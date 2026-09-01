@@ -278,9 +278,7 @@ static positive lex_at;
 
 static b32 lex_add(b32 kind, b32 op, string_address text, positive length)
 {
-        if (!shell_room((address_any address_to)address_of lex_tokens,
-                        address_of lex_token_room, (positive)lex_count + 2,
-                        sizeof(lex_token)))
+        if (!shell_array_room(lex_tokens, lex_token_room, (positive)lex_count + 2))
                 return false;
 
         lex_tokens[lex_count].at = lex_at;

@@ -67,8 +67,8 @@ static COLD b32 ul_bad_usage(string_address program, string_address message)
         return 1;
 }
 
-static bool ul_size_number(string_address address_to text, positive base,
-                           positive address_to value)
+static COLD bool ul_size_number(
+    string_address address_to text, positive base, positive address_to value)
 {
         string_address at = address_to text;
         positive got = 0;
@@ -76,16 +76,9 @@ static bool ul_size_number(string_address address_to text, positive base,
 
         while (1)
         {
-                p8 byte = string_get(at);
-                positive digit;
+                positive digit = digit_known(string_get(at), 16);
 
-                if (byte >= '0' && byte <= '9')
-                        digit = byte - '0';
-                else if (byte >= 'a' && byte <= 'f')
-                        digit = byte - 'a' + 10;
-                else if (byte >= 'A' && byte <= 'F')
-                        digit = byte - 'A' + 10;
-                else
+                if (digit >= base)
                         break;
 
                 positive scaled;
@@ -206,10 +199,8 @@ static b32 ul_tasks(b32 pid, bool all, ul_task_action action,
 
 static PURE b32 ul_hex(p8 byte)
 {
-        if (byte >= '0' && byte <= '9')
-                return byte - '0';
-        byte = byte_to_lower(byte);
-        return byte >= 'a' && byte <= 'f' ? byte - 'a' + 10 : -1;
+        positive digit = digit_known(byte, 16);
+        return digit < 16 ? (b32)digit : -1;
 }
 
 static bool ul_cpu_mask(string_address text, positive address_to set)
@@ -677,7 +668,6 @@ static b32 util_linux_taskset()
         file_taking taking = {
             .program = (string_address)"taskset",
             .allowed = (string_address)"apcVh",
-            .valued = (string_address)"",
             .longs = ul_taskset_longs,
         };
         positive count = (positive)program_argument_count();
@@ -1358,18 +1348,12 @@ static const ul_policy ul_policies[] = {
 
 #define UL_POLICIES (sizeof(ul_policies) / sizeof(ul_policies[0]))
 
-static ul_policy const address_to ul_policy_option(p8 option)
+static inline INLINE ul_policy const address_to ul_policy_find(p32 key,
+                                                               bool option)
 {
         for (positive at = 0; at < UL_POLICIES; at++)
-                if (ul_policies[at].option == option)
-                        return ul_policies + at;
-        return null;
-}
-
-static ul_policy const address_to ul_policy_value(p32 value)
-{
-        for (positive at = 0; at < UL_POLICIES; at++)
-                if (ul_policies[at].value == value)
+                if (option ? ul_policies[at].option == key
+                           : ul_policies[at].value == key)
                         return ul_policies + at;
         return null;
 }
@@ -1377,7 +1361,7 @@ static ul_policy const address_to ul_policy_value(p32 value)
 static fn ul_chrt_report(b32 pid, string_address state,
                          ul_sched_attr address_to attr)
 {
-        ul_policy const address_to policy = ul_policy_value(attr->policy);
+        ul_policy const address_to policy = ul_policy_find(attr->policy, false);
 
         string_format(log, "pid %b's %s scheduling policy: %s\n",
                       (bipolar)pid, state,
@@ -1504,7 +1488,7 @@ static b32 util_linux_chrt()
         bool by_pid = (taking.flags & FILE_FLAG('p')) != 0;
         bool all = (taking.flags & FILE_FLAG('a')) != 0;
         ul_policy const address_to policy =
-            ul_policy_option(ul_chrt_policy ? ul_chrt_policy : 'r');
+            ul_policy_find(ul_chrt_policy ? ul_chrt_policy : 'r', true);
         positive priority = 0;
         positive first = taking.first;
         bool priority_given = false;
@@ -2584,6 +2568,17 @@ static fn ul_wait_close(positive count)
                               (positive)ul_wait_pids[i].descriptor);
 }
 
+static COLD b32 ul_wait_timed_out(positive active, bool verbose)
+{
+        if (verbose)
+        {
+                log("Timeout expired\n", 16);
+                log_flush();
+        }
+        ul_wait_close(active);
+        return 3;
+}
+
 static bool ul_wait_operand(string_address text, b32 address_to pid,
                             p64 address_to inode)
 {
@@ -2664,12 +2659,8 @@ static b32 util_linux_waitpid()
                          address_of timeout))
                 return ul_bad_usage("waitpid", "invalid timeout");
 
-        if (!shell_room((address_any address_to)address_of ul_wait_pids,
-                        address_of ul_wait_room, wanted,
-                        sizeof(ul_wait_pids[0])) ||
-            !shell_room((address_any address_to)address_of file_id_scratch,
-                        address_of file_id_scratch_room, wanted,
-                        sizeof(file_id_scratch[0])))
+        if (!shell_array_room(ul_wait_pids, ul_wait_room, wanted) ||
+            !shell_array_room(file_id_scratch, file_id_scratch_room, wanted))
                 return ul_bad_usage("waitpid", "not enough memory");
 
         positive active = 0;
@@ -2756,15 +2747,7 @@ static b32 util_linux_waitpid()
                 {
                         positive now = ul_now_ns();
                         if (now >= deadline)
-                        {
-                                if (verbose)
-                                {
-                                        log("Timeout expired\n", 16);
-                                        log_flush();
-                                }
-                                ul_wait_close(active);
-                                return 3;
-                        }
+                                return ul_wait_timed_out(active, verbose);
                         positive left = deadline - now;
                         span.tv_sec = left / 1000000000;
                         span.tv_nsec = left % 1000000000;
@@ -2775,15 +2758,7 @@ static b32 util_linux_waitpid()
                                                (positive)ul_wait_pids, active,
                                                (positive)limit, 0, 8);
                 if (ready == 0)
-                {
-                        if (verbose)
-                        {
-                                log("Timeout expired\n", 16);
-                                log_flush();
-                        }
-                        ul_wait_close(active);
-                        return 3;
-                }
+                        return ul_wait_timed_out(active, verbose);
                 if (ready < 0)
                 {
                         if (ready == -4)
@@ -3045,9 +3020,7 @@ static COLD __attribute__((noinline)) b32 ul_setpriv_dump()
 
         bipolar groups = system_call_2(syscall(getgroups), 0, 0);
         if (groups < 0 ||
-            !shell_room((address_any address_to)address_of file_id_scratch,
-                        address_of file_id_scratch_room, (positive)groups,
-                        sizeof(file_id_scratch[0])) ||
+            !shell_array_room(file_id_scratch, file_id_scratch_room, (positive)groups) ||
             (groups && system_call_2(syscall(getgroups), (positive)groups,
                                      (positive)file_id_scratch) < 0))
                 return ul_bad_usage("setpriv", "getgroups failed");
@@ -4409,7 +4382,6 @@ static b32 util_linux_setsid()
         file_taking taking = {
             .program = (string_address)"setsid",
             .allowed = (string_address)"cfwVh",
-            .valued = (string_address)"",
             .longs = ul_setsid_longs,
         };
         b32 answer;
@@ -4478,7 +4450,6 @@ static b32 util_linux_setpgid()
         file_taking taking = {
             .program = (string_address)"setpgid",
             .allowed = (string_address)"fVh",
-            .valued = (string_address)"",
             .longs = ul_setpgid_longs,
         };
         b32 answer;

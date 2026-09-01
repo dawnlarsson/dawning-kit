@@ -550,14 +550,8 @@ fi
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
 supported='blkid choom chrt exch fadvise findfs findmnt flock getino ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
 
-awk '
-        /static shell_tool shell_tools\[\]/ { inside=1; next }
-        inside && /\{null, null\}/ { exit }
-        inside && match($0, /\{"[^"]+"/) {
-                name=substr($0, RSTART + 2, RLENGTH - 3)
-                print name
-        }
-' "$root/src/sh/builtin.c" | sort -u > "$work/dispatched"
+awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
+        "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"
 
 printf '%s\n' $upstream | sort -u > "$work/upstream"
 printf '%s\n' $supported | sort -u > "$work/supported"

@@ -10,6 +10,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LEDGER = pathlib.Path(__file__).with_name('coreutils-9.11.json')
 BUILTINS = ROOT / 'src/sh/builtin.c'
+TOOLS = ROOT / 'src/sh/tools.inc'
 
 
 def ordered_set(ledger, name):
@@ -28,6 +29,12 @@ def table_names(source, name):
                           match.group(1), re.MULTILINE))
 
 
+def tool_names(source):
+    return set(re.findall(
+        r'^SHELL_TOOL\((?:GENERAL|UTIL_(?:BIN|SBIN)),\s*([A-Za-z_]\w*),',
+        source, re.MULTILINE))
+
+
 def main():
     try:
         ledger = json.loads(LEDGER.read_text(encoding='utf-8'))
@@ -36,9 +43,9 @@ def main():
         if not expected <= commands:
             raise ValueError('absent names must belong to commands')
 
-        source = BUILTINS.read_text(encoding='utf-8')
-        dispatched = (table_names(source, 'shell_commands') |
-                      table_names(source, 'shell_tools'))
+        builtins = BUILTINS.read_text(encoding='utf-8')
+        tools = TOOLS.read_text(encoding='utf-8')
+        dispatched = table_names(builtins, 'shell_commands') | tool_names(tools)
     except (OSError, ValueError, json.JSONDecodeError) as error:
         print('coreutils gap: %s' % error, file=sys.stderr)
         return 1

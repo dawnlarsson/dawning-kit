@@ -234,9 +234,7 @@ static bool storage_uuid_header(p8 address_to uuid, positive room)
                         if (byte != '-')
                                 return false;
                 }
-                else if (!((byte >= '0' && byte <= '9') ||
-                           (byte >= 'a' && byte <= 'f') ||
-                           (byte >= 'A' && byte <= 'F')))
+                else if (digit_known(byte, 16) >= 16)
                         return false;
         }
 

@@ -244,9 +244,11 @@ static b32 system_init()
         positive started = now_ns();
         bipolar wait_error = 0;
 
+#ifndef SHELL_NO_UTILITIES
         bipolar network = start_network(device);
         positive network_started = now_ns();
         positive network_failures = 0;
+#endif
 
         // Returning from PID 1 panics the kernel, which on a machine with no
         // serial console says nothing at all. Retrying at a bounded rate keeps
@@ -285,6 +287,7 @@ static b32 system_init()
                 {
                         wait_error = 0;
 
+#ifndef SHELL_NO_UTILITIES
                         if (reaped == network)
                         {
                                 if (now_ns() - network_started >= NETWORK_SETTLED_NS)
@@ -306,6 +309,7 @@ static b32 system_init()
                                 network = start_network(device);
                                 continue;
                         }
+#endif
 
                         if (reaped != shell)
                                 continue;

@@ -81,6 +81,7 @@ objdump_cmd=$(pick objdump) || exit 1
 readelf_cmd=$(pick readelf) || exit 1
 objcopy_cmd=$(pick objcopy) || exit 1
 program_flags=$(key program_flags)
+spark_cppflags=${SPARK_CPPFLAGS:-}
 
 if [ "$mode" = debug ]; then
         program_flags="$program_flags -g"
@@ -108,7 +109,8 @@ flags=$(printf '%s' "$program_flags" | sed 's/-flto//g')
 # MOONWATER_FREESTANDING_ASM is what makes the .S assemble without the kernel
 # headers; see kit/asm for why it is defined here rather than assumed there.
 # shellcheck disable=SC2086
-if ! $compiler "$source_file.c" -o "$elf" $flags -static -nostdlib -nostartfiles \
+if ! $compiler "$source_file.c" -o "$elf" $flags $spark_cppflags \
+        -static -nostdlib -nostartfiles \
         \
         -T "$linker_script" -Wl,--build-id=none -Wl,-e,_start \
         -Wl,--no-warn-rwx-segments; then
@@ -177,7 +179,10 @@ zeros() {
 
 pad_file_to() {
         have=$(wc -c <"$1")
-        [ "$have" -lt "$2" ] && zeros $(($2 - have))
+        if [ "$have" -lt "$2" ]; then
+                zeros $(($2 - have)) || return 1
+        fi
+        return 0
 }
 
 spark_header() {

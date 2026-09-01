@@ -292,6 +292,7 @@ DECORATORS = {
 
 ASM_DECLARERS = {'ASM_FUNC': 'public', 'ASM_LOCAL_FUNC': 'local'}
 ASM_ENDERS = {'ASM_END': 'public', 'ASM_LOCAL_END': 'local'}
+ASM_ALIASES = {'ASM_ALIAS': 'public'}
 
 NON_NAMES = DECORATORS | {
     '_Alignas', '_Alignof', '_Generic', '_Static_assert', 'alignas',
@@ -301,7 +302,7 @@ NON_NAMES = DECORATORS | {
     'short', 'signed', 'sizeof', 'static', 'struct', 'switch', 'typedef',
     'typeof', '__typeof', '__typeof__', 'union', 'unsigned', 'void',
     'volatile', 'while', '_Bool', '_Complex', '_Imaginary',
-} | set(ASM_DECLARERS) | set(ASM_ENDERS)
+} | set(ASM_DECLARERS) | set(ASM_ENDERS) | set(ASM_ALIASES)
 
 
 def strip_trailing_decorators(header):
@@ -903,6 +904,15 @@ def assembly_inventory(path, tokens, directives):
                 and tokens[index + 3].value == ')':
             events.append((tokens[index].start, 1,
                            (macro, tokens[index + 2].value, tokens[index].line)))
+        elif index + 5 < len(tokens) \
+                and macro in ASM_ALIASES \
+                and tokens[index + 1].value == '(' \
+                and tokens[index + 2].kind == 'identifier' \
+                and tokens[index + 3].value == ',' \
+                and tokens[index + 4].kind == 'identifier' \
+                and tokens[index + 5].value == ')':
+            events.append((tokens[index].start, 1,
+                           (macro, tokens[index + 2].value, tokens[index].line)))
     events.sort(key=lambda item: (item[0], item[1]))
 
     current, stack = None, []
@@ -912,6 +922,27 @@ def assembly_inventory(path, tokens, directives):
     for _, event_kind, event in events:
         if event_kind:
             macro, name, line = event
+            if macro in ASM_ALIASES:
+                # Architecture-local aliases are complete definitions with
+                # no body/end pair. Unscoped aliases are the libc spellings
+                # collected after the architecture blocks and do not add new
+                # hardware-floor routines to this inventory.
+                if current is None:
+                    continue
+                scope = ASM_ALIASES[macro]
+                if opened[current] is not None:
+                    prior = opened[current]
+                    pairing.append(AsmPairIssue(
+                        path, current, line,
+                        f'{macro}({name}) appears before '
+                        f'{prior[1]} from line {prior[2]} is closed'))
+                if name not in order:
+                    order.append(name)
+                have.setdefault(name, set()).add(current)
+                counts[(name, current)] = counts.get((name, current), 0) + 1
+                scopes.setdefault((name, current), set()).add(scope)
+                continue
+
             if macro in ASM_ENDERS:
                 scope = ASM_ENDERS[macro]
                 if current is None:

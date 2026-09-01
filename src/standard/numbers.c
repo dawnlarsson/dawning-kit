@@ -1173,6 +1173,36 @@ static b32 numbers_hex_value(b32 byte)
         return byte_to_lower(byte) - 'a' + 10;
 }
 
+static inline INLINE fn numbers_read_exponent(string_address address_to scan,
+                                               b32 address_to exponent)
+{
+        string_address digits = address_to scan + 1;
+        b32 sign = 1;
+        b32 value = 0;
+
+        if (address_to digits == '+')
+                digits++;
+        else if (address_to digits == '-')
+        {
+                sign = -1;
+                digits++;
+        }
+
+        if (!byte_is_digit(address_to digits))
+                return;
+
+        while (byte_is_digit(address_to digits))
+        {
+                if (value < NUMBERS_EXPONENT_CLAMP)
+                        value = value * 10 + (address_to digits - '0');
+
+                digits++;
+        }
+
+        address_to exponent += sign * value;
+        address_to scan = digits;
+}
+
 static fn numbers_read_hexadecimal(numbers_scan address_to number, string_address start)
 {
         string_address scan = start + 2;
@@ -1235,33 +1265,7 @@ static fn numbers_read_hexadecimal(numbers_scan address_to number, string_addres
         }
 
         if (byte_to_lower(address_to scan) == 'p')
-        {
-                string_address digits = scan + 1;
-                b32 sign = 1;
-                b32 value = 0;
-
-                if (address_to digits == '+')
-                        digits++;
-                else if (address_to digits == '-')
-                {
-                        sign = -1;
-                        digits++;
-                }
-
-                if (byte_is_digit(address_to digits))
-                {
-                        while (byte_is_digit(address_to digits))
-                        {
-                                if (value < NUMBERS_EXPONENT_CLAMP)
-                                        value = value * 10 + (address_to digits - '0');
-
-                                digits++;
-                        }
-
-                        exponent += sign * value;
-                        scan = digits;
-                }
-        }
+                numbers_read_exponent(address_of scan, address_of exponent);
 
         number->kind = NUMBERS_NUMBER;
         number->hexadecimal = true;
@@ -1434,33 +1438,7 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
         number->point = whole_digits - hidden_zeros;
 
         if (byte_to_lower(address_to scan) == 'e')
-        {
-                string_address digits = scan + 1;
-                b32 sign = 1;
-                b32 value = 0;
-
-                if (address_to digits == '+')
-                        digits++;
-                else if (address_to digits == '-')
-                {
-                        sign = -1;
-                        digits++;
-                }
-
-                if (byte_is_digit(address_to digits))
-                {
-                        while (byte_is_digit(address_to digits))
-                        {
-                                if (value < NUMBERS_EXPONENT_CLAMP)
-                                        value = value * 10 + (address_to digits - '0');
-
-                                digits++;
-                        }
-
-                        number->point += sign * value;
-                        scan = digits;
-                }
-        }
+                numbers_read_exponent(address_of scan, address_of number->point);
 
         numbers_trim(number);
         number->kind = NUMBERS_NUMBER;

@@ -1431,6 +1431,11 @@ typedef union matrix4
 
 #define ASM_END(name) ".size " #name ", .-" #name "\n"
 
+#define ASM_ALIAS(name, target)         \
+    ".globl " #name "\n"                \
+    ".type " #name ", " ASM_TYPE "\n"   \
+    ".set " #name ", " #target "\n"
+
 // A shared assembly subroutine is a function to the machine and to objtool,
 // even when it is not part of the public library interface. In particular, a
 // call to a plain label inside another STT_FUNC is an intra-function call and
@@ -10328,17 +10333,7 @@ ASM_FUNC(positive_to_string)
     ASM_RET
     ASM_END(string_digits_octal_escape_max)
 
-    ASM_FUNC(string_digits_octal_max)
-    "mov x3, xzr\n   mov x4, xzr\n   cbz x1, 2f\n"
-    "1:  ldrb w5, [x0, x4]\n   sub w5, w5, #48\n"
-    "cmp w5, #7\n"
-    "b.hi 2f\n   add x3, x5, x3, lsl #3\n"
-    "add x4, x4, #1\n"
-    "cmp x4, x1\n   b.ne 1b\n"
-    "2:  cbz x2, 3f\n   str x4, [x2]\n"
-    "3:  mov x0, x3\n"
-    ASM_RET
-    ASM_END(string_digits_octal_max)
+    ASM_ALIAS(string_digits_octal_max, string_digits_octal_escape_max)
 
     ASM_FUNC(string_digits_hexadecimal_escape_max)
     "mov x3, xzr\n   mov x4, xzr\n   cbz x1, 4f\n"
@@ -13439,14 +13434,7 @@ ASM_FUNC(positive_to_string)
     ASM_RET
     ASM_END(string_digits_octal_escape_max)
 
-    ASM_FUNC(string_digits_octal_max)
-    "mv a3, zero\n   mv a4, zero\n   li t2, 7\n   beqz a1, 2f\n"
-    "1:  add t0, a0, a4\n   lbu t1, 0(t0)\n   addi t1, t1, -48\n   bltu t2, t1, 2f\n"
-    "slli a3, a3, 3\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
-    "2:  beqz a2, 3f\n   sd a4, 0(a2)\n"
-    "3:  mv a0, a3\n"
-    ASM_RET
-    ASM_END(string_digits_octal_max)
+    ASM_ALIAS(string_digits_octal_max, string_digits_octal_escape_max)
 
     ASM_FUNC(string_digits_hexadecimal_escape_max)
     "mv a3, zero\n   mv a4, zero\n   beqz a1, 4f\n"
@@ -13459,16 +13447,7 @@ ASM_FUNC(positive_to_string)
     ASM_RET
     ASM_END(string_digits_hexadecimal_escape_max)
 
-    ASM_FUNC(string_digits_hexadecimal_max)
-    "mv a3, zero\n   mv a4, zero\n   beqz a1, 4f\n"
-    "1:  add t0, a0, a4\n   lbu t0, 0(t0)\n   addi t1, t0, -48\n   li t2, 9\n"
-    "bgeu t2, t1, 2f\n   ori t0, t0, 32\n   addi t0, t0, -97\n   li t2, 5\n"
-    "bltu t2, t0, 4f\n   addi t1, t0, 10\n"
-    "2:  slli a3, a3, 4\n   add a3, a3, t1\n   addi a4, a4, 1\n   bne a4, a1, 1b\n"
-    "4:  beqz a2, 5f\n   sd a4, 0(a2)\n"
-    "5:  mv a0, a3\n"
-    ASM_RET
-    ASM_END(string_digits_hexadecimal_max)
+    ASM_ALIAS(string_digits_hexadecimal_max, string_digits_hexadecimal_escape_max)
     //
     //       string_digits_base_max. The x86_64 block carries the contract.
     //       The RISC-V floor has M, so the generic path uses its integer mul;
@@ -14470,11 +14449,6 @@ fn string_format(writer write, string_address format, ...);
         These sit above the userspace half of the file because the kernel is
         the reader that cannot see anything below it.
 */
-#define ASM_ALIAS(name, target)         \
-    ".globl " #name "\n"                \
-    ".type " #name ", " ASM_TYPE "\n"   \
-    ".set " #name ", " #target "\n"
-
 __asm__(
     ""
 //      An empty string to begin with, because STOCK_STRINGS can take every

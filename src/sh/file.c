@@ -3907,9 +3907,7 @@ static bool find_empty(string_address path, file_facts address_to facts)
 
 static b32 find_make(p8 kind)
 {
-        if (!shell_room((address_any address_to)address_of find_nodes,
-                        address_of find_node_room, find_used + 1,
-                        sizeof(find_node)))
+        if (!shell_array_room(find_nodes, find_node_room, find_used + 1))
         {
                 file_fail("find: out of memory while reading expression\n", 0);
                 find_bad = true;
@@ -4597,10 +4595,7 @@ static fn find_batch_run(positive slot)
         positive have = 0;
         positive template = (positive)(node->extra - node->number);
 
-        if (!shell_room((address_any address_to)address_of find_exec_words,
-                        address_of find_exec_word_room,
-                        template + batch->words + 1,
-                        sizeof(string_address)))
+        if (!shell_array_room(find_exec_words, find_exec_word_room, template + batch->words + 1))
         {
                 file_fail("find: out of memory while building -exec arguments\n", 0);
                 find_status = 1;
@@ -4646,9 +4641,7 @@ static bool find_exec_once(find_node address_to node)
         positive path_length = string_length(find_path);
         positive words = (positive)(node->extra - node->number);
 
-        if (!shell_room((address_any address_to)address_of find_exec_words,
-                        address_of find_exec_word_room, words + 1,
-                        sizeof(string_address)))
+        if (!shell_array_room(find_exec_words, find_exec_word_room, words + 1))
         {
                 file_fail("find: out of memory while building -exec arguments\n", 0);
                 find_status = 1;
@@ -5880,9 +5873,7 @@ static bool du_exclude_seen(p8 letter, string_address value)
         if (letter != 'e' || !value)
                 return true;
 
-        if (!shell_room((address_any address_to)address_of du_excludes,
-                        address_of du_exclude_room, du_exclude_have + 1,
-                        sizeof(string_address)))
+        if (!shell_array_room(du_excludes, du_exclude_room, du_exclude_have + 1))
         {
                 file_fail("du: out of memory while reading exclude patterns\n", 0);
                 return false;
@@ -7038,9 +7029,7 @@ static fn file_operand(b32 index)
         if (file_operand_failed)
                 return;
 
-        if (!shell_room((address_any address_to)address_of file_operand_list,
-                        address_of file_operand_room, file_operand_count + 1,
-                        sizeof(file_operand_list[0])))
+        if (!shell_array_room(file_operand_list, file_operand_room, file_operand_count + 1))
         {
                 file_operand_failed = true;
                 return;
@@ -11113,9 +11102,7 @@ static bool env_put(string_address entry)
                 }
         }
 
-        if (!shell_room((address_any address_to)address_of env_list,
-                        address_of env_room, env_have + 2,
-                        sizeof(env_list[0])))
+        if (!shell_array_room(env_list, env_room, env_have + 2))
         {
                 file_fail("env: environment is too large\n", 0);
                 return false;
@@ -11137,9 +11124,7 @@ static bool env_seen(p8 letter, string_address value)
         if (letter != 'u')
                 return true;
 
-        if (!shell_room((address_any address_to)address_of env_dropped,
-                        address_of env_dropped_room, env_drops + 1,
-                        sizeof(env_dropped[0])))
+        if (!shell_array_room(env_dropped, env_dropped_room, env_drops + 1))
         {
                 file_fail("env: unset list is too large\n", 0);
                 return false;
@@ -11188,12 +11173,8 @@ static bool env_split(string_address text, positive address_to have)
                 it after the first word would move the text underneath those
                 pointers. At most every second byte begins a one-byte word.
         */
-        if (!shell_room((address_any address_to)address_of env_split_store,
-                        address_of env_split_room, length + 1,
-                        sizeof(env_split_store[0])) ||
-            !shell_room((address_any address_to)address_of env_words,
-                        address_of env_words_room,
-                        given + length / 2 + 2, sizeof(env_words[0])))
+        if (!shell_array_room(env_split_store, env_split_room, length + 1) ||
+            !shell_array_room(env_words, env_words_room, given + length / 2 + 2))
         {
                 file_fail("env: split string is too large\n", 0);
                 return false;
@@ -11276,9 +11257,7 @@ static b32 file_env()
         if (split && !env_split(split, address_of have))
                 return 125;
 
-        if (!shell_room((address_any address_to)address_of env_words,
-                        address_of env_words_room,
-                        have + count - index + 1, sizeof(env_words[0])))
+        if (!shell_array_room(env_words, env_words_room, have + count - index + 1))
         {
                 file_fail("env: argument list is too large\n", 0);
                 return 125;
@@ -11297,9 +11276,7 @@ static b32 file_env()
                         return 125;
         }
 
-        if (!shell_room((address_any address_to)address_of env_list,
-                        address_of env_room, env_have + 1,
-                        sizeof(env_list[0])))
+        if (!shell_array_room(env_list, env_room, env_have + 1))
                 return 125;
 
         env_list[env_have] = null;
@@ -11485,9 +11462,7 @@ static bool id_group_add(positive value, positive address_to have)
                 if (file_id_scratch[i] == (p32)value)
                         return true;
 
-        if (!shell_room((address_any address_to)address_of file_id_scratch,
-                        address_of file_id_scratch_room, address_to have + 1,
-                        sizeof(file_id_scratch[0])))
+        if (!shell_array_room(file_id_scratch, file_id_scratch_room, address_to have + 1))
                 return false;
 
         file_id_scratch[address_to have] = (p32)value;
@@ -11567,9 +11542,7 @@ static bool id_groups_process(positive real, positive effective,
         address_to have = 0;
 
         if (groups < 0 ||
-            !shell_room((address_any address_to)address_of file_id_scratch,
-                        address_of file_id_scratch_room, (positive)groups + 2,
-                        sizeof(file_id_scratch[0])))
+            !shell_array_room(file_id_scratch, file_id_scratch_room, (positive)groups + 2))
                 return false;
 
         if (groups &&

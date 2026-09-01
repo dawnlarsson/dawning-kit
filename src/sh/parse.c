@@ -272,10 +272,7 @@ fn parse_nest_enter()
         parse_frame address_to frame;
 
         if (parse_nest_depth == 0x7fffffff ||
-            !shell_room((address_any address_to)address_of parse_frames,
-                        address_of parse_frame_room,
-                        (positive)parse_nest_depth + 1,
-                        sizeof(parse_frames[0])))
+            !shell_array_room(parse_frames, parse_frame_room, (positive)parse_nest_depth + 1))
         {
                 string_format(log_error, "No room for nested shell input\n");
                 log_flush();
@@ -474,13 +471,8 @@ static bool parse_here_register(string_address word, bool strip)
         positive reserve = string_length(word) + 1;
         here_document address_to document;
 
-        if (!shell_room((address_any address_to)address_of here_documents,
-                        address_of here_document_room,
-                        (positive)here_wanted + 1,
-                        sizeof(here_documents[0])) ||
-            !shell_room((address_any address_to)address_of here_names,
-                        address_of here_names_room,
-                        here_names_used + reserve, sizeof(here_names[0])))
+        if (!shell_array_room(here_documents, here_document_room, (positive)here_wanted + 1) ||
+            !shell_array_room(here_names, here_names_room, here_names_used + reserve))
                 return false;
 
         document = here_documents + here_wanted;
@@ -574,9 +566,7 @@ bool parse_here_line(string_address line)
         // A body that does not fit is not a body with its end cut off: the
         // reader does not look at what this answers, so the complaint is made
         // here and the command it belongs to is refused when it is parsed.
-        if (!shell_room((address_any address_to)address_of here_text,
-                        address_of here_text_room,
-                        here_used + length + 2, sizeof(here_text[0])))
+        if (!shell_array_room(here_text, here_text_room, here_used + length + 2))
         {
                 if (!document->overflow)
                         string_format(log_error, "Here-document too long: %s\n",
@@ -607,9 +597,7 @@ fn parse_here_close()
 
                 // Past the terminator, so the body after this one does not
                 // overwrite it and every body stands as a string.
-                if (shell_room((address_any address_to)address_of here_text,
-                               address_of here_text_room, here_used + 1,
-                               sizeof(here_text[0])))
+                if (shell_array_room(here_text, here_text_room, here_used + 1))
                 {
                         here_text[here_used] = end;
                         here_used++;
@@ -627,9 +615,7 @@ static bool parse_hold(string_address line, b32 unfinished)
 
         if (line != parse_pending)
         {
-                if (!shell_room((address_any address_to)address_of parse_pending,
-                                address_of parse_pending_room, length + 2,
-                                sizeof(parse_pending[0])))
+                if (!shell_array_room(parse_pending, parse_pending_room, length + 2))
                         return false;
 
                 memory_copy(parse_pending, line, length + 1);
@@ -734,10 +720,8 @@ bool parse_feed(string_address line)
         {
                 positive length = string_length(line);
 
-                if (!shell_room((address_any address_to)address_of parse_pending,
-                                address_of parse_pending_room,
-                                parse_pending_used + length + 2,
-                                sizeof(parse_pending[0])))
+                if (!shell_array_room(parse_pending, parse_pending_room,
+                                      parse_pending_used + length + 2))
                         return false;
 
                 memory_copy(parse_pending + parse_pending_used, line, length + 1);
@@ -765,9 +749,7 @@ bool parse_feed(string_address line)
 
                 //      Room taken before any address into the table is,
                 //      because taking room is what may move it.
-                if (!shell_room((address_any address_to)address_of parse_tokens,
-                                address_of parse_token_room, parse_token_count + 2,
-                                sizeof(parse_token)))
+                if (!shell_array_room(parse_tokens, parse_token_room, parse_token_count + 2))
                         return false;
 
                 into = parse_tokens + parse_token_count;
@@ -793,9 +775,7 @@ bool parse_feed(string_address line)
                 script beginning with #! therefore wrote through the null
                 initial table before it reached its first command.
         */
-        if (!shell_room((address_any address_to)address_of parse_tokens,
-                        address_of parse_token_room, parse_token_count + 1,
-                        sizeof(parse_token)))
+        if (!shell_array_room(parse_tokens, parse_token_room, parse_token_count + 1))
                 return false;
 
         parse_tokens[parse_token_count].kind = PT_NEWLINE;
@@ -1074,10 +1054,9 @@ static bool parse_alias_replace(b32 position)
                         goto alias_done;
                 }
 
-                if (!shell_room((address_any address_to)address_of replacement,
-                                address_of replacement_room,
-                                replacement_count + (positive)count + 1,
-                                sizeof(replacement[0])))
+                if (!shell_array_room(
+                        replacement, replacement_room,
+                        replacement_count + (positive)count + 1))
                 {
                         parse_state = PARSE_SYNTAX;
                         goto alias_done;
@@ -1120,10 +1099,7 @@ static bool parse_alias_replace(b32 position)
                 if (!line)
                         break;
 
-                if (!shell_room((address_any address_to)address_of replacement,
-                                address_of replacement_room,
-                                replacement_count + 1,
-                                sizeof(replacement[0])))
+                if (!shell_array_room(replacement, replacement_room, replacement_count + 1))
                 {
                         parse_state = PARSE_SYNTAX;
                         goto alias_done;
@@ -1140,10 +1116,8 @@ static bool parse_alias_replace(b32 position)
                 line++;
         }
 
-        if (!shell_room((address_any address_to)address_of parse_tokens,
-                        address_of parse_token_room,
-                        parse_token_count + replacement_count + 1,
-                        sizeof(parse_tokens[0])))
+        if (!shell_array_room(parse_tokens, parse_token_room,
+                              parse_token_count + replacement_count + 1))
         {
                 parse_state = PARSE_SYNTAX;
                 goto alias_done;

@@ -802,6 +802,17 @@ static string_address storage_findmnt_cell(storage_mount address_to mount,
         }
 }
 
+static inline INLINE bool storage_filesystem_option_represented(
+    storage_mount address_to mount, string_address option, positive length)
+{
+        return storage_option_has_length(mount->options, option, length) ||
+            (length == 2 &&
+             ((!memory_compare(option, "ro", 2) &&
+               storage_option_has(mount->options, (string_address)"rw")) ||
+              (!memory_compare(option, "rw", 2) &&
+               storage_option_has(mount->options, (string_address)"ro"))));
+}
+
 static positive storage_combined_options_length(storage_mount address_to mount)
 {
         positive length = 0;
@@ -820,15 +831,8 @@ static positive storage_combined_options_length(storage_mount address_to mount)
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
-                bool represented = storage_option_has_length(
-                    mount->options, at, token_length) ||
-                    (token_length == 2 &&
-                     ((!memory_compare(at, "ro", 2) &&
-                       storage_option_has(mount->options,
-                                          (string_address)"rw")) ||
-                      (!memory_compare(at, "rw", 2) &&
-                       storage_option_has(mount->options,
-                                          (string_address)"ro"))));
+                bool represented = storage_filesystem_option_represented(
+                    mount, at, token_length);
 
                 if (token_length && !represented)
                         length += token_length + (length ? 1 : 0);
@@ -899,15 +903,8 @@ static fn storage_combined_options_write(writer output,
         while ((at = storage_comma_next(address_of cursor,
                                          address_of token_length)))
         {
-                bool represented = storage_option_has_length(
-                    mount->options, at, token_length) ||
-                    (token_length == 2 &&
-                     ((!memory_compare(at, "ro", 2) &&
-                       storage_option_has(mount->options,
-                                          (string_address)"rw")) ||
-                      (!memory_compare(at, "rw", 2) &&
-                       storage_option_has(mount->options,
-                                          (string_address)"ro"))));
+                bool represented = storage_filesystem_option_represented(
+                    mount, at, token_length);
 
                 if (token_length && !represented)
                 {

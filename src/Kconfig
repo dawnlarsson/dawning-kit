@@ -5,6 +5,53 @@ menu "Moonwater"
         help
           Enable the Moonwater core: the spark binary format, /dev/spark and Canvas
 
+    config MOONWATER_SHELL
+        bool "Bundle the Moonwater shell in the initial filesystem"
+        depends on MOONWATER_CORE=y
+        default y
+        help
+          Build the Spark shell and install it as /shell, /init and /bin/sh.
+          Disable this when another initramfs supplies its own init and command
+          interpreter. Disable MOONWATER_UTILITIES as well for a kernel-only
+          image with no bundled userspace payload. The repository's fs/
+          directory is generated output; point CONFIG_INITRAMFS_SOURCE at a
+          separate tree or archive when supplying a replacement init.
+
+    config MOONWATER_SHELL_MONITOR
+        bool "Bundle the shell resource monitor"
+        depends on MOONWATER_SHELL && MOONWATER_UTILITIES
+        default y
+        help
+          Install monitor.sh and its historical mointor.sh spelling. The
+          script uses /bin/sh and is therefore unavailable without the shell.
+
+    config MOONWATER_UTILITIES
+        bool "Bundle the general utility surface"
+        depends on MOONWATER_CORE=y
+        default y
+        help
+          Build and install the core, file, text and network utility surface.
+          When the shell is enabled its one shared binary provides the applets;
+          otherwise a utility-only Spark entrypoint is built and unknown names
+          cannot fall through into an interactive shell. The utility-only
+          binary retains the /shell path used by the kernel's accelerated tool
+          spawning ABI, but /bin/sh and /init are not installed.
+
+          Disabling this option removes the applet registry roots so linker
+          garbage collection drops their unreferenced code. Shared helpers
+          still needed by the enabled shell remain.
+
+    config MOONWATER_UTIL_LINUX
+        bool "Bundle util-linux compatible utilities"
+        depends on MOONWATER_UTILITIES
+        default y
+        help
+          Install mount, process-policy, namespace and related util-linux
+          compatible applet names, including their conventional /bin and
+          /sbin aliases. Disabling this removes the util-linux registry roots;
+          only helpers independently needed by another enabled component
+          remain in the linked image.
+
     config MOONWATER_CANVAS
         bool "Moonwater Canvas, the in-kernel compositor"
         depends on MOONWATER_CORE && DRM && DRM_CLIENT
@@ -22,7 +69,7 @@ menu "Moonwater"
 
     config MOONWATER_CANVAS_AUTOSTART
         bool "Start Canvas automatically during boot"
-        depends on MOONWATER_CANVAS
+        depends on MOONWATER_CANVAS && MOONWATER_SHELL
         default y
         help
           Probe DRM devices and start the Canvas desktop and its terminal as

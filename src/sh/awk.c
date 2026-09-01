@@ -4577,41 +4577,27 @@ static awk_node address_to awk_pipe_level()
         return node;
 }
 
-static awk_node address_to awk_and_level()
-{
-        awk_node address_to node = awk_pipe_level();
-
-        while (awk_token == T_AND)
-        {
-                awk_node address_to made = awk_node_new(N_AND);
-
-                awk_next_token();
-                awk_skip_newlines();
-                made->a = node;
-                made->b = awk_pipe_level();
-                node = made;
+#define AWK_LOGICAL_LEVEL(name, lower, token, kind)                           \
+        static awk_node address_to name()                                    \
+        {                                                                    \
+                awk_node address_to node = lower();                          \
+                                                                             \
+                while (awk_token == token)                                   \
+                {                                                            \
+                        awk_node address_to made = awk_node_new(kind);        \
+                                                                             \
+                        awk_next_token();                                    \
+                        awk_skip_newlines();                                 \
+                        made->a = node;                                      \
+                        made->b = lower();                                   \
+                        node = made;                                         \
+                }                                                            \
+                                                                             \
+                return node;                                                 \
         }
 
-        return node;
-}
-
-static awk_node address_to awk_or_level()
-{
-        awk_node address_to node = awk_and_level();
-
-        while (awk_token == T_OR)
-        {
-                awk_node address_to made = awk_node_new(N_OR);
-
-                awk_next_token();
-                awk_skip_newlines();
-                made->a = node;
-                made->b = awk_and_level();
-                node = made;
-        }
-
-        return node;
-}
+AWK_LOGICAL_LEVEL(awk_and_level, awk_pipe_level, T_AND, N_AND)
+AWK_LOGICAL_LEVEL(awk_or_level, awk_and_level, T_OR, N_OR)
 
 static awk_node address_to awk_expression()
 {
@@ -5134,41 +5120,23 @@ static fn awk_leave(b32 code)
         exit(code & 0xff);
 }
 
-static awk_text address_to awk_eval_text(awk_node address_to node)
-{
-        awk_value one;
-        awk_text address_to made;
+#define AWK_EVALUATOR(name, type, conversion)                                \
+        static type name(awk_node address_to node)                           \
+        {                                                                    \
+                awk_value one;                                               \
+                type value;                                                  \
+                                                                             \
+                awk_value_start(one);                                        \
+                awk_eval(node, address_of one);                              \
+                value = (conversion);                                        \
+                awk_value_done(address_of one);                              \
+                return value;                                                \
+        }
 
-        awk_value_start(one);
-        awk_eval(node, address_of one);
-        made = awk_text_hold(awk_to_text(address_of one));
-        awk_value_done(address_of one);
-        return made;
-}
-
-static decimal awk_eval_number(awk_node address_to node)
-{
-        awk_value one;
-        decimal value;
-
-        awk_value_start(one);
-        awk_eval(node, address_of one);
-        value = awk_to_number(address_of one);
-        awk_value_done(address_of one);
-        return value;
-}
-
-static bool awk_eval_truth(awk_node address_to node)
-{
-        awk_value one;
-        bool answer;
-
-        awk_value_start(one);
-        awk_eval(node, address_of one);
-        answer = awk_truth(address_of one);
-        awk_value_done(address_of one);
-        return answer;
-}
+AWK_EVALUATOR(awk_eval_text, awk_text address_to,
+              awk_text_hold(awk_to_text(address_of one)))
+AWK_EVALUATOR(awk_eval_number, decimal, awk_to_number(address_of one))
+AWK_EVALUATOR(awk_eval_truth, bool, awk_truth(address_of one))
 
 // The key a subscript list makes, which is the pieces joined by SUBSEP.
 static awk_text address_to awk_subscript_key(awk_node address_to list, b32 count)
@@ -6842,10 +6810,9 @@ static fn awk_start()
         while (process_environment && process_environment[environment_count])
                 environment_count++;
 
-        if (!shell_room((address_any address_to)address_of awk_child_environment,
-                        address_of awk_child_environment_room,
-                        environment_count + 1,
-                        sizeof(awk_child_environment[0])))
+        if (!shell_array_room(awk_child_environment,
+                              awk_child_environment_room,
+                              environment_count + 1))
                 awk_fatal(null, "no room for the environment");
 
         if (environment_count)
@@ -6942,10 +6909,8 @@ static bool awk_option_seen(p8 letter, string_address value)
 
         if (letter == 'v')
         {
-                if (!shell_room((address_any address_to)address_of awk_pending,
-                                address_of awk_pending_room,
-                                (positive)awk_pending_count + 1,
-                                sizeof(awk_pending[0])))
+                if (!shell_array_room(awk_pending, awk_pending_room,
+                                      (positive)awk_pending_count + 1))
                         awk_fatal(null, "no room for assignments");
 
                 awk_pending[awk_pending_count++] =

@@ -243,6 +243,12 @@ static bool shell_room(address_any address_to held, positive address_to have,
         return false;
 }
 
+// Most growing stores carry their width in their pointed-to type. Keep the
+// cast and sizeof at this floor instead of repeating both at every caller.
+#define shell_array_room(array, room, want)                                  \
+        shell_room((address_any address_to)address_of (array),               \
+                   address_of (room), (want), sizeof((array)[0]))
+
 //      Bytes that will not move for as long as the line lasts.
 static p8 address_to shell_store_take(shell_store address_to store, positive room)
 {

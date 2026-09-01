@@ -193,9 +193,7 @@ static bool readonly_add(string_address name, positive length)
         if (env_readonly(name))
                 return true;
 
-        if (!shell_room((address_any address_to)address_of readonly_name,
-                        address_of readonly_room, readonly_count + 1,
-                        sizeof(readonly_name[0])))
+        if (!shell_array_room(readonly_name, readonly_room, readonly_count + 1))
                 return false;
 
         kept = shell_store_take(address_of readonly_storage, length + 1);
@@ -293,9 +291,7 @@ static bool shell_env_initialized;
 
 static bool env_table_room(positive want)
 {
-        return shell_room((address_any address_to)address_of shell_vars,
-                          address_of shell_vars_room, want,
-                          sizeof(shell_vars[0]));
+        return shell_array_room(shell_vars, shell_vars_room, want);
 }
 
 static positive env_name_hash(const_string name, positive length)
@@ -752,9 +748,7 @@ string_address address_to shell_environment()
                     (shell_vars[at].permanent || shell_vars[at].temporary))
                         count++;
 
-        if (!shell_room((address_any address_to)address_of shell_envp,
-                        address_of shell_envp_room, count + 1,
-                        sizeof(shell_envp[0])))
+        if (!shell_array_room(shell_envp, shell_envp_room, count + 1))
                 return null;
 
         count = 0;
@@ -2312,9 +2306,7 @@ static positive local_depth;
 bool shell_local_enter()
 {
         if (local_depth == positive_max ||
-            !shell_room((address_any address_to)address_of local_from,
-                        address_of local_from_room, local_depth + 1,
-                        sizeof(local_from[0])))
+            !shell_array_room(local_from, local_from_room, local_depth + 1))
         {
                 string_format(shell_diagnostic, "No room for function locals\n");
                 return false;
@@ -2402,9 +2394,7 @@ static b32 local_remember(string_address name)
                         return 0;
 
         if (local_count == positive_max ||
-            !shell_room((address_any address_to)address_of local_table,
-                        address_of local_room, local_count + 1,
-                        sizeof(local_table[0])))
+            !shell_array_room(local_table, local_room, local_count + 1))
                 return -1;
 
         if (local_count == local_initialized)
@@ -4495,9 +4485,7 @@ fn shell_getopts(writer write, string_address input)
         {
                 positive index = 3;
 
-                if (!shell_room((address_any address_to)address_of shell_getopts_list,
-                                address_of shell_getopts_room,
-                                shell_argc - 3 + 1, sizeof(string_address)))
+                if (!shell_array_room(shell_getopts_list, shell_getopts_room, shell_argc - 3 + 1))
                         return shell_answer(2);
 
                 positive listed = shell_argc - index;
@@ -4514,9 +4502,8 @@ fn shell_getopts(writer write, string_address input)
         }
         else
         {
-                if (!shell_room((address_any address_to)address_of shell_getopts_list,
-                                address_of shell_getopts_room,
-                                shell_parameter_count + 1, sizeof(string_address)))
+                if (!shell_array_room(shell_getopts_list, shell_getopts_room,
+                                      shell_parameter_count + 1))
                         return shell_answer(2);
 
                 if (shell_parameter_count >= 4)
@@ -5083,9 +5070,7 @@ static bool trap_record(positive number, string_address action)
         string_address kept;
 
         if (length == positive_max ||
-            !shell_room((address_any address_to)address_of trap_table,
-                        address_of trap_room, trap_count + 1,
-                        sizeof(trap_table[0])))
+            !shell_array_room(trap_table, trap_room, trap_count + 1))
                 return false;
 
         kept = shell_map(length + 1);
@@ -5369,9 +5354,7 @@ bool alias_record(string_address name, positive name_length, string_address valu
                 return true;
         }
 
-        if (!shell_room((address_any address_to)address_of alias_table,
-                        address_of alias_room, alias_count + 1,
-                        sizeof(alias_table[0])))
+        if (!shell_array_room(alias_table, alias_room, alias_count + 1))
         {
                 memory_free(kept_name, name_length + 1);
                 memory_free(kept_value, value_length + 1);
@@ -5688,110 +5671,33 @@ static positive shell_name_index_find(string_address name, address_any table,
 }
 
 static shell_tool shell_tools[] = {
-    {"awk", text_awk},
-    {"cat", text_cat},
-    {"dd", tools_dd},
-    {"diff", tools_diff},
-    {"ps", tools_ps},
-    {"cmp", text_cmp},
-    {"cut", text_cut},
-    {"expr", text_expr},
-    {"fold", text_fold},
-    {"grep", text_grep},
-    {"head", text_head},
-    {"nl", text_nl},
-    {"rev", text_rev},
-    {"sed", text_sed},
-    {"sort", text_sort},
-    {"sum", text_sum},
-    {"tac", text_tac},
-    {"tail", text_tail},
-    {"tee", text_tee},
-    {"tr", text_tr},
-    {"uniq", text_uniq},
-    {"wc", text_wc},
-
-    {"basename", file_basename},
-    {"blkid", storage_program_blkid},
-    {"chgrp", file_chgrp},
-    {"choom", util_linux_choom},
-    {"chrt", util_linux_chrt},
-    {"chmod", file_chmod},
-    {"chown", file_chown},
-    {"cp", file_cp},
-    {"date", file_date},
-    {"df", file_df},
-    {"dirname", file_dirname},
-    {"du", file_du},
-    {"env", file_env},
-    {"exch", util_linux_exch},
-    {"fadvise", util_linux_fadvise},
-    {"find", file_find},
-    {"findfs", storage_program_findfs},
-    {"findmnt", storage_program_findmnt},
-    {"flock", util_linux_flock},
-    {"getino", util_linux_getino},
-    {"groups", file_groups},
-    {"hostname", file_hostname},
-    {"ip", net_ip},
-    {"host", net_host},
-    {"fetch", net_fetch},
-    {"id", file_id},
-    {"ionice", util_linux_ionice},
-    {"kill", file_kill},
-    {"link", file_link},
-    {"ln", file_ln},
-    {"logname", file_logname},
-    {"ls", file_ls},
-    {"mkdir", file_mkdir},
-    {"mkfifo", file_mkfifo},
-    {"mknod", file_mknod},
-    {"mktemp", file_mktemp},
-    {"mount", storage_program_mount},
-    {"mountpoint", storage_program_mountpoint},
-    {"mv", file_mv},
-    {"nice", file_nice},
-    {"nproc", file_nproc},
-    {"nsenter", util_linux_nsenter},
-    {"pathchk", file_pathchk},
-    {"printenv", file_printenv},
-    {"prlimit", util_linux_prlimit},
-    {"readlink", file_readlink},
-    {"realpath", file_realpath},
-    {"renice", util_linux_renice},
-    {"rm", file_rm},
-    {"rmdir", file_rmdir},
-    {"seq", file_seq},
-    {"setarch", util_linux_setarch},
-    {"setpgid", util_linux_setpgid},
-    {"setpriv", util_linux_setpriv},
-    {"setsid", util_linux_setsid},
-    {"sleep", file_sleep},
-    {"stat", file_stat},
-    {"stty", file_stty},
-    {"sync", file_sync},
-    {"taskset", util_linux_taskset},
-    {"touch", file_touch},
-    {"truncate", file_truncate},
-    {"tty", file_tty},
-    {"uname", file_uname},
-    {"uclampset", util_linux_uclampset},
-    {"unlink", file_unlink},
-    {"umount", storage_program_umount},
-    {"unshare", util_linux_unshare},
-    {"vdir", file_vdir},
-    {"waitpid", util_linux_waitpid},
-    {"whoami", file_whoami},
-    {"xargs", file_xargs},
-    {"yes", file_yes},
-
-    {"edit", system_edit},
-    {"init", system_init},
-    {"pointer", screen_pointer},
-    {"term", screen_term},
-    {"text", screen_text},
-    {"window", screen_window},
-    {"world", system_world},
+#ifdef SHELL_NO_UTILITIES
+#define SHELL_TOOL_GENERAL(name, function)
+#define SHELL_TOOL_UTIL_BIN(name, function)
+#define SHELL_TOOL_UTIL_SBIN(name, function)
+#else
+#define SHELL_TOOL_GENERAL(name, function) {#name, function},
+#ifdef SHELL_NO_UTIL_LINUX
+#define SHELL_TOOL_UTIL_BIN(name, function)
+#define SHELL_TOOL_UTIL_SBIN(name, function)
+#else
+#define SHELL_TOOL_UTIL_BIN(name, function) {#name, function},
+#define SHELL_TOOL_UTIL_SBIN(name, function) {#name, function},
+#endif
+#endif
+#ifdef SHELL_UTILITY_PROGRAM
+#define SHELL_TOOL_SYSTEM(name, function)
+#else
+#define SHELL_TOOL_SYSTEM(name, function) {#name, function},
+#endif
+#define SHELL_TOOL(category, name, function) \
+        SHELL_TOOL_##category(name, function)
+#include "tools.inc"
+#undef SHELL_TOOL
+#undef SHELL_TOOL_SYSTEM
+#undef SHELL_TOOL_UTIL_SBIN
+#undef SHELL_TOOL_UTIL_BIN
+#undef SHELL_TOOL_GENERAL
     {null, null},
 };
 
@@ -6383,9 +6289,7 @@ bool shell_background_started(bipolar address_to children, positive count,
         shell_wait_drop(job);
 
         if (count > positive_max - shell_wait_count ||
-            !shell_room((address_any address_to)address_of shell_wait_table,
-                        address_of shell_wait_room, shell_wait_count + count,
-                        sizeof(shell_wait_table[0])))
+            !shell_array_room(shell_wait_table, shell_wait_room, shell_wait_count + count))
                 return false;
 
         for (positive at = 0; at < count; at++)

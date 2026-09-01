@@ -1623,9 +1623,7 @@ static b32 exec_simple(b32 index)
         //      An empty command line never entered the loop, so the table
         //      may not exist yet to hold even the null that ends it.
         if (!count &&
-            !shell_room((address_any address_to)address_of shell_argv,
-                        address_of shell_argv_room, 2,
-                        sizeof(string_address)))
+            !shell_array_room(shell_argv, shell_argv_room, 2))
         {
                 shell_status = 2;
                 return 2;
@@ -1962,9 +1960,7 @@ static b32 exec_for(b32 index)
         {
                 for (at = 0; at < (b32)shell_parameter_count; at++)
                 {
-                        if (!shell_room((address_any address_to)address_of exec_items,
-                                        address_of exec_items_room,
-                                        (positive)at + 1, sizeof(string_address)))
+                        if (!shell_array_room(exec_items, exec_items_room, (positive)at + 1))
                                 break;
 
                         exec_items[count++] = exec_arena_copy(shell_parameter[at]);
@@ -2217,10 +2213,7 @@ static bool conditional_add(string_address text, positive length)
         string_address kept;
 
         if (length == positive_max || conditional_word_count == positive_max ||
-            !shell_room((address_any address_to)address_of conditional_word,
-                        address_of conditional_word_room,
-                        conditional_word_count + 1,
-                        sizeof(conditional_word[0])))
+            !shell_array_room(conditional_word, conditional_word_room, conditional_word_count + 1))
                 return false;
 
         kept = shell_store_take(address_of exec_store, length + 1);
@@ -2913,9 +2906,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         bool spawn_failed = false;
 
         if (count > positive_max / sizeof(children[0]) ||
-            !shell_room((address_any address_to)address_of children,
-                        address_of children_room, count,
-                        sizeof(children[0])))
+            !shell_array_room(children, children_room, count))
         {
                 string_format(exec_error, "No room for pipeline\n");
                 return 2;

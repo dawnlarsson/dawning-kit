@@ -467,60 +467,118 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 find fs/usr -maxdepth 1 \( -type f -o -type l \) -delete ||
                         die "clearing the last /usr image"
 
-                # Every program in the image is spark, including the one the kernel
-                # execs as /init, so no ELF is ever loaded on the boot path.
-                sh kit/spark programs/shell fs/shell || die "building the shell"
+                config_enabled() {
+                        grep -q "^CONFIG_$1=y$" linux/.config && return 0
+                        grep -q "^# CONFIG_$1 is not set$" linux/.config &&
+                                return 1
+                        # An existing build tree has no lines for newly added
+                        # symbols until olddefconfig next runs. Their Kconfig
+                        # defaults are all y, so preserve that default here too.
+                        return 0
+                }
 
-                # Scripts need a real interpreter path: /shell is the image's
-                # binary, but a #!/bin/sh shebang is resolved by the kernel
-                # before the shell gets any say. Keep the monitor itself at
-                # the root where a person looking at the initial filesystem
-                # sees it, and make its PATH spelling a link to that one copy.
-                ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
-                ln -sf ../bin fs/usr/bin || die "linking /usr/bin"
-                ln -sf ../sbin fs/usr/sbin || die "linking /usr/sbin"
-                cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
-                chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
-                ln -sf monitor.sh fs/mointor.sh || die "linking /mointor.sh"
-                ln -sf ../monitor.sh fs/bin/monitor.sh || die "linking /bin/monitor.sh"
-                ln -sf ../monitor.sh fs/bin/mointor.sh || die "linking /bin/mointor.sh"
+                component_enabled() {
+                        grep -q '^CONFIG_MOONWATER_CORE=y$' linux/.config &&
+                                config_enabled "$1"
+                }
+
+                # The X-macro is both the compiled dispatch registry and the
+                # installed surface, including its component categories.
+                shell_tool_names() {
+                        include_util=0
+                        component_enabled MOONWATER_UTIL_LINUX && include_util=1
+                        awk -F '[(),[:space:]]+' -v util="$include_util" \
+                            '$1 == "SHELL_TOOL" &&
+                             ($2 == "GENERAL" ||
+                              (util && ($2 == "UTIL_BIN" ||
+                                        $2 == "UTIL_SBIN"))) {
+                                     print $3
+                             }' src/sh/tools.inc
+                }
+
+                shell_system_names() {
+                        awk -F '[(),[:space:]]+' \
+                            '$1 == "SHELL_TOOL" && $2 == "SYSTEM" { print $3 }' \
+                            src/sh/tools.inc
+                }
+
+                shell_conventional_names() {
+                        awk -F '[(),[:space:]]+' \
+                            '$2 == "UTIL_BIN"  { print "bin",  $3 }
+                             $2 == "UTIL_SBIN" { print "sbin", $3 }' \
+                            src/sh/tools.inc
+                }
+
+                applet_binary=
+                if component_enabled MOONWATER_SHELL; then
+                        # Every program in the default image is spark, including
+                        # the one the kernel execs as /init, so no ELF is loaded
+                        # on its boot path.
+                        spark_cppflags=
+                        if ! component_enabled MOONWATER_UTILITIES; then
+                                spark_cppflags=-DSHELL_NO_UTILITIES
+                        elif ! component_enabled MOONWATER_UTIL_LINUX; then
+                                spark_cppflags=-DSHELL_NO_UTIL_LINUX
+                        fi
+                        SPARK_CPPFLAGS=$spark_cppflags \
+                                sh kit/spark programs/shell fs/shell ||
+                                die "building the shell"
+                        applet_binary=shell
+
+                        # Scripts need a real interpreter path: /shell is the
+                        # image's binary, but a #!/bin/sh shebang is resolved
+                        # by the kernel before the shell gets any say.
+                        ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
+                        ln -sf ../bin fs/usr/bin || die "linking /usr/bin"
+                        ln -sf ../sbin fs/usr/sbin || die "linking /usr/sbin"
+                        for utility in $(shell_system_names); do
+                                ln -sf shell "fs/$utility" || die "linking $utility"
+                        done
+
+                        if component_enabled MOONWATER_SHELL_MONITOR; then
+                                cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
+                                chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
+                                ln -sf monitor.sh fs/mointor.sh || die "linking /mointor.sh"
+                                ln -sf ../monitor.sh fs/bin/monitor.sh || die "linking /bin/monitor.sh"
+                                ln -sf ../monitor.sh fs/bin/mointor.sh || die "linking /bin/mointor.sh"
+                        fi
+                elif component_enabled MOONWATER_UTILITIES; then
+                        spark_cppflags=
+                        component_enabled MOONWATER_UTIL_LINUX ||
+                                spark_cppflags=-DSHELL_NO_UTIL_LINUX
+                        SPARK_CPPFLAGS=$spark_cppflags \
+                                sh kit/spark programs/utilities fs/shell ||
+                                die "building the utilities"
+                        # The kernel's SPAWN_TOOL ABI accelerates through this
+                        # fixed path. This binary has no shell fallback.
+                        applet_binary=shell
+                        ln -sf ../bin fs/usr/bin || die "linking /usr/bin"
+                        ln -sf ../sbin fs/usr/sbin || die "linking /usr/sbin"
+                fi
 
                 #
-                #       The utilities are the shell, under other names.
+                #       Utilities are one multicall Spark program under other names.
                 #
-                #       Every one of them is a function inside it, reached by
-                #       the name the binary was called as, so a link is the
-                #       whole of what /bin/grep is. One copy on disk, one to
-                #       page in, and nothing that can be a version behind the
-                #       shell that also holds it.
+                #       With the shell present they share its binary. A utility-only
+                #       image has the same dispatch table but no shell fallback.
                 #
-                for utility in cat awk dd diff ps grep sed cut tr sort uniq head tail wc tee \
-                        expr cmp mktemp kill date xargs \
-                        rev nl fold ls find stat du df chmod chown chgrp ln readlink \
-                        basename dirname realpath mkdir rmdir cp mv rm touch \
-                        sleep stty seq yes env id hostname uname ip host fetch \
-                        mount umount mountpoint blkid findmnt findfs \
-                        setsid setpgid ionice fadvise taskset renice prlimit \
-                        chrt uclampset flock unshare nsenter setarch setpriv \
-                        waitpid choom exch getino \
-                        init edit term window text pointer world; do
-                        ln -sf shell "fs/$utility" || die "linking $utility"
-                done
+                if component_enabled MOONWATER_UTILITIES; then
+                        for utility in $(shell_tool_names); do
+                                ln -sf "$applet_binary" "fs/$utility" ||
+                                        die "linking $utility"
+                        done
 
-                # Conventional util-linux locations. The root spellings keep
-                # Moonwater's one-directory PATH fast; these aliases make
-                # distro and recovery scripts with absolute paths work too.
-                for utility in mount umount mountpoint findmnt setsid setpgid \
-                        ionice fadvise taskset renice prlimit chrt uclampset \
-                        flock unshare nsenter setarch setpriv waitpid choom \
-                        exch getino; do
-                        ln -sf ../shell "fs/bin/$utility" ||
-                                die "linking /bin/$utility"
-                done
-                for utility in blkid findfs; do
-                        ln -sf ../shell "fs/sbin/$utility" ||
-                                die "linking /sbin/$utility"
-                done
+                        if component_enabled MOONWATER_UTIL_LINUX; then
+                                # Conventional util-linux locations for scripts
+                                # which use absolute paths.
+                                shell_conventional_names |
+                                while read -r directory utility; do
+                                        ln -sf "../$applet_binary" \
+                                                "fs/$directory/$utility" ||
+                                                die "linking /$directory/$utility"
+                                done
+                        fi
+                fi
 
         label KERNEL BUILD
                 cpu_cores=$(nproc)

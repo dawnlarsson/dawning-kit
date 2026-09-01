@@ -370,17 +370,7 @@ static positive expand_base_positive(string_address address_to at,
 
         while (1)
         {
-                p8 byte = string_get(step);
-                positive digit;
-
-                if (byte >= '0' && byte <= '9')
-                        digit = byte - '0';
-                else if (byte >= 'a' && byte <= 'f')
-                        digit = byte - 'a' + 10;
-                else if (byte >= 'A' && byte <= 'F')
-                        digit = byte - 'A' + 10;
-                else
-                        break;
+                positive digit = digit_known(string_get(step), 16);
 
                 if (digit >= base)
                         break;
@@ -673,9 +663,7 @@ bool shell_parameters_set(string_address address_to words, positive count)
         }
 
         if (count > positive_max - 2 ||
-            !shell_room((address_any address_to)address_of shell_parameter,
-                        address_of shell_parameter_room, count + 2,
-                        sizeof(string_address)))
+            !shell_array_room(shell_parameter, shell_parameter_room, count + 2))
                 return false;
 
         /* Measure before changing the live table, so allocation failure leaves
@@ -775,9 +763,7 @@ static positive shell_restore_room;
 bool shell_parameters_restore_prepare(positive count)
 {
         return count != positive_max &&
-               shell_room((address_any address_to)address_of shell_restore_words,
-                          address_of shell_restore_room, count + 1,
-                          sizeof(string_address));
+               shell_array_room(shell_restore_words, shell_restore_room, count + 1);
 }
 
 bool shell_parameters_restore(positive mark, positive count)
@@ -1851,55 +1837,29 @@ static bipolar arith_equal()
         Each declines the doubled form, because && and || are the levels above
         and reading one here would take half of it.
 */
-static bipolar arith_bit_and()
-{
-        bipolar value = arith_equal();
-
-        while (1)
-        {
-                arith_space();
-
-                if (!string_is(arith_at, '&') || string_is(arith_at + 1, '&') ||
-                    string_is(arith_at + 1, '='))
-                        return value;
-
-                arith_at++;
-                value = value & arith_equal();
+#define ARITH_BIT_LEVEL(name, lower, character, operation, doubled)           \
+        static bipolar name()                                                \
+        {                                                                    \
+                bipolar value = lower();                                     \
+                                                                             \
+                while (1)                                                    \
+                {                                                            \
+                        arith_space();                                       \
+                                                                             \
+                        if (!string_is(arith_at, character) ||               \
+                            ((doubled) &&                                    \
+                             string_is(arith_at + 1, character)) ||          \
+                            string_is(arith_at + 1, '='))                    \
+                                return value;                                \
+                                                                             \
+                        arith_at++;                                          \
+                        value = value operation lower();                     \
+                }                                                            \
         }
-}
 
-static bipolar arith_bit_xor()
-{
-        bipolar value = arith_bit_and();
-
-        while (1)
-        {
-                arith_space();
-
-                if (!string_is(arith_at, '^') || string_is(arith_at + 1, '='))
-                        return value;
-
-                arith_at++;
-                value = value ^ arith_bit_and();
-        }
-}
-
-static bipolar arith_bit_or()
-{
-        bipolar value = arith_bit_xor();
-
-        while (1)
-        {
-                arith_space();
-
-                if (!string_is(arith_at, '|') || string_is(arith_at + 1, '|') ||
-                    string_is(arith_at + 1, '='))
-                        return value;
-
-                arith_at++;
-                value = value | arith_bit_xor();
-        }
-}
+ARITH_BIT_LEVEL(arith_bit_and, arith_equal, '&', &, true)
+ARITH_BIT_LEVEL(arith_bit_xor, arith_bit_and, '^', ^, false)
+ARITH_BIT_LEVEL(arith_bit_or, arith_bit_xor, '|', |, true)
 
 static bipolar arith_and()
 {
@@ -2343,9 +2303,7 @@ static bipolar expand_tool_direct(string_address command, b32 output)
         if (!count ||
             !shell_room((address_any address_to)address_of text,
                         address_of text_room, string_length(command) + 1, 1) ||
-            !shell_room((address_any address_to)address_of expand_tool_argv,
-                        address_of expand_tool_argv_room, (positive)count + 1,
-                        sizeof(*expand_tool_argv)))
+            !shell_array_room(expand_tool_argv, expand_tool_argv_room, (positive)count + 1))
                 goto done;
 
         out = text;
@@ -4225,9 +4183,7 @@ static bool glob_add(string_address path)
         positive length = string_length(path) + 1;
         p8 address_to bytes;
 
-        if (!shell_room((address_any address_to)address_of glob_result,
-                        address_of glob_room, glob_count + 1,
-                        sizeof(string_address)))
+        if (!shell_array_room(glob_result, glob_room, glob_count + 1))
         {
                 glob_failed = true;
                 return false;
@@ -4427,9 +4383,7 @@ static bool expand_sort_names(string_address address_to names, positive count)
         if (count < 2)
                 return true;
 
-        if (!shell_room((address_any address_to)address_of expand_sort_room,
-                        address_of expand_sort_room_count, count,
-                        sizeof(string_address)))
+        if (!shell_array_room(expand_sort_room, expand_sort_room_count, count))
                 return false;
 
         target = expand_sort_room;
