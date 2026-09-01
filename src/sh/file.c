@@ -1776,8 +1776,7 @@ static bool file_take_from(file_taking address_to taking, positive index)
                                                           letter) ||
                                         file_option_among(taking->long_optional,
                                                           letter);
-                        bool valued = string_first_of(taking->valued, letter)
-                                      != null;
+                        bool valued = file_option_among(taking->valued, letter);
 
                         if (mark && !optional && !valued)
                         {
@@ -1839,7 +1838,9 @@ static bool file_take_from(file_taking address_to taking, positive index)
 
                         file_option_supersede(taking, string_get(letter));
 
-                        if (!spare && !string_first_of(taking->valued, string_get(letter)))
+                        if (!spare &&
+                            !file_option_among(taking->valued,
+                                               string_get(letter)))
                         {
                                 if (taking->seen && !taking->seen(string_get(letter), null))
                                         return false;

@@ -22,7 +22,8 @@ trap 'rm -rf "$work"' EXIT INT TERM
 
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock unshare nsenter setarch setpriv waitpid; do
+        uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
+        getino; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -97,7 +98,8 @@ section util-linux
 
 group reference
 for utility in setsid setpgid ionice fadvise taskset renice prlimit chrt \
-        uclampset flock unshare nsenter setarch setpriv waitpid; do
+        uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
+        getino; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
@@ -305,6 +307,36 @@ compare 'fcntl byte range' flock \
         '"$TOOL" --fcntl --start 0 --length 1 "$0" /bin/true' "$lock"
 compare 'incompatible no-fork close' flock \
         '"$TOOL" --no-fork --close "$0" /bin/true' "$lock"
+
+group choom
+compare 'show pid one' choom '"$TOOL" -p 1'
+compare 'set command score' choom \
+        '"$TOOL" -n 0 -- /bin/sh -c '\''cat /proc/self/oom_score_adj'\'''
+compare 'adjust own process' choom \
+        '"$TOOL" -p $$ -n 1 | sed -E "s/pid [0-9]+/pid PID/"'
+compare 'pid excludes command' choom '"$TOOL" -p $$ /bin/true'
+compare 'command requires adjust' choom '"$TOOL" /bin/true'
+compare 'invalid adjustment' choom '"$TOOL" -n impossible /bin/true'
+
+group exch
+compare 'exchange paths' exch \
+        'printf A > "$0/a"; printf B > "$0/b"; "$TOOL" "$0/a" "$0/b"; cat "$0/a" "$0/b"' \
+        "$work"
+compare 'too few paths' exch '"$TOOL" only-one'
+compare 'too many paths' exch '"$TOOL" one two three'
+compare 'missing path' exch '"$TOOL" /no/such/one /no/such/two'
+
+group getino
+compare 'pidfd inode' getino '"$TOOL" 1'
+compare 'pid and inode output' getino '"$TOOL" --print-pid 1'
+compare 'validated pidfd inode' getino \
+        'inode=$("$TOOL" 1) && "$TOOL" "1:$inode"'
+compare 'multiple pids' getino '"$TOOL" 1 1'
+compare 'user namespace inode' getino '"$TOOL" --userns 1'
+compare 'namespace options exclusive' getino \
+        '"$TOOL" --pidfs --userns 1'
+compare 'invalid pid' getino '"$TOOL" invalid-pid'
+compare 'wrong pidfd inode' getino '"$TOOL" 1:1'
 
 group setarch
 compare 'show current personality' setarch '"$TOOL" --show'
@@ -516,7 +548,7 @@ fi
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid chrt fadvise findfs findmnt flock ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
+supported='blkid choom chrt exch fadvise findfs findmnt flock getino ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
 
 awk '
         /static shell_tool shell_tools\[\]/ { inside=1; next }

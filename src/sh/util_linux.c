@@ -157,6 +157,16 @@ static bool ul_pid(string_address text, string_address program,
         return true;
 }
 
+static bipolar ul_identity(string_address text, positive maximum, bool group)
+{
+        positive value;
+
+        if (ul_unsigned(text, maximum, address_of value))
+                return (bipolar)value;
+
+        return group ? file_group_id(text) : file_user_id(text);
+}
+
 /* taskset, chrt and uclampset all give -a the same meaning. */
 static b32 ul_tasks(b32 pid, bool all, ul_task_action action,
                     address_any context)
@@ -542,6 +552,21 @@ static b32 ul_exec_words(string_address address_to words,
         string_format(file_fail, "%s: %s: %s\n", program, words[0],
                       file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
+}
+
+static bipolar ul_path_write(string_address path, address_any bytes,
+                             positive length)
+{
+        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
+                                        (positive)path, FILE_WRITE, 0644);
+        if (handle < 0)
+                return handle;
+
+        bipolar wrote = system_write_all((positive)handle, bytes, length);
+        system_call_1(syscall(close), (positive)handle);
+
+        return wrote < 0 ? wrote
+             : (positive)wrote == length ? 0 : -ERROR_INVALID;
 }
 
 static bool ul_meta(file_taking address_to taking, string_address syntax,
@@ -2889,16 +2914,12 @@ static bool ul_setpriv_take(p8 letter, string_address value)
 
 static bool ul_setpriv_id(string_address text, bool group, p32 address_to id)
 {
-        positive value;
-        if (ul_unsigned(text, p32_max, address_of value))
-        {
-                address_to id = (p32)value;
-                return true;
-        }
-        bipolar named = group ? file_group_id(text) : file_user_id(text);
-        if (named < 0)
+        bipolar value = ul_identity(text, p32_max, group);
+
+        if (value < 0)
                 return false;
-        address_to id = (p32)named;
+
+        address_to id = (p32)value;
         return true;
 }
 
@@ -3345,15 +3366,8 @@ static bipolar ul_directory_open_at(string_address program, bipolar base,
 static b32 ul_namespace_write(string_address path, address_any bytes,
                               positive length, string_address program)
 {
-        bipolar handle = system_call_4(syscall(openat), AT_FDCWD,
-                                        (positive)path, FILE_WRITE, 0644);
-        bipolar wrote = handle < 0 ? handle
-            : system_call_3(syscall(write), handle, (positive)bytes, length);
-        bipolar error = wrote < 0 ? wrote
-            : (positive)wrote == length ? 0 : -ERROR_INVALID;
+        bipolar error = ul_path_write(path, bytes, length);
 
-        if (handle >= 0)
-                system_call_1(syscall(close), handle);
         if (error < 0)
                 string_format(file_fail, "%s: cannot write %s: %s\n",
                               program, path, file_reason(error));
@@ -3412,18 +3426,12 @@ static bool ul_namespace_range(string_address text,
 static bool ul_namespace_id(string_address text, bool group,
                             positive address_to id)
 {
-        positive parsed;
+        bipolar value = ul_identity(text, (positive)p32_max - 1, group);
 
-        if (ul_unsigned(text, (positive)p32_max - 1, address_of parsed))
-        {
-                address_to id = parsed;
-                return true;
-        }
-
-        bipolar named = group ? file_group_id(text) : file_user_id(text);
-        if (named < 0)
+        if (value < 0)
                 return false;
-        address_to id = (positive)named;
+
+        address_to id = (positive)value;
         return true;
 }
 
@@ -4853,4 +4861,258 @@ static b32 util_linux_ionice()
         }
 
         return ul_bad_usage("ionice", "bad usage");
+}
+
+// choom -----------------------------------------------------------
+static const file_long ul_choom_longs[] = {
+    {"adjust", 'n'}, {"pid", 'p'}, {"help", 'h'}, {"version", 'V'},
+    {null, 0},
+};
+
+static bool ul_choom_read(string_address path, b32 address_to value)
+{
+        p8 text[32];
+        bipolar length = file_slurp(path, text, sizeof(text));
+        bipolar parsed;
+
+        if (length <= 0)
+                return false;
+        while (length && byte_is_space(text[length - 1]))
+                text[--length] = end;
+        if (!ul_signed(text, b32_min, b32_max, address_of parsed))
+                return false;
+
+        address_to value = (b32)parsed;
+        return true;
+}
+
+static bool ul_choom_write(string_address path, b32 value)
+{
+        p8 text[32];
+        positive length = bipolar_into_string(text, value);
+
+        text[length++] = '\n';
+        return ul_path_write(path, text, length) == 0;
+}
+
+static b32 util_linux_choom()
+{
+        file_taking taking = {
+            .program = "choom", .allowed = "nphV", .valued = "np",
+            .longs = ul_choom_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] -p PID | -n NUMBER command [argument ...]",
+                    address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        string_address pid_text = file_option_value(address_of taking, 'p');
+        string_address adjustment = file_option_value(address_of taking, 'n');
+        b32 pid = 0;
+        bipolar parsed = 0;
+
+        if (pid_text &&
+            (!ul_pid(pid_text, "choom", "PID", address_of pid) || !pid))
+                return 1;
+        if (adjustment &&
+            !ul_signed(adjustment, b32_min, b32_max, address_of parsed))
+                return ul_bad_usage("choom", "invalid adjust argument");
+        if (pid && taking.first < count)
+                return ul_bad_usage("choom", "PID and command are mutually exclusive");
+        if (!pid && taking.first >= count)
+                return ul_bad_usage("choom", "no PID or COMMAND specified");
+        if (!adjustment && taking.first < count)
+                return ul_bad_usage("choom", "no OOM score adjust value specified");
+
+        b32 target = pid ? pid : (b32)system_call(syscall(getpid));
+        p8 score_path[64];
+        p8 adjust_path[64];
+
+        ul_proc_path(score_path, target, null, "oom_score");
+        ul_proc_path(adjust_path, target, null, "oom_score_adj");
+
+        if (!adjustment)
+        {
+                b32 score;
+                b32 old;
+
+                if (!ul_choom_read(score_path, address_of score) ||
+                    !ul_choom_read(adjust_path, address_of old))
+                        return ul_bad_usage("choom", "failed to read OOM score");
+                string_format(log,
+                              "pid %b's current OOM score: %b\n"
+                              "pid %b's current OOM score adjust value: %b\n",
+                              (bipolar)pid, (bipolar)score,
+                              (bipolar)pid, (bipolar)old);
+                log_flush();
+                return 0;
+        }
+
+        b32 old = 0;
+        if (pid && !ul_choom_read(adjust_path, address_of old))
+                return ul_bad_usage("choom", "failed to read OOM score adjust value");
+        if (!ul_choom_write(adjust_path, (b32)parsed))
+                return ul_bad_usage("choom", "failed to set OOM score adjust value");
+        if (pid)
+        {
+                string_format(log,
+                              "pid %b's OOM score adjust value changed from %b to %b\n",
+                              (bipolar)pid, (bipolar)old, parsed);
+                log_flush();
+                return 0;
+        }
+        return ul_exec(taking.first, "choom");
+}
+
+// exch ------------------------------------------------------------
+#define UL_RENAME_EXCHANGE 2
+
+static const file_long ul_exch_longs[] = {
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_exch()
+{
+        file_taking taking = {
+            .program = "exch", .allowed = "hV", .longs = ul_exch_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] OLDPATH NEWPATH",
+                    address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        if (count - taking.first != 2)
+                return ul_bad_usage("exch", count - taking.first < 2
+                                    ? "too few arguments"
+                                    : "too many arguments");
+
+        string_address old = program_argument((b32)taking.first);
+        string_address new = program_argument((b32)taking.first + 1);
+        bipolar changed = system_call_5(syscall(renameat2), AT_FDCWD,
+                                        (positive)old, AT_FDCWD,
+                                        (positive)new, UL_RENAME_EXCHANGE);
+        if (changed < 0)
+        {
+                string_format(file_fail,
+                              "exch: failed to exchange %s and %s: %s\n",
+                              old, new, file_reason(changed));
+                return 1;
+        }
+        return 0;
+}
+
+// getino ----------------------------------------------------------
+static const file_long ul_getino_longs[] = {
+    {"pidfs", '0'}, {"cgroupns", '1'}, {"ipcns", '2'},
+    {"mntns", '3'}, {"netns", '4'}, {"pidns", '5'},
+    {"timens", '6'}, {"userns", '7'}, {"utsns", '8'},
+    {"print-pid", 'p'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+/* _IO(0xff, n), the pidfs namespace descriptor requests. */
+static const p16 ul_getino_requests[] = {
+    0, 0xff01, 0xff02, 0xff03, 0xff04, 0xff05, 0xff07, 0xff09, 0xff0a,
+};
+
+static b32 util_linux_getino()
+{
+        file_taking taking = {
+            .program = "getino", .allowed = "phV",
+            .longs = ul_getino_longs, .operand = file_operand,
+        };
+        b32 answer;
+
+        file_operands_begin();
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] PID[:inode]...",
+                    address_of answer))
+                return answer;
+        if (file_operand_failed)
+                return ul_bad_usage("getino", "not enough memory");
+        if (!file_operand_count)
+                return ul_bad_usage("getino", "no process specified");
+
+        positive kind = 0;
+        bool selected = false;
+        for (positive i = 0; i < sizeof(ul_getino_requests) /
+                                     sizeof(ul_getino_requests[0]); i++)
+                if (taking.flags & FILE_FLAG((p8)('0' + i)))
+                {
+                        if (selected)
+                                return ul_bad_usage(
+                                    "getino", "namespace options are mutually exclusive");
+                        selected = true;
+                        kind = i;
+                }
+
+        bool print_pid = (taking.flags & FILE_FLAG('p')) != 0;
+        for (positive i = 0; i < file_operand_count; i++)
+        {
+                string_address operand = file_operand_at(i);
+                b32 pid;
+                p64 wanted;
+
+                if (!ul_wait_operand(operand, address_of pid,
+                                     address_of wanted))
+                {
+                        string_format(file_fail,
+                                      "getino: invalid PID argument '%s'\n",
+                                      operand);
+                        return 1;
+                }
+
+                bipolar handle = system_call_2(
+                    syscall(pidfd_open), (positive)(p32)pid, 0);
+                file_facts facts;
+                if (handle < 0 ||
+                    !file_look(handle, "", AT_EMPTY_PATH, address_of facts) ||
+                    (wanted && facts.inode != wanted))
+                {
+                        if (handle >= 0)
+                                system_call_1(syscall(close), (positive)handle);
+                        string_format(file_fail,
+                                      "getino: could not open PID %b\n",
+                                      (bipolar)pid);
+                        return 1;
+                }
+
+                if (kind)
+                {
+                        bipolar namespace = system_call_3(
+                            syscall(ioctl), (positive)handle,
+                            ul_getino_requests[kind], 0);
+                        system_call_1(syscall(close), (positive)handle);
+                        handle = namespace;
+                        if (handle < 0 ||
+                            !file_look(handle, "", AT_EMPTY_PATH,
+                                       address_of facts))
+                        {
+                                if (handle >= 0)
+                                        system_call_1(syscall(close),
+                                                      (positive)handle);
+                                return ul_bad_usage(
+                                    "getino", "failed to determine namespace");
+                        }
+                }
+
+                if (print_pid)
+                        string_format(log, "%b:%p\n", (bipolar)pid,
+                                      (positive)facts.inode);
+                else
+                        string_format(log, "%p\n", (positive)facts.inode);
+                system_call_1(syscall(close), (positive)handle);
+        }
+
+        log_flush();
+        return 0;
 }
