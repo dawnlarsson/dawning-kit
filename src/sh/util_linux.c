@@ -1737,8 +1737,7 @@ static b32 util_linux_uclampset()
                                 bipolar handle = system_open_at_mode(
                                     AT_FDCWD, paths[at], FILE_WRITE, 0);
                                 if (handle < 0 ||
-                                    system_call_3(syscall(write), handle,
-                                                  (positive)text, length) < 0)
+                                    system_write_once(handle, text, length) < 0)
                                 {
                                         if (handle >= 0)
                                                 system_close(handle);
@@ -2381,9 +2380,10 @@ static b32 ul_setarch_show(string_address value, b32 pid)
                 bipolar handle = system_open_at(AT_FDCWD,
                                                 path,
                                                 FILE_READ | O_CLOEXEC);
-                bipolar got = handle < 0 ? handle
-                    : system_call_3(syscall(read), handle, (positive)text,
-                                    sizeof(text) - 1);
+                bipolar got = handle < 0
+                                  ? handle
+                                  : system_read_once(handle, text,
+                                                     sizeof(text) - 1);
                 if (handle >= 0)
                         system_close(handle);
                 if (got <= 0)
@@ -2882,9 +2882,9 @@ static COLD b32 ul_cap_last()
                              "/proc/sys/kernel/cap_last_cap",
                              FILE_READ | O_CLOEXEC);
         p8 text[24];
-        bipolar got = handle < 0 ? handle
-            : system_call_3(syscall(read), handle, (positive)text,
-                            sizeof(text) - 1);
+        bipolar got = handle < 0
+                          ? handle
+                          : system_read_once(handle, text, sizeof(text) - 1);
         if (handle >= 0)
                 system_close(handle);
         if (got > 0)
@@ -2925,9 +2925,9 @@ static COLD bool ul_cap_status(p64 sets[5])
         bipolar handle = system_open_at(AT_FDCWD,
                                        "/proc/self/status",
                                        FILE_READ | O_CLOEXEC);
-        bipolar got = handle < 0 ? handle
-            : system_call_3(syscall(read), handle, (positive)text,
-                            sizeof(text) - 1);
+        bipolar got = handle < 0
+                          ? handle
+                          : system_read_once(handle, text, sizeof(text) - 1);
         if (handle >= 0) system_close(handle);
         if (got <= 0) return false;
         text[got] = 0;

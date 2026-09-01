@@ -355,9 +355,8 @@ b32 main()
                         return 1;
                 }
 
-                got = system_call_3(syscall(read), (positive)input,
-                                    (positive)(shell_buffer + held),
-                                    shell_buffer_room - 1 - held);
+                got = system_read_once(input, shell_buffer + held,
+                                       shell_buffer_room - 1 - held);
 
                 if (got <= 0)
                         break;

@@ -1267,8 +1267,7 @@ static fn storage_probe_partition(string_address path,
         bipolar got;
 
         memory_zero(facts, sizeof(facts));
-        if (system_call_5(syscall(statx), AT_FDCWD, (positive)path, 0x800,
-                          0x7ff, (positive)facts) < 0 ||
+        if (system_stat_at(AT_FDCWD, path, 0x800, 0x7ff, facts) < 0 ||
             (storage_le16(facts + 28) & 0170000) != 0060000)
                 return;
 
@@ -1453,9 +1452,8 @@ static bool storage_each_device(storage_visitor visit, address_any context)
 
         while (!stopped)
         {
-                bipolar got = system_call_3(syscall(getdents64),
-                                            (positive)directory,
-                                            (positive)block, sizeof(block));
+                bipolar got = system_read_directory(directory, block,
+                                                    sizeof(block));
                 positive at = 0;
 
                 if (got <= 0)

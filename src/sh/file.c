@@ -4,6 +4,42 @@
 static address_any text_arena_take(positive bytes);
 static positive text_arena_used;
 
+/* Every arena-backed vector shares one rare grow/copy path.  The common
+   typed front keeps a full store to existing room on the caller's hot path. */
+#if X64
+#define TEXT_ARENA_GROW
+#else
+#define TEXT_ARENA_GROW COLD __attribute__((noinline))
+#endif
+static TEXT_ARENA_GROW bool text_arena_grow(
+    address_any table, positive address_to room, positive used,
+    positive wanted, positive unit, positive first)
+{
+        if (wanted < used)
+                return false;
+        if (wanted <= address_to room)
+                return true;
+
+        positive larger = memory_growth(address_to room, wanted, first);
+
+        if (!larger || larger > positive_max / unit)
+                return false;
+
+        address_any grown = text_arena_take(larger * unit);
+
+        if (!grown)
+                return false;
+        if (used)
+                memory_copy_apart(grown,
+                                  address_to(address_any address_to)table,
+                                  used * unit);
+
+        address_to(address_any address_to)table = grown;
+        address_to room = larger;
+        return true;
+}
+#undef TEXT_ARENA_GROW
+
 /*
         What the file utilities share.
 
@@ -387,9 +423,8 @@ bool file_look(bipolar directory, string_address path, positive flags,
 {
         memory_fill(out, 0, sizeof(file_facts));
 
-        return system_call_5(syscall(statx), directory, (positive)path,
-                             flags | AT_NO_AUTOMOUNT, STATX_WANTED,
-                             (positive)out) == 0;
+        return system_stat_at(directory, path, flags | AT_NO_AUTOMOUNT,
+                              STATX_WANTED, out) == 0;
 }
 
 bool file_look_at(string_address path, file_facts address_to out)
@@ -446,8 +481,7 @@ static string_address file_last_component(string_address path)
 
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
 {
-        bipolar length = system_call_4(syscall(readlinkat), AT_FDCWD,
-                                       (positive)path, (positive)into, limit - 1);
+        bipolar length = system_read_link_at(AT_FDCWD, path, into, limit - 1);
 
         if (length < 0)
                 return length;
@@ -544,9 +578,8 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 if (!follow)
                         continue;
 
-                bipolar seen = system_call_4(syscall(readlinkat), AT_FDCWD,
-                                             (positive)into, (positive)link,
-                                             FILE_PATH_MAX - 1);
+                bipolar seen = system_read_link_at(
+                    AT_FDCWD, into, link, FILE_PATH_MAX - 1);
 
                 if (seen <= 0)
                         continue;
@@ -1310,8 +1343,8 @@ struct linux_dirent64 address_to file_walk_next(file_walk address_to walk)
 {
         if (walk->at >= walk->have)
         {
-                bipolar taken = system_call_3(syscall(getdents64), walk->handle,
-                                              (positive)walk->block, FILE_BLOCK);
+                bipolar taken = system_read_directory(
+                    walk->handle, walk->block, FILE_BLOCK);
 
                 if (taken <= 0)
                         return null;
@@ -1464,15 +1497,14 @@ bool file_ask(string_address program, string_address question, string_address su
         string_format(file_fail, "%s: %s '%s'? ", program, question, subject);
 
         p8 answer[2];
-        bipolar got = system_call_3(syscall(read), 0, (positive)answer, 1);
+        bipolar got = system_read_once(0, answer, 1);
 
         if (got != 1)
                 return false;
 
         bool yes = answer[0] == 'y' || answer[0] == 'Y';
 
-        while (answer[0] != '\n' &&
-               system_call_3(syscall(read), 0, (positive)answer, 1) == 1)
+        while (answer[0] != '\n' && system_read_once(0, answer, 1) == 1)
                 ;
 
         return yes;
@@ -7632,10 +7664,9 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         }
 
         file_facts facts;
-        bipolar looked = system_call_5(syscall(statx), AT_FDCWD,
-                                       (positive)path,
-                                       AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT,
-                                       STATX_BASIC, (positive)address_of facts);
+        bipolar looked = system_stat_at(
+            AT_FDCWD, path, AT_SYMLINK_NOFOLLOW | AT_NO_AUTOMOUNT,
+            STATX_BASIC, address_of facts);
 
         if (!looked)
                 return true;
@@ -8322,7 +8353,7 @@ static bool truncate_current_size(string_address path, bipolar handle,
                 size = facts->size > (p64)b64_max ? -ERROR_INVALID
                                                   : (b64)facts->size;
         else
-                size = system_call_3(syscall(lseek), handle, 0, FILE_SEEK_END);
+                size = system_seek(handle, 0, FILE_SEEK_END);
 
         if (size < 0)
         {
@@ -9302,7 +9333,7 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
                 walk.have = 0;
                 walk.at = 0;
 
-                system_call_3(syscall(lseek), directory, 0, FILE_SEEK_SET);
+                system_seek(directory, 0, FILE_SEEK_SET);
 
                 struct linux_dirent64 address_to entry;
                 positive removed = 0;
@@ -13036,50 +13067,13 @@ static bool xargs_ended;
 static bool xargs_ran;
 static positive xargs_line_count;
 
-static bool xargs_words_room(positive extra)
-{
-        if (xargs_word_count == positive_max ||
-            extra > positive_max - xargs_word_count - 1)
-                return false;
-
-        positive need = xargs_word_count + extra + 1;
-
-        if (need <= xargs_word_room)
-                return true;
-
-        positive room = xargs_word_room ? xargs_word_room : 32;
-
-        while (room < need)
-        {
-                if (room > positive_max / 2)
-                        return false;
-
-                room *= 2;
-        }
-
-        if (room > positive_max / sizeof(string_address))
-                return false;
-
-        string_address address_to grown =
-            (string_address address_to)text_arena_take(
-                room * sizeof(string_address));
-
-        if (!grown)
-                return false;
-
-        if (xargs_word_count)
-                memory_copy_apart(grown, xargs_words,
-                                 xargs_word_count * sizeof(string_address));
-
-        xargs_words = grown;
-        xargs_word_room = room;
-        return true;
-}
-
 static bool xargs_add(string_address text, positive length)
 {
         if (length == positive_max || xargs_used > positive_max - length - 1 ||
-            !xargs_words_room(1))
+            xargs_word_count > positive_max - 2 ||
+            !array_arena_reserve(xargs_words, xargs_word_room,
+                                 xargs_word_count, xargs_word_count + 2, 32,
+                                 text_arena_grow))
                 return false;
 
         p8 address_to made = (p8 address_to)text_arena_take(length + 1);
@@ -13102,34 +13096,12 @@ static fn xargs_item_put(p8 letter)
                 return;
         }
 
-        if (xargs_item_length + 2 > xargs_item_room)
+        if (!array_arena_reserve(xargs_item, xargs_item_room,
+                                 xargs_item_length, xargs_item_length + 2,
+                                 256, text_arena_grow))
         {
-                positive room = xargs_item_room ? xargs_item_room : 256;
-
-                while (room < xargs_item_length + 2)
-                {
-                        if (room > positive_max / 2)
-                        {
-                                xargs_item_broken = true;
-                                return;
-                        }
-
-                        room *= 2;
-                }
-
-                p8 address_to grown = (p8 address_to)text_arena_take(room);
-
-                if (!grown)
-                {
-                        xargs_item_broken = true;
-                        return;
-                }
-
-                if (xargs_item_length)
-                        memory_copy_apart(grown, xargs_item, xargs_item_length);
-
-                xargs_item = grown;
-                xargs_item_room = room;
+                xargs_item_broken = true;
+                return;
         }
 
         xargs_item[xargs_item_length++] = letter;

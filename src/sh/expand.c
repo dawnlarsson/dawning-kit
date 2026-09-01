@@ -246,7 +246,7 @@ static COLD fn expand_complain(address_any data, positive length)
         if (length == 0)
                 length = string_length(data);
 
-        system_call_3(syscall(write), standard_error_descriptor, (positive)data, length);
+        system_write_once(standard_error_descriptor, data, length);
 }
 
 #define expand_name_character(value) (byte_is_alnum(value) || (value) == '_')
@@ -4118,8 +4118,7 @@ static bool glob_exists(string_address path)
 {
         p8 facts[256];
 
-        return system_call_5(syscall(statx), AT_FDCWD, (positive)path,
-                             0x100, 0, (positive)facts) == 0;
+        return system_stat_at(AT_FDCWD, path, 0x100, 0, facts) == 0;
 }
 
 /*
@@ -4225,8 +4224,8 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
                 while (1)
                 {
-                        bipolar got = system_call_3(syscall(getdents64), (positive)directory,
-                                                    (positive)block, sizeof(block));
+                        bipolar got = system_read_directory(
+                            directory, block, sizeof(block));
                         p8 address_to step = block;
 
                         if (got < 0)

@@ -641,16 +641,16 @@ static b32 tools_dd(void)
         if (skip)
         {
                 positive want = skip_bytes ? skip : skip * ibs;
-                bipolar landed = system_call_3(syscall(lseek), in_handle, want, 0);
+                bipolar landed = system_seek(in_handle, want, 0);
                 bool short_of_it = false;
 
                 if (landed >= 0)
                 {
-                        bipolar stop = system_call_3(syscall(lseek), in_handle, 0, 2);
+                        bipolar stop = system_seek(in_handle, 0, 2);
 
                         if (stop >= 0)
                         {
-                                system_call_3(syscall(lseek), in_handle, (positive)landed, 0);
+                                system_seek(in_handle, landed, 0);
 
                                 // A size of zero is what a file that has no
                                 // size to report says, so it is not a file
@@ -691,7 +691,7 @@ static b32 tools_dd(void)
         if (seek)
         {
                 positive want = seek_bytes ? seek : seek * obs;
-                bipolar landed = system_call_3(syscall(lseek), out_handle, want, 0);
+                bipolar landed = system_seek(out_handle, want, 0);
 
                 if (landed < 0)
                 {
@@ -791,7 +791,7 @@ static b32 tools_dd(void)
 
                         positive bad = ibs - partial_before;
 
-                        if (system_call_3(syscall(lseek), in_handle, bad, 1) < 0)
+                        if (system_seek(in_handle, bad, 1) < 0)
                                 result = 1;
 
                         if ((conv & DD_SYNC) && !partial_before)
@@ -2476,51 +2476,11 @@ typedef struct
         positive room;
 } diff_names;
 
-/*
-        Every growing table in this file doubles the same way, out of the
-        text arena. The arena cannot take a block back, so growth allocates
-        the doubled room, copies what is used, and abandons the old block;
-        the abandoned halves sum to less than the final table. One grower
-        keeps six tables from writing that walk out by hand.
-*/
-static bool tools_grow(address_any table, positive address_to room,
-                       positive used, positive need, positive unit,
-                       positive first)
-{
-        if (need <= address_to room)
-                return true;
-
-        positive larger = address_to room ? address_to room : first;
-
-        while (larger < need)
-        {
-                if (larger > positive_max / 2 ||
-                    larger * 2 > positive_max / unit)
-                        return false;
-
-                larger *= 2;
-        }
-
-        address_any grown = text_arena_take(larger * unit);
-
-        if (!grown)
-                return false;
-
-        if (used)
-                memory_copy_apart(grown,
-                                  address_to(address_any address_to)table,
-                                  used * unit);
-
-        address_to(address_any address_to)table = grown;
-        address_to room = larger;
-        return true;
-}
-
 static bool diff_name_add(diff_names address_to names, string_address value)
 {
-        if (!tools_grow(address_of names->at, address_of names->room,
-                        names->count, names->count + 1,
-                        sizeof(string_address), 32))
+        if (!text_arena_grow(address_of names->at, address_of names->room,
+                             names->count, names->count + 1,
+                             sizeof(string_address), 32))
                 return false;
 
         names->at[names->count++] = value;
@@ -3184,8 +3144,8 @@ static p8 address_to ps_read_growing(string_address path, positive first,
 
 static ps_process address_to ps_process_add()
 {
-        if (!tools_grow(address_of ps_list, address_of ps_room_processes,
-                        ps_count, ps_count + 1, sizeof(ps_process), 128))
+        if (!text_arena_grow(address_of ps_list, address_of ps_room_processes,
+                             ps_count, ps_count + 1, sizeof(ps_process), 128))
                 return null;
 
         ps_process address_to made = ps_list + ps_count;
@@ -3530,8 +3490,8 @@ static bool ps_room_add(positive extra)
 {
         if (ps_room_used == positive_max ||
             extra > positive_max - ps_room_used - 1 ||
-            !tools_grow(address_of ps_room, address_of ps_room_size,
-                        ps_room_used, ps_room_used + extra + 1, 1, 64))
+            !text_arena_grow(address_of ps_room, address_of ps_room_size,
+                             ps_room_used, ps_room_used + extra + 1, 1, 64))
         {
                 ps_failed = true;
                 return false;
@@ -3753,8 +3713,8 @@ static bool ps_field_add(ps_selected address_to address_to fields,
                          positive value, string_address header,
                          bool custom_header)
 {
-        if (!tools_grow(fields, room, address_to count, address_to count + 1,
-                        sizeof(ps_selected), 16))
+        if (!text_arena_grow(fields, room, address_to count,
+                             address_to count + 1, sizeof(ps_selected), 16))
                 return false;
 
         (address_to fields)[address_to count].field = value;
@@ -3768,8 +3728,8 @@ static bool ps_value_add(positive address_to address_to values,
                          positive address_to count, positive address_to room,
                          positive value)
 {
-        if (!tools_grow(values, room, address_to count, address_to count + 1,
-                        sizeof(positive), 16))
+        if (!text_arena_grow(values, room, address_to count,
+                             address_to count + 1, sizeof(positive), 16))
                 return false;
 
         (address_to values)[address_to count] = value;
@@ -3861,8 +3821,9 @@ static bool ps_string_add(string_address address_to address_to values,
                     !string_compare_max((address_to values)[i], from, length))
                         return true;
 
-        if (!tools_grow(values, room, address_to count, address_to count + 1,
-                        sizeof(string_address), 16))
+        if (!text_arena_grow(values, room, address_to count,
+                             address_to count + 1,
+                             sizeof(string_address), 16))
                 return false;
 
         p8 address_to made = (p8 address_to)text_arena_take(length + 1);

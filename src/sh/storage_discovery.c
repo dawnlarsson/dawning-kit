@@ -1484,10 +1484,8 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
                         return null;
                 }
 
-                bipolar got = system_call_4(syscall(readlinkat), AT_FDCWD,
-                                             (positive)name,
-                                             (positive)path.bytes,
-                                             path.room - 1);
+                bipolar got = system_read_link_at(
+                    AT_FDCWD, name, path.bytes, path.room - 1);
 
                 if (got < 0)
                 {

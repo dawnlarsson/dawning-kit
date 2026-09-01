@@ -371,8 +371,7 @@ static positive stream_trap_write(b32 descriptor, address_any from,
 
 static bipolar stream_trap_seek(b32 descriptor, bipolar offset, b32 whence)
 {
-        return system_call_3(syscall(lseek), (positive)(bipolar)descriptor,
-                             (positive)offset, (positive)(bipolar)whence);
+        return system_seek(descriptor, offset, whence);
 }
 
 static bipolar stream_trap_close(b32 descriptor)

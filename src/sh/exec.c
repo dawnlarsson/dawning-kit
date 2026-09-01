@@ -488,7 +488,7 @@ static bipolar exec_here_pipe(string_address body, positive length)
         if (length <= PIPE_HOLDS)
         {
                 if (length)
-                        system_call_3(syscall(write), ends[1], (positive)body, length);
+                        system_write_once(ends[1], body, length);
 
                 system_close(ends[1]);
 

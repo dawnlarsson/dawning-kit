@@ -72,8 +72,7 @@ static b32 term_send(b32 master)
         if (!to_shell_length)
                 return true;
 
-        return term_sent(system_call_3(syscall(write), master,
-                                       (positive)to_shell, to_shell_length));
+        return term_sent(system_write_once(master, to_shell, to_shell_length));
 }
 
 static fn term_follow_modes(b32 master)
@@ -261,9 +260,8 @@ static b32 screen_term()
 
                 for (;;)
                 {
-                        bipolar got = system_call_3(syscall(read), master,
-                                                    (positive)from_shell,
-                                                    sizeof(from_shell));
+                        bipolar got = system_read_once(master, from_shell,
+                                                       sizeof(from_shell));
 
                         if (got > 0)
                         {

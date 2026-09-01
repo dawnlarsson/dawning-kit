@@ -122,6 +122,36 @@
         system_call_4(syscall(openat), (positive)(bipolar)(directory),       \
                       (positive)(path), (positive)(flags), (positive)(mode))
 
+/* One-shot I/O stays visibly distinct from the EINTR-retrying helpers. */
+#define system_read_once(handle, into, length)                               \
+        system_call_3(syscall(read), (positive)(handle), (positive)(into),   \
+                      (positive)(length))
+
+#define system_write_once(handle, data, length)                              \
+        system_call_3(syscall(write), (positive)(handle), (positive)(data),  \
+                      (positive)(length))
+
+#define system_seek(handle, offset, origin)                                  \
+        system_call_3(syscall(lseek), (positive)(handle),                    \
+                      (positive)(offset), (positive)(origin))
+
+#define system_file_status(handle, into)                                     \
+        system_call_2(syscall(fstat), (positive)(handle), (positive)(into))
+
+#define system_read_directory(handle, into, length)                          \
+        system_call_3(syscall(getdents64), (positive)(handle),               \
+                      (positive)(into), (positive)(length))
+
+#define system_read_link_at(directory, path, into, length)                   \
+        system_call_4(syscall(readlinkat), (positive)(bipolar)(directory),   \
+                      (positive)(path), (positive)(into),                    \
+                      (positive)(length))
+
+#define system_stat_at(directory, path, flags, mask, into)                   \
+        system_call_5(syscall(statx), (positive)(bipolar)(directory),        \
+                      (positive)(path), (positive)(flags), (positive)(mask), \
+                      (positive)(into))
+
 #define system_pipe(pair, flags)                                             \
         system_call_2(syscall(pipe2), (positive)(pair), (positive)(flags))
 
@@ -156,6 +186,18 @@ typedef struct
         memory_release((address_any address_to)address_of (array),            \
                        address_of (room), address_of (used),                  \
                        sizeof((array)[0]))
+
+/* Arena vectors cannot resize their last block.  Their hot path is only this
+   typed capacity check; a subsystem supplies one cold grow/copy body for all
+   its element widths. */
+#define array_arena_reserve(array, room, used, wanted, first, grow)           \
+        ({ positive _arena_used = (used);                                    \
+           positive _arena_wanted = (wanted);                               \
+           _arena_wanted >= _arena_used &&                                  \
+               (_arena_wanted <= (room) ||                                  \
+                (grow)((address_any address_to)address_of (array),            \
+                       address_of (room), _arena_used, _arena_wanted,         \
+                       sizeof((array)[0]), (first))); })
 
 #define byte_store_reserve(store, wanted, step)                              \
         ({ __auto_type _byte_store = (store);                                \

@@ -3063,9 +3063,9 @@ static bool test_bad;
 
 bool test_facts(string_address path, file_facts address_to out, bool follow)
 {
-        return system_call_5(syscall(statx), AT_FDCWD, (positive)path,
-                             follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                             STATX_BASIC, (positive)out) == 0;
+        return system_stat_at(AT_FDCWD, path,
+                              follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                              STATX_BASIC, out) == 0;
 }
 
 bool test_unary(p8 op, string_address value)
@@ -4196,8 +4196,7 @@ fn shell_read(writer write, string_address input)
                         break;
                 }
 
-                bipolar got = system_call_3(syscall(read), 0,
-                                             (positive)address_of value, 1);
+                bipolar got = system_read_once(0, address_of value, 1);
 
                 if (got != 1)
                 {
@@ -4215,8 +4214,7 @@ fn shell_read(writer write, string_address input)
                 {
                         p8 next;
 
-                        got = system_call_3(syscall(read), 0,
-                                            (positive)address_of next, 1);
+                        got = system_read_once(0, address_of next, 1);
 
                         if (got != 1)
                         {

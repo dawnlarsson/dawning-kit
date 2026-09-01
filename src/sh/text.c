@@ -2327,7 +2327,7 @@ static bool text_directory(positive handle)
 
         memory_fill(raw, 0, sizeof(raw));
 
-        if (system_call_2(syscall(fstat), handle, (positive)raw) < 0)
+        if (system_file_status(handle, raw) < 0)
                 return false;
 
         return (address_to(p32 address_to)(raw + TEXT_STAT_MODE) & 0170000) == 0040000;
@@ -2340,7 +2340,7 @@ static bool text_regular_size(positive handle, positive address_to size)
 
         memory_fill(raw, 0, sizeof(raw));
 
-        if (system_call_2(syscall(fstat), handle, (positive)raw) < 0)
+        if (system_file_status(handle, raw) < 0)
                 return false;
 
         p32 mode = address_to(p32 address_to)(raw + TEXT_STAT_MODE);
@@ -2889,14 +2889,12 @@ static b32 text_wc()
 
                         if (text_regular_size(text_input.handle, address_of size))
                         {
-                                bipolar at = system_call_3(syscall(lseek),
-                                                           text_input.handle, 0, 1);
+                                bipolar at = system_seek(text_input.handle, 0, 1);
 
                                 if (at >= 0 && (positive)at <= size)
                                 {
                                         bytes = size - (positive)at;
-                                        system_call_3(syscall(lseek),
-                                                      text_input.handle, 0, 2);
+                                        system_seek(text_input.handle, 0, 2);
                                         text_input.finished = true;
                                         goto counted;
                                 }
@@ -3453,7 +3451,7 @@ static bool text_read_at(positive handle, positive offset, p8 address_to into, p
 {
         positive have = 0;
 
-        system_call_3(syscall(lseek), handle, offset, FILE_SEEK_SET);
+        system_seek(handle, offset, FILE_SEEK_SET);
 
         while (have < want)
         {
@@ -3549,7 +3547,7 @@ static fn text_stream_count(positive left)
 
 static fn text_stream_seek(positive start)
 {
-        system_call_3(syscall(lseek), text_input.handle, start, FILE_SEEK_SET);
+        system_seek(text_input.handle, start, FILE_SEEK_SET);
         text_input.filled = 0;
         text_input.position = 0;
         text_input.finished = false;
@@ -6074,7 +6072,7 @@ static p32 text_path_mode(string_address path)
 
         memory_fill(raw, 0, sizeof(raw));
 
-        bipolar told = system_call_2(syscall(fstat), (positive)handle, (positive)raw);
+        bipolar told = system_file_status(handle, raw);
 
         system_close(handle);
 
@@ -6168,7 +6166,7 @@ static bool grep_walk(string_address path, b32 depth)
 
         memory_fill(raw, 0, sizeof(raw));
 
-        if (system_call_2(syscall(fstat), (positive)handle, (positive)raw) >= 0)
+        if (system_file_status(handle, raw) >= 0)
         {
                 positive device = address_to(positive address_to)(raw + TEXT_STAT_DEVICE);
                 positive node = address_to(positive address_to)(raw + TEXT_STAT_NODE);
@@ -6187,8 +6185,8 @@ static bool grep_walk(string_address path, b32 depth)
 
         while (fine)
         {
-                bipolar got = system_call_3(syscall(getdents64), (positive)handle,
-                                            (positive)entries, sizeof(entries));
+                bipolar got = system_read_directory(handle, entries,
+                                                    sizeof(entries));
 
                 if (got <= 0)
                         break;
@@ -10137,14 +10135,14 @@ static bipolar cmp_byte(text_reader address_to side)
 // has ended.
 static positive cmp_length(text_reader address_to side)
 {
-        bipolar here = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_CUR);
+        bipolar here = system_seek(side->handle, 0, FILE_SEEK_CUR);
         bipolar last;
 
         if (here < 0)
                 return 0;
 
-        last = system_call_3(syscall(lseek), side->handle, 0, FILE_SEEK_END);
-        system_call_3(syscall(lseek), side->handle, (positive)here, FILE_SEEK_SET);
+        last = system_seek(side->handle, 0, FILE_SEEK_END);
+        system_seek(side->handle, here, FILE_SEEK_SET);
 
         return last < 0 || last < here ? 0 : (positive)(last - here);
 }
@@ -10156,7 +10154,7 @@ static fn cmp_pass(text_reader address_to side, positive count)
         if (!count)
                 return;
 
-        if (system_call_3(syscall(lseek), side->handle, count, FILE_SEEK_CUR) >= 0)
+        if (system_seek(side->handle, count, FILE_SEEK_CUR) >= 0)
                 return;
 
         while (count-- && cmp_byte(side) >= 0)

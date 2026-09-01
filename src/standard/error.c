@@ -1291,12 +1291,10 @@ ERROR_ENTRY(close, b32, (b32 handle), error_whole,
         offset that certainly does not fit.
 */
 ERROR_ENTRY(read, bipolar, (b32 handle, address_any buffer, positive count),
-            error_wide, system_call_3(syscall(read), (positive)handle,
-                                      (positive)buffer, count))
+            error_wide, system_read_once(handle, buffer, count))
 ERROR_ENTRY(write, bipolar,
             (b32 handle, const address_any buffer, positive count), error_wide,
-            system_call_3(syscall(write), (positive)handle, (positive)buffer,
-                          count))
+            system_write_once(handle, buffer, count))
 ERROR_ENTRY(pread, bipolar,
             (b32 handle, address_any buffer, positive count, bipolar offset),
             error_wide, system_call_4(syscall(pread64), (positive)handle,
@@ -1307,8 +1305,7 @@ ERROR_ENTRY(pwrite, bipolar,
             error_wide, system_call_4(syscall(pwrite64), (positive)handle,
                                       (positive)buffer, count, (positive)offset))
 ERROR_ENTRY(lseek, bipolar, (b32 handle, bipolar offset, b32 whence),
-            error_wide, system_call_3(syscall(lseek), (positive)handle,
-                                      (positive)offset, (positive)whence))
+            error_wide, system_seek(handle, offset, whence))
 ERROR_ENTRY(dup, b32, (b32 handle), error_whole,
             system_call_1(syscall(dup), (positive)handle))
 
@@ -1407,7 +1404,7 @@ ERROR_ENTRY(lstat, b32, (string_address path, stat_address into), error_whole,
         on every machine here.
 */
 ERROR_ENTRY(fstat, b32, (b32 handle, stat_address into), error_whole,
-            system_call_2(syscall(fstat), (positive)handle, (positive)into))
+            system_file_status(handle, into))
 ERROR_ENTRY(unlinkat, b32,
             (b32 directory, string_address path, b32 flags), error_whole,
             system_remove_at(directory, path, flags))
@@ -1457,14 +1454,12 @@ ERROR_ENTRY(symlink, b32, (string_address target, string_address path),
 */
 ERROR_ENTRY(readlink, bipolar,
             (string_address path, string_address into, positive size),
-            error_wide, system_call_4(syscall(readlinkat), ERROR_AT_HERE,
-                                      (positive)path, (positive)into, size))
+            error_wide,
+            system_read_link_at(ERROR_AT_HERE, path, into, size))
 ERROR_ENTRY(readlinkat, bipolar,
             (b32 directory, string_address path, string_address into,
              positive size),
-            error_wide, system_call_4(syscall(readlinkat),
-                                      (positive)directory, (positive)path,
-                                      (positive)into, size))
+            error_wide, system_read_link_at(directory, path, into, size))
 
 /*
         access asks the kernel with the real user and group rather than the
@@ -1553,8 +1548,7 @@ static string_address getcwd(string_address into, positive size)
 }
 
 ERROR_ENTRY(getdents64, b32, (b32 handle, address_any into, positive size),
-            error_whole, system_call_3(syscall(getdents64), (positive)handle,
-                                       (positive)into, size))
+            error_whole, system_read_directory(handle, into, size))
 
 //      umask cannot fail: it returns the previous mask and there is no error
 //      the kernel can report, so no translation happens and errno is not
