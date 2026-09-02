@@ -193,7 +193,9 @@ struct cursor_stats {
 
         Counters use their native, lossless units.  CPU and process time is
         nanoseconds, memory and network values are bytes, and load is fixed at
-        two decimal places.  Consumers decide presentation.
+        two decimal places.  Every snapshot also carries the three common
+        clocks, regardless of its sections; zero sections requests just that
+        common metadata.  Consumers decide presentation.
 */
 #define SPARK_SNAPSHOT_VERSION 1u
 

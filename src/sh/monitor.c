@@ -46,33 +46,18 @@ static fn monitor_fill(positive count, p8 byte)
                 memory_fill(room, byte, count);
 }
 
-static fn monitor_number(positive value)
-{
-        positive_to_string(text_put, value);
-}
-
-static fn monitor_number_field(writer write, positive value, positive width,
-                               bool left)
-{
-        p8 text[24];
-        positive length = positive_into(text, value);
-
-        writer_field(write, text, length, width, ' ', left);
-}
-
 static fn monitor_tenths_field(writer write, positive value, positive width)
 {
-        p8 text[32];
-        positive length = positive_into(text, value / 10);
+        p8 fraction[2] = {'.', (p8)('0' + value % 10)};
 
-        text[length++] = '.';
-        text[length++] = (p8)('0' + value % 10);
-        writer_field(write, text, length, width, ' ', false);
+        positive_to_base_field(write, value / 10, 10,
+                               width > 2 ? width - 2 : 0, -1, 0);
+        write(fraction, sizeof(fraction));
 }
 
 static fn monitor_hundredths(positive value)
 {
-        monitor_number(value / 100);
+        positive_to_string(text_put, value / 100);
         text_put_character('.');
         positive_to_padded(text_put, value % 100, 2, '0', 0);
 }
@@ -90,42 +75,6 @@ static CONST positive monitor_percent(positive part, positive whole,
         return scaled <= positive_max - whole / 2
                    ? (scaled + whole / 2) / whole
                    : scaled / whole;
-}
-
-static positive monitor_human(p8 address_to into, positive bytes)
-{
-        static const string_address suffix[] = {" B", " kB", " MB", " GB",
-                                                 " TB", " PB", " EB"};
-        positive unit = 0;
-        positive divisor = 1;
-
-        while (unit + 1 < array_count(suffix) &&
-               bytes / divisor >= 1024 && divisor <= positive_max / 1024)
-        {
-                divisor *= 1024;
-                unit++;
-        }
-
-        positive length;
-
-        if (!unit)
-                length = positive_into(into, bytes);
-        else
-        {
-                positive whole = bytes / divisor;
-                positive remainder = bytes % divisor;
-                positive tenths = whole * 10 +
-                    monitor_percent(remainder, divisor, 10);
-
-                length = positive_into(into, tenths / 10);
-                into[length++] = '.';
-                into[length++] = (p8)('0' + tenths % 10);
-        }
-
-        positive suffix_length = string_length(suffix[unit]);
-
-        memory_copy_apart(into + length, suffix[unit], suffix_length);
-        return length + suffix_length;
 }
 
 static fn monitor_bar(positive percent, positive width)
@@ -174,17 +123,17 @@ static fn monitor_header(system_snapshot address_to sample,
 
                 if (days)
                 {
-                        monitor_number(days);
+                        positive_to_string(text_put, days);
                         text_put_character('d');
                         text_put_character(' ');
                 }
                 if (days || hours)
                 {
-                        monitor_number(hours);
+                        positive_to_string(text_put, hours);
                         text_put_character('h');
                         text_put_character(' ');
                 }
-                monitor_number(minutes);
+                positive_to_string(text_put, minutes);
                 text_put_string("m ");
 
                 text_put_string("load ");
@@ -275,18 +224,22 @@ static fn monitor_memory(system_snapshot address_to sample,
         positive available = sample->header.memory_available;
         positive used = total >= available ? total - available : 0;
         positive percent = monitor_percent(used, total, 100);
-        positive used_tenths = monitor_percent(used, (positive)1 << 30, 10);
-        positive total_tenths = monitor_percent(total, (positive)1 << 30, 10);
+        p8 used_text[9];
+        p8 total_text[9];
+        positive used_length = positive_into_human_nearest_string(
+            used_text, used, true);
+        positive total_length = positive_into_human_nearest_string(
+            total_text, total, true);
 
         text_put_string(" mem    ");
         monitor_bar(percent, bar_width);
         text_put_character(' ');
-        monitor_number_field(text_put, percent, 3, false);
+        positive_to_base_field(text_put, percent, 10, 3, -1, 0);
         text_put_string("%  ");
-        monitor_tenths_field(text_put, used_tenths, 0);
-        text_put_string("G / ");
-        monitor_tenths_field(text_put, total_tenths, 0);
-        text_put_string("G\033[K\n");
+        text_put(used_text, used_length);
+        text_put_string(" / ");
+        text_put(total_text, total_length);
+        text_put_string("\033[K\n");
 
         positive swap_total = sample->header.swap_total;
         positive swap_used = swap_total >= sample->header.swap_free
@@ -296,15 +249,17 @@ static fn monitor_memory(system_snapshot address_to sample,
 
         if (swap_percent)
         {
+                p8 swap_text[9];
+                positive swap_length = positive_into_human_nearest_string(
+                    swap_text, swap_used, true);
+
                 text_put_string(" swap   ");
                 monitor_bar(swap_percent, bar_width);
                 text_put_character(' ');
-                monitor_number_field(text_put, swap_percent, 3, false);
+                positive_to_base_field(text_put, swap_percent, 10, 3, -1, 0);
                 text_put_string("%  ");
-                monitor_tenths_field(text_put,
-                                     monitor_percent(swap_used,
-                                                     (positive)1 << 30, 10), 0);
-                text_put_string("G\033[K\n");
+                text_put(swap_text, swap_length);
+                text_put_string("\033[K\n");
         }
 }
 
@@ -347,10 +302,12 @@ static fn monitor_networks(system_snapshot address_to old,
                 positive up = transmitted > positive_max / 1000000
                                   ? positive_max
                                   : transmitted * 1000000 / elapsed_us;
-                p8 down_text[32];
-                p8 up_text[32];
-                positive down_length = monitor_human(down_text, down);
-                positive up_length = monitor_human(up_text, up);
+                p8 down_text[16];
+                p8 up_text[16];
+                positive down_length =
+                    positive_into_human_nearest_string(down_text, down, false);
+                positive up_length =
+                    positive_into_human_nearest_string(up_text, up, false);
                 monitor_row_left = columns > 1 ? columns - 1 : 1;
                 monitor_row_write(" ", 1);
                 string_to_field(monitor_row_write, network->name, 10, ' ',
@@ -425,16 +382,11 @@ static bool monitor_processes(system_snapshot address_to old,
                 if (before < old->header.process_count &&
                     old->processes[before].pid == process->pid)
                 {
-                        positive now = process->user_ns;
-                        positive was = old->processes[before].user_ns;
-
-                        now = now <= positive_max - process->system_ns
-                                  ? now + process->system_ns
-                                  : positive_max;
-                        was = was <= positive_max -
-                                         old->processes[before].system_ns
-                                  ? was + old->processes[before].system_ns
-                                  : positive_max;
+                        positive now = system_time_sum(
+                            process->user_ns, process->system_ns);
+                        positive was = system_time_sum(
+                            old->processes[before].user_ns,
+                            old->processes[before].system_ns);
                         used = now >= was ? now - was : 0;
                 }
 
@@ -448,14 +400,15 @@ static bool monitor_processes(system_snapshot address_to old,
 
         for (positive i = 0; i < count; i++)
         {
-                p8 memory_text[32];
-                positive memory_length = monitor_human(
-                    memory_text, (address_to top)[i].process->resident_bytes);
+                p8 memory_text[9];
+                positive memory_length = positive_into_human_nearest_string(
+                    memory_text, (address_to top)[i].process->resident_bytes,
+                    true);
                 monitor_row_left = columns > 1 ? columns - 1 : 1;
                 monitor_row_write(" ", 1);
-                monitor_number_field(monitor_row_write,
-                                     (address_to top)[i].process->pid, 7,
-                                     true);
+                positive_to_base_field(
+                    monitor_row_write, (address_to top)[i].process->pid, 10,
+                    7, -1, (positive)1 << 27);
                 monitor_row_write(" ", 1);
                 monitor_tenths_field(monitor_row_write,
                                      (address_to top)[i].tenths, 6);
@@ -550,7 +503,7 @@ static HOT b32 tools_monitor()
         text_put_string("\033[?1049h\033[?25l\033[2J\033[H\033[1m monitor\033[0m  sampling...\033[K");
         text_flush();
 
-        if (!system_snapshot_take(old, SPARK_SNAPSHOT_ALL))
+        if (!system_snapshot_take(old, SPARK_SNAPSHOT_ALL, false))
         {
                 text_error("/proc", "cannot read system snapshot");
                 status = 1;
@@ -575,7 +528,8 @@ static HOT b32 tools_monitor()
 
                         sample = old == samples ? samples + 1 : samples;
 
-                        if (!system_snapshot_take(sample, SPARK_SNAPSHOT_ALL))
+                        if (!system_snapshot_take(sample, SPARK_SNAPSHOT_ALL,
+                                                  false))
                         {
                                 text_error("/proc", "cannot read system snapshot");
                                 status = 1;
@@ -601,9 +555,9 @@ static HOT b32 tools_monitor()
                 if (rows < 12 || columns < 40)
                 {
                         text_put_string(" monitor ");
-                        monitor_number(columns);
+                        positive_to_string(text_put, columns);
                         text_put_character('x');
-                        monitor_number(rows);
+                        positive_to_string(text_put, rows);
                         text_put_string("\033[K\033[J");
                 }
                 else

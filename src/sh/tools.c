@@ -3008,53 +3008,16 @@ static ps_column ps_columns[PS_FIELD_COUNT] = {
 
 typedef struct
 {
-        positive pid;
-        positive ppid;
-        positive uid;
-        positive tty;
-        positive rss;
-        positive vsz;
-        positive utime;
-        positive stime;
-        positive start;
-        positive pgrp;
-        positive session;
-        bipolar tpgid;
-        bipolar nice;
-        positive threads;
         p8 state[8];
-        string_address comm;
         string_address args;
         string_address user;
-} ps_process;
+} ps_detail;
 
-static ps_process address_to ps_list;
-static positive ps_count;
-static positive ps_room_processes;
-static positive ps_clock = 100;
+static system_snapshot ps_snapshot;
 static positive ps_now;
 static positive ps_own_tty;
 static positive ps_own_uid;
 static positive ps_wall;
-
-static positive ps_read_file(string_address path, p8 address_to into, positive limit)
-{
-        bipolar got = file_slurp(path, into, limit);
-
-        return got > 0 ? (positive)got : 0;
-}
-
-static ps_process address_to ps_process_add()
-{
-        if (!array_arena_reserve(ps_list, ps_room_processes, ps_count,
-                                 ps_count + 1, 128, text_arena_grow))
-                return null;
-
-        ps_process address_to made = ps_list + ps_count;
-
-        memory_fill(made, 0, sizeof(ps_process));
-        return made;
-}
 
 // The name behind a numeric user id. file.c already reads /etc/passwd and
 // remembers the last answer, so ps only keeps a copy that lives as long as
@@ -3078,145 +3041,68 @@ static string_address ps_name_of(positive uid)
         return (string_address)made;
 }
 
-static bool ps_gather()
+static string_address ps_arguments(struct snapshot_process address_to process)
 {
-        static system_snapshot snapshot;
-        p8 block[8192];
+        p8 path[64];
+        positive base = 6;
 
-        ps_count = 0;
-        ps_room_processes = 0;
+        memory_copy_apart(path, "/proc/", base);
+        base += positive_into(path + base, process->pid);
+        string_copy(path + base, "/cmdline");
 
-        ps_now = system_clock_ns(7) / SYSTEM_NANOSECONDS;
-        ps_wall = (positive)file_now();
+        positive got = 0;
+        bipolar handle = text_open_handle(path, FILE_READ, 0);
+        p8 address_to command = handle < 0
+            ? null
+            : text_arena_read_all((positive)handle, 256, address_of got, null);
 
-        if (!system_snapshot_take(address_of snapshot,
-                                  SPARK_SNAPSHOT_PROCESS))
-                return false;
+        if (handle >= 0)
+                system_close(handle);
 
-        for (positive item = 0; item < snapshot.header.process_count; item++)
+        if (command && got)
         {
-                struct snapshot_process address_to process =
-                    snapshot.processes + item;
-                p8 path[64];
-                positive base = 6;
+                for (positive i = 0; i < got; i++)
+                        command[i] = command[i] ? command[i] : ' ';
 
-                memory_copy_apart(path, "/proc/", base);
-                base += positive_into(path + base, process->pid);
-                path[base] = end;
+                while (got && command[got - 1] == ' ')
+                        got--;
 
-                ps_process address_to one = ps_process_add();
-
-                if (!one)
-                        return false;
-
-                one->pid = process->pid;
-                one->ppid = process->ppid;
-                one->pgrp = process->pgrp;
-                one->session = process->session;
-                one->tty = (positive)process->tty;
-                one->tpgid = process->tpgid;
-                one->nice = process->nice;
-                one->threads = process->threads;
-                one->utime = process->user_ns / SYSTEM_TICK_NS;
-                one->stime = process->system_ns / SYSTEM_TICK_NS;
-                one->start = process->start_ns / SYSTEM_TICK_NS;
-                one->vsz = process->virtual_bytes / 1024;
-                one->rss = process->resident_bytes / 1024;
-                one->comm = (string_address)process->command;
-                one->state[0] = (p8)process->state;
-                one->state[1] = end;
-
-                positive mark = 1;
-
-                if (one->nice < 0)
-                        one->state[mark++] = '<';
-                else if (one->nice > 0)
-                        one->state[mark++] = 'N';
-
-                if (one->session == one->pid)
-                        one->state[mark++] = 's';
-
-                if (one->threads > 1)
-                        one->state[mark++] = 'l';
-
-                if (one->tpgid == (bipolar)one->pgrp)
-                        one->state[mark++] = '+';
-
-                one->state[mark] = end;
-
-                string_copy(path + base, "/status");
-
-                if (ps_read_file(path, block, sizeof(block)))
-                {
-                        string_address seek = block;
-
-                        while (string_get(seek))
-                        {
-                                if (seek[0] == 'U' && seek[1] == 'i' && seek[2] == 'd' &&
-                                    seek[3] == ':')
-                                {
-                                        string_address value = seek + 4;
-
-                                        one->uid =
-                                            system_field_unsigned(address_of value);
-                                        break;
-                                }
-
-                                seek = string_first_of_or_end(seek, '\n');
-
-                                if (string_get(seek))
-                                        seek++;
-                        }
-                }
-
-                one->user = ps_name_of(one->uid);
-
-                if (!one->user)
-                        return false;
-
-                string_copy(path + base, "/cmdline");
-
-                positive got = 0;
-                bipolar handle = text_open_handle(path, FILE_READ, 0);
-                p8 address_to arguments = handle < 0
-                    ? null
-                    : text_arena_read_all((positive)handle, 256,
-                                          address_of got, null);
-
-                if (handle >= 0)
-                        system_close(handle);
-
-                if (arguments && got)
-                {
-                        for (positive i = 0; i < got; i++)
-                                arguments[i] = arguments[i] ? arguments[i] : ' ';
-
-                        while (got && arguments[got - 1] == ' ')
-                                got--;
-
-                        arguments[got] = end;
-                        one->args = (string_address)arguments;
-                }
-                else
-                {
-                        positive length = string_length(one->comm);
-                        p8 address_to fallback =
-                            (p8 address_to)text_arena_take(length + 3);
-
-                        if (!fallback)
-                                return false;
-
-                        fallback[0] = '[';
-                        memory_copy_apart(fallback + 1, one->comm, length);
-                        fallback[1 + length] = ']';
-                        fallback[2 + length] = end;
-                        one->args = (string_address)fallback;
-                }
-
-                ps_count++;
+                command[got] = end;
+                return (string_address)command;
         }
 
-        return true;
+        positive length = string_length(process->command);
+        p8 address_to fallback =
+            (p8 address_to)text_arena_take(length + 3);
+
+        if (!fallback)
+                return null;
+
+        fallback[0] = '[';
+        memory_copy_apart(fallback + 1, process->command, length);
+        fallback[1 + length] = ']';
+        fallback[2 + length] = end;
+        return (string_address)fallback;
+}
+
+static string_address ps_state(ps_detail address_to detail,
+                               struct snapshot_process address_to process)
+{
+        positive mark = 1;
+
+        detail->state[0] = (p8)process->state;
+        if (process->nice < 0)
+                detail->state[mark++] = '<';
+        else if (process->nice > 0)
+                detail->state[mark++] = 'N';
+        if (process->session == process->pid)
+                detail->state[mark++] = 's';
+        if (process->threads > 1)
+                detail->state[mark++] = 'l';
+        if (process->tpgid == (int)process->pgrp)
+                detail->state[mark++] = '+';
+        detail->state[mark] = end;
+        return (string_address)detail->state;
 }
 
 /*
@@ -3284,9 +3170,9 @@ static fn ps_digits(positive value)
         ps_bytes(have, length);
 }
 
-static fn ps_put_time(positive ticks)
+static fn ps_put_time(positive nanoseconds)
 {
-        positive seconds = ticks / ps_clock;
+        positive seconds = nanoseconds / SYSTEM_NANOSECONDS;
 
         positive_to_padded(ps_bytes, seconds / 3600, 2, '0', 0);
         ps_byte(':');
@@ -3346,44 +3232,64 @@ static fn ps_put_tty(positive tty)
         ps_digits(minor);
 }
 
-static fn ps_draw(ps_process address_to one, positive field)
+static fn ps_draw(struct snapshot_process address_to process,
+                  ps_detail address_to detail, positive field)
 {
         ps_room_used = 0;
 
         switch (field)
         {
-        case PS_FIELD_PID: ps_digits(one->pid); break;
-        case PS_FIELD_PPID: ps_digits(one->ppid); break;
+        case PS_FIELD_PID: ps_digits(process->pid); break;
+        case PS_FIELD_PPID: ps_digits(process->ppid); break;
         case PS_FIELD_USER:
-                ps_text(one->user);
+                if (!detail->user &&
+                    !(detail->user = ps_name_of(process->uid)))
+                        ps_failed = true;
+                ps_text(detail->user);
                 break;
-        case PS_FIELD_UID: ps_digits(one->uid); break;
-        case PS_FIELD_COMM: ps_text(one->comm); break;
-        case PS_FIELD_ARGS: ps_text(one->args); break;
-        case PS_FIELD_STAT: ps_text(one->state); break;
-        case PS_FIELD_TIME: ps_put_time(one->utime + one->stime); break;
+        case PS_FIELD_UID: ps_digits(process->uid); break;
+        case PS_FIELD_COMM: ps_text(process->command); break;
+        case PS_FIELD_ARGS:
+                if (!detail->args &&
+                    !(detail->args = ps_arguments(process)))
+                        ps_failed = true;
+                ps_text(detail->args);
+                break;
+        case PS_FIELD_STAT:
+                ps_text(detail->state[0] ? (string_address)detail->state
+                                         : ps_state(detail, process));
+                break;
+        case PS_FIELD_TIME:
+                ps_put_time(system_time_sum(process->user_ns,
+                                            process->system_ns));
+                break;
         case PS_FIELD_ETIME:
         {
-                positive began = one->start / ps_clock;
+                positive began = process->start_ns / SYSTEM_NANOSECONDS;
 
                 ps_put_elapsed(ps_now > began ? ps_now - began : 0);
                 break;
         }
-        case PS_FIELD_RSS: ps_digits(one->rss); break;
-        case PS_FIELD_VSZ: ps_digits(one->vsz); break;
-        case PS_FIELD_TTY: ps_put_tty(one->tty); break;
+        case PS_FIELD_RSS: ps_digits(process->resident_bytes / 1024); break;
+        case PS_FIELD_VSZ: ps_digits(process->virtual_bytes / 1024); break;
+        case PS_FIELD_TTY: ps_put_tty((positive)process->tty); break;
         case PS_FIELD_CPU:
         {
-                positive lived = ps_now > one->start / ps_clock
-                                     ? ps_now - one->start / ps_clock
+                positive began = process->start_ns / SYSTEM_NANOSECONDS;
+                positive lived = ps_now > began
+                                     ? ps_now - began
                                      : 0;
 
-                ps_digits(lived ? (one->utime + one->stime) / ps_clock * 100 / lived : 0);
+                ps_digits(lived ? system_time_sum(process->user_ns,
+                                                  process->system_ns) /
+                                      SYSTEM_NANOSECONDS * 100 / lived
+                                : 0);
                 break;
         }
         case PS_FIELD_STIME:
         {
-                b64 began = (b64)ps_wall - (b64)ps_now + (b64)(one->start / ps_clock);
+                b64 began = (b64)ps_wall - (b64)ps_now +
+                            (b64)(process->start_ns / SYSTEM_NANOSECONDS);
                 b64 year, year_now;
                 positive month, day, hour, minute, second;
                 positive month_now, day_now, hour_now, minute_now, second_now;
@@ -3415,12 +3321,12 @@ static fn ps_draw(ps_process address_to one, positive field)
 
                 break;
         }
-        case PS_FIELD_SID: ps_digits(one->session); break;
-        case PS_FIELD_PGID: ps_digits(one->pgrp); break;
-        case PS_FIELD_NLWP: ps_digits(one->threads); break;
+        case PS_FIELD_SID: ps_digits(process->session); break;
+        case PS_FIELD_PGID: ps_digits(process->pgrp); break;
+        case PS_FIELD_NLWP: ps_digits(process->threads); break;
         case PS_FIELD_ETIMES:
         {
-                positive began = one->start / ps_clock;
+                positive began = process->start_ns / SYSTEM_NANOSECONDS;
 
                 ps_digits(ps_now > began ? ps_now - began : 0);
                 break;
@@ -3432,10 +3338,11 @@ static fn ps_draw(ps_process address_to one, positive field)
                 ps_room[ps_room_used] = end;
 }
 
-static fn ps_column_out(ps_process address_to one, positive field,
+static fn ps_column_out(struct snapshot_process address_to process,
+                        ps_detail address_to detail, positive field,
                         positive width, bool last)
 {
-        ps_draw(one, field);
+        ps_draw(process, detail, field);
 
         // A column that something follows is exactly as wide as it says,
         // which is where the reference cuts a long command line off.
@@ -4017,24 +3924,6 @@ static b32 tools_ps(void)
                         return text_done(1);
         }
 
-        if (!ps_gather())
-        {
-                text_error("/proc", "cannot read");
-                return text_done(1);
-        }
-
-        ps_own_tty = 0;
-        positive own_pid = (positive)system_call(syscall(getpid));
-
-        for (positive i = 0; i < ps_count; i++)
-                if (ps_list[i].pid == own_pid)
-                {
-                        ps_own_tty = ps_list[i].tty;
-                        break;
-                }
-
-        ps_own_uid = (positive)system_call(syscall(geteuid));
-
         /*
                 The two listings ps has of its own are not -o spelled out:
                 the terminal is eight columns wide and headed TTY rather than
@@ -4071,6 +3960,44 @@ static b32 tools_ps(void)
                                           preset[f].field, preset[f].header,
                                           preset[f].custom_header))
                                 return text_done(1);
+        }
+
+        positive wanted = 0;
+
+        for (positive f = 0; f < field_count; f++)
+                wanted |= (positive)1 << fields[f].field;
+
+        bool selectors = selected_count || ppid_count || command_count;
+        bool alternate_selectors = ppid_count || command_count;
+        bool filter_owner = !every && !selectors;
+        bool names = wanted & ((positive)1 << PS_FIELD_USER);
+        bool owners = filter_owner || names ||
+                      (wanted & ((positive)1 << PS_FIELD_UID));
+        if (!system_snapshot_take(address_of ps_snapshot,
+                                  SPARK_SNAPSHOT_PROCESS, owners))
+        {
+                text_error("/proc", "cannot read");
+                return text_done(1);
+        }
+
+        ps_now = ps_snapshot.header.uptime_ns / SYSTEM_NANOSECONDS;
+        ps_wall = ps_snapshot.header.realtime_seconds;
+        positive ps_count = ps_snapshot.header.process_count;
+
+        if (filter_owner)
+        {
+                ps_own_tty = 0;
+                positive own_pid = (positive)system_call(syscall(getpid));
+
+                for (positive i = 0; i < ps_count; i++)
+                        if (ps_snapshot.processes[i].pid == own_pid)
+                        {
+                                ps_own_tty =
+                                    (positive)ps_snapshot.processes[i].tty;
+                                break;
+                        }
+
+                ps_own_uid = (positive)system_call(syscall(geteuid));
         }
 
         bool show_headers = force_headers;
@@ -4116,14 +4043,13 @@ static b32 tools_ps(void)
                 text_put_character('\n');
         }
 
-        bool selectors = selected_count || ppid_count || command_count;
-        bool alternate_selectors = ppid_count || command_count;
         bool matched = false;
 
         for (positive at = 0; at < ps_count; at++)
         {
                 positive p = reverse ? ps_count - at - 1 : at;
-                ps_process address_to one = ps_list + p;
+                struct snapshot_process address_to process =
+                    ps_snapshot.processes + p;
                 positive repeats = 1;
 
                 /*
@@ -4134,23 +4060,26 @@ static b32 tools_ps(void)
                 if (selectors && !(every && alternate_selectors))
                 {
                         repeats = ps_pid_matches(selected_pids, selected_count,
-                                                 one->pid);
+                                                 process->pid);
 
                         if (!repeats &&
                             (ps_value_has(selected_ppids, ppid_count,
-                                          one->ppid) ||
+                                          process->ppid) ||
                              ps_command_selected(selected_commands,
-                                                 command_count, one->comm)))
+                                                 command_count,
+                                                 process->command)))
                                 repeats = 1;
 
                         if (!repeats)
                                 continue;
                 }
                 else if (!every &&
-                         !(one->uid == ps_own_uid && one->tty == ps_own_tty))
+                         !(process->uid == ps_own_uid &&
+                           (positive)process->tty == ps_own_tty))
                         continue;
 
                 matched = true;
+                ps_detail detail = {0};
 
                 for (positive repeat = 0; repeat < repeats; repeat++)
                 {
@@ -4167,7 +4096,8 @@ static b32 tools_ps(void)
                                 if (header_length > width)
                                         width = header_length;
 
-                                ps_column_out(one, field, width,
+                                ps_column_out(process, address_of detail,
+                                              field, width,
                                               f + 1 == field_count);
                         }
 

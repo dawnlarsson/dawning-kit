@@ -960,10 +960,6 @@ static HOT void snapshot_system(struct snapshot_header *header)
         struct sysinfo info;
         unsigned long loads[3];
 
-        header->monotonic_ns = ktime_get_ns();
-        header->realtime_seconds = ktime_get_real_seconds();
-        header->uptime_ns = ktime_get_boottime_ns();
-
         si_meminfo(&info);
         header->memory_total = info.totalram * info.mem_unit;
         header->memory_available = (unsigned long)si_mem_available() * PAGE_SIZE;
@@ -1058,7 +1054,7 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
         if (copy_from_user(&request, out, sizeof(request)))
                 return -EFAULT;
         if (request.version != SPARK_SNAPSHOT_VERSION || request.reserved ||
-            !request.flags || (request.flags & ~supported) ||
+            (request.flags & ~supported) ||
             request.capacity > SPARK_SNAPSHOT_MAX_BYTES || !request.buffer)
                 return -EINVAL;
         if (request.capacity < sizeof(*header))
@@ -1095,6 +1091,9 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
         header->version = SPARK_SNAPSHOT_VERSION;
         header->flags = request.flags;
         header->page_size = PAGE_SIZE;
+        header->monotonic_ns = ktime_get_ns();
+        header->realtime_seconds = ktime_get_real_seconds();
+        header->uptime_ns = ktime_get_boottime_ns();
 
         if (request.flags & SPARK_SNAPSHOT_SYSTEM)
                 snapshot_system(header);

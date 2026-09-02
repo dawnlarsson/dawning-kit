@@ -16,15 +16,9 @@ typedef struct
 {
         struct snapshot_header header;
         struct snapshot_cpu address_to cpus;
-        positive cpu_room;
         struct snapshot_network address_to networks;
-        positive network_room;
         struct snapshot_process address_to processes;
-        positive process_room;
-        struct snapshot_process address_to process_spare;
-        positive process_spare_room;
-        p8 address_to kernel;
-        positive kernel_room;
+        byte_store records;
         byte_store input;
 } system_snapshot;
 
@@ -49,12 +43,26 @@ typedef struct
 
 _Static_assert(sizeof(system_information) == 112, "Linux sysinfo ABI");
 
+static HOT address_any system_snapshot_append(system_snapshot address_to sample,
+                                              positive width)
+{
+        positive used = sample->records.used;
+
+        if (width > SPARK_SNAPSHOT_MAX_BYTES - used ||
+            !byte_store_reserve(address_of sample->records, used + width,
+                                4096))
+                return null;
+
+        sample->records.used += width;
+        return sample->records.bytes + used;
+}
+
 static CONST bool system_snapshot_range(unsigned int offset,
                                         unsigned int count, positive width,
                                         unsigned int used)
 {
-        return offset <= used && count <= positive_max / width &&
-               count * width <= used - offset;
+        return offset >= sizeof(struct snapshot_header) && !(offset & 7) &&
+               offset <= used && (positive)count * width <= used - offset;
 }
 
 static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
@@ -68,14 +76,13 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
         if (device < 0)
                 return false;
 
-        if (!sample->kernel_room &&
-            !memory_reserve((address_any address_to)address_of sample->kernel,
-                            address_of sample->kernel_room, 0, 4096, 1, 4096))
+        if (!sample->records.room &&
+            !byte_store_reserve(address_of sample->records, 4096, 4096))
                 return false;
 
         struct snapshot_request request = {
-            .buffer = (unsigned long)sample->kernel,
-            .capacity = (unsigned int)sample->kernel_room,
+            .buffer = (unsigned long)sample->records.bytes,
+            .capacity = (unsigned int)sample->records.room,
             .flags = flags,
             .version = SPARK_SNAPSHOT_VERSION,
         };
@@ -84,18 +91,17 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
 
         if (answer == -28 && request.required > request.capacity &&
             request.required <= SPARK_SNAPSHOT_MAX_BYTES &&
-            memory_reserve((address_any address_to)address_of sample->kernel,
-                           address_of sample->kernel_room, 0,
-                           request.required, 1, 4096))
+            byte_store_reserve(address_of sample->records, request.required,
+                               4096))
         {
-                request.buffer = (unsigned long)sample->kernel;
-                request.capacity = (unsigned int)sample->kernel_room;
+                request.buffer = (unsigned long)sample->records.bytes;
+                request.capacity = (unsigned int)sample->records.room;
                 answer = system_control(device, SPARK_IOCTL_SNAPSHOT,
                                         address_of request);
         }
 
         if (answer < 0 || request.used < sizeof(struct snapshot_header) ||
-            request.used > sample->kernel_room)
+            request.used > sample->records.room)
         {
                 system_close(device);
                 device = -1;
@@ -103,7 +109,7 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
         }
 
         struct snapshot_header address_to header =
-            (struct snapshot_header address_to)sample->kernel;
+            (struct snapshot_header address_to)sample->records.bytes;
 
         if (header->version != SPARK_SNAPSHOT_VERSION ||
             header->bytes != request.used || header->flags != flags ||
@@ -123,36 +129,8 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
                 return false;
         }
 
-        if ((flags & SPARK_SNAPSHOT_CPU) &&
-            !memory_reserve(
-                 (address_any address_to)address_of sample->cpus,
-                 address_of sample->cpu_room, 0, header->cpu_count,
-                 sizeof(struct snapshot_cpu), 16))
-                return false;
-
-        if ((flags & SPARK_SNAPSHOT_NETWORK) &&
-            !memory_reserve(
-                 (address_any address_to)address_of sample->networks,
-                 address_of sample->network_room, 0, header->network_count,
-                 sizeof(struct snapshot_network), 8))
-                return false;
-
         sample->header = *header;
-
-        if (flags & SPARK_SNAPSHOT_CPU)
-                memory_copy_apart(sample->cpus,
-                                  sample->kernel + header->cpu_offset,
-                                  header->cpu_count *
-                                      sizeof(struct snapshot_cpu));
-        if (flags & SPARK_SNAPSHOT_NETWORK)
-        {
-                memory_copy_apart(sample->networks,
-                                  sample->kernel + header->network_offset,
-                                  header->network_count *
-                                      sizeof(struct snapshot_network));
-                for (positive i = 0; i < header->network_count; i++)
-                        sample->networks[i].name[15] = end;
-        }
+        sample->records.used = request.used;
 
         return true;
 }
@@ -160,6 +138,11 @@ static HOT bool system_snapshot_accelerated(system_snapshot address_to sample,
 static CONST positive system_scaled(positive value, positive scale)
 {
         return value > positive_max / scale ? positive_max : value * scale;
+}
+
+static CONST positive system_time_sum(positive left, positive right)
+{
+        return left <= positive_max - right ? left + right : positive_max;
 }
 
 static PURE string_address system_field_start(string_address at)
@@ -258,12 +241,6 @@ static HOT bool system_snapshot_system(system_snapshot address_to sample)
 {
         system_information information;
 
-        sample->header.monotonic_ns = system_clock_ns(1);
-        sample->header.uptime_ns = system_clock_ns(7);
-        sample->header.realtime_seconds = system_clock_ns(0) /
-                                           SYSTEM_NANOSECONDS;
-        sample->header.page_size = (unsigned int)system_page_size();
-
         if (system_call_1(syscall(sysinfo),
                           (positive)address_of information) < 0)
                 return false;
@@ -319,24 +296,24 @@ static HOT bool system_snapshot_cpu(system_snapshot address_to sample)
         if (!file_store_slurp("/proc/stat", address_of sample->input))
                 return false;
 
+        sample->header.cpu_offset = (unsigned int)sample->records.used;
         string_address line = sample->input.bytes;
 
         while (line[0] == 'c' && line[1] == 'p' && line[2] == 'u' &&
                (line[3] == ' ' || byte_is_digit(line[3])))
         {
-                if (!memory_reserve(
-                        (address_any address_to)address_of sample->cpus,
-                        address_of sample->cpu_room, sample->header.cpu_count,
-                        sample->header.cpu_count + 1,
-                        sizeof(struct snapshot_cpu), 16))
+                struct snapshot_cpu address_to cpu =
+                    system_snapshot_append(sample,
+                                           sizeof(struct snapshot_cpu));
+
+                if (!cpu)
                         return false;
 
-                struct snapshot_cpu address_to cpu =
-                    sample->cpus + sample->header.cpu_count++;
                 string_address at = line + 3;
                 positive total = 0;
                 positive idle = 0;
 
+                sample->header.cpu_count++;
                 memory_fill(cpu, 0, sizeof(*cpu));
                 cpu->id = line[3] == ' '
                               ? ~0u
@@ -372,6 +349,7 @@ static HOT bool system_snapshot_network(system_snapshot address_to sample)
         if (!file_store_slurp("/proc/net/dev", address_of sample->input))
                 return false;
 
+        sample->header.network_offset = (unsigned int)sample->records.used;
         string_address line = sample->input.bytes;
 
         while (string_get(line))
@@ -397,20 +375,17 @@ static HOT bool system_snapshot_network(system_snapshot address_to sample)
 
                         if (length && length < 16)
                         {
-                                if (!memory_reserve(
-                                        (address_any address_to)address_of
-                                            sample->networks,
-                                        address_of sample->network_room,
-                                        sample->header.network_count,
-                                        sample->header.network_count + 1,
-                                        sizeof(struct snapshot_network), 8))
+                                struct snapshot_network address_to network =
+                                    system_snapshot_append(
+                                        sample,
+                                        sizeof(struct snapshot_network));
+
+                                if (!network)
                                         return false;
 
-                                struct snapshot_network address_to network =
-                                    sample->networks +
-                                    sample->header.network_count++;
                                 string_address at = colon + 1;
 
+                                sample->header.network_count++;
                                 memory_fill(network, 0, sizeof(*network));
                                 memory_copy_apart(network->name, name, length);
                                 network->received =
@@ -471,17 +446,20 @@ static HOT bool system_process_parse(
         return process->pid != 0;
 }
 
-#define system_process_order(left, right) ((left).pid <= (right).pid ? -1 : 1)
-
-static HOT bool system_snapshot_processes(system_snapshot address_to sample)
+static HOT bool system_snapshot_processes(system_snapshot address_to sample,
+                                          bool owners)
 {
         file_walk walk;
 
         if (!file_walk_open(address_of walk, AT_FDCWD, "/proc"))
                 return false;
 
+        sample->header.process_offset = (unsigned int)sample->records.used;
         struct linux_dirent64 address_to entry;
 
+        /* proc_pid_readdir advances through TGIDs in numeric order; namespace
+           and visibility filtering only skip entries, so consumers can merge
+           consecutive snapshots directly without sorting them again. */
         while ((entry = file_walk_next(address_of walk)))
         {
                 if (!byte_is_digit(entry->d_name[0]))
@@ -495,62 +473,72 @@ static HOT bool system_snapshot_processes(system_snapshot address_to sample)
                                        sizeof(block)) <= 0)
                         continue;
 
-                if (!memory_reserve(
-                        (address_any address_to)address_of sample->processes,
-                        address_of sample->process_room,
-                        sample->header.process_count,
-                        sample->header.process_count + 1,
-                        sizeof(struct snapshot_process), 128))
+                struct snapshot_process address_to process =
+                    system_snapshot_append(sample,
+                                           sizeof(struct snapshot_process));
+
+                if (!process)
                 {
                         file_walk_close(address_of walk);
                         return false;
                 }
 
-                if (system_process_parse(
-                        block, sample->header.page_size,
-                        sample->processes + sample->header.process_count))
+                if (system_process_parse(block, sample->header.page_size,
+                                         process))
+                {
+                        if (owners)
+                        {
+                                path_join(path, sizeof(path), entry->d_name,
+                                          "status");
+
+                                if (file_slurp_once_at(walk.handle, path, block,
+                                                       sizeof(block)) > 0)
+                                {
+                                        string_address uid = string_search(
+                                            block, "\nUid:");
+
+                                        if (uid)
+                                        {
+                                                uid += 5;
+                                                process->uid = (unsigned int)
+                                                    system_field_unsigned(
+                                                        address_of uid);
+                                        }
+                                }
+                        }
+
                         sample->header.process_count++;
+                }
+                else
+                        sample->records.used -= sizeof(*process);
         }
 
         file_walk_close(address_of walk);
 
-        positive count = sample->header.process_count;
-
-        if (count > 1)
-        {
-                if (!memory_reserve(
-                        (address_any address_to)address_of sample->process_spare,
-                        address_of sample->process_spare_room, 0, count,
-                        sizeof(struct snapshot_process), 128))
-                        return false;
-
-                struct snapshot_process address_to ordered = array_merge_sort(
-                    sample->processes, sample->process_spare, count,
-                    system_process_order);
-
-                if (ordered != sample->processes)
-                        memory_copy_apart(sample->processes, ordered,
-                                          count * sizeof(*ordered));
-        }
-
         return true;
 }
 
-#undef system_process_order
-
 static HOT bool system_snapshot_take(system_snapshot address_to sample,
-                                     unsigned int flags)
+                                     unsigned int flags, bool process_owners)
 {
         memory_fill(address_of sample->header, 0, sizeof(sample->header));
         sample->header.version = SPARK_SNAPSHOT_VERSION;
         sample->header.flags = flags;
-        sample->header.page_size = (unsigned int)system_page_size();
 
         unsigned int kernel_flags =
             flags & (SPARK_SNAPSHOT_SYSTEM | SPARK_SNAPSHOT_CPU |
                      SPARK_SNAPSHOT_NETWORK);
-        bool accelerated = kernel_flags &&
-                           system_snapshot_accelerated(sample, kernel_flags);
+        bool accelerated = system_snapshot_accelerated(sample, kernel_flags);
+
+        if (!accelerated)
+        {
+                sample->records.used = sizeof(struct snapshot_header);
+                sample->header.page_size = (unsigned int)system_page_size();
+                sample->header.monotonic_ns = system_clock_ns(1);
+                sample->header.realtime_seconds = system_clock_ns(0) /
+                                                   SYSTEM_NANOSECONDS;
+                sample->header.uptime_ns = system_clock_ns(7);
+        }
 
         if (!accelerated && (flags & SPARK_SNAPSHOT_SYSTEM) &&
             !system_snapshot_system(sample))
@@ -562,9 +550,19 @@ static HOT bool system_snapshot_take(system_snapshot address_to sample,
             !system_snapshot_network(sample))
                 return false;
         if ((flags & SPARK_SNAPSHOT_PROCESS) &&
-            !system_snapshot_processes(sample))
+            !system_snapshot_processes(sample, process_owners))
                 return false;
 
         sample->header.flags = flags;
+        sample->header.bytes = (unsigned int)sample->records.used;
+        if (flags & SPARK_SNAPSHOT_CPU)
+                sample->cpus = (struct snapshot_cpu address_to)
+                    (sample->records.bytes + sample->header.cpu_offset);
+        if (flags & SPARK_SNAPSHOT_NETWORK)
+                sample->networks = (struct snapshot_network address_to)
+                    (sample->records.bytes + sample->header.network_offset);
+        if (flags & SPARK_SNAPSHOT_PROCESS)
+                sample->processes = (struct snapshot_process address_to)
+                    (sample->records.bytes + sample->header.process_offset);
         return true;
 }
