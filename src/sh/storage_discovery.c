@@ -527,18 +527,6 @@ typedef struct
         bool invert;
 } storage_findmnt_options;
 
-static string_address storage_attached_long(string_address argument,
-                                            string_address name)
-{
-        positive length = string_length(name);
-
-        if (string_compare_max(argument, name, length) ||
-            argument[length] != '=')
-                return null;
-
-        return argument + length + 1;
-}
-
 static PURE bool storage_rw_opposite(string_address options,
                                      string_address option, positive length)
 {
@@ -951,6 +939,21 @@ static PURE bool storage_findmnt_match(storage_mount address_to mount,
 b32 storage_findmnt(positive argc, string_address address_to argv,
                     writer output, writer diagnostic)
 {
+        static const storage_argument_name arguments[] = {
+            STORAGE_ARGUMENT("noheadings", 'n'),
+            STORAGE_ARGUMENT("raw", 'r'),
+            STORAGE_ARGUMENT("list", 'l'),
+            STORAGE_ARGUMENT("nofsroot", 'v'),
+            STORAGE_ARGUMENT("pairs", 'P'),
+            STORAGE_ARGUMENT("first-only", 'f'),
+            STORAGE_ARGUMENT("invert", 'i'),
+            STORAGE_ARGUMENT("source", 'S'),
+            STORAGE_ARGUMENT("target", 'T'),
+            STORAGE_ARGUMENT("mountpoint", 'M'),
+            STORAGE_ARGUMENT("types", 't'),
+            STORAGE_ARGUMENT("options", 'O'),
+            STORAGE_ARGUMENT("output", 'o'),
+        };
         storage_findmnt_options options = {
             .columns = {STORAGE_TARGET, STORAGE_SOURCE,
                         STORAGE_FSTYPE, STORAGE_OPTIONS},
@@ -960,13 +963,17 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         positive query_id = 0;
         bool have_query_id = false;
         positive widths[STORAGE_COLUMN_MAX] = {0};
+        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        string_address value;
+        b32 option;
 
-        for (positive at = 1; at < argc; at++)
+        while ((option = storage_argument_next(
+                    address_of taking, (string_address)"nrlvPfiSTMtoO",
+                    (string_address)"STMtoO", arguments,
+                    array_count(arguments), address_of value)) !=
+               STORAGE_ARGUMENT_END)
         {
-                string_address word = argv[at];
-                string_address attached;
-
-                if (word[0] != '-' || !word[1])
+                if (option == STORAGE_ARGUMENT_OPERAND)
                 {
                         if (options.operand)
                         {
@@ -975,238 +982,59 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                 return 1;
                         }
 
-                        options.operand = *word ? word : (string_address) "/";
+                        options.operand = *value ? value : (string_address) "/";
                         continue;
                 }
 
-                if (!string_compare(word, (string_address) "--"))
+                if (option == STORAGE_ARGUMENT_MISSING)
                 {
-                        if (++at < argc)
-                        {
-                                options.operand = *argv[at] ? argv[at] :
-                                                               (string_address) "/";
-                                at++;
-                        }
-
-                        if (at != argc)
-                        {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: too many arguments\n");
-                                return 1;
-                        }
-
-                        break;
+                        storage_write_text(diagnostic,
+                            (string_address) "findmnt: option needs an argument\n");
+                        return 1;
                 }
 
-                if (!string_compare(word, (string_address) "--noheadings"))
-                {
+                if (option == 'n')
                         options.no_headings = true;
-                        continue;
-                }
-                if (!string_compare(word, (string_address) "--raw"))
-                {
+                else if (option == 'r')
                         options.raw = true;
-                        continue;
-                }
-                if (!string_compare(word, (string_address) "--list"))
-                        continue;
-                if (!string_compare(word, (string_address) "--nofsroot"))
-                {
+                else if (option == 'v')
                         options.no_fsroot = true;
-                        continue;
-                }
-                if (!string_compare(word, (string_address) "--pairs"))
+                else if (option == 'l')
+                        ; /* This implementation is already list-shaped. */
+                else if (option == 'P')
                 {
                         options.pairs = true;
                         options.no_headings = true;
-                        continue;
                 }
-                if (!string_compare(word, (string_address) "--first-only"))
-                {
+                else if (option == 'f')
                         options.first_only = true;
-                        continue;
-                }
-                if (!string_compare(word, (string_address) "--invert"))
-                {
+                else if (option == 'i')
                         options.invert = true;
-                        continue;
-                }
-
-                attached = storage_attached_long(
-                    word, (string_address) "--source");
-                if (attached)
+                else if (option == 'S')
+                        options.source = value;
+                else if (option == 'T' || option == 'M')
                 {
-                        options.source = attached;
-                        continue;
-                }
-                attached = storage_attached_long(
-                    word, (string_address) "--target");
-                if (attached)
-                {
-                        options.target = *attached ? attached :
-                                                     (string_address) "/";
-                        options.path_query = true;
-                        continue;
-                }
-                attached = storage_attached_long(
-                    word, (string_address) "--mountpoint");
-                if (attached)
-                {
-                        options.target = *attached ? attached :
-                                                     (string_address) "/";
-                        options.mountpoint_query = true;
-                        continue;
-                }
-                attached = storage_attached_long(
-                    word, (string_address) "--types");
-                if (attached)
-                {
-                        options.type = attached;
-                        continue;
-                }
-                attached = storage_attached_long(
-                    word, (string_address) "--options");
-                if (attached)
-                {
-                        options.option_filter = attached;
-                        continue;
-                }
-                attached = storage_attached_long(
-                    word, (string_address) "--output");
-                if (attached)
-                {
-                        if (!storage_columns(attached, address_of options))
-                        {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: unsupported output column\n");
-                                return 1;
-                        }
-                        continue;
-                }
-                if (!string_compare(word, (string_address) "--source") ||
-                    !string_compare(word, (string_address) "--target") ||
-                    !string_compare(word, (string_address) "--types") ||
-                    !string_compare(word, (string_address) "--output") ||
-                    !string_compare(word, (string_address) "--mountpoint") ||
-                    !string_compare(word, (string_address) "--options"))
-                {
-                        string_address option = word;
-                        string_address value;
-
-                        if (++at >= argc)
-                        {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: option needs an argument\n");
-                                return 1;
-                        }
-                        value = argv[at];
-
-                        if (!string_compare(option,
-                                            (string_address) "--source"))
-                                options.source = value;
-                        else if (!string_compare(option,
-                                                 (string_address) "--target"))
-                        {
-                                options.target = *value ? value :
-                                                          (string_address) "/";
+                        options.target = *value ? value : (string_address) "/";
+                        if (option == 'T')
                                 options.path_query = true;
-                        }
-                        else if (!string_compare(option,
-                                                 (string_address) "--mountpoint"))
-                        {
-                                options.target = *value ? value :
-                                                          (string_address) "/";
-                                options.mountpoint_query = true;
-                        }
-                        else if (!string_compare(option,
-                                                 (string_address) "--types"))
-                                options.type = value;
-                        else if (!string_compare(option,
-                                                 (string_address) "--options"))
-                                options.option_filter = value;
-                        else if (!storage_columns(value, address_of options))
-                        {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: unsupported output column\n");
-                                return 1;
-                        }
-
-                        continue;
-                }
-
-                for (positive letter = 1; word[letter]; letter++)
-                {
-                        string_address value;
-
-                        if (word[letter] == 'n')
-                                options.no_headings = true;
-                        else if (word[letter] == 'r')
-                                options.raw = true;
-                        else if (word[letter] == 'v')
-                                options.no_fsroot = true;
-                        else if (word[letter] == 'l')
-                                ; /* This implementation is already list-shaped. */
-                        else if (word[letter] == 'P')
-                        {
-                                options.pairs = true;
-                                options.no_headings = true;
-                        }
-                        else if (word[letter] == 'f')
-                                options.first_only = true;
-                        else if (word[letter] == 'i')
-                                options.invert = true;
-                        else if (word[letter] == 'S' || word[letter] == 'T' ||
-                                 word[letter] == 'M' ||
-                                 word[letter] == 't' || word[letter] == 'o' ||
-                                 word[letter] == 'O')
-                        {
-                                /* storage_option_value expects the option at
-                                   word[1]; attached values are handled here. */
-                                if (word[letter + 1])
-                                        value = word + letter + 1;
-                                else if (at + 1 < argc)
-                                        value = argv[++at];
-                                else
-                                {
-                                        storage_write_text(diagnostic,
-                                            (string_address) "findmnt: option needs an argument\n");
-                                        return 1;
-                                }
-
-                                if (word[letter] == 'S')
-                                        options.source = value;
-                                else if (word[letter] == 'T')
-                                {
-                                        options.target = *value ? value :
-                                                                  (string_address) "/";
-                                        options.path_query = true;
-                                }
-                                else if (word[letter] == 'M')
-                                {
-                                        options.target = *value ? value :
-                                                                  (string_address) "/";
-                                        options.mountpoint_query = true;
-                                }
-                                else if (word[letter] == 't')
-                                        options.type = value;
-                                else if (word[letter] == 'O')
-                                        options.option_filter = value;
-                                else if (!storage_columns(value,
-                                                          address_of options))
-                                {
-                                        storage_write_text(diagnostic,
-                                            (string_address) "findmnt: unsupported output column\n");
-                                        return 1;
-                                }
-
-                                break;
-                        }
                         else
-                        {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: unsupported option\n");
-                                return 1;
-                        }
+                                options.mountpoint_query = true;
+                }
+                else if (option == 't')
+                        options.type = value;
+                else if (option == 'O')
+                        options.option_filter = value;
+                else if (option != 'o')
+                {
+                        storage_write_text(diagnostic,
+                            (string_address) "findmnt: unsupported option\n");
+                        return 1;
+                }
+                else if (!storage_columns(value, address_of options))
+                {
+                        storage_write_text(diagnostic,
+                            (string_address) "findmnt: unsupported output column\n");
+                        return 1;
                 }
         }
 
@@ -1382,72 +1210,48 @@ static fn storage_mountpoint_error(writer diagnostic, bool quiet,
 b32 storage_mountpoint(positive argc, string_address address_to argv,
                        writer output, writer diagnostic)
 {
+        static const storage_argument_name options[] = {
+            STORAGE_ARGUMENT("quiet", 'q'),
+            STORAGE_ARGUMENT("fs-devno", 'd'),
+            STORAGE_ARGUMENT("devno", 'x'),
+            STORAGE_ARGUMENT("nofollow", 'N'),
+        };
         bool quiet = false;
         bool fs_devno = false;
         bool devno = false;
         bool nofollow = false;
         string_address path = null;
+        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        string_address value;
+        b32 option;
 
-        for (positive at = 1; at < argc; at++)
+        while ((option = storage_argument_next(
+                    address_of taking, (string_address)"qdx",
+                    (string_address)"", options, array_count(options),
+                    address_of value)) != STORAGE_ARGUMENT_END)
         {
-                string_address argument = argv[at];
-
-                if (!string_compare(argument, (string_address) "--quiet"))
+                if (option == 'q')
                         quiet = true;
-                else if (!string_compare(argument,
-                                         (string_address) "--fs-devno"))
+                else if (option == 'd')
                         fs_devno = true;
-                else if (!string_compare(argument, (string_address) "--devno"))
+                else if (option == 'x')
                         devno = true;
-                else if (!string_compare(argument,
-                                         (string_address) "--nofollow"))
+                else if (option == 'N')
                         nofollow = true;
-                else if (!string_compare(argument, (string_address) "--"))
+                else if (option == STORAGE_ARGUMENT_OPERAND)
                 {
-                        if (++at < argc)
-                        {
-                                if (path || at + 1 != argc)
-                                {
-                                        storage_write_text(diagnostic,
-                                            (string_address) "mountpoint: too many paths\n");
-                                        return 1;
-                                }
-
-                                path = argv[at++];
-                        }
-
-                        if (at != argc)
+                        if (path)
                         {
                                 storage_write_text(diagnostic,
                                     (string_address) "mountpoint: too many paths\n");
                                 return 1;
                         }
-                        break;
+                        path = value;
                 }
-                else if (argument[0] == '-' && argument[1])
-                {
-                        for (positive letter = 1; argument[letter]; letter++)
-                        {
-                                if (argument[letter] == 'q')
-                                        quiet = true;
-                                else if (argument[letter] == 'd')
-                                        fs_devno = true;
-                                else if (argument[letter] == 'x')
-                                        devno = true;
-                                else
-                                {
-                                        storage_write_text(diagnostic,
-                                            (string_address) "mountpoint: unsupported option\n");
-                                        return 1;
-                                }
-                        }
-                }
-                else if (!path)
-                        path = argv[at];
                 else
                 {
                         storage_write_text(diagnostic,
-                            (string_address) "mountpoint: too many paths\n");
+                            (string_address) "mountpoint: unsupported option\n");
                         return 1;
                 }
         }

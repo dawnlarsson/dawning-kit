@@ -617,31 +617,50 @@ static bool env_declare(string_address name, positive length)
         return true;
 }
 
-static fn env_declare_restore(string_address name, bool declared)
+/* Declaration and export ownership are the same reversible bit transition.
+   The third argument chooses the bit and whether the environment cache is
+   affected; all cell creation and empty-cell reclamation stays in one path. */
+static fn env_mark_restore(string_address name, bool enabled, bool export_mark)
 {
         positive length = string_length(name);
-        positive found = env_find_span(name, length);
+        positive hash = env_name_hash(name, length);
+        positive found = env_find_hashed_span(name, length, hash);
 
-        if (declared)
+        if (enabled)
         {
-                if (found < shell_var_count)
-                        shell_vars[found].declared = true;
-                else
-                        env_declare(name, length);
+                env_variable address_to entry =
+                    found < shell_var_count
+                        ? shell_vars + found
+                        : env_export_take_hashed(name, length, hash);
 
-                return;
+                if (entry)
+                {
+                        if (export_mark)
+                                entry->permanent = true;
+                        else
+                                entry->declared = true;
+                }
         }
-
-        if (found < shell_var_count)
+        else if (found < shell_var_count)
         {
-                shell_vars[found].declared = false;
+                env_variable address_to entry = shell_vars + found;
 
-                if (!shell_vars[found].permanent &&
-                    !shell_vars[found].temporary &&
-                    !env_variable_has_value(shell_vars + found))
+                if (export_mark)
+                        entry->permanent = false;
+                else
+                        entry->declared = false;
+
+                if (!entry->permanent && !entry->temporary &&
+                    !entry->declared && !env_variable_has_value(entry))
                         env_variable_drop(found);
         }
+
+        if (export_mark)
+                shell_envp_dirty = true;
 }
+
+#define env_declare_restore(name, enabled)                                  \
+        env_mark_restore((name), (enabled), false)
 
 static bool env_export_mark_span(const_string name, positive length)
 {
@@ -660,34 +679,8 @@ static bool env_export_mark(string_address name)
         return env_export_mark_span(name, string_length(name));
 }
 
-static fn env_export_restore(string_address name, bool exported)
-{
-        positive length = string_length(name);
-        positive hash = env_name_hash(name, length);
-        positive found = env_find_hashed_span(name, length, hash);
-
-        if (exported)
-        {
-                env_variable address_to entry =
-                    found < shell_var_count
-                        ? shell_vars + found
-                        : env_export_take_hashed(name, length, hash);
-
-                if (entry)
-                        entry->permanent = true;
-        }
-        else if (found < shell_var_count)
-        {
-                shell_vars[found].permanent = false;
-
-                if (!shell_vars[found].temporary &&
-                    !shell_vars[found].declared &&
-                    !env_variable_has_value(shell_vars + found))
-                        env_variable_drop(found);
-        }
-
-        shell_envp_dirty = true;
-}
+#define env_export_restore(name, enabled)                                   \
+        env_mark_restore((name), (enabled), true)
 
 static bool env_export_temporary(string_address assignment)
 {

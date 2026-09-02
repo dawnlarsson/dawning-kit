@@ -54,16 +54,6 @@ static fn dd_info_caught(b32 number)
         dd_info_asked = 1;
 }
 
-// Restarting, so a read that a report interrupted goes back to waiting rather
-// than coming back short and being counted as a partial record.
-static fn dd_listen(b32 number)
-{
-        positive action[4] = {(positive)dd_info_caught, SIGNAL_CATCH_FLAGS,
-                              SIGNAL_CATCH_RESTORER, 0};
-
-        system_signal_action(number, address_of action, 0, 8);
-}
-
 static fn dd_say_number(positive value)
 {
         p8 digits[24];
@@ -636,7 +626,10 @@ static b32 tools_dd(void)
         if (!ibuf || !obuf || !converted)
                 return 1;
 
-        dd_listen(DD_SIGNAL_INFO);
+        /* Restart a read interrupted by the report signal, so a short read is
+           not mistaken for a partial input record. */
+        system_signal_install(DD_SIGNAL_INFO, (positive)dd_info_caught,
+                              SIGNAL_CATCH_FLAGS, SIGNAL_CATCH_RESTORER, null);
 
         if (skip)
         {

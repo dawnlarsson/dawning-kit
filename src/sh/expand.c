@@ -4997,64 +4997,37 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         literal metacharacter, so preserving that distinction needs no second
         pattern language.
 */
-RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
+/* Glob and ERE operands preserve quoted metacharacters with the same encoder.
+   Two machine-word sets keep membership constant-time without a callback or
+   a 256-byte table; ERE adds to the four metacharacters glob already owns. */
+static CONST bool expand_quoted_metacharacter(p8 value, bool regex)
 {
-        positive room = 1;
-        positive at;
-        p8 address_to result;
-        positive used = 0;
+        const p64 common_low = ((p64)1 << '*') | ((p64)1 << '?');
+        const p64 common_high = ((p64)1 << ('[' - 64)) |
+                                ((p64)1 << ('\\' - 64));
+        const p64 regex_low = ((p64)1 << '$') | ((p64)1 << '(') |
+                              ((p64)1 << ')') | ((p64)1 << '+') |
+                              ((p64)1 << '.');
+        const p64 regex_high = ((p64)1 << (']' - 64)) |
+                               ((p64)1 << ('^' - 64)) |
+                               ((p64)1 << ('{' - 64)) |
+                               ((p64)1 << ('|' - 64)) |
+                               ((p64)1 << ('}' - 64));
+        p64 bit;
 
-        if (!expand_word_ready(word))
-                return (string_address) "";
+        if (value >= 128)
+                return false;
 
-        for (at = 0; at < expand_length; at++)
-        {
-                p8 value = expand_text[at];
+        bit = (p64)1 << (value & 63);
 
-                room++;
+        if (bit & (value < 64 ? common_low : common_high))
+                return true;
 
-                if (expand_mark[at] == MARK_QUOTED &&
-                    (value == '*' || value == '?' || value == '[' || value == '\\'))
-                        room++;
-        }
-
-        result = shell_store_take(address_of expand_store, room);
-
-        if (!result)
-        {
-                expand_overflow = true;
-                expand_too_long(word);
-                return (string_address) "";
-        }
-
-        for (at = 0; at < expand_length; at++)
-        {
-                p8 value = expand_text[at];
-
-                if (expand_mark[at] == MARK_QUOTED &&
-                    (value == '*' || value == '?' || value == '[' || value == '\\'))
-                        result[used++] = '\\';
-
-                result[used++] = value;
-        }
-
-        result[used] = end;
-
-        return result;
+        return regex && (bit & (value < 64 ? regex_low : regex_high));
 }
 
-// Quoted pieces of a [[ string =~ regex ]] right hand side are literal.
-// Translate that byte-level distinction into ERE backslashes before the
-// expander's quote marks disappear.
-static CONST bool expand_regex_metacharacter(p8 value)
-{
-        return value == '.' || value == '^' || value == '$' || value == '*' ||
-               value == '+' || value == '?' || value == '(' || value == ')' ||
-               value == '[' || value == ']' || value == '{' || value == '}' ||
-               value == '|' || value == '\\';
-}
-
-RETURNS_NONNULL string_address shell_expand_regex(string_address word)
+static RETURNS_NONNULL string_address shell_expand_quoted(
+    string_address word, bool regex)
 {
         positive room = 1;
         positive at;
@@ -5072,7 +5045,7 @@ RETURNS_NONNULL string_address shell_expand_regex(string_address word)
                 room++;
 
                 if (expand_mark[at] == MARK_QUOTED &&
-                    expand_regex_metacharacter(expand_text[at]))
+                    expand_quoted_metacharacter(expand_text[at], regex))
                 {
                         if (room == positive_max)
                                 break;
@@ -5094,7 +5067,7 @@ RETURNS_NONNULL string_address shell_expand_regex(string_address word)
                 p8 value = expand_text[at];
 
                 if (expand_mark[at] == MARK_QUOTED &&
-                    expand_regex_metacharacter(value))
+                    expand_quoted_metacharacter(value, regex))
                         result[used++] = '\\';
 
                 result[used++] = value;
@@ -5102,4 +5075,15 @@ RETURNS_NONNULL string_address shell_expand_regex(string_address word)
 
         result[used] = end;
         return result;
+}
+
+RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
+{
+        return shell_expand_quoted(word, false);
+}
+
+// Quoted pieces of a [[ string =~ regex ]] right hand side are literal.
+RETURNS_NONNULL string_address shell_expand_regex(string_address word)
+{
+        return shell_expand_quoted(word, true);
 }

@@ -8266,35 +8266,6 @@ static bool sed_option_seen(p8 letter, string_address value)
         return true;
 }
 
-/*
-        Where -i writes before it is allowed to be the file.
-
-        Beside the original rather than in a temporary directory, because the
-        rename at the end has to stay inside one filesystem to be a rename at
-        all. renameat2 rather than renameat, for the reason file.c gives where
-        mv does the same thing: riscv64 never had renameat, and a flags word
-        of zero is the same operation.
-*/
-static bool sed_temporary(string_address name, p8 address_to into, positive slot)
-{
-        string_address last = string_last_of(name, '/');
-        positive cut = last ? (positive)(last - name) + 1 : 0;
-
-        if (cut + 24 >= TEXT_PATH_MAX)
-                return false;
-
-        memory_copy(into, name, cut);
-
-        positive at = cut;
-        positive value = (positive)system_call_1(syscall(getpid), 0) * 31 + slot;
-
-        into[at++] = 's';
-        into[at++] = 'e';
-        into[at++] = 'd';
-        at += positive_into_string(into + at, value);
-        return true;
-}
-
 static b32 text_sed()
 {
         b32 leaving = -1;
@@ -8363,6 +8334,9 @@ static b32 text_sed()
                 return text_refuse(null, "no input files", 4);
 
         b32 inputs = text_input_count();
+        positive temporary_nonce = sed_in_place
+            ? (positive)system_call_1(syscall(getpid), 0) * 31
+            : 0;
 
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
@@ -8391,20 +8365,19 @@ static b32 text_sed()
 
                 if (sed_in_place)
                 {
-                        if (!sed_temporary(name, temporary, (positive)i))
-                        {
-                                text_close();
-                                return text_refuse(
-                                    name, "cannot make a temporary file beside", 4);
-                        }
-
-                        // O_EXCL, so a name that is somehow already taken is a
-                        // failure rather than somebody else's file truncated.
-                        written = text_open_handle(temporary, 01 | 0100 | 0200, 0600);
+                        written = file_temporary_open(
+                            name, temporary, TEXT_PATH_MAX,
+                            (string_address)"sed", 3,
+                            temporary_nonce + (positive)i * 64, 64, 0600);
 
                         if (written < 0)
                         {
                                 text_close();
+                                if (!temporary[0])
+                                        return text_refuse(
+                                            name,
+                                            "cannot make a temporary file beside",
+                                            4);
                                 return text_refuse(temporary, "cannot create", 4);
                         }
 

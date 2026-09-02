@@ -174,25 +174,20 @@ static PURE string_address system_field_start(string_address at)
         return at;
 }
 
-static positive system_field_unsigned(string_address address_to at)
-{
-        string_address here = system_field_start(address_to at);
-        positive used = 0;
-        positive value = string_digits(here, address_of used);
+#define SYSTEM_FIELD(name, type, parse)                                     \
+        static type name(string_address address_to at)                      \
+        {                                                                   \
+                string_address here = system_field_start(address_to at);    \
+                positive used = 0;                                          \
+                type value = parse(here, address_of used);                  \
+                                                                            \
+                address_to at = here + used;                                \
+                return value;                                               \
+        }
 
-        address_to at = here + used;
-        return value;
-}
-
-static bipolar system_field_signed(string_address address_to at)
-{
-        string_address here = system_field_start(address_to at);
-        positive used = 0;
-        bipolar value = string_bipolar(here, address_of used);
-
-        address_to at = here + used;
-        return value;
-}
+SYSTEM_FIELD(system_field_unsigned, positive, string_digits)
+SYSTEM_FIELD(system_field_signed, bipolar, string_bipolar)
+#undef SYSTEM_FIELD
 
 static fn system_fields_pass(string_address address_to at, positive count)
 {

@@ -431,14 +431,6 @@ static fn monitor_caught(b32 number)
         monitor_stopping = 1;
 }
 
-static fn monitor_listen(b32 number)
-{
-        positive action[4] = {(positive)monitor_caught, SIGNAL_CATCH_FLAGS,
-                              SIGNAL_CATCH_RESTORER, 0};
-
-        system_signal_action(number, address_of action, 0, 8);
-}
-
 static b32 monitor_sleep(p64 address_to span)
 {
         p64 left[2] = {span[0], span[1]};
@@ -497,9 +489,12 @@ static HOT b32 tools_monitor()
         b32 status = 0;
 
         monitor_stopping = 0;
-        monitor_listen(1);
-        monitor_listen(2);
-        monitor_listen(15);
+        system_signal_install(1, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, null);
+        system_signal_install(2, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, null);
+        system_signal_install(15, (positive)monitor_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, null);
         text_put_string("\033[?1049h\033[?25l\033[2J\033[H\033[1m monitor\033[0m  sampling...\033[K");
         text_flush();
 

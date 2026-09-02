@@ -1224,44 +1224,36 @@ static string_address awk_ofmt();
 static awk_text address_to awk_sprintf(string_address format, positive length,
                                        awk_value address_to arguments, b32 count);
 
-static fn awk_value_clear(awk_value address_to which)
-{
-        awk_text_drop(which->text);
-        which->text = null;
-        which->number = 0;
-        which->state = AWK_UNSET;
-}
-
-static fn awk_set_number(awk_value address_to which, decimal number)
-{
-        awk_text_drop(which->text);
-        which->text = null;
-        which->number = number;
-        which->state = AWK_HAS_NUMBER;
-}
-
-// Takes the reference the caller was holding.
-static fn awk_set_text(awk_value address_to which, awk_text address_to text)
+/* Every value replacement owns the same text-reference transition.  Keep the
+   invariant once and force the four typed entry shapes back into their hot
+   callers, where the constant state and null/zero arguments disappear. */
+static inline INLINE fn awk_value_set(awk_value address_to which,
+                                      awk_text address_to text,
+                                      decimal number, p8 state)
 {
         awk_text_drop(which->text);
         which->text = text;
-        which->number = 0;
-        which->state = AWK_HAS_TEXT;
+        which->number = number;
+        which->state = state;
 }
+
+#define awk_value_clear(which)                                              \
+        awk_value_set((which), null, 0, AWK_UNSET)
+#define awk_set_number(which, number)                                       \
+        awk_value_set((which), null, (number), AWK_HAS_NUMBER)
+
+// Takes the reference the caller was holding.
+#define awk_set_text(which, text)                                           \
+        awk_value_set((which), (text), 0, AWK_HAS_TEXT)
 
 static fn awk_set_bytes(awk_value address_to which, string_address from, positive length)
 {
         awk_set_text(which, awk_text_new(from, length));
 }
 
-// What came from outside, which is a string that may also be a number.
-static fn awk_set_input(awk_value address_to which, awk_text address_to text)
-{
-        awk_text_drop(which->text);
-        which->text = text;
-        which->number = 0;
-        which->state = AWK_HAS_TEXT | AWK_INPUT;
-}
+// What came from outside is a string which may also be a number.
+#define awk_set_input(which, text)                                          \
+        awk_value_set((which), (text), 0, AWK_HAS_TEXT | AWK_INPUT)
 
 static fn awk_set_input_bytes(awk_value address_to which, string_address from, positive length)
 {
@@ -4347,42 +4339,36 @@ static awk_node address_to awk_unary()
         return awk_power_level();
 }
 
-static awk_node address_to awk_multiply_level()
-{
-        awk_node address_to node = awk_unary();
-
-        while (awk_token == T_TIMES || awk_token == T_DIVIDE || awk_token == T_MODULO)
-        {
-                awk_node address_to made = awk_node_new(N_ARITH);
-
-                made->sub = (p8)(awk_token == T_TIMES ? '*'
-                                                      : (awk_token == T_DIVIDE ? '/' : '%'));
-                awk_next_token();
-                made->a = node;
-                made->b = awk_unary();
-                node = made;
+/* The two left-associative arithmetic precedence levels are one parser
+   transition.  Conditions and operator maps remain literal at each expansion
+   so the compiler sees the same specialized loops as hand-written bodies. */
+#define AWK_ARITH_LEVEL(name, lower, accepts, operation)                     \
+        static awk_node address_to name()                                   \
+        {                                                                   \
+                awk_node address_to node = lower();                         \
+                                                                            \
+                while (accepts)                                             \
+                {                                                           \
+                        awk_node address_to made = awk_node_new(N_ARITH);    \
+                                                                            \
+                        made->sub = (p8)(operation);                         \
+                        awk_next_token();                                   \
+                        made->a = node;                                     \
+                        made->b = lower();                                  \
+                        node = made;                                        \
+                }                                                           \
+                                                                            \
+                return node;                                                \
         }
 
-        return node;
-}
-
-static awk_node address_to awk_add_level()
-{
-        awk_node address_to node = awk_multiply_level();
-
-        while (awk_token == T_PLUS || awk_token == T_MINUS)
-        {
-                awk_node address_to made = awk_node_new(N_ARITH);
-
-                made->sub = (p8)(awk_token == T_PLUS ? '+' : '-');
-                awk_next_token();
-                made->a = node;
-                made->b = awk_multiply_level();
-                node = made;
-        }
-
-        return node;
-}
+AWK_ARITH_LEVEL(awk_multiply_level, awk_unary,
+                awk_token == T_TIMES || awk_token == T_DIVIDE ||
+                    awk_token == T_MODULO,
+                awk_token == T_TIMES ? '*' : (awk_token == T_DIVIDE ? '/' : '%'))
+AWK_ARITH_LEVEL(awk_add_level, awk_multiply_level,
+                awk_token == T_PLUS || awk_token == T_MINUS,
+                awk_token == T_PLUS ? '+' : '-')
+#undef AWK_ARITH_LEVEL
 
 static awk_node address_to awk_concat_level()
 {

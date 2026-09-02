@@ -824,7 +824,9 @@ bool exec_function_unset(string_address name)
 }
 
 static b32 exec_node(b32 index);
-static b32 exec_node_kind(b32 index);
+/* Keep the large central dispatcher off A53 erratum 843419's page-edge
+   ADRP/load shape.  This alignment removes a 4 KiB linker veneer island. */
+static ARM64_ERRATUM_ALIGN b32 exec_node_kind(b32 index);
 
 static b32 exec_define(b32 index)
 {

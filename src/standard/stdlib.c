@@ -836,10 +836,7 @@ static fn stdlib_signal_unblock(b32 number)
    it is four zero words on every supported kernel ABI. */
 static inline INLINE fn process_signal_default(b32 number)
 {
-        positive action[4] = {0, 0, 0, 0};
-
-        system_signal_action(number, address_of action, 0,
-                             STDLIB_SIGNAL_SET_BYTES);
+        system_signal_install(number, 0, 0, 0, null);
 }
 
 static fn stdlib_signal_raise(b32 number)

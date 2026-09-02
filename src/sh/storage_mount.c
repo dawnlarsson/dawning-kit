@@ -572,6 +572,34 @@ static b32 storage_mount_list(writer write, writer diagnostic,
 b32 storage_mount_command(positive argc, string_address address_to argv,
                           writer write, writer diagnostic)
 {
+        static const storage_argument_name arguments[] = {
+            STORAGE_ARGUMENT("all", 'a'),
+            STORAGE_ARGUMENT("types", 't'),
+            STORAGE_ARGUMENT("options", 'o'),
+            STORAGE_ARGUMENT("fstab", 'T'),
+            STORAGE_ARGUMENT("label", 'L'),
+            STORAGE_ARGUMENT("uuid", 'U'),
+            STORAGE_ARGUMENT("source", 'S'),
+            STORAGE_ARGUMENT("target", 'X'),
+            STORAGE_ARGUMENT("read-only", 'r'),
+            STORAGE_ARGUMENT("read-write", 'w'),
+            STORAGE_ARGUMENT("bind", 'B'),
+            STORAGE_ARGUMENT("rbind", 'R'),
+            STORAGE_ARGUMENT("move", 'M'),
+            STORAGE_ARGUMENT("make-shared", '1'),
+            STORAGE_ARGUMENT("make-rshared", '2'),
+            STORAGE_ARGUMENT("make-private", '3'),
+            STORAGE_ARGUMENT("make-rprivate", '4'),
+            STORAGE_ARGUMENT("make-slave", '5'),
+            STORAGE_ARGUMENT("make-rslave", '6'),
+            STORAGE_ARGUMENT("make-unbindable", '7'),
+            STORAGE_ARGUMENT("make-runbindable", '8'),
+            STORAGE_ARGUMENT("verbose", 'v'),
+            STORAGE_ARGUMENT("no-mtab", 'n'),
+            STORAGE_ARGUMENT("no-canonicalize", 'c'),
+            STORAGE_ARGUMENT("internal-only", 'i'),
+            STORAGE_ARGUMENT("sloppy", 's'),
+        };
         string_address type = null;
         string_address fstab = (string_address)"/etc/fstab";
         string_address named_source = null;
@@ -581,274 +609,104 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         storage_mount_options options;
         positive operands = 0;
         bool all = false;
-        positive at = 1;
+        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        string_address value;
+        b32 option;
         b32 status = 1;
 
         memory_fill(address_of tag_source, 0, sizeof(tag_source));
         memory_fill(address_of options, 0, sizeof(options));
 
-        while (at < argc)
+        while ((option = storage_argument_next(
+                    address_of taking, (string_address)"arwBRMvncistoTLU",
+                    (string_address)"toTLUSX", arguments,
+                    array_count(arguments), address_of value)) !=
+               STORAGE_ARGUMENT_END)
         {
-                string_address word = argv[at++];
-                if (storage_word(word, "--"))
-                        break;
-
-                /* Short options are a getopt-style stream. Flags may be
-                   clustered; an option which takes a value consumes the
-                   rest of its word, or the following argv word when there
-                   is no rest. This is one policy for -vn, -vtnfs, -ofoo,
-                   and their unclustered spellings rather than four parsers. */
-                if (word[0] == '-' && word[1] && word[1] != '-')
+                if (option == STORAGE_ARGUMENT_OPERAND)
                 {
-                        string_address letter = word + 1;
-
-                        while (*letter)
+                        if (operands >= 2)
                         {
-                                p8 option = *letter++;
-                                string_address value;
-
-                                if (option == 'a')
-                                        all = true;
-                                else if (option == 'r')
-                                {
-                                        if (!storage_options_parse(
-                                                address_of options,
-                                                (string_address)"ro"))
-                                                goto no_memory;
-                                }
-                                else if (option == 'w')
-                                {
-                                        if (!storage_options_parse(
-                                                address_of options,
-                                                (string_address)"rw"))
-                                                goto no_memory;
-                                }
-                                else if (option == 'B')
-                                {
-                                        options.flags |= STORAGE_MS_BIND;
-                                        options.mentioned |= STORAGE_MS_BIND;
-                                }
-                                else if (option == 'R')
-                                {
-                                        options.flags |= STORAGE_MS_BIND |
-                                                         STORAGE_MS_REC;
-                                        options.mentioned |= STORAGE_MS_BIND |
-                                                             STORAGE_MS_REC;
-                                }
-                                else if (option == 'M')
-                                {
-                                        options.flags |= STORAGE_MS_MOVE;
-                                        options.mentioned |= STORAGE_MS_MOVE;
-                                }
-                                else if (option == 'v' || option == 'n' ||
-                                         option == 'c' || option == 'i' ||
-                                         option == 's')
-                                        ;
-                                else if (option == 't' || option == 'o' ||
-                                         option == 'T' || option == 'L' ||
-                                         option == 'U')
-                                {
-                                        if (*letter)
-                                        {
-                                                value = letter;
-                                                letter += string_length(letter);
-                                        }
-                                        else
-                                        {
-                                                if (at >= argc)
-                                                        goto missing_option;
-                                                value = argv[at++];
-                                        }
-
-                                        if (option == 't')
-                                                type = value;
-                                        else if (option == 'o')
-                                        {
-                                                if (!storage_options_parse(
-                                                        address_of options,
-                                                        value))
-                                                        goto no_memory;
-                                        }
-                                        else if (option == 'T')
-                                                fstab = value;
-                                        else
-                                        {
-                                                if (!storage_mount_tag(
-                                                        address_of tag_source,
-                                                        option == 'L' ?
-                                                          (string_address)"LABEL" :
-                                                          (string_address)"UUID",
-                                                        value))
-                                                        goto no_memory;
-                                                named_source = tag_source.bytes;
-                                        }
-                                }
-                                else
-                                {
-                                        string_format(diagnostic,
-                                                      "mount: unknown option: -%c\n",
-                                                      option);
-                                        goto done;
-                                }
+                                string_format(diagnostic,
+                                              "mount: too many operands\n");
+                                goto done;
                         }
-                        continue;
+                        operand[operands++] = value;
                 }
-
-                if (storage_word(word, "--all"))
+                else if (option == STORAGE_ARGUMENT_MISSING)
+                        goto missing_option;
+                else if (option == STORAGE_ARGUMENT_UNKNOWN ||
+                         ((option == 'S' || option == 'X') && !*value))
+                {
+                        if (taking.letters)
+                                string_format(diagnostic,
+                                              "mount: unknown option: -%c\n",
+                                              taking.letters[-1]);
+                        else
+                                string_format(diagnostic,
+                                              "mount: unknown option: %s\n",
+                                              taking.word);
+                        goto done;
+                }
+                else if (option == 'a')
                         all = true;
-                else if (storage_word(word, "--types"))
+                else if (option == 'r' || option == 'w')
                 {
-                        if (at >= argc)
-                                goto missing_option;
-                        type = argv[at++];
-                }
-                else if (storage_prefix(word, "--types="))
-                        type = word + sizeof("--types=") - 1;
-                else if (storage_word(word, "--options"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        if (!storage_options_parse(address_of options, argv[at++]))
+                        if (!storage_options_parse(
+                                address_of options,
+                                option == 'r' ? (string_address)"ro" :
+                                                (string_address)"rw"))
                                 goto no_memory;
                 }
-                else if (storage_prefix(word, "--options="))
+                else if (option == 'B' || option == 'R')
                 {
-                        if (!storage_options_parse(address_of options,
-                                                   word + sizeof("--options=") - 1))
-                                goto no_memory;
+                        positive flags = STORAGE_MS_BIND |
+                            (option == 'R' ? STORAGE_MS_REC : 0);
+                        options.flags |= flags;
+                        options.mentioned |= flags;
                 }
-                else if (storage_word(word, "--fstab"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        fstab = argv[at++];
-                }
-                else if (storage_word(word, "--label"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        if (!storage_mount_tag(address_of tag_source,
-                                               (string_address)"LABEL",
-                                               argv[at++]))
-                                goto no_memory;
-                        named_source = tag_source.bytes;
-                }
-                else if (storage_prefix(word, "--label="))
-                {
-                        if (!storage_mount_tag(address_of tag_source,
-                                               (string_address)"LABEL",
-                                               word + sizeof("--label=") - 1))
-                                goto no_memory;
-                        named_source = tag_source.bytes;
-                }
-                else if (storage_word(word, "--uuid"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        if (!storage_mount_tag(address_of tag_source,
-                                               (string_address)"UUID",
-                                               argv[at++]))
-                                goto no_memory;
-                        named_source = tag_source.bytes;
-                }
-                else if (storage_prefix(word, "--uuid="))
-                {
-                        if (!storage_mount_tag(address_of tag_source,
-                                               (string_address)"UUID",
-                                               word + sizeof("--uuid=") - 1))
-                                goto no_memory;
-                        named_source = tag_source.bytes;
-                }
-                else if (storage_word(word, "--source"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        named_source = argv[at++];
-                }
-                else if (storage_prefix(word, "--source=") &&
-                         word[sizeof("--source=") - 1])
-                        named_source = word + sizeof("--source=") - 1;
-                else if (storage_word(word, "--target"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        named_target = argv[at++];
-                }
-                else if (storage_prefix(word, "--target=") &&
-                         word[sizeof("--target=") - 1])
-                        named_target = word + sizeof("--target=") - 1;
-                else if (storage_word(word, "--read-only"))
-                {
-                        if (!storage_options_parse(address_of options,
-                                                   (string_address)"ro"))
-                                goto no_memory;
-                }
-                else if (storage_word(word, "--read-write"))
-                {
-                        if (!storage_options_parse(address_of options,
-                                                   (string_address)"rw"))
-                                goto no_memory;
-                }
-                else if (storage_word(word, "--bind"))
-                {
-                        options.flags |= STORAGE_MS_BIND;
-                        options.mentioned |= STORAGE_MS_BIND;
-                }
-                else if (storage_word(word, "--rbind"))
-                {
-                        options.flags |= STORAGE_MS_BIND | STORAGE_MS_REC;
-                        options.mentioned |= STORAGE_MS_BIND | STORAGE_MS_REC;
-                }
-                else if (storage_word(word, "--move"))
+                else if (option == 'M')
                 {
                         options.flags |= STORAGE_MS_MOVE;
                         options.mentioned |= STORAGE_MS_MOVE;
                 }
-                else if (storage_word(word, "--make-shared"))
-                        options.propagation = STORAGE_MS_SHARED;
-                else if (storage_word(word, "--make-rshared"))
-                        options.propagation = STORAGE_MS_SHARED | STORAGE_MS_REC;
-                else if (storage_word(word, "--make-private"))
-                        options.propagation = STORAGE_MS_PRIVATE;
-                else if (storage_word(word, "--make-rprivate"))
-                        options.propagation = STORAGE_MS_PRIVATE | STORAGE_MS_REC;
-                else if (storage_word(word, "--make-slave"))
-                        options.propagation = STORAGE_MS_SLAVE;
-                else if (storage_word(word, "--make-rslave"))
-                        options.propagation = STORAGE_MS_SLAVE | STORAGE_MS_REC;
-                else if (storage_word(word, "--make-unbindable"))
-                        options.propagation = STORAGE_MS_UNBINDABLE;
-                else if (storage_word(word, "--make-runbindable"))
-                        options.propagation = STORAGE_MS_UNBINDABLE | STORAGE_MS_REC;
-                else if (storage_word(word, "--verbose"))
-                        ;
-                else if (storage_word(word, "--no-mtab") ||
-                         storage_word(word, "--no-canonicalize") ||
-                         storage_word(word, "--internal-only") ||
-                         storage_word(word, "--sloppy"))
-                        ;
-                else if (*word == '-' && word[1])
+                else if (option == 't')
+                        type = value;
+                else if (option == 'o')
                 {
-                        string_format(diagnostic, "mount: unknown option: %s\n", word);
-                        goto done;
+                        if (!storage_options_parse(address_of options, value))
+                                goto no_memory;
                 }
-                else if (operands < 2)
-                        operand[operands++] = word;
-                else
+                else if (option == 'T')
+                        fstab = value;
+                else if (option == 'L' || option == 'U')
                 {
-                        string_format(diagnostic, "mount: too many operands\n");
-                        goto done;
+                        if (!storage_mount_tag(
+                                address_of tag_source,
+                                option == 'L' ? (string_address)"LABEL" :
+                                                (string_address)"UUID",
+                                value))
+                                goto no_memory;
+                        named_source = tag_source.bytes;
                 }
-        }
-
-        while (at < argc)
-        {
-                if (operands >= 2)
+                else if (option == 'S')
+                        named_source = value;
+                else if (option == 'X')
+                        named_target = value;
+                else if (option >= '1' && option <= '8')
                 {
-                        string_format(diagnostic, "mount: too many operands\n");
-                        goto done;
+                        static const positive propagation[] = {
+                            STORAGE_MS_SHARED,
+                            STORAGE_MS_SHARED | STORAGE_MS_REC,
+                            STORAGE_MS_PRIVATE,
+                            STORAGE_MS_PRIVATE | STORAGE_MS_REC,
+                            STORAGE_MS_SLAVE,
+                            STORAGE_MS_SLAVE | STORAGE_MS_REC,
+                            STORAGE_MS_UNBINDABLE,
+                            STORAGE_MS_UNBINDABLE | STORAGE_MS_REC,
+                        };
+                        options.propagation = propagation[option - '1'];
                 }
-                operand[operands++] = argv[at++];
         }
 
         if (named_source)
@@ -1114,6 +972,18 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
 b32 storage_umount_command(positive argc, string_address address_to argv,
                            writer write, writer diagnostic)
 {
+        static const storage_argument_name arguments[] = {
+            STORAGE_ARGUMENT("all", 'a'),
+            STORAGE_ARGUMENT("lazy", 'l'),
+            STORAGE_ARGUMENT("force", 'f'),
+            STORAGE_ARGUMENT("recursive", 'R'),
+            STORAGE_ARGUMENT("read-only", 'r'),
+            STORAGE_ARGUMENT("types", 't'),
+            STORAGE_ARGUMENT("verbose", 'v'),
+            STORAGE_ARGUMENT("no-mtab", 'n'),
+            STORAGE_ARGUMENT("no-canonicalize", 'c'),
+            STORAGE_ARGUMENT("internal-only", 'i'),
+        };
         positive flags = STORAGE_UMOUNT_NOFOLLOW;
         string_address types = null;
         string_address address_to operand = null;
@@ -1122,113 +992,56 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         bool all = false;
         bool recursive = false;
         bool read_only = false;
-        positive at = 1;
+        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        string_address value;
+        b32 option;
         storage_mount_table table;
         bool loaded;
         b32 failed = 0;
 
         (void)write;
-        while (at < argc)
+        while ((option = storage_argument_next(
+                    address_of taking, (string_address)"alfRrvncit",
+                    (string_address)"t", arguments, array_count(arguments),
+                    address_of value)) != STORAGE_ARGUMENT_END)
         {
-                string_address word = argv[at++];
-                if (storage_word(word, "--"))
-                        break;
-
-                if (word[0] == '-' && word[1] && word[1] != '-')
-                {
-                        string_address letter = word + 1;
-
-                        while (*letter)
-                        {
-                                p8 option = *letter++;
-
-                                if (option == 'a')
-                                        all = true;
-                                else if (option == 'l')
-                                        flags |= STORAGE_MNT_DETACH;
-                                else if (option == 'f')
-                                        flags |= STORAGE_MNT_FORCE;
-                                else if (option == 'R')
-                                        recursive = true;
-                                else if (option == 'r')
-                                        read_only = true;
-                                else if (option == 'v' || option == 'n' ||
-                                         option == 'c' || option == 'i')
-                                        ;
-                                else if (option == 't')
-                                {
-                                        if (*letter)
-                                        {
-                                                types = letter;
-                                                letter += string_length(letter);
-                                        }
-                                        else
-                                        {
-                                                if (at >= argc)
-                                                        goto missing_option;
-                                                types = argv[at++];
-                                        }
-                                }
-                                else
-                                {
-                                        string_format(diagnostic,
-                                                      "umount: unknown option: -%c\n",
-                                                      option);
-                                        goto failed_early;
-                                }
-                        }
-                        continue;
-                }
-
-                if (storage_word(word, "--all"))
-                        all = true;
-                else if (storage_word(word, "--lazy"))
-                        flags |= STORAGE_MNT_DETACH;
-                else if (storage_word(word, "--force"))
-                        flags |= STORAGE_MNT_FORCE;
-                else if (storage_word(word, "--recursive"))
-                        recursive = true;
-                else if (storage_word(word, "--read-only"))
-                        read_only = true;
-                else if (storage_word(word, "--types"))
-                {
-                        if (at >= argc)
-                                goto missing_option;
-                        types = argv[at++];
-                }
-                else if (storage_prefix(word, "--types="))
-                        types = word + sizeof("--types=") - 1;
-                else if (storage_word(word, "--verbose"))
-                        ;
-                else if (storage_word(word, "--no-mtab") ||
-                         storage_word(word, "--no-canonicalize") ||
-                         storage_word(word, "--internal-only"))
-                        ;
-                else if (*word == '-' && word[1])
-                {
-                        string_format(diagnostic, "umount: unknown option: %s\n", word);
-                        goto failed_early;
-                }
-                else
+                if (option == STORAGE_ARGUMENT_OPERAND)
                 {
                         if (!array_store_reserve(operand, operand_room,
                                                  operands, operands + 1, 16))
                         {
-                                string_format(diagnostic, "umount: no memory\n");
+                                string_format(diagnostic,
+                                              "umount: no memory\n");
                                 goto failed_early;
                         }
-                        operand[operands++] = word;
+                        operand[operands++] = value;
                 }
-        }
-        while (at < argc)
-        {
-                if (!array_store_reserve(operand, operand_room,
-                                         operands, operands + 1, 16))
+                else if (option == STORAGE_ARGUMENT_MISSING)
+                        goto missing_option;
+                else if (option == STORAGE_ARGUMENT_UNKNOWN)
                 {
-                        string_format(diagnostic, "umount: no memory\n");
+                        if (taking.letters)
+                                string_format(diagnostic,
+                                              "umount: unknown option: -%c\n",
+                                              taking.letters[-1]);
+                        else
+                                string_format(diagnostic,
+                                              "umount: unknown option: %s\n",
+                                              taking.word);
                         goto failed_early;
                 }
-                operand[operands++] = argv[at++];
+                else if (option == 'a')
+                        all = true;
+                else if (option == 'l')
+                        flags |= STORAGE_MNT_DETACH;
+                else if (option == 'f')
+                        flags |= STORAGE_MNT_FORCE;
+                else if (option == 'R')
+                        recursive = true;
+                else if (option == 'r')
+                        read_only = true;
+                else if (option == 't')
+                        types = value;
         }
 
         if (!all && !operands)
@@ -1287,3 +1100,5 @@ failed_early:
         array_store_release(operand, operand_room, operands);
         return 1;
 }
+
+#undef STORAGE_ARGUMENT

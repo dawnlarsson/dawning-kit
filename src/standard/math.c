@@ -2044,9 +2044,8 @@ static b32 math_reduce_quadrant(decimal value, decimal address_to reduced)
 #define MATH_COS_C14 -1.1470745597729725e-11
 #define MATH_COS_C16 4.779477332387385e-14
 
-static decimal math_sine_reduced(decimal reduced)
+static inline INLINE decimal math_sine_polynomial(decimal squared)
 {
-        decimal squared = reduced * reduced;
         decimal walked;
 
         walked = MATH_SIN_C17;
@@ -2058,15 +2057,11 @@ static decimal math_sine_reduced(decimal reduced)
         walked = MATH_SIN_C5 + squared * walked;
         walked = MATH_SIN_C3 + squared * walked;
 
-        return reduced + (reduced * squared) * walked;
+        return walked;
 }
 
-static decimal math_cosine_reduced(decimal reduced)
+static inline INLINE decimal math_cosine_polynomial(decimal squared)
 {
-        decimal squared = reduced * reduced;
-        decimal half = 0.5 * squared;
-        decimal front = 1.0 - half;
-        decimal lost = (1.0 - front) - half;
         decimal walked;
 
         walked = MATH_COS_C16;
@@ -2077,7 +2072,26 @@ static decimal math_cosine_reduced(decimal reduced)
         walked = MATH_COS_C6 + squared * walked;
         walked = MATH_COS_C4 + squared * walked;
 
-        return front + (lost + (squared * squared) * walked);
+        return walked;
+}
+
+static decimal math_sine_reduced(decimal reduced)
+{
+        decimal squared = reduced * reduced;
+
+        return reduced + (reduced * squared) *
+                             math_sine_polynomial(squared);
+}
+
+static decimal math_cosine_reduced(decimal reduced)
+{
+        decimal squared = reduced * reduced;
+        decimal half = 0.5 * squared;
+        decimal front = 1.0 - half;
+        decimal lost = (1.0 - front) - half;
+
+        return front +
+               (lost + (squared * squared) * math_cosine_polynomial(squared));
 }
 
 /*
@@ -2201,26 +2215,13 @@ static decimal math_tangent_reduced(decimal reduced, bool cotangent)
         decimal numerator_high, numerator_low;
         decimal denominator_high, denominator_low;
 
-        walked = MATH_SIN_C17;
-        walked = MATH_SIN_C15 + squared * walked;
-        walked = MATH_SIN_C13 + squared * walked;
-        walked = MATH_SIN_C11 + squared * walked;
-        walked = MATH_SIN_C9 + squared * walked;
-        walked = MATH_SIN_C7 + squared * walked;
-        walked = MATH_SIN_C5 + squared * walked;
-        walked = MATH_SIN_C3 + squared * walked;
+        walked = math_sine_polynomial(squared);
         sine_high = math_fast_two_sum(reduced, (reduced * squared) * walked,
                                       address_of sine_low);
 
         front = 1.0 - 0.5 * squared;
         lost = (1.0 - front) - 0.5 * squared;
-        walked = MATH_COS_C16;
-        walked = MATH_COS_C14 + squared * walked;
-        walked = MATH_COS_C12 + squared * walked;
-        walked = MATH_COS_C10 + squared * walked;
-        walked = MATH_COS_C8 + squared * walked;
-        walked = MATH_COS_C6 + squared * walked;
-        walked = MATH_COS_C4 + squared * walked;
+        walked = math_cosine_polynomial(squared);
         cosine_high = math_fast_two_sum(front, lost + (squared * squared) * walked,
                                         address_of cosine_low);
 

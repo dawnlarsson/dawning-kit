@@ -479,6 +479,51 @@ static string_address file_last_component(string_address path)
         return last ? last + 1 : path;
 }
 
+/* Claim an exclusive temporary name beside a destination, so the eventual
+   rename cannot cross a filesystem.  Editors and in-place text filters need
+   the same retry machine; only their marker, nonce and creation mode differ. */
+static COLD bipolar file_temporary_open(string_address path, p8 address_to into,
+                                        positive room, string_address marker,
+                                        positive marker_length, positive value,
+                                        positive attempts, positive mode)
+{
+        string_address slash = string_last_of(path, '/');
+        positive prefix = slash ? (positive)(slash - path) + 1 : 0;
+        p8 number[24];
+
+        if (!room || prefix > room || marker_length >= room - prefix)
+        {
+                if (room)
+                        into[0] = end;
+                return -ERROR_INVALID;
+        }
+
+        memory_copy_apart(into, path, prefix);
+        memory_copy_apart(into + prefix, marker, marker_length);
+
+        for (positive attempt = 0; attempt < attempts; attempt++)
+        {
+                positive length = positive_into_string(number, value + attempt);
+
+                if (length >= room - prefix - marker_length)
+                {
+                        into[0] = end;
+                        return -ERROR_INVALID;
+                }
+
+                memory_copy_end(into + prefix + marker_length, number, length);
+
+                bipolar handle = system_open_at_mode(
+                    AT_FDCWD, into, FILE_WRITE | FILE_CREATE | FILE_EXCLUSIVE,
+                    mode);
+
+                if (handle >= 0 || handle != -ERROR_EXISTS)
+                        return handle;
+        }
+
+        return -ERROR_EXISTS;
+}
+
 bipolar file_link_text(string_address path, p8 address_to into, positive limit)
 {
         bipolar length = system_read_link_at(AT_FDCWD, path, into, limit - 1);

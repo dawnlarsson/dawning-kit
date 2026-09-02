@@ -934,6 +934,32 @@ static inline INLINE p8 format_number_sign(p64 bits,
                spec->flags & FORMAT_FLAG_SPACE ? ' ' : 0;
 }
 
+/* Decimal and hexadecimal numbers have one field prefix: outside spaces,
+   sign, radix prefix, then inside zeros.  Forced inline keeps the prefix-less
+   decimal path free of even a test or empty emit. */
+static inline INLINE positive format_number_begin(
+    format_sink address_to sink, format_spec address_to spec, positive body,
+    p8 sign, address_any prefix, positive prefix_length)
+{
+        positive spaces = spec->width > body ? spec->width - body : 0;
+
+        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
+            !(spec->flags & FORMAT_FLAG_ZERO))
+                format_fill(sink, ' ', spaces);
+        if (sign)
+                format_emit(sink, address_of sign, 1);
+        if (prefix_length)
+                format_emit(sink, prefix, prefix_length);
+        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
+            (spec->flags & FORMAT_FLAG_ZERO))
+        {
+                format_fill(sink, '0', spaces);
+                spaces = 0;
+        }
+
+        return spaces;
+}
+
 /*
         The three decimal float shapes, and the field around them.
 
@@ -1093,20 +1119,7 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
         body = (sign != 0) + integer_length + (point ? 1 : 0) + fraction_length +
                exponent_length;
 
-        if (spec->width > body)
-                spaces = spec->width - body;
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT) && !(spec->flags & FORMAT_FLAG_ZERO))
-                format_fill(sink, ' ', spaces);
-
-        if (sign)
-                format_emit(sink, address_of sign, 1);
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT) && (spec->flags & FORMAT_FLAG_ZERO))
-        {
-                format_fill(sink, '0', spaces);
-                spaces = 0;
-        }
+        spaces = format_number_begin(sink, spec, body, sign, null, 0);
 
         if (style == 'e' || style == 'E')
         {
@@ -1332,22 +1345,9 @@ static fn format_hex_field(format_sink address_to sink, decimal value,
         body = (sign != 0) + 2 + 1 + (point ? 1 : 0) + nibble_count + extra +
                exponent_length;
 
-        if (spec->width > body)
-                spaces = spec->width - body;
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT) && !(spec->flags & FORMAT_FLAG_ZERO))
-                format_fill(sink, ' ', spaces);
-
-        if (sign)
-                format_emit(sink, address_of sign, 1);
-
-        format_emit(sink, (address_any)(upper ? "0X" : "0x"), 2);
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT) && (spec->flags & FORMAT_FLAG_ZERO))
-        {
-                format_fill(sink, '0', spaces);
-                spaces = 0;
-        }
+        spaces = format_number_begin(
+            sink, spec, body, sign,
+            (address_any)(upper ? "0X" : "0x"), 2);
 
         {
                 p8 first = alphabet[lead & 15];

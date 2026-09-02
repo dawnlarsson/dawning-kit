@@ -12,6 +12,15 @@
 #ifndef STANDARD_MODERN_C_LIBRARY_COMMON
 #define STANDARD_MODERN_C_LIBRARY_COMMON
 
+/* GNU ld repairs an A53 ADRP/load pair split by a 4 KiB boundary with a whole
+   veneer page.  Large functions which have actually hit that layout use one
+   shared, architecture-scoped alignment spelling. */
+#if ARM64
+#define ARM64_ERRATUM_ALIGN __attribute__((aligned(64)))
+#else
+#define ARM64_ERRATUM_ALIGN
+#endif
+
 /* Typed, unaligned loads and same-width bit casts.  __builtin_memcpy is the
    compiler's one spelling that is both alias-safe and architecture-safe. */
 #define memory_load_unaligned(type, source)                                  \
@@ -238,6 +247,18 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
         system_call_4(syscall(rt_sigaction), (positive)(number),             \
                       (positive)(action), (positive)(previous),              \
                       (positive)(set_bytes))
+
+/* Linux gives every signal disposition the same four-word record.  Keep that
+   ABI shape at the syscall floor: callers choose the handler, flags and
+   restorer without rebuilding the record in each subsystem. */
+static inline INLINE bool system_signal_install(
+    b32 number, positive disposition, positive flags, positive restorer,
+    positive address_to previous)
+{
+        positive action[4] = {disposition, flags, restorer, 0};
+
+        return system_signal_action(number, address_of action, previous, 8) >= 0;
+}
 
 #define system_signal_mask(how, set, previous, set_bytes)                    \
         system_call_4(syscall(rt_sigprocmask), (positive)(how),              \

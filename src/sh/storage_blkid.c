@@ -1706,50 +1706,134 @@ static bool storage_blkid_visit(
         return !context->first_only;
 }
 
-static bool storage_option_value(positive argc,
-                                 string_address address_to argv,
-                                 positive address_to at,
-                                 string_address argument,
-                                 string_address address_to value)
+/* Storage commands are callable both as shell builtins and through farm
+   links, so they cannot use the process-global utility option reader.  One
+   cursor owns the equivalent argv state machine for the whole storage family:
+   short clusters, attached values, long values and the -- boundary. */
+typedef struct
 {
-        if (argument[2])
-        {
-                address_to value = argument + 2;
-                return true;
-        }
+        positive argc;
+        string_address address_to argv;
+        positive at;
+        string_address letters;
+        string_address word;
+        bool operands_only;
+} storage_arguments;
 
-        if (*at + 1 >= argc)
-                return false;
+/* Length occupies padding the generic named-byte row would leave unused, so
+   table lookup never has to rescan constant option names. */
+typedef struct
+{
+        string_address name;
+        p8 value;
+        p8 length;
+} storage_argument_name;
 
-        address_to value = argv[++*at];
-        return true;
+#define STORAGE_ARGUMENT(name, value)                                      \
+        {(string_address)(name), (value), sizeof(name) - 1}
+
+enum
+{
+        STORAGE_ARGUMENT_END,
+        STORAGE_ARGUMENT_OPERAND = 256,
+        STORAGE_ARGUMENT_UNKNOWN = -1,
+        STORAGE_ARGUMENT_MISSING = -2,
+};
+
+static PURE p8 storage_argument_long(string_address name, positive length,
+                                     const storage_argument_name address_to options,
+                                     positive count)
+{
+        for (positive at = 0; at < count; at++)
+                if (options[at].length == length &&
+                    !memory_compare(name, options[at].name, length))
+                        return options[at].value;
+
+        return 0;
 }
 
-static bool storage_long_option_value(positive argc,
-                                      string_address address_to argv,
-                                      positive address_to at,
-                                      string_address argument,
-                                      string_address name,
-                                      string_address address_to value)
+static COLD b32 storage_argument_next(
+    storage_arguments address_to taking, string_address allowed,
+    string_address valued, const storage_argument_name address_to longs,
+    positive long_count, string_address address_to value)
 {
-        positive length = string_length(name);
-
-        /* This assembly comparison stops at a short argument, so a separate
-           full argument scan is unnecessary before argument[length]. */
-        if (string_compare_max(argument, name, length))
-                return false;
-        if (!argument[length])
+        while (true)
         {
-                if (*at + 1 >= argc)
-                        return false;
-                address_to value = argv[++*at];
-                return true;
-        }
-        if (argument[length] != '=')
-                return false;
+                if (taking->letters && *taking->letters)
+                {
+                        p8 option = *taking->letters++;
 
-        address_to value = argument + length + 1;
-        return true;
+                        if (!string_first_of(allowed, option))
+                                return STORAGE_ARGUMENT_UNKNOWN;
+
+                        if (string_first_of(valued, option))
+                        {
+                                if (*taking->letters)
+                                {
+                                        address_to value = taking->letters;
+                                        taking->letters = null;
+                                }
+                                else if (taking->at < taking->argc)
+                                        address_to value =
+                                            taking->argv[taking->at++];
+                                else
+                                        return STORAGE_ARGUMENT_MISSING;
+                        }
+                        else
+                                address_to value = null;
+
+                        return option;
+                }
+
+                taking->letters = null;
+                if (taking->at >= taking->argc)
+                        return STORAGE_ARGUMENT_END;
+
+                taking->word = taking->argv[taking->at++];
+                if (taking->operands_only || taking->word[0] != '-' ||
+                    !taking->word[1])
+                {
+                        address_to value = taking->word;
+                        return STORAGE_ARGUMENT_OPERAND;
+                }
+
+                if (taking->word[1] == '-' && !taking->word[2])
+                {
+                        taking->operands_only = true;
+                        continue;
+                }
+
+                if (taking->word[1] == '-')
+                {
+                        string_address name = taking->word + 2;
+                        string_address mark = string_first_of(name, '=');
+                        positive length = mark ? (positive)(mark - name)
+                                               : string_length(name);
+                        p8 option = storage_argument_long(name, length, longs,
+                                                          long_count);
+
+                        if (!option || (mark &&
+                                        !string_first_of(valued, option)))
+                                return STORAGE_ARGUMENT_UNKNOWN;
+
+                        if (string_first_of(valued, option))
+                        {
+                                if (mark)
+                                        address_to value = mark + 1;
+                                else if (taking->at < taking->argc)
+                                        address_to value =
+                                            taking->argv[taking->at++];
+                                else
+                                        return STORAGE_ARGUMENT_MISSING;
+                        }
+                        else
+                                address_to value = null;
+
+                        return option;
+                }
+
+                taking->letters = taking->word + 1;
+        }
 }
 
 /*
@@ -1760,28 +1844,31 @@ static bool storage_long_option_value(positive argc,
 b32 storage_blkid_run(positive argc, string_address address_to argv,
                       writer output, writer error)
 {
+        static const storage_argument_name options[] = {
+            STORAGE_ARGUMENT("uuid", 'U'),
+            STORAGE_ARGUMENT("label", 'L'),
+            STORAGE_ARGUMENT("match-tag", 's'),
+            STORAGE_ARGUMENT("match-token", 't'),
+            STORAGE_ARGUMENT("output", 'o'),
+        };
         storage_blkid_context context;
         string_address inline_devices[8];
         string_address address_to devices = inline_devices;
         positive device_room = array_count(inline_devices);
         positive device_count = 0;
-        bool option_end = false;
+        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        string_address value;
+        b32 option;
 
         memory_zero(address_of context, sizeof(context));
         context.output = output;
 
-        for (positive at = 1; at < argc; at++)
+        while ((option = storage_argument_next(
+                    address_of taking, (string_address)"ULsto",
+                    (string_address)"ULsto", options, array_count(options),
+                    address_of value)) != STORAGE_ARGUMENT_END)
         {
-                string_address argument = argv[at];
-                string_address value;
-
-                if (!option_end && string_equals(argument, "--"))
-                {
-                        option_end = true;
-                        continue;
-                }
-
-                if (option_end || argument[0] != '-' || !argument[1])
+                if (option == STORAGE_ARGUMENT_OPERAND)
                 {
                         if (device_count == device_room)
                         {
@@ -1805,17 +1892,11 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                                              device_count, device_count + 1, 8))
                                         goto usage;
                         }
-                        devices[device_count++] = argument;
+                        devices[device_count++] = value;
                         continue;
                 }
 
-                if ((argument[1] == 'U' &&
-                     storage_option_value(argc, argv, address_of at, argument,
-                                          address_of value)) ||
-                    storage_long_option_value(argc, argv, address_of at,
-                                              argument,
-                                              (string_address)"--uuid",
-                                              address_of value))
+                if (option == 'U')
                 {
                         context.selector.tag = (string_address)"UUID";
                         context.selector.tag_length = 4;
@@ -1825,13 +1906,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                         continue;
                 }
 
-                if ((argument[1] == 'L' &&
-                     storage_option_value(argc, argv, address_of at, argument,
-                                          address_of value)) ||
-                    storage_long_option_value(argc, argv, address_of at,
-                                              argument,
-                                              (string_address)"--label",
-                                              address_of value))
+                if (option == 'L')
                 {
                         context.selector.tag = (string_address)"LABEL";
                         context.selector.tag_length = 5;
@@ -1841,13 +1916,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                         continue;
                 }
 
-                if ((argument[1] == 's' &&
-                     storage_option_value(argc, argv, address_of at, argument,
-                                          address_of value)) ||
-                    storage_long_option_value(argc, argv, address_of at,
-                                              argument,
-                                              (string_address)"--match-tag",
-                                              address_of value))
+                if (option == 's')
                 {
                         positive length = string_length(value);
 
@@ -1856,26 +1925,14 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                         continue;
                 }
 
-                if ((argument[1] == 't' &&
-                     storage_option_value(argc, argv, address_of at, argument,
-                                          address_of value)) ||
-                    storage_long_option_value(argc, argv, address_of at,
-                                              argument,
-                                              (string_address)"--match-token",
-                                              address_of value))
+                if (option == 't')
                 {
                         if (!storage_selector_parse(value, address_of context.selector))
                                 goto usage;
                         continue;
                 }
 
-                if ((argument[1] == 'o' &&
-                     storage_option_value(argc, argv, address_of at, argument,
-                                          address_of value)) ||
-                    storage_long_option_value(argc, argv, address_of at,
-                                              argument,
-                                              (string_address)"--output",
-                                              address_of value))
+                if (option == 'o')
                 {
                         if (string_equals(value, "value"))
                                 context.mode = STORAGE_OUTPUT_VALUE;

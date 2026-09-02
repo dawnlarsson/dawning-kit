@@ -1203,46 +1203,30 @@ static COLD bool edit_step_apply(struct edit_step address_to step,
         return true;
 }
 
-static COLD bool edit_undo()
+static COLD ARM64_ERRATUM_ALIGN bool edit_step_move(bool backward)
 {
         struct edit_step address_to step;
 
-        if (!edit_step_at)
+        if (backward ? !edit_step_at : edit_step_at >= edit_step_count)
                 return false;
 
-        edit_step_seal();
-        step = edit_steps + --edit_step_at;
+        if (backward)
+                edit_step_seal();
 
-        if (!edit_step_apply(step, true))
+        step = edit_steps + (backward ? --edit_step_at : edit_step_at++);
+
+        if (!edit_step_apply(step, backward))
         {
-                edit_step_at++;
+                if (backward)
+                        edit_step_at++;
+                else
+                        edit_step_at--;
                 return false;
         }
 
-        edit_cursors_restore(step->before, step->before_count);
-        edit_empty_file = step->before_empty;
-        edit_view_free = false;
-        edit_modified = !edit_step_saved_known || edit_step_saved != edit_step_at;
-        return true;
-}
-
-static COLD bool edit_redo()
-{
-        struct edit_step address_to step;
-
-        if (edit_step_at >= edit_step_count)
-                return false;
-
-        step = edit_steps + edit_step_at++;
-
-        if (!edit_step_apply(step, false))
-        {
-                edit_step_at--;
-                return false;
-        }
-
-        edit_cursors_restore(step->after, step->after_count);
-        edit_empty_file = step->after_empty;
+        edit_cursors_restore(backward ? step->before : step->after,
+                             backward ? step->before_count : step->after_count);
+        edit_empty_file = backward ? step->before_empty : step->after_empty;
         edit_view_free = false;
         edit_modified = !edit_step_saved_known || edit_step_saved != edit_step_at;
         return true;
@@ -3963,16 +3947,13 @@ static fn edit_key(positive key)
                 case 'z':
                         //      Ctrl+Shift+Z is redo where a terminal can say
                         //      so, and Ctrl+Z is undo everywhere.
-                        if (shift)
-                                edit_redo();
-                        else
-                                edit_undo();
+                        edit_step_move(!shift);
 
                         edit_primary_from(edit_cursor_count - 1);
                         edit_repaint_all();
                         return;
                 case 'y':
-                        edit_redo();
+                        edit_step_move(false);
                         edit_primary_from(edit_cursor_count - 1);
                         edit_repaint_all();
                         return;
@@ -4276,7 +4257,6 @@ static bool edit_flush()
 */
 #define EDIT_ENOENT 2
 #define EDIT_ENOMEM 12
-#define EDIT_EEXIST 17
 #define EDIT_PATH_MAX 4096
 
 static p8 address_to edit_read_file(string_address path,
@@ -4336,25 +4316,6 @@ static p8 address_to edit_read_file(string_address path,
         return block;
 }
 
-/* A unique-enough O_EXCL name beside the destination, so rename stays atomic. */
-static bool edit_temporary_name(p8 address_to into, positive attempt)
-{
-        string_address slash = string_last_of(edit_path, '/');
-        positive prefix = slash ? (positive)(slash - edit_path) + 1 : 0;
-        positive at = prefix;
-        positive value =
-            (positive)system_call_1(syscall(getpid), 0) * 67 + attempt;
-
-        if (prefix + 32 >= EDIT_PATH_MAX)
-                return false;
-
-        memory_copy(into, edit_path, prefix);
-        memory_copy_apart(into + at, (string_address)".moonwater-edit-", 16);
-        at += 16;
-        positive_into_string(into + at, value);
-        return true;
-}
-
 static bool edit_write_file()
 {
         b32 handle = -1;
@@ -4363,33 +4324,24 @@ static bool edit_write_file()
         p8 temporary[EDIT_PATH_MAX];
         positive length = 0;
         positive wrote;
-        positive attempt;
         bipolar synced;
         bipolar closed;
         bipolar named;
         bipolar chmodded;
         bool existed = file_look_at(edit_path, address_of facts);
         positive mode = existed ? facts.mode & 07777 : 0666;
+        positive temporary_nonce =
+            (positive)system_call_1(syscall(getpid), 0) * 67;
 
         block = edit_bytes_take(address_of length);
 
         if (!block)
                 return false;
 
-        for (attempt = 0; attempt < 64; attempt++)
-        {
-                if (!edit_temporary_name(temporary, attempt))
-                        break;
-
-                handle = system_open_at_mode(AT_FDCWD,
-                                       temporary,
-                                       FILE_WRITE | FILE_CREATE |
-                                           FILE_EXCLUSIVE,
-                                       mode);
-
-                if (handle >= 0 || handle != -EDIT_EEXIST)
-                        break;
-        }
+        handle = (b32)file_temporary_open(
+            edit_path, temporary, EDIT_PATH_MAX,
+            (string_address)".moonwater-edit-", 16, temporary_nonce, 64,
+            mode);
 
         if (handle < 0)
         {
@@ -4457,16 +4409,10 @@ static fn edit_window_changed_handler(b32 number)
 
 static bool edit_window_signal(positive address_to previous)
 {
-#if defined(__x86_64__) || defined(_M_X64)
-        positive action[4] = {(positive)edit_window_changed_handler,
-                              SIGNAL_RESTORER,
-                              SIGNAL_CATCH_RESTORER, 0};
-#else
-        positive action[4] = {(positive)edit_window_changed_handler, 0, 0, 0};
-#endif
-
-        return system_signal_action(EDIT_SIGNAL_WINCH, address_of action,
-                                    previous, 8) >= 0;
+        return system_signal_install(
+            EDIT_SIGNAL_WINCH, (positive)edit_window_changed_handler,
+            SIGNAL_CATCH_FLAGS & ~SIGNAL_RESTART, SIGNAL_CATCH_RESTORER,
+            previous);
 }
 
 static fn edit_window_signal_restore(positive address_to previous)

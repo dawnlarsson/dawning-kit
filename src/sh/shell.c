@@ -30,9 +30,7 @@
 
 fn shell_signal(b32 number, positive disposition)
 {
-        positive action[4] = {disposition, 0, 0, 0};
-
-        system_signal_action(number, address_of action, 0, 8);
+        system_signal_install(number, disposition, 0, 0, null);
 }
 
 #define shell_ignore(n) shell_signal(n, SIGNAL_IGNORE)
@@ -154,10 +152,8 @@ fn shell_catch_mode(b32 number, bool restart)
         if (!restart)
                 flags &= ~SIGNAL_RESTART;
 
-        positive action[4] = {(positive)trap_signal_caught, flags,
-                              SIGNAL_CATCH_RESTORER, 0};
-
-        system_signal_action(number, address_of action, 0, 8);
+        system_signal_install(number, (positive)trap_signal_caught, flags,
+                              SIGNAL_CATCH_RESTORER, null);
 }
 
 fn shell_catch(b32 number)

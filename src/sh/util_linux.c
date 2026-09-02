@@ -3381,10 +3381,9 @@ static b32 ul_namespace_wait(bipolar child, bool job_control)
                 if (status & 0x7f)
                 {
                         b32 signal = (b32)(status & 0x7f);
-                        positive action[4] = {0, 0, 0, 0};
 
                         log_flush();
-                        system_signal_action(signal, address_of action, 0, 8);
+                        process_signal_default(signal);
                         system_call_2(syscall(kill),
                                       system_call(syscall(getpid)), signal);
                         return 128 + signal;
