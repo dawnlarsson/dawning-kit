@@ -1291,6 +1291,21 @@ x86_kernel_vector_audit()
         printf '%s\n' '#define X86_FEATURE_ERMS 0' \
                 > "$work/x86-kernel-include/asm/cpufeatures.h"
 
+        # library.common.c is included through this umbrella by the real
+        # module.  Compiling library.c alone cannot catch a userspace-only
+        # inline body which escaped its KERNEL_MODE boundary.
+        if ! "$x86_kernel_compiler" -std=gnu11 -O2 -mno-sse -mno-sse2 \
+                -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
+                -I"$work/x86-kernel-include" \
+                -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
+                -c src/compiler_memory.c -o "$work/x86-kernel-common.o" \
+                2> "$work/x86-kernel-common.err"
+        then
+                note "the x86 KERNEL_MODE common umbrella did not compile:"
+                sed 's/^/    /' "$work/x86-kernel-common.err" | head -10
+                return 1
+        fi
+
         if ! "$x86_kernel_compiler" -std=gnu11 -O2 -mno-sse -mno-sse2 \
                 -mno-mmx -msoft-float -ffreestanding -fno-builtin -nostdlib \
                 -I"$work/x86-kernel-include" \
@@ -1382,6 +1397,21 @@ arm64_kernel_vector_audit()
                 note "arm64 kernel vector audit: NOT RUN -- no AArch64 objdump"
                 return 2
         }
+
+        # The module includes library.common.c through compiler_memory.c, not
+        # library.c directly.  Keep that full preprocessor boundary buildable
+        # before inspecting the assembly-only library beneath it.
+        if ! "$arm64_kernel_compiler" $arm64_kernel_target -std=gnu11 -O2 \
+                -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \
+                -ffreestanding -fno-builtin \
+                -nostdlib -DSTANDARD_MODERN_C_KERNEL '-DEXPORT_SYMBOL(name)=' \
+                -c src/compiler_memory.c -o "$work/arm64-kernel-common.o" \
+                2> "$work/arm64-kernel-common.err"
+        then
+                note "the ARM64 KERNEL_MODE common umbrella did not compile:"
+                sed 's/^/    /' "$work/arm64-kernel-common.err" | head -10
+                return 1
+        fi
 
         if ! "$arm64_kernel_compiler" $arm64_kernel_target -std=gnu11 -O2 \
                 -march=armv8-a -mgeneral-regs-only -mno-outline-atomics \

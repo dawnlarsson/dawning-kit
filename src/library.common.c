@@ -251,6 +251,8 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
 /* Linux gives every signal disposition the same four-word record.  Keep that
    ABI shape at the syscall floor: callers choose the handler, flags and
    restorer without rebuilding the record in each subsystem. */
+#if defined(LINUX) && !defined(KERNEL_MODE) && \
+    !defined(STANDARD_NO_PLATFORM)
 static inline INLINE bool system_signal_install(
     b32 number, positive disposition, positive flags, positive restorer,
     positive address_to previous)
@@ -259,6 +261,7 @@ static inline INLINE bool system_signal_install(
 
         return system_signal_action(number, address_of action, previous, 8) >= 0;
 }
+#endif
 
 #define system_signal_mask(how, set, previous, set_bytes)                    \
         system_call_4(syscall(rt_sigprocmask), (positive)(how),              \
