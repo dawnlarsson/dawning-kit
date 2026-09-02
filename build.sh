@@ -84,6 +84,7 @@ do_build=1
 do_clean=0
 do_usb=0
 console=0
+image=""
 
 while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -148,9 +149,20 @@ build_remote() {
         ssh -n "$host" "cd $remote && sudo env $carry sh build.sh $extra" ||
                 die "the build failed on $host"
 
-        say "Fetching the image"
-        mkdir -p dist
-        scp -q "$host:$remote/dist/bootx64.efi" dist/bootx64.efi ||
+        # The host which built the configured profile is authoritative about
+        # its export.  A stale local artifacts/.config may describe another
+        # architecture entirely (an ARM Mac commonly names kernel8.img).
+        image=$(ssh -n "$host" \
+                "cd $remote && . ./kit/common && key_one kernel_export") ||
+                die "could not identify the built image"
+        case "$image" in
+        dist/*) ;;
+        *) die "remote build reported an invalid image path: $image" ;;
+        esac
+
+        say "Fetching $image"
+        mkdir -p "$(dirname "$image")"
+        scp -q "$host:$remote/$image" "$image" ||
                 die "could not fetch the built image"
 }
 
@@ -656,11 +668,13 @@ fi
 [ "$do_usb" -eq 1 ] || [ "$do_run" -eq 1 ] || exit 0
 
 #
-#       Where the image ended up. After a local build the profile says; after
-#       a remote one there is no local config to ask, and the EFI stub image
-#       is fetched to the same place either way.
+#       Where the image ended up. A remote build sets this from its own
+#       generated configuration. A local build, or --boot without a build,
+#       asks the local configuration and finally falls back to x86 EFI.
 #
-image=$(key kernel_export 2>/dev/null || true)
+if [ -z "$image" ]; then
+        image=$(key_one kernel_export 2>/dev/null || true)
+fi
 [ -n "$image" ] || image="dist/bootx64.efi"
 
 [ -f "$image" ] ||
