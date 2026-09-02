@@ -1,5 +1,5 @@
 # Full production-function audit seal. Update only after reconciling every entry.
-sha256 02ba71d1f12de114e5db6eb7987b13b7a24790c99f58a28bfbbba34e6e608c26
+sha256 cc41efbe7b8d0e924b254b269704e20d3a8d1afc81882f8cd51a9febc5028e0d
 c_functions 2608
 library_asm 240
 library_arch_bodies 720

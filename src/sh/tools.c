@@ -3044,11 +3044,8 @@ static string_address ps_name_of(positive uid)
 static string_address ps_arguments(struct snapshot_process address_to process)
 {
         p8 path[64];
-        positive base = 6;
 
-        memory_copy_apart(path, "/proc/", base);
-        base += positive_into(path + base, process->pid);
-        string_copy(path + base, "/cmdline");
+        system_process_path(path, process->pid, null, "cmdline");
 
         positive got = 0;
         bipolar handle = text_open_handle(path, FILE_READ, 0);
@@ -3260,8 +3257,8 @@ static fn ps_draw(struct snapshot_process address_to process,
                                          : ps_state(detail, process));
                 break;
         case PS_FIELD_TIME:
-                ps_put_time(system_time_sum(process->user_ns,
-                                            process->system_ns));
+                ps_put_time(system_saturating_add(process->user_ns,
+                                                  process->system_ns));
                 break;
         case PS_FIELD_ETIME:
         {
@@ -3280,8 +3277,8 @@ static fn ps_draw(struct snapshot_process address_to process,
                                      ? ps_now - began
                                      : 0;
 
-                ps_digits(lived ? system_time_sum(process->user_ns,
-                                                  process->system_ns) /
+                ps_digits(lived ? system_saturating_add(process->user_ns,
+                                                        process->system_ns) /
                                       SYSTEM_NANOSECONDS * 100 / lived
                                 : 0);
                 break;

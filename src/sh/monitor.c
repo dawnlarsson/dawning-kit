@@ -382,9 +382,9 @@ static bool monitor_processes(system_snapshot address_to old,
                 if (before < old->header.process_count &&
                     old->processes[before].pid == process->pid)
                 {
-                        positive now = system_time_sum(
+                        positive now = system_saturating_add(
                             process->user_ns, process->system_ns);
-                        positive was = system_time_sum(
+                        positive was = system_saturating_add(
                             old->processes[before].user_ns,
                             old->processes[before].system_ns);
                         used = now >= was ? now - was : 0;

@@ -1047,14 +1047,12 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
         struct snapshot_request request;
         struct snapshot_builder build;
         struct snapshot_header *header;
-        unsigned int supported = SPARK_SNAPSHOT_SYSTEM | SPARK_SNAPSHOT_CPU |
-                                 SPARK_SNAPSHOT_NETWORK;
         long answer = 0;
 
         if (copy_from_user(&request, out, sizeof(request)))
                 return -EFAULT;
         if (request.version != SPARK_SNAPSHOT_VERSION || request.reserved ||
-            (request.flags & ~supported) ||
+            (request.flags & ~SPARK_SNAPSHOT_KERNEL) ||
             request.capacity > SPARK_SNAPSHOT_MAX_BYTES || !request.buffer)
                 return -EINVAL;
         if (request.capacity < sizeof(*header))

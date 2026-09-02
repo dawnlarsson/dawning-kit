@@ -166,11 +166,9 @@ static b32 ul_tasks(b32 pid, bool all, ul_task_action action,
         if (!all)
                 return action(pid, context);
 
-        p8 path[64] = "/proc/";
-        positive at = 6;
+        p8 path[64];
 
-        at += positive_into_string(path + at, (positive)(p32)pid);
-        memory_copy_apart_end(path + at, "/task", 5);
+        system_process_path(path, (p32)pid, null, "task");
 
         file_walk walk;
 
@@ -1577,11 +1575,9 @@ typedef struct
 
 static fn ul_uclamp_name(b32 pid, p8 address_to name)
 {
-        p8 path[64] = "/proc/";
-        positive at = 6;
+        p8 path[64];
 
-        at += positive_into_string(path + at, (positive)(p32)pid);
-        memory_copy_apart_end(path + at, "/comm", 5);
+        system_process_path(path, (p32)pid, null, "comm");
         bipolar got = file_slurp(path, name, FILE_NAME_MAX);
         if (got <= 0)
         {
@@ -2372,11 +2368,11 @@ static b32 ul_setarch_show(string_address value, b32 pid)
 
         if (pid)
         {
-                p8 path[64] = "/proc/";
+                p8 path[64];
                 p8 text[32];
-                positive at = 6;
-                at += positive_into_string(path + at, (positive)(p32)pid);
-                memory_copy_apart_end(path + at, "/personality", 12);
+
+                system_process_path(path, (p32)pid, null,
+                                    "personality");
                 bipolar got = file_slurp(path, text, sizeof(text));
                 if (got <= 0)
                 {
@@ -3202,24 +3198,6 @@ static const ul_namespace ul_namespaces[] = {
     {(string_address)"mnt", 12, CLONE_NEWNS},
 };
 
-static fn ul_proc_path(p8 address_to path, b32 pid,
-                       string_address directory, string_address name)
-{
-        positive at = 6;
-
-        memory_copy_apart(path, "/proc/", at);
-        at += positive_into_string(path + at, (positive)(p32)pid);
-        path[at++] = '/';
-        if (directory)
-        {
-                positive length = string_length(directory);
-                memory_copy_apart(path + at, directory, length);
-                at += length;
-                path[at++] = '/';
-        }
-        string_copy_end(path + at, name);
-}
-
 static bipolar ul_namespace_open(string_address program, bipolar target_handle,
                                  const ul_namespace address_to space,
                                  string_address path)
@@ -3596,8 +3574,9 @@ static b32 ul_namespace_mapping(b32 target, bool group,
                                                has_single, ranges, range_count);
 
         p8 path[64];
-        ul_proc_path(path, target, null, group ? (string_address)"gid_map"
-                                              : (string_address)"uid_map");
+        system_process_path(path, (p32)target, null,
+                            group ? (string_address)"gid_map"
+                                  : (string_address)"uid_map");
         return has_single && ul_namespace_map(path, single.inside,
                                               single.outside, single.count,
                                               "unshare");
@@ -3635,7 +3614,8 @@ static b32 ul_unshare_user(ul_user_mapping address_to map)
 
                 if (!failed && map->deny_groups)
                 {
-                        ul_proc_path(path, target, null, "setgroups");
+                        system_process_path(path, (p32)target, null,
+                                            "setgroups");
                         failed = ul_namespace_write(path, "deny", 4, "unshare");
                 }
                 if (!failed)
@@ -3722,7 +3702,8 @@ static bool ul_namespace_persistence_start(
                                 ? (string_address)"time_for_children"
                                 : ul_namespaces[i].name;
                         p8 source[64];
-                        ul_proc_path(source, target, "ns", name);
+                        system_process_path(source, (p32)target,
+                                            "ns", name);
                         if (system_mount(source, destination, 0, MS_BIND, 0) < 0)
                         {
                                 file_fail("unshare: cannot bind namespace file\n",
@@ -4072,7 +4053,8 @@ static b32 util_linux_nsenter()
         if (target)
         {
                 p8 target_path[64];
-                ul_proc_path(target_path, target, null, "");
+                system_process_path(target_path, (p32)target, null,
+                                    "");
                 target_handle = ul_directory_open("nsenter", target_path);
                 if (target_handle < 0)
                         return 1;
@@ -4811,8 +4793,10 @@ static b32 util_linux_choom()
         p8 score_path[64];
         p8 adjust_path[64];
 
-        ul_proc_path(score_path, target, null, "oom_score");
-        ul_proc_path(adjust_path, target, null, "oom_score_adj");
+        system_process_path(score_path, (p32)target, null,
+                            "oom_score");
+        system_process_path(adjust_path, (p32)target, null,
+                            "oom_score_adj");
 
         if (!adjustment)
         {

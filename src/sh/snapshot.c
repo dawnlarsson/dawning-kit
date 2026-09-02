@@ -140,9 +140,30 @@ static CONST positive system_scaled(positive value, positive scale)
         return value > positive_max / scale ? positive_max : value * scale;
 }
 
-static CONST positive system_time_sum(positive left, positive right)
+static CONST positive system_saturating_add(positive left, positive right)
 {
         return left <= positive_max - right ? left + right : positive_max;
+}
+
+static fn system_process_path(p8 address_to path, p32 pid,
+                              string_address directory, string_address name)
+{
+        positive at = 6;
+
+        memory_copy_apart(path, "/proc/", at);
+        at += positive_into(path + at, pid);
+        path[at++] = '/';
+
+        if (directory)
+        {
+                positive length = string_length(directory);
+
+                memory_copy_apart(path + at, directory, length);
+                at += length;
+                path[at++] = '/';
+        }
+
+        string_copy(path + at, name);
 }
 
 static PURE string_address system_field_start(string_address at)
@@ -324,15 +345,10 @@ static HOT bool system_snapshot_cpu(system_snapshot address_to sample)
                 {
                         positive value = system_field_unsigned(address_of at);
 
-                        if (total <= positive_max - value)
-                                total += value;
-                        else
-                                total = positive_max;
+                        total = system_saturating_add(total, value);
 
                         if (field == 3 || field == 4)
-                                idle = idle <= positive_max - value
-                                           ? idle + value
-                                           : positive_max;
+                                idle = system_saturating_add(idle, value);
                 }
 
                 cpu->total_ns = system_scaled(total, SYSTEM_TICK_NS);
@@ -521,18 +537,15 @@ static HOT bool system_snapshot_processes(system_snapshot address_to sample,
 static HOT bool system_snapshot_take(system_snapshot address_to sample,
                                      unsigned int flags, bool process_owners)
 {
-        memory_fill(address_of sample->header, 0, sizeof(sample->header));
-        sample->header.version = SPARK_SNAPSHOT_VERSION;
-        sample->header.flags = flags;
-
-        unsigned int kernel_flags =
-            flags & (SPARK_SNAPSHOT_SYSTEM | SPARK_SNAPSHOT_CPU |
-                     SPARK_SNAPSHOT_NETWORK);
+        unsigned int kernel_flags = flags & SPARK_SNAPSHOT_KERNEL;
         bool accelerated = system_snapshot_accelerated(sample, kernel_flags);
 
         if (!accelerated)
         {
                 sample->records.used = sizeof(struct snapshot_header);
+                memory_fill(address_of sample->header, 0,
+                            sizeof(sample->header));
+                sample->header.version = SPARK_SNAPSHOT_VERSION;
                 sample->header.page_size = (unsigned int)system_page_size();
                 sample->header.monotonic_ns = system_clock_ns(1);
                 sample->header.realtime_seconds = system_clock_ns(0) /
