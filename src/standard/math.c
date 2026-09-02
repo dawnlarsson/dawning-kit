@@ -2865,11 +2865,11 @@ static decimal hyperbolic_tangent(decimal value)
 /*
         The standard names.
 
-        Each is a one line wrapper rather than a macro, so that a program can
-        take the address of one and so that a local variable called `exp`
-        does not silently become a call. They are static like everything else
-        in this file: an unused one leaves no code behind, and none of them
-        can collide at link time with a program that also links a real libc.
+        Each standard spelling is a static alias rather than a macro or a
+        forwarding body: a program can take its address, a local variable
+        called `exp` remains a variable, and both names reach the same code.
+        An unused alias leaves no code behind and cannot collide at link time
+        with a program that also links a real libc.
 
         There is no `log`. The library's `log` is the writer, and the natural
         logarithm is `logarithm`, or `ln` for short.
@@ -2880,31 +2880,34 @@ static decimal hyperbolic_tangent(decimal value)
         fmin and fmax are decimal_smaller and decimal_larger, fdim is
         decimal_difference and fma is decimal_multiply_add.
 */
-static decimal ln(decimal value) { return logarithm(value); }
-static decimal exp(decimal value) { return exponential(value); }
-static decimal exp2(decimal value) { return exponential_two(value); }
-static decimal expm1(decimal value) { return exponential_minus_one(value); }
-static decimal log2(decimal value) { return logarithm_two(value); }
-static decimal log10(decimal value) { return logarithm_ten(value); }
-static decimal pow(decimal base, decimal exponent) { return power(base, exponent); }
-static decimal cbrt(decimal value) { return cube_root(value); }
-static decimal hypot(decimal first, decimal second) { return hypotenuse(first, second); }
-static decimal sin(decimal value) { return sine(value); }
-static decimal cos(decimal value) { return cosine(value); }
-static decimal tan(decimal value) { return tangent(value); }
-static decimal asin(decimal value) { return arc_sine(value); }
-static decimal acos(decimal value) { return arc_cosine(value); }
-static decimal atan(decimal value) { return arc_tangent(value); }
-static decimal atan2(decimal rise, decimal run) { return arc_tangent_two(rise, run); }
-static decimal sinh(decimal value) { return hyperbolic_sine(value); }
-static decimal cosh(decimal value) { return hyperbolic_cosine(value); }
-static decimal tanh(decimal value) { return hyperbolic_tangent(value); }
-static decimal fmod(decimal left, decimal right) { return decimal_modulo(left, right); }
-static decimal remainder(decimal left, decimal right) { return decimal_remainder(left, right); }
-static decimal ldexp(decimal value, b32 exponent) { return decimal_scaled(value, exponent); }
-static decimal scalbn(decimal value, b32 exponent) __attribute__((alias("ldexp")));
-static decimal frexp(decimal value, b32 address_to exponent) { return decimal_split_exponent(value, exponent); }
-static decimal modf(decimal value, decimal address_to whole) { return decimal_split_whole(value, whole); }
+static decimal ln(decimal) __attribute__((alias("logarithm")));
+static decimal exp(decimal) __attribute__((alias("exponential")));
+static decimal exp2(decimal) __attribute__((alias("exponential_two")));
+static decimal expm1(decimal) __attribute__((alias("exponential_minus_one")));
+static decimal log2(decimal) __attribute__((alias("logarithm_two")));
+static decimal log10(decimal) __attribute__((alias("logarithm_ten")));
+static decimal pow(decimal, decimal) __attribute__((alias("power")));
+static decimal cbrt(decimal) __attribute__((alias("cube_root")));
+static decimal hypot(decimal, decimal) __attribute__((alias("hypotenuse")));
+static decimal sin(decimal) __attribute__((alias("sine")));
+static decimal cos(decimal) __attribute__((alias("cosine")));
+static decimal tan(decimal) __attribute__((alias("tangent")));
+static decimal asin(decimal) __attribute__((alias("arc_sine")));
+static decimal acos(decimal) __attribute__((alias("arc_cosine")));
+static decimal atan(decimal) __attribute__((alias("arc_tangent")));
+static decimal atan2(decimal, decimal) __attribute__((alias("arc_tangent_two")));
+static decimal sinh(decimal) __attribute__((alias("hyperbolic_sine")));
+static decimal cosh(decimal) __attribute__((alias("hyperbolic_cosine")));
+static decimal tanh(decimal) __attribute__((alias("hyperbolic_tangent")));
+static decimal fmod(decimal, decimal) __attribute__((alias("decimal_modulo")));
+static decimal remainder(decimal, decimal)
+    __attribute__((alias("decimal_remainder")));
+static decimal ldexp(decimal, b32) __attribute__((alias("decimal_scaled")));
+static decimal scalbn(decimal, b32) __attribute__((alias("decimal_scaled")));
+static decimal frexp(decimal, b32 address_to)
+    __attribute__((alias("decimal_split_exponent")));
+static decimal modf(decimal, decimal address_to)
+    __attribute__((alias("decimal_split_whole")));
 
 #pragma GCC pop_options
 

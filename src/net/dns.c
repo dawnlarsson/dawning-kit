@@ -28,10 +28,8 @@
         Compression. Almost every real answer points into itself rather than
         spelling a name twice -- two octets whose top bits are both set, the
         remaining fourteen an offset from the start of the message. A parser
-        that does not follow those reads garbage on nearly every reply. One
-        that follows them without counting can be sent in a circle by two
-        pointers aimed at each other, so the number of jumps is bounded by the
-        size of the message, which no honest reply can exceed.
+        that does not follow those reads garbage on nearly every reply. Every
+        pointer must move backwards, so the cursor is also its own loop bound.
 
         Truncation. A reply too big for the buffer arrives shortened, and a
         shortened answer section is indistinguishable from a short one. The
@@ -128,12 +126,12 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
 
         The answer is where the name ENDS in the message, which for a
         compressed name is two bytes on from where it began however far away
-        the pointer led. Every jump is counted against the size of the whole
-        message, which a legitimate reply cannot exceed.
+        the pointer led. A jump must strictly lower the cursor, which both
+        rejects forward pointers and makes a cycle impossible without a
+        second counter in the hot parser.
 */
 static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive at)
 {
-        positive jumps = 0;
         bipolar ended = -1;
 
         for (;;)
@@ -160,7 +158,7 @@ static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive
                         //      A pointer must lead backwards into the message
                         //      that has already been seen. Anything else is a
                         //      loop dressed as an offset.
-                        if (target >= at || ++jumps > size)
+                        if (target >= at)
                                 return DNS_MALFORMED;
 
                         at = target;
@@ -177,18 +175,9 @@ static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive
         }
 }
 
-//      A transaction id worth having. getrandom is the kernel's own, and the
-//      clock is what answers when it is unavailable -- which is better than a
-//      counter starting at one, and is why it is never simply a counter.
-static p16 dns_transaction(void)
+static inline INLINE p16 dns_transaction(void)
 {
-        p16 value = 0;
-
-        if (system_call_3(syscall(getrandom), (positive)address_of value,
-                          sizeof value, 1) == sizeof value)
-                return value;
-
-        return (p16)(get_cpu_time() ^ (get_cpu_time() >> 17));
+        return (p16)network_transaction(sizeof(p16));
 }
 
 /*

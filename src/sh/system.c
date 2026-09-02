@@ -133,24 +133,19 @@ static bipolar start_network(b32 device)
                              network_argv, 2);
 }
 
-fn pause_for(positive nanoseconds)
+static fn pause_for(positive nanoseconds)
 {
         timespec span = {nanoseconds / 1000000000, nanoseconds % 1000000000};
 
         sleep(address_of span);
 }
 
-bipolar start_shell(b32 device)
-{
-        return start_service(device, (string_address)init_program,
-                             init_argv, 1);
-}
-
 static bipolar start_shell_until_ready(b32 device, positive address_to started)
 {
         bipolar shell;
 
-        while ((shell = start_shell(device)) < 0)
+        while ((shell = start_service(device, (string_address)init_program,
+                                      init_argv, 1)) < 0)
         {
                 string_format(log, init_label "could not start %s: %b\n",
                               init_program, shell);
@@ -164,7 +159,7 @@ static bipolar start_shell_until_ready(b32 device, positive address_to started)
 
 // Reading a wait status as an exit code alone reports a crash as a clean exit
 // of zero -- which is the one thing this line exists to make visible.
-fn report_exit(positive status)
+static fn report_exit(positive status)
 {
         positive signal = status & 0x7f;
 
@@ -187,7 +182,7 @@ fn report_exit(positive status)
         kernel/ links before fs/. By the time there is an init there is a
         devpts, and this is where a system mounts it anyway.
 */
-fn mount_devpts()
+static fn mount_devpts()
 {
         bipolar made = system_make_directory_at(AT_FDCWD, "/dev/pts", 0755);
 
@@ -389,13 +384,13 @@ static struct mount_point world_mounts[] = {
     {null, null, null, 0},
 };
 
-fn world_say(string_address text)
+static fn world_say(string_address text)
 {
         string_format(log, world_label "%s\n", text);
         log_flush();
 }
 
-fn world_fail(string_address text, bipolar code)
+static fn world_fail(string_address text, bipolar code)
 {
         string_format(log, world_label "%s: %b\n", text, code);
         log_flush();
@@ -448,7 +443,7 @@ static bipolar world_enter(string_address root)
 
 // A root missing /sys is still a root worth being in, so a mount that will not
 // take is reported and stepped over rather than refusing the whole world.
-fn world_populate()
+static fn world_populate()
 {
         for (positive i = 0; world_mounts[i].target; i++)
         {
@@ -468,22 +463,9 @@ fn world_populate()
 
 // The name a world answers to is the last element of its path, so
 // /worlds/arch is "arch". Only its own namespace ever sees it.
-fn world_name(string_address root, p8 address_to into, positive room)
+static fn world_name(string_address root, p8 address_to into, positive room)
 {
-        positive length = string_length(root);
-        positive start = 0;
-        positive count;
-
-        for (positive i = 0; i < length; i++)
-                if (string_get(root + i) == '/' && i + 1 < length)
-                        start = i + 1;
-
-        count = length - start;
-
-        if (count >= room)
-                count = room - 1;
-
-        memory_copy_end(into, root + start, count);
+        path_tail_copy(into, room, root);
 }
 
 static b32 system_world()

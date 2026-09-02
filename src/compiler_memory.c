@@ -1133,24 +1133,6 @@ static inline INLINE positive known_highest_byte(p64 word)
 }
 
 /*
-        The difference memcmp promises, from two words already in registers.
-
-        Exclusive-or leaves zero bytes where the two agree, so the first byte
-        that differs is the one holding the lowest set bit. The answer is the
-        difference of those two bytes read as unsigned char, which is a
-        magnitude and not merely a sign -- src/test/verify.c asserts the
-        number, and the assembly returns it, so an expansion that returned
-        -1, 0 or 1 would be quicker and wrong.
-*/
-static inline INLINE b32 known_word_difference(p64 first_word, p64 second_word)
-{
-        positive at = known_lowest_byte(first_word ^ second_word);
-
-        return (b32)((first_word >> at) & 0xff) -
-               (b32)((second_word >> at) & 0xff);
-}
-
-/*
         Which bytes of a word are zero, marked in their high bit.
 
         The cheap form, (word - ones) & ~word & highs, marks the first zero
@@ -1170,99 +1152,10 @@ static inline INLINE p64 known_zero_bytes(p64 word)
 #endif // KNOWN_SCAN_WORDS
 
 /*
-        memcmp at a length the compiler folded.
-
-        Whole words while there is room for one, then the last eight bytes
-        read again, which is inside the bound whenever the size reached eight
-        at all and costs nothing: the bytes it looks at twice are bytes the
-        word before it already found equal, so the first difference it can
-        report is still the first difference there is.
-
-        Correct at every size, not only under the cutoff. The macro below
-        never calls this with a large one, but a specializer that is only
-        right in the window it is used in is a trap for whoever writes the
-        next one.
-*/
-static inline INLINE b32 compare_known(const address_any first,
-                                       const address_any second, positive size)
-{
-        const p8 address_to left = (const p8 address_to)first;
-        const p8 address_to right = (const p8 address_to)second;
-        positive at = 0;
-
-#if KNOWN_SCAN_WORDS
-        if (size >= 8) {
-                KNOWN_STRAIGHT
-                while (at + 8 <= size) {
-                        p64 one = known_word(left + at, 8);
-                        p64 two = known_word(right + at, 8);
-
-                        if (one != two)
-                                return known_word_difference(one, two);
-                        at += 8;
-                }
-
-                if (at != size) {
-                        p64 one = known_word(left + size - 8, 8);
-                        p64 two = known_word(right + size - 8, 8);
-
-                        if (one != two)
-                                return known_word_difference(one, two);
-                }
-
-                return 0;
-        }
-
-        //      Under eight, the same shape in whatever width fits twice: a
-        //      four byte compare is one of the commonest literals there is
-        //      and deserves better than four branches. The second load of
-        //      each pair overlaps the first, so five, six and seven need no
-        //      remainder either.
-        if (size >= 4) {
-                p64 one = known_word(left, 4);
-                p64 two = known_word(right, 4);
-
-                if (one != two)
-                        return known_word_difference(one, two);
-                if (size == 4)
-                        return 0;
-                one = known_word(left + size - 4, 4);
-                two = known_word(right + size - 4, 4);
-                if (one != two)
-                        return known_word_difference(one, two);
-                return 0;
-        }
-
-        if (size >= 2) {
-                p64 one = known_word(left, 2);
-                p64 two = known_word(right, 2);
-
-                if (one != two)
-                        return known_word_difference(one, two);
-                if (size == 2)
-                        return 0;
-                one = known_word(left + size - 2, 2);
-                two = known_word(right + size - 2, 2);
-                if (one != two)
-                        return known_word_difference(one, two);
-                return 0;
-        }
-#endif
-
-        KNOWN_STRAIGHT
-        for (; at < size; at++)
-                if (left[at] != right[at])
-                        return (b32)left[at] - (b32)right[at];
-
-        return 0;
-}
-
-/*
         The length of the common prefix at a size the compiler folded.
 
-        This is compare_known's exact bounded word walk with the useful part
-        of its mismatch answer kept: the byte position rather than the byte
-        difference.  A partial final word begins at size - width and overlaps
+        This is the one bounded word walk shared by memcmp and the public
+        prefix primitive. A partial final word begins at size - width and overlaps
         only bytes an earlier word has already proved equal, so adding the
         first differing byte inside it still gives the first difference in
         the complete span without reading outside that span.
@@ -1338,6 +1231,24 @@ static inline INLINE positive common_prefix_known(const address_any first,
                         return at;
 
         return size;
+}
+
+/*
+        memcmp is the shared prefix walk plus the two bytes where it stopped.
+        The result remains the unsigned-byte magnitude the assembly returns,
+        rather than merely its sign. GCC already rediscovered exactly this
+        form from the former second copy of the word walk: the complete exact
+        test binaries are byte-identical on x86-64, AArch64 and RV64, so the
+        duplicate state machine had no code-generation value.
+*/
+static inline INLINE b32 compare_known(const address_any first,
+                                       const address_any second, positive size)
+{
+        const p8 address_to left = (const p8 address_to)first;
+        const p8 address_to right = (const p8 address_to)second;
+        positive at = common_prefix_known(first, second, size);
+
+        return at == size ? 0 : (b32)left[at] - (b32)right[at];
 }
 
 /*
@@ -1911,38 +1822,17 @@ static inline INLINE positive into_base_known(p8 address_to into,
 //      byte-and-bit
 //====================================================================
 /*
-        Values that are known where the call is written.
+        C versions of the single-value hardware routines. The byte operations
+        stay inline for dynamic arguments too: their arithmetic is shorter
+        than a call and lets a surrounding scan optimize through the result.
+        The bit reductions expand only for constants; RV64 has no baseline
+        Zbb, so their dynamic C form is deliberately longer than the assembly.
 
-        The single-value routines answer from their argument alone, so a
-        literal does not shorten one, it removes it: byte_is_digit('7') is
-        the token 1 and there is nothing left for the machine to do. Every
-        other fold in this file replaces a call with a shorter line of code;
-        this is the only one that replaces a call with no line of code.
-
-        And the reach is wider than a literal typed at the call. Because
-        these are assembly symbols, the compiler cannot see through one and
-        cannot fold a call to one however well it knows the argument -- so
-        without the macros at the bottom of this file, isdigit('7') is a call
-        at every optimisation level. With them, __builtin_constant_p is
-        answered after inlining and constant propagation, so a caller's own
-        wrapper folds too: a shell's is_separator('/') and an allocator's
-        bits_trailing_zeros(sizeof (struct thing)) both arrive as a constant
-        with no call, measured at -O2 and -Os.
-
-        Each expansion is the routine's own arithmetic written in C, so the
-        two agree by construction rather than by resemblance, and
-        src/test/single.c walks every byte and every single-bit word through
-        both to say so.
-
-        Two shapes are avoided on purpose. Nothing here reaches for
-        __builtin_popcountll, __builtin_clzll or __builtin_ctzll: riscv64 has
-        no Zbb on this baseline and gcc answers all four of those with a call
-        into libgcc, which a -nostdlib link has no symbol for, and the two
-        count builtins are undefined at zero where these routines are defined
-        to answer sixty four. And nothing here narrows to eight bits: the
-        argument is an int and may be EOF, or a byte that arrived with its
-        high bits still on it, and an expansion that masked would be
-        answering a different question than the routine.
+        These keep the full int contract, including EOF. The bit forms avoid
+        compiler builtins because RV64 lowers them to unavailable libgcc calls
+        and because this library defines the zero cases those builtins leave
+        undefined. src/test/single.c compares every expansion with its
+        addressable assembly routine.
 */
 static inline INLINE b32 known_is_digit(b32 value)
 { return (p32)(value - 48) < 10; }
@@ -1976,9 +1866,21 @@ static inline INLINE b32 known_is_ascii(b32 value)
 static inline INLINE b32 known_to_ascii(b32 value)
 { return value & 127; }
 static inline INLINE b32 known_to_upper(b32 value)
-{ return value - (known_is_lower(value) << 5); }
+{
+#if X64 || ARM64
+        return (p32)(value - 'a') < 26 ? value - 32 : value;
+#else
+        return value - (known_is_lower(value) << 5);
+#endif
+}
 static inline INLINE b32 known_to_lower(b32 value)
-{ return value + (known_is_upper(value) << 5); }
+{
+#if X64 || ARM64
+        return (p32)(value - 'A') < 26 ? value + 32 : value;
+#else
+        return value + (known_is_upper(value) << 5);
+#endif
+}
 
 /*
         Bits folded in pairs, then in nibbles, then in bytes, and the eight
@@ -2430,7 +2332,18 @@ static inline INLINE address_any copy_until_known(address_any destination,
 
 //      byte-and-bit
 /*
-        Twenty one macros naming themselves, through one shared shape.
+        The short byte predicates stay as their visible arithmetic even for a
+        dynamic value: an out-of-line assembly call costs more than the work
+        and hides the result from the caller's optimizer. Punctuation keeps
+        the assembly fallback because GCC turns its three-condition C form
+        into branches. The function-like macros preserve the addressable
+        assembly names: a bare `byte_is_digit` remains untouched.
+
+        The five bit routines are different. Their C fallbacks are full SWAR
+        reductions needed by the RV64 floor, while the other architectures
+        have shorter hardware bodies; only a folded input should select them.
+        KNOWN_SINGLE names the routine in its own fallback arm, through one
+        shared shape.
 
         KNOWN_SINGLE takes the routine's name as an argument and puts it back
         in the else arm, which is safe for the same reason the three above are
@@ -2447,22 +2360,22 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define KNOWN_SINGLE(name, known, value)                                      \
         (__builtin_constant_p(value) ? known(value) : name(value))
 
-#define byte_is_digit(value)       KNOWN_SINGLE(byte_is_digit, known_is_digit, (value))
-#define byte_is_upper(value)       KNOWN_SINGLE(byte_is_upper, known_is_upper, (value))
-#define byte_is_lower(value)       KNOWN_SINGLE(byte_is_lower, known_is_lower, (value))
-#define byte_is_alpha(value)       KNOWN_SINGLE(byte_is_alpha, known_is_alpha, (value))
-#define byte_is_alnum(value)       KNOWN_SINGLE(byte_is_alnum, known_is_alnum, (value))
-#define byte_is_space(value)       KNOWN_SINGLE(byte_is_space, known_is_space, (value))
-#define byte_is_hexadecimal(value) KNOWN_SINGLE(byte_is_hexadecimal, known_is_hexadecimal, (value))
-#define byte_is_printable(value)   KNOWN_SINGLE(byte_is_printable, known_is_printable, (value))
-#define byte_is_graphic(value)     KNOWN_SINGLE(byte_is_graphic, known_is_graphic, (value))
-#define byte_is_control(value)     KNOWN_SINGLE(byte_is_control, known_is_control, (value))
+#define byte_is_digit(value)       known_is_digit(value)
+#define byte_is_upper(value)       known_is_upper(value)
+#define byte_is_lower(value)       known_is_lower(value)
+#define byte_is_alpha(value)       known_is_alpha(value)
+#define byte_is_alnum(value)       known_is_alnum(value)
+#define byte_is_space(value)       known_is_space(value)
+#define byte_is_hexadecimal(value) known_is_hexadecimal(value)
+#define byte_is_printable(value)   known_is_printable(value)
+#define byte_is_graphic(value)     known_is_graphic(value)
+#define byte_is_control(value)     known_is_control(value)
 #define byte_is_punctuation(value) KNOWN_SINGLE(byte_is_punctuation, known_is_punctuation, (value))
-#define byte_is_blank(value)       KNOWN_SINGLE(byte_is_blank, known_is_blank, (value))
-#define byte_is_ascii(value)       KNOWN_SINGLE(byte_is_ascii, known_is_ascii, (value))
-#define byte_to_ascii(value)       KNOWN_SINGLE(byte_to_ascii, known_to_ascii, (value))
-#define byte_to_upper(value)       KNOWN_SINGLE(byte_to_upper, known_to_upper, (value))
-#define byte_to_lower(value)       KNOWN_SINGLE(byte_to_lower, known_to_lower, (value))
+#define byte_is_blank(value)       known_is_blank(value)
+#define byte_is_ascii(value)       known_is_ascii(value)
+#define byte_to_ascii(value)       known_to_ascii(value)
+#define byte_to_upper(value)       known_to_upper(value)
+#define byte_to_lower(value)       known_to_lower(value)
 #define bits_counted(value)        KNOWN_SINGLE(bits_counted, known_counted, (value))
 #define bits_trailing_zeros(value) KNOWN_SINGLE(bits_trailing_zeros, known_trailing_zeros, (value))
 #define bits_leading_zeros(value)  KNOWN_SINGLE(bits_leading_zeros, known_leading_zeros, (value))

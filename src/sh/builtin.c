@@ -51,11 +51,11 @@ positive shell_argc;
 // eval runs a line, and what runs lines sits below this file.
 fn run_line(string_address line);
 fn shell_input_end();
-bool exec_function_here(string_address name);
+bool exec_function_here_hashed(string_address name, positive2 named);
 bool exec_function_unset(string_address name);
 static bool exec_line_aborted();
 static bool exec_source_stop();
-bool shell_builtin(string_address arguments);
+bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
 bipolar shell_spawn_tool(string_address address_to arguments,
@@ -604,11 +604,6 @@ static PURE bool env_export_active_span(const_string name, positive length)
 
         return found < shell_var_count && (shell_vars[found].permanent ||
                                            shell_vars[found].temporary);
-}
-
-PURE bool env_exported(string_address name)
-{
-        return name && env_export_active_span(name, string_length(name));
 }
 
 static bool env_declare(string_address name, positive length)
@@ -5559,10 +5554,9 @@ static fn shell_name_index_build(address_any table, positive stride,
 static positive shell_name_index_find(string_address name, address_any table,
                                       positive stride, positive count,
                                       shell_name_slot address_to slots,
-                                      positive room, bool address_to ready)
+                                      positive room, bool address_to ready,
+                                      positive2 named)
 {
-        positive length;
-        positive hash;
         positive at;
 
         if (!address_to ready)
@@ -5571,13 +5565,7 @@ static positive shell_name_index_find(string_address name, address_any table,
                 address_to ready = true;
         }
 
-        {
-                positive2 answer = string_hash_33_length(name);
-
-                hash = answer.x;
-                length = answer.y;
-        }
-        at = hash & (room - 1);
+        at = named.x & (room - 1);
 
         for (positive probes = 0; probes < room; probes++)
         {
@@ -5586,14 +5574,14 @@ static positive shell_name_index_find(string_address name, address_any table,
                 if (!slot->index_plus_one)
                         return count;
 
-                if (slot->hash == hash && slot->length == length)
+                if (slot->hash == named.x && slot->length == named.y)
                 {
                         positive index = slot->index_plus_one - 1;
                         string_address candidate =
                             *(string_address address_to)((p8 address_to)table +
                                                           index * stride);
 
-                        if (!memory_compare(name, candidate, length))
+                        if (!memory_compare(name, candidate, named.y))
                                 return index;
                 }
 
@@ -5640,12 +5628,12 @@ static shell_tool shell_tools[] = {
 static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
 static bool shell_tool_index_ready;
 
-static positive shell_tool_find(string_address name)
+static positive shell_tool_find_hashed(string_address name, positive2 named)
 {
         return shell_name_index_find(name, shell_tools, sizeof(shell_tools[0]),
                                      SHELL_TOOLS, shell_tool_index,
                                      SHELL_TOOL_INDEX_ROOM,
-                                     address_of shell_tool_index_ready);
+                                     address_of shell_tool_index_ready, named);
 }
 
 /*
@@ -5732,12 +5720,6 @@ b32 shell_tool_as_called()
         return shell_tool_call(which);
 }
 
-// Whether a name is one of the utilities, without running it.
-bool shell_tool_here(string_address name)
-{
-        return shell_tool_find(name) != SHELL_TOOLS;
-}
-
 fn shell_tool_list(writer write)
 {
         for (positive i = 0; i < SHELL_TOOLS; i++)
@@ -5745,9 +5727,9 @@ fn shell_tool_list(writer write)
                               shell_tools[i].name);
 }
 
-static bool shell_tool_run(string_address name)
+static bool shell_tool_run_hashed(string_address name, positive2 named)
 {
-        positive which = shell_tool_find(name);
+        positive which = shell_tool_find_hashed(name, named);
         bipolar child = -1;
         positive status = 0;
 
@@ -6490,26 +6472,30 @@ shell_command shell_commands[] = {
 static shell_name_slot shell_command_index[SHELL_COMMAND_INDEX_ROOM];
 static bool shell_command_index_ready;
 
-static shell_command address_to shell_command_named(string_address name)
+static shell_command address_to shell_command_named_hashed(string_address name,
+                                                           positive2 named)
 {
         positive which = shell_name_index_find(
             name, shell_commands, sizeof(shell_commands[0]),
             SHELL_COMMAND_COUNT, shell_command_index,
-            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready);
+            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready,
+            named);
 
         return which < SHELL_COMMAND_COUNT ? shell_commands + which : null;
 }
 
-bool shell_command_here(string_address name)
+bool shell_tool_only_here(string_address name, positive2 named)
 {
-        return shell_command_named(name) != null;
+        return shell_tool_find_hashed(name, named) != SHELL_TOOLS &&
+               !shell_command_named_hashed(name, named);
 }
 
 /* Control builtins live in the executor because their result unwinds C
    frames, but command/type must report the same builtin namespace. */
-static bool shell_command_builtin_here(string_address name)
+static bool shell_command_builtin_here(string_address name, positive2 named)
 {
-        return shell_command_named(name) || shell_tool_here(name) ||
+        return shell_command_named_hashed(name, named) ||
+               shell_tool_find_hashed(name, named) != SHELL_TOOLS ||
                exec_control_builtin(name, false);
 }
 
@@ -6799,15 +6785,16 @@ fn shell_type(writer write, string_address input)
         while (index < shell_argc)
         {
                 string_address name = shell_argv[index++];
+                positive2 named = string_hash_33_length(name);
                 bipolar located;
 
-                if (shell_command_builtin_here(name))
+                if (shell_command_builtin_here(name, named))
                 {
                         string_format(write, "%s is a shell builtin\n", name);
                         continue;
                 }
 
-                if (exec_function_here(name))
+                if (exec_function_here_hashed(name, named))
                 {
                         string_format(write, "%s is a shell function\n", name);
                         continue;
@@ -6898,9 +6885,10 @@ fn shell_command_builtin(writer write, string_address input)
                 while (index < shell_argc)
                 {
                         string_address name = shell_argv[index++];
+                        positive2 named = string_hash_33_length(name);
                         bipolar located;
 
-                        if (shell_command_builtin_here(name))
+                        if (shell_command_builtin_here(name, named))
                         {
                                 string_format(write,
                                               at_length
@@ -6911,7 +6899,7 @@ fn shell_command_builtin(writer write, string_address input)
                                 continue;
                         }
 
-                        if (exec_function_here(name))
+                        if (exec_function_here_hashed(name, named))
                         {
                                 string_format(write,
                                               at_length
@@ -6979,13 +6967,8 @@ fn shell_command_builtin(writer write, string_address input)
         {
                 bool tail = shell_tail_command;
 
-                /* A named builtin may run eval or dot and therefore owns more
-                   than one command. A multicall utility is one disposable
-                   operation and keeps the direct stage. */
-                if (shell_command_named(shell_argv[0]))
-                        shell_tail_command = false;
-
-                if (shell_builtin(shell_arguments()))
+                if (shell_builtin(shell_arguments(),
+                                  string_hash_33_length(shell_argv[0])))
                 {
                         shell_tail_command = tail;
                         return;
@@ -7051,7 +7034,8 @@ fn shell_which(writer write, string_address input)
 
         // Before the path, because that is the order the shell runs them in:
         // a grep on the path is not the grep that would run.
-        if (shell_command_builtin_here(input))
+        if (shell_command_builtin_here(input,
+                                       string_hash_33_length(input)))
                 return string_format(write, "%s: shell builtin\n", input);
 
         located = shell_find_in_path_alloc(input, address_of found,

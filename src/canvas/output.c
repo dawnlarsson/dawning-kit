@@ -15,7 +15,7 @@
         millimetres whatever mode it is in, and QEMU synthesises an EDID too,
         so neither the size nor the presence of one separates them.
 */
-static _Bool canvas_is_virtual(struct drm_device *dev)
+static PURE _Bool canvas_is_virtual(struct drm_device *dev)
 {
         static const char *const guests[] = {
             "bochs-drm", "virtio_gpu", "qxl", "vmwgfx", "cirrus-qemu",

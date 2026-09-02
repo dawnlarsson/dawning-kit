@@ -413,19 +413,19 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
 // able to say a shape changed before console.c is read.
 static void console_regrid(struct pane *pane);
 
-static struct canvas *canvas_from_client(struct drm_client_dev *client)
+static CONST struct canvas *canvas_from_client(struct drm_client_dev *client)
 {
         return container_of(client, struct canvas, client);
 }
 
-static _Bool rects_overlap(int ax, int ay, int aw, int ah,
-                           int bx, int by, int bw, int bh)
+static CONST _Bool rects_overlap(int ax, int ay, int aw, int ah,
+                                 int bx, int by, int bw, int bh)
 {
         return ax < bx + bw && bx < ax + aw && ay < by + bh && by < ay + ah;
 }
 
-static inline _Bool point_in_rect(int x, int y, int width, int height,
-                                  int point_x, int point_y)
+static inline CONST _Bool point_in_rect(int x, int y, int width, int height,
+                                        int point_x, int point_y)
 {
         return point_x >= x && point_x < x + width &&
                point_y >= y && point_y < y + height;

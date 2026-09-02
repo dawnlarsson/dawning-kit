@@ -327,12 +327,10 @@ b32 main()
                         memory_free(held_command, length + 1);
                 }
 
-                shell_input_end();
-
-                shell_trap_exit();
-                log_flush();
-
-                return shell_status;
+                /* Join the ordinary input teardown without closing stdin:
+                   -c has no source descriptor of its own. */
+                script_file = false;
+                goto input_finished;
         }
 
         positive held = 0;
@@ -381,6 +379,7 @@ b32 main()
                 run_line(shell_buffer);
         }
 
+input_finished:
         shell_input_end();
 
         if (script_file)

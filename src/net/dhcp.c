@@ -258,26 +258,12 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
 //      A mask of n leading bits, said as the prefix length a route wants.
 static CONST p8 dhcp_prefix_of(p32 mask)
 {
-        p8 bits = 0;
-
-        while (mask & 0x80000000u)
-        {
-                bits++;
-                mask <<= 1;
-        }
+        p32 first_zero = ~mask;
+        p8 bits = first_zero
+                    ? (p8)(bits_leading_zeros((positive)first_zero) - 32)
+                    : 32;
 
         return bits ? bits : 24;
-}
-
-static p32 dhcp_transaction(void)
-{
-        p32 transaction;
-
-        if (system_call_3(syscall(getrandom), (positive)address_of transaction,
-                          sizeof transaction, 1) != sizeof transaction)
-                transaction = (p32)get_cpu_time();
-
-        return transaction;
 }
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
@@ -366,7 +352,7 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
         positive wait;
 
         memory_fill(lease, 0, sizeof(dhcp_lease));
-        transaction = dhcp_transaction();
+        transaction = (p32)network_transaction(sizeof transaction);
         handle = dhcp_open(device, HOST_ANY, true);
 
         if (handle < 0)
@@ -490,7 +476,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
         if (!lease->address || !lease->server)
                 return DHCP_NO_OFFER;
 
-        transaction = dhcp_transaction();
+        transaction = (p32)network_transaction(sizeof transaction);
         handle = dhcp_open(device, lease->address, false);
 
         if (handle < 0)

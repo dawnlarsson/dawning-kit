@@ -22,14 +22,11 @@
         one translation unit):
 
           storage_mount_table_load / storage_mount_table_release
-          storage_mount_find_id / storage_mount_find_target
+          storage_mount_find_target
           storage_fstab_table_load / storage_fstab_table_release
-          storage_fstab_find
 
         A successful load owns both table blocks until release.  Callers may
         iterate entry[0..count), and every string remains valid until then.
-        storage_fstab_find accepts either the source or target spelling, which
-        is the lookup mount uses when one operand is omitted.
 */
 typedef struct
 {
@@ -494,16 +491,6 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
         return true;
 }
 
-PURE storage_mount address_to storage_mount_find_id(
-    storage_mount_table address_to table, positive id)
-{
-        for (positive at = 0; at < table->count; at++)
-                if (table->entry[at].id == id)
-                        return table->entry + at;
-
-        return null;
-}
-
 PURE storage_mount address_to storage_mount_find_target(
     storage_mount_table address_to table, string_address target)
 {
@@ -511,17 +498,6 @@ PURE storage_mount address_to storage_mount_find_target(
         for (positive at = table->count; at; at--)
                 if (!string_compare(table->entry[at - 1].target, target))
                         return table->entry + at - 1;
-
-        return null;
-}
-
-PURE storage_fstab address_to storage_fstab_find(
-    storage_fstab_table address_to table, string_address name)
-{
-        for (positive at = 0; at < table->count; at++)
-                if (!string_compare(table->entry[at].source, name) ||
-                    !string_compare(table->entry[at].target, name))
-                        return table->entry + at;
 
         return null;
 }
@@ -766,48 +742,73 @@ static PURE inline INLINE bool storage_filesystem_option_represented(
 static PURE positive storage_combined_options_length(storage_mount address_to mount)
 {
         positive length = 0;
-        string_address cursor = mount->options;
-        string_address at;
-        positive token_length;
 
-        while ((at = storage_comma_next(address_of cursor,
-                                         address_of token_length)))
+        for (positive filesystem = 0; filesystem < 2; filesystem++)
         {
-                if (token_length)
-                        length += token_length + (length ? 1 : 0);
-        }
+                string_address cursor = filesystem ? mount->filesystem_options
+                                                   : mount->options;
+                string_address at;
+                positive token_length;
 
-        cursor = mount->filesystem_options;
-        while ((at = storage_comma_next(address_of cursor,
-                                         address_of token_length)))
-        {
-                bool represented = storage_filesystem_option_represented(
-                    mount, at, token_length);
-
-                if (token_length && !represented)
-                        length += token_length + (length ? 1 : 0);
+                while ((at = storage_comma_next(address_of cursor,
+                                                 address_of token_length)))
+                        if (token_length &&
+                            (!filesystem ||
+                             !storage_filesystem_option_represented(
+                                 mount, at, token_length)))
+                                length += token_length + (length ? 1 : 0);
         }
 
         return length;
+}
+
+static fn storage_findmnt_option_write(writer output, string_address at,
+                                       positive length, string_address shown,
+                                       bool raw, bool pairs)
+{
+        if (!raw && !pairs)
+        {
+                output((address_any)shown, length);
+                return;
+        }
+
+        p8 saved = at[length];
+        bool borrowed = shown == at;
+
+        if (borrowed)
+                at[length] = end;
+        if (pairs)
+                storage_write_encoded(output, shown);
+        else
+                storage_findmnt_value(output, shown, true);
+        if (borrowed)
+                at[length] = saved;
 }
 
 static fn storage_combined_options_write(writer output,
                                          storage_mount address_to mount,
                                          bool raw, bool pairs)
 {
-        string_address cursor = mount->options;
-        string_address at;
-        positive token_length;
         bool any = false;
 
-        while ((at = storage_comma_next(address_of cursor,
-                                         address_of token_length)))
+        for (positive filesystem = 0; filesystem < 2; filesystem++)
         {
-                bool overridden = storage_rw_opposite(
-                    mount->filesystem_options, at, token_length);
+                string_address cursor = filesystem ? mount->filesystem_options
+                                                   : mount->options;
+                string_address at;
+                positive token_length;
 
-                if (token_length)
+                while ((at = storage_comma_next(address_of cursor,
+                                                 address_of token_length)))
                 {
+                        if (!token_length ||
+                            (filesystem &&
+                             storage_filesystem_option_represented(
+                                 mount, at, token_length)))
+                                continue;
+
+                        bool overridden = !filesystem && storage_rw_opposite(
+                            mount->filesystem_options, at, token_length);
                         string_address shown = overridden
                             ? (memory_is_2(at, 'r', 'w')
                                    ? (string_address)"ro"
@@ -816,71 +817,14 @@ static fn storage_combined_options_write(writer output,
 
                         if (any)
                                 output((address_any)",", 1);
-
-                        if (pairs)
-                        {
-                                p8 saved = at[token_length];
-
-                                if (!overridden)
-                                        at[token_length] = end;
-                                storage_write_encoded(output, shown);
-                                if (!overridden)
-                                        at[token_length] = saved;
-                        }
-                        else if (raw)
-                        {
-                                p8 saved = at[token_length];
-
-                                if (!overridden)
-                                        at[token_length] = end;
-                                storage_findmnt_value(output, shown, true);
-                                if (!overridden)
-                                        at[token_length] = saved;
-                        }
-                        else
-                                output((address_any)shown, token_length);
-
-                        any = true;
-                }
-        }
-
-        cursor = mount->filesystem_options;
-        while ((at = storage_comma_next(address_of cursor,
-                                         address_of token_length)))
-        {
-                bool represented = storage_filesystem_option_represented(
-                    mount, at, token_length);
-
-                if (token_length && !represented)
-                {
-                        if (any)
-                                output((address_any)",", 1);
-
-                        if (pairs)
-                        {
-                                p8 saved = at[token_length];
-
-                                at[token_length] = end;
-                                storage_write_encoded(output, at);
-                                at[token_length] = saved;
-                        }
-                        else if (raw)
-                        {
-                                p8 saved = at[token_length];
-
-                                at[token_length] = end;
-                                storage_findmnt_value(output, at, true);
-                                at[token_length] = saved;
-                        }
-                        else
-                                output((address_any)at, token_length);
-
+                        storage_findmnt_option_write(
+                            output, at, token_length, shown, raw, pairs);
                         any = true;
                 }
         }
 }
 
-static bool storage_source_has_root(storage_mount address_to mount)
+static PURE bool storage_source_has_root(storage_mount address_to mount)
 {
         return mount->root && mount->root[0] &&
                !string_equals(mount->root, "/");

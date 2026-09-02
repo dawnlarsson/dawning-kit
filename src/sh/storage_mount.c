@@ -56,12 +56,9 @@
 
 #define storage_word(word, wanted) string_equals((word), (wanted))
 
-static bool storage_prefix(string_address word, string_address prefix)
-{
-        positive count = string_length(prefix);
-
-        return !string_compare_max(word, prefix, count);
-}
+#define storage_prefix(word, prefix)                                        \
+        (!string_compare_max((word), (string_address)(prefix),              \
+                             sizeof(prefix) - 1))
 
 typedef byte_store storage_mount_word;
 
@@ -122,11 +119,79 @@ static bool storage_data_add(storage_mount_options address_to options,
         return true;
 }
 
-static bool storage_option_name(string_address item, positive length,
-                                string_address name)
-{
-        return length == string_length(name) && !memory_compare(item, name, length);
-}
+typedef struct {
+        string_address name;
+        p32 set_length;
+        p32 clear_action;
+} storage_mount_option;
+
+enum { STORAGE_OPTION_FLAGS, STORAGE_OPTION_PROPAGATION,
+       STORAGE_OPTION_NOAUTO, STORAGE_OPTION_NOFAIL, STORAGE_OPTION_LOOP };
+
+#define STORAGE_OPTION_LENGTH_SHIFT 26
+#define STORAGE_OPTION_FLAG_MASK (((p32)1 << STORAGE_OPTION_LENGTH_SHIFT) - 1)
+#define STORAGE_OPTION_ACTION_SHIFT 28
+#define O(name, set, clear, action)                                         \
+        {(string_address)(name),                                            \
+         (p32)(set) | ((p32)(sizeof(name) - 1)                              \
+                        << STORAGE_OPTION_LENGTH_SHIFT),                    \
+         (p32)(clear) | ((p32)(action) << STORAGE_OPTION_ACTION_SHIFT)}
+
+/* Length and action live above Linux's highest mount flag, leaving the hot
+   table at two words and one pointer per spelling. */
+static const storage_mount_option storage_mount_option_table[] = {
+    O("ro", STORAGE_MS_RDONLY, 0, STORAGE_OPTION_FLAGS),
+    O("rw", 0, STORAGE_MS_RDONLY, STORAGE_OPTION_FLAGS),
+    O("suid", 0, STORAGE_MS_NOSUID, STORAGE_OPTION_FLAGS),
+    O("nosuid", STORAGE_MS_NOSUID, 0, STORAGE_OPTION_FLAGS),
+    O("dev", 0, STORAGE_MS_NODEV, STORAGE_OPTION_FLAGS),
+    O("nodev", STORAGE_MS_NODEV, 0, STORAGE_OPTION_FLAGS),
+    O("exec", 0, STORAGE_MS_NOEXEC, STORAGE_OPTION_FLAGS),
+    O("noexec", STORAGE_MS_NOEXEC, 0, STORAGE_OPTION_FLAGS),
+    O("sync", STORAGE_MS_SYNCHRONOUS, 0, STORAGE_OPTION_FLAGS),
+    O("async", 0, STORAGE_MS_SYNCHRONOUS, STORAGE_OPTION_FLAGS),
+    O("dirsync", STORAGE_MS_DIRSYNC, 0, STORAGE_OPTION_FLAGS),
+    O("mand", STORAGE_MS_MANDLOCK, 0, STORAGE_OPTION_FLAGS),
+    O("nomand", 0, STORAGE_MS_MANDLOCK, STORAGE_OPTION_FLAGS),
+    O("atime", 0, STORAGE_MS_NOATIME, STORAGE_OPTION_FLAGS),
+    O("noatime", STORAGE_MS_NOATIME, 0, STORAGE_OPTION_FLAGS),
+    O("diratime", 0, STORAGE_MS_NODIRATIME, STORAGE_OPTION_FLAGS),
+    O("nodiratime", STORAGE_MS_NODIRATIME, 0, STORAGE_OPTION_FLAGS),
+    O("relatime", STORAGE_MS_RELATIME, STORAGE_MS_STRICTATIME, STORAGE_OPTION_FLAGS),
+    O("norelatime", 0, STORAGE_MS_RELATIME, STORAGE_OPTION_FLAGS),
+    O("strictatime", STORAGE_MS_STRICTATIME, STORAGE_MS_RELATIME, STORAGE_OPTION_FLAGS),
+    O("nostrictatime", 0, STORAGE_MS_STRICTATIME, STORAGE_OPTION_FLAGS),
+    O("lazytime", STORAGE_MS_LAZYTIME, 0, STORAGE_OPTION_FLAGS),
+    O("nolazytime", 0, STORAGE_MS_LAZYTIME, STORAGE_OPTION_FLAGS),
+    O("symfollow", 0, STORAGE_MS_NOSYMFOLLOW, STORAGE_OPTION_FLAGS),
+    O("nosymfollow", STORAGE_MS_NOSYMFOLLOW, 0, STORAGE_OPTION_FLAGS),
+    O("bind", STORAGE_MS_BIND, 0, STORAGE_OPTION_FLAGS),
+    O("rbind", STORAGE_MS_BIND | STORAGE_MS_REC, 0, STORAGE_OPTION_FLAGS),
+    O("move", STORAGE_MS_MOVE, 0, STORAGE_OPTION_FLAGS),
+    O("remount", STORAGE_MS_REMOUNT, 0, STORAGE_OPTION_FLAGS),
+    O("silent", STORAGE_MS_SILENT, 0, STORAGE_OPTION_FLAGS),
+    O("loud", 0, STORAGE_MS_SILENT, STORAGE_OPTION_FLAGS),
+    O("shared", STORAGE_MS_SHARED, 0, STORAGE_OPTION_PROPAGATION),
+    O("rshared", STORAGE_MS_SHARED | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("slave", STORAGE_MS_SLAVE, 0, STORAGE_OPTION_PROPAGATION),
+    O("rslave", STORAGE_MS_SLAVE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("private", STORAGE_MS_PRIVATE, 0, STORAGE_OPTION_PROPAGATION),
+    O("rprivate", STORAGE_MS_PRIVATE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("unbindable", STORAGE_MS_UNBINDABLE, 0, STORAGE_OPTION_PROPAGATION),
+    O("runbindable", STORAGE_MS_UNBINDABLE | STORAGE_MS_REC, 0, STORAGE_OPTION_PROPAGATION),
+    O("noauto", 0, 0, STORAGE_OPTION_NOAUTO),
+    O("nofail", 0, 0, STORAGE_OPTION_NOFAIL),
+    O("loop", 0, 0, STORAGE_OPTION_LOOP),
+    O("defaults", 0, 0, STORAGE_OPTION_FLAGS),
+    O("auto", 0, 0, STORAGE_OPTION_FLAGS),
+    O("user", 0, 0, STORAGE_OPTION_FLAGS),
+    O("users", 0, 0, STORAGE_OPTION_FLAGS),
+    O("owner", 0, 0, STORAGE_OPTION_FLAGS),
+    O("group", 0, 0, STORAGE_OPTION_FLAGS),
+    O("nouser", 0, 0, STORAGE_OPTION_FLAGS),
+    O("_netdev", 0, 0, STORAGE_OPTION_FLAGS),
+};
+#undef O
 
 static bool storage_options_parse(storage_mount_options address_to out,
                                   string_address list)
@@ -139,86 +204,46 @@ static bool storage_options_parse(storage_mount_options address_to out,
         {
                 positive set = 0;
                 positive clear = 0;
-                bool consume = true;
+                bool consume = false;
 
                 /* getopt/libmount accept redundant commas in -o lists. */
                 if (!length)
                         continue;
 
-#define STORAGE_OPTION(name, set_bits, clear_bits)                 \
-                if (storage_option_name(at, length, name))         \
-                { set = (set_bits); clear = (clear_bits); }
+                for (positive i = 0; i < array_count(storage_mount_option_table); i++)
+                {
+                        const storage_mount_option address_to option =
+                            storage_mount_option_table + i;
+                        positive option_length = option->set_length >>
+                                                 STORAGE_OPTION_LENGTH_SHIFT;
 
-                STORAGE_OPTION("ro", STORAGE_MS_RDONLY, 0)
-                else STORAGE_OPTION("rw", 0, STORAGE_MS_RDONLY)
-                else STORAGE_OPTION("suid", 0, STORAGE_MS_NOSUID)
-                else STORAGE_OPTION("nosuid", STORAGE_MS_NOSUID, 0)
-                else STORAGE_OPTION("dev", 0, STORAGE_MS_NODEV)
-                else STORAGE_OPTION("nodev", STORAGE_MS_NODEV, 0)
-                else STORAGE_OPTION("exec", 0, STORAGE_MS_NOEXEC)
-                else STORAGE_OPTION("noexec", STORAGE_MS_NOEXEC, 0)
-                else STORAGE_OPTION("sync", STORAGE_MS_SYNCHRONOUS, 0)
-                else STORAGE_OPTION("async", 0, STORAGE_MS_SYNCHRONOUS)
-                else STORAGE_OPTION("dirsync", STORAGE_MS_DIRSYNC, 0)
-                else STORAGE_OPTION("mand", STORAGE_MS_MANDLOCK, 0)
-                else STORAGE_OPTION("nomand", 0, STORAGE_MS_MANDLOCK)
-                else STORAGE_OPTION("atime", 0, STORAGE_MS_NOATIME)
-                else STORAGE_OPTION("noatime", STORAGE_MS_NOATIME, 0)
-                else STORAGE_OPTION("diratime", 0, STORAGE_MS_NODIRATIME)
-                else STORAGE_OPTION("nodiratime", STORAGE_MS_NODIRATIME, 0)
-                else STORAGE_OPTION("relatime", STORAGE_MS_RELATIME,
-                                    STORAGE_MS_STRICTATIME)
-                else STORAGE_OPTION("norelatime", 0, STORAGE_MS_RELATIME)
-                else STORAGE_OPTION("strictatime", STORAGE_MS_STRICTATIME,
-                                    STORAGE_MS_RELATIME)
-                else STORAGE_OPTION("nostrictatime", 0, STORAGE_MS_STRICTATIME)
-                else STORAGE_OPTION("lazytime", STORAGE_MS_LAZYTIME, 0)
-                else STORAGE_OPTION("nolazytime", 0, STORAGE_MS_LAZYTIME)
-                else STORAGE_OPTION("symfollow", 0, STORAGE_MS_NOSYMFOLLOW)
-                else STORAGE_OPTION("nosymfollow", STORAGE_MS_NOSYMFOLLOW, 0)
-                else STORAGE_OPTION("bind", STORAGE_MS_BIND, 0)
-                else STORAGE_OPTION("rbind", STORAGE_MS_BIND | STORAGE_MS_REC, 0)
-                else STORAGE_OPTION("move", STORAGE_MS_MOVE, 0)
-                else STORAGE_OPTION("remount", STORAGE_MS_REMOUNT, 0)
-                else STORAGE_OPTION("silent", STORAGE_MS_SILENT, 0)
-                else STORAGE_OPTION("loud", 0, STORAGE_MS_SILENT)
-                else if (storage_option_name(at, length, "shared"))
-                        out->propagation = STORAGE_MS_SHARED;
-                else if (storage_option_name(at, length, "rshared"))
-                        out->propagation = STORAGE_MS_SHARED | STORAGE_MS_REC;
-                else if (storage_option_name(at, length, "slave"))
-                        out->propagation = STORAGE_MS_SLAVE;
-                else if (storage_option_name(at, length, "rslave"))
-                        out->propagation = STORAGE_MS_SLAVE | STORAGE_MS_REC;
-                else if (storage_option_name(at, length, "private"))
-                        out->propagation = STORAGE_MS_PRIVATE;
-                else if (storage_option_name(at, length, "rprivate"))
-                        out->propagation = STORAGE_MS_PRIVATE | STORAGE_MS_REC;
-                else if (storage_option_name(at, length, "unbindable"))
-                        out->propagation = STORAGE_MS_UNBINDABLE;
-                else if (storage_option_name(at, length, "runbindable"))
-                        out->propagation = STORAGE_MS_UNBINDABLE | STORAGE_MS_REC;
-                else if (storage_option_name(at, length, "noauto"))
-                        out->noauto = true;
-                else if (storage_option_name(at, length, "nofail"))
-                        out->nofail = true;
-                else if (storage_option_name(at, length, "loop"))
-                        out->unsupported_loop = true;
-                else if (storage_option_name(at, length, "defaults") ||
-                         storage_option_name(at, length, "auto") ||
-                         storage_option_name(at, length, "user") ||
-                         storage_option_name(at, length, "users") ||
-                         storage_option_name(at, length, "owner") ||
-                         storage_option_name(at, length, "group") ||
-                         storage_option_name(at, length, "nouser") ||
-                         storage_option_name(at, length, "_netdev") ||
-                         storage_prefix(at, "x-") || storage_prefix(at, "X-") ||
-                         storage_prefix(at, "comment="))
-                        ;
-                else
-                        consume = false;
+                        if (length != option_length ||
+                            memory_compare(at, option->name, length))
+                                continue;
 
-#undef STORAGE_OPTION
+                        positive action = option->clear_action >>
+                                          STORAGE_OPTION_ACTION_SHIFT;
+
+                        set = option->set_length & STORAGE_OPTION_FLAG_MASK;
+                        clear = option->clear_action & STORAGE_OPTION_FLAG_MASK;
+                        if (action == STORAGE_OPTION_PROPAGATION)
+                                out->propagation = set;
+                        else if (action == STORAGE_OPTION_NOAUTO)
+                                out->noauto = true;
+                        else if (action == STORAGE_OPTION_NOFAIL)
+                                out->nofail = true;
+                        else if (action == STORAGE_OPTION_LOOP)
+                                out->unsupported_loop = true;
+                        consume = true;
+                        break;
+                }
+
+                if (!consume)
+                        consume = (length >= 2 &&
+                                   ((at[0] == 'x' || at[0] == 'X') &&
+                                    at[1] == '-')) ||
+                                  (length >= 8 &&
+                                   !memory_compare(at, "comment=", 8));
 
                 out->mentioned |= set | clear;
                 out->flags = (out->flags | set) & ~clear;

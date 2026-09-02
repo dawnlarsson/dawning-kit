@@ -863,7 +863,7 @@ static fn parse_skip_separators()
 
 // Running out of tokens inside a construct is not an error: it means the rest
 // of it is on a line nobody has typed yet.
-static fn parse_fail()
+static COLD fn parse_fail()
 {
         parse_state = parse_look(0)->kind == PT_END ? PARSE_INCOMPLETE : PARSE_SYNTAX;
 }
@@ -904,7 +904,7 @@ static bool parse_expect_operator(b32 op)
         happens to be spelled "done" is read as an argument, because argument
         position never asks this question.
 */
-static bool parse_at_list_end()
+static PURE bool parse_at_list_end()
 {
         parse_token address_to token = parse_look(0);
         b32 keyword;
@@ -933,18 +933,17 @@ static bool parse_at_list_end()
         be reached, because the word in front of a command is read as the
         keyword every time. dash calls it a syntax error and so does this.
 */
-static bool parse_reserved(b32 ahead)
+static PURE bool parse_reserved(b32 ahead)
 {
         return parse_keyword(ahead) != PARSE_KEYWORD_NONE;
 }
 
-static bool parse_redirect_operator(b32 op)
+static CONST bool parse_redirect_operator(b32 op)
 {
-        return op == OP_LESS || op == OP_GREAT || op == OP_DGREAT ||
-               op == OP_DLESS || op == OP_LESSAND || op == OP_GREATAND ||
-               op == OP_LESSGREAT || op == OP_CLOBBER ||
-               op == OP_ANDGREAT || op == OP_ANDDGREAT ||
-               op == OP_HERESTRING;
+        /* lex.c keeps redirect operators in three contiguous families. */
+        return (op >= OP_DLESS && op <= OP_CLOBBER) ||
+               (op >= OP_LESS && op <= OP_GREAT) ||
+               (op >= OP_ANDGREAT && op <= OP_HERESTRING);
 }
 
 /* Return the number of descriptor tokens before a redirect operator, or -1.

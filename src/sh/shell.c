@@ -336,7 +336,7 @@ typedef struct
         positive used;
 } shell_mark;
 
-static shell_mark shell_store_mark(shell_store address_to store)
+static PURE shell_mark shell_store_mark(shell_store address_to store)
 {
         shell_mark mark;
 
@@ -812,7 +812,7 @@ fn shell_execute_command()
         log_flush();
 }
 
-bool shell_builtin(string_address arguments)
+bool shell_builtin(string_address arguments, positive2 named)
 {
         static shell_command address_to remembered;
         static positive remembered_length;
@@ -833,7 +833,7 @@ bool shell_builtin(string_address arguments)
                 command = remembered;
         else
         {
-                command = shell_command_named(shell_argv[0]);
+                command = shell_command_named_hashed(shell_argv[0], named);
 
                 if (!arguments && shell_command_name_stable &&
                     shell_argv[0] == shell_command_name_address && command)
@@ -845,6 +845,13 @@ bool shell_builtin(string_address arguments)
 
         if (command)
         {
+                /* A normal builtin can evaluate nested commands and consumes
+                   the one-command tail privilege. `command` keeps it until
+                   its second lookup identifies the command it wraps; a tool
+                   miss keeps it too. Keeping this beside the lookup avoids a
+                   complete duplicate command-table probe in exec_dispatch. */
+                if (command->function != shell_command_builtin)
+                        shell_tail_command = false;
 
                 /* This old builtin still consumes a rejoined line.  Everyone
                    else reads argv directly, so do not scan and copy every
@@ -872,7 +879,7 @@ bool shell_builtin(string_address arguments)
         // Commands and utilities are disjoint tables.  A script executes the
         // former far more often, so do not make every echo, test, read and
         // printf pay for a guaranteed miss through all of the utility index.
-        if (shell_tool_run(shell_argv[0]))
+        if (shell_tool_run_hashed(shell_argv[0], named))
                 return true;
 
         return false;

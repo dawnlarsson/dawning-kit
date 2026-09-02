@@ -46,7 +46,7 @@ static struct pm_qos_request pointer_qos;
 #define ACCEL_CEILING 8
 #define ACCEL_MAX (ACCEL_ONE * 5 / 2)
 
-static int pointer_gain(int speed)
+static CONST int pointer_gain(int speed)
 {
         if (speed <= ACCEL_FLOOR)
                 return ACCEL_ONE;
@@ -589,14 +589,17 @@ static int canvas_loop(void *unused)
                             (unsigned int)atomic_xchg(&desktop.focus_steps, 0);
                         _Bool commit = atomic_xchg(&desktop.focus_commit, 0);
                         _Bool minimize = atomic_xchg(&desktop.minimize, 0);
+                        _Bool changed = false;
 
                         mutex_lock(&desktop.lock);
                         while (steps--)
-                                pane_focus_step();
+                                changed |= pane_focus_step();
                         if (minimize)
-                                pane_minimize_focused();
+                                changed |= pane_minimize_focused();
                         if (commit)
-                                pane_focus_commit();
+                                changed |= pane_focus_commit();
+                        if (changed)
+                                desktop_redraw();
                         mutex_unlock(&desktop.lock);
                 }
 

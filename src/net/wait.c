@@ -12,6 +12,26 @@
 #ifndef STANDARD_MODERN_C_NET_WAIT
 #define STANDARD_MODERN_C_NET_WAIT
 
+/* DHCP and DNS need different-width transaction tags, but their entropy
+   policy is identical: nonblocking kernel randomness when early boot has it,
+   and the hardware counter when it does not.  The width is constant at every
+   caller, so this disappears into the packet builder without a generic
+   runtime path. */
+static inline INLINE positive network_transaction(positive width)
+{
+        positive value = 0;
+
+        if (system_call_3(syscall(getrandom), (positive)address_of value,
+                          width, 1) != width)
+        {
+                value = get_cpu_time();
+                if (width == sizeof(p16))
+                        value ^= value >> 17;
+        }
+
+        return value;
+}
+
 /*
         ppoll rather than poll, because arm64 and riscv64 have only ppoll in
         the asm-generic syscall table. Keep the kernel's pollfd layout typed:

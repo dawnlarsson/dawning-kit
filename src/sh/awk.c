@@ -1191,11 +1191,18 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         return negative ? -value : value;
 }
 
-static PURE bool awk_looks_numeric(string_address text, positive length)
+static bool awk_looks_numeric(string_address text, positive length,
+                              decimal address_to number)
 {
         positive used;
+        decimal value;
 
-        awk_scan_number(text, length, address_of used);
+        if (length && !byte_is_digit(text[0]) && text[0] != '.' &&
+            text[0] != '+' && text[0] != '-' && text[0] != ' ' &&
+            text[0] != '\t' && text[0] != '\n')
+                return false;
+
+        value = awk_scan_number(text, length, address_of used);
 
         if (!used)
                 return false;
@@ -1204,7 +1211,11 @@ static PURE bool awk_looks_numeric(string_address text, positive length)
                (text[used] == ' ' || text[used] == '\t' || text[used] == '\n'))
                 used++;
 
-        return used == length;
+        if (used != length)
+                return false;
+
+        address_to number = value;
+        return true;
 }
 
 static PURE decimal awk_number_of(string_address text, positive length)
@@ -1283,8 +1294,8 @@ static fn awk_set_input(awk_value address_to which, awk_text address_to text)
         which->number = 0;
         which->state = AWK_HAS_TEXT;
 
-        if (awk_looks_numeric(text->text, text->length))
-                which->state |= AWK_STRNUM;
+        if (awk_looks_numeric(text->text, text->length, address_of which->number))
+                which->state |= AWK_STRNUM | AWK_HAS_NUMBER;
 }
 
 static fn awk_set_input_bytes(awk_value address_to which, string_address from, positive length)

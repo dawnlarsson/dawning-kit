@@ -203,7 +203,7 @@ static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
         everywhere except within radius of the top and bottom, where it follows
         the circle those corners are quarters of.
 */
-static int round_inset(int row, int height, int radius)
+static CONST int round_inset(int row, int height, int radius)
 {
         int dy;
 

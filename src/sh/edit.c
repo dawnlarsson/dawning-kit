@@ -368,7 +368,7 @@ static fn edit_line_close(positive at)
 //      takes a position from the outside -- a mouse click, a go to line, a
 //      cursor restored from an undo step -- comes through here, so no other
 //      routine has to ask whether it was handed a line that exists.
-static struct edit_place edit_place_clamped(positive line, positive column)
+static PURE struct edit_place edit_place_clamped(positive line, positive column)
 {
         struct edit_place place;
 
@@ -386,12 +386,12 @@ static struct edit_place edit_place_clamped(positive line, positive column)
         return place;
 }
 
-static bool edit_place_before(struct edit_place a, struct edit_place b)
+static CONST bool edit_place_before(struct edit_place a, struct edit_place b)
 {
         return a.line < b.line || (a.line == b.line && a.column < b.column);
 }
 
-static bool edit_place_same(struct edit_place a, struct edit_place b)
+static CONST bool edit_place_same(struct edit_place a, struct edit_place b)
 {
         return a.line == b.line && a.column == b.column;
 }
@@ -465,14 +465,14 @@ static fn edit_cursors_shift(struct edit_place from, struct edit_place to,
 #define edit_cursor_anchor(at)                                              \
         edit_cursor_place_of(at, anchor_line, anchor_column)
 
-static bool edit_cursor_has_selection(positive at)
+static PURE bool edit_cursor_has_selection(positive at)
 {
         return edit_cursors[at].selecting &&
                !edit_place_same(edit_cursor_caret(at), edit_cursor_anchor(at));
 }
 
-static inline INLINE struct edit_place edit_selection_edge(positive at,
-                                                           bool last)
+static PURE inline INLINE struct edit_place edit_selection_edge(positive at,
+                                                                bool last)
 {
         struct edit_place caret = edit_cursor_caret(at);
         struct edit_place anchor = edit_cursor_anchor(at);
@@ -584,7 +584,8 @@ static fn edit_cursors_one()
         "put this text here", and neither has a special case for whether the
         span happens to be inside one line.
 */
-static positive edit_span_length(struct edit_place from, struct edit_place to)
+static PURE positive edit_span_length(struct edit_place from,
+                                      struct edit_place to)
 {
         positive total;
 
@@ -1161,38 +1162,62 @@ static struct edit_place edit_change(struct edit_place from,
         return after;
 }
 
-//      Where a patch's inserted text ends, worked out from the text rather
-//      than remembered, because the two would then have to be kept level.
-static struct edit_place edit_patch_end(struct edit_patch address_to patch)
+//      Where a span ends, worked out from the text rather than remembered,
+//      because the two would then have to be kept level.
+static PURE struct edit_place edit_span_end(struct edit_place place,
+                                            string_address text,
+                                            positive length)
 {
-        struct edit_place place;
         p8 address_to last;
         positive breaks;
 
-        place.line = patch->line;
-        place.column = patch->column;
-
-        if (!patch->inserted_length)
+        if (!length)
                 return place;
 
-        last = (p8 address_to)memory_last_of(patch->inserted, '\n',
-                                             patch->inserted_length);
-        breaks = memory_count(patch->inserted, patch->inserted_length, '\n');
+        last = (p8 address_to)memory_last_of(text, '\n', length);
+        breaks = memory_count(text, length, '\n');
 
-        place.line = patch->line + breaks;
+        place.line += breaks;
 
         if (!breaks)
         {
-                place.column = patch->column + patch->inserted_length;
+                place.column += length;
                 return place;
         }
 
-        place.column = patch->inserted_length -
-                       (positive)(last + 1 - patch->inserted);
+        place.column = length - (positive)(last + 1 - text);
         return place;
 }
 
-static bool edit_undo()
+/* Undo and redo are the same cold replacement machine in opposite directions.
+   Keeping it out of the typing path removes two copies of the journal walk. */
+static COLD bool edit_step_apply(struct edit_step address_to step,
+                                 bool backward)
+{
+        for (positive done = 0; done < step->patch_count; done++)
+        {
+                positive at = backward ? step->patch_count - done - 1 : done;
+                struct edit_patch address_to patch = step->patches + at;
+                struct edit_place from = {patch->line, patch->column};
+                string_address removed = backward ? patch->inserted
+                                                  : patch->removed;
+                positive removed_length = backward ? patch->inserted_length
+                                                    : patch->removed_length;
+                struct edit_place after;
+
+                if (!edit_raw_replace(
+                        from, edit_span_end(from, removed, removed_length),
+                        backward ? patch->removed : patch->inserted,
+                        backward ? patch->removed_length
+                                 : patch->inserted_length,
+                        address_of after))
+                        return false;
+        }
+
+        return true;
+}
+
+static COLD bool edit_undo()
 {
         struct edit_step address_to step;
 
@@ -1202,20 +1227,10 @@ static bool edit_undo()
         edit_step_seal();
         step = edit_steps + --edit_step_at;
 
-        for (positive at = step->patch_count; at; at--)
+        if (!edit_step_apply(step, true))
         {
-                struct edit_patch address_to patch = step->patches + at - 1;
-                struct edit_place from = {patch->line, patch->column};
-                struct edit_place to = edit_patch_end(patch);
-                struct edit_place after;
-
-                if (!edit_raw_replace(from, to, patch->removed,
-                                      patch->removed_length,
-                                      address_of after))
-                {
-                        edit_step_at++;
-                        return false;
-                }
+                edit_step_at++;
+                return false;
         }
 
         edit_cursors_restore(step->before, step->before_count);
@@ -1225,7 +1240,7 @@ static bool edit_undo()
         return true;
 }
 
-static bool edit_redo()
+static COLD bool edit_redo()
 {
         struct edit_step address_to step;
 
@@ -1234,29 +1249,10 @@ static bool edit_redo()
 
         step = edit_steps + edit_step_at++;
 
-        for (positive at = 0; at < step->patch_count; at++)
+        if (!edit_step_apply(step, false))
         {
-                struct edit_patch address_to patch = step->patches + at;
-                struct edit_place from = {patch->line, patch->column};
-                struct edit_place to = from;
-                struct edit_place after;
-
-                if (patch->removed_length)
-                {
-                        struct edit_patch measure = address_to patch;
-
-                        measure.inserted = patch->removed;
-                        measure.inserted_length = patch->removed_length;
-                        to = edit_patch_end(address_of measure);
-                }
-
-                if (!edit_raw_replace(from, to, patch->inserted,
-                                      patch->inserted_length,
-                                      address_of after))
-                {
-                        edit_step_at--;
-                        return false;
-                }
+                edit_step_at--;
+                return false;
         }
 
         edit_cursors_restore(step->after, step->after_count);
@@ -1274,18 +1270,18 @@ static bool edit_redo()
         outside ASCII is several bytes and one column. Every routine below that
         has "column" in its name means the screen; everything else means bytes.
 */
-static bool edit_is_continuation(p8 character)
+static CONST bool edit_is_continuation(p8 character)
 {
         return (character & 0xc0) == 0x80;
 }
 
-static bool edit_is_word(p8 character)
+static CONST bool edit_is_word(p8 character)
 {
         return byte_is_alnum(character) || character == '_' ||
                character >= 0x80;
 }
 
-static positive edit_display_column(positive line, positive column)
+static PURE positive edit_display_column(positive line, positive column)
 {
         struct edit_line address_to text = edit_lines + line;
         positive width = 0;
@@ -1329,7 +1325,7 @@ static PURE positive edit_column_at_display(positive line, positive wanted)
 //      One character forward or back, whole. Stepping a byte at a time through
 //      a UTF-8 sequence would put the caret between two bytes of one letter,
 //      and then the next insert would break it in half.
-static positive edit_step_forward(positive line, positive column)
+static PURE positive edit_step_forward(positive line, positive column)
 {
         struct edit_line address_to text = edit_lines + line;
 
@@ -1344,7 +1340,7 @@ static positive edit_step_forward(positive line, positive column)
         return column;
 }
 
-static positive edit_step_back(positive line, positive column)
+static PURE positive edit_step_back(positive line, positive column)
 {
         struct edit_line address_to text = edit_lines + line;
 
@@ -1445,14 +1441,14 @@ static fn edit_resize(positive columns, positive rows)
 }
 
 //      How many rows the text gets, which is everything but the status line.
-static positive edit_text_rows()
+static PURE positive edit_text_rows()
 {
         return edit_rows > 1 ? edit_rows - 1 : 1;
 }
 
 //      The line numbers down the side, as wide as the largest number plus the
 //      space that separates it from the text.
-static positive edit_gutter()
+static PURE positive edit_gutter()
 {
         return positive_digits(edit_line_count) + 1;
 }
@@ -2423,13 +2419,13 @@ static bool edit_range_taken(positive address_to claimed, positive first,
 //      The first and last line a cursor is working on. A selection that stops
 //      at the very start of a line has not reached into it, which is the rule
 //      that stops Tab from indenting one line more than was highlighted.
-static positive edit_range_first(positive at)
+static PURE positive edit_range_first(positive at)
 {
         return edit_cursor_has_selection(at) ? edit_selection_start(at).line
                                              : edit_cursors[at].line;
 }
 
-static positive edit_range_last(positive at)
+static PURE positive edit_range_last(positive at)
 {
         struct edit_place from;
         struct edit_place to;
@@ -2721,7 +2717,7 @@ static fn edit_copy_lines(bool up)
         two characters that are easy to see and easy to undo, and getting it
         from a language server costs a language server.
 */
-static string_address edit_comment_marker()
+static PURE string_address edit_comment_marker()
 {
         string_address tail;
 
@@ -2753,8 +2749,8 @@ static string_address edit_comment_marker()
         return (string_address) "# ";
 }
 
-static bool edit_line_commented(positive line, string_address marker,
-                                positive bare)
+static PURE bool edit_line_commented(positive line, string_address marker,
+                                     positive bare)
 {
         positive indent = edit_line_indent(line);
 
@@ -3216,37 +3212,10 @@ static p8 edit_input_paste_end[] = {27, '[', '2', '0', '1', '~'};
 
 static fn edit_key(positive key);
 
-/*
-        A mouse report, decoded, handed over.
-
-        Nothing in this file decodes one -- that is the next agent's work --
-        but the seam is here so that it is a call rather than a rewrite. What
-        arrives is a button, a state and a cell; what it should do is
-        edit_place_cursor, edit_place_cursor with extend, or edit_cursor_add,
-        which is the whole of what a mouse is for in an editor.
-*/
-#define EDIT_MOUSE_PRESS 0
-#define EDIT_MOUSE_DRAG 1
-#define EDIT_MOUSE_RELEASE 2
-#define EDIT_MOUSE_WHEEL_UP 3
-#define EDIT_MOUSE_WHEEL_DOWN 4
-
-static fn edit_mouse_event(p8 what, positive screen_row, positive screen_column,
-                           positive modifiers)
-{
-        // Deliberately empty. Written here rather than left out so that the
-        // call site, the argument order and the cell convention are decided
-        // once, by whoever owns the rest of the file, instead of twice.
-        (void)what;
-        (void)screen_row;
-        (void)screen_column;
-        (void)modifiers;
-}
-
 //      The three bits a terminal packs into the second CSI parameter: one is
 //      no modifier at all, and everything above that is one more than the sum
 //      of shift, alt and control.
-static positive edit_modifiers_from(positive value)
+static CONST positive edit_modifiers_from(positive value)
 {
         positive bits = value > 1 ? value - 1 : 0;
         positive modifiers = 0;
@@ -3267,7 +3236,7 @@ static positive edit_modifiers_from(positive value)
 //      arrives as the letter's place in the alphabet and nothing else, which
 //      is why an editor that wants Ctrl+S has to know that 0x13 is what it
 //      looks like.
-static positive edit_key_from_control(p8 byte)
+static CONST positive edit_key_from_control(p8 byte)
 {
         switch (byte)
         {
@@ -3311,7 +3280,7 @@ static positive edit_key_from_control(p8 byte)
 //      The keys a CSI sequence ending in a tilde names, by its first
 //      parameter. The numbers are xterm's and every terminal worth decoding
 //      agrees with them.
-static positive edit_key_from_tilde(positive value)
+static CONST positive edit_key_from_tilde(positive value)
 {
         if (value == 1 || value == 7)
                 return EDIT_KEY_HOME;
@@ -3337,7 +3306,7 @@ static positive edit_key_from_tilde(positive value)
         return EDIT_KEY_NONE;
 }
 
-static positive edit_key_from_final(p8 final)
+static CONST positive edit_key_from_final(p8 final)
 {
         if (final >= 'A' && final <= 'D')
                 return EDIT_KEY_UP + final - 'A';
@@ -3507,27 +3476,12 @@ static fn edit_input_byte(p8 byte)
                         positive modifiers = edit_modifiers_from(second);
                         positive key;
 
-                        //      A mouse report, in either of the two shapes a
-                        //      terminal sends one, handed to whoever owns the
-                        //      mouse.
+                        // Mouse reports are complete CSI frames here. The
+                        // editor has no pointer actions yet, so consuming and
+                        // discarding the frame is the whole operation.
                         if (edit_input_csi.marker == '<' &&
                             (byte == 'M' || byte == 'm'))
-                        {
-                                positive third =
-                                    edit_input_csi.count > 2
-                                        ? edit_input_csi.value[2]
-                                        : 1;
-                                p8 what = byte == 'm' ? EDIT_MOUSE_RELEASE
-                                          : (first & 32) ? EDIT_MOUSE_DRAG
-                                          : first == 64 ? EDIT_MOUSE_WHEEL_UP
-                                          : first == 65 ? EDIT_MOUSE_WHEEL_DOWN
-                                                        : EDIT_MOUSE_PRESS;
-
-                                edit_mouse_event(what, third ? third - 1 : 0,
-                                                 second ? second - 1 : 0,
-                                                 first & 28);
                                 return;
-                        }
 
                         if (byte == 'Z')
                         {

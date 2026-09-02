@@ -347,7 +347,7 @@ typedef struct
 #define CONVERSION_FLAG_ALTERNATE 8
 #define CONVERSION_FLAG_ZERO 16
 
-static const p8 conversion_flag_bytes[128] = {
+static const p8 conversion_flag_bytes['0' + 1] = {
     ['-'] = CONVERSION_FLAG_LEFT, ['+'] = CONVERSION_FLAG_PLUS,
     [' '] = CONVERSION_FLAG_SPACE, ['#'] = CONVERSION_FLAG_ALTERNATE,
     ['0'] = CONVERSION_FLAG_ZERO,
@@ -362,7 +362,8 @@ static inline INLINE positive conversion_flags_take(
         while (true)
         {
                 p8 byte = string_get(at);
-                p8 flag = byte < 128 ? conversion_flag_bytes[byte] : 0;
+                p8 flag = byte < array_count(conversion_flag_bytes)
+                              ? conversion_flag_bytes[byte] : 0;
 
                 if (!flag)
                         break;

@@ -1885,8 +1885,6 @@ static string_address file_environment(string_address name)
         return environment ? string_get_environment(environment, name) : null;
 }
 
-#define FILE_TCGETS 0x5401u
-
 enum
 {
         FILE_COLOR_NEVER,
@@ -1939,21 +1937,9 @@ static inline INLINE bool file_color_next(string_address address_to cursor,
         return true;
 }
 
-static bool file_handle_terminal(positive handle)
-{
-        p8 settings[64];
-
-        return system_control(handle, FILE_TCGETS, settings) == 0;
-}
-
-static bool file_output_terminal()
-{
-        return file_handle_terminal(1);
-}
-
 static bipolar file_input_terminal_name(p8 address_to path, positive limit)
 {
-        if (!file_handle_terminal(0))
+        if (!stream_is_terminal(0))
                 return -ENOTTY;
 
         bipolar length = system_call_4(
@@ -1992,7 +1978,7 @@ static bool file_color_active(b32 when)
         if (when == FILE_COLOR_ALWAYS)
                 return true;
 
-        if (when != FILE_COLOR_AUTO || !file_output_terminal())
+        if (when != FILE_COLOR_AUTO || !stream_is_terminal(1))
                 return false;
 
         string_address term = file_environment((string_address) "TERM");
@@ -3107,7 +3093,7 @@ static b32 file_ls_as(string_address program, bool long_default,
         ls_slash = (flags & FILE_FLAG('p')) != 0;
         ls_coloring = false;
         ls_color_started = false;
-        ls_terminal = file_output_terminal();
+        ls_terminal = stream_is_terminal(1);
         ls_colors = file_environment((string_address) "LS_COLORS");
 
         if (ls_colors && string_get(ls_colors) &&
@@ -6876,6 +6862,26 @@ static fn file_simple_operand(b32 index)
         file_simple_operand_count++;
 }
 
+static bool file_simple_operands(string_address program, positive wanted)
+{
+        file_simple_operand_count = 0;
+        file_taking taking = {
+            .program = program, .allowed = (string_address)"",
+            .valued = (string_address)"", .operand = file_simple_operand,
+        };
+
+        if (!file_take(address_of taking))
+                return false;
+        if (file_simple_operand_count == wanted)
+                return true;
+
+        string_format(file_fail, "%s: %s\n", program,
+                      file_simple_operand_count < wanted
+                          ? (string_address)"missing operand"
+                          : (string_address)"too many operands");
+        return false;
+}
+
 static fn file_operand(b32 index)
 {
         if (file_operand_failed)
@@ -6903,24 +6909,8 @@ static string_address file_operand_at(positive index)
 
 static b32 file_link()
 {
-        file_simple_operand_count = 0;
-        file_taking taking = {
-            .program = (string_address) "link",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
-            .operand = file_simple_operand,
-        };
-
-        if (!file_take(address_of taking))
+        if (!file_simple_operands((string_address)"link", 2))
                 return 1;
-        if (file_simple_operand_count != 2)
-        {
-                file_fail(file_simple_operand_count < 2
-                              ? (string_address) "link: missing operand\n"
-                              : (string_address) "link: too many operands\n",
-                          0);
-                return 1;
-        }
 
         string_address source = file_simple_operand_list[0];
         string_address target = file_simple_operand_list[1];
@@ -6938,24 +6928,8 @@ static b32 file_link()
 
 static b32 file_unlink()
 {
-        file_simple_operand_count = 0;
-        file_taking taking = {
-            .program = (string_address) "unlink",
-            .allowed = (string_address) "",
-            .valued = (string_address) "",
-            .operand = file_simple_operand,
-        };
-
-        if (!file_take(address_of taking))
+        if (!file_simple_operands((string_address)"unlink", 1))
                 return 1;
-        if (file_simple_operand_count != 1)
-        {
-                file_fail(!file_simple_operand_count
-                              ? (string_address) "unlink: missing operand\n"
-                              : (string_address) "unlink: too many operands\n",
-                          0);
-                return 1;
-        }
 
         string_address path = file_simple_operand_list[0];
         bipolar answer = system_remove_at(AT_FDCWD,
@@ -9988,7 +9962,7 @@ static b32 file_tty()
         }
 
         if (taking.flags & FILE_FLAG('s'))
-                return file_handle_terminal(0) ? 0 : 1;
+                return stream_is_terminal(0) ? 0 : 1;
 
         p8 path[FILE_PATH_MAX];
         bipolar length = file_input_terminal_name(path, sizeof(path));

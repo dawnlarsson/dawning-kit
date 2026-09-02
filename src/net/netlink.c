@@ -209,7 +209,7 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
 }
 
 //      The body, for the caller to fill in by name rather than by offset.
-static address_any netlink_body(netlink_buffer address_to buffer)
+static PURE address_any netlink_body(netlink_buffer address_to buffer)
 {
         return buffer->bytes + NETLINK_HEADER;
 }
@@ -313,10 +313,11 @@ static bipolar netlink_open(void)
 */
 static bipolar netlink_receive(b32 handle, netlink_buffer address_to buffer)
 {
-        bipolar size = socket_receive(handle,
-                                      buffer->bytes ? buffer->bytes
-                                                    : (address_any)&size,
-                                      buffer->bytes ? buffer->room : 0,
+        /* With MSG_TRUNC a zero-length datagram read still returns its true
+           length. Keeping that probe empty matters after the first reply:
+           otherwise every later datagram was copied into the buffer once
+           while peeking and a second time while consuming it. */
+        bipolar size = socket_receive(handle, (address_any)&size, 0,
                                       MSG_PEEK | MSG_TRUNC, 0, 0);
         bipolar got;
 
@@ -513,6 +514,9 @@ typedef struct
         p8 hardware[6];
 } netlink_search;
 
+static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
+                            netlink_visitor visit, address_any context);
+
 static bool netlink_link_seen(netlink_header address_to header, address_any context)
 {
         netlink_search address_to search = (netlink_search address_to)context;
@@ -589,23 +593,10 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
 */
 static bipolar netlink_link_find(b32 handle, netlink_search address_to search)
 {
-        netlink_buffer request = {0};
-        netlink_buffer reply = {0};
-        netlink_link address_to body;
-        p32 sequence = netlink_sequence_next++;
-        bipolar status;
-
         search->found = false;
 
-        if (!netlink_begin(address_of request, RTM_GETLINK, NLM_REQUEST | NLM_DUMP,
-                           sequence, sizeof(netlink_link)))
-                return -1;
-
-        body = (netlink_link address_to)netlink_body(address_of request);
-        body->family = AF_UNSPEC;
-
-        status = netlink_transact(handle, address_of request, sequence,
-                                  address_of reply, netlink_link_seen, search);
+        bipolar status = netlink_dump(handle, RTM_GETLINK, sizeof(netlink_link),
+                                      AF_UNSPEC, netlink_link_seen, search);
 
         if (status < 0)
                 return status;

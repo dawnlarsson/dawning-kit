@@ -367,16 +367,9 @@ static void fill(struct window *window, unsigned int colour)
                                 window->width, colour);
 }
 
-static void hold(long seconds)
+static void hold(long seconds, long nanoseconds)
 {
-        long timespec[2] = {seconds, 0};
-
-        system_call_2(syscall(nanosleep), (positive)timespec, 0);
-}
-
-static void hold_ms(long milliseconds)
-{
-        long timespec[2] = {0, milliseconds * 1000000};
+        long timespec[2] = {seconds, nanoseconds};
 
         system_call_2(syscall(nanosleep), (positive)timespec, 0);
 }
@@ -446,7 +439,7 @@ static b32 screen_window()
                         window_commit(back);
                 }
 
-                hold_ms(25);
+                hold(0, 25000000);
         }
 
         // Put one away and let the other cover its display.
@@ -456,7 +449,7 @@ static b32 screen_window()
         bare->style |= WINDOW_FULLSCREEN;
         window_commit(bare);
 
-        hold(7);
+        hold(7, 0);
 
         window_close(bare);
         window_close(front);
@@ -593,7 +586,7 @@ static b32 screen_text()
                 if (changed)
                         window_flush(window);
 
-                hold_ms(10);
+                hold(0, 10000000);
         }
 
         window_close(window);

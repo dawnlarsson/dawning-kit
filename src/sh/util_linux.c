@@ -4614,22 +4614,6 @@ static PURE b32 ul_ionice_class(string_address text)
         return -1;
 }
 
-static b32 ul_ionice_id(string_address text, string_address kind,
-                        b32 address_to value)
-{
-        positive got;
-
-        if (!ul_unsigned(text, b32_max, address_of got))
-        {
-                string_format(file_fail, "ionice: invalid %s: %s\n", kind,
-                              text);
-                return 1;
-        }
-
-        address_to value = (b32)got;
-        return 0;
-}
-
 static b32 ul_ionice_get(b32 which, b32 id)
 {
         bipolar raw = system_call_2(syscall(ioprio_get), (positive)which,
@@ -4729,10 +4713,9 @@ static b32 util_linux_ionice()
                 id_kind = ul_ionice_identity == 'p' ? "PID"
                           : ul_ionice_identity == 'P' ? "PGID"
                                                      : "UID";
-                answer = ul_ionice_id(
+                answer = !ul_pid(
                     file_option_value(address_of taking, ul_ionice_identity),
-                    id_kind,
-                    address_of id);
+                    "ionice", id_kind, address_of id);
         }
         else
                 answer = 0;
@@ -4757,8 +4740,8 @@ static b32 util_linux_ionice()
 
                 for (positive at = taking.first; at < count && !answer; at++)
                 {
-                        if (ul_ionice_id(program_argument((b32)at), id_kind,
-                                         address_of id))
+                        if (!ul_pid(program_argument((b32)at), "ionice",
+                                    id_kind, address_of id))
                                 return 1;
                         answer = setting
                                      ? ul_ionice_set(which, id, class, data,

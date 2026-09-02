@@ -36,9 +36,8 @@ fn shell_trap_exit();
 fn exec_child_began();
 COLD fn exec_expand_fatal();
 string_address shell_flags_current();
-bool shell_tool_here(string_address name);
-bool shell_command_here(string_address name);
-bool exec_function_here(string_address name);
+bool shell_tool_only_here(string_address name, positive2 named);
+bool exec_function_here_hashed(string_address name, positive2 named);
 string_address alias_lookup(string_address name);
 bipolar shell_spawn_tool(string_address address_to arguments,
                          b32 output, bool quiet);
@@ -102,6 +101,12 @@ static bool expand_failed;
 static bool expand_name_at_empty;
 static bool expand_explicit_empty;
 static positive expand_depth;
+
+static inline INLINE fn expand_fail_state()
+{
+        expand_overflow = true;
+        expand_failed = true;
+}
 
 /*
         Where a finished word lives.
@@ -303,8 +308,7 @@ static string_address expand_hold(string_address text, positive length,
 
         if (!held)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return null;
         }
 
@@ -818,12 +822,12 @@ static fn expand_ifs_prepare()
         }
 }
 
-static bool expand_in_ifs(p8 value)
+static PURE bool expand_in_ifs(p8 value)
 {
         return expand_ifs_set[value] != 0;
 }
 
-static bool expand_ifs_blank(p8 value)
+static PURE bool expand_ifs_blank(p8 value)
 {
         return expand_ifs_blank_set[value] != 0;
 }
@@ -1176,8 +1180,7 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         if (step != expand_length || !(into = shell_store_take(address_of expand_store,
                                                                 room)))
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 expand_length = at;
                 expand_quoted_seen = held;
                 expand_name_at_empty = held_name_at;
@@ -1367,34 +1370,34 @@ static bipolar arith_divide(bipolar left, bipolar right, bool remainder)
 
 // Shell arithmetic is the target machine word. Express wrapping through the
 // unsigned type so compiler overflow assumptions cannot change that contract.
-static bipolar arith_addition(bipolar left, bipolar right)
+static CONST bipolar arith_addition(bipolar left, bipolar right)
 {
         return (bipolar)((positive)left + (positive)right);
 }
 
-static bipolar arith_subtraction(bipolar left, bipolar right)
+static CONST bipolar arith_subtraction(bipolar left, bipolar right)
 {
         return (bipolar)((positive)left - (positive)right);
 }
 
-static bipolar arith_product(bipolar left, bipolar right)
+static CONST bipolar arith_product(bipolar left, bipolar right)
 {
         return (bipolar)((positive)left * (positive)right);
 }
 
-static bipolar arith_negate(bipolar value)
+static CONST bipolar arith_negate(bipolar value)
 {
         return (bipolar)(0 - (positive)value);
 }
 
-static bipolar arith_shift_left(bipolar left, bipolar right)
+static CONST bipolar arith_shift_left(bipolar left, bipolar right)
 {
         positive count = (positive)right & (positive_bits - 1);
 
         return (bipolar)((positive)left << count);
 }
 
-static bipolar arith_shift_right(bipolar left, bipolar right)
+static CONST bipolar arith_shift_right(bipolar left, bipolar right)
 {
         positive count = (positive)right & (positive_bits - 1);
 
@@ -2192,6 +2195,7 @@ static bipolar expand_tool_direct(string_address command, b32 output)
         static positive text_room;
         b32 count;
         bipolar child = -1;
+        positive2 named;
         bool quiet = false;
         p8 address_to out;
 
@@ -2246,10 +2250,10 @@ static bipolar expand_tool_direct(string_address command, b32 output)
         }
 
         expand_tool_argv[count] = null;
+        named = string_hash_33_length(expand_tool_argv[0]);
 
-        if (!shell_tool_here(expand_tool_argv[0]) ||
-            shell_command_here(expand_tool_argv[0]) ||
-            exec_function_here(expand_tool_argv[0]) ||
+        if (!shell_tool_only_here(expand_tool_argv[0], named) ||
+            exec_function_here_hashed(expand_tool_argv[0], named) ||
             alias_lookup(expand_tool_argv[0]))
                 goto done;
 
@@ -2507,7 +2511,7 @@ static COLD fn expand_fatal()
         order. Both halves matter: the sentence names the word, and the fatal
         is what stops a script rather than letting it act on a truncated one.
 */
-static fn expand_too_long(string_address word)
+static COLD fn expand_too_long(string_address word)
 {
         string_format(expand_complain, "Expansion too long: %s\n", word);
         expand_fatal();
@@ -2767,8 +2771,7 @@ static fn expand_replace(string_address name, string_address pattern_text,
 
         if (!source)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 expand_length = expansion_start;
                 return;
         }
@@ -3093,8 +3096,7 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
                   address_of expand_store, count * sizeof(names[0]))) ||
             env_names_prefix(prefix, prefix_length, names, count) != count)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return;
         }
 
@@ -3107,8 +3109,7 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
 
                 if (!kept)
                 {
-                        expand_overflow = true;
-                        expand_failed = true;
+                        expand_fail_state();
                         return;
                 }
 
@@ -3118,8 +3119,7 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
 
         if (!expand_sort_names(names, count))
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return;
         }
 
@@ -3218,8 +3218,7 @@ static string_address expand_braced(string_address step, bool quoted)
 
         if (!name)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return close + 1;
         }
 
@@ -4301,36 +4300,19 @@ static bool expand_sort_names(string_address address_to names, positive count)
         return true;
 }
 
-static string_address expand_keep_string(string_address text)
+static inline INLINE string_address expand_keep_bytes(string_address text,
+                                                       positive length)
 {
-        positive room = string_length(text) + 1;
-        string_address result = shell_store_take(address_of expand_store, room);
+        string_address result = shell_store_take(address_of expand_store,
+                                                 length + 1);
 
         if (!result)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return (string_address) "";
         }
 
-        memory_copy(result, text, room);
-
-        return result;
-}
-
-static string_address expand_keep(positive at, positive stop)
-{
-        positive room = stop - at + 1;
-        string_address result = shell_store_take(address_of expand_store, room);
-
-        if (!result)
-        {
-                expand_overflow = true;
-                expand_failed = true;
-                return (string_address) "";
-        }
-
-        memory_copy_end(result, expand_text + at, stop - at);
+        memory_copy_end(result, text, length);
 
         return result;
 }
@@ -4391,8 +4373,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
         if (!pattern)
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return false;
         }
 
@@ -4438,8 +4419,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
                 if (glob_failed)
                 {
-                        expand_overflow = true;
-                        expand_failed = true;
+                        expand_fail_state();
                         return false;
                 }
 
@@ -4447,20 +4427,19 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 {
                 if (!expand_sort_names(glob_result, glob_count))
                         {
-                                expand_overflow = true;
-                                expand_failed = true;
+                                expand_fail_state();
                                 return false;
                         }
 
                         for (index = 0; index < glob_count; index++)
                         {
-                                string_address kept = expand_keep_string(
-                                    glob_result[index]);
+                                string_address name = glob_result[index];
+                                string_address kept = expand_keep_bytes(
+                                    name, string_length(name));
 
                                 if (expand_failed || !shell_words_add(out, kept))
                                 {
-                                        expand_overflow = true;
-                                        expand_failed = true;
+                                        expand_fail_state();
                                         return false;
                                 }
                         }
@@ -4470,12 +4449,12 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
         }
 
         {
-                string_address kept = expand_keep(at, stop);
+                string_address kept = expand_keep_bytes(expand_text + at,
+                                                        stop - at);
 
                 if (expand_failed || !shell_words_add(out, kept))
                 {
-                        expand_overflow = true;
-                        expand_failed = true;
+                        expand_fail_state();
                         return false;
                 }
         }
@@ -4711,8 +4690,7 @@ static positive expand_brace_made(string_address word,
             !(made = shell_store_take(address_of expand_store,
                                       prefix + middle_length + suffix + 1)))
         {
-                expand_overflow = true;
-                expand_failed = true;
+                expand_fail_state();
                 return out->count;
         }
 
@@ -4968,7 +4946,7 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
         if (!expand_word_ready(word))
                 return (string_address) "";
 
-        result = expand_keep(0, expand_length);
+        result = expand_keep_bytes(expand_text, expand_length);
 
         if (expand_overflow)
         {
@@ -4992,7 +4970,7 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         expand_push_run(word, value_at, MARK_PLAIN);
         expand_into(word + value_at, false, MARK_PLAIN, true);
 
-        result = expand_keep(0, expand_length);
+        result = expand_keep_bytes(expand_text, expand_length);
 
         if (expand_overflow)
         {
@@ -5062,7 +5040,7 @@ RETURNS_NONNULL string_address shell_expand_pattern(string_address word)
 // Quoted pieces of a [[ string =~ regex ]] right hand side are literal.
 // Translate that byte-level distinction into ERE backslashes before the
 // expander's quote marks disappear.
-static bool expand_regex_metacharacter(p8 value)
+static CONST bool expand_regex_metacharacter(p8 value)
 {
         return value == '.' || value == '^' || value == '$' || value == '*' ||
                value == '+' || value == '?' || value == '(' || value == ')' ||

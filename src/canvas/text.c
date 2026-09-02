@@ -13,7 +13,7 @@
 
 static const struct font_desc *canvas_font;
 
-static const unsigned char *glyph_bits(unsigned int character)
+static PURE const unsigned char *glyph_bits(unsigned int character)
 {
         return font_data_buf(canvas_font->data) +
                (size_t)character *
@@ -22,7 +22,7 @@ static const unsigned char *glyph_bits(unsigned int character)
 
 // Whether the face is the one canvas_cell assumes: eight wide, a byte a row,
 // and a cell tall.
-static _Bool glyph_is_cell(void)
+static PURE _Bool glyph_is_cell(void)
 {
         return canvas_font && canvas_font->width == WINDOW_CELL_W &&
                canvas_font->height == WINDOW_CELL_H &&
@@ -46,8 +46,8 @@ static void glyph_draw(const struct target *t, int x, int y, int scale,
         up to the last space. A single word longer than the box breaks where it
         runs out of room, because the alternative is drawing off the stop.
 */
-static unsigned int text_line_end(const char *text, unsigned int length,
-                                  unsigned int start, unsigned int columns, _Bool wrap)
+static PURE unsigned int text_line_end(const char *text, unsigned int length,
+                                       unsigned int start, unsigned int columns, _Bool wrap)
 {
         unsigned int remaining;
         unsigned int scanned;
@@ -116,7 +116,7 @@ static unsigned int text_line_end(const char *text, unsigned int length,
 }
 
 // Past the break, and past the character the break was made on.
-static unsigned int text_line_next(const char *text, unsigned int length, unsigned int stop)
+static PURE unsigned int text_line_next(const char *text, unsigned int length, unsigned int stop)
 {
         if (stop < length && (text[stop] == '\n' || text[stop] == ' '))
                 return stop + 1;

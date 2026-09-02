@@ -36,8 +36,8 @@ static void cursor_cell(struct drm_rect *rect, int x, int y,
 
 // Whether any of these desktop rectangles reaches this output. Early, because
 // it is the one overlap question everything from cursor cells to damage asks.
-static _Bool output_touched(struct output *output, const struct drm_rect *damage,
-                            unsigned int count)
+static PURE _Bool output_touched(struct output *output, const struct drm_rect *damage,
+                                 unsigned int count)
 {
         unsigned int i;
 
@@ -679,8 +679,8 @@ static HOT void compose_clip(const struct target *t)
 // Somewhere to draw: an output, a pointer into its scanout buffer, and the
 // damage. The clip is in target coordinates; the rectangle asked for is in
 // desktop ones.
-static struct target target_of(struct output *output, u32 *pixels,
-                               int rx, int ry, int rw, int rh)
+static PURE struct target target_of(struct output *output, u32 *pixels,
+                                    int rx, int ry, int rw, int rh)
 {
         struct target t;
 

@@ -87,7 +87,7 @@ static fn exec_line_begin()
         }
 }
 
-static bool exec_line_aborted()
+static PURE bool exec_line_aborted()
 {
         return exec_signal == EXEC_SIGNAL_FATAL;
 }
@@ -172,7 +172,7 @@ static b32 exec_redirect_status;
 // A save may not occupy a descriptor this command is going to redirect. An
 // open duplication source is occupied already; a closed one is detected later
 // by exec_saved_fd_is, so neither kind needs to force every save above it.
-static bool exec_redirect_target_is(parse_node address_to node, b32 fd)
+static PURE bool exec_redirect_target_is(parse_node address_to node, b32 fd)
 {
         for (b32 at = 0; at < node->redirect_count; at++)
         {
@@ -186,7 +186,7 @@ static bool exec_redirect_target_is(parse_node address_to node, b32 fd)
         return false;
 }
 
-static bool exec_saved_fd_is(b32 fd)
+static PURE bool exec_saved_fd_is(b32 fd)
 {
         for (b32 at = 0; at < exec_save_count; at++)
                 if (exec_saves[at].saved == fd)
@@ -744,6 +744,8 @@ typedef struct
 {
         p8 address_to name;
         positive name_room;
+        positive name_hash;
+        positive name_length;
         b32 body;
         // Where this body sits in the kept arenas, so that redefining it can
         // hand the space back rather than leaving it behind.
@@ -756,24 +758,33 @@ static positive exec_function_room;
 static positive exec_function_count;
 static positive exec_function_recent = positive_max;
 
-// Whether a name is a function, which type asks and nothing else does.
-bool exec_function_here(string_address name);
+// Whether a name is a function, which direct command substitution asks.
+bool exec_function_here_hashed(string_address name, positive2 named);
 
-static b32 exec_function_find(string_address name)
+static PURE inline INLINE bool exec_function_matches(
+    positive index, string_address name, positive hash, positive length)
+{
+        return exec_functions[index].name_hash == hash &&
+               exec_functions[index].name_length == length &&
+               !memory_compare(exec_functions[index].name, name, length);
+}
+
+static b32 exec_function_find(string_address name, positive2 named)
 {
         positive index;
 
         if (exec_function_recent < exec_function_count &&
             exec_functions[exec_function_recent].body &&
-            !string_compare(exec_functions[exec_function_recent].name, name))
+            exec_function_matches(exec_function_recent, name,
+                                  named.x, named.y))
                 return exec_functions[exec_function_recent].body;
 
         for (index = 0; index < exec_function_count; index++)
         {
-                if (index == exec_function_recent)
+                if (index == exec_function_recent || !exec_functions[index].body)
                         continue;
 
-                if (!string_compare(exec_functions[index].name, name))
+                if (exec_function_matches(index, name, named.x, named.y))
                 {
                         exec_function_recent = index;
                         return exec_functions[index].body;
@@ -783,18 +794,19 @@ static b32 exec_function_find(string_address name)
         return 0;
 }
 
-bool exec_function_here(string_address name)
+bool exec_function_here_hashed(string_address name, positive2 named)
 {
-        return exec_function_find(name) != 0;
+        return exec_function_find(name, named) != 0;
 }
 
 bool exec_function_unset(string_address name)
 {
+        positive2 named = string_hash_33_length(name);
         positive slot;
 
         for (slot = 0; slot < exec_function_count; slot++)
         {
-                if (string_compare(exec_functions[slot].name, name))
+                if (!exec_function_matches(slot, name, named.x, named.y))
                         continue;
 
                 if (!exec_functions[slot].body)
@@ -822,11 +834,12 @@ static b32 exec_define(b32 index)
         bool released = false;
         b32 body;
         positive slot;
-        positive name_length = string_length(name);
+        positive2 named = string_hash_33_length(name);
+        positive name_length = named.y;
 
         for (slot = 0; slot < exec_function_count; slot++)
         {
-                if (!string_compare(exec_functions[slot].name, name))
+                if (exec_function_matches(slot, name, named.x, named.y))
                         break;
         }
 
@@ -855,6 +868,8 @@ static b32 exec_define(b32 index)
 
                         exec_functions[slot].name = null;
                         exec_functions[slot].name_room = 0;
+                        exec_functions[slot].name_hash = 0;
+                        exec_functions[slot].name_length = 0;
                         exec_functions[slot].body = 0;
                         exec_function_count++;
                 }
@@ -872,6 +887,8 @@ static b32 exec_define(b32 index)
                 }
 
                 string_copy(exec_functions[slot].name, name);
+                exec_functions[slot].name_hash = named.x;
+                exec_functions[slot].name_length = named.y;
         }
 
         /*
@@ -1330,6 +1347,7 @@ static b32 exec_dispatch(b32 command_word)
         static p8 address_to found;
         static positive found_room;
         string_address name = shell_argv[0];
+        positive2 named;
         p8 initial = string_get(name);
         b32 body;
 
@@ -1342,7 +1360,32 @@ static b32 exec_dispatch(b32 command_word)
         if (exec_control_builtin(name, true))
                 return shell_status;
 
-        body = exec_function_find(name);
+        shell_command_name_stable =
+            parse_words[command_word] == name &&
+            (parse_word_flags[command_word] & PARSE_WORD_LITERAL);
+
+        if (shell_command_name_stable)
+        {
+                /* Leading assignments have already been consumed, so this
+                   literal word's otherwise-unused assignment-name hash slot
+                   can cache the complete command hash for every later pass
+                   through a kept loop tree. */
+                named.x = parse_word_name_hashes[command_word];
+                named.y = parse_word_lengths[command_word];
+
+                if (!named.x)
+                {
+                        named.x = memory_hash_33(name, named.y);
+                        parse_word_name_hashes[command_word] = named.x;
+                }
+
+                shell_command_name_address = name;
+                shell_command_name_length = named.y;
+        }
+        else
+                named = string_hash_33_length(name);
+
+        body = exec_function_find(name, named);
 
         if (body)
         {
@@ -1350,28 +1393,10 @@ static b32 exec_dispatch(b32 command_word)
                 return exec_call(body);
         }
 
-        shell_command_name_stable =
-            parse_words[command_word] == name &&
-            (parse_word_flags[command_word] & PARSE_WORD_LITERAL);
-
-        if (shell_command_name_stable)
-        {
-                shell_command_name_address = name;
-                shell_command_name_length = parse_word_lengths[command_word];
-        }
-
         {
                 bool tail = shell_tail_command;
 
-                /* command may still select an external utility, so let that
-                   wrapper preserve the already-isolated process. Every other
-                   builtin can evaluate nested commands and must consume the
-                   one-command tail privilege here. */
-                shell_tail_command =
-                    tail &&
-                    (!shell_command_named(name) ||
-                     (initial == 'c' && !string_compare(name, "command")));
-                if (shell_builtin(null))
+                if (shell_builtin(null, named))
                         return shell_status;
                 shell_tail_command = tail;
         }
@@ -2321,7 +2346,7 @@ static bool conditional_tokenize(string_address text)
         return true;
 }
 
-static bool conditional_is(string_address word)
+static PURE bool conditional_is(string_address word)
 {
         return conditional_at < conditional_word_count &&
                word_is(conditional_word[conditional_at], word);

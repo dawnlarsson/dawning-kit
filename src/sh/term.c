@@ -119,7 +119,7 @@ static fn touch_all()
         fill contract, including on RV64 implementations that trap unaligned
         doubleword stores.
 */
-static positive blank_cell_word()
+static PURE positive blank_cell_word()
 {
         positive clear_ink = reverse ? paper : ink;
         positive clear_paper = reverse ? ink : paper;
@@ -482,7 +482,7 @@ static fn tab_forward()
         through to the plain foreground range and 38;5;31m painted the text
         red for no reason anyone asked for.
 */
-static unsigned char colour_256(unsigned int n)
+static CONST unsigned char colour_256(unsigned int n)
 {
         unsigned int r, g, b;
 
@@ -506,7 +506,8 @@ static unsigned char colour_256(unsigned int n)
                                (r > 2 ? 1 : 0) | (g > 2 ? 2 : 0) | (b > 2 ? 4 : 0));
 }
 
-static unsigned char colour_rgb(unsigned int r, unsigned int g, unsigned int b)
+static CONST unsigned char colour_rgb(unsigned int r, unsigned int g,
+                                      unsigned int b)
 {
         return (unsigned char)((r > 192 || g > 192 || b > 192 ? 8 : 0) |
                                (r > 96 ? 1 : 0) | (g > 96 ? 2 : 0) | (b > 96 ? 4 : 0));
@@ -1496,7 +1497,7 @@ static fn line_take(positive from, positive to)
 }
 
 // The word before the cursor is the run of spaces then the run that is not.
-static positive line_word()
+static PURE positive line_word()
 {
         positive at = line_point;
 
@@ -1935,8 +1936,8 @@ static fn SPARE term_key_modified(unsigned int character, unsigned int code,
                    string_length((string_address)sequence));
 }
 
-//      The two argument spelling every existing caller uses, which is every
-//      caller that has no modifiers to hand.
+// The test fixture and any caller without compositor modifiers use the
+// ordinary two-argument spelling.
 static fn SPARE term_key(unsigned int character, unsigned int code)
 {
         term_key_modified(character, code, 0);

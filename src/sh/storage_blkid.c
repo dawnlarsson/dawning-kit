@@ -67,11 +67,11 @@ typedef struct
          __builtin_offsetof(storage_identity, member),                      \
          __builtin_offsetof(storage_identity, length_member)}
 static const storage_tag_descriptor storage_tags[] = {
-    STORAGE_TAG(UUID, uuid, uuid_length, UUID),
     STORAGE_TAG(LABEL, label, label_length, LABEL),
-    STORAGE_TAG(PARTUUID, partuuid, partuuid_length, PARTUUID),
-    STORAGE_TAG(PARTLABEL, partlabel, partlabel_length, PARTLABEL),
+    STORAGE_TAG(UUID, uuid, uuid_length, UUID),
     STORAGE_TAG(TYPE, type, type_length, TYPE),
+    STORAGE_TAG(PARTLABEL, partlabel, partlabel_length, PARTLABEL),
+    STORAGE_TAG(PARTUUID, partuuid, partuuid_length, PARTUUID),
     {(string_address)"DEVNAME", 7, STORAGE_SHOW_DEVNAME, 0, 0},
 };
 #undef STORAGE_TAG
@@ -1389,20 +1389,16 @@ static const storage_tag_descriptor address_to storage_tag_find(
         return null;
 }
 
-static string_address storage_selected_value(
+static string_address storage_tag_value(
     storage_identity address_to identity,
-    storage_selector address_to selector)
+    const storage_tag_descriptor address_to descriptor)
 {
-        const storage_tag_descriptor address_to descriptor = storage_tag_find(
-            selector->tag, selector->tag_length);
-
-        if (!descriptor)
-                return null;
         if (descriptor->show == STORAGE_SHOW_DEVNAME)
                 return identity->path;
 
         return memory_load_unaligned(
-                   positive, (p8 address_to)identity + descriptor->length_offset)
+                   positive,
+                   (p8 address_to)identity + descriptor->length_offset)
                    ? (p8 address_to)identity + descriptor->value_offset
                    : null;
 }
@@ -1416,7 +1412,11 @@ static bool storage_identity_matches(
         if (!selector->tag_length)
                 return true;
 
-        value = storage_selected_value(identity, selector);
+        const storage_tag_descriptor address_to descriptor = storage_tag_find(
+            selector->tag, selector->tag_length);
+        if (!descriptor)
+                return false;
+        value = storage_tag_value(identity, descriptor);
         return value && string_equals(value, selector->value);
 }
 
@@ -1625,20 +1625,12 @@ static fn storage_write_encoded(writer output, string_address value)
         storage_write_hex_escaped(output, value, false, true);
 }
 
-static fn storage_full_field(writer output, string_address name,
-                             string_address value)
+static fn storage_output_field(writer output, string_address name,
+                               string_address value, bool exported)
 {
-        string_format(output, " %s=\"", name);
+        string_format(output, exported ? "%s=" : " %s=\"", name);
         storage_write_encoded(output, value);
-        output("\"", 1);
-}
-
-static fn storage_export_field(writer output, string_address name,
-                               string_address value)
-{
-        string_format(output, "%s=", name);
-        storage_write_encoded(output, value);
-        output("\n", 1);
+        output(exported ? "\n" : "\"", 1);
 }
 
 static bool storage_blkid_visit(
@@ -1646,118 +1638,69 @@ static bool storage_blkid_visit(
 {
         storage_blkid_context address_to context =
             (storage_blkid_context address_to)opaque;
-        bool selected = !context->select_seen ||
-            ((context->shown & STORAGE_SHOW_LABEL) && identity->label_length) ||
-            ((context->shown & STORAGE_SHOW_UUID) && identity->uuid_length) ||
-            ((context->shown & STORAGE_SHOW_TYPE) && identity->type_length) ||
-            ((context->shown & STORAGE_SHOW_PARTLABEL) &&
-             identity->partlabel_length) ||
-            ((context->shown & STORAGE_SHOW_PARTUUID) &&
-             identity->partuuid_length) ||
-            (context->shown & STORAGE_SHOW_DEVNAME);
 
         if (!storage_identity_matches(identity, address_of context->selector))
                 return true;
 
         context->found++;
 
+        positive available = STORAGE_SHOW_DEVNAME;
+
+        for (positive at = 0; at + 1 < array_count(storage_tags); at++)
+                if (storage_tag_value(identity, storage_tags + at))
+                        available |= storage_tags[at].show;
+
         /* A recognised device remains a successful blkid query even when a
            requested tag is absent.  Only `-o device` prints independently of
            the selected tag; the field-oriented formats emit no empty row. */
-        if (!selected && context->mode != STORAGE_OUTPUT_DEVICE)
+        if (context->select_seen && !(context->shown & available) &&
+            context->mode != STORAGE_OUTPUT_DEVICE)
                 return !context->first_only;
 
-        if (context->mode == STORAGE_OUTPUT_VALUE)
-        {
-                if ((context->shown & STORAGE_SHOW_LABEL) &&
-                    identity->label_length)
-                        string_format(context->output, "%s\n", identity->label);
-                if ((context->shown & STORAGE_SHOW_UUID) && identity->uuid_length)
-                        string_format(context->output, "%s\n", identity->uuid);
-                if ((context->shown & STORAGE_SHOW_TYPE) && identity->type_length)
-                        string_format(context->output, "%s\n", identity->type);
-                if ((context->shown & STORAGE_SHOW_PARTLABEL) &&
-                    identity->partlabel_length)
-                        string_format(context->output, "%s\n",
-                                      identity->partlabel);
-                if ((context->shown & STORAGE_SHOW_PARTUUID) &&
-                    identity->partuuid_length)
-                        string_format(context->output, "%s\n",
-                                      identity->partuuid);
-                if (context->shown & STORAGE_SHOW_DEVNAME)
-                        string_format(context->output, "%s\n", identity->path);
-        }
-        else if (context->mode == STORAGE_OUTPUT_DEVICE)
+        if (context->mode == STORAGE_OUTPUT_DEVICE)
                 string_format(context->output, "%s\n", identity->path);
-        else if (context->mode == STORAGE_OUTPUT_EXPORT)
-        {
-                if (context->found > 1)
-                        context->output("\n", 1);
-                storage_export_field(context->output,
-                                     (string_address)"DEVNAME", identity->path);
-                if (!context->select_seen ||
-                    (context->shown & STORAGE_SHOW_LABEL))
-                {
-                        if (identity->label_length)
-                                storage_export_field(context->output,
-                                    (string_address)"LABEL", identity->label);
-                }
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_UUID)) &&
-                    identity->uuid_length)
-                        storage_export_field(context->output,
-                            (string_address)"UUID", identity->uuid);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_TYPE)) &&
-                    identity->type_length)
-                        storage_export_field(context->output,
-                            (string_address)"TYPE", identity->type);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_PARTLABEL)) &&
-                    identity->partlabel_length)
-                        storage_export_field(context->output,
-                            (string_address)"PARTLABEL", identity->partlabel);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_PARTUUID)) &&
-                    identity->partuuid_length)
-                        storage_export_field(context->output,
-                            (string_address)"PARTUUID", identity->partuuid);
-        }
         else
         {
-                string_format(context->output, "%s:", identity->path);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_LABEL)) &&
-                    identity->label_length)
-                        storage_full_field(context->output,
-                            (string_address)"LABEL", identity->label);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_UUID)) &&
-                    identity->uuid_length)
-                        storage_full_field(context->output,
-                            (string_address)"UUID", identity->uuid);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_TYPE)) &&
-                    identity->type_length)
-                        storage_full_field(context->output,
-                            (string_address)"TYPE", identity->type);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_PARTLABEL)) &&
-                    identity->partlabel_length)
-                        storage_full_field(context->output,
-                            (string_address)"PARTLABEL", identity->partlabel);
-                if ((!context->select_seen ||
-                     (context->shown & STORAGE_SHOW_PARTUUID)) &&
-                    identity->partuuid_length)
-                        storage_full_field(context->output,
-                            (string_address)"PARTUUID", identity->partuuid);
-                if (context->select_seen &&
-                    (context->shown & STORAGE_SHOW_DEVNAME))
+                bool exported = context->mode == STORAGE_OUTPUT_EXPORT;
+
+                if (exported && context->found > 1)
+                        context->output("\n", 1);
+
+                if (exported)
+                        storage_output_field(context->output,
+                            (string_address)"DEVNAME", identity->path, true);
+
+                if (context->mode == STORAGE_OUTPUT_FULL)
+                        string_format(context->output, "%s:", identity->path);
+
+                for (positive at = 0; at < array_count(storage_tags); at++)
                 {
-                        storage_full_field(context->output,
-                            (string_address)"DEVNAME", identity->path);
+                        const storage_tag_descriptor address_to tag =
+                            storage_tags + at;
+                        bool asked = (context->shown & tag->show) != 0;
+                        string_address value = storage_tag_value(identity, tag);
+
+                        if (!value ||
+                            (exported && tag->show == STORAGE_SHOW_DEVNAME) ||
+                            (context->mode == STORAGE_OUTPUT_VALUE && !asked) ||
+                            (context->mode == STORAGE_OUTPUT_FULL &&
+                             context->select_seen && !asked) ||
+                            (context->mode == STORAGE_OUTPUT_FULL &&
+                             !context->select_seen &&
+                             tag->show == STORAGE_SHOW_DEVNAME) ||
+                            (exported && tag->show != STORAGE_SHOW_DEVNAME &&
+                             context->select_seen && !asked))
+                                continue;
+
+                        if (context->mode == STORAGE_OUTPUT_VALUE)
+                                string_format(context->output, "%s\n", value);
+                        else
+                                storage_output_field(context->output, tag->name,
+                                                     value, exported);
                 }
-                context->output("\n", 1);
+
+                if (context->mode == STORAGE_OUTPUT_FULL)
+                        context->output("\n", 1);
         }
 
         return !context->first_only;

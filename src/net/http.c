@@ -66,12 +66,15 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
         if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
-        //      The authority ends at whichever of the two comes first, or
-        //      at the end of the string when neither does.
+        //      The authority ends at the first slash or colon. One walk is
+        //      enough; asking for each byte separately scanned every normal
+        //      hostname twice.
         {
-                string_address slash = string_first_of_or_end(at, '/');
-                string_address colon = string_first_of_or_end(at, ':');
-                string_address stop = colon < slash ? colon : slash;
+                string_address stop = at;
+
+                while (string_get(stop) && !string_is(stop, '/') &&
+                       !string_is(stop, ':'))
+                        stop++;
 
                 length = (positive)(stop - at);
 
@@ -110,7 +113,7 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
 }
 
 //      Where the header ends: the blank line, in either spelling.
-static bipolar http_header_end(p8 address_to bytes, positive size)
+static PURE bipolar http_header_end(p8 address_to bytes, positive size)
 {
         //      Both spellings are looked for at once and the one that
         //      starts first wins. A header block ending \r\n\r\n contains no
@@ -167,22 +170,6 @@ static string_address http_header(p8 address_to bytes, positive size,
         }
 
         return null;
-}
-
-//      Append one request piece, refusing the whole request rather than
-//      silently sending a valid-looking prefix when the fixed buffer is full.
-static bool http_add(p8 address_to into, positive address_to used,
-                     positive room, string_address text)
-{
-        positive length = string_length(text);
-
-        if (address_to used > room || length > room - address_to used)
-                return false;
-
-        memory_copy(into + address_to used, text, length);
-        address_to used += length;
-
-        return true;
 }
 
 /*
@@ -277,21 +264,36 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
         {
                 p8 request[1024];
-                positive used = 0;
+                positive path_length = string_length(path);
+                positive name_length = string_length(name);
+                positive fixed = sizeof("GET ") - 1 +
+                                 sizeof(" HTTP/1.0\r\nHost: ") - 1 +
+                                 sizeof("\r\nUser-Agent: dawning\r\n"
+                                        "Connection: close\r\n\r\n") - 1;
+                positive used;
+                p8 address_to into = request;
 
-                if (!http_add(request, address_of used, sizeof request,
-                              (string_address) "GET ") ||
-                    !http_add(request, address_of used, sizeof request, path) ||
-                    !http_add(request, address_of used, sizeof request,
-                              (string_address) " HTTP/1.0\r\nHost: ") ||
-                    !http_add(request, address_of used, sizeof request, name) ||
-                    !http_add(request, address_of used, sizeof request,
-                              (string_address) "\r\nUser-Agent: dawning\r\n"
-                                               "Connection: close\r\n\r\n"))
+                if (path_length > sizeof request - fixed ||
+                    name_length > sizeof request - fixed - path_length)
                 {
                         status = HTTP_BAD_URL;
                         goto done;
                 }
+
+                used = fixed + path_length + name_length;
+
+#define HTTP_COPY(part, length)                                              \
+                do { memory_copy(into, (part), (length)); into += (length); } \
+                while (false)
+                HTTP_COPY("GET ", sizeof("GET ") - 1);
+                HTTP_COPY(path, path_length);
+                HTTP_COPY(" HTTP/1.0\r\nHost: ",
+                          sizeof(" HTTP/1.0\r\nHost: ") - 1);
+                HTTP_COPY(name, name_length);
+                HTTP_COPY("\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n",
+                          sizeof("\r\nUser-Agent: dawning\r\n"
+                                 "Connection: close\r\n\r\n") - 1);
+#undef HTTP_COPY
 
                 if (socket_send((b32)handle, request, used, 0, 0, 0) < 0)
                 {

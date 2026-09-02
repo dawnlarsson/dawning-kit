@@ -72,23 +72,18 @@ static const unsigned char cursor_by_edges[16] = {
     [EDGE_BOTTOM | EDGE_LEFT] = CURSOR_RESIZE_NESW,
 };
 
-static unsigned int cursor_for_edges(unsigned int edges)
-{
-        return cursor_by_edges[edges & 15];
-}
-
 static PURE unsigned int cursor_shape_at(int x, int y)
 {
         unsigned int edges;
 
         if (desktop.resizing)
-                return cursor_for_edges(desktop.resize_edges);
+                return cursor_by_edges[desktop.resize_edges & 15];
 
         if (desktop.dragging)
                 return CURSOR_ARROW;
 
         pane_under(x, y, &edges);
-        return cursor_for_edges(edges);
+        return cursor_by_edges[edges & 15];
 }
 
 /*
@@ -338,7 +333,7 @@ static void drag_press(int x, int y)
 
         pane_focus(pane);
         pane_raise(pane);
-        list_sort(NULL, &desktop.windows, pane_by_z);
+        list_move_tail(&pane->link, &desktop.windows);
 
         // Taking hold of a window is what free floating means, so a window the
         // compositor placed is handed back to its program.

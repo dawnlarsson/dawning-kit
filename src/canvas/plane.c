@@ -89,7 +89,7 @@ static void plane_drop(struct output *output)
 }
 
 // The largest whole scale of a shape that fits the plane's buffer.
-static unsigned int plane_scale(struct output *output, unsigned int scale)
+static PURE unsigned int plane_scale(struct output *output, unsigned int scale)
 {
         while (scale > 1 && (CURSOR_W * scale > output->cursor_w ||
                              CURSOR_H * scale > output->cursor_h))

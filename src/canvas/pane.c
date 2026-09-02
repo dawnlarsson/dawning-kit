@@ -28,7 +28,7 @@
 // The view follows the end rather than sitting on a line.
 #define PANE_LIVE ((unsigned int)-1)
 
-static struct output *output_by_index(unsigned int index)
+static PURE struct output *output_by_index(unsigned int index)
 {
         struct output *output;
         unsigned int i = 0;
@@ -96,11 +96,11 @@ static void pane_size(struct pane *pane)
 
 static void pane_raise(struct pane *raised)
 {
-        struct pane *pane;
         int top = 0;
 
-        list_for_each_entry(pane, &desktop.windows, link)
-                top = max(top, pane->z);
+        if (!list_empty(&desktop.windows))
+                top = max(top, list_last_entry(&desktop.windows,
+                                                struct pane, link)->z);
 
         raised->z = top + 1;
 
@@ -108,7 +108,7 @@ static void pane_raise(struct pane *raised)
                 WRITE_ONCE(raised->shared->z, raised->z);
 }
 
-static int pane_by_z(void *unused, const struct list_head *a, const struct list_head *b)
+static PURE int pane_by_z(void *unused, const struct list_head *a, const struct list_head *b)
 {
         int za = list_entry(a, struct pane, link)->z;
         int zb = list_entry(b, struct pane, link)->z;
@@ -189,7 +189,7 @@ static unsigned int pane_length(struct pane *pane, unsigned int index)
         The room the window has now and the shape whoever owns the cells last
         laid them out in are the same at rest and not during a resize.
 */
-static unsigned int pane_rows(struct pane *pane)
+static PURE unsigned int pane_rows(struct pane *pane)
 {
         return max(min(pane->grid_rows, pane->rows), 1u);
 }
@@ -203,7 +203,7 @@ static unsigned int pane_rows(struct pane *pane)
         on the screen, so a window taller than what has been written to it
         still has the newest line at the bottom of it.
 */
-static unsigned int pane_oldest(struct pane *pane)
+static PURE unsigned int pane_oldest(struct pane *pane)
 {
         unsigned int filled = clamp(pane->head - pane->history, pane_rows(pane),
                                     pane->history);
@@ -219,7 +219,7 @@ static unsigned int pane_oldest(struct pane *pane)
         everything in it -- including what has already scrolled past -- without
         anything being moved or rewritten.
 */
-static unsigned int pane_line_rows(struct pane *pane, unsigned int index)
+static PURE unsigned int pane_line_rows(struct pane *pane, unsigned int index)
 {
         unsigned int width = max(pane->grid_columns, 1u);
         unsigned int length = pane_length(pane, index);
@@ -507,8 +507,8 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         pane->y = 80;
         pane->style = WINDOW_FRAME;
 
-        list_add_tail(&pane->link, &desktop.windows);
         pane_raise(pane);
+        list_add_tail(&pane->link, &desktop.windows);
 
         page->style = WINDOW_FRAME;
         page->x = pane->x;
@@ -665,23 +665,29 @@ static void pane_refresh(struct pane *pane)
 */
 static void pane_focus(struct pane *pane)
 {
-        struct pane *other;
+        struct pane *old = desktop.focused;
 
-        if (desktop.focused == pane)
+        if (old == pane)
                 return;
+
+        if (old)
+        {
+                old->state = 0;
+                if (old->shared)
+                        WRITE_ONCE(old->shared->state, 0);
+        }
 
         desktop.focused = pane;
 
-        list_for_each_entry(other, &desktop.windows, link)
+        if (pane)
         {
-                other->state = other == pane ? WINDOW_FOCUSED : 0;
-
-                if (other->shared)
-                        WRITE_ONCE(other->shared->state, other->state);
+                pane->state = WINDOW_FOCUSED;
+                if (pane->shared)
+                        WRITE_ONCE(pane->shared->state, WINDOW_FOCUSED);
         }
 }
 
-static _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
+static PURE _Bool pane_focusable(struct pane *pane, _Bool include_minimized)
 {
         return pane->shared && !(pane->style & WINDOW_PASSTHROUGH) &&
                (include_minimized || !(pane->style & WINDOW_MINIMIZED));
@@ -717,7 +723,7 @@ static PURE struct pane *pane_topmost(struct pane *except,
         minimizing that top window, choose the highest one instead, which is
         the window the user just put away and makes Alt-Tab a restore path.
 */
-static void pane_focus_step(void)
+static _Bool pane_focus_step(void)
 {
         struct pane *pane;
         struct pane *top = pane_topmost(NULL, true);
@@ -745,21 +751,21 @@ static void pane_focus_step(void)
                 next = top;
 
         if (!next || next == focused)
-                return;
+                return false;
 
         desktop.focus_cycle_z = next->z;
         pane_focus(next);
-        desktop_redraw();
+        return true;
 }
 
-static void pane_focus_commit(void)
+static _Bool pane_focus_commit(void)
 {
         struct pane *pane = desktop.focused;
 
         desktop.focus_cycle_z = 0;
 
         if (!pane || !pane_focusable(pane, true))
-                return;
+                return false;
 
         if (pane->style & WINDOW_MINIMIZED)
         {
@@ -768,22 +774,22 @@ static void pane_focus_commit(void)
         }
 
         pane_raise(pane);
-        list_sort(NULL, &desktop.windows, pane_by_z);
-        desktop_redraw();
+        list_move_tail(&pane->link, &desktop.windows);
+        return true;
 }
 
-static void pane_minimize_focused(void)
+static _Bool pane_minimize_focused(void)
 {
         struct pane *pane = desktop.focused;
 
         if (!pane || !pane_focusable(pane, false))
-                return;
+                return false;
 
         pane->style |= WINDOW_MINIMIZED;
         WRITE_ONCE(pane->shared->style, pane->style);
 
         pane_focus(pane_topmost(pane, false));
-        desktop_redraw();
+        return true;
 }
 
 /*
