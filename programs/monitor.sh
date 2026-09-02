@@ -45,8 +45,7 @@ now_net=$scratch/net.now
 old_net=$scratch/net.old
 now_pid=$scratch/pid.now
 old_pid=$scratch/pid.old
-now_time=$scratch/time.now
-old_time=$scratch/time.old
+monitor_host=$(uname -n 2>/dev/null | cut -c1-14)
 
 #       Put the terminal back the way it was found, whichever way we leave.
 finish() {
@@ -61,12 +60,7 @@ trap finish INT TERM HUP
 #       time because this shell has no ${var:offset:length} to slice a
 #       prebuilt string with.
 bar() {
-        local value=$1
-        local width=$2
-        local filled
-        local colour
-        local i
-        local drawn
+        local value="$1" width="$2" filled colour i drawn
 
         filled=$(( value * width / 100 ))
         [ "$filled" -lt 0 ] && filled=0
@@ -92,8 +86,7 @@ line() {
 }
 
 sample() {
-        read uptime ignored < /proc/uptime
-        printf '%s\n' "$uptime" > "$now_time"
+        read sample_time ignored < /proc/uptime
         grep '^cpu' /proc/stat > "$now_cpu" 2>/dev/null
         grep ':' /proc/net/dev > "$now_net" 2>/dev/null
 
@@ -128,27 +121,26 @@ sample() {
 }
 
 header() {
-        local up
-        local load
-        local host
-        local clock
+        local up load load_one load_five load_fifteen clock s d h m
 
-        up=$(awk '{ s = int($1)
-                    d = int(s / 86400); s = s % 86400
-                    h = int(s / 3600);  s = s % 3600
-                    m = int(s / 60)
-                    if (d > 0) printf "%dd %dh %dm", d, h, m
-                    else if (h > 0) printf "%dh %dm", h, m
-                    else printf "%dm", m }' /proc/uptime 2>/dev/null)
-        load=$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)
-        host=$(uname -n 2>/dev/null | cut -c1-14)
+        s=${sample_time%%.*}
+        d=$(( s / 86400 )); s=$(( s % 86400 ))
+        h=$(( s / 3600 ));  s=$(( s % 3600 ))
+        m=$(( s / 60 ))
+        if [ "$d" -gt 0 ]; then up="${d}d ${h}h ${m}m"
+        elif [ "$h" -gt 0 ]; then up="${h}h ${m}m"
+        else up="${m}m"
+        fi
+        read load_one load_five load_fifteen ignored < /proc/loadavg
+        load="$load_one $load_five $load_fifteen"
         clock=$(date +%H:%M:%S 2>/dev/null)
 
         if [ "$screen_columns" -ge 72 ]; then
-                line "$(printf '\033[1m %-14s\033[0m up %-12s load %-18s %s' \
-                        "$host" "$up" "$load" "$clock")"
+                printf '\033[1m %-14s\033[0m up %-12s load %-18s %s #%02d\033[K\n' \
+                        "$monitor_host" "$up" "$load" "$clock" "$(( count % 100 ))"
         else
-                line "$(printf '\033[1m %-14s\033[0m %s' "$host" "$clock")"
+                printf '\033[1m %-14s\033[0m %s #%02d\033[K\n' \
+                        "$monitor_host" "$clock" "$(( count % 100 ))"
         fi
         line ""
 }
@@ -175,18 +167,19 @@ cpus() {
                         total += delta
                         if (i == 5 || i == 6) idle += delta
                 }
-                percent = (total > 0) ? int((total - idle) * 100 / total + 0.5) : 0
-                print $1, percent
-             }' "$old_cpu" "$now_cpu" 2>/dev/null | while read name percent; do
-                [ -n "$percent" ] || continue
+                tenths = (total > 0) ? int((total - idle) * 1000 / total + 0.5) : 0
+                print $1, int((tenths + 5) / 10), sprintf("%.1f", tenths / 10)
+             }' "$old_cpu" "$now_cpu" 2>/dev/null |
+        while read name percent displayed; do
+                [ -n "$displayed" ] || continue
                 if [ "$name" = cpu ]; then
-                        line "$(printf ' %-6s [%s] %3s%%' \
-                                "all" "$(bar "$percent" "$cpu_bar_width")" "$percent")"
+                        line "$(printf ' %-6s [%s] %5s%%' \
+                                "all" "$(bar "$percent" "$cpu_bar_width")" "$displayed")"
                 else
                         shown=$(( shown + 1 ))
                         [ "$shown" -ge "$cpu_rows" ] && continue
-                        line "$(printf ' %-6s [%s] %3s%%' \
-                                "$name" "$(bar "$percent" "$cpu_bar_width")" "$percent")"
+                        line "$(printf ' %-6s [%s] %5s%%' \
+                                "$name" "$(bar "$percent" "$cpu_bar_width")" "$displayed")"
                 fi
         done
 }
@@ -320,7 +313,7 @@ sample
 cp "$now_cpu" "$old_cpu" 2>/dev/null
 cp "$now_net" "$old_net" 2>/dev/null
 cp "$now_pid" "$old_pid" 2>/dev/null
-cp "$now_time" "$old_time" 2>/dev/null
+old_time_value=$sample_time
 
 count=0
 sample_interval=0.01
@@ -348,7 +341,7 @@ while :; do
 
         # Leave the last cell untouched: writing it puts real terminals into
         # pending-wrap state, where the following newline can consume a row.
-        cpu_bar_width=$(( screen_columns - 16 ))
+        cpu_bar_width=$(( screen_columns - 18 ))
         memory_bar_width=$(( screen_columns - 39 ))
         [ "$cpu_bar_width" -lt 1 ] && cpu_bar_width=1
         [ "$memory_bar_width" -lt 1 ] && memory_bar_width=1
@@ -356,7 +349,7 @@ while :; do
         # One reader answers all four layout questions. At the faster redraw
         # rate, two avoidable forks per frame are not bookkeeping, but load.
         set -- $(awk -v cpu_file="$now_cpu" -v net_file="$now_net" \
-                -v old_time="$old_time" -v now_time="$now_time" '
+                -v before="$old_time_value" -v after="$sample_time" '
                 FILENAME == cpu_file && /^cpu/ { cpus++ }
                 FILENAME == net_file {
                         split($0, part, ":")
@@ -366,15 +359,12 @@ while :; do
                 }
                 FILENAME == "/proc/meminfo" && /^SwapTotal:/ { total = $2 }
                 FILENAME == "/proc/meminfo" && /^SwapFree:/  { free = $2 }
-                FILENAME == old_time { before = $1 }
-                FILENAME == now_time { after = $1 }
                 END {
                         pct = total > 0 ? int((total - free) * 100 / total + 0.5) : 0
                         elapsed = after - before
                         if (elapsed <= 0) elapsed = 0.01
                         print cpus + 0, networks + 0, pct > 0 ? 1 : 0, elapsed
-                }' "$now_cpu" "$now_net" /proc/meminfo "$old_time" "$now_time" \
-                2>/dev/null)
+                }' "$now_cpu" "$now_net" /proc/meminfo 2>/dev/null)
         cpu_count=${1:-1}
         network_count=${2:-0}
         swap_count=${3:-0}
@@ -402,10 +392,12 @@ while :; do
         printf '\033[?2026h'
         draw
         printf '\033[?2026l'
-        cp "$now_cpu" "$old_cpu" 2>/dev/null
-        cp "$now_net" "$old_net" 2>/dev/null
-        cp "$now_pid" "$old_pid" 2>/dev/null
-        cp "$now_time" "$old_time" 2>/dev/null
+        # The next sample recreates every .now file. Rename this frame into
+        # place instead of opening, reading and rewriting the snapshots.
+        mv -f "$now_cpu" "$old_cpu" 2>/dev/null
+        mv -f "$now_net" "$old_net" 2>/dev/null
+        mv -f "$now_pid" "$old_pid" 2>/dev/null
+        old_time_value=$sample_time
 
         count=$(( count + 1 ))
         [ "$frames" -gt 0 ] && [ "$count" -ge "$frames" ] && break

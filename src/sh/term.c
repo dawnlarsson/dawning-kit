@@ -369,10 +369,8 @@ static fn emit_bytes(address_any data, positive length)
 #endif
 }
 
-static fn emit_string(const char address_to text)
-{
-        emit_bytes((address_any)text, string_length((string_address)text));
-}
+#define emit_literal(text) \
+        emit_bytes((address_any)(text), sizeof(text) - 1)
 
 /* One CSI parameter machine serves both terminal output and editor input.
    The final byte is deliberately not stored: it is the caller's action, while
@@ -839,7 +837,7 @@ static fn csi_final(unsigned int final)
                 // counting CUP takes it back in.
                 if (terminal_csi.count && terminal_csi.value[0] == 6)
                 {
-                        emit_string("\x1b[");
+                        emit_literal("\x1b[");
                         positive_to_string(emit_bytes, row + 1);
                         emit(';');
                         positive_to_string(emit_bytes,
@@ -847,11 +845,11 @@ static fn csi_final(unsigned int final)
                         emit('R');
                 }
                 else if (terminal_csi.count && terminal_csi.value[0] == 5)
-                        emit_string("\x1b[0n");
+                        emit_literal("\x1b[0n");
                 break;
         case 'c':
                 // A VT102, which is what the sequences above add up to.
-                emit_string("\x1b[?6c");
+                emit_literal("\x1b[?6c");
                 break;
         case 'r':
         {

@@ -467,27 +467,27 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 find fs/usr -maxdepth 1 \( -type f -o -type l \) -delete ||
                         die "clearing the last /usr image"
 
-                config_enabled() {
-                        grep -q "^CONFIG_$1=y$" linux/.config && return 0
-                        grep -q "^# CONFIG_$1 is not set$" linux/.config &&
-                                return 1
-                        # An existing build tree has no lines for newly added
-                        # symbols until olddefconfig next runs. Their Kconfig
-                        # defaults are all y, so preserve that default here too.
-                        return 0
-                }
-
-                component_enabled() {
-                        grep -q '^CONFIG_MOONWATER_CORE=y$' linux/.config &&
-                                config_enabled "$1"
-                }
+                # Read the component switches once. An existing build tree has
+                # no lines for newly added symbols until olddefconfig next
+                # runs; their Kconfig defaults are y, while the core must be
+                # explicitly built in for the initial filesystem to use it.
+                eval "$(awk '
+                        BEGIN { print "moon_core=0\nmoon_shell=1\nmoon_utilities=1\n" \
+                                      "moon_util_linux=1\nmoon_shell_monitor=1" }
+                        /^CONFIG_MOONWATER_[A-Z_]*=y$/ {
+                                name = $0; sub(/^CONFIG_MOONWATER_/, "", name)
+                                sub(/=y$/, "", name); print "moon_" tolower(name) "=1"
+                        }
+                        /^# CONFIG_MOONWATER_[A-Z_]* is not set$/ {
+                                name = $0; sub(/^# CONFIG_MOONWATER_/, "", name)
+                                sub(/ is not set$/, "", name); print "moon_" tolower(name) "=0"
+                        }
+                ' linux/.config)"
 
                 # The X-macro is both the compiled dispatch registry and the
                 # installed surface, including its component categories.
                 shell_tool_names() {
-                        include_util=0
-                        component_enabled MOONWATER_UTIL_LINUX && include_util=1
-                        awk -F '[(),[:space:]]+' -v util="$include_util" \
+                        awk -F '[(),[:space:]]+' -v util="$moon_util_linux" \
                             '$1 == "SHELL_TOOL" &&
                              ($2 == "GENERAL" ||
                               (util && ($2 == "UTIL_BIN" ||
@@ -510,14 +510,14 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 }
 
                 applet_binary=
-                if component_enabled MOONWATER_SHELL; then
+                if [ "$moon_core" -eq 1 ] && [ "$moon_shell" -eq 1 ]; then
                         # Every program in the default image is spark, including
                         # the one the kernel execs as /init, so no ELF is loaded
                         # on its boot path.
                         spark_cppflags=
-                        if ! component_enabled MOONWATER_UTILITIES; then
+                        if [ "$moon_utilities" -eq 0 ]; then
                                 spark_cppflags=-DSHELL_NO_UTILITIES
-                        elif ! component_enabled MOONWATER_UTIL_LINUX; then
+                        elif [ "$moon_util_linux" -eq 0 ]; then
                                 spark_cppflags=-DSHELL_NO_UTIL_LINUX
                         fi
                         SPARK_CPPFLAGS=$spark_cppflags \
@@ -535,16 +535,16 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                                 ln -sf shell "fs/$utility" || die "linking $utility"
                         done
 
-                        if component_enabled MOONWATER_SHELL_MONITOR; then
+                        if [ "$moon_shell_monitor" -eq 1 ] && [ "$moon_utilities" -eq 1 ]; then
                                 cp programs/monitor.sh fs/monitor.sh || die "installing /monitor.sh"
                                 chmod 0755 fs/monitor.sh || die "making /monitor.sh executable"
                                 ln -sf monitor.sh fs/mointor.sh || die "linking /mointor.sh"
                                 ln -sf ../monitor.sh fs/bin/monitor.sh || die "linking /bin/monitor.sh"
                                 ln -sf ../monitor.sh fs/bin/mointor.sh || die "linking /bin/mointor.sh"
                         fi
-                elif component_enabled MOONWATER_UTILITIES; then
+                elif [ "$moon_core" -eq 1 ] && [ "$moon_utilities" -eq 1 ]; then
                         spark_cppflags=
-                        component_enabled MOONWATER_UTIL_LINUX ||
+                        [ "$moon_util_linux" -eq 1 ] ||
                                 spark_cppflags=-DSHELL_NO_UTIL_LINUX
                         SPARK_CPPFLAGS=$spark_cppflags \
                                 sh kit/spark programs/utilities fs/shell ||
@@ -562,13 +562,13 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 #       With the shell present they share its binary. A utility-only
                 #       image has the same dispatch table but no shell fallback.
                 #
-                if component_enabled MOONWATER_UTILITIES; then
+                if [ "$moon_core" -eq 1 ] && [ "$moon_utilities" -eq 1 ]; then
                         for utility in $(shell_tool_names); do
                                 ln -sf "$applet_binary" "fs/$utility" ||
                                         die "linking $utility"
                         done
 
-                        if component_enabled MOONWATER_UTIL_LINUX; then
+                        if [ "$moon_util_linux" -eq 1 ]; then
                                 # Conventional util-linux locations for scripts
                                 # which use absolute paths.
                                 shell_conventional_names |

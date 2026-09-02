@@ -1427,11 +1427,11 @@ static bool diff_classify(diff_side address_to side, b32 which)
 
 // Discarding ------------------------------------------------
 
-// The loop this used to be is one count of leading zeros; the or with one
-// keeps a zero from asking about a word with nothing set.
+// The loop this used to be is one compiler-visible highest-bit operation; the
+// or with one keeps a zero from asking about a word with nothing set.
 static positive diff_floor_log2(positive value)
 {
-        return positive_bits - 1 - bits_leading_zeros(value | 1);
+        return top_bit_known(value | 1);
 }
 
 /*
@@ -3773,6 +3773,8 @@ static bool ps_command_list(string_address list,
 static bool ps_command_selected(string_address address_to values,
                                 positive count, string_address command)
 {
+        positive command_length = string_length(command);
+
         for (positive i = 0; i < count; i++)
         {
                 positive length = string_length(values[i]);
@@ -3781,7 +3783,7 @@ static bool ps_command_selected(string_address address_to values,
                 if (length > 15)
                         length = 15;
 
-                if (string_length(command) == length &&
+                if (command_length == length &&
                     !string_compare_max(values[i], command, length))
                         return true;
         }

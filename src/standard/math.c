@@ -919,10 +919,7 @@ static decimal math_exponential_minus_one_reduced(decimal reduced)
 //      halfway cases away from zero, which is what makes the reduced
 //      remainder land inside half a step either way rather than a whole
 //      step on one side.
-static b32 math_nearest_whole(decimal value)
-{
-        return (b32)decimal_rounded(value);
-}
+#define math_nearest_whole(value) ((b32)decimal_rounded(value))
 
 /*
         e to the x.

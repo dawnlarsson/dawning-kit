@@ -1149,7 +1149,51 @@ static inline INLINE p64 known_zero_bytes(p64 word)
 
         return ~((low + ~KNOWN_HIGHS) | word | ~KNOWN_HIGHS);
 }
+
+/* Count a byte over a short, folded span without paying the call and scalar
+   loop used below the vector threshold. The multiply horizontally sums the
+   exact per-byte marks from known_zero_bytes; known-word expansion is kept
+   off RV64 because its baseline does not permit an unaligned integer load. */
+static inline INLINE positive count_known(const address_any block,
+                                           positive size, p8 value)
+{
+        const p8 address_to at = (const p8 address_to)block;
+        p64 spread = (p64)value * KNOWN_ONES;
+        positive counted = 0;
+        positive walked = 0;
+
+        while (walked + 8 <= size)
+        {
+                p64 marks = known_zero_bytes(known_word(at + walked, 8) ^
+                                              spread);
+
+                counted += ((marks >> 7) * KNOWN_ONES) >> 56;
+                walked += 8;
+        }
+
+        while (walked < size)
+                counted += at[walked++] == value;
+
+        return counted;
+}
 #endif // KNOWN_SCAN_WORDS
+
+/* A folded tiny translation is the table loads themselves. The assembly
+   floor walks four at a time for general spans; spelling at most eight lets
+   GCC remove its trip counter, remainder dispatch and call on every floor. */
+static inline INLINE address_any translate_known(address_any block,
+                                                  positive size,
+                                                  address_any table)
+{
+        p8 address_to bytes = (p8 address_to)block;
+        const p8 address_to translation = (const p8 address_to)table;
+
+        KNOWN_STRAIGHT
+        for (positive at = 0; at < size; at++)
+                bytes[at] = translation[bytes[at]];
+
+        return block;
+}
 
 /*
         The length of the common prefix at a size the compiler folded.
@@ -1259,10 +1303,28 @@ static inline INLINE b32 compare_known(const address_any first,
         vector path becomes cheaper.
 */
 #define KNOWN_ASCII_CASE_MAX 12
+#if RISCV64
+#define KNOWN_FOLDED_MAX 0
+#else
+#define KNOWN_FOLDED_MAX 8
+#endif
 
 static inline INLINE p8 known_ascii_upper(p8 value)
 {
+#if RISCV64
+        return (p8)(value - (((p32)(value - 'a') < 26) << 5));
+#else
         return value >= 'a' && value <= 'z' ? (p8)(value - 32) : value;
+#endif
+}
+
+static inline INLINE p8 known_ascii_lower(p8 value)
+{
+#if RISCV64
+        return (p8)(value + (((p32)(value - 'A') < 26) << 5));
+#else
+        return value >= 'A' && value <= 'Z' ? (p8)(value + 32) : value;
+#endif
 }
 
 static inline INLINE b32 compare_ascii_case_known(const address_any first,
@@ -1279,6 +1341,25 @@ static inline INLINE b32 compare_ascii_case_known(const address_any first,
                 p8 two = known_ascii_upper(right[at]);
 
                 if (one != two)
+                        return (b32)one - (b32)two;
+        }
+
+        return 0;
+}
+
+/* strncasecmp has the counted case fold above plus one rule memcasecmp does
+   not: an equal pair of terminators ends the comparison before the bound. */
+static inline INLINE b32 compare_folded_max_known(string_address first,
+                                                   string_address second,
+                                                   positive bound)
+{
+        KNOWN_STRAIGHT
+        for (positive at = 0; at < bound; at++)
+        {
+                p8 one = known_ascii_lower(first[at]);
+                p8 two = known_ascii_lower(second[at]);
+
+                if (one != two || two == 0)
                         return (b32)one - (b32)two;
         }
 
@@ -2279,6 +2360,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
                  ? compare_ascii_case_known((first), (second), (size))        \
                  : memory_compare_ascii_case((first), (second), (size)))
 
+#define string_compare_folded_max(first, second, bound)                       \
+        (__builtin_constant_p(bound) &&                                      \
+                         (positive)(bound) <= KNOWN_FOLDED_MAX               \
+                 ? compare_folded_max_known((first), (second), (bound))      \
+                 : string_compare_folded_max((first), (second), (bound)))
+
 #define memory_first_of(block, value, size)                                   \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SCAN_MAX     \
                  ? first_of_known((block), (value), (size))                   \
@@ -2400,6 +2487,18 @@ static inline INLINE address_any copy_until_known(address_any destination,
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_UNTIL_MAX    \
                  ? copy_until_known((destination), (source), (value), (size)) \
                  : memory_copy_until((destination), (source), (value), (size)))
+
+#if KNOWN_SCAN_WORDS
+#define memory_count(block, size, value)                                      \
+        (__builtin_constant_p(size) && (positive)(size) <= 63                \
+                 ? count_known((block), (positive)(size), (p8)(value))       \
+                 : memory_count((block), (size), (value)))
+#endif
+
+#define memory_translate(block, size, table)                                  \
+        (__builtin_constant_p(size) && (positive)(size) <= 8                 \
+                 ? translate_known((block), (positive)(size), (table))       \
+                 : memory_translate((block), (size), (table)))
 
 #define string_copy_end(destination, source)                                  \
         (__builtin_constant_p(__builtin_strlen((const char address_to)(source))) \

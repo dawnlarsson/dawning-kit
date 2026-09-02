@@ -661,7 +661,7 @@ static int canvas_start(struct canvas *canvas)
         if (!desktop.terminal)
         {
                 desktop.terminal = true;
-                log_canvas("terminal: %d\n", spawn_program("/term"));
+                log_canvas("terminal: %d\n", spawn_terminal());
         }
 
         return 0;

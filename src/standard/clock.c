@@ -1730,12 +1730,8 @@ positive strftime(p8 address_to into, positive max,
 
 /* date(1) shares the full formatter and only opts into the two GNU date
    directives that libc's strftime must return verbatim. */
-static positive clock_format_extended(p8 address_to into, positive max,
-                                      const char address_to format,
-                                      const tm address_to broken)
-{
-        return clock_format(into, max, format, broken, true);
-}
+#define clock_format_extended(into, max, format, broken)                    \
+        clock_format((into), (max), (format), (broken), true)
 
 /*
         strptime, which reads a date back out of the text strftime wrote and
@@ -1890,12 +1886,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
 
 // The compound specifiers, read back through the same loop that wrote them,
 // against the same format strings strftime expands them to.
-static bool clock_scan_nested(clock_scan_state address_to state,
-                              const char address_to format)
-{
-        return clock_scan_core(state, format);
-}
-
 static bool clock_scan_core(clock_scan_state address_to state,
                             const char address_to format)
 {
@@ -1988,7 +1978,7 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 }
 
                 case 'c':
-                        if (!clock_scan_nested(state, "%a %b %e %H:%M:%S %Y"))
+                        if (!clock_scan_core(state, "%a %b %e %H:%M:%S %Y"))
                                 return false;
                         break;
 
@@ -2011,12 +2001,12 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
 
                 case 'D':
-                        if (!clock_scan_nested(state, "%m/%d/%y"))
+                        if (!clock_scan_core(state, "%m/%d/%y"))
                                 return false;
                         break;
 
                 case 'F':
-                        if (!clock_scan_nested(state, "%Y-%m-%d"))
+                        if (!clock_scan_core(state, "%Y-%m-%d"))
                                 return false;
                         break;
 
@@ -2091,12 +2081,12 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 }
 
                 case 'r':
-                        if (!clock_scan_nested(state, "%I:%M:%S %p"))
+                        if (!clock_scan_core(state, "%I:%M:%S %p"))
                                 return false;
                         break;
 
                 case 'R':
-                        if (!clock_scan_nested(state, "%H:%M"))
+                        if (!clock_scan_core(state, "%H:%M"))
                                 return false;
                         break;
 
@@ -2145,7 +2135,7 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
 
                 case 'T':
-                        if (!clock_scan_nested(state, "%H:%M:%S"))
+                        if (!clock_scan_core(state, "%H:%M:%S"))
                                 return false;
                         break;
 
@@ -2205,12 +2195,12 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
 
                 case 'x':
-                        if (!clock_scan_nested(state, "%m/%d/%y"))
+                        if (!clock_scan_core(state, "%m/%d/%y"))
                                 return false;
                         break;
 
                 case 'X':
-                        if (!clock_scan_nested(state, "%H:%M:%S"))
+                        if (!clock_scan_core(state, "%H:%M:%S"))
                                 return false;
                         break;
 

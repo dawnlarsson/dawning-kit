@@ -276,10 +276,6 @@ typedef struct
    memory_reserve: realloc knows the old allocation's size, so the caller only
    carries its pointer and capacity. Keep the typed, overwhelmingly-hot check
    here and the allocation policy in allocator.c. */
-static address_any memory_resize_growth(address_any block, positive have,
-                                        positive wanted, positive first,
-                                        positive address_to grown);
-
 #define memory_resize_reserve(held, room, wanted, first)                     \
         ({ __auto_type _held = (held); __auto_type _room = (room);           \
            positive _wanted = (wanted), _grown;                             \

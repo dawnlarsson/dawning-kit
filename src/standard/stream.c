@@ -344,45 +344,17 @@ b32 stream_put_string(string_address text, stream address_to handle);
 positive stream_put_bytes(stream address_to handle, address_any data,
                           positive length);
 
-/*
-        The traps, one line each.
-
-        These exist so that the reason for every syscall in the file is
-        visible at the call site rather than buried in an argument list of
-        casts. read goes through system_read_retry because a stream read that
-        loses to a signal is not an end of file and must not be reported as
-        one; write goes through system_write_all because a short write to a
-        pipe is not an error either and the caller of fwrite has no way to
-        resume from one.
-*/
-static bipolar stream_trap_read(b32 descriptor, address_any into,
-                                positive length)
-{
-        return system_read_retry((positive)descriptor, into, length);
-}
-
-static positive stream_trap_write(b32 descriptor, address_any from,
-                                  positive length)
-{
-        return system_write_all((positive)descriptor, from, length);
-}
-
-static bipolar stream_trap_seek(b32 descriptor, bipolar offset, b32 whence)
-{
-        return system_seek(descriptor, offset, whence);
-}
-
-static bipolar stream_trap_close(b32 descriptor)
-{
-        return system_close(descriptor);
-}
-
-static bipolar stream_trap_open(string_address path, b32 flags, b32 permissions)
-{
-        return system_open_at_mode(AT_FDCWD,
-                             path, flags,
-                             permissions);
-}
+/* A stream read retries signals and a stream write finishes short writes.
+   Keep those policies named at each call without five forwarding bodies. */
+#define stream_trap_read(descriptor, into, length)                           \
+        system_read_retry((positive)(descriptor), (into), (length))
+#define stream_trap_write(descriptor, from, length)                          \
+        system_write_all((positive)(descriptor), (from), (length))
+#define stream_trap_seek(descriptor, offset, whence)                         \
+        system_seek((descriptor), (offset), (whence))
+#define stream_trap_close(descriptor) system_close(descriptor)
+#define stream_trap_open(path, flags, permissions)                           \
+        system_open_at_mode(AT_FDCWD, (path), (flags), (permissions))
 
 /*
         Is this descriptor a terminal.

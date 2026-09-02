@@ -996,85 +996,35 @@ static stream address_to spool_open_memory(address_any bytes, sized size,
 /*
         The names <stdio.h> and <stdlib.h> know these by.
 
-        Wrappers rather than alias attributes, which is the opposite of what
-        stream.c does one file over, and the reason is what the two files are.
-        stream.c's prose names are non-static and exported, so an alias is a
-        second label on an address that was going to exist anyway. Everything
-        here is static, so that a program which never calls popen does not
-        carry a fork and an exec and a thirty-two entry table it will never
-        touch; and a static function reached only through a static wrapper is
-        inlined into it at -O2 and then the wrapper is the whole function.
-        Nothing is paid for the extra name.
-
-        error.c makes the same choice for the same reason across sixty POSIX
-        wrappers, and the sizes agree: a program that calls none of this links
-        none of it.
+        Static aliases put both spellings on the same body. Section collection
+        still removes an entry a program never calls, while an address taken
+        through either spelling remains the address of the same operation.
 */
-static b32 remove(string_address path)
-{
-        return spool_remove_path(path);
-}
-
-static b32 mkstemp(string_address form)
-{
-        return spool_temporary_open(form);
-}
-
-static b32 mkostemp(string_address form, b32 flags)
-{
-        return spool_temporary_open_flagged(form, flags);
-}
-
-static b32 mkstemps(string_address form, b32 suffix)
-{
-        return spool_temporary_open_suffixed(form, suffix);
-}
-
-static string_address mkdtemp(string_address form)
-{
-        return spool_temporary_directory(form);
-}
-
-static string_address tmpnam(string_address into)
-{
-        return spool_temporary_name(into);
-}
-
-static string_address tempnam(string_address directory, string_address prefix)
-{
-        return spool_temporary_named(directory, prefix);
-}
-
+static b32 remove(string_address) __attribute__((alias("spool_remove_path")));
+static b32 mkstemp(string_address)
+        __attribute__((alias("spool_temporary_open")));
+static b32 mkostemp(string_address, b32)
+        __attribute__((alias("spool_temporary_open_flagged")));
+static b32 mkstemps(string_address, b32)
+        __attribute__((alias("spool_temporary_open_suffixed")));
+static string_address mkdtemp(string_address)
+        __attribute__((alias("spool_temporary_directory")));
+static string_address tmpnam(string_address)
+        __attribute__((alias("spool_temporary_name")));
+static string_address tempnam(string_address, string_address)
+        __attribute__((alias("spool_temporary_named")));
 static stream address_to tmpfile(void)
-{
-        return spool_temporary_stream();
-}
-
-static stream address_to popen(string_address command, string_address mode)
-{
-        return spool_open_process(command, mode);
-}
-
-static b32 pclose(stream address_to handle)
-{
-        return spool_close_process(handle);
-}
-
-static fn setlinebuf(stream address_to handle)
-{
-        spool_set_line_buffered(handle);
-}
-
-static fn setbuffer(stream address_to handle, string_address buffer,
-                    sized size)
-{
-        spool_set_buffer_sized(handle, buffer, size);
-}
-
-static fn __fpurge(stream address_to handle)
-{
-        spool_purge(handle);
-}
+        __attribute__((alias("spool_temporary_stream")));
+static stream address_to popen(string_address, string_address)
+        __attribute__((alias("spool_open_process")));
+static b32 pclose(stream address_to)
+        __attribute__((alias("spool_close_process")));
+static fn setlinebuf(stream address_to)
+        __attribute__((alias("spool_set_line_buffered")));
+static fn setbuffer(stream address_to, string_address, sized)
+        __attribute__((alias("spool_set_buffer_sized")));
+static fn __fpurge(stream address_to)
+        __attribute__((alias("spool_purge")));
 
 static b32 fpurge(stream address_to handle)
 {
@@ -1086,21 +1036,12 @@ static b32 fpurge(stream address_to handle)
         return 0;
 }
 
-static b32 fgetpos(stream address_to handle, fpos_t address_to into)
-{
-        return spool_get_position(handle, into);
-}
-
-static b32 fsetpos(stream address_to handle, const fpos_t address_to from)
-{
-        return spool_set_position(handle, from);
-}
-
-static stream address_to fmemopen(address_any bytes, sized size,
-                                  string_address mode)
-{
-        return spool_open_memory(bytes, size, mode);
-}
+static b32 fgetpos(stream address_to, fpos_t address_to)
+        __attribute__((alias("spool_get_position")));
+static b32 fsetpos(stream address_to, const fpos_t address_to)
+        __attribute__((alias("spool_set_position")));
+static stream address_to fmemopen(address_any, sized, string_address)
+        __attribute__((alias("spool_open_memory")));
 
 /*
         The _unlocked family, which in a single-threaded library is the same

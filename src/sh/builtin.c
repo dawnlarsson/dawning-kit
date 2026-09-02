@@ -6628,13 +6628,15 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
         if (string_first_of(name, '/'))
         {
+                name_length = string_length(name);
+
                 if (system_access_at(AT_FDCWD, name, access))
                         return false;
 
-                if (string_length(name) >= room)
+                if (name_length >= room)
                         return false;
 
-                string_copy(into, name);
+                memory_copy_end(into, name, name_length);
                 return true;
         }
 
@@ -6643,10 +6645,12 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
                 if (known)
                 {
-                        if (string_length(known) >= room)
+                        positive known_length = string_length(known);
+
+                        if (known_length >= room)
                                 return false;
 
-                        string_copy(into, known);
+                        memory_copy_end(into, known, known_length);
                         return true;
                 }
         }

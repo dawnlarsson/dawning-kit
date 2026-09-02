@@ -316,10 +316,8 @@ static address_any address_to allocator_link(address_any block)
         return (address_any address_to)block;
 }
 
-static positive allocator_page_round(positive bytes)
-{
-        return (bytes + (ALLOCATOR_PAGE - 1)) & ~(positive)(ALLOCATOR_PAGE - 1);
-}
+#define allocator_page_round(bytes)                                         \
+        (((bytes) + (ALLOCATOR_PAGE - 1)) & ~(positive)(ALLOCATOR_PAGE - 1))
 
 /*
         Which shelf a request of this many bytes -- header included -- belongs

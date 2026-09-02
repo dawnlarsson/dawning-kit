@@ -47,7 +47,7 @@
 // Defined below, next to the rest of the spawning, and called only by the
 // compositor when it has a screen to put something on.
 #ifdef CONFIG_MOONWATER_CANVAS
-static int spawn_program(const char *path);
+static int spawn_terminal(void);
 #endif
 
 struct spawn_strings
@@ -538,15 +538,17 @@ static void spawn_free(struct spawn_work *work)
 static int spawn_enter(void *data);
 
 #ifdef CONFIG_MOONWATER_CANVAS
-static int spawn_program(const char *path)
+static int spawn_terminal(void)
 {
         struct spawn_work *work = kzalloc(sizeof(*work), GFP_KERNEL);
 
         if (!work)
                 return -ENOMEM;
 
-        work->path = kstrdup(path, GFP_KERNEL);
-        work->path_owned = true;
+        /* Borrow the literal like do_spawn borrows its fixed /shell path;
+           copying it for a worker whose next action is execve adds a slab
+           round trip and no lifetime. */
+        work->path = "/term";
         work->arguments = kvmalloc(sizeof(*work->arguments) +
                                    2 * sizeof(char *), GFP_KERNEL);
 
@@ -554,7 +556,7 @@ static int spawn_program(const char *path)
         if (work->arguments)
                 refcount_set(&work->arguments->references, 1);
 
-        if (!work->path || !work->arguments)
+        if (!work->arguments)
         {
                 spawn_free(work);
                 return -ENOMEM;
@@ -724,19 +726,13 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
                 size_t length;
 
                 if (walk >= block + bytes)
-                {
-                        kvfree(strings);
-                        return -EINVAL;
-                }
+                        goto malformed;
 
                 remaining = (size_t)(block + bytes - walk);
                 length = strnlen(walk, remaining);
 
                 if (length == remaining)
-                {
-                        kvfree(strings);
-                        return -EINVAL;
-                }
+                        goto malformed;
 
                 vector[i] = walk;
                 walk += length + 1;
@@ -745,6 +741,10 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
 
         *out = strings;
         return 0;
+
+malformed:
+        kvfree(strings);
+        return -EINVAL;
 }
 
 static long do_spawn(struct file *file, struct spawn __user *request,

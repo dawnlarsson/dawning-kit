@@ -136,12 +136,9 @@ typedef FILE address_to format_stream;
 #define format_output stdout
 #define format_error stderr
 
-//      stream_put_bytes already has this shape, so the wrapper is a name.
-static positive format_stream_write(format_stream stream, address_any data,
-                                    positive length)
-{
-        return stream_put_bytes(stream, data, length);
-}
+//      stream_put_bytes already has this shape, so this is a second name.
+static positive format_stream_write(format_stream, address_any, positive)
+        __attribute__((alias("stream_put_bytes")));
 
 #endif // STANDARD_MODERN_C_STANDARD_STREAM
 

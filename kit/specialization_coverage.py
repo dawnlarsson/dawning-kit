@@ -2,7 +2,7 @@
 """Audit known-argument specialization coverage for library.c's inventory.
 
 src/compiler_memory.c replaces calls whose decisive argument the compiler
-already knows with the narrower operation that argument permits. Forty-five
+already knows with the narrower operation that argument permits. Forty-eight
 routines have that today. This file classifies the complete inventory so that
 the question is asked once per routine and not once per reader.
 
@@ -241,7 +241,7 @@ cover('specialized', 'bound', 'string_copy_max_endptr',
       'Measured literal bounds copy the short known pair directly',
       expansion='copy_max_endptr_known', evidence='src/test/bounded.c')
 cover('worth_it', 'bound', '''
-string_compare_folded_max string_first_of_max string_span_max
+string_first_of_max string_span_max
 ''', 'a literal bound under about thirty two turns a bounded walk into one or '
      'two word loads and a SWAR test; expected to track memory_compare\'s '
      'measured table, since it is the same shape of body',
@@ -264,10 +264,33 @@ cover('specialized', 'source', 'string_copy_end',
       'A literal source has a folded length; its bytes and terminator use the '
       'known-size copy and the answer is the terminator address',
       expansion='copy_end_known', evidence='src/test/exact_family.c')
+cover('specialized', 'size', 'memory_count',
+      'Measured for folded 16-, 24-, 31- and 53-byte spans. The unaligned '
+      'word reductions take 19%, 26%, 37% and 66% of assembly-call time on '
+      'x86-64; the 16-, 24- and 53-byte rows take 36%, 34% and 28% under the '
+      'AArch64 runner. RV64 keeps the assembly path because its baseline does '
+      'not permit unaligned word loads. The cutoff is the byte before one '
+      'complete AArch64 vector block and two x86-64 vector blocks',
+      expansion='count_known', evidence='src/test/verify.c')
+cover('specialized', 'size', 'memory_translate',
+      'Measured at the six-byte temporary-name call site. Straight table '
+      'loads with no loop or call take 98% of the assembly-call time on '
+      'x86-64, 59% under the AArch64 runner and 67% under the RV64 runner. '
+      'The expansion stops at eight bytes, where removing control overhead '
+      'still dominates the scalar table loads',
+      expansion='translate_known', evidence='kit/bench_translate.c')
+cover('specialized', 'bound', 'string_compare_folded_max',
+      'Short literal bounds reuse the measured ASCII-case compare expansion '
+      'and add strncasecmp\'s equal-terminator stop. At three bytes the '
+      'straight line takes about 80% of the x86-64 and AArch64 routine at '
+      'eight bytes. RV64 retains the assembly path: even a '
+      'branchless three-byte expansion saves only 3% while adding 228 bytes. '
+      'The fixed-width targets stop at the measured eight-byte cutoff',
+      expansion='compare_folded_max_known', evidence='src/test/standard.c')
 cover('worth_it', 'size', '''
-memory_first_of_ascii_case memory_span_byte memory_count memory_count_words
+memory_first_of_ascii_case memory_span_byte memory_count_words
 memory_hash_33 memory_sum_bytes memory_checksum_bsd16
-memory_translate memory_to_lower_ascii memory_to_upper_ascii
+memory_to_lower_ascii memory_to_upper_ascii
 memory_reverse memory_exchange_apart memory_frob
 ''', 'a literal size under a block skips the width dispatch and the tail '
      'arithmetic that is most of the work there; expected to win under '

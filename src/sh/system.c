@@ -384,12 +384,6 @@ static struct mount_point world_mounts[] = {
     {null, null, null, 0},
 };
 
-static fn world_say(string_address text)
-{
-        string_format(log, world_label "%s\n", text);
-        log_flush();
-}
-
 static fn world_fail(string_address text, bipolar code)
 {
         string_format(log, world_label "%s: %b\n", text, code);
@@ -461,13 +455,6 @@ static fn world_populate()
         }
 }
 
-// The name a world answers to is the last element of its path, so
-// /worlds/arch is "arch". Only its own namespace ever sees it.
-static fn world_name(string_address root, p8 address_to into, positive room)
-{
-        path_tail_copy(into, room, root);
-}
-
 static b32 system_world()
 {
         string_address root = program_argument(1);
@@ -477,7 +464,8 @@ static b32 system_world()
 
         if (!root)
         {
-                world_say("usage: world <root> [program]");
+                string_format(log, world_label "usage: world <root> [program]\n");
+                log_flush();
                 return 1;
         }
 
@@ -527,7 +515,8 @@ static b32 system_world()
                 }
 
                 world_populate();
-                world_name(root, name, sizeof(name));
+                // /worlds/arch answers to "arch" inside its own namespace.
+                path_tail_copy(name, sizeof(name), root);
                 system_call_2(syscall(sethostname), (positive)name,
                               string_length((string_address)name));
 

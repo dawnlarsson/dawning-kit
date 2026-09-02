@@ -191,18 +191,14 @@ typedef struct
         discarded. Every caller re-checks the word in a loop, so a spurious
         return costs one more turn and cannot be wrong.
 */
-static fn lock_futex_wait(b32 address_to word, b32 was, b32 private)
-{
-        system_call_6(syscall(futex), (positive)word,
-                      (positive)(LOCK_FUTEX_WAIT | private), (positive)was, 0,
-                      0, 0);
-}
-
-static fn lock_futex_wake(b32 address_to word, b32 private)
-{
-        system_call_6(syscall(futex), (positive)word,
-                      (positive)(LOCK_FUTEX_WAKE | private), 1, 0, 0, 0);
-}
+#define lock_futex_wait(word, was, private)                                 \
+        ((fn)system_call_6(syscall(futex), (positive)(word),                \
+                           (positive)(LOCK_FUTEX_WAIT | (private)),          \
+                           (positive)(was), 0, 0, 0))
+#define lock_futex_wake(word, private)                                      \
+        ((fn)system_call_6(syscall(futex), (positive)(word),                \
+                           (positive)(LOCK_FUTEX_WAKE | (private)),          \
+                           1, 0, 0, 0))
 
 /*
         Take, which is one compare-and-swap when nobody else holds it.
@@ -293,28 +289,14 @@ static b32 lock_state(lock address_to it)
 
 //      The two threads-in-one-process spellings, which is the case this
 //      library will meet first.
-static fn lock_take(lock address_to it)
-{
-        lock_take_private(it, LOCK_FUTEX_PRIVATE);
-}
-
-static fn lock_release(lock address_to it)
-{
-        lock_release_private(it, LOCK_FUTEX_PRIVATE);
-}
+#define lock_take(it) lock_take_private((it), LOCK_FUTEX_PRIVATE)
+#define lock_release(it) lock_release_private((it), LOCK_FUTEX_PRIVATE)
 
 //      The two across-processes spellings, for a lock that lives in a
 //      MAP_SHARED page. Same algorithm, different futex key; see the note
 //      above LOCK_FUTEX_PRIVATE for why mixing them silently deadlocks.
-static fn lock_take_shared(lock address_to it)
-{
-        lock_take_private(it, 0);
-}
-
-static fn lock_release_shared(lock address_to it)
-{
-        lock_release_private(it, 0);
-}
+#define lock_take_shared(it) lock_take_private((it), 0)
+#define lock_release_shared(it) lock_release_private((it), 0)
 
 /*
         Which thread is asking, for a test that wants to prove two of them

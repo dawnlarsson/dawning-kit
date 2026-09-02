@@ -645,12 +645,9 @@ static positive shell_flatten_strings(string_address address_to strings,
         used = 0;
 
         for (positive at = 0; at < count; at++)
-        {
-                positive length = string_length(strings[at]) + 1;
-
-                memory_copy(address_to block + used, strings[at], length);
-                used += length;
-        }
+                used = (positive)(string_copy_end(address_to block + used,
+                                                  strings[at]) -
+                                    address_to block) + 1;
 
         address_to count_out = count;
         return used;

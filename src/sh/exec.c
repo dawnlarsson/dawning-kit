@@ -2862,12 +2862,6 @@ static bipolar exec_spawn_node(b32 index, bool background)
         return child;
 }
 
-static b32 exec_subshell(b32 index)
-{
-        return exec_child_status(exec_spawn_node(parse_nodes[index].left,
-                                                 false));
-}
-
 /*
         A pipeline.
 
@@ -3271,7 +3265,8 @@ static b32 exec_node_kind(b32 index)
         else if (node->kind == NODE_CASE)
                 status = exec_case(index);
         else if (node->kind == NODE_SUBSHELL)
-                status = exec_subshell(index);
+                status = exec_child_status(
+                    exec_spawn_node(parse_nodes[index].left, false));
         else
                 status = exec_node(node->left);
 

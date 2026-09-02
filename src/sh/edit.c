@@ -249,15 +249,8 @@ static fn edit_say(address_any text, positive length)
         edit_emitted_length += length;
 }
 
-static fn edit_say_text(string_address text)
-{
-        edit_say(text, string_length(text));
-}
-
-static fn edit_say_byte(p8 character)
-{
-        edit_say(address_of character, 1);
-}
+#define edit_say_literal(literal) \
+        edit_say((string_address)(literal), sizeof(literal) - 1)
 
 //      Where the next character written goes, in the terminal's own one based
 //      counting. Everything the renderer draws is placed rather than assumed,
@@ -265,20 +258,11 @@ static fn edit_say_byte(p8 character)
 //      a line the terminal wrapped.
 static fn edit_say_at(positive screen_row, positive screen_column)
 {
-        edit_say_text((string_address)ANSI);
+        edit_say_literal(ANSI);
         positive_to_string(edit_say, screen_row + 1);
-        edit_say_byte(';');
+        edit_say((string_address)";", 1);
         positive_to_string(edit_say, screen_column + 1);
-        edit_say_byte('H');
-}
-
-//      The line store, the line table and the cursor list, all three on the
-//      one grower. The two tables count elements where a line counts bytes, so
-//      the element width is folded in here rather than at every call.
-static bool edit_line_room_for(struct edit_line address_to line, positive want)
-{
-        return memory_resize_reserve(address_of line->text, address_of line->room, want,
-                         EDIT_LINE_FIRST);
+        edit_say((string_address)"H", 1);
 }
 
 #define edit_table_room_for(table, room, want)                               \
@@ -313,7 +297,9 @@ static bool edit_line_splice(positive which, positive from, positive to,
 
         tail = line->length - to;
 
-        if (!edit_line_room_for(line, from + length + tail))
+        if (!memory_resize_reserve(address_of line->text,
+                                   address_of line->room,
+                                   from + length + tail, EDIT_LINE_FIRST))
                 return false;
 
         // The tail moves before the new bytes land on top of where it was, and
@@ -1515,15 +1501,8 @@ static fn edit_row_put(string_address text, positive length)
         edit_row_length += length;
 }
 
-static fn edit_row_put_text(string_address text)
-{
-        edit_row_put(text, string_length(text));
-}
-
-static fn edit_row_put_byte(p8 character)
-{
-        edit_row_put(address_of character, 1);
-}
+#define edit_row_put_literal(literal) \
+        edit_row_put((string_address)(literal), sizeof(literal) - 1)
 
 static fn edit_row_put_number(positive value, positive width)
 {
@@ -1532,7 +1511,7 @@ static fn edit_row_put_number(positive value, positive width)
 
         while (length < width)
         {
-                edit_row_put_byte(' ');
+                edit_row_put((string_address)" ", 1);
                 width--;
         }
 
@@ -1604,16 +1583,16 @@ static fn edit_row_build(positive screen_row)
         {
                 // Past the end of the file. VS Code leaves the gutter empty
                 // there rather than numbering lines that do not exist.
-                edit_row_put_text((string_address)TERM_GREY);
-                edit_row_put_byte('~');
-                edit_row_put_text((string_address)TERM_RESET);
+                edit_row_put_literal(TERM_GREY);
+                edit_row_put((string_address)"~", 1);
+                edit_row_put_literal(TERM_RESET);
                 return;
         }
 
-        edit_row_put_text((string_address)TERM_GREY);
+        edit_row_put_literal(TERM_GREY);
         edit_row_put_number(line + 1, gutter - 1);
-        edit_row_put_text((string_address)TERM_RESET);
-        edit_row_put_byte(' ');
+        edit_row_put_literal(TERM_RESET);
+        edit_row_put((string_address)" ", 1);
 
         for (positive at = 0; at <= edit_lines[line].length && drawn < width;)
         {
@@ -1640,8 +1619,10 @@ static fn edit_row_build(positive screen_row)
 
                 if (wanted != marked)
                 {
-                        edit_row_put_text((string_address)(wanted ? TERM_REVERSE
-                                                                  : TERM_RESET));
+                        if (wanted)
+                                edit_row_put_literal(TERM_REVERSE);
+                        else
+                                edit_row_put_literal(TERM_RESET);
                         marked = wanted;
                 }
 
@@ -1654,7 +1635,7 @@ static fn edit_row_build(positive screen_row)
                                 break;
 
                         if (character == '\t' || at >= edit_lines[line].length)
-                                edit_row_put_byte(' ');
+                                edit_row_put((string_address)" ", 1);
                         else
                         {
                                 positive stop = at + 1;
@@ -1680,7 +1661,7 @@ static fn edit_row_build(positive screen_row)
         }
 
         if (marked)
-                edit_row_put_text((string_address)TERM_RESET);
+                edit_row_put_literal(TERM_RESET);
 }
 
 //      The status line: what the file is called, whether it has been changed,
@@ -1769,9 +1750,9 @@ static fn edit_status_build()
                         break;
 
         edit_row_length = 0;
-        edit_row_put_text((string_address)TERM_REVERSE);
+        edit_row_put_literal(TERM_REVERSE);
         edit_row_put(edit_status_bytes, edit_status_length);
-        edit_row_put_text((string_address)TERM_RESET);
+        edit_row_put_literal(TERM_RESET);
 }
 
 /*
@@ -1789,7 +1770,7 @@ static fn edit_draw()
         edit_follow();
         gutter = edit_gutter();
 
-        edit_say_text((string_address)TERM_HIDE_CURSOR);
+        edit_say_literal(TERM_HIDE_CURSOR);
         edit_rows_painted = 0;
 
         for (positive screen_row = 0; screen_row < rows; screen_row++)
@@ -1805,7 +1786,7 @@ static fn edit_draw()
 
                 edit_say_at(screen_row, 0);
                 edit_say(edit_row_bytes, edit_row_length);
-                edit_say_text((string_address)ANSI "K");
+                edit_say_literal(ANSI "K");
                 edit_row_drawn[screen_row] = mark;
                 edit_row_known[screen_row] = true;
                 edit_rows_painted++;
@@ -1813,7 +1794,7 @@ static fn edit_draw()
 
         edit_status_build();
         edit_say_at(edit_rows - 1, 0);
-        edit_say_text((string_address)ANSI "K");
+        edit_say_literal(ANSI "K");
         edit_say(edit_row_bytes, edit_row_length);
 
         /*
@@ -1841,7 +1822,7 @@ static fn edit_draw()
                         edit_say_at(edit_rows - 1,
                                     1 + string_length(edit_prompt_label) +
                                         edit_prompt_length);
-                        edit_say_text((string_address)TERM_SHOW_CURSOR);
+                        edit_say_literal(TERM_SHOW_CURSOR);
                         return;
                 }
 
@@ -1861,7 +1842,7 @@ static fn edit_draw()
                 edit_say_at(screen_row, screen_column);
         }
 
-        edit_say_text((string_address)TERM_SHOW_CURSOR);
+        edit_say_literal(TERM_SHOW_CURSOR);
 }
 
 /*
@@ -4626,8 +4607,8 @@ static b32 system_edit()
         edit_running = true;
 
         log_flush();
-        edit_say_text((string_address)TERM_ALT_BUFFER TERM_RESET
-                          TERM_CLEAR_SCREEN "\033[?2004h");
+        edit_say_literal(TERM_ALT_BUFFER TERM_RESET TERM_CLEAR_SCREEN
+                         "\033[?2004h");
 
         while (edit_running)
         {
@@ -4674,8 +4655,8 @@ static b32 system_edit()
                         edit_input_byte(arriving[at]);
         }
 
-        edit_say_text((string_address)"\033[?2004l" TERM_RESET TERM_SHOW_CURSOR
-                          TERM_MAIN_BUFFER);
+        edit_say_literal("\033[?2004l" TERM_RESET TERM_SHOW_CURSOR
+                         TERM_MAIN_BUFFER);
         if (!edit_flush())
                 result = 1;
         edit_window_signal_restore(window_action);

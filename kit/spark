@@ -120,30 +120,31 @@ fi
 
 # objdump -h has a stable column layout; readelf -S splits "[ 1]" into two
 # fields for single digit indices and one for double, which does not parse.
-section_size() {
-        "$objdump_cmd" -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $3); exit }'
-}
-
-section_addr() {
-        "$objdump_cmd" -h "$elf" | awk -v s="$1" '$2 == s { print strtonum("0x" $4); exit }'
-}
-
-page_round() { echo $((($1 + 4095) / 4096 * 4096)); }
+# Read its table once: invoking objdump and awk once per field made the packer
+# parse the same ELF five times.
+section_layout=$("$objdump_cmd" -h "$elf" | awk '
+        BEGIN { text_size = text_addr = data_size = data_addr = bss_size = bss_addr = "0" }
+        $2 == ".text" { text_size = $3; text_addr = $4 }
+        $2 == ".data" { data_size = $3; data_addr = $4 }
+        $2 == ".bss"  { bss_size  = $3; bss_addr  = $4 }
+        END { print text_size, text_addr, data_size, data_addr, bss_size, bss_addr }
+') || exit 1
+# shellcheck disable=SC2086 # six numeric fields emitted above
+set -- $section_layout
+text_bytes=$((0x$1))
+text_addr=$((0x$2))
+data_bytes=$((0x$3))
+data_addr=$((0x$4))
+bss_bytes=$((0x$5))
+bss_addr=$((0x$6))
 
 # The image is mapped from 64 bytes before .text: that is where the header
 # sits, and spark.ld reserves exactly that much.
-text_addr=$(section_addr .text)
-: "${text_addr:=0}"
 base=$((text_addr - 64))
-entry=$("$readelf_cmd" -h -W "$elf" | awk '/Entry point/ { print strtonum($NF) }')
-
-data_addr=$(section_addr .data)
-data_bytes=$(section_size .data)
-bss_addr=$(section_addr .bss)
-bss_bytes=$(section_size .bss)
+entry_hex=$("$readelf_cmd" -h -W "$elf" | awk '/Entry point/ { print $NF }')
+entry=$((entry_hex + 0))
 
 : "${entry:=0}"
-: "${data_addr:=0}" "${data_bytes:=0}" "${bss_addr:=0}" "${bss_bytes:=0}"
 
 if [ "$text_addr" = 0 ] || [ "$entry" = 0 ]; then
         echo "spark: could not read base/entry from the linked image" >&2
@@ -157,12 +158,12 @@ if [ "$data_bytes" -gt 0 ]; then
 elif [ "$bss_bytes" -gt 0 ]; then
         text_end=$bss_addr
 else
-        text_end=$((text_addr + $(section_size .text)))
+        text_end=$((text_addr + text_bytes))
 fi
 
-text_size=$(page_round $((text_end - base)))
-data_size=$(page_round "$data_bytes")
-bss_size=$(page_round "$bss_bytes")
+text_size=$((((text_end - base + 4095) / 4096) * 4096))
+data_size=$((((data_bytes + 4095) / 4096) * 4096))
+bss_size=$((((bss_bytes + 4095) / 4096) * 4096))
 
 if [ "$text_size" -le 0 ]; then
         echo "spark: computed a non positive text size ($text_size)" >&2
@@ -172,20 +173,14 @@ fi
 "$objcopy_cmd" -O binary --only-section=.text "$elf" "$work/text.bin" || exit 1
 "$objcopy_cmd" -O binary --only-section=.data "$elf" "$work/data.bin" 2>/dev/null || : >"$work/data.bin"
 
-# Emits n zero bytes.
-zeros() {
-        dd if=/dev/zero bs=1 count="$1" 2>/dev/null
+pad_to() {
+        [ "$1" -ge "$2" ] ||
+                dd if=/dev/zero bs=1 count=$(($2 - $1)) 2>/dev/null
 }
 
-pad_file_to() {
-        have=$(wc -c <"$1")
-        if [ "$have" -lt "$2" ]; then
-                zeros $(($2 - have)) || return 1
-        fi
-        return 0
-}
-
-spark_header() {
+{
+        # The header occupies the first 64 bytes of the text region itself,
+        # so the image carries no page that nothing maps.
         bit_32 $SPARK_MAGIC
         bit_16 1
         bit_16 0
@@ -196,18 +191,12 @@ spark_header() {
         bit_64 "$bss_size"
         bit_64 0
         bit_64 0
-}
-
-{
-        # The header occupies the first 64 bytes of the text region itself,
-        # so the image carries no page that nothing maps.
-        spark_header
         cat "$work/text.bin"
-        pad_file_to "$work/text.bin" $((text_size - 64))
+        pad_to "$text_bytes" $((text_size - 64))
 
         if [ "$data_size" -gt 0 ]; then
                 cat "$work/data.bin"
-                pad_file_to "$work/data.bin" "$data_size"
+                pad_to "$data_bytes" "$data_size"
         fi
 } >"$output" || exit 1
 

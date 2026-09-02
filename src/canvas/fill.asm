@@ -49,6 +49,11 @@ SYM_FUNC_START(canvas_rect_fill)
         mov     %rdi, %r9               # where this row starts
         mov     %rcx, %r10              # rows left
 
+        # The overwhelmingly common narrow rectangle is one scale-one window
+        # border.  Keep its two stores out of the generic tail ladder.
+        cmp     $2, %rdx
+        je      8f
+
         # The shared u32-fill floor crosses at 208 words on native Zen 5.
         # This is the same row traffic and therefore the same threshold.
         cmp     $208, %rdx
@@ -81,6 +86,12 @@ SYM_FUNC_START(canvas_rect_fill)
         jnz     1b
 9:      RET
 
+8:      mov     %rax, (%r9)
+        add     %rsi, %r9
+        dec     %r10
+        jnz     8b
+        RET
+
         # Wide enough that starting a rep costs less than the stores it saves.
 5:      mov     %r9, %rdi
         mov     %rdx, %rcx
@@ -104,6 +115,9 @@ SYM_FUNC_START(canvas_rect_fill)
         mov     w4, w4
         orr     x5, x4, x4, lsl #32
 
+        cmp     x2, #2
+        b.eq    8f
+
 1:      mov     x6, x0                  // where this row starts
         mov     x7, x2                  // pixels left in it
 
@@ -123,6 +137,12 @@ SYM_FUNC_START(canvas_rect_fill)
         subs    x3, x3, #1
         b.ne    1b
 9:      ret
+
+8:      str     x5, [x0]
+        add     x0, x0, x1
+        subs    x3, x3, #1
+        b.ne    8b
+        ret
 SYM_FUNC_END(canvas_rect_fill)
 
 #> arch riscv64
@@ -136,6 +156,8 @@ SYM_FUNC_START(canvas_rect_fill)
         slli    t0, a4, 32
         or      t0, t0, a4
         li      t3, 2
+
+        beq     a2, t3, 8f
 
 1:      mv      t1, a0
         mv      t2, a2
@@ -163,6 +185,16 @@ SYM_FUNC_START(canvas_rect_fill)
         addi    a3, a3, -1
         bnez    a3, 1b
 9:      ret
+
+        # A u32 row need only be four-byte aligned on baseline RISC-V, so the
+        # two pixels stay two word stores rather than one potentially
+        # misaligned doubleword store.
+8:      sw      a4, 0(a0)
+        sw      a4, 4(a0)
+        add     a0, a0, a1
+        addi    a3, a3, -1
+        bnez    a3, 8b
+        ret
 SYM_FUNC_END(canvas_rect_fill)
 
 #> arch other
@@ -175,20 +207,11 @@ SYM_FUNC_START(canvas_row_blit)
         test    %ecx, %ecx
         jnz     5f
 
-        # No alpha to force on, so this is a copy, and past the point where
-        # starting one pays that is what rep movs is for.
-        cmp     $256, %rdx
-        jb      5f
-
-        mov     %rdx, %rcx
-        shr     $1, %rcx
-        rep movsq
-
-        test    $1, %dl
-        jz      9f
-        mov     (%rsi), %eax
-        mov     %eax, (%rdi)
-        RET
+        # XRGB needs no alpha fixup.  The common copy floor already owns the
+        # size/alignment ladder and ERMS crossover, so do not carry a second,
+        # less complete copy engine here.
+        shl     $2, %rdx
+        jmp     memory_copy_apart
 
 5:      mov     %ecx, %eax
         shl     $32, %rcx
@@ -213,6 +236,11 @@ SYM_FUNC_END(canvas_row_blit)
 
 #> arch arm64
 SYM_FUNC_START(canvas_row_blit)
+        cbnz    w3, 4f
+        lsl     x2, x2, #2
+        b       memory_copy_apart
+
+4:
         mov     w3, w3
         orr     x4, x3, x3, lsl #32
 
@@ -235,6 +263,11 @@ SYM_FUNC_END(canvas_row_blit)
 
 #> arch riscv64
 SYM_FUNC_START(canvas_row_blit)
+        bnez    a3, 4f
+        slli    a2, a2, 2
+        tail    memory_copy_apart
+
+4:
         slli    a3, a3, 32
         srli    a3, a3, 32
         slli    t0, a3, 32

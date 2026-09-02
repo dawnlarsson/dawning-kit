@@ -938,15 +938,9 @@ static b32 awk_big_length(awk_big address_to big)
                 return 0;
 
         p32 top = big->limb[big->count - 1];
-        b32 bits = (big->count - 1) * 32;
 
-        while (top)
-        {
-                bits++;
-                top >>= 1;
-        }
-
-        return bits;
+        return (big->count - 1) * 32 +
+               (top ? (b32)top_bit_known(top) + 1 : 0);
 }
 
 static p32 awk_big_word(awk_big address_to big, b32 which)
@@ -1191,33 +1185,6 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
         return negative ? -value : value;
 }
 
-static bool awk_looks_numeric(string_address text, positive length,
-                              decimal address_to number)
-{
-        positive used;
-        decimal value;
-
-        if (length && !byte_is_digit(text[0]) && text[0] != '.' &&
-            text[0] != '+' && text[0] != '-' && text[0] != ' ' &&
-            text[0] != '\t' && text[0] != '\n')
-                return false;
-
-        value = awk_scan_number(text, length, address_of used);
-
-        if (!used)
-                return false;
-
-        while (used < length &&
-               (text[used] == ' ' || text[used] == '\t' || text[used] == '\n'))
-                used++;
-
-        if (used != length)
-                return false;
-
-        address_to number = value;
-        return true;
-}
-
 static PURE decimal awk_number_of(string_address text, positive length)
 {
         positive used;
@@ -1241,7 +1208,8 @@ enum
         AWK_HAS_NUMBER = 1,
         AWK_HAS_TEXT = 2,
         AWK_STRNUM = 4,
-        AWK_UNSET = 8
+        AWK_UNSET = 8,
+        AWK_INPUT = 16
 };
 
 typedef struct
@@ -1292,10 +1260,7 @@ static fn awk_set_input(awk_value address_to which, awk_text address_to text)
         awk_text_drop(which->text);
         which->text = text;
         which->number = 0;
-        which->state = AWK_HAS_TEXT;
-
-        if (awk_looks_numeric(text->text, text->length, address_of which->number))
-                which->state |= AWK_STRNUM | AWK_HAS_NUMBER;
+        which->state = AWK_HAS_TEXT | AWK_INPUT;
 }
 
 static fn awk_set_input_bytes(awk_value address_to which, string_address from, positive length)
@@ -1316,8 +1281,39 @@ static fn awk_value_copy(awk_value address_to to, awk_value address_to from)
         to->state = from->state;
 }
 
+/* Input only needs its string/number classification when an operation can
+   observe it.  Fields which are merely printed used to pay the complete
+   decimal scanner anyway.  Cache both outcomes so truth, arithmetic and a
+   later comparison still share exactly one scan. */
+static fn awk_classify_input(awk_value address_to which)
+{
+        if (!(which->state & AWK_INPUT))
+                return;
+
+        positive used;
+        decimal number = awk_scan_number(which->text->text, which->text->length,
+                                         address_of used);
+
+        which->number = number;
+        which->state = (which->state & ~AWK_INPUT) | AWK_HAS_NUMBER;
+
+        if (used)
+        {
+                while (used < which->text->length &&
+                       (which->text->text[used] == ' ' ||
+                        which->text->text[used] == '\t' ||
+                        which->text->text[used] == '\n'))
+                        used++;
+
+                if (used == which->text->length)
+                        which->state |= AWK_STRNUM;
+        }
+}
+
 static decimal awk_to_number(awk_value address_to which)
 {
+        awk_classify_input(which);
+
         if (which->state & AWK_HAS_NUMBER)
                 return which->number;
 
@@ -1410,6 +1406,8 @@ static awk_text address_to awk_to_output_text(awk_value address_to which)
 
 static bool awk_truth(awk_value address_to which)
 {
+        awk_classify_input(which);
+
         if (which->state & AWK_UNSET)
                 return false;
 
@@ -1426,6 +1424,8 @@ static bool awk_truth(awk_value address_to which)
 
 static bool awk_numeric_side(awk_value address_to which)
 {
+        awk_classify_input(which);
+
         if (which->state & (AWK_UNSET | AWK_STRNUM))
                 return true;
 
