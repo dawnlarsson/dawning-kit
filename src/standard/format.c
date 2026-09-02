@@ -927,6 +927,13 @@ static fn format_round(format_number address_to number, bipolar keep)
         number->exponent++;
 }
 
+static inline INLINE p8 format_number_sign(p64 bits,
+                                            format_spec address_to spec)
+{
+        return bits >> 63 ? '-' : spec->flags & FORMAT_FLAG_PLUS ? '+' :
+               spec->flags & FORMAT_FLAG_SPACE ? ' ' : 0;
+}
+
 /*
         The three decimal float shapes, and the field around them.
 
@@ -963,12 +970,7 @@ static fn format_decimal_field(format_sink address_to sink, decimal value,
 
         view.value = value;
 
-        if (view.bits >> 63)
-                sign = '-';
-        else if (spec->flags & FORMAT_FLAG_PLUS)
-                sign = '+';
-        else if (spec->flags & FORMAT_FLAG_SPACE)
-                sign = ' ';
+        sign = format_number_sign(view.bits, spec);
 
         //      Infinities and not-a-numbers are words, and a word is never
         //      zero padded however loudly the flag asks.
@@ -1231,12 +1233,7 @@ static fn format_hex_field(format_sink address_to sink, decimal value,
                 return;
         }
 
-        if (view.bits >> 63)
-                sign = '-';
-        else if (spec->flags & FORMAT_FLAG_PLUS)
-                sign = '+';
-        else if (spec->flags & FORMAT_FLAG_SPACE)
-                sign = ' ';
+        sign = format_number_sign(view.bits, spec);
 
         mantissa = (positive)(view.bits & (((p64)1 << 52) - 1));
         raw = (bipolar)((view.bits >> 52) & 0x7ff);

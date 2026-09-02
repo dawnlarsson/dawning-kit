@@ -70,7 +70,7 @@
 #       are syscall wrappers and were measured spawning in 7.6 us. The kernel
 #       is a different case: it is compiled with -mno-sse, so v2 there means
 #       integer instructions only and there is no vector code to trip over.
-#> program_flags -march=x86-64
+#> program_flags -march=x86-64 -falign-functions=1
 
 
 CONFIG_64BIT=y

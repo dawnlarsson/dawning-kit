@@ -144,16 +144,11 @@ cover('specialized', 'size', 'memory_zero',
       'fill_known with the byte already chosen: 19-48% of the routine from 1 to 128 '
       'bytes, tracking the fill it reuses',
       expansion='zero_known', evidence='src/test/exact_family.c')
-cover('worth_it', 'size', 'memory_copy_end memory_copy_apart_end',
+cover('specialized', 'size', 'memory_copy_apart_end',
       'Measured. A lea, a push, a call to the copy, a pop and one terminator; '
       'expanded, the call goes and the lea folds into the answer: 16-40% of '
       'the routine from 1 to 128 bytes',
-      expansion='copy_end_known')
-cover('worth_it', 'size', 'memory_copy_source_first',
-      'bcopy is three register moves and a jump into memory_copy; the same '
-      'argument as memory_zero and not separately timed',
-      expansion='copy_known', evidence=None)
-
+      expansion='copy_apart_count_end_known', evidence='src/test/verify.c')
 # memcmp's contract here is the magnitude of the byte difference and not its
 # sign, which src/test/verify.c checks, so __builtin_memcmp cannot be the
 # expansion: a hand written word walk has to keep the subtraction.
@@ -203,23 +198,10 @@ cover('specialized', 'needle_size', 'memory_search_ascii_case',
       'from the shape of the body rather than from measurement',
       expansion='search_case_known',
       evidence='src/test/needle.c')
-cover('worth_it', 'input', 'string_find',
-      'a literal needle gives its length; one byte is string_first_of and the '
-      'empty needle is the front of the string, both without the general '
-      'hunt', expansion='find_known', evidence=None)
-cover('worth_it', 'needle', 'string_search',
-      'strstr with a literal needle: the same one byte and empty cases, and '
-      'the length no longer measured at run time',
-      expansion='find_known', evidence=None)
-
 cover('specialized', 'base', 'positive_into_base',
       'base ten is positive_into and base sixteen is a shift and a nibble '
       'table; the general path divides by a register',
       expansion='into_base_known', evidence='src/test/exact_base.c')
-cover('worth_it', 'base', 'string_digits_base_max',
-      'base ten is positive_into and base sixteen is a shift and a nibble '
-      'table; the general path divides by a register',
-      expansion='into_base_known', evidence=None)
 cover('specialized', 'base', 'string_to_number string_to_number_unsigned',
       'base ten and sixteen are the two a caller ever writes down, and each '
       'drops the general digit-value path and the base range check',
@@ -240,17 +222,6 @@ cover('specialized', 'bound', 'string_copy_max_end',
 cover('specialized', 'bound', 'string_copy_max_endptr',
       'Measured literal bounds copy the short known pair directly',
       expansion='copy_max_endptr_known', evidence='src/test/bounded.c')
-cover('worth_it', 'bound', '''
-string_first_of_max string_span_max
-''', 'a literal bound under about thirty two turns a bounded walk into one or '
-     'two word loads and a SWAR test; expected to track memory_compare\'s '
-     'measured table, since it is the same shape of body',
-      expansion='bounded_known', evidence=None)
-cover('worth_it', 'length', 'string_copy_max',
-      'strncpy pads the whole length with zeros, so a literal length is a '
-      'copy and a fill both of known size -- two expansions that already '
-      'exist; the padding is what makes this one worth more than the rest of '
-      'the bounded family', expansion='copy_max_known', evidence=None)
 
 cover('specialized', 'size', 'memory_first_of memory_last_of',
       'Measured short literal spans skip the width dispatch and tail '
@@ -287,35 +258,6 @@ cover('specialized', 'bound', 'string_compare_folded_max',
       'branchless three-byte expansion saves only 3% while adding 228 bytes. '
       'The fixed-width targets stop at the measured eight-byte cutoff',
       expansion='compare_folded_max_known', evidence='src/test/standard.c')
-cover('worth_it', 'size', '''
-memory_first_of_ascii_case memory_span_byte memory_count_words
-memory_hash_33 memory_sum_bytes memory_checksum_bsd16
-memory_to_lower_ascii memory_to_upper_ascii
-memory_reverse memory_exchange_apart memory_frob
-''', 'a literal size under a block skips the width dispatch and the tail '
-     'arithmetic that is most of the work there; expected to win under '
-     'thirty two and to be level by a block, unmeasured',
-      expansion='block_known', evidence=None)
-
-cover('worth_it', 'count', 'writer_fill',
-      'writer_fill makes exactly count calls; a literal count is that many '
-      'calls written out, with no counter and no branch',
-      expansion='fill_writer_known', evidence=None)
-cover('worth_it', 'width', 'positive_into_padded positive_to_padded '
-      'writer_field string_to_field positive_to_base_field',
-      'width and pad together decide the shape of the field, and a folded '
-      'zero pad removes the padding path altogether',
-      expansion='field_known', evidence=None)
-cover('worth_it', 'stride', 'string_table_find',
-      'stride and count are a sizeof and an array length at every call site '
-      'in the tree; folding both turns the walk into a fixed sequence of '
-      'compares', expansion='table_known', evidence=None)
-cover('worth_it', 'which', 'byte_class_holds',
-      'the class number is a literal wherever a lexer asks, and each class is '
-      'the branchless range test byte_is_* already holds',
-      expansion='class_known', evidence=None)
-
-
 # ----------------------------------------------------------------------
 #       folds_already
 # ----------------------------------------------------------------------
@@ -347,6 +289,64 @@ cover('folds_already', 'value', 'narrow_larger narrow_smaller',
       'a min or a max the hardware does in one instruction')
 cover('folds_already', 'magnitude', 'narrow_with_sign decimal_with_sign',
       'a sign copy: one and or one bit insert')
+
+# Fixed-16 C bodies took 123-306% of the x86-64 floor for checksum, hash,
+# reverse, span, first-of and case conversion; sum/frob were level. Word count
+# won 6% but has no folded production caller. ARM64/RV64 qemu often improved,
+# which cannot overrule a native regression or justify unused unrolled bodies.
+cover('folds_already', 'size', '''
+memory_first_of_ascii_case memory_span_byte memory_count_words
+memory_hash_33 memory_sum_bytes memory_checksum_bsd16
+memory_to_lower_ascii memory_to_upper_ascii memory_reverse memory_frob
+''', 'fixed short bodies were measured; native x86-64 is level or slower, and '
+     'every production caller carries a runtime size')
+
+# No production caller presents these bounds as literals. The proposed forms
+# duplicate the same bounded scan/copy work and only remove entry dispatch;
+# unlike the shipped compare/count families they have no uniform measured
+# crossover that pays for the straight-line body.
+cover('folds_already', 'bound', 'string_first_of_max string_span_max',
+      'all production bounds are runtime slice lengths; a fixed body would be '
+      'unreached and duplicate the floor')
+cover('folds_already', 'length', 'string_copy_max',
+      'there is no production call, and the copied length remains runtime '
+      'even when the padding bound is folded')
+
+# These shapes make a synthetic constant-call benchmark smaller, but no
+# production caller presents the required constant. Keeping their macro and
+# helper machinery would therefore add source without changing an image.
+cover('folds_already', 'size',
+      'memory_copy_end memory_copy_source_first memory_exchange_apart',
+      'all production copies/exchanges carry runtime sizes; keep the compact '
+      'hardware-floor entry points')
+cover('folds_already', 'input', 'string_find',
+      'production needles are runtime strings')
+cover('folds_already', 'needle', 'string_search',
+      'production needles are runtime strings, including the fixed-name '
+      'tables whose selection remains runtime')
+cover('folds_already', 'base', 'string_digits_base_max',
+      'the scanner supplies its parsed runtime base; direct leaf wrappers '
+      'would be unused')
+cover('folds_already', 'which', 'byte_class_holds',
+      'the shell lexer passes a parsed runtime class; direct predicates '
+      'already cover callers that know the class')
+
+# The common two-digit zero fields now dispatch inside the assembly floor;
+# six- and nine-digit contiguous fields already did. Other literal widths do
+# not determine the runtime digit/body length, so a caller expansion merely
+# repeats the same field state machine.
+cover('folds_already', 'width',
+      'positive_into_padded positive_to_padded writer_field string_to_field '
+      'positive_to_base_field',
+      'common fixed decimal widths dispatch in the floor; otherwise width '
+      'does not determine runtime body or padding length')
+cover('folds_already', 'count', 'writer_fill',
+      'every production count is runtime; unrolling duplicates opaque writer '
+      'calls and no loop body work disappears')
+cover('folds_already', 'stride', 'string_table_find',
+      'smallest fixed production table has six entries and most are much '
+      'larger or runtime-sized; unrolling duplicates the tuned comparison '
+      'body once per entry')
 
 # Converters whose only foldable parameter is the number being converted. No
 # call site in the tree hands one a literal -- they all convert something read

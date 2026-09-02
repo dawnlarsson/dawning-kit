@@ -70,9 +70,10 @@ positive program_initial_identity(void);
         and makes no syscall; capacity one still validates the path, writes the
         terminator and closes it. openat and read retry EINTR. An open error
         leaves the destination untouched; another read error terminates what
-        was accepted, closes once and returns that error. close itself is never
-        retried: after EINTR Linux no longer gives userspace a portable answer
-        about ownership of the descriptor.
+        was accepted, closes once and returns that error. The private descriptor
+        is opened close-on-exec so a concurrent fork/exec cannot leak it into
+        the new image. close itself is never retried: after EINTR Linux no
+        longer gives userspace a portable answer about descriptor ownership.
 
         sleep and exit trap directly rather than paying for a generic
         syscall-arity adapter.
@@ -112,7 +113,7 @@ __asm__(
     "test %rdx, %rdx\n   jz .Lfile_slurp_x64_zero\n"
     "mov %rsi, %r8\n   mov %rdx, %r9\n   mov %rdi, %rsi\n"
     ".Lfile_slurp_x64_open:\n"
-    "mov $-100, %rdi\n   xor %edx, %edx\n   xor %r10d, %r10d\n"
+    "mov $-100, %rdi\n   mov $0x80000, %edx\n   xor %r10d, %r10d\n"
     "mov $" LINUX_RUNTIME_TEXT(syscall(openat)) ", %eax\n   syscall\n"
     "cmp $-4, %rax\n   je .Lfile_slurp_x64_open\n"
     "test %rax, %rax\n   js .Lfile_slurp_x64_return\n"
@@ -242,7 +243,7 @@ __asm__(
     "cbz x2, .Lfile_slurp_arm64_zero\n"
     "mov x4, x1\n   mov x5, x2\n   mov x6, x0\n"
     ".Lfile_slurp_arm64_open:\n"
-    "mov x0, #-100\n   mov x1, x6\n   mov x2, xzr\n   mov x3, xzr\n"
+    "mov x0, #-100\n   mov x1, x6\n   mov x2, #0x80000\n   mov x3, xzr\n"
     "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(openat)) "\n"
     SYSCALL_INSTRUCTION "\n   cmn x0, #4\n   b.eq .Lfile_slurp_arm64_open\n"
     "tbnz x0, #63, .Lfile_slurp_arm64_return\n"
@@ -361,7 +362,7 @@ __asm__(
     "beqz a2, .Lfile_slurp_riscv64_zero\n"
     "mv t0, a0\n   mv t1, a1\n   mv t2, a2\n"
     ".Lfile_slurp_riscv64_open:\n"
-    "li a0, -100\n   mv a1, t0\n   li a2, 0\n   li a3, 0\n"
+    "li a0, -100\n   mv a1, t0\n   li a2, 0x80000\n   li a3, 0\n"
     "li a7, " LINUX_RUNTIME_TEXT(syscall(openat)) "\n   ecall\n"
     "li t3, -4\n   beq a0, t3, .Lfile_slurp_riscv64_open\n"
     "bltz a0, .Lfile_slurp_riscv64_return\n"

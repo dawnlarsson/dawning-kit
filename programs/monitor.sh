@@ -60,23 +60,21 @@ trap finish INT TERM HUP
 #       time because this shell has no ${var:offset:length} to slice a
 #       prebuilt string with.
 bar() {
-        local value="$1" width="$2" filled colour i drawn
+        local value="$1" width="$2" filled i
 
         filled=$(( value * width / 100 ))
         [ "$filled" -lt 0 ] && filled=0
         [ "$filled" -gt "$width" ] && filled=$width
 
-        if [ "$value" -ge 85 ]; then colour=31
-        elif [ "$value" -ge 60 ]; then colour=33
-        else colour=32
+        if [ "$value" -ge 85 ]; then bar_colour=31
+        elif [ "$value" -ge 60 ]; then bar_colour=33
+        else bar_colour=32
         fi
 
         i=0
-        drawn=
-        while [ "$i" -lt "$filled" ]; do drawn="$drawn|"; i=$(( i + 1 )); done
-        while [ "$i" -lt "$width" ]; do drawn="$drawn "; i=$(( i + 1 )); done
-
-        printf '\033[%sm%s\033[0m' "$colour" "$drawn"
+        bar_drawn=
+        while [ "$i" -lt "$filled" ]; do bar_drawn="$bar_drawn|"; i=$(( i + 1 )); done
+        while [ "$i" -lt "$width" ]; do bar_drawn="$bar_drawn "; i=$(( i + 1 )); done
 }
 
 #       Clear to end of line so a shorter line never leaves the tail of a
@@ -173,14 +171,14 @@ cpus() {
         while read name percent displayed; do
                 [ -n "$displayed" ] || continue
                 if [ "$name" = cpu ]; then
-                        line "$(printf ' %-6s [%s] %5s%%' \
-                                "all" "$(bar "$percent" "$cpu_bar_width")" "$displayed")"
+                        name=all
                 else
                         shown=$(( shown + 1 ))
                         [ "$shown" -ge "$cpu_rows" ] && continue
-                        line "$(printf ' %-6s [%s] %5s%%' \
-                                "$name" "$(bar "$percent" "$cpu_bar_width")" "$displayed")"
                 fi
+                bar "$percent" "$cpu_bar_width"
+                printf ' %-6s [\033[%sm%s\033[0m] %5s%%\033[K\n' \
+                        "$name" "$bar_colour" "$bar_drawn" "$displayed"
         done
 }
 
@@ -200,14 +198,25 @@ memory() {
 
         set -- $report
         [ -n "$1" ] || return 0
-        line "$(printf ' %-6s [%s] %3s%%  %sG / %sG' \
-                "mem" "$(bar "$1" "$memory_bar_width")" "$1" "$2" "$3")"
-        [ "${4:-0}" -gt 0 ] && line "$(printf ' %-6s [%s] %3s%%  %sG' \
-                "swap" "$(bar "$4" "$memory_bar_width")" "$4" "$5")"
+        bar "$1" "$memory_bar_width"
+        printf ' %-6s [\033[%sm%s\033[0m] %3s%%  %sG / %sG\033[K\n' \
+                "mem" "$bar_colour" "$bar_drawn" "$1" "$2" "$3"
+        if [ "${4:-0}" -gt 0 ]; then
+                bar "$4" "$memory_bar_width"
+                printf ' %-6s [\033[%sm%s\033[0m] %3s%%  %sG\033[K\n' \
+                        "swap" "$bar_colour" "$bar_drawn" "$4" "$5"
+        fi
 }
 
 network() {
-        awk -v interval="$sample_interval" 'FNR == NR {
+        awk -v interval="$sample_interval" -v rows="$network_rows" \
+            -v columns="$screen_columns" '
+             function human(n) {
+                if (n >= 1048576) return sprintf("%.1f MB", n / 1048576)
+                if (n >= 1024) return sprintf("%.1f kB", n / 1024)
+                return sprintf("%d B", n)
+             }
+             FNR == NR {
                 split($0, part, ":")
                 name = part[1]
                 gsub(/ /, "", name)
@@ -229,27 +238,19 @@ network() {
                 if (rx < 0) rx = 0
                 if (tx < 0) tx = 0
                 if (rx == 0 && tx == 0 && field[1] == 0) next
-                printf "%s %d %d\n", name, rx / interval, tx / interval
-             }' "$old_net" "$now_net" 2>/dev/null | head -"$network_rows" |
-        while read name rx tx; do
-                [ -n "$name" ] || continue
-                line "$(printf ' %-10s down %-12s up %-12s' "$name" \
-                        "$(human "$rx")/s" "$(human "$tx")/s" |
-                        cut -c1-$(( screen_columns - 1 )))"
-        done
-}
-
-human() {
-        awk -v n="$1" 'BEGIN {
-                if (n >= 1048576)   { printf "%.1f MB", n / 1048576 }
-                else if (n >= 1024) { printf "%.1f kB", n / 1024 }
-                else                { printf "%d B", n }
-        }'
+                if (shown >= rows) exit
+                row = sprintf(" %-10s down %-12s up %-12s", name,
+                              human(rx / interval) "/s",
+                              human(tx / interval) "/s")
+                printf "%s%c[K\n", substr(row, 1, columns - 1), 27
+                shown++
+             }' "$old_net" "$now_net" 2>/dev/null
 }
 
 processes() {
         line ""
-        line "$(printf '\033[1m %-7s %6s %9s  %s\033[0m' "pid" "cpu%" "memory" "command")"
+        printf '\033[1m %-7s %6s %9s  %s\033[0m\033[K\n' \
+                "pid" "cpu%" "memory" "command"
 
         #       Ticks used since the previous frame, over the ticks that
         #       elapsed. A process that was not there last frame simply has no

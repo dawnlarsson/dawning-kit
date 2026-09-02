@@ -82,9 +82,9 @@ static fn text_put_character(p8 character)
                 text_out_failed = true;
 }
 
-static fn text_put_string(string_address value)
+static inline INLINE fn text_put_string(string_address value)
 {
-        text_put(value, string_length(value));
+        text_put(value, (positive)__builtin_strlen((const char address_to)value));
 }
 
 /*
@@ -3239,6 +3239,26 @@ static bool tac_read(tac_buffer address_to buffer, string_address name)
         return okay;
 }
 
+static inline INLINE fn
+tac_emit_reverse_piece(p8 address_to data, positive start, positive stop,
+                       bool before, positive address_to past,
+                       bool address_to first)
+{
+        if (before)
+        {
+                text_put(data + start, address_to past - start);
+                address_to past = start;
+        }
+        else
+        {
+                if (!address_to first || stop != address_to past)
+                        text_put(data + stop, address_to past - stop);
+
+                address_to past = stop;
+                address_to first = false;
+        }
+}
+
 static fn tac_literal(p8 address_to data, positive length,
                       p8 address_to separator, positive separator_length,
                       bool before)
@@ -3269,19 +3289,8 @@ static fn tac_literal(p8 address_to data, positive length,
                 positive start = (positive)(found - data);
                 positive stop = start + separator_length;
 
-                if (before)
-                {
-                        text_put(data + start, past - start);
-                        past = start;
-                }
-                else
-                {
-                        if (!first || stop != past)
-                                text_put(data + stop, past - stop);
-
-                        past = stop;
-                        first = false;
-                }
+                tac_emit_reverse_piece(data, start, stop, before,
+                                       address_of past, address_of first);
 
                 cutoff = start;
         }
@@ -3313,19 +3322,8 @@ static fn tac_regex(p8 address_to data, positive length, bool before)
 
                 positive stop = regex_slots[1];
 
-                if (before)
-                {
-                        text_put(data + start, past - start);
-                        past = start;
-                }
-                else
-                {
-                        if (!first || stop != past)
-                                text_put(data + stop, past - stop);
-
-                        past = stop;
-                        first = false;
-                }
+                tac_emit_reverse_piece(data, start, stop, before,
+                                       address_of past, address_of first);
 
                 cutoff = start;
         }

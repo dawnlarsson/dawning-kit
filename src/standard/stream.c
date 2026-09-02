@@ -678,6 +678,15 @@ static fn stream_land_at_end(stream address_to handle)
                 stream_trap_seek(handle->descriptor, 0, SEEK_END);
 }
 
+static inline INLINE fn stream_reset_buffer(stream address_to handle)
+{
+        handle->buffer = null;
+        handle->buffer_size = 0;
+        handle->read_head = 0;
+        handle->read_tail = 0;
+        handle->write_used = 0;
+}
+
 /*
         fopen.
 
@@ -834,11 +843,7 @@ b32 stream_close(stream address_to handle)
         if (handle->flags & STREAM_BUFFER_OURS)
                 stream_release(handle->buffer);
 
-        handle->buffer = null;
-        handle->buffer_size = 0;
-        handle->read_head = 0;
-        handle->read_tail = 0;
-        handle->write_used = 0;
+        stream_reset_buffer(handle);
         handle->pushback_used = 0;
         handle->descriptor = -1;
         handle->flags &= ~(STREAM_BUFFER_OURS | STREAM_READABLE | STREAM_WRITABLE);
@@ -1700,11 +1705,7 @@ b32 stream_set_buffering(stream address_to handle, string_address buffer,
         if (handle->flags & STREAM_BUFFER_OURS)
                 stream_release(handle->buffer);
 
-        handle->buffer = null;
-        handle->buffer_size = 0;
-        handle->read_head = 0;
-        handle->read_tail = 0;
-        handle->write_used = 0;
+        stream_reset_buffer(handle);
         handle->flags &= ~(STREAM_BUFFER_OURS | STREAM_LINE_BUFFERED |
                            STREAM_UNBUFFERED);
         handle->flags |= STREAM_MODE_KNOWN;

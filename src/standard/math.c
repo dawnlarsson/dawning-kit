@@ -1289,6 +1289,21 @@ static decimal math_log_pieces(decimal value, b32 address_to power,
         return head;
 }
 
+static inline INLINE bool math_log_special(decimal value, decimal address_to answer)
+{
+        if (decimal_is_nan(value))
+                *answer = value;
+        else if (value < 0.0)
+                *answer = (value - value) / (value - value);
+        else if (value == 0.0)
+                *answer = -MATH_HUGE / (value * value);
+        else if (decimal_is_infinite(value))
+                *answer = value;
+        else
+                return false;
+        return true;
+}
+
 /*
         The natural logarithm, which cannot be called log.
 
@@ -1317,15 +1332,10 @@ static decimal logarithm(decimal value)
         b32 exponent;
         decimal head, tail;
         decimal large, large_error;
+        decimal special;
 
-        if (decimal_is_nan(value))
-                return value;
-        if (value < 0.0)
-                return (value - value) / (value - value);
-        if (value == 0.0)
-                return -MATH_HUGE / (value * value);
-        if (decimal_is_infinite(value))
-                return value;
+        if (math_log_special(value, address_of special))
+                return special;
 
         head = math_log_pieces(value, address_of exponent, address_of tail);
 
@@ -1356,15 +1366,10 @@ static decimal logarithm_two(decimal value)
         decimal head, tail;
         decimal scaled, scaled_error;
         decimal total, total_error;
+        decimal special;
 
-        if (decimal_is_nan(value))
-                return value;
-        if (value < 0.0)
-                return (value - value) / (value - value);
-        if (value == 0.0)
-                return -MATH_HUGE / (value * value);
-        if (decimal_is_infinite(value))
-                return value;
+        if (math_log_special(value, address_of special))
+                return special;
 
         head = math_log_pieces(value, address_of exponent, address_of tail);
 
@@ -1398,15 +1403,10 @@ static decimal logarithm_ten(decimal value)
         decimal from_exponent, from_exponent_error;
         decimal scaled, scaled_error;
         decimal total, total_error;
+        decimal special;
 
-        if (decimal_is_nan(value))
-                return value;
-        if (value < 0.0)
-                return (value - value) / (value - value);
-        if (value == 0.0)
-                return -MATH_HUGE / (value * value);
-        if (decimal_is_infinite(value))
-                return value;
+        if (math_log_special(value, address_of special))
+                return special;
 
         head = math_log_pieces(value, address_of exponent, address_of tail);
 

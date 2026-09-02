@@ -2172,6 +2172,15 @@ static inline INLINE p8 address_to copy_end_known(string_address destination,
         return destination + length;
 }
 
+/* Copy a known non-overlapping count and append its terminator. */
+static inline INLINE p8 address_to copy_apart_count_end_known(
+    p8 address_to destination, address_any source, positive size)
+{
+        copy_apart_known(destination, source, size);
+        destination[size] = 0;
+        return destination + size;
+}
+
 /*
         A copy whose length the compiler does not know but whose bound it
         does. Each class is a pair of overlapping loads and a pair of
@@ -2499,6 +2508,12 @@ static inline INLINE address_any copy_until_known(address_any destination,
         (__builtin_constant_p(size) && (positive)(size) <= 8                 \
                  ? translate_known((block), (positive)(size), (table))       \
                  : memory_translate((block), (size), (table)))
+
+#define memory_copy_apart_end(destination, source, size)                      \
+        (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX    \
+                 ? copy_apart_count_end_known((destination), (source),       \
+                                               (positive)(size))             \
+                 : memory_copy_apart_end((destination), (source), (size)))
 
 #define string_copy_end(destination, source)                                  \
         (__builtin_constant_p(__builtin_strlen((const char address_to)(source))) \

@@ -1,7 +1,7 @@
 #> program_flags -static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin
 #> program_flags -ffunction-sections -fdata-sections
 #> program_flags -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all -Wl,--strip-debug -Wl,-x -Wl,-s
-#> program_flags -O2 -Wl,-nmagic -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-protector
+#> program_flags -O2 -fwhole-program -fipa-pta -Wl,-nmagic -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-protector
 
 #
 # Any profile, essential for all

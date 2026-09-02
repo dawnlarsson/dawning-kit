@@ -41,6 +41,13 @@ source_file=${1:-"src/main.c"}
 output_file=${2:-"bin/$(basename "$(pwd)")"}
 
 compiler=${CC:-gcc}
+program_ipa_flags=
+case $("$compiler" --version 2>/dev/null) in
+*clang* | *Clang*) ;;
+*GCC* | *gcc*)
+        program_ipa_flags="-fwhole-program -fipa-pta"
+        ;;
+esac
 
 # This used to be built with flags_base+=" ...", which is a bash extension.
 # Under dash -- /bin/sh on Debian and Ubuntu -- every append after the first
@@ -64,7 +71,7 @@ compiler=${CC:-gcc}
 flags_base="-static -s -flto -nostdlib -nostartfiles -ffreestanding -fno-builtin \
 -Qn -Wl,--build-id=none -Wl,--gc-sections -Wl,--strip-all -Wl,--strip-debug -Wl,-x -Wl,-s \
 -Wl,--no-warn-rwx-segments -Wl,-nmagic \
--O2 \
+-O2 $program_ipa_flags \
 -fno-asynchronous-unwind-tables -fomit-frame-pointer -fno-stack-protector \
 -fno-semantic-interposition -D_FORTIFY_SOURCE=0 -fno-unwind-tables -fno-plt \
 -fno-PIE -fno-pie -fno-stack-clash-protection"

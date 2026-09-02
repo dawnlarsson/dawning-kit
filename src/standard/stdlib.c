@@ -356,6 +356,19 @@ string_address getenv(string_address name)
         return string_get_environment(program_environment_list(), name);
 }
 
+static inline INLINE fn stdlib_environment_install(bipolar found,
+                                                   string_address entry)
+{
+        if (found >= 0)
+        {
+                stdlib_environment_vector[found] = entry;
+                return;
+        }
+
+        stdlib_environment_vector[stdlib_environment_count++] = entry;
+        stdlib_environment_vector[stdlib_environment_count] = null;
+}
+
 /*
         setenv copies both halves into storage it owns, because the caller is
         entitled to free or overwrite either one the instant this returns.
@@ -397,16 +410,7 @@ b32 setenv(string_address name, string_address value, b32 overwrite)
         memory_copy_apart(entry + name_length + 1, value, value_length);
         entry[name_length + 1 + value_length] = end;
 
-        if (found >= 0)
-        {
-                stdlib_environment_vector[found] = entry;
-                return 0;
-        }
-
-        stdlib_environment_vector[stdlib_environment_count] = entry;
-        stdlib_environment_count++;
-        stdlib_environment_vector[stdlib_environment_count] = null;
-
+        stdlib_environment_install(found, entry);
         return 0;
 }
 
@@ -496,16 +500,7 @@ b32 putenv(string_address entry)
 
         found = stdlib_environment_find(entry, name_length);
 
-        if (found >= 0)
-        {
-                stdlib_environment_vector[found] = entry;
-                return 0;
-        }
-
-        stdlib_environment_vector[stdlib_environment_count] = entry;
-        stdlib_environment_count++;
-        stdlib_environment_vector[stdlib_environment_count] = null;
-
+        stdlib_environment_install(found, entry);
         return 0;
 }
 

@@ -801,35 +801,41 @@ bipolar shell_clone()
         return system_fork();
 }
 
-static b8 expand_ifs_set[256];
-static b8 expand_ifs_blank_set[256];
+enum
+{
+        EXPAND_IFS_MEMBER = 1,
+        EXPAND_IFS_BLANK = 2
+};
+
+/* Membership and whitespace are two properties of the same byte.  Keeping
+   them in one table halves the hot splitter's footprint and preparation work. */
+static b8 expand_ifs_kind[256];
 
 static fn expand_ifs_prepare()
 {
         string_address ifs = expand_ifs();
 
-        memory_fill(expand_ifs_set, 0, sizeof(expand_ifs_set));
-        memory_fill(expand_ifs_blank_set, 0, sizeof(expand_ifs_blank_set));
+        memory_fill(expand_ifs_kind, 0, sizeof(expand_ifs_kind));
 
         while (string_get(ifs))
         {
                 p8 value = string_get(ifs++);
 
-                expand_ifs_set[value] = 1;
+                expand_ifs_kind[value] = EXPAND_IFS_MEMBER;
 
                 if (value == ' ' || value == '\t' || value == '\n')
-                        expand_ifs_blank_set[value] = 1;
+                        expand_ifs_kind[value] |= EXPAND_IFS_BLANK;
         }
 }
 
 static PURE bool expand_in_ifs(p8 value)
 {
-        return expand_ifs_set[value] != 0;
+        return expand_ifs_kind[value] & EXPAND_IFS_MEMBER;
 }
 
 static PURE bool expand_ifs_blank(p8 value)
 {
-        return expand_ifs_blank_set[value] != 0;
+        return expand_ifs_kind[value] & EXPAND_IFS_BLANK;
 }
 
 /*

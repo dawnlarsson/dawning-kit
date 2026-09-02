@@ -292,10 +292,8 @@ static positive net_name_count;
 
 static bool net_name_seen(netlink_header address_to header, address_any context)
 {
-        netlink_link address_to link = (netlink_link address_to)((p8 address_to)header +
-                                                                 NETLINK_HEADER);
-        string_address found = (string_address)netlink_find(header, sizeof(netlink_link),
-                                                            IFLA_IFNAME, null);
+        netlink_link address_to link;
+        string_address found = netlink_link_name(header, address_of link);
         net_name address_to entry;
         (void)context;
 
@@ -338,11 +336,8 @@ static PURE string_address net_name_of(p32 index)
 
 static bool net_link_line(netlink_header address_to header, address_any context)
 {
-        netlink_link address_to link = (netlink_link address_to)((p8 address_to)header +
-                                                                 NETLINK_HEADER);
-        positive size = 0;
-        string_address name = (string_address)netlink_find(header, sizeof(netlink_link),
-                                                           IFLA_IFNAME, address_of size);
+        netlink_link address_to link;
+        string_address name = netlink_link_name(header, address_of link);
         (void)context;
 
         if (!name)

@@ -2377,15 +2377,7 @@ static b32 ul_setarch_show(string_address value, b32 pid)
                 positive at = 6;
                 at += positive_into_string(path + at, (positive)(p32)pid);
                 memory_copy_apart_end(path + at, "/personality", 12);
-                bipolar handle = system_open_at(AT_FDCWD,
-                                                path,
-                                                FILE_READ | O_CLOEXEC);
-                bipolar got = handle < 0
-                                  ? handle
-                                  : system_read_once(handle, text,
-                                                     sizeof(text) - 1);
-                if (handle >= 0)
-                        system_close(handle);
+                bipolar got = file_slurp(path, text, sizeof(text));
                 if (got <= 0)
                 {
                         string_format(file_fail,
@@ -2393,7 +2385,6 @@ static b32 ul_setarch_show(string_address value, b32 pid)
                           (bipolar)pid, file_reason(got));
                         return 1;
                 }
-                text[got] = 0;
                 while (got && byte_is_space(text[got - 1]))
                         text[--got] = 0;
                 value = text;
@@ -2876,15 +2867,9 @@ static COLD b32 ul_cap_last()
 {
         if (ul_cap_max >= 0)
                 return ul_cap_max;
-        bipolar handle = system_open_at(AT_FDCWD,
-                             "/proc/sys/kernel/cap_last_cap",
-                             FILE_READ | O_CLOEXEC);
         p8 text[24];
-        bipolar got = handle < 0
-                          ? handle
-                          : system_read_once(handle, text, sizeof(text) - 1);
-        if (handle >= 0)
-                system_close(handle);
+        bipolar got = file_slurp("/proc/sys/kernel/cap_last_cap", text,
+                                 sizeof(text));
         if (got > 0)
         {
                 positive taken, value = string_digits_max(text, (positive)got,
@@ -2920,15 +2905,8 @@ static COLD bool ul_cap_status(p64 sets[5])
             "CapEff:\t", "CapPrm:\t", "CapInh:\t", "CapAmb:\t", "CapBnd:\t",
         };
         p8 text[4096];
-        bipolar handle = system_open_at(AT_FDCWD,
-                                       "/proc/self/status",
-                                       FILE_READ | O_CLOEXEC);
-        bipolar got = handle < 0
-                          ? handle
-                          : system_read_once(handle, text, sizeof(text) - 1);
-        if (handle >= 0) system_close(handle);
+        bipolar got = file_slurp("/proc/self/status", text, sizeof(text));
         if (got <= 0) return false;
-        text[got] = 0;
         for (positive i = 0; i < 5; i++)
         {
                 string_address found = string_search(text, names[i]);

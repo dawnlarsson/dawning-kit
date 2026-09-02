@@ -5311,7 +5311,9 @@ ASM_FUNC(positive_to_string)
     //       intra-function call into positive_into_core.
     //
     ASM_FUNC(positive_into_padded)
-    "cmp $48, %cl\n   jne .Lpositive_into_padded_x86_general\n   cmp $6, %rdx\n   je .Lpositive_into_padded_x86_six_check\n"
+    "cmp $48, %cl\n   jne .Lpositive_into_padded_x86_general\n   cmp $2, %rdx\n   jne .Lpositive_into_padded_x86_not_pair\n"
+    "cmp $100, %rsi\n   jae .Lpositive_into_padded_x86_general\n   jmp positive_into_pair\n"
+    ".Lpositive_into_padded_x86_not_pair:\n   cmp $6, %rdx\n   je .Lpositive_into_padded_x86_six_check\n"
     "cmp $9, %rdx\n   jne .Lpositive_into_padded_x86_general\n   cmp $1000000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
     "mov $4, %r10d\n   jmp .Lpositive_into_padded_x86_fixed\n"
     ".Lpositive_into_padded_x86_six_check:\n   cmp $1000000, %rsi\n   jae .Lpositive_into_padded_x86_general\n"
@@ -5472,6 +5474,14 @@ ASM_FUNC(positive_to_string)
     // formatter avoids both this adapter's frame and its extra digit copy;
     // every nonzero-width field pays only one not-taken branch on entry.
     "test %rdx, %rdx\n   jz 5f\n"
+    // Values ten through ninety-nine are already one two-byte writer call.
+    // Send their pair table directly instead of using the general field frame.
+    "cmp $2, %rdx\n   jne 0f\n   cmp $48, %cl\n   jne 0f\n"
+    "test %r8b, %r8b\n   jnz 0f\n   cmp $10, %rsi\n   jb 0f\n"
+    "cmp $100, %rsi\n   jae 0f\n"
+    "mov %rdi, %r9\n   lea digit_pairs(%rip), %rdi\n   lea (%rdi,%rsi,2), %rdi\n"
+    "mov $2, %esi\n   sub $8, %rsp\n" ASM_CALL("r9")
+    "add $8, %rsp\n" ASM_RET
     "0:\n   push %rbx\n   push %r12\n   push %r13\n"
     "push %r14\n   sub $40, %rsp  # four pushes and forty: aligned calls; 24-byte scratch\n"
     "mov %rdi, %rbx\n   mov %rdx, %r12\n   mov %cl, 24(%rsp)\n   mov %r8b, 25(%rsp)\n"
@@ -9422,7 +9432,10 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_into_padded)
     "cmp w3, #48\n"
-    "b.ne .Lpositive_into_padded_arm_general\n   cmp x2, #6\n"
+    "b.ne .Lpositive_into_padded_arm_general\n   cmp x2, #2\n"
+    "b.ne .Lpositive_into_padded_arm_not_pair\n   cmp x1, #100\n"
+    "b.hs .Lpositive_into_padded_arm_general\n   b positive_into_pair\n"
+    ".Lpositive_into_padded_arm_not_pair:\n   cmp x2, #6\n"
     "b.eq .Lpositive_into_padded_arm_six_check\n   cmp x2, #9\n"
     "b.ne .Lpositive_into_padded_arm_general\n   mov w4, #0xca00\n"
     "movk w4, #0x3b9a, lsl #16\n"
@@ -9593,6 +9606,13 @@ ASM_FUNC(positive_to_string)
     //
     ASM_FUNC(positive_to_padded)
     "cbz x2, 5f\n"
+    "cmp x2, #2\n   b.ne 0f\n   cmp w3, #48\n   b.ne 0f\n"
+    "cbnz w4, 0f\n   cmp x1, #10\n   b.lo 0f\n"
+    "cmp x1, #100\n   b.hs 0f\n"
+    "mov x5, x0\n   adrp x0, digit_pairs\n   add x0, x0, :lo12:digit_pairs\n"
+    "add x0, x0, x1, lsl #1\n   mov x1, #2\n"
+    "str x30, [sp, #-16]!\n   mov x16, x5\n" ASM_CALL("x16")
+    "ldr x30, [sp], #16\n" ASM_RET
     "0:\n   stp x29, x30, [sp,  #-80]!\n"
     "mov x29, sp\n   stp x19, x20, [sp, #16]\n"
     "stp x21, x22, [sp, #32]\n"
@@ -12794,7 +12814,10 @@ ASM_FUNC(positive_to_string)
     //       positive_into_padded: the x86_64 block carries the contract. Its
     //       byte moves make no unaligned-access assumption on baseline RV64.
     ASM_FUNC(positive_into_padded)
-    "li t0, 48\n   bne a3, t0, .Lpositive_into_padded_rv_general\n   li t0, 6\n   beq a2, t0, .Lpositive_into_padded_rv_six_check\n"
+    "li t0, 48\n   bne a3, t0, .Lpositive_into_padded_rv_general\n   li t0, 2\n"
+    "bne a2, t0, .Lpositive_into_padded_rv_not_pair\n   li t0, 100\n"
+    "bgeu a1, t0, .Lpositive_into_padded_rv_general\n   j positive_into_pair\n"
+    ".Lpositive_into_padded_rv_not_pair:\n   li t0, 6\n   beq a2, t0, .Lpositive_into_padded_rv_six_check\n"
     "li t0, 9\n   bne a2, t0, .Lpositive_into_padded_rv_general\n   li t0, 1000000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
     "li t2, 4\n   j .Lpositive_into_padded_rv_fixed\n"
     ".Lpositive_into_padded_rv_six_check:\n   li t0, 1000000\n   bgeu a1, t0, .Lpositive_into_padded_rv_general\n"
@@ -12915,6 +12938,12 @@ ASM_FUNC(positive_to_string)
     //       make no unaligned word-access promise.
     ASM_FUNC(positive_to_padded)
     "beqz a2, 5f\n"
+    "li t0, 2\n   bne a2, t0, 0f\n   li t0, 48\n   bne a3, t0, 0f\n"
+    "bnez a4, 0f\n   li t0, 10\n   bltu a1, t0, 0f\n"
+    "li t0, 100\n   bgeu a1, t0, 0f\n"
+    "mv t0, a0\n   lla a0, digit_pairs\n   slli t1, a1, 1\n   add a0, a0, t1\n"
+    "li a1, 2\n   addi sp, sp, -16\n   sd ra, 8(sp)\n" ASM_CALL("t0")
+    "ld ra, 8(sp)\n   addi sp, sp, 16\n" ASM_RET
     "0:\n   addi sp, sp, -80\n   sd ra, 72(sp)\n   sd s0, 56(sp)\n"
     "sd s1, 48(sp)\n   sd s2, 40(sp)\n   sd s3, 32(sp)\n   mv s0, a0\n"
     "mv s1, a2\n   sb a3, 24(sp)\n   sb a4, 25(sp)\n   mv a0, sp\n"
