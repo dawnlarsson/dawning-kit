@@ -29,27 +29,6 @@
 */
 typedef struct
 {
-        positive id;
-        positive parent_id;
-        string_address device;
-        string_address root;
-        string_address target;
-        string_address options;
-        string_address type;
-        string_address source;
-        string_address filesystem_options;
-} storage_mount;
-
-typedef struct
-{
-        byte_store text;
-        storage_mount address_to entry;
-        positive entry_room;
-        positive count;
-} storage_mount_table;
-
-typedef struct
-{
         string_address source;
         string_address target;
         string_address type;

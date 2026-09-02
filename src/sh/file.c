@@ -5838,19 +5838,16 @@ static b32 file_du()
 /*
         df [-h] [-i] [-T] [-a] [-P] [PATH...]
 
-        The mounted filesystems come from /proc/mounts, because the kernel is
-        the only thing that knows what is mounted and this is where it says
-        so. A filesystem with no blocks at all is one of the kernel's own
+        The mounted filesystems come from the shared mountinfo table, because
+        the kernel is the only thing that knows what this namespace can see.
+        A filesystem with no blocks at all is one of the kernel's own
         bookkeeping mounts and is left out unless -a asks for it, the way df
         has always left it out.
 
-        The whole table is measured before any of it is written: each column
-        ends up as wide as the widest thing under it and no wider, which is
-        why the file is read twice and why the second pass prints.
+        Each filesystem is measured once and its facts stay beside the parsed
+        record while widths and rows are produced. Path operands use statx's
+        mount ID, so one kernel answer replaces a search by filesystem traits.
 */
-#define DF_TEXT (1 << 18)
-
-static p8 df_text[DF_TEXT];
 static bool df_human;
 static bool df_inodes;
 static bool df_types;
@@ -5863,6 +5860,17 @@ static positive df_full_width;
 static positive df_blocks_width;
 static positive df_used_width;
 static positive df_free_width;
+
+typedef struct
+{
+        file_mount_facts facts;
+        bool eligible;
+        bool shown;
+        bool measured;
+} df_sample;
+
+static df_sample address_to df_samples;
+static positive df_sample_room;
 
 // The kernel counts in whatever unit the filesystem uses; df has always
 // reported in 1024 byte ones, and rounds a part of one up to a whole. An
@@ -5959,44 +5967,6 @@ static fn df_row(string_address device, string_address type, string_address wher
         log("\n", 1);
 }
 
-// Every line of /proc/mounts is device, mount point, type, options; the first
-// three are all df needs and names use backslash-octal for whitespace and \.
-static positive df_field(p8 address_to text, positive at, p8 address_to into,
-                         positive limit)
-{
-        positive filled = 0;
-
-        while (text[at] == ' ')
-                at++;
-
-        while (text[at] && text[at] != ' ' && text[at] != '\n')
-        {
-                positive used = 0;
-                positive decoded = text[at] == '\\'
-                                       ? string_digits_octal_max(
-                                             text + at + 1, 3, address_of used)
-                                       : 0;
-
-                if (used == 3)
-                {
-                        if (filled + 1 < limit)
-                                into[filled++] = (p8)decoded;
-
-                        at += 4;
-                        continue;
-                }
-
-                if (filled + 1 < limit)
-                        into[filled++] = text[at];
-
-                at++;
-        }
-
-        into[filled] = end;
-
-        return at;
-}
-
 static const file_long df_longs[] = {
     {(string_address) "all", 'a'},
     {(string_address) "human-readable", 'h'},
@@ -6027,10 +5997,11 @@ static b32 file_df()
         df_all = (taking.flags & FILE_FLAG('a')) != 0;
         df_posix = (taking.flags & FILE_FLAG('P')) != 0;
 
-        if (file_slurp((string_address) "/proc/mounts", df_text, DF_TEXT) <= 0 &&
-            file_slurp((string_address) "/proc/self/mounts", df_text, DF_TEXT) <= 0)
+        storage_mount_table mounts;
+
+        if (!storage_mount_table_load(address_of mounts, null))
         {
-                file_fail("df: cannot read /proc/mounts\n", 0);
+                file_fail("df: cannot read mount table\n", 0);
                 return 1;
         }
 
@@ -6073,152 +6044,150 @@ static b32 file_df()
 
         bool filtering = first < count;
 
-        for (positive pass = 0; pass < 2; pass++)
+        if (!array_store_reserve(df_samples, df_sample_room, 0, mounts.count,
+                                 32))
         {
-                if (pass == 1)
+                storage_mount_table_release(address_of mounts);
+                file_fail("df: out of memory\n", 0);
+                return 1;
+        }
+
+        memory_fill(df_samples, 0, mounts.count * sizeof(*df_samples));
+
+        for (positive at = 0; at < mounts.count; at++)
+        {
+                storage_mount address_to mount = mounts.entry + at;
+                df_sample address_to sample = df_samples + at;
+                file_mount_facts address_to facts = address_of sample->facts;
+                string_address where = mount->target;
+                string_address type = mount->type;
+
+                /* Asking an autofs mount for its facts would mount it. */
+                bipolar answered = string_compare(type, "autofs") == 0
+                                       ? -ERROR_ACCESS
+                                       : system_call_2(syscall(statfs),
+                                                       (positive)where,
+                                                       (positive)facts);
+
+                if (answered < 0 && answered != -ERROR_ACCESS)
                 {
-                        string_to_field(log, (string_address) "Filesystem",
-                                        df_device_width, ' ', true);
-                        log(" ", 1);
-
-                        if (df_types)
-                        {
-                                string_to_field(log, (string_address) "Type",
-                                                df_type_width, ' ', true);
-                                log(" ", 1);
-                        }
-
-                        df_column(blocks_heading, df_blocks_width);
-                        df_column(used_heading, df_used_width);
-                        df_column(free_heading, df_free_width);
-                        log(full_heading, 0);
-                        log(" Mounted on\n", 0);
+                        string_format(file_fail, "df: %s: %s\n", where,
+                                      file_reason(answered));
+                        continue;
                 }
 
-                positive at = 0;
+                sample->measured = answered >= 0;
 
-                while (df_text[at])
+                if (!sample->measured && !df_all)
+                        continue;
+
+                if (!facts->blocks && !df_all)
+                        continue;
+
+                sample->eligible = true;
+                sample->shown = !filtering;
+        }
+
+        /* statx supplies the mount ID directly. Each operand is therefore one
+           syscall and one exact table match, including stacked/bind mounts. */
+        if (filtering)
+                for (positive i = first; i < count; i++)
                 {
-                        p8 device[FILE_PATH_MAX];
-                        p8 where[FILE_PATH_MAX];
-                        p8 type[FILE_NAME_MAX];
-                        p8 text[64];
+                        string_address path = program_argument((b32)i);
+                        file_facts wanted;
+                        bipolar answered;
 
-                        at = df_field(df_text, at, device, FILE_PATH_MAX);
-                        at = df_field(df_text, at, where, FILE_PATH_MAX);
-                        at = df_field(df_text, at, type, FILE_NAME_MAX);
+                        memory_fill(address_of wanted, 0, sizeof(wanted));
+                        answered = system_stat_at(AT_FDCWD, path,
+                                                  AT_NO_AUTOMOUNT,
+                                                  STATX_WANTED,
+                                                  address_of wanted);
 
-                        at = (positive)(string_first_of_or_end(df_text + at, '\n') - df_text);
-
-                        if (df_text[at])
-                                at++;
-
-                        if (!string_get(where))
-                                continue;
-
-                        file_mount_facts facts;
-
-                        memory_fill(address_of facts, 0, sizeof(facts));
-
-                        /*
-                                An automount point is not asked how full it
-                                is: asking is what mounts it, and df is a
-                                question and not an instruction.
-
-                                A mount under a directory this user cannot
-                                walk into is there and is not measurable, and
-                                is said with dashes. Anything else that will
-                                not answer is a fault rather than a wall, and
-                                is complained about and left out.
-                        */
-                        bool automount = string_compare(type, "autofs") == 0;
-                        bipolar answered = automount
-                                               ? -ERROR_ACCESS
-                                               : system_call_2(syscall(statfs),
-                                                               (positive)where,
-                                                               (positive)address_of facts);
-
-                        if (answered < 0 && answered != -ERROR_ACCESS)
+                        if (answered < 0)
                         {
-                                string_format(file_fail, "df: %s: %s\n", where,
+                                string_format(file_fail, "df: %s: %s\n", path,
                                               file_reason(answered));
                                 continue;
                         }
 
-                        bool measured = answered >= 0;
-
-                        if (!measured && !df_all)
-                                continue;
-
-                        if (facts.blocks == 0 && !df_all)
-                                continue;
-
-                        if (filtering)
-                        {
-                                bool matched = false;
-
-                                for (positive i = first; i < count; i++)
+                        /* The last record is the visible top of a stacked
+                           mount, just as storage_mount_find_target chooses. */
+                        for (positive at = mounts.count; at; at--)
+                                if (mounts.entry[at - 1].id == wanted.mount_id)
                                 {
-                                        p8 wanted[FILE_PATH_MAX];
-
-                                        if (!file_real(program_argument((b32)i), wanted))
-                                                continue;
-
-                                        file_mount_facts theirs;
-
-                                        memory_fill(address_of theirs, 0, sizeof(theirs));
-
-                                        if (system_call_2(syscall(statfs), (positive)wanted,
-                                                          (positive)address_of theirs) < 0)
-                                                continue;
-
-                                        if (theirs.identity[0] == facts.identity[0] &&
-                                            theirs.identity[1] == facts.identity[1] &&
-                                            theirs.blocks == facts.blocks)
-                                                matched = true;
+                                        df_samples[at - 1].shown =
+                                            df_samples[at - 1].eligible;
+                                        break;
                                 }
-
-                                if (!matched)
-                                        continue;
-                        }
-
-                        if (pass == 1)
-                        {
-                                df_row(device, type, where, address_of facts, measured);
-                                continue;
-                        }
-
-                        p64 total, used, spare, size;
-
-                        df_reading(address_of facts, address_of total, address_of used,
-                                   address_of spare, address_of size);
-
-                        if (string_length(device) > df_device_width)
-                                df_device_width = string_length(device);
-
-                        if (measured && string_length(type) > df_type_width)
-                                df_type_width = string_length(type);
-
-                        if (!measured)
-                                continue;
-
-                        positive length = df_amount(text, total, size);
-
-                        if (length > df_blocks_width)
-                                df_blocks_width = length;
-
-                        length = df_amount(text, used, size);
-
-                        if (length > df_used_width)
-                                df_used_width = length;
-
-                        length = df_amount(text, spare, size);
-
-                        if (length > df_free_width)
-                                df_free_width = length;
                 }
+
+        for (positive at = 0; at < mounts.count; at++)
+        {
+                storage_mount address_to mount = mounts.entry + at;
+                df_sample address_to sample = df_samples + at;
+                file_mount_facts address_to facts = address_of sample->facts;
+                string_address device = mount->source;
+                string_address type = mount->type;
+                p8 text[64];
+
+                if (!sample->shown)
+                        continue;
+
+                if (string_length(device) > df_device_width)
+                        df_device_width = string_length(device);
+
+                if (sample->measured && string_length(type) > df_type_width)
+                        df_type_width = string_length(type);
+
+                if (!sample->measured)
+                        continue;
+
+                p64 total, used, spare, size;
+
+                df_reading(facts, address_of total, address_of used,
+                           address_of spare, address_of size);
+                positive length = df_amount(text, total, size);
+
+                if (length > df_blocks_width)
+                        df_blocks_width = length;
+
+                length = df_amount(text, used, size);
+
+                if (length > df_used_width)
+                        df_used_width = length;
+
+                length = df_amount(text, spare, size);
+
+                if (length > df_free_width)
+                        df_free_width = length;
         }
 
+        string_to_field(log, (string_address) "Filesystem", df_device_width,
+                        ' ', true);
+        log(" ", 1);
+
+        if (df_types)
+        {
+                string_to_field(log, (string_address) "Type", df_type_width,
+                                ' ', true);
+                log(" ", 1);
+        }
+
+        df_column(blocks_heading, df_blocks_width);
+        df_column(used_heading, df_used_width);
+        df_column(free_heading, df_free_width);
+        log(full_heading, 0);
+        log(" Mounted on\n", 0);
+
+        for (positive at = 0; at < mounts.count; at++)
+                if (df_samples[at].shown)
+                        df_row(mounts.entry[at].source,
+                               mounts.entry[at].type,
+                               mounts.entry[at].target,
+                               address_of df_samples[at].facts,
+                               df_samples[at].measured);
+
+        storage_mount_table_release(address_of mounts);
         log_flush();
 
         return 0;
@@ -12064,36 +12033,25 @@ static bool nproc_cgroup_mount(p8 address_to into)
                 return true;
         }
 
-        if (file_slurp((string_address) "/proc/mounts", df_text, DF_TEXT) <= 0 &&
-            file_slurp((string_address) "/proc/self/mounts", df_text, DF_TEXT) <= 0)
+        storage_mount_table table;
+
+        if (!storage_mount_table_load(address_of table, null))
                 return false;
 
-        positive at = 0;
+        bool found = false;
 
-        while (df_text[at])
-        {
-                p8 device[2];
-                p8 where[FILE_PATH_MAX];
-                p8 kind[32];
-
-                at = df_field(df_text, at, device, sizeof(device));
-                at = df_field(df_text, at, where, sizeof(where));
-                at = df_field(df_text, at, kind, sizeof(kind));
-
-                if (!string_compare(kind, (string_address) "cgroup2"))
+        for (positive at = 0; at < table.count; at++)
+                if (!string_compare(table.entry[at].type,
+                                    (string_address) "cgroup2"))
                 {
-                        string_copy_max_end(into, where, FILE_PATH_MAX - 1);
-                        return true;
+                        string_copy_max_end(into, table.entry[at].target,
+                                            FILE_PATH_MAX - 1);
+                        found = true;
+                        break;
                 }
 
-                while (df_text[at] && df_text[at] != '\n')
-                        at++;
-
-                if (df_text[at])
-                        at++;
-        }
-
-        return false;
+        storage_mount_table_release(address_of table);
+        return found;
 }
 
 static positive nproc_cgroup_quota()

@@ -403,6 +403,34 @@ static bool shell_tail_command;
 static bool shell_tail_line_requested;
 fn shell_thread_instance_mode(bool preserve_ignored);
 
+/* The mount table is shared by file and storage utilities. Its parser lives
+   in storage_discovery.c, while this declaration keeps consumers independent
+   of source inclusion order. */
+typedef struct
+{
+        positive id;
+        positive parent_id;
+        string_address device;
+        string_address root;
+        string_address target;
+        string_address options;
+        string_address type;
+        string_address source;
+        string_address filesystem_options;
+} storage_mount;
+
+typedef struct
+{
+        byte_store text;
+        storage_mount address_to entry;
+        positive entry_room;
+        positive count;
+} storage_mount_table;
+
+bool storage_mount_table_load(storage_mount_table address_to table,
+                              writer diagnostic);
+fn storage_mount_table_release(storage_mount_table address_to table);
+
 #include "lex.c"
 #include "file.c"
 #include "snapshot.c"
