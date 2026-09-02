@@ -3028,8 +3028,6 @@ typedef struct
         string_address user;
 } ps_process;
 
-#define ps_pid_order(left, right) ((left).pid <= (right).pid ? -1 : 1)
-
 static ps_process address_to ps_list;
 static positive ps_count;
 static positive ps_room_processes;
@@ -3038,7 +3036,6 @@ static positive ps_now;
 static positive ps_own_tty;
 static positive ps_own_uid;
 static positive ps_wall;
-static positive ps_page_kb = 4;
 
 static positive ps_read_file(string_address path, p8 address_to into, positive limit)
 {
@@ -3057,37 +3054,6 @@ static ps_process address_to ps_process_add()
 
         memory_fill(made, 0, sizeof(ps_process));
         return made;
-}
-
-// The bytes a /proc field is made of, and the ones between two of them.
-static b8 ps_blank_bytes[STRING_SET_BYTES];
-static b8 ps_field_bytes[STRING_SET_BYTES];
-
-#define PS_TAKE(name, type, parse)                                           \
-static type name(string_address address_to at)                              \
-{                                                                           \
-        string_address here = address_to at +                               \
-            string_span(address_to at, ps_blank_bytes);                     \
-        positive taken;                                                     \
-        type value = parse(here, address_of taken);                          \
-        address_to at = here + taken;                                       \
-        return value;                                                       \
-}
-PS_TAKE(ps_take, positive, string_digits)
-PS_TAKE(ps_signed, bipolar, string_bipolar)
-#undef PS_TAKE
-
-static fn ps_pass(string_address address_to at, positive fields)
-{
-        string_address here = address_to at;
-
-        for (positive i = 0; i < fields; i++)
-        {
-                here += string_span(here, ps_blank_bytes);
-                here += string_span(here, ps_field_bytes);
-        }
-
-        address_to at = here;
 }
 
 // The name behind a numeric user id. file.c already reads /etc/passwd and
@@ -3114,148 +3080,51 @@ static string_address ps_name_of(positive uid)
 
 static bool ps_gather()
 {
+        static system_snapshot snapshot;
         p8 block[8192];
-        file_walk walk;
 
         ps_count = 0;
         ps_room_processes = 0;
-        ps_page_kb = 4;
 
-        /*
-                rss in /proc/PID/stat is counted in native pages, not in the
-                4 KiB pages most machines happen to use. AT_PAGESZ is the
-                kernel's architecture-specific answer and /proc/self/auxv is
-                available anywhere the rest of this implementation is.
-        */
-        {
-                p8 auxv[512];
-                positive got = ps_read_file("/proc/self/auxv", auxv, sizeof(auxv));
-                positive pair = 2 * sizeof(positive);
+        ps_now = system_clock_ns(7) / SYSTEM_NANOSECONDS;
+        ps_wall = (positive)file_now();
 
-                for (positive at = 0; at + pair <= got; at += pair)
-                {
-                        positive type;
-                        positive value;
-
-                        memory_copy_apart(address_of type, auxv + at,
-                                         sizeof(positive));
-                        memory_copy_apart(address_of value,
-                                         auxv + at + sizeof(positive),
-                                         sizeof(positive));
-
-                        if (type == 6 && value >= 1024)
-                        {
-                                ps_page_kb = value / 1024;
-                                break;
-                        }
-                }
-        }
-
-        string_set_add(ps_blank_bytes, " \t");
-        memory_fill(ps_field_bytes, 1, sizeof(ps_field_bytes));
-        ps_field_bytes[0] = 0;
-        ps_field_bytes[' '] = 0;
-        ps_field_bytes['\t'] = 0;
-
-        {
-                p8 uptime[64];
-
-                if (ps_read_file("/proc/uptime", uptime, sizeof(uptime)))
-                {
-                        string_address at = uptime;
-
-                        ps_now = ps_take(address_of at);
-                        ps_wall = (positive)file_now();
-                }
-        }
-
-        if (!file_walk_open(address_of walk, AT_FDCWD, "/proc"))
+        if (!system_snapshot_take(address_of snapshot,
+                                  SPARK_SNAPSHOT_PROCESS))
                 return false;
 
-        struct linux_dirent64 address_to entry;
-
-        while ((entry = file_walk_next(address_of walk)))
+        for (positive item = 0; item < snapshot.header.process_count; item++)
         {
-                if (!byte_is_digit(entry->d_name[0]))
-                        continue;
-
+                struct snapshot_process address_to process =
+                    snapshot.processes + item;
                 p8 path[64];
+                positive base = 6;
 
-                positive base = path_join(path, sizeof(path), "/proc", entry->d_name);
-
-                string_copy(path + base, "/stat");
-
-                if (!ps_read_file(path, block, sizeof(block)))
-                        continue;
+                memory_copy_apart(path, "/proc/", base);
+                base += positive_into(path + base, process->pid);
+                path[base] = end;
 
                 ps_process address_to one = ps_process_add();
 
                 if (!one)
-                {
-                        file_walk_close(address_of walk);
                         return false;
-                }
 
-                string_address at = block;
-
-                one->pid = ps_take(address_of at);
-
-                at = string_first_of_or_end(at, '(') + 1;
-
-                string_address close = at;
-                string_address last = string_last_of(at, ')');
-
-                if (!last)
-                        continue;
-
-                positive length = (positive)(last - close);
-                p8 address_to command =
-                    (p8 address_to)text_arena_take(length + 1);
-
-                if (!command)
-                {
-                        file_walk_close(address_of walk);
-                        return false;
-                }
-
-                memory_copy_apart_end(command, close, length);
-                one->comm = (string_address)command;
-
-                at = last + 2;
-
-                one->state[0] = string_get(at);
+                one->pid = process->pid;
+                one->ppid = process->ppid;
+                one->pgrp = process->pgrp;
+                one->session = process->session;
+                one->tty = (positive)process->tty;
+                one->tpgid = process->tpgid;
+                one->nice = process->nice;
+                one->threads = process->threads;
+                one->utime = process->user_ns / SYSTEM_TICK_NS;
+                one->stime = process->system_ns / SYSTEM_TICK_NS;
+                one->start = process->start_ns / SYSTEM_TICK_NS;
+                one->vsz = process->virtual_bytes / 1024;
+                one->rss = process->resident_bytes / 1024;
+                one->comm = (string_address)process->command;
+                one->state[0] = (p8)process->state;
                 one->state[1] = end;
-
-                at += 2;
-
-                /*
-                        The state is the third field and the command before it
-                        can hold a space or a bracket of its own, which is why
-                        the walk starts from the last close bracket rather
-                        than counting from the front.
-                */
-                one->ppid = ps_take(address_of at);
-                one->pgrp = ps_take(address_of at);
-                one->session = ps_take(address_of at);
-                one->tty = ps_take(address_of at);
-                one->tpgid = ps_signed(address_of at);
-                ps_pass(address_of at, 5);
-                one->utime = ps_take(address_of at);
-                one->stime = ps_take(address_of at);
-                ps_pass(address_of at, 2);
-                ps_take(address_of at);
-                one->nice = ps_signed(address_of at);
-                one->threads = ps_take(address_of at);
-                ps_pass(address_of at, 1);
-                one->start = ps_take(address_of at);
-                one->vsz = ps_take(address_of at) / 1024;
-                {
-                        positive pages = ps_take(address_of at);
-
-                        one->rss = pages > positive_max / ps_page_kb
-                                       ? positive_max
-                                       : pages * ps_page_kb;
-                }
 
                 positive mark = 1;
 
@@ -3288,7 +3157,8 @@ static bool ps_gather()
                                 {
                                         string_address value = seek + 4;
 
-                                        one->uid = ps_take(address_of value);
+                                        one->uid =
+                                            system_field_unsigned(address_of value);
                                         break;
                                 }
 
@@ -3302,10 +3172,7 @@ static bool ps_gather()
                 one->user = ps_name_of(one->uid);
 
                 if (!one->user)
-                {
-                        file_walk_close(address_of walk);
                         return false;
-                }
 
                 string_copy(path + base, "/cmdline");
 
@@ -3337,10 +3204,7 @@ static bool ps_gather()
                             (p8 address_to)text_arena_take(length + 3);
 
                         if (!fallback)
-                        {
-                                file_walk_close(address_of walk);
                                 return false;
-                        }
 
                         fallback[0] = '[';
                         memory_copy_apart(fallback + 1, one->comm, length);
@@ -3352,33 +3216,8 @@ static bool ps_gather()
                 ps_count++;
         }
 
-        file_walk_close(address_of walk);
-
-        /* Bottom-up merge sort avoids quadratic startup on large /proc trees. */
-        if (ps_count > 1)
-        {
-                if (ps_count > positive_max / sizeof(ps_process))
-                        return false;
-
-                ps_process address_to spare =
-                    (ps_process address_to)text_arena_take(
-                        ps_count * sizeof(ps_process));
-
-                if (!spare)
-                        return false;
-
-                ps_process address_to from = array_merge_sort(
-                    ps_list, spare, ps_count, ps_pid_order);
-
-                if (from != ps_list)
-                        memory_copy_apart(ps_list, from,
-                                         ps_count * sizeof(ps_process));
-        }
-
         return true;
 }
-
-#undef ps_pid_order
 
 /*
         A field is drawn into a small buffer first, because a column is padded
@@ -4184,21 +4023,15 @@ static b32 tools_ps(void)
                 return text_done(1);
         }
 
-        {
-                p8 block[4096];
+        ps_own_tty = 0;
+        positive own_pid = (positive)system_call(syscall(getpid));
 
-                if (ps_read_file("/proc/self/stat", block, sizeof(block)))
+        for (positive i = 0; i < ps_count; i++)
+                if (ps_list[i].pid == own_pid)
                 {
-                        string_address last = string_last_of(block, ')');
-
-                        if (last)
-                        {
-                                string_address at = last + 2;
-                                ps_pass(address_of at, 4);
-                                ps_own_tty = ps_take(address_of at);
-                        }
+                        ps_own_tty = ps_list[i].tty;
+                        break;
                 }
-        }
 
         ps_own_uid = (positive)system_call(syscall(geteuid));
 

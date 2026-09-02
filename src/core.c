@@ -17,6 +17,14 @@
 #include <linux/refcount.h>
 #include <linux/cred.h>
 #include <linux/file.h>
+#include <linux/kernel_stat.h>
+#include <linux/cpumask.h>
+#include <linux/timekeeping.h>
+#include <linux/sched/loadavg.h>
+#include <linux/swap.h>
+#include <linux/netdevice.h>
+#include <linux/nsproxy.h>
+#include <net/net_namespace.h>
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
@@ -905,6 +913,218 @@ REPORT_CANVAS(report_cursor, cursor_stats, canvas_cursor_stats)
 #undef REPORT_CANVAS
 #endif
 
+/*
+        Typed system state in one crossing.
+
+        These sections are already world-readable through procfs.  The ioctl
+        preserves the caller's network namespace and reports no task records;
+        process visibility is governed by procfs mount and ptrace policy, so
+        userspace deliberately keeps that section on the procfs fallback.
+*/
+struct snapshot_builder
+{
+        u8 *data;
+        u32 capacity;
+        u32 used;
+        u32 required;
+};
+
+static DEFINE_MUTEX(snapshot_lock);
+static u8 *snapshot;
+static u32 snapshot_room;
+
+static void *snapshot_append(struct snapshot_builder *build, u32 bytes)
+{
+        void *record = NULL;
+
+        if (unlikely(bytes > U32_MAX - build->required))
+        {
+                build->required = U32_MAX;
+                return NULL;
+        }
+
+        u32 stop = build->required + bytes;
+
+        if (likely(stop <= build->capacity))
+        {
+                record = build->data + build->required;
+                build->used = stop;
+        }
+
+        build->required = stop;
+        return record;
+}
+
+static HOT void snapshot_system(struct snapshot_header *header)
+{
+        struct sysinfo info;
+        unsigned long loads[3];
+
+        header->monotonic_ns = ktime_get_ns();
+        header->realtime_seconds = ktime_get_real_seconds();
+        header->uptime_ns = ktime_get_boottime_ns();
+
+        si_meminfo(&info);
+        header->memory_total = info.totalram * info.mem_unit;
+        header->memory_available = (unsigned long)si_mem_available() * PAGE_SIZE;
+        si_swapinfo(&info);
+        header->swap_total = info.totalswap * info.mem_unit;
+        header->swap_free = info.freeswap * info.mem_unit;
+
+        get_avenrun(loads, FIXED_1 / 200, 0);
+        for (unsigned int i = 0; i < 3; i++)
+                header->load[i] = LOAD_INT(loads[i]) * 100 +
+                                  LOAD_FRAC(loads[i]);
+}
+
+static HOT void snapshot_cpus(struct snapshot_builder *build,
+                              struct snapshot_header *header)
+{
+        struct snapshot_cpu aggregate = {.id = ~0u};
+        struct snapshot_cpu *aggregate_out;
+        int cpu;
+
+        header->cpu_offset = build->required;
+        aggregate_out = snapshot_append(build, sizeof(*aggregate_out));
+        header->cpu_count++;
+
+        for_each_online_cpu(cpu)
+        {
+                struct kernel_cpustat stat;
+                struct snapshot_cpu record = {.id = cpu};
+
+                kcpustat_cpu_fetch(&stat, cpu);
+
+                /* Guest time is already included in user/nice. */
+                for (unsigned int field = 0; field <= CPUTIME_STEAL; field++)
+                        record.total_ns += stat.cpustat[field];
+
+                record.idle_ns = stat.cpustat[CPUTIME_IDLE] +
+                                 stat.cpustat[CPUTIME_IOWAIT];
+                aggregate.total_ns += record.total_ns;
+                aggregate.idle_ns += record.idle_ns;
+
+                struct snapshot_cpu *out =
+                    snapshot_append(build, sizeof(record));
+
+                if (likely(out))
+                        *out = record;
+                header->cpu_count++;
+        }
+
+        if (aggregate_out)
+                *aggregate_out = aggregate;
+}
+
+static HOT void snapshot_networks(struct snapshot_builder *build,
+                                  struct snapshot_header *header)
+{
+        struct net_device *device;
+        struct net *net = current->nsproxy->net_ns;
+
+        header->network_offset = build->required;
+
+        rcu_read_lock();
+        for_each_netdev_rcu(net, device)
+        {
+                struct rtnl_link_stats64 temporary;
+                const struct rtnl_link_stats64 *stats =
+                    dev_get_stats(device, &temporary);
+                struct snapshot_network record = {0};
+
+                strscpy(record.name, device->name, sizeof(record.name));
+                record.received = stats->rx_bytes;
+                record.transmitted = stats->tx_bytes;
+
+                struct snapshot_network *out =
+                    snapshot_append(build, sizeof(record));
+
+                if (likely(out))
+                        *out = record;
+                header->network_count++;
+        }
+        rcu_read_unlock();
+}
+
+static HOT long report_snapshot(struct snapshot_request __user *out)
+{
+        struct snapshot_request request;
+        struct snapshot_builder build;
+        struct snapshot_header *header;
+        unsigned int supported = SPARK_SNAPSHOT_SYSTEM | SPARK_SNAPSHOT_CPU |
+                                 SPARK_SNAPSHOT_NETWORK;
+        long answer = 0;
+
+        if (copy_from_user(&request, out, sizeof(request)))
+                return -EFAULT;
+        if (request.version != SPARK_SNAPSHOT_VERSION || request.reserved ||
+            !request.flags || (request.flags & ~supported) ||
+            request.capacity > SPARK_SNAPSHOT_MAX_BYTES || !request.buffer)
+                return -EINVAL;
+        if (request.capacity < sizeof(*header))
+        {
+                request.required = sizeof(*header);
+                request.used = 0;
+                if (copy_to_user(out, &request, sizeof(request)))
+                        return -EFAULT;
+                return -ENOSPC;
+        }
+
+        mutex_lock(&snapshot_lock);
+        if (unlikely(request.capacity > snapshot_room))
+        {
+                u8 *larger = kvrealloc(snapshot, request.capacity, GFP_KERNEL);
+
+                if (!larger)
+                {
+                        answer = -ENOMEM;
+                        goto unlock;
+                }
+
+                snapshot = larger;
+                snapshot_room = request.capacity;
+        }
+
+        build.data = snapshot;
+        build.capacity = request.capacity;
+        build.used = 0;
+        build.required = 0;
+        memset(build.data, 0, sizeof(*header));
+        header = snapshot_append(&build, sizeof(*header));
+
+        header->version = SPARK_SNAPSHOT_VERSION;
+        header->flags = request.flags;
+        header->page_size = PAGE_SIZE;
+
+        if (request.flags & SPARK_SNAPSHOT_SYSTEM)
+                snapshot_system(header);
+        if (request.flags & SPARK_SNAPSHOT_CPU)
+                snapshot_cpus(&build, header);
+        if (request.flags & SPARK_SNAPSHOT_NETWORK)
+                snapshot_networks(&build, header);
+
+        header->bytes = build.used;
+        request.used = build.used;
+        request.required = build.required;
+
+        if (copy_to_user((void __user *)request.buffer, build.data,
+                         build.used))
+        {
+                answer = -EFAULT;
+                goto done;
+        }
+
+        if (build.required > build.capacity)
+                answer = -ENOSPC;
+
+        if (copy_to_user(out, &request, sizeof(request)))
+                answer = -EFAULT;
+done:
+unlock:
+        mutex_unlock(&snapshot_lock);
+        return answer;
+}
+
 static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
         switch (cmd)
@@ -933,6 +1153,8 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         }
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);
+        case SPARK_IOCTL_SNAPSHOT:
+                return report_snapshot((struct snapshot_request __user *)arg);
 #ifdef CONFIG_MOONWATER_CANVAS
         case SPARK_IOCTL_INPUT_STATS:
                 return report_input((struct input_stats __user *)arg);
@@ -1118,6 +1340,7 @@ static void __exit exit_module(void)
 #endif
 
         misc_deregister(&device);
+        kvfree(snapshot);
         unregister_binfmt(&format);
         log_k("Spark format unregistered\n");
 }

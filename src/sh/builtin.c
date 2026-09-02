@@ -5596,6 +5596,7 @@ static shell_tool shell_tools[] = {
 #define SHELL_TOOL_GENERAL(name, function)
 #define SHELL_TOOL_UTIL_BIN(name, function)
 #define SHELL_TOOL_UTIL_SBIN(name, function)
+#define SHELL_TOOL_MONITOR(name, function)
 #else
 #define SHELL_TOOL_GENERAL(name, function) {#name, function},
 #ifdef SHELL_NO_UTIL_LINUX
@@ -5604,6 +5605,11 @@ static shell_tool shell_tools[] = {
 #else
 #define SHELL_TOOL_UTIL_BIN(name, function) {#name, function},
 #define SHELL_TOOL_UTIL_SBIN(name, function) {#name, function},
+#endif
+#ifdef SHELL_NO_MONITOR
+#define SHELL_TOOL_MONITOR(name, function)
+#else
+#define SHELL_TOOL_MONITOR(name, function) {#name, function},
 #endif
 #endif
 #ifdef SHELL_UTILITY_PROGRAM
@@ -5618,6 +5624,7 @@ static shell_tool shell_tools[] = {
 #undef SHELL_TOOL_SYSTEM
 #undef SHELL_TOOL_UTIL_SBIN
 #undef SHELL_TOOL_UTIL_BIN
+#undef SHELL_TOOL_MONITOR
 #undef SHELL_TOOL_GENERAL
     {null, null},
 };

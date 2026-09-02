@@ -18,12 +18,14 @@ menu "Moonwater"
           separate tree or archive when supplying a replacement init.
 
     config MOONWATER_SHELL_MONITOR
-        bool "Bundle the shell resource monitor"
+        bool "Bundle the native resource monitor"
         depends on MOONWATER_SHELL && MOONWATER_UTILITIES
         default y
         help
-          Install monitor.sh and its historical mointor.sh spelling. The
-          script uses /bin/sh and is therefore unavailable without the shell.
+          Build the persistent monitor applet and install monitor.sh plus its
+          historical mointor.sh spelling as thin launchers. The monitor reads
+          typed shared snapshots and keeps its previous sample in memory,
+          avoiding the process and temporary-file cost of a shell dashboard.
 
     config MOONWATER_UTILITIES
         bool "Bundle the general utility surface"

@@ -13,7 +13,6 @@
         line, field, path or entry ceiling.
 */
 
-#define STORAGE_OPEN_CLOEXEC 02000000
 #define STORAGE_OPEN_PATH    010000000
 #define STORAGE_OPEN_NOFOLLOW 0400000
 
@@ -74,57 +73,6 @@ static fn storage_write_text(writer output, string_address text)
 {
         if (output && text)
                 output((address_any)text, string_length(text));
-}
-
-/* Read the whole file.  A short read is not EOF for procfs, and one more byte
-   is always reserved for the terminator rather than borrowed from the file. */
-static bool storage_read_all(string_address path, byte_store address_to text)
-{
-        bipolar handle = system_open_at(AT_FDCWD,
-                                       path,
-                                       STORAGE_OPEN_CLOEXEC);
-
-        if (handle < 0)
-                return false;
-
-        text->used = 0;
-
-        while (true)
-        {
-                positive want;
-
-                if (text->used > positive_max - 4097)
-                {
-                        system_close(handle);
-                        return false;
-                }
-
-                want = text->used + 4097;
-
-                if (!byte_store_reserve(text, want, 4096))
-                {
-                        system_close(handle);
-                        return false;
-                }
-
-                bipolar got = system_read_retry((positive)handle,
-                                                text->bytes + text->used, 4096);
-
-                if (got < 0)
-                {
-                        system_close(handle);
-                        return false;
-                }
-
-                if (!got)
-                        break;
-
-                text->used += (positive)got;
-        }
-
-        system_close(handle);
-        text->bytes[text->used] = end;
-        return true;
 }
 
 #define STORAGE_TABLE_RELEASE(name, type)                                    \
@@ -299,7 +247,7 @@ bool storage_mount_table_load(storage_mount_table address_to table,
 {
         memory_fill(table, 0, sizeof(*table));
 
-        if (!storage_read_all((string_address) "/proc/self/mountinfo",
+        if (!file_store_slurp((string_address) "/proc/self/mountinfo",
                               address_of table->text))
         {
                 storage_write_text(diagnostic,
@@ -421,7 +369,7 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
 {
         memory_fill(table, 0, sizeof(*table));
 
-        if (!storage_read_all(path, address_of table->text))
+        if (!file_store_slurp(path, address_of table->text))
         {
                 if (!missing_ok)
                 {
@@ -1562,7 +1510,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         bipolar handle = system_open_at(AT_FDCWD,
                                        path,
                                        STORAGE_OPEN_PATH |
-                                           STORAGE_OPEN_CLOEXEC |
+                                           O_CLOEXEC |
                                            (nofollow ? STORAGE_OPEN_NOFOLLOW : 0));
         bool mounted = false;
         bool inspected = false;

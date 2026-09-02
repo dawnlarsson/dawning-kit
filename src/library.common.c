@@ -313,6 +313,66 @@ typedef struct
            array_store_release(_byte_store->bytes, _byte_store->room,         \
                                _byte_store->used); })
 
+#ifndef KERNEL_MODE
+/* Read a whole file into reusable owned storage. Procfs may return short
+   reads before EOF, so this is deliberately a loop rather than file_slurp. */
+static HOT bool file_store_slurp(string_address path,
+                                 byte_store address_to store)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return false;
+
+        store->used = 0;
+        while (store->used <= positive_max - 4097 &&
+               byte_store_reserve(store, store->used + 4097, 4096))
+        {
+                bipolar got = system_read_retry(
+                    (positive)handle, store->bytes + store->used,
+                    store->room - store->used - 1);
+
+                if (got < 0)
+                        break;
+                if (!got)
+                {
+                        store->bytes[store->used] = end;
+                        system_close(handle);
+                        return true;
+                }
+
+                store->used += (positive)got;
+        }
+
+        system_close(handle);
+        return false;
+}
+
+/* One bounded proc/sys-style record: open, one EINTR-safe read, terminate,
+   close. Use file_store_slurp when a short read is not the complete record. */
+static HOT bipolar file_slurp_once_at(bipolar directory, string_address path,
+                                      p8 address_to into,
+                                      positive capacity)
+{
+        if (!capacity)
+                return -1;
+
+        bipolar handle = system_open_at(directory, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return handle;
+
+        bipolar got = system_read_retry((positive)handle, into, capacity - 1);
+
+        system_close(handle);
+        if (got >= 0)
+                into[got] = end;
+        return got;
+}
+#endif // KERNEL_MODE
+
 /* Bounded parsers keep their overflow bit instead of silently truncating.
    The array width is part of the expression and disappears at compile time. */
 #define fixed_store_byte(bytes, used, failed, value)                         \

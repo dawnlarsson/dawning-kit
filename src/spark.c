@@ -181,6 +181,107 @@ struct cursor_stats {
         unsigned int recovering;    // a full commit still has to clear a plane
 };
 
+/*
+        One versioned view of the kernel data read by system utilities.
+
+        The caller chooses sections, owns the output buffer and receives
+        offsets rather than pointers.  That keeps the ABI relocatable and
+        lets one ioctl replace a forest of open/read/parse/close cycles.  A
+        stock kernel can produce the exact same records from procfs, which is
+        important: acceleration must not change namespace or visibility
+        semantics merely because /dev/spark exists.
+
+        Counters use their native, lossless units.  CPU and process time is
+        nanoseconds, memory and network values are bytes, and load is fixed at
+        two decimal places.  Consumers decide presentation.
+*/
+#define SPARK_SNAPSHOT_VERSION 1u
+
+#define SPARK_SNAPSHOT_SYSTEM  0x01u
+#define SPARK_SNAPSHOT_CPU     0x02u
+#define SPARK_SNAPSHOT_NETWORK 0x04u
+#define SPARK_SNAPSHOT_PROCESS 0x08u
+#define SPARK_SNAPSHOT_ALL     0x0fu
+#define SPARK_SNAPSHOT_MAX_BYTES (16u << 20)
+
+struct snapshot_header {
+        unsigned int version;
+        unsigned int flags;
+        unsigned int bytes;
+        unsigned int page_size;
+        unsigned long monotonic_ns;
+        unsigned long realtime_seconds;
+        unsigned long uptime_ns;
+        unsigned long memory_total;
+        unsigned long memory_available;
+        unsigned long swap_total;
+        unsigned long swap_free;
+        unsigned int load[3];
+        unsigned int cpu_offset;
+        unsigned int cpu_count;
+        unsigned int network_offset;
+        unsigned int network_count;
+        unsigned int process_offset;
+        unsigned int process_count;
+        unsigned int reserved;
+};
+
+struct snapshot_cpu {
+        unsigned int id;       // ~0u is the all-CPU aggregate
+        unsigned int reserved;
+        unsigned long total_ns;
+        unsigned long idle_ns;
+};
+
+struct snapshot_network {
+        char name[16];
+        unsigned long received;
+        unsigned long transmitted;
+};
+
+struct snapshot_process {
+        unsigned int pid;
+        unsigned int ppid;
+        unsigned int pgrp;
+        unsigned int session;
+        int tty;
+        int tpgid;
+        int nice;
+        unsigned int threads;
+        unsigned long user_ns;
+        unsigned long system_ns;
+        unsigned long start_ns;
+        unsigned long virtual_bytes;
+        unsigned long resident_bytes;
+        unsigned int uid;
+        unsigned int state;
+        char command[16];
+};
+
+struct snapshot_request {
+        unsigned long buffer;
+        unsigned int capacity;
+        unsigned int flags;
+        unsigned int version;
+        unsigned int used;
+        unsigned int required;
+        unsigned int reserved;
+};
+
+_Static_assert(sizeof(struct snapshot_header) == 112,
+               "spark snapshot header ABI");
+_Static_assert(sizeof(struct snapshot_cpu) == 24,
+               "spark snapshot CPU ABI");
+_Static_assert(sizeof(struct snapshot_network) == 32,
+               "spark snapshot network ABI");
+_Static_assert(sizeof(struct snapshot_process) == 96,
+               "spark snapshot process ABI");
+_Static_assert(sizeof(struct snapshot_request) == 32,
+               "spark snapshot request ABI");
+
+// _IOWR('s', 9, struct snapshot_request)
+#define SPARK_IOCTL_SNAPSHOT 0xc0207309u
+
 struct spawn {
         unsigned long path;       // user pointer, NUL terminated
         unsigned long argv;       // user pointer to the flat argv block

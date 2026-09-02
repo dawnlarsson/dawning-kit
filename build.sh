@@ -488,8 +488,10 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # installed surface, including its component categories.
                 shell_tool_names() {
                         awk -F '[(),[:space:]]+' -v util="$moon_util_linux" \
+                            -v monitor="$moon_shell_monitor" \
                             '$1 == "SHELL_TOOL" &&
                              ($2 == "GENERAL" ||
+                              (monitor && $2 == "MONITOR") ||
                               (util && ($2 == "UTIL_BIN" ||
                                         $2 == "UTIL_SBIN"))) {
                                      print $3
@@ -515,11 +517,12 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         # the one the kernel execs as /init, so no ELF is loaded
                         # on its boot path.
                         spark_cppflags=
-                        if [ "$moon_utilities" -eq 0 ]; then
-                                spark_cppflags=-DSHELL_NO_UTILITIES
-                        elif [ "$moon_util_linux" -eq 0 ]; then
-                                spark_cppflags=-DSHELL_NO_UTIL_LINUX
-                        fi
+                        [ "$moon_utilities" -eq 1 ] ||
+                                spark_cppflags="$spark_cppflags -DSHELL_NO_UTILITIES"
+                        [ "$moon_util_linux" -eq 1 ] ||
+                                spark_cppflags="$spark_cppflags -DSHELL_NO_UTIL_LINUX"
+                        [ "$moon_shell_monitor" -eq 1 ] ||
+                                spark_cppflags="$spark_cppflags -DSHELL_NO_MONITOR"
                         SPARK_CPPFLAGS=$spark_cppflags \
                                 sh kit/spark programs/shell fs/shell ||
                                 die "building the shell"
@@ -543,9 +546,9 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                                 ln -sf ../monitor.sh fs/bin/mointor.sh || die "linking /bin/mointor.sh"
                         fi
                 elif [ "$moon_core" -eq 1 ] && [ "$moon_utilities" -eq 1 ]; then
-                        spark_cppflags=
+                        spark_cppflags=-DSHELL_NO_MONITOR
                         [ "$moon_util_linux" -eq 1 ] ||
-                                spark_cppflags=-DSHELL_NO_UTIL_LINUX
+                                spark_cppflags="$spark_cppflags -DSHELL_NO_UTIL_LINUX"
                         SPARK_CPPFLAGS=$spark_cppflags \
                                 sh kit/spark programs/utilities fs/shell ||
                                 die "building the utilities"

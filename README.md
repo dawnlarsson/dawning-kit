@@ -52,9 +52,9 @@ user-owned tree or archive, or boot with an external root filesystem.
 
 `CONFIG_MOONWATER_UTIL_LINUX=n` removes the util-linux applet roots while
 keeping the general utility surface. When the shell and utilities are enabled,
-`CONFIG_MOONWATER_SHELL_MONITOR=n` omits the monitor script. Disabled registry
-roots are discarded by the section linker, so these settings reduce the
-compiled payload as well as the installed names.
+`CONFIG_MOONWATER_SHELL_MONITOR=n` omits the native monitor applet and its thin
+launcher scripts. Disabled registry roots are discarded by the section linker,
+so these settings reduce the compiled payload as well as the installed names.
 
 ## "Moonwater"?
 Some believe that if you leave a bowl of water outside under a full moon, it absorbs celestial energy. 

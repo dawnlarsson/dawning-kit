@@ -1,0 +1,684 @@
+/*
+        The live monitor as one long-lived utility.
+
+        The former shell workload launched grep, awk, sort, head, date, stty,
+        cp and mv on every frame and serialized typed kernel counters through
+        temporary text files between them.  This consumes the shared snapshot
+        records directly, keeps the preceding sample in memory and writes one
+        terminal transaction.  The two-line script remains only as the stable
+        /monitor.sh interface.
+*/
+
+#define MONITOR_RESTORE "\033[?2026l\033[?25h\033[0m\033[?1049l"
+
+typedef struct
+{
+        struct snapshot_process address_to process;
+        positive tenths;
+} monitor_top;
+
+static positive monitor_row_left;
+static volatile b32 monitor_stopping;
+
+static HOT fn monitor_row_write(address_any data, positive length)
+{
+        if (length > monitor_row_left)
+                length = monitor_row_left;
+        if (length)
+        {
+                text_put(data, length);
+                monitor_row_left -= length;
+        }
+}
+
+static fn monitor_row_end(bool newline)
+{
+        text_put_string("\033[K");
+        if (newline)
+                text_put_character('\n');
+}
+
+static fn monitor_fill(positive count, p8 byte)
+{
+        p8 address_to room = text_reserve(count);
+
+        if (room)
+                memory_fill(room, byte, count);
+}
+
+static fn monitor_number(positive value)
+{
+        positive_to_string(text_put, value);
+}
+
+static fn monitor_number_field(writer write, positive value, positive width,
+                               bool left)
+{
+        p8 text[24];
+        positive length = positive_into(text, value);
+
+        writer_field(write, text, length, width, ' ', left);
+}
+
+static fn monitor_tenths_field(writer write, positive value, positive width)
+{
+        p8 text[32];
+        positive length = positive_into(text, value / 10);
+
+        text[length++] = '.';
+        text[length++] = (p8)('0' + value % 10);
+        writer_field(write, text, length, width, ' ', false);
+}
+
+static fn monitor_hundredths(positive value)
+{
+        monitor_number(value / 100);
+        text_put_character('.');
+        positive_to_padded(text_put, value % 100, 2, '0', 0);
+}
+
+static CONST positive monitor_percent(positive part, positive whole,
+                                      positive scale)
+{
+        if (!whole)
+                return 0;
+        if (part > positive_max / scale)
+                return positive_max;
+
+        positive scaled = part * scale;
+
+        return scaled <= positive_max - whole / 2
+                   ? (scaled + whole / 2) / whole
+                   : scaled / whole;
+}
+
+static positive monitor_human(p8 address_to into, positive bytes)
+{
+        static const string_address suffix[] = {" B", " kB", " MB", " GB",
+                                                 " TB", " PB", " EB"};
+        positive unit = 0;
+        positive divisor = 1;
+
+        while (unit + 1 < array_count(suffix) &&
+               bytes / divisor >= 1024 && divisor <= positive_max / 1024)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        positive length;
+
+        if (!unit)
+                length = positive_into(into, bytes);
+        else
+        {
+                positive whole = bytes / divisor;
+                positive remainder = bytes % divisor;
+                positive tenths = whole * 10 +
+                    monitor_percent(remainder, divisor, 10);
+
+                length = positive_into(into, tenths / 10);
+                into[length++] = '.';
+                into[length++] = (p8)('0' + tenths % 10);
+        }
+
+        positive suffix_length = string_length(suffix[unit]);
+
+        memory_copy_apart(into + length, suffix[unit], suffix_length);
+        return length + suffix_length;
+}
+
+static fn monitor_bar(positive percent, positive width)
+{
+        positive filled = percent > 100 ? width : percent * width / 100;
+        string_address colour = percent >= 85 ? "\033[31m"
+                                : percent >= 60 ? "\033[33m"
+                                                : "\033[32m";
+
+        text_put_string("[");
+        text_put_string(colour);
+        monitor_fill(filled, '|');
+        text_put_string("\033[0m");
+        monitor_fill(width - filled, ' ');
+        text_put_string("]");
+}
+
+static PURE struct snapshot_network address_to monitor_network_find(
+    system_snapshot address_to sample, string_address name)
+{
+        for (positive i = 0; i < sample->header.network_count; i++)
+                if (string_equals(sample->networks[i].name, name))
+                        return sample->networks + i;
+
+        return null;
+}
+
+static fn monitor_header(system_snapshot address_to sample,
+                         string_address host, positive count,
+                         positive columns)
+{
+        positive seconds = sample->header.uptime_ns / SYSTEM_NANOSECONDS;
+        positive days = seconds / 86400;
+        positive hours = seconds / 3600 % 24;
+        positive minutes = seconds / 60 % 60;
+        time_t now = (time_t)sample->header.realtime_seconds;
+        tm broken;
+
+        text_put_string("\033[1m ");
+        writer_field(text_put, host, string_length(host), 14, ' ', true);
+        text_put_string("\033[0m ");
+
+        if (columns >= 72)
+        {
+                text_put_string("up ");
+
+                if (days)
+                {
+                        monitor_number(days);
+                        text_put_character('d');
+                        text_put_character(' ');
+                }
+                if (days || hours)
+                {
+                        monitor_number(hours);
+                        text_put_character('h');
+                        text_put_character(' ');
+                }
+                monitor_number(minutes);
+                text_put_string("m ");
+
+                text_put_string("load ");
+                for (positive i = 0; i < 3; i++)
+                {
+                        monitor_hundredths(sample->header.load[i]);
+                        text_put_character(' ');
+                }
+        }
+
+        if (localtime_r(address_of now, address_of broken))
+        {
+                p8 clock[8];
+
+                positive_into_padded(clock, (positive)broken.tm_hour, 2, '0');
+                clock[2] = ':';
+                positive_into_padded(clock + 3, (positive)broken.tm_min, 2, '0');
+                clock[5] = ':';
+                positive_into_padded(clock + 6, (positive)broken.tm_sec, 2, '0');
+                text_put(clock, sizeof(clock));
+        }
+
+        text_put_string(" #");
+        positive_to_padded(text_put, count % 100, 2, '0', 0);
+        text_put_string("\033[K\n\033[K\n");
+}
+
+static fn monitor_cpus(system_snapshot address_to old,
+                       system_snapshot address_to sample, positive rows,
+                       positive bar_width)
+{
+        positive shown = 0;
+        positive previous = 0;
+
+        for (positive i = 0; i < sample->header.cpu_count && shown < rows; i++)
+        {
+                struct snapshot_cpu address_to cpu = sample->cpus + i;
+                unsigned int id = cpu->id;
+
+                while (previous < old->header.cpu_count &&
+                       old->cpus[previous].id != id &&
+                       (old->cpus[previous].id == ~0u ||
+                        old->cpus[previous].id < id))
+                        previous++;
+
+                struct snapshot_cpu address_to before =
+                    previous < old->header.cpu_count &&
+                            old->cpus[previous].id == id
+                        ? old->cpus + previous++
+                        : null;
+                positive total = before && cpu->total_ns >= before->total_ns
+                                     ? cpu->total_ns - before->total_ns
+                                     : 0;
+                positive idle = before && cpu->idle_ns >= before->idle_ns
+                                    ? cpu->idle_ns - before->idle_ns
+                                    : 0;
+                positive busy = total >= idle ? total - idle : 0;
+                positive tenths = monitor_percent(busy, total, 1000);
+                p8 name[24];
+                positive name_length;
+
+                if (cpu->id == ~0u)
+                {
+                        memory_copy_apart(name, "all", 3);
+                        name_length = 3;
+                }
+                else
+                {
+                        memory_copy_apart(name, "cpu", 3);
+                        name_length = 3 + positive_into(name + 3, cpu->id);
+                }
+
+                text_put_character(' ');
+                writer_field(text_put, name, name_length, 6, ' ', true);
+                text_put_string(" ");
+                monitor_bar((tenths + 5) / 10, bar_width);
+                text_put_character(' ');
+                monitor_tenths_field(text_put, tenths, 5);
+                text_put_string("%\033[K\n");
+                shown++;
+        }
+}
+
+static fn monitor_memory(system_snapshot address_to sample,
+                         positive bar_width)
+{
+        positive total = sample->header.memory_total;
+        positive available = sample->header.memory_available;
+        positive used = total >= available ? total - available : 0;
+        positive percent = monitor_percent(used, total, 100);
+        positive used_tenths = monitor_percent(used, (positive)1 << 30, 10);
+        positive total_tenths = monitor_percent(total, (positive)1 << 30, 10);
+
+        text_put_string(" mem    ");
+        monitor_bar(percent, bar_width);
+        text_put_character(' ');
+        monitor_number_field(text_put, percent, 3, false);
+        text_put_string("%  ");
+        monitor_tenths_field(text_put, used_tenths, 0);
+        text_put_string("G / ");
+        monitor_tenths_field(text_put, total_tenths, 0);
+        text_put_string("G\033[K\n");
+
+        positive swap_total = sample->header.swap_total;
+        positive swap_used = swap_total >= sample->header.swap_free
+                                 ? swap_total - sample->header.swap_free
+                                 : 0;
+        positive swap_percent = monitor_percent(swap_used, swap_total, 100);
+
+        if (swap_percent)
+        {
+                text_put_string(" swap   ");
+                monitor_bar(swap_percent, bar_width);
+                text_put_character(' ');
+                monitor_number_field(text_put, swap_percent, 3, false);
+                text_put_string("%  ");
+                monitor_tenths_field(text_put,
+                                     monitor_percent(swap_used,
+                                                     (positive)1 << 30, 10), 0);
+                text_put_string("G\033[K\n");
+        }
+}
+
+static fn monitor_networks(system_snapshot address_to old,
+                           system_snapshot address_to sample, positive rows,
+                           positive columns, positive elapsed_ns)
+{
+        positive shown = 0;
+        positive elapsed_us = elapsed_ns / 1000;
+
+        if (!elapsed_us)
+                elapsed_us = 1;
+
+        for (positive i = 0; i < sample->header.network_count && shown < rows;
+             i++)
+        {
+                struct snapshot_network address_to network =
+                    sample->networks + i;
+
+                if (string_equals(network->name, "lo"))
+                        continue;
+
+                struct snapshot_network address_to before =
+                    monitor_network_find(old, network->name);
+                positive received = before &&
+                                            network->received >= before->received
+                                        ? network->received - before->received
+                                        : 0;
+                positive transmitted =
+                    before && network->transmitted >= before->transmitted
+                        ? network->transmitted - before->transmitted
+                        : 0;
+
+                if (!received && !transmitted && !network->received)
+                        continue;
+
+                positive down = received > positive_max / 1000000
+                                    ? positive_max
+                                    : received * 1000000 / elapsed_us;
+                positive up = transmitted > positive_max / 1000000
+                                  ? positive_max
+                                  : transmitted * 1000000 / elapsed_us;
+                p8 down_text[32];
+                p8 up_text[32];
+                positive down_length = monitor_human(down_text, down);
+                positive up_length = monitor_human(up_text, up);
+                monitor_row_left = columns > 1 ? columns - 1 : 1;
+                monitor_row_write(" ", 1);
+                string_to_field(monitor_row_write, network->name, 10, ' ',
+                                true);
+                monitor_row_write(" down ", 6);
+                down_text[down_length++] = '/';
+                down_text[down_length++] = 's';
+                writer_field(monitor_row_write, down_text, down_length, 12,
+                             ' ', true);
+                monitor_row_write(" up ", 4);
+                up_text[up_length++] = '/';
+                up_text[up_length++] = 's';
+                writer_field(monitor_row_write, up_text, up_length, 12, ' ',
+                             true);
+                monitor_row_end(true);
+                shown++;
+        }
+}
+
+static HOT fn monitor_top_insert(monitor_top address_to top, positive rows,
+                                 positive address_to count,
+                                 struct snapshot_process address_to process,
+                                 positive tenths)
+{
+        positive at = 0;
+
+        while (at < address_to count && top[at].tenths >= tenths)
+                at++;
+
+        if (at >= rows)
+                return;
+
+        positive stop = address_to count < rows ? address_to count
+                                                 : rows - 1;
+
+        while (stop > at)
+        {
+                top[stop] = top[stop - 1];
+                stop--;
+        }
+
+        top[at].process = process;
+        top[at].tenths = tenths;
+        if (address_to count < rows)
+                address_to count += 1;
+}
+
+static bool monitor_processes(system_snapshot address_to old,
+                              system_snapshot address_to sample,
+                              monitor_top address_to address_to top,
+                              positive address_to top_room, positive rows,
+                              positive columns, positive elapsed_ns)
+{
+        if (!memory_reserve((address_any address_to)top, top_room, 0, rows,
+                            sizeof(monitor_top), 16))
+                return false;
+
+        positive count = 0;
+        positive before = 0;
+
+        for (positive i = 0; i < sample->header.process_count; i++)
+        {
+                struct snapshot_process address_to process =
+                    sample->processes + i;
+
+                while (before < old->header.process_count &&
+                       old->processes[before].pid < process->pid)
+                        before++;
+
+                positive used = 0;
+
+                if (before < old->header.process_count &&
+                    old->processes[before].pid == process->pid)
+                {
+                        positive now = process->user_ns;
+                        positive was = old->processes[before].user_ns;
+
+                        now = now <= positive_max - process->system_ns
+                                  ? now + process->system_ns
+                                  : positive_max;
+                        was = was <= positive_max -
+                                         old->processes[before].system_ns
+                                  ? was + old->processes[before].system_ns
+                                  : positive_max;
+                        used = now >= was ? now - was : 0;
+                }
+
+                positive tenths = monitor_percent(used, elapsed_ns, 1000);
+
+                monitor_top_insert(address_to top, rows, address_of count,
+                                   process, tenths);
+        }
+
+        text_put_string("\033[K\n\033[1m pid       cpu%    memory  command\033[0m\033[K\n");
+
+        for (positive i = 0; i < count; i++)
+        {
+                p8 memory_text[32];
+                positive memory_length = monitor_human(
+                    memory_text, (address_to top)[i].process->resident_bytes);
+                monitor_row_left = columns > 1 ? columns - 1 : 1;
+                monitor_row_write(" ", 1);
+                monitor_number_field(monitor_row_write,
+                                     (address_to top)[i].process->pid, 7,
+                                     true);
+                monitor_row_write(" ", 1);
+                monitor_tenths_field(monitor_row_write,
+                                     (address_to top)[i].tenths, 6);
+                monitor_row_write(" ", 1);
+                writer_field(monitor_row_write, memory_text, memory_length, 9,
+                             ' ', false);
+                monitor_row_write("  ", 2);
+                monitor_row_write((address_to top)[i].process->command,
+                                  string_length(
+                                      (address_to top)[i].process->command));
+                monitor_row_end(i + 1 < count);
+        }
+
+        return true;
+}
+
+static fn monitor_caught(b32 number)
+{
+        (void)number;
+        monitor_stopping = 1;
+}
+
+static fn monitor_listen(b32 number)
+{
+        positive action[4] = {(positive)monitor_caught, SIGNAL_CATCH_FLAGS,
+                              SIGNAL_CATCH_RESTORER, 0};
+
+        system_signal_action(number, address_of action, 0, 8);
+}
+
+static b32 monitor_sleep(p64 address_to span)
+{
+        p64 left[2] = {span[0], span[1]};
+
+        while (!monitor_stopping)
+        {
+                bipolar answer = system_call_2(syscall(nanosleep),
+                                               (positive)left,
+                                               (positive)left);
+
+                if (answer >= 0)
+                        return 1;
+                if (answer != -4)
+                        return -1;
+        }
+
+        return 0;
+}
+
+static HOT b32 tools_monitor()
+{
+        positive arguments = (positive)program_argument_count();
+        p64 interval[2] = {0, 500000000};
+        positive frames = 0;
+
+        if (arguments > 3 ||
+            (arguments > 1 &&
+             (!sleep_read(program_argument(1), address_of interval[0],
+                          address_of interval[1]) ||
+              (!interval[0] && !interval[1]))) ||
+            (arguments > 2 &&
+             !string_digits_exact(program_argument(2), address_of frames)))
+        {
+                text_error(null, "usage: monitor [interval] [frames]");
+                return text_done(2);
+        }
+
+        file_machine facts;
+        p8 host[15];
+
+        memory_fill(address_of facts, 0, sizeof(facts));
+        memory_fill(host, 0, sizeof(host));
+        if (system_call_1(syscall(uname), (positive)address_of facts) >= 0)
+        {
+                positive length = string_length_max(facts.node, 14);
+
+                memory_copy_apart(host, facts.node, length);
+        }
+
+        static system_snapshot samples[2];
+        system_snapshot address_to old = samples;
+        system_snapshot address_to sample = old;
+        static monitor_top address_to top;
+        static positive top_room;
+        positive count = 0;
+        b32 status = 0;
+
+        monitor_stopping = 0;
+        monitor_listen(1);
+        monitor_listen(2);
+        monitor_listen(15);
+        text_put_string("\033[?1049h\033[?25l\033[2J\033[H\033[1m monitor\033[0m  sampling...\033[K");
+        text_flush();
+
+        if (!system_snapshot_take(old, SPARK_SNAPSHOT_ALL))
+        {
+                text_error("/proc", "cannot read system snapshot");
+                status = 1;
+                goto finished;
+        }
+
+        while (!monitor_stopping)
+        {
+                if (count)
+                {
+                        b32 slept = monitor_sleep(interval);
+
+                        if (slept <= 0)
+                        {
+                                if (slept < 0)
+                                {
+                                        text_error(null, "monitor: sleep failed");
+                                        status = 1;
+                                }
+                                break;
+                        }
+
+                        sample = old == samples ? samples + 1 : samples;
+
+                        if (!system_snapshot_take(sample, SPARK_SNAPSHOT_ALL))
+                        {
+                                text_error("/proc", "cannot read system snapshot");
+                                status = 1;
+                                break;
+                        }
+                }
+
+                positive elapsed_ns = sample->header.monotonic_ns >=
+                                               old->header.monotonic_ns
+                                          ? sample->header.monotonic_ns -
+                                                old->header.monotonic_ns
+                                          : 0;
+
+                if (!elapsed_ns)
+                        elapsed_ns = 10000000;
+
+                positive2 size = term_size();
+                positive columns = size.width ? size.width : 80;
+                positive rows = size.height ? size.height : 24;
+
+                text_put_string("\033[?2026h\033[H");
+
+                if (rows < 12 || columns < 40)
+                {
+                        text_put_string(" monitor ");
+                        monitor_number(columns);
+                        text_put_character('x');
+                        monitor_number(rows);
+                        text_put_string("\033[K\033[J");
+                }
+                else
+                {
+                        positive networks = 0;
+
+                        for (positive i = 0;
+                             i < sample->header.network_count; i++)
+                                networks += !string_equals(
+                                    sample->networks[i].name, "lo");
+
+                        positive swap_used = sample->header.swap_total >=
+                                                     sample->header.swap_free
+                                                 ? sample->header.swap_total -
+                                                       sample->header.swap_free
+                                                 : 0;
+                        positive swap = monitor_percent(
+                                            swap_used,
+                                            sample->header.swap_total, 100) != 0;
+                        positive network_room = rows > 7 + swap
+                                                    ? rows - 7 - swap
+                                                    : 0;
+
+                        if (networks > network_room)
+                                networks = network_room;
+
+                        positive fixed = 5 + swap + networks;
+                        positive available = rows > fixed ? rows - fixed : 2;
+
+                        if (available < 2)
+                                available = 2;
+
+                        positive cpu_rows = available / 2;
+
+                        if (cpu_rows > sample->header.cpu_count)
+                                cpu_rows = sample->header.cpu_count;
+                        if (!cpu_rows)
+                                cpu_rows = 1;
+
+                        positive process_rows = available - cpu_rows;
+
+                        if (!process_rows)
+                                process_rows = 1;
+
+                        monitor_header(sample, host, count, columns);
+                        monitor_cpus(old, sample, cpu_rows, columns - 18);
+                        monitor_memory(sample, columns - 39);
+                        monitor_networks(old, sample, networks, columns,
+                                         elapsed_ns);
+
+                        if (!monitor_processes(old, sample, address_of top,
+                                               address_of top_room,
+                                               process_rows, columns,
+                                               elapsed_ns))
+                        {
+                                status = 1;
+                                break;
+                        }
+
+                        text_put_string("\033[J");
+                }
+
+                text_put_string("\033[?2026l");
+                text_flush();
+                count++;
+
+                if (frames && count >= frames)
+                        break;
+
+                old = sample;
+        }
+
+finished:
+        text_put_string(MONITOR_RESTORE);
+        return text_done(status);
+}
+
+#undef MONITOR_RESTORE
