@@ -6934,6 +6934,278 @@ fn check_hunts_wide()
 }
 
 /*
+        string_compare and memory_compare over the four vector loops, at every
+        pair of alignments, and against a page that is not there.
+
+        check_compare_wide above stops at three hundred bytes with one offset
+        against the other. The x86_64 bodies read four vectors of each stream
+        a turn once three single vectors have agreed -- two hundred and twenty
+        four bytes in on AVX-512, a hundred and twenty eight on AVX2 -- and
+        answer what is left before a page edge with a vector that overlaps
+        what they have already read. So a difference and a terminator are
+        planted in every byte across the words, the three single vectors and
+        the first block of four, then at the edges of every vector after; and
+        the two strings are put at every distance apart a sixty four byte
+        vector can tell, because it is the later of the two offsets within a
+        page that licenses the reads.
+
+        The page argument those bodies make is that a load which does not
+        cross a page cannot fault, and the only way to hold them to it is a
+        page that is not there: one string ends on the last byte of a mapping
+        with the page after it unmapped while the other goes on, at every
+        length that puts the edge in a different part of the loop. A body
+        that reads a vector across that edge dies here rather than in a shell
+        somewhere. A run that cannot map the pages says so and skips that part.
+
+        On x86_64 all of it runs once a body, the two feature bytes forced
+        down a tier each pass as check_hunts_wide does.
+*/
+#define BLOCK_ROOM 1600
+#define BLOCK_EDGE_PAGES 4
+
+static p8 block_left[64 + BLOCK_ROOM];
+static p8 block_right[64 + BLOCK_ROOM];
+
+fn block_pair(string_address detail, p8 address_to left, p8 address_to right)
+{
+        same("string_compare", detail, (positive)string_compare(left, right),
+             (positive)reference_compare(left, right));
+        same("string_compare", detail, (positive)string_compare(right, left),
+             (positive)reference_compare(right, left));
+}
+
+fn block_fill(p8 address_to left, p8 address_to right, positive count)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                left[i] = (p8)('a' + i % 23);
+                right[i] = left[i];
+        }
+}
+
+//      The three things a lane can be wrong about at one position: a byte
+//      above 127 against one below, where a signed lane answers with the
+//      wrong sign; a byte one apart; and the end of one string where the
+//      other goes on.
+fn block_plant(p8 address_to left, p8 address_to right, positive where)
+{
+        p8 keep = right[where];
+
+        right[where] = (p8)(keep ^ 0x80);
+        block_pair("the high bit apart", left, right);
+        right[where] = (p8)(keep + 1);
+        block_pair("a byte apart", left, right);
+        right[where] = 0;
+        block_pair("an early terminator", left, right);
+        right[where] = keep;
+}
+
+fn block_sweep()
+{
+        static const positive plants[] = {33, 100, 224, 300, 479, 599};
+        p8 address_to left = wide_aligned_at(block_left);
+        p8 address_to right = wide_aligned_at(block_right);
+
+        block_fill(left, right, BLOCK_ROOM);
+        left[1500] = 0;
+        right[1500] = 0;
+        block_pair("long and equal", left, right);
+
+        //      Every byte through the first block of four and the vectors
+        //      either side of it, then the edges of every vector after.
+        for (positive where = 0; where < 1500; where++)
+        {
+                if (where > 600 && (where % 32) > 1 && (where % 32) < 30)
+                        continue;
+
+                block_plant(left, right, where);
+        }
+
+        //      Both orders of every pair of distances into a vector.
+        for (positive l = 0; l < 64; l++)
+                for (positive r = 0; r < 64; r++)
+                {
+                        p8 address_to a = left + l;
+                        p8 address_to b = right + r;
+
+                        block_fill(a, b, 601);
+                        a[600] = 0;
+                        b[600] = 0;
+                        block_pair("long and equal, apart", a, b);
+
+                        for (positive p = 0; p < sizeof(plants) / sizeof(plants[0]); p++)
+                                block_plant(a, b, plants[p]);
+                }
+}
+
+fn block_memory_pair(string_address detail, p8 address_to a, p8 address_to b,
+                     positive size)
+{
+        same("memory_compare", detail, (positive)memory_compare(a, b, size),
+             (positive)reference_memory_compare(a, b, size));
+        same("memory_compare", detail, (positive)memory_compare(b, a, size),
+             (positive)reference_memory_compare(b, a, size));
+}
+
+fn block_memory()
+{
+        static const positive sizes[] = {63,  64,  65,  96,  127, 128, 129, 191,
+                                         192, 193, 255, 256, 257, 300, 319, 320,
+                                         321, 385, 448, 511, 512, 513, 576, 700,
+                                         768, 769, 1000, 1023, 1024, 1025, 1100};
+        static const positive lefts[] = {0, 1, 7, 8, 15, 16, 17, 31, 32, 33, 63};
+        p8 address_to left = wide_aligned_at(block_left);
+        p8 address_to right = wide_aligned_at(block_right);
+
+        for (positive s = 0; s < sizeof(sizes) / sizeof(sizes[0]); s++)
+                for (positive o = 0; o < sizeof(lefts) / sizeof(lefts[0]); o++)
+                {
+                        positive size = sizes[s];
+                        p8 address_to a = left + lefts[o];
+                        p8 address_to b = right + (lefts[o] * 7 + 3) % 64;
+
+                        block_fill(a, b, size + 1);
+
+                        //      One past the count differs, which is what
+                        //      says nothing past the count was looked at.
+                        b[size] = (p8)(a[size] ^ 0xff);
+
+                        block_memory_pair("equal over the vectors", a, b, size);
+
+                        //      Every byte of the first vector and of the
+                        //      last -- which the overlapping tail reads a
+                        //      second time -- and the edges of each between.
+                        for (positive where = 0; where < size; where++)
+                        {
+                                p8 keep = b[where];
+
+                                if (where >= 64 && where + 64 < size &&
+                                    (where % 64) > 1 && (where % 64) < 62)
+                                        continue;
+
+                                b[where] = (p8)(keep ^ 0x80);
+                                block_memory_pair("the high bit apart", a, b, size);
+                                b[where] = (p8)(keep + 1);
+                                block_memory_pair("a byte apart", a, b, size);
+                                b[where] = keep;
+                        }
+                }
+}
+
+//      A string whose terminator is the last readable byte before an edge,
+//      against another that goes on past that length, and against a second
+//      such string ending on its own edge.
+fn block_edge_one(p8 address_to edge, p8 address_to other_edge, positive length)
+{
+        static const positive shifts[] = {0, 1, 7, 31, 32, 33, 63};
+        p8 address_to text = edge - 1 - length;
+        p8 address_to twin = other_edge - 1 - length;
+        p8 address_to room = other_edge - (BLOCK_EDGE_PAGES - 1) * 4096;
+
+        for (positive i = 0; i < length; i++)
+                text[i] = (p8)('a' + i % 23);
+
+        text[length] = 0;
+
+        for (positive s = 0; s < sizeof(shifts) / sizeof(shifts[0]); s++)
+        {
+                p8 address_to other = room + shifts[s];
+                positive longer = length + 200;
+
+                for (positive i = 0; i < longer; i++)
+                        other[i] = (p8)('a' + i % 23);
+
+                other[longer] = 0;
+                block_pair("longer than the edge", text, other);
+
+                other[length] = 0;
+                block_pair("equal up to the edge", text, other);
+
+                other[length - 1] = (p8)(other[length - 1] ^ 0x80);
+                block_pair("apart at the edge", text, other);
+                other[length - 1] = text[length - 1];
+
+                other[length / 2] = (p8)(other[length / 2] + 1);
+                block_pair("apart before the edge", text, other);
+        }
+
+        //      Both on an edge: equal, and one a byte longer, so that one of
+        //      the two has its terminator where the other has a byte and
+        //      neither has anything readable after it.
+        for (positive i = 0; i < length; i++)
+                twin[i] = text[i];
+
+        twin[length] = 0;
+        block_pair("both on an edge", text, twin);
+
+        twin--;
+        for (positive i = 0; i <= length; i++)
+                twin[i] = (p8)('a' + i % 23);
+
+        twin[length + 1] = 0;
+        block_pair("both on an edge, one longer", text, twin);
+}
+
+fn block_edge(p8 address_to edge, p8 address_to other_edge)
+{
+        //      Every length while the edge is inside the words and the first
+        //      vectors, then every length that puts it in each part of the
+        //      four vector loop with one page edge inside the string, then
+        //      with two.
+        for (positive length = 1; length <= 400; length++)
+                block_edge_one(edge, other_edge, length);
+
+        for (positive length = 4000; length <= 4300; length++)
+                block_edge_one(edge, other_edge, length);
+
+        for (positive length = 8100; length <= 8300; length++)
+                block_edge_one(edge, other_edge, length);
+}
+
+fn check_compare_blocks()
+{
+        p8 wide = 0;
+        p8 widest = 0;
+        p8 address_to first = (p8 address_to)memory(BLOCK_EDGE_PAGES * 4096);
+        p8 address_to second = (p8 address_to)memory(BLOCK_EDGE_PAGES * 4096);
+
+#if X64
+        wide = cpu_has_avx2;
+        widest = cpu_has_avx512;
+#endif
+
+        //      Both mapped before either loses its last page, so the second
+        //      cannot be handed the hole the first left.
+        if (first && second)
+        {
+                memory_free(first + (BLOCK_EDGE_PAGES - 1) * 4096, 4096);
+                memory_free(second + (BLOCK_EDGE_PAGES - 1) * 4096, 4096);
+        }
+        else
+                string_format(log, "  NOTE string_compare: no pages to map, so "
+                                   "the edge was not tested\n");
+
+        for (positive pass = 0; pass < BULK_TIERS; pass++)
+        {
+                bulk_tier(pass, wide, widest);
+                block_sweep();
+                block_memory();
+
+                if (first && second)
+                        block_edge(first + (BLOCK_EDGE_PAGES - 1) * 4096,
+                                   second + (BLOCK_EDGE_PAGES - 1) * 4096);
+        }
+
+        bulk_tier(0, wide, widest);
+
+        if (first)
+                memory_free(first, (BLOCK_EDGE_PAGES - 1) * 4096);
+
+        if (second)
+                memory_free(second, (BLOCK_EDGE_PAGES - 1) * 4096);
+}
+
+/*
         The six number routines, deeply.
 
         check_bulk_numbers above is thirteen values and a round trip. That is
@@ -8146,6 +8418,7 @@ b32 main()
         check_string_edges();
         check_compare_edges();
         check_compare_wide();
+        check_compare_blocks();
         check_environment();
         check_bulk_strings();
         check_paths();

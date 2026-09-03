@@ -1866,6 +1866,100 @@ __asm__(
     "test %rax, %rax\n   jnz 22f\n"                                    \
     "kmovq %k2, %rax\n   jmp 23f\n"
 
+/*
+        Two streams against each other, for string_compare. One vector of
+        each answers "differ or end" with a mask in %rcx and the flags set on
+        it; four of each answer only yes or no, and PAIR_WHICH finds the
+        vector once they have said yes.
+
+        The terminator is looked for in the first string alone. Where the two
+        agree the second ends where the first does, and where they do not the
+        compare has stopped them already, so the four first-string vectors
+        fold to one with vpminub, as WIDE_LENGTH's do, and one zero test
+        serves all four. The compares stay four: a lane is equal or it is
+        not, and nothing folds that.
+
+        Both widths fold the compare into the vector as well, and ask one
+        zero test of the result. AVX2 has no choice: vpcmpeqb leaves all
+        ones where the lanes agree, and a minimum against that leaves the
+        byte where they do and nought where they do not. AVX-512 was first
+        written the other way, four vpcmpneqb into mask registers folded
+        with three kor and a kortest, and on a 9950X that measured 2.5x the
+        floor at four kilobytes against 1.5x for the ymm body it replaced:
+        the compares into mask registers and the kor between them share one
+        pipe, and nine of them a turn is more cycles than the eight loads.
+        Exclusive-or leaves nought where the lanes agree, and vpternlogd
+        with the second string as its memory operand computes fold | (a ^ b)
+        in one instruction, so four compares and their fold are four
+        instructions and not six -- each one costs a third of a tick a
+        turn here, and the loop is bound by them and not by its loads. A
+        saturating subtract from one then turns the fold into one where they
+        agree and nought where they do not, which is the shape the minimum
+        wants, so the terminator fold and the compare fold meet in one
+        vpminub and one vptestnmb answers both. The fold keeps no record of
+        which vector answered, so PAIR_WHICH compares each against memory
+        again; it runs once a call.
+*/
+#define AVX2_PAIR_READY "vpxor %ymm8, %ymm8, %ymm8\n"
+#define AVX2_PAIR                                                      \
+    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm4\n"        \
+    "vpminub %ymm4, %ymm0, %ymm0\n   vpcmpeqb %ymm8, %ymm0, %ymm0\n"   \
+    "vpmovmskb %ymm0, %ecx\n   test %ecx, %ecx\n"
+#define AVX2_PAIR_QUAD                                                 \
+    "vmovdqu (%rdi), %ymm0\n"                                          \
+    "vmovdqu (1*" AVX2_WIDTH ")(%rdi), %ymm1\n"                        \
+    "vmovdqu (2*" AVX2_WIDTH ")(%rdi), %ymm2\n"                        \
+    "vmovdqu (3*" AVX2_WIDTH ")(%rdi), %ymm3\n"                        \
+    "vpcmpeqb (%rsi), %ymm0, %ymm4\n"                                  \
+    "vpcmpeqb (1*" AVX2_WIDTH ")(%rsi), %ymm1, %ymm5\n"                \
+    "vpcmpeqb (2*" AVX2_WIDTH ")(%rsi), %ymm2, %ymm6\n"                \
+    "vpcmpeqb (3*" AVX2_WIDTH ")(%rsi), %ymm3, %ymm7\n"                \
+    "vpminub %ymm1, %ymm0, %ymm9\n   vpminub %ymm3, %ymm2, %ymm10\n"   \
+    "vpand %ymm5, %ymm4, %ymm11\n   vpand %ymm7, %ymm6, %ymm12\n"      \
+    "vpminub %ymm10, %ymm9, %ymm9\n   vpand %ymm12, %ymm11, %ymm11\n"  \
+    "vpminub %ymm11, %ymm9, %ymm9\n   vpcmpeqb %ymm8, %ymm9, %ymm9\n"  \
+    "vpmovmskb %ymm9, %ecx\n   test %ecx, %ecx\n"
+#define AVX2_PAIR_WHICH                                                \
+    "vpminub %ymm4, %ymm0, %ymm0\n   vpcmpeqb %ymm8, %ymm0, %ymm0\n"   \
+    "vpmovmskb %ymm0, %ecx\n   test %ecx, %ecx\n   jnz 35f\n"          \
+    "vpminub %ymm5, %ymm1, %ymm1\n   vpcmpeqb %ymm8, %ymm1, %ymm1\n"   \
+    "vpmovmskb %ymm1, %ecx\n   test %ecx, %ecx\n   jnz 40f\n"          \
+    "vpminub %ymm6, %ymm2, %ymm2\n   vpcmpeqb %ymm8, %ymm2, %ymm2\n"   \
+    "vpmovmskb %ymm2, %ecx\n   test %ecx, %ecx\n   jnz 37f\n"          \
+    "vpminub %ymm7, %ymm3, %ymm3\n   vpcmpeqb %ymm8, %ymm3, %ymm3\n"   \
+    "vpmovmskb %ymm3, %ecx\n   jmp 38f\n"
+
+#define AVX512_PAIR_READY "mov $1, %ecx\n   vpbroadcastb %ecx, %zmm10\n"
+#define AVX512_PAIR                                                    \
+    "vmovdqu64 (%rdi), %zmm0\n   vpcmpneqb (%rsi), %zmm0, %k0\n"       \
+    "vptestnmb %zmm0, %zmm0, %k1\n   korq %k1, %k0, %k0\n"             \
+    "kmovq %k0, %rcx\n   test %rcx, %rcx\n"
+#define AVX512_PAIR_QUAD                                               \
+    "vmovdqu64 (%rdi), %zmm0\n"                                        \
+    "vmovdqu64 (1*" AVX512_WIDTH ")(%rdi), %zmm1\n"                    \
+    "vmovdqu64 (2*" AVX512_WIDTH ")(%rdi), %zmm2\n"                    \
+    "vmovdqu64 (3*" AVX512_WIDTH ")(%rdi), %zmm3\n"                    \
+    "vpxorq (%rsi), %zmm0, %zmm11\n"                                   \
+    "vpternlogd $0xf6, (1*" AVX512_WIDTH ")(%rsi), %zmm1, %zmm11\n"    \
+    "vpminub %zmm1, %zmm0, %zmm8\n   vpminub %zmm3, %zmm2, %zmm9\n"    \
+    "vpternlogd $0xf6, (2*" AVX512_WIDTH ")(%rsi), %zmm2, %zmm11\n"    \
+    "vpternlogd $0xf6, (3*" AVX512_WIDTH ")(%rsi), %zmm3, %zmm11\n"    \
+    "vpminub %zmm9, %zmm8, %zmm8\n   vpsubusb %zmm11, %zmm10, %zmm11\n" \
+    "vpminub %zmm11, %zmm8, %zmm8\n   vptestnmb %zmm8, %zmm8, %k0\n"   \
+    "kortestq %k0, %k0\n"
+#define AVX512_PAIR_WHICH                                              \
+    "vptestnmb %zmm0, %zmm0, %k0\n   vpcmpneqb (%rsi), %zmm0, %k1\n"   \
+    "korq %k1, %k0, %k0\n   kmovq %k0, %rcx\n   test %rcx, %rcx\n   jnz 35f\n" \
+    "vptestnmb %zmm1, %zmm1, %k0\n"                                    \
+    "vpcmpneqb (1*" AVX512_WIDTH ")(%rsi), %zmm1, %k1\n"               \
+    "korq %k1, %k0, %k0\n   kmovq %k0, %rcx\n   test %rcx, %rcx\n   jnz 40f\n" \
+    "vptestnmb %zmm2, %zmm2, %k0\n"                                    \
+    "vpcmpneqb (2*" AVX512_WIDTH ")(%rsi), %zmm2, %k1\n"               \
+    "korq %k1, %k0, %k0\n   kmovq %k0, %rcx\n   test %rcx, %rcx\n   jnz 37f\n" \
+    "vptestnmb %zmm3, %zmm3, %k0\n"                                    \
+    "vpcmpneqb (3*" AVX512_WIDTH ")(%rsi), %zmm3, %k1\n"               \
+    "korq %k1, %k0, %k0\n   kmovq %k0, %rcx\n   jmp 38f\n"
+
 // The kernel never owns the vector register file here. Its implementations
 // are the scalar paths below, so emitting the userspace-only alternatives in
 // a kernel object merely leaves dead AVX instructions behind unconditional
@@ -2152,6 +2246,121 @@ __asm__(
     "4:  mov %r9, %rcx\n   neg %rcx\n   and %r9, %rcx\n   dec %rcx  # the bytes under the terminator\n" \
     "and %rcx, %rax\n   jz 2f\n   bsr %rax, %rcx\n   lea (%rdi,%rcx), %r11\n" \
     "2:  mov %r11, %rax\n" LEAVE ASM_RET
+
+//
+//      Two streams and no length, from where four word steps have agreed.
+//
+//      Neither pointer can be aligned down, because aligning one misaligns
+//      the other, and neither may be read past its terminator into a page
+//      nobody mapped. What makes a read safe is the argument the word loop
+//      in string_compare makes: a load that does not cross a page cannot
+//      fault, because the byte at the pointer is inside the string and so
+//      inside a page that is there. The later of the two offsets within a
+//      page says how many bytes both streams can be read through before
+//      either reaches an edge, and that count licenses every vector until it
+//      runs out -- one question a page where the old body asked two a
+//      vector, which was a third of its instructions.
+//
+//      Three vectors a turn before four a turn, so a string that ends inside
+//      the first few never reads two hundred and fifty six bytes to find it.
+//      A shell's names have usually ended before the words are through, and
+//      what reaches here at all is mostly paths, which end soon after. The
+//      three are paid once a call and not once a page: after a page edge
+//      the loop goes back to four a turn directly, and the vectors under
+//      four that are left before the next edge run one at a time then.
+//
+//      The first of the three is read wherever the words left the cursor,
+//      and then the cursor is stepped back to a vector edge of the first
+//      string. The bytes that puts under the next vector twice are bytes
+//      already known to agree and to be nothing's end, so they add no flag
+//      to any mask, and the step is added to the span because it is inside
+//      what has been read. What it buys is a load that stays inside one
+//      cache line: the words leave the cursor thirty two bytes into a line,
+//      and a sixty four byte load that straddles two lines takes two load
+//      slots, which on a machine that issues two a cycle halves the loop.
+//      Measured with kit/floor.c on a 9950X, a four kilobyte string cost 164
+//      ticks a call against the floor's 70 before this step and 121 after;
+//      the same is done after every page edge, because an edge on the second
+//      string leaves the first wherever it happened to be.
+//
+//      What is left over the floor at four kilobytes is outside the loop:
+//      the byte and four words in front of it, the one vector read before
+//      the step back, and the chain from the mask to the two bytes that
+//      answer. The loop itself runs within a seventh of the floor a page --
+//      82 ticks against 72 on that machine, each vector instruction a third
+//      of a tick a turn -- and at sixty four kilobytes and a megabyte the
+//      call is memory bound and within a tenth of it. The rows kit/floor.c
+//      prints, two runs each, before and after:
+//
+//          string_compare        64      floor / floor    floor / floor
+//                                4096    514% / 498%      55% / 56%
+//                                65536   108% / 112%      9% / 10%
+//                                1048576 39% / 44%        7% / 6%
+//
+//      and a second pair after, with the machine loaded: 57% / 50%,
+//      6% / 15% and 2% / 7%. The floor and the routine are timed in
+//      interleaved trials on one core, so the ratio holds when the
+//      absolute numbers move.
+//
+//      What is left in front of a page edge is answered by one more read
+//      that ends exactly on the edge rather than by handing it down: a
+//      block of four where the four vector loop has run, since a whole
+//      block is behind the cursor by then, and one vector where only
+//      vectors have -- and the bytes read twice are bytes already known to
+//      agree and to be nothing's end, which contribute nothing to the mask.
+//      That holds for the other stream as well: its edge is further off,
+//      and what is behind its cursor has been read once already. A first
+//      entry too near an edge for even one vector has nothing behind it but
+//      the words and goes back to them; that is about one call in thirty of
+//      those that get this far, and costs it at most sixty three bytes the
+//      slow way. Handing every page tail down instead put a byte loop
+//      between the pages, up to thirty one bytes of it at eight
+//      instructions each, which is what the old body paid.
+//
+//      The four vector loop is pinned to thirty two bytes because a loop
+//      this short cares where it sits: the old one measured 285 cycles a
+//      call at one offset and 259 at another for the same instructions.
+//
+#define WIDE_COMPARE(W, READY, PAIR, QUAD, WHICH, LEAVE)                      \
+    "mov %edi, %ecx\n   and $0xfff, %ecx\n   mov %esi, %edx\n   and $0xfff, %edx\n" \
+    "cmp %edx, %ecx\n   cmovb %edx, %ecx\n   mov $0x1000, %r8d\n"             \
+    "sub %ecx, %r8d  # bytes both can read before a page ends\n"             \
+    "cmp $" W ", %r8d\n   jb 21f  # too near an edge: back to the words\n"  \
+    READY                                                                     \
+    PAIR "jnz 35f\n"                                                          \
+    "add $" W ", %rdi\n   add $" W ", %rsi\n   sub $" W ", %r8d\n"            \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   sub %rcx, %rdi\n   sub %rcx, %rsi\n" \
+    "add %ecx, %r8d  # back to a vector edge of the first string\n"          \
+    "mov $2, %edx\n"                                                          \
+    "30: cmp $" W ", %r8d\n   jb 33f\n"                                       \
+    PAIR "jnz 35f\n"                                                          \
+    "add $" W ", %rdi\n   add $" W ", %rsi\n   sub $" W ", %r8d\n"            \
+    "dec %edx\n   jnz 30b\n"                                                  \
+    "32: sub $(4*" W "), %r8d\n   jb 34f  # fewer than four left\n"           \
+    ".balign 32\n"                                                            \
+    "31: " QUAD "jnz 39f\n"                                                    \
+    "add $(4*" W "), %rdi\n   add $(4*" W "), %rsi\n   sub $(4*" W "), %r8d\n" \
+    "jae 31b\n"                                                               \
+    "add $(4*" W "), %r8d\n   jz 36f  # on the edge already\n"                \
+    "lea (-4*" W ")(%rdi,%r8), %rdi\n   lea (-4*" W ")(%rsi,%r8), %rsi  # the last block, overlapping\n" \
+    QUAD "jnz 39f\n"                                                          \
+    "add $(4*" W "), %rdi\n   add $(4*" W "), %rsi\n   jmp 36f\n"             \
+    "34: add $(4*" W "), %r8d\n   mov $3, %edx\n   jmp 30b\n"                 \
+    "33: test %r8d, %r8d\n   jz 36f\n"                                        \
+    "lea -" W "(%rdi,%r8), %rdi\n   lea -" W "(%rsi,%r8), %rsi  # the last one, overlapping\n" \
+    PAIR "jnz 35f\n"                                                          \
+    "add $" W ", %rdi\n   add $" W ", %rsi\n"                                 \
+    "36: mov %edi, %ecx\n   and $0xfff, %ecx\n   mov %esi, %edx\n   and $0xfff, %edx\n" \
+    "cmp %edx, %ecx\n   cmovb %edx, %ecx\n   mov $0x1000, %r8d\n   sub %ecx, %r8d\n" \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   sub %rcx, %rdi\n   sub %rcx, %rsi\n" \
+    "add %ecx, %r8d\n   jmp 32b  # four a turn again, straight away\n"       \
+    "39: " WHICH                                                              \
+    "38: add $" W ", %rdi\n   add $" W ", %rsi\n"                            \
+    "37: add $" W ", %rdi\n   add $" W ", %rsi\n"                            \
+    "40: add $" W ", %rdi\n   add $" W ", %rsi\n"                            \
+    "35: bsf %rcx, %rcx\n" LEAVE                                              \
+    "movzbl (%rdi,%rcx), %eax\n   movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n" \
+    ASM_RET
 #endif
 
 #if X64
@@ -2353,52 +2562,34 @@ __asm__(
     "and %rcx, %rax\n   test %r11, %rax\n   jnz 3f\n"
     "add $8, %rdi\n   add $8, %rsi\n   dec %edx\n   jnz 6b\n"
     //
-    //      Thirty two bytes a step, once four word steps have agreed.
+    //      A vector at a time once four word steps have agreed, and four at
+    //      a time once three vectors have. The body is WIDE_COMPARE above.
     //
-    //      One mask answers both questions at once. vpcmpeqb marks where the
-    //      two agree and a second marks where the first string ends;
-    //      and-not leaves the bytes that agree and are not the end, so all
-    //      ones means keep going and anything else means stop -- and the
-    //      lowest zero is the byte to answer with whichever of the two it
-    //      was. Where both ended together those bytes are equal and their
-    //      difference is zero, which is the answer that case wants anyway.
+    //      One mask answers both questions at once: where the two part and
+    //      where the first one ends, and the lowest flag is the byte to
+    //      answer with. Where both ended together those bytes are equal and
+    //      their difference is zero, which is the answer that case wants.
     //
-    //      Measured over strings a megabyte long on a 9950X: 17.0 GB/s the
-    //      word way, 61.6 this way, against a floor of 71 for reading two
-    //      streams and comparing them and answering nothing.
+    //      The body this replaces read one ymm a turn and asked the page
+    //      question of both pointers before every one of them. Against
+    //      kit/floor.c, which reads both streams four vectors a turn at the
+    //      widest load and answers nothing, it measured on a 9950X 5.1x
+    //      slower at four kilobytes, 2.1x at sixty four and 1.4x at a
+    //      megabyte; this one 1.55x, 1.1x and 1.07x. WIDE_COMPARE says
+    //      where the rest is.
+    //
+    //      The same two tests WIDE_PICK makes, in the same order, under
+    //      other names: that macro's labels are 5 and 6, and in this routine
+    //      those are the word that differed and the word loop.
     //
     "20:\n"
     ASM_USERSPACE_WIDE(
+    ASM_WIDER("cpu_has_avx512", "26f")
     ASM_NARROW("cpu_has_avx2", "21f")
-    "vpxor %ymm4, %ymm4, %ymm4\n"
-    //
-    //      0xfe0 is the last offset in a page at which thirty two bytes
-    //      still fit, which is the same argument the word loop makes at
-    //      0xff8.
-    //
-    //
-    //      The wide loop is pinned to a thirty two byte boundary because it
-    //      is short enough to care where it sits. Measured on a 9950X over
-    //      four kilobyte strings, the same sixteen instructions cost 285
-    //      cycles a call at one offset and 259 at another; the count of
-    //      instructions executed does not move. Pinning it means the number
-    //      does not depend on how long the code in front of it happens to be.
-    //
-    ".balign 32\n"
-    "22:  mov %edi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
-    "mov %esi, %ecx\n   and $0xfff, %ecx\n   cmp $0xfe0, %ecx\n   ja 24f\n"
-    "vmovdqu (%rdi), %ymm0\n   vpcmpeqb (%rsi), %ymm0, %ymm1\n   vpcmpeqb %ymm4, %ymm0, %ymm2\n   vpandn %ymm1, %ymm2, %ymm3\n"
-    "vpmovmskb %ymm3, %ecx\n   cmp $-1, %ecx\n   jne 23f\n   add $32, %rdi\n"
-    "add $32, %rsi\n   jmp 22b\n"
-    "23:  not %ecx\n   bsf %ecx, %ecx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
-    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
-    ASM_RET
-    //
-    //      Near the end of a page, so back to the word loop for eight steps
-    //      -- by then the boundary is behind us and the wide loop can have
-    //      it again.
-    //
-    "24:  vzeroupper\n   jmp 1b\n"
+    WIDE_COMPARE(AVX2_WIDTH, AVX2_PAIR_READY, AVX2_PAIR, AVX2_PAIR_QUAD,
+                 AVX2_PAIR_WHICH, AVX2_LEAVE)
+    "26: " WIDE_COMPARE(AVX512_WIDTH, AVX512_PAIR_READY, AVX512_PAIR,
+                        AVX512_PAIR_QUAD, AVX512_PAIR_WHICH, AVX512_LEAVE)
     )
     "21:  jmp 1b\n"
     //
@@ -2682,8 +2873,8 @@ __asm__(
     //       costs more than the walk; from eight to thirty one the whole span
     //       is covered by overlapping eight byte windows read straight
     //       through; from thirty two a word loop walks the middle; and where
-    //       the processor has the registers for it the wide path below takes
-    //       everything from thirty two up instead.
+    //       the processor has the registers for it the wide paths below take
+    //       everything from thirty two up instead, sixty four on AVX-512.
     //
     //       The windows overlap on purpose. Thirteen bytes are the first
     //       eight and the last eight, which look at three bytes twice, and
@@ -2709,7 +2900,58 @@ __asm__(
     //
     "xor %eax, %eax\n"
     ASM_USERSPACE_WIDE(
-    ASM_NARROW("cpu_has_avx2", "5f")
+    WIDE_PICK_MAX
+    //
+    //       Sixty four bytes a vector and four vectors a round where the
+    //       processor has the registers, because the thirty two byte round
+    //       below is half the machine on one that does: a 9950X issues two
+    //       loads a cycle whatever their width, so its eight ymm loads read
+    //       a hundred and twenty eight bytes in the time eight zmm loads
+    //       read two hundred and fifty six. Against kit/floor.c, which reads
+    //       both streams at the widest load and answers nothing, the ymm
+    //       round measured 2.0x slower at four kilobytes on that machine.
+    //
+    //       Not four compares into mask registers. That was written first,
+    //       folded with two kor and a kortest, and measured 1.5x the floor
+    //       at four kilobytes: compares into mask registers and the kor
+    //       between them share one pipe, and seven of them a round is more
+    //       cycles than eight loads. Exclusive-or leaves nought where the
+    //       lanes agree and runs on any pipe, vpternlogd folds three of the
+    //       four into one, and one vptestmb is the whole of the test. That
+    //       measured 1.09x to 1.15x the floor at four kilobytes over four
+    //       runs on a loaded machine, and at the floor from sixty four
+    //       kilobytes up, where the ymm round had been 2.0x and 1.04x. A
+    //       round that differs anywhere falls into the single vector loop
+    //       to find where, as the ymm round does and for the reason given
+    //       there.
+    //
+    //       The ladder is the one WIDE_PICK_MAX describes: a count under
+    //       sixty four is handed forward to the ymm body, which hands one
+    //       under thirty two forward to the words.
+    //
+    "cmp $64, %rdx\n   jb 7f\n"
+    "cmp $256, %rdx\n   jb 13f\n"
+    ".balign 32\n"
+    "11: vmovdqu64 (%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n   vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "vpxorq (%rsi), %zmm0, %zmm0\n   vpxorq 64(%rsi), %zmm1, %zmm1\n   vpxorq 128(%rsi), %zmm2, %zmm2\n   vpxorq 192(%rsi), %zmm3, %zmm3\n"
+    "vporq %zmm1, %zmm0, %zmm0\n   vpternlogd $0xfe, %zmm3, %zmm2, %zmm0\n   vptestmb %zmm0, %zmm0, %k0\n"
+    "kortestq %k0, %k0\n   jnz 13f  # somewhere in these four\n"
+    "add $256, %rdi\n   add $256, %rsi\n   sub $256, %rdx\n   cmp $256, %rdx\n"
+    "jae 11b\n"
+    "13: cmp $64, %rdx\n   jb 14f\n   vmovdqu64 (%rdi), %zmm0\n   vpcmpneqb (%rsi), %zmm0, %k0\n"
+    "kortestq %k0, %k0\n   jnz 18f\n   add $64, %rdi\n   add $64, %rsi\n   sub $64, %rdx\n   jmp 13b\n"
+    //
+    //       The last sixty four bytes, read again, for the reason the ymm
+    //       body gives for its last thirty two.
+    //
+    "14: test %rdx, %rdx\n   jz 16f\n   lea -64(%rdi,%rdx), %rdi\n   lea -64(%rsi,%rdx), %rsi\n"
+    "vmovdqu64 (%rdi), %zmm0\n   vpcmpneqb (%rsi), %zmm0, %k0\n   kortestq %k0, %k0\n   jz 16f\n"
+    "18: kmovq %k0, %rcx\n   bsf %rcx, %rcx\n   vzeroupper\n   movzbl (%rdi,%rcx), %eax\n"
+    "movzbl (%rsi,%rcx), %ecx\n   sub %ecx, %eax\n"
+    ASM_RET
+    "16: vzeroupper\n   xor %eax, %eax\n"
+    ASM_RET
+    "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
     "cmp $32, %rdx\n   jb 5f\n"
     //
     //       Four blocks a round, and-ed into one mask. A round that differs
