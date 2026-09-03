@@ -7468,8 +7468,6 @@ fn check_first_of_blocks()
         p8 avx2 = cpu_has_avx2;
         p8 avx512 = cpu_has_avx512;
 
-        wide_bind();
-
         first_of_blocks_tier();
 
         cpu_has_avx512 = 0;
@@ -7477,6 +7475,294 @@ fn check_first_of_blocks()
 
         cpu_has_avx2 = 0;
         first_of_blocks_tier();
+
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+}
+
+/*
+        The block loops, and the page after the string.
+
+        string_last_of_or_end walks four vectors a turn once its cursor is
+        four vectors aligned, memory_count four vectors a turn from wherever
+        the block starts, and string_copy is string_length's four vectors and
+        then memory_copy_apart. The sweeps above stop at three hundred and
+        twenty bytes, which barely leaves a head loop, so this is the same
+        question asked of longer strings: the byte in every vector of every
+        block, with and without the terminator in the same block, strings
+        starting at every offset of a two hundred and fifty six byte block,
+        counts that are not a multiple of any block, and matches under the
+        vector that overlaps the end of a count.
+
+        And the terminator as the last byte of a page with the page after it
+        unmapped, which is what the aligned vector rule is for: a block that
+        read one byte past the string would stop the program here rather
+        than answer. The pages come from the allocator and the last of them
+        is taken away, as exact_scan.c does it.
+
+        Every sweep runs once for each body, the feature bytes walked down
+        as check_hunts_wide walks them.
+*/
+#define BLOCK_PAGE 4096
+#define BLOCK_PAGES 4
+#define BLOCK_PROT_NONE 0
+
+static p8 address_to block_pages;
+
+// Three mapped pages and then one that is not; null if the machine refused.
+static p8 address_to block_mapped(void)
+{
+        if (!block_pages)
+        {
+                p8 address_to raw = (p8 address_to)memory((BLOCK_PAGES + 1) * BLOCK_PAGE);
+                positive at;
+
+                if (!raw)
+                        return null;
+
+                at = ((positive)(address_any)raw + BLOCK_PAGE - 1) & ~(positive)(BLOCK_PAGE - 1);
+                block_pages = (p8 address_to)at;
+
+                if ((bipolar)system_call_3(syscall(mprotect),
+                                           (positive)(block_pages + (BLOCK_PAGES - 1) * BLOCK_PAGE),
+                                           BLOCK_PAGE, BLOCK_PROT_NONE) < 0)
+                {
+                        block_pages = null;
+                        return null;
+                }
+        }
+
+        return block_pages;
+}
+
+static p8 block_field[2048 + 256];
+static p8 block_spare[2048 + 256];
+
+static string_address block_aligned_at(p8 address_to array)
+{
+        positive at = (positive)(address_any)array;
+
+        return array + ((256 - (at & 255)) & 255);
+}
+
+// Lengths across every block a body here steps by, with the ones either
+// side of each boundary, and a few that are nowhere near one.
+static positive block_sizes[] = {0,   1,   63,  64,  65,  127, 128, 129,
+                                 191, 192, 193, 255, 256, 257, 300, 383,
+                                 384, 385, 511, 512, 513, 700, 767, 768,
+                                 769, 1000, 1023, 1024, 1025, 1100};
+
+#define BLOCK_SIZE_COUNT (sizeof(block_sizes) / sizeof(block_sizes[0]))
+
+// Where in a vector a plant goes: the ends and the middle of each.
+static positive block_lanes[] = {0, 1, 31, 32, 33, 62, 63};
+
+#define BLOCK_LANE_COUNT (sizeof(block_lanes) / sizeof(block_lanes[0]))
+
+fn block_last_case(string_address text, p8 byte)
+{
+        if (wide_last_or_end)
+                same("string_last_of_or_end", "blocks",
+                     (positive)wide_last_or_end(text, byte),
+                     (positive)reference_last_or_end(text, byte));
+}
+
+fn block_copy_case(string_address text, positive size)
+{
+        reference_fill(block_spare, 0xa5, sizeof(block_spare));
+        string_copy(block_spare, text);
+        same_bytes("string_copy", "blocks, the string and its terminator",
+                   block_spare, text, size + 1);
+
+        for (positive i = 1; i <= 8; i++)
+                same("string_copy", "blocks, the byte after", block_spare[size + i], 0xa5);
+}
+
+fn blocks_sweep_strings()
+{
+        string_address base = block_aligned_at(block_field);
+
+        for (positive offset = 0; offset < 256; offset++)
+                for (positive s = 0; s < BLOCK_SIZE_COUNT; s++)
+                {
+                        positive size = block_sizes[s];
+                        string_address text = base + offset;
+
+                        if (offset + size + 16 >= sizeof(block_field))
+                                continue;
+
+                        reference_fill(block_field, 'a', sizeof(block_field));
+                        text[size] = 0;
+
+                        // absent, present everywhere, and the terminator
+                        block_last_case(text, 'z');
+                        block_last_case(text, 'a');
+                        block_last_case(text, 0);
+                        block_copy_case(text, size);
+
+                        // one past the terminator, which nothing may see
+                        text[size + 1] = 'z';
+                        block_last_case(text, 'z');
+                        text[size + 1] = 'a';
+
+                        // the byte in each lane of each vector of each
+                        // block, on its own and with an earlier one that
+                        // must lose to it, and with a later one past the
+                        // terminator that must not win
+                        for (positive vector = 0; vector * 64 < size; vector++)
+                                for (positive l = 0; l < BLOCK_LANE_COUNT; l++)
+                                {
+                                        positive where = vector * 64 + block_lanes[l];
+
+                                        if (where >= size)
+                                                continue;
+
+                                        text[where] = 'z';
+                                        block_last_case(text, 'z');
+
+                                        text[where / 2] = 'z';
+                                        block_last_case(text, 'z');
+                                        text[where / 2] = 'a';
+
+                                        text[size + 1] = 'z';
+                                        block_last_case(text, 'z');
+                                        text[size + 1] = 'a';
+
+                                        text[where] = 'a';
+                                }
+                }
+}
+
+static p8 count_room[66000];
+
+fn blocks_sweep_count()
+{
+        static positive count_offsets[] = {0, 1, 7, 31, 33, 63};
+
+        // every length across the blocks of every body, at alignments the
+        // wide loops have to start on, over a pattern with more than one
+        // value in it
+        for (positive o = 0; o < sizeof(count_offsets) / sizeof(count_offsets[0]); o++)
+                for (positive size = 200; size <= 1100; size++)
+                {
+                        positive off = count_offsets[o];
+
+                        for (positive i = 0; i < off + size + 64; i++)
+                                count_room[i] = (p8)((i * 7 + off) % 5 ? 'a' : '\n');
+
+                        same("memory_count", "blocks, against the byte loop",
+                             memory_count(count_room + off, size, '\n'),
+                             reference_count(count_room + off, size, '\n'));
+                        same("memory_count", "blocks, against the byte loop",
+                             memory_count(count_room + off, size, 'a'),
+                             reference_count(count_room + off, size, 'a'));
+                        same("memory_count", "blocks, nothing to count",
+                             memory_count(count_room + off, size, 'z'), 0);
+                }
+
+        // a match under the vector that overlaps the end, at every lane of
+        // it, and just past the count where it must not be seen
+        for (positive size = 1; size < 64; size++)
+                for (positive at = 0; at < size + 2; at++)
+                {
+                        reference_fill(count_room, 'a', sizeof(count_room));
+                        count_room[at] = '\n';
+                        same("memory_count", "blocks, the overlapping tail",
+                             memory_count(count_room, size, '\n'), at < size);
+                        count_room[256 + at] = '\n';
+                        same("memory_count", "blocks, the tail after a block",
+                             memory_count(count_room, 256 + size, '\n'),
+                             (positive)(at < size) + 1);
+                }
+
+        // past the drain of the sixty four byte body: 252 rounds of 256 is
+        // 64512, and a block of nothing but the byte is where a wrapped
+        // lane shows
+        reference_fill(count_room, '\n', sizeof(count_room));
+
+        for (positive size = 64400; size < 65000; size += 3)
+        {
+                same("memory_count", "blocks, every byte matches",
+                     memory_count(count_room, size, '\n'), size);
+                same("memory_count", "blocks, no byte matches",
+                     memory_count(count_room, size, 'z'), 0);
+        }
+}
+
+fn blocks_sweep_page_edge()
+{
+        p8 address_to pages = block_mapped();
+        p8 address_to edge;
+
+        if (!pages)
+                return;
+
+        edge = pages + (BLOCK_PAGES - 1) * BLOCK_PAGE;
+
+        // the terminator is the last mapped byte, so the string runs to the
+        // edge of the page and the byte after it faults
+        for (positive size = 0; size <= 1100; size++)
+        {
+                string_address text = (string_address)(edge - 1 - size);
+
+                for (positive i = 0; i < size; i++)
+                        text[i] = 'a';
+
+                text[size] = 0;
+
+                block_last_case(text, 'z');
+                block_last_case(text, 'a');
+                block_last_case(text, 0);
+
+                if (size)
+                {
+                        text[size - 1] = 'z';
+                        block_last_case(text, 'z');
+                        text[0] = 'z';
+                        block_last_case(text, 'z');
+                        text[size - 1] = 'a';
+                        block_last_case(text, 'z');
+                        text[0] = 'a';
+                }
+
+                block_copy_case(text, size);
+
+                // and the block that ends at the edge, counted
+                same("memory_count", "blocks ending at the page edge",
+                     memory_count(text, size, 'a'), size);
+                same("memory_count", "blocks ending at the page edge",
+                     memory_count(text, size, 'z'), 0);
+
+                if (size)
+                {
+                        text[size - 1] = 'z';
+                        same("memory_count", "blocks ending at the page edge",
+                             memory_count(text, size, 'z'), 1);
+                }
+        }
+}
+
+fn blocks_sweep()
+{
+        blocks_sweep_strings();
+        blocks_sweep_count();
+        blocks_sweep_page_edge();
+}
+
+fn check_blocks()
+{
+        p8 avx2 = cpu_has_avx2;
+        p8 avx512 = cpu_has_avx512;
+
+        wide_bind();
+
+        blocks_sweep();
+
+        cpu_has_avx512 = 0;
+        blocks_sweep();
+
+        cpu_has_avx2 = 0;
+        blocks_sweep();
 
         cpu_has_avx2 = avx2;
         cpu_has_avx512 = avx512;
@@ -8683,6 +8969,7 @@ b32 main()
         check_first_of_wide();
         check_hunts_wide();
         check_first_of_blocks();
+        check_blocks();
         check_copy();
         check_exchange();
         check_frob();

@@ -2161,7 +2161,154 @@ __asm__(
 //      rather than on a jump table, so the commonest of them -- a terminator
 //      in the second vector -- costs one add and no taken branch.
 //
+//
+//      The scan and what comes after it are two parameters because two
+//      routines want the scan: string_length answers with the length, and
+//      string_copy goes on to copy that many bytes and one more. TAIL is
+//      entered with the length in %rax, the start in %r8 and the upper
+//      halves already dropped; %r9 is not touched anywhere in the scan,
+//      which is where string_copy keeps its destination.
+//
 #define WIDE_LENGTH(W, ZEROED, ZEROS_AT, QUAD, QUAD_WHICH, LEAVE)             \
+    WIDE_LENGTH_INTO(W, ZEROED, ZEROS_AT, QUAD, QUAD_WHICH, LEAVE, ASM_RET)
+
+//      What string_copy does with a length: the terminator is copied too.
+#define STRING_COPY_TAIL                                                      \
+    "mov %r8, %rsi\n   mov %r9, %rdi\n   lea 1(%rax), %rdx\n   jmp memory_copy_apart\n"
+
+//
+//      string_copy's scan, which is the one it always had until the string
+//      outlasts the head, and string_length's from there, storing as it
+//      goes. A short string -- and nearly all of them are -- costs exactly
+//      what the scan this replaces cost and then one memory_copy_apart,
+//      which is the tail above. A long one is read once and written once:
+//      every block that holds no terminator is stored from the registers
+//      it was tested in, at the distance the destination sits from the
+//      source, which %r10 holds so the store shares the load's addressing.
+//      Reading the string twice, once to measure and once to copy,
+//      measured 84% over the copy floor at four thousand and ninety six
+//      bytes and 47% at a megabyte on a 9950X; the floor moves each byte
+//      once in each direction and so, now, does this: 37% to 39% over it
+//      at four thousand and ninety six bytes, under it at sixty five
+//      thousand, and within 3% at a megabyte.
+//
+//      The head is eight thirty two byte vectors whatever the machine has,
+//      read straight line off a displacement the way string_length reads
+//      its four. On a 9950X a compare that lands in a mask register costs
+//      more than one that lands in a vector, and a short string is a few
+//      such compares and nothing else: the same head in sixty four byte
+//      vectors measured 16.0 ticks on a sixty four byte copy against 14.2
+//      to 14.6 for the thirty two byte scan it replaced, and 13.4 to 14.8
+//      on an eight byte copy against 11.4; this head measures 11.6 to 12.0
+//      on eight and 15.7 to 16.7 on sixty four, of which the copy under it
+//      accounts for about one tick by having moved in the binary. Straight
+//      line and not the one vector loop it replaced: the loop measured
+//      42.4 ticks on a two hundred and fifty six byte copy against 23.9
+//      for this, each turn waiting on the cursor the last one moved. Eight
+//      and not four so the first block, rounded down to two hundred and
+//      fifty six from the end of them, is never in front of the second
+//      vector: a block that wide is what the sixty four byte loop reads,
+//      and it has to sit inside one page, so it has to be aligned to its
+//      own size and not to half of it. The first vector's mask is shifted
+//      down by the offset rather than the flags masked, so a terminator in
+//      it is the length straight off bsf, which is also what the old scan
+//      did.
+//
+//      The blocks are as wide as the machine goes, and are entered after a
+//      call that copies everything in front of the first block -- under
+//      eight vectors, once a call, with the three values the loop needs
+//      pushed around it. They are the blocks string_length reads, tested
+//      the way it tests them, and QUAD_WHICH is its ladder for which vector
+//      held the terminator; the four raw vectors are loaded into the
+//      registers it expects rather than folded straight off memory,
+//      because the two a fused minimum would consume have to be stored
+//      afterwards. LAST stores what the last block holds up to and
+//      including the terminator: AVX-512 the whole vectors under the one
+//      that ended the string and that one under a byte mask, AVX2, which
+//      has no byte masked store, by a second call.
+//
+#define WIDE_COPY_HEAD                                                        \
+    "mov %rdi, %r8  # keep the start\n"                                       \
+    AVX2_ZEROED                                                               \
+    "mov %edi, %ecx\n   and $" AVX2_WIDTH "-1, %ecx\n   and $-" AVX2_WIDTH ", %rdi\n" \
+    AVX2_ZEROS_AT("")                                                         \
+    "shr %cl, %eax  # the bytes in front of the string are not ours\n"       \
+    "test %eax, %eax\n   jnz 29f  # tested: a shift by nought leaves the flags alone\n" \
+    AVX2_ZEROS_AT("(1*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 21f\n"      \
+    AVX2_ZEROS_AT("(2*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 22f\n"      \
+    AVX2_ZEROS_AT("(3*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 23f\n"      \
+    AVX2_ZEROS_AT("(4*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 24f\n"      \
+    AVX2_ZEROS_AT("(5*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 25f\n"      \
+    AVX2_ZEROS_AT("(6*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 26f\n"      \
+    AVX2_ZEROS_AT("(7*" AVX2_WIDTH ")") "test %eax, %eax\n   jnz 27f\n"      \
+    "jmp 28f\n"                                                               \
+    "27: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "26: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "25: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "24: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "23: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "22: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "21: add $" AVX2_WIDTH ", %rdi\n   bsf %eax, %eax\n   add %rdi, %rax\n   sub %r8, %rax\n" \
+    AVX2_LEAVE STRING_COPY_TAIL                                               \
+    "29: bsf %eax, %eax\n"                                                    \
+    AVX2_LEAVE STRING_COPY_TAIL                                               \
+    "28: mov %r9, %r10\n   sub %r8, %r10  # how far the destination is from the source\n" \
+    "add $(8*" AVX2_WIDTH "), %rdi\n   and $(-8*" AVX2_WIDTH "), %rdi  # the first block: after the first vector, inside what was read, aligned for either width\n" \
+    "push %r9\n   push %r10\n   push %rdi\n"                                  \
+    "mov %rdi, %rdx\n   sub %r8, %rdx\n   mov %r8, %rsi\n   mov %r9, %rdi\n"  \
+    "vzeroupper\n   call memory_copy_apart  # the head, up to the first block\n" \
+    "pop %rdi\n   pop %r10\n   pop %r9\n"                                     \
+    ASM_WIDER("cpu_has_avx512", "6f")                                         \
+    AVX2_ZEROED "jmp 20f\n"
+
+//      The lanes up to and including the terminator, whose flag is the
+//      lowest in %rax, as a store mask.
+#define AVX512_COPY_MASK                                                      \
+    "bsf %rax, %rcx\n   mov $2, %rax\n   shl %cl, %rax\n   dec %rax\n   kmovq %rax, %k3\n"
+
+#define AVX2_COPY_BLOCKS                                                      \
+    ".balign 32\n"                                                            \
+    "20: vmovdqa (%rdi), %ymm3\n   vmovdqa (1*" AVX2_WIDTH ")(%rdi), %ymm8\n" \
+    "vmovdqa (2*" AVX2_WIDTH ")(%rdi), %ymm5\n   vmovdqa (3*" AVX2_WIDTH ")(%rdi), %ymm9\n" \
+    "vpminub %ymm8, %ymm3, %ymm4\n   vpminub %ymm9, %ymm5, %ymm6\n   vpminub %ymm4, %ymm6, %ymm7\n" \
+    "vpcmpeqb %ymm7, %ymm2, %ymm7\n   vpmovmskb %ymm7, %eax\n   test %eax, %eax\n   jnz 4f\n" \
+    "vmovdqu %ymm3, (%rdi,%r10)\n   vmovdqu %ymm8, (1*" AVX2_WIDTH ")(%rdi,%r10)\n" \
+    "vmovdqu %ymm5, (2*" AVX2_WIDTH ")(%rdi,%r10)\n   vmovdqu %ymm9, (3*" AVX2_WIDTH ")(%rdi,%r10)\n" \
+    "add $(4*" AVX2_WIDTH "), %rdi\n   jmp 20b\n"                             \
+    "4:  " AVX2_QUAD_WHICH                                                    \
+    "23: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "22: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "21: add $" AVX2_WIDTH ", %rdi\n"                                         \
+    "2:  bsf %rax, %rax\n   lea 1(%rdi,%rax), %rdx  # one past the terminator\n" \
+    "and $(-4*" AVX2_WIDTH "), %rdi  # the block, none of which is stored yet\n" \
+    "sub %rdi, %rdx\n   mov %rdi, %rsi\n   add %r10, %rdi\n"                  \
+    "vzeroupper\n   push %r9\n   call memory_copy_apart  # the rest of it\n   pop %rax\n" \
+    ASM_RET
+
+#define AVX512_COPY_BLOCKS                                                    \
+    ".balign 32\n"                                                            \
+    "20: vmovdqa64 (%rdi), %zmm1\n   vmovdqa64 (1*" AVX512_WIDTH ")(%rdi), %zmm6\n" \
+    "vmovdqa64 (2*" AVX512_WIDTH ")(%rdi), %zmm4\n   vmovdqa64 (3*" AVX512_WIDTH ")(%rdi), %zmm7\n" \
+    "vpminub %zmm6, %zmm1, %zmm3\n   vpminub %zmm7, %zmm4, %zmm5\n"           \
+    "vptestnmb %zmm3, %zmm3, %k0\n   vptestnmb %zmm5, %zmm5, %k2\n"           \
+    "kortestq %k0, %k2\n   jnz 4f\n"                                         \
+    "vmovdqu64 %zmm1, (%rdi,%r10)\n   vmovdqu64 %zmm6, (1*" AVX512_WIDTH ")(%rdi,%r10)\n" \
+    "vmovdqu64 %zmm4, (2*" AVX512_WIDTH ")(%rdi,%r10)\n   vmovdqu64 %zmm7, (3*" AVX512_WIDTH ")(%rdi,%r10)\n" \
+    "add $(4*" AVX512_WIDTH "), %rdi\n   jmp 20b\n"                           \
+    "4:  " AVX512_QUAD_WHICH                                                  \
+    "23: vmovdqu64 %zmm4, (2*" AVX512_WIDTH ")(%rdi,%r10)\n"                  \
+    "vmovdqu64 %zmm6, (1*" AVX512_WIDTH ")(%rdi,%r10)\n   vmovdqu64 %zmm1, (%rdi,%r10)\n" \
+    "add $(3*" AVX512_WIDTH "), %rdi\n" AVX512_COPY_MASK                      \
+    "vmovdqu8 %zmm7, (%rdi,%r10){%k3}\n   jmp 9f\n"                           \
+    "22: vmovdqu64 %zmm6, (1*" AVX512_WIDTH ")(%rdi,%r10)\n   vmovdqu64 %zmm1, (%rdi,%r10)\n" \
+    "add $(2*" AVX512_WIDTH "), %rdi\n" AVX512_COPY_MASK                      \
+    "vmovdqu8 %zmm4, (%rdi,%r10){%k3}\n   jmp 9f\n"                           \
+    "21: vmovdqu64 %zmm1, (%rdi,%r10)\n   add $" AVX512_WIDTH ", %rdi\n" AVX512_COPY_MASK \
+    "vmovdqu8 %zmm6, (%rdi,%r10){%k3}\n   jmp 9f\n"                           \
+    "2:  " AVX512_COPY_MASK "vmovdqu8 %zmm1, (%rdi,%r10){%k3}\n"              \
+    "9:  mov %r9, %rax\n   vzeroupper\n" ASM_RET
+
+#define WIDE_LENGTH_INTO(W, ZEROED, ZEROS_AT, QUAD, QUAD_WHICH, LEAVE, TAIL)  \
     "mov %rdi, %r8  # keep the start\n"                                       \
     ZEROED                                                                    \
     "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
@@ -2181,7 +2328,7 @@ __asm__(
     "22: add $" W ", %rdi\n"                                                  \
     "21: add $" W ", %rdi\n"                                                  \
     "2:  bsf %rax, %rax\n   add %rdi, %rax\n   sub %r8, %rax\n"               \
-    LEAVE ASM_RET
+    LEAVE TAIL
 
 //
 //      The word at a time hunt under string_first_of_max, a word a turn
@@ -2528,7 +2675,42 @@ __asm__(
 //      per lane, so there is no borrow to lie about anything above the lowest
 //      flag.
 //
-#define WIDE_LAST(W, BROADCAST, ZEROED, BOTH, LEAVE)                          \
+//      One vector a turn until the cursor reaches a four vector boundary,
+//      then string_length's four vectors a turn to the terminator, then
+//      back from the terminator to that boundary for the byte. The head
+//      loop is the whole routine for the strings strrchr is mostly asked
+//      about -- a path, for its last slash or dot -- and it is left as it
+//      was so they pay nothing new. What follows it is for the long ones,
+//      where one question of every vector measured 220% to 330% over the
+//      traffic floor at four thousand and ninety six bytes and 125% at
+//      sixty five thousand on a 9950X, against 42% and 5% now. At a
+//      megabyte every routine that looks at what it reads, string_length
+//      included, sits about 50% over that floor on that box, and this one
+//      sits with them.
+//
+//      Why two passes and not one. A block that asks after both bytes has to
+//      compare four vectors against c and fold four against zero, and on a
+//      9950X every compare that lands in a mask register costs about a
+//      cycle on its own: measured per two hundred and fifty six byte block
+//      in L1, four loads alone take 2.9 ticks, string_length's fold with
+//      two mask compares 3.8, and the best single pass found -- one mask
+//      compare over the minimum of twelve vector operations -- 5.9, the
+//      shape with five mask compares 8.4. So the terminator is found by
+//      string_length's loop, which is the cheapest question there is, and
+//      the byte is hunted backwards from it: for the byte that is near the
+//      end, which is what a last-of is usually asked for, that is a block or
+//      two of vpcmpeqb, and for a byte that is nowhere it is a second pass
+//      at the cost of the first single pass shape.
+//
+//      The way back reads only whole vectors between the boundary and the
+//      terminator, which the way forward has just read, and the vector that
+//      holds the terminator is masked down to the lanes under it. It walks
+//      one vector at a time until the cursor is on a four vector boundary
+//      and four at a time from there, and stops at where the blocks began:
+//      everything before that the head loop has already answered for in
+//      %r11.
+//
+#define WIDE_LAST(W, BROADCAST, ZEROED, BOTH, QUAD, QUAD_WHICH, HUNT, BACK, LEAVE) \
     "movzbl %sil, %ecx\n"                                                     \
     BROADCAST                                                                 \
     ZEROED                                                                    \
@@ -2537,7 +2719,7 @@ __asm__(
     "mov $-1, %rdx\n   shl %cl, %rdx  # which bytes of this vector are ours\n" \
     BOTH                                                                      \
     "and %rdx, %rax\n   and %rdx, %r9\n   jmp 3f\n"                           \
-    "1:  add $" W ", %rdi\n"                                                  \
+    "1:  add $" W ", %rdi\n   test $(4*" W "-1), %edi\n   jz 20f  # four vectors aligned to four: blocks from here\n" \
     BOTH                                                                      \
     "3:  test %r9, %r9\n   jnz 4f  # the string ends in this one\n"           \
     "test %rax, %rax\n   jz 1b\n"                                             \
@@ -2545,7 +2727,72 @@ __asm__(
     "jmp 1b\n"                                                                \
     "4:  mov %r9, %rcx\n   neg %rcx\n   and %r9, %rcx\n   dec %rcx  # the bytes under the terminator\n" \
     "and %rcx, %rax\n   jz 2f\n   bsr %rax, %rcx\n   lea (%rdi,%rcx), %r11\n" \
-    "2:  mov %r11, %rax\n" LEAVE ASM_RET
+    "2:  mov %r11, %rax\n" LEAVE ASM_RET                                      \
+    "20: mov %rdi, %r10  # where the blocks began\n   sub $(4*" W "), %rdi\n" \
+    ".balign 32\n"                                                            \
+    "3:  " QUAD "jz 3b\n"                                                      \
+    QUAD_WHICH                                                                \
+    "23: add $" W ", %rdi\n"                                                  \
+    "22: add $" W ", %rdi\n"                                                  \
+    "21: add $" W ", %rdi\n"                                                  \
+    "2:  bsf %rax, %rax\n   lea -1(%rdi,%rax), %rdi  # the last byte of the string\n" \
+    "movzbl %sil, %ecx\n"                                                     \
+    BROADCAST                                                                 \
+    "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
+    "mov $2, %rdx\n   shl %cl, %rdx\n   dec %rdx  # the lanes at and under the last byte\n" \
+    HUNT                                                                      \
+    "and %rdx, %rax\n   mov %rdi, %r8\n   jnz 25f\n"                          \
+    "24: cmp %r10, %rdi\n   jbe 26f  # back where the blocks began: the head's answer stands\n" \
+    "test $(4*" W "-1), %edi\n   jz 27f  # a whole block under the cursor\n"  \
+    "sub $" W ", %rdi\n" HUNT "test %rax, %rax\n   jz 24b\n   mov %rdi, %r8\n" \
+    "25: bsr %rax, %rcx\n   lea (%r8,%rcx), %rax\n" LEAVE ASM_RET             \
+    "26: mov %r11, %rax\n" LEAVE ASM_RET                                      \
+    "27: " BACK
+
+//
+//      A block on the way back, four compares straight off memory. The
+//      vector that answered is walked down from the top, which is where the
+//      last match is likeliest, and its address goes in %r8 so the one bsr
+//      at 25 serves every rung. AVX-512 keeps the four masks in %k1 to %k4
+//      and moves one into a general register only once it knows the block
+//      has a match; AVX2 has no mask registers and ors the four compares.
+//
+#define AVX2_LAST_BACK                                                        \
+    "sub $(4*" AVX2_WIDTH "), %rdi\n"                                         \
+    "vpcmpeqb (3*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm6\n   vpcmpeqb (2*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm5\n" \
+    "vpcmpeqb (1*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm4\n   vpcmpeqb (%rdi), %ymm1, %ymm3\n" \
+    "vpor %ymm6, %ymm5, %ymm7\n   vpor %ymm4, %ymm3, %ymm8\n"                 \
+    "vpor %ymm8, %ymm7, %ymm7\n   vpmovmskb %ymm7, %eax\n"                    \
+    "test %eax, %eax\n   jnz 28f\n"                                           \
+    "cmp %r10, %rdi\n   ja 27b\n   jmp 26b\n"                                 \
+    "28: lea (3*" AVX2_WIDTH ")(%rdi), %r8\n   vpmovmskb %ymm6, %eax\n   test %eax, %eax\n   jnz 25b\n" \
+    "sub $" AVX2_WIDTH ", %r8\n   vpmovmskb %ymm5, %eax\n   test %eax, %eax\n   jnz 25b\n" \
+    "sub $" AVX2_WIDTH ", %r8\n   vpmovmskb %ymm4, %eax\n   test %eax, %eax\n   jnz 25b\n" \
+    "sub $" AVX2_WIDTH ", %r8\n   vpmovmskb %ymm3, %eax\n   jmp 25b\n"
+
+#define AVX512_LAST_BACK                                                      \
+    "sub $(4*" AVX512_WIDTH "), %rdi\n"                                       \
+    "vpcmpeqb (3*" AVX512_WIDTH ")(%rdi), %zmm1, %k4\n   vpcmpeqb (2*" AVX512_WIDTH ")(%rdi), %zmm1, %k3\n" \
+    "vpcmpeqb (1*" AVX512_WIDTH ")(%rdi), %zmm1, %k2\n   vpcmpeqb (%rdi), %zmm1, %k1\n" \
+    "korq %k4, %k3, %k5\n   korq %k2, %k1, %k6\n   kortestq %k5, %k6\n   jnz 28f\n" \
+    "cmp %r10, %rdi\n   ja 27b\n   jmp 26b\n"                                 \
+    "28: lea (3*" AVX512_WIDTH ")(%rdi), %r8\n   kmovq %k4, %rax\n   test %rax, %rax\n   jnz 25b\n" \
+    "sub $" AVX512_WIDTH ", %r8\n   kmovq %k3, %rax\n   test %rax, %rax\n   jnz 25b\n" \
+    "sub $" AVX512_WIDTH ", %r8\n   kmovq %k2, %rax\n   test %rax, %rax\n   jnz 25b\n" \
+    "sub $" AVX512_WIDTH ", %r8\n   kmovq %k1, %rax\n   jmp 25b\n"
+
+//
+//      One word of memory_count's word at a time body: the matches in the
+//      word at D off the cursor, counted into %rax. %rcx holds ~c in every
+//      byte, %r10 0x7f7f.., %r11 0x0101.. and %r9 0x8080..; the word and
+//      its flags go through %r8 and %rdx, which is why the value is not in
+//      %rdx by then.
+//
+#define NARROW_COUNT_WORD(D)                                                  \
+    "mov " D "(%rdi), %r8\n   xor %rcx, %r8  # 0xff where the byte matched\n" \
+    "mov %r8, %rdx\n   and %r10, %rdx\n   add %r11, %rdx  # bit seven from the low seven, no carry between bytes\n" \
+    "and %r8, %rdx\n   and %r9, %rdx  # and bit seven itself: 0xff exactly\n" \
+    "popcnt %rdx, %rdx\n   add %rdx, %rax\n"
 
 //
 //      Two streams and no length, from where four word steps have agreed.
@@ -3113,12 +3360,15 @@ __asm__(
     //
     //       memory_count -- how many times a byte appears.
     //
-    //       Two bodies. The wide one compares thirty two bytes at a time and
-    //       subtracts the result into a byte accumulator: vpcmpeqb leaves 0xff
-    //       where the bytes matched, which as a signed byte is minus one, so
-    //       subtracting it adds one. That accumulator is a byte per lane and
-    //       would wrap at 256, so the outer loop drains it every 255 rounds
-    //       through vpsadbw, which sums each eight byte group into a quadword.
+    //       Three bodies. The thirty two byte one compares a vector at a time
+    //       and subtracts the result into a byte accumulator: vpcmpeqb leaves
+    //       0xff where the bytes matched, which as a signed byte is minus
+    //       one, so subtracting it adds one. That accumulator is a byte per
+    //       lane and would wrap at 256, so the outer loop drains it every 255
+    //       rounds through vpsadbw, which sums each eight byte group into a
+    //       quadword. The sixty four byte one under it is the same shape with
+    //       the compare in a mask register, and the word at a time one is
+    //       a popcnt of exact flags.
     //
     //       Measured on a 9950X over ninety two megabytes: the byte loop the
     //       compiler writes at -O2 runs at 15.8 GB/s, the eight-byte-at-a-time
@@ -3130,7 +3380,7 @@ __asm__(
     ASM_FUNC(memory_count)
     "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
     ASM_USERSPACE_WIDE(
-    ASM_PICK(X86_FEATURE_AVX2, "5f")
+    WIDE_PICK
     "movzbl %dl, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
     //
     //       Four accumulators, not one. vpsubb into the same register every
@@ -3165,11 +3415,100 @@ __asm__(
     "jae 8b\n   vpxor %ymm0, %ymm0, %ymm0\n   vpsadbw %ymm0, %ymm2, %ymm2\n   vextracti128 $1, %ymm2, %xmm3\n"
     "vpaddq %xmm3, %xmm2, %xmm2\n   vpextrq $0, %xmm2, %r11\n   add %r11, %rax\n   vpextrq $1, %xmm2, %r11\n"
     "add %r11, %rax\n   add %r10, %rdi\n   sub %r10, %rsi\n"
-    "4:  vzeroupper\n"
+    "4:  vzeroupper\n   jmp 5f\n"
+    //
+    //       Sixty four bytes at a time, four vectors a turn. The compare
+    //       lands in a mask register rather than a vector, which is the only
+    //       place an EVEX compare can land, and the mask steers a merge: a
+    //       lane that matched has one subtracted from it and a lane that did
+    //       not is left alone. Three instructions a vector, the same as the
+    //       thirty two byte body, and no vpmovm2b to turn the mask back into
+    //       bytes first. The lanes are still bytes and still wrap at 256, so
+    //       the round cap stays.
+    //
+    //       It is the compare into a mask that bounds this on a 9950X, at
+    //       about a cycle each: per two hundred and fifty six byte block in
+    //       L1 the four loads alone measured 2.9 ticks, this 4.5, a kmovq
+    //       and popcnt of each mask 6.1, vpmovm2b and a plain vpsubb 5.5,
+    //       and six plain vector operations a vector with no mask at all
+    //       7.7. So it is this, at 49% to 67% over the traffic floor at four
+    //       thousand and ninety six bytes across runs, from 100% to 133%
+    //       before, and at the floor at sixty five thousand, where the loads
+    //       are what the time is.
+    //
+    //       Under a block there is no accumulator and no drain: a whole
+    //       vector is a compare, a kmovq and a popcnt, and what is left under
+    //       a vector is one masked compare and the same popcnt. The lanes
+    //       outside the count are masked off and a masked off lane does not
+    //       fault, so the vector may straddle the end of the block and the
+    //       page after it; it needs neither the word at a time body nor a
+    //       byte loop. A call of sixty three bytes is a compare and a
+    //       popcnt rather than a hundred instructions, and a call of sixty
+    //       four measured 16.9 ticks against 12.7 for the thirty two byte
+    //       body while it still drained four accumulators for one vector,
+    //       and 14.2 to 15.5 without; what is left of the gap is the compare
+    //       into a mask and the kmovq out of it, and a call of eight bytes
+    //       measures 11.6 against 31.5 for the byte loop it replaces.
+    //
+    "6:  movzbl %dl, %ecx\n   vpbroadcastb %ecx, %zmm1\n"
+    "cmp $256, %rsi\n   jb 3f\n"
+    "vpternlogd $0xff, %zmm9, %zmm9, %zmm9  # minus one in every byte\n"
+    "1:  vpxorq %zmm2, %zmm2, %zmm2\n   vpxorq %zmm3, %zmm3, %zmm3\n   vpxorq %zmm4, %zmm4, %zmm4\n   vpxorq %zmm5, %zmm5, %zmm5\n"
+    "mov %rsi, %r8\n   and $-256, %r8\n   mov $65280, %r9\n   cmp %r9, %r8\n   cmova %r9, %r8  # never more rounds than a lane holds: 255 of them\n"
+    "sub %r8, %rsi\n"
+    ".balign 32\n"
+    "2:  vpcmpeqb (%rdi), %zmm1, %k1\n   vpsubb %zmm9, %zmm2, %zmm2{%k1}  # minus minus one, where it matched\n"
+    "vpcmpeqb 64(%rdi), %zmm1, %k2\n   vpsubb %zmm9, %zmm3, %zmm3{%k2}\n"
+    "vpcmpeqb 128(%rdi), %zmm1, %k3\n   vpsubb %zmm9, %zmm4, %zmm4{%k3}\n"
+    "vpcmpeqb 192(%rdi), %zmm1, %k4\n   vpsubb %zmm9, %zmm5, %zmm5{%k4}\n"
+    "add $256, %rdi\n   sub $256, %r8\n   jnz 2b\n"
+    "vpxorq %zmm0, %zmm0, %zmm0\n   vpsadbw %zmm0, %zmm2, %zmm2\n   vpsadbw %zmm0, %zmm3, %zmm3\n"
+    "vpsadbw %zmm0, %zmm4, %zmm4\n   vpsadbw %zmm0, %zmm5, %zmm5\n   vpaddq %zmm3, %zmm2, %zmm2\n   vpaddq %zmm5, %zmm4, %zmm4\n"
+    "vpaddq %zmm4, %zmm2, %zmm2\n   vextracti64x4 $1, %zmm2, %ymm3\n   vpaddq %ymm3, %ymm2, %ymm2\n"
+    "vextracti128 $1, %ymm2, %xmm3\n   vpaddq %xmm3, %xmm2, %xmm2\n   vmovq %xmm2, %r11\n   add %r11, %rax\n"
+    "vpextrq $1, %xmm2, %r11\n   add %r11, %rax\n"
+    "cmp $256, %rsi\n   jae 1b  # the cap and not the count ended the loop\n"
+    //       whole vectors under a block, counted one at a time
+    "3:  cmp $64, %rsi\n   jb 8f\n   vpcmpeqb (%rdi), %zmm1, %k1\n   kmovq %k1, %r8\n   popcnt %r8, %r8\n   add %r8, %rax\n"
+    "add $64, %rdi\n   sub $64, %rsi\n   jmp 3b\n"
+    "8:  test %rsi, %rsi\n   jz 7f\n"
+    "mov %esi, %ecx\n   mov $1, %r8\n   shl %cl, %r8\n   dec %r8\n   kmovq %r8, %k2  # the lanes inside the count\n"
+    "vpcmpeqb (%rdi), %zmm1, %k1{%k2}\n   kmovq %k1, %r8\n   popcnt %r8, %r8\n   add %r8, %rax\n"
+    "7:  vzeroupper\n"
+    ASM_RET
     )
-    "5:  test %rsi, %rsi\n   jz 9f\n"
-    "6:  cmpb %dl, (%rdi)\n   jne 7f\n   inc %rax\n"
-    "7:  inc %rdi\n   dec %rsi\n   jnz 6b\n"
+    //
+    //       Eight bytes at a time, for a processor with neither, for what the
+    //       thirty two byte body leaves under a vector, and the whole of the
+    //       routine in a kernel build. It was a byte loop, and a byte loop
+    //       with a taken branch a byte measured 1200% to 1300% over the word
+    //       at a time floor on a 9950X; this measures 15% to 20% over it.
+    //
+    //       The word is exclusive-ored with ~c, so a byte that matched is
+    //       0xff and no other byte is, and a byte is 0xff exactly when its
+    //       low seven bits plus one carry into bit seven and bit seven was
+    //       already set. Neither half can carry between bytes, so every flag
+    //       is exact and popcnt counts them: the (v - 0x01..) & ~v test the
+    //       hunts use would count a borrow's lie as a match. Four words a
+    //       turn, each its own chain, and the popcnts land in one register
+    //       because one add a word is not what bounds this.
+    //
+    //       The value is spent as the ninth register; ~c is put back before
+    //       the byte tail, which compares against %cl.
+    //
+    "5:  movzbl %dl, %ecx\n   cmp $8, %rsi\n   jb 7f\n"
+    "movabs $0x0101010101010101, %r11\n   imul %r11, %rcx\n   not %rcx  # ~c in every byte\n"
+    "movabs $0x7f7f7f7f7f7f7f7f, %r10\n   movabs $0x8080808080808080, %r9\n"
+    "cmp $32, %rsi\n   jb 3f\n"
+    ".balign 32\n"
+    "1:  " NARROW_COUNT_WORD("") NARROW_COUNT_WORD("8") NARROW_COUNT_WORD("16") NARROW_COUNT_WORD("24")
+    "add $32, %rdi\n   sub $32, %rsi\n   cmp $32, %rsi\n   jae 1b\n"
+    "3:  cmp $8, %rsi\n   jb 6f\n"
+    "2:  " NARROW_COUNT_WORD("") "add $8, %rdi\n   sub $8, %rsi\n   cmp $8, %rsi\n   jae 2b\n"
+    "6:  not %rcx\n"
+    "7:  test %rsi, %rsi\n   jz 9f\n"
+    "8:  cmpb %cl, (%rdi)\n   jne 4f\n   inc %rax\n"
+    "4:  inc %rdi\n   dec %rsi\n   jnz 8b\n"
     "9:\n"
     ASM_RET
     ASM_END(memory_count)
@@ -4098,15 +4437,24 @@ __asm__(
     "4:\n"
     ASM_USERSPACE_WIDE(
         WIDE_PICK
-        WIDE_LAST(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_BOTH, AVX2_LEAVE)
+        WIDE_LAST(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_BOTH, AVX2_QUAD,
+                  AVX2_QUAD_WHICH, AVX2_HUNT, AVX2_LAST_BACK, AVX2_LEAVE)
         "6:  " WIDE_LAST(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
-                         AVX512_BOTH, AVX512_LEAVE)
+                         AVX512_BOTH, AVX512_QUAD, AVX512_QUAD_WHICH,
+                         AVX512_HUNT, AVX512_LAST_BACK, AVX512_LEAVE)
     )
     //
-    //      The word at a time body, for a processor with neither. Its zero
-    //      test is the five instruction one and not the three instruction one
-    //      the rest of this file uses, and the difference only shows where the
-    //      highest flag in a word is wanted.
+    //      The word at a time body, for a processor with neither, and the
+    //      whole of the routine in a kernel build. The same two passes as
+    //      the vector bodies and for the same reason: a word asked after
+    //      both bytes cost two five instruction exact tests and a bsr, and
+    //      measured 300% to 325% over the word at a time floor on a 9950X,
+    //      where string_length's word loop sits at that floor and this now
+    //      does too. So the
+    //      terminator is found with string_length's loop, and the byte is
+    //      hunted backwards from it with the four instruction test, which
+    //      may lie above the lowest flag but is exact as a yes or no; the
+    //      word that says yes is tested exactly, once a call.
     //
     //      (v - 0x0101..) & ~v & 0x8080.. lets a borrow out of a zero byte
     //      set the flag on the byte above it. The flags are exact at the
@@ -4122,26 +4470,39 @@ __asm__(
     //      Measured on arm64, where the same mistake could be run: 774 wrong
     //      in 300000 over a five letter alphabet, and none after.
     //
-    "5:  movzbl %sil, %ecx\n   push %rbx\n   xor %ebx, %ebx  # best so far: none\n"
-    "movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x7f7f7f7f7f7f7f7f, %r11\n"
-    "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
-    "shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9\n   movzbl %sil, %eax\n"
-    "inc %eax\n   movzbl %al, %eax\n   mov $1, %ecx\n   test %eax, %eax\n"
-    "cmovz %ecx, %eax  # never zero, never it\n"
-    "imul %r10, %rax\n   mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n"
-    "and %r9, %rdx\n   or %rax, %rdx\n"
-    "1:  mov %rdx, %rax\n   xor %rsi, %rax\n   mov %rax, %rcx\n   and %r11, %rcx\n"
-    "add %r11, %rcx\n   or %rax, %rcx\n   or %r11, %rcx\n   not %rcx\n"
-    "mov %rcx, %rax  # matches, and none a borrow invented\n"
-    "mov %rdx, %r8\n   and %r11, %r8\n   add %r11, %r8\n   or %rdx, %r8\n"
-    "or %r11, %r8\n   not %r8\n   and %r9, %r8  # terminator in this word\n"
-    "test %r8, %r8\n   jnz 3f\n   test %rax, %rax\n   jz 2f\n"
-    "bsr %rax, %rcx\n   shr $3, %rcx\n   lea (%rdi,%rcx), %rbx  # a later match than any before\n"
-    "2:  mov $-1, %r9\n   add $8, %rdi\n   mov (%rdi), %rdx\n   jmp 1b\n"
-    "3:  mov %r8, %rcx\n   neg %rcx\n   and %r8, %rcx\n   dec %rcx\n"
-    "and %rcx, %rax\n   jz 7f\n   bsr %rax, %rcx\n   shr $3, %rcx\n"
-    "lea (%rdi,%rcx), %rbx\n"
-    "7:  mov %rbx, %rax\n   pop %rbx\n"
+    //      On the way back the bytes that are not the string's -- the
+    //      terminator and what follows it in its word, and what sits in
+    //      front of the string in the first word -- are made ~c, which is
+    //      never c, rather than masked out of every word's flags.
+    //
+    "5:  mov %rdi, %r8  # keep the start\n"
+    "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n   shl $3, %ecx\n"
+    "mov $1, %r9\n   shl %cl, %r9\n   dec %r9  # ones below the string, zero if aligned\n"
+    "or %r9, %rdx  # so they cannot look like a terminator\n"
+    "movabs $0xfefefefefefefeff, %r10  # -0x0101010101010101\n"
+    "movabs $0x8080808080808080, %r11\n"
+    "lea (%rdx,%r10), %rax\n   not %rdx\n   and %rdx, %rax\n   and %r11, %rax\n   jnz 2f\n"
+    "1:  add $8, %rdi\n   mov (%rdi), %rdx\n   lea (%rdx,%r10), %rax\n   not %rdx\n   and %rdx, %rax\n"
+    "and %r11, %rax\n   jz 1b\n"
+    "2:  bsf %rax, %rcx\n   sub $7, %ecx\n   mov $1, %rdx\n   shl %cl, %rdx\n   dec %rdx  # the bytes under the terminator\n"
+    "movzbl %sil, %ecx\n   movabs $0x0101010101010101, %rsi\n   imul %rsi, %rcx  # c in every byte\n"
+    "mov (%rdi), %rax\n   and %rdx, %rax\n   not %rdx\n   mov %rcx, %rsi\n   not %rsi\n   and %rdx, %rsi\n"
+    "or %rsi, %rax  # the terminator and what follows it are ~c\n"
+    "and $-8, %r8  # the word the string starts in\n"
+    "cmp %r8, %rdi\n   ja 12f\n"
+    "13: mov %r9, %rdx\n   not %rdx\n   and %rdx, %rax\n   mov %rcx, %rsi\n   not %rsi\n   and %r9, %rsi\n"
+    "or %rsi, %rax  # and so is what sits in front of the string\n"
+    "12: xor %rcx, %rax  # zero where the byte matched\n"
+    "lea (%rax,%r10), %rdx\n   mov %rax, %rsi\n   not %rsi\n   and %rsi, %rdx\n   test %r11, %rdx\n"
+    "jnz 14f  # a match, or a lie above one: either way there is one\n"
+    "cmp %r8, %rdi\n   jbe 15f  # that was the first word\n"
+    "sub $8, %rdi\n   mov (%rdi), %rax\n   cmp %r8, %rdi\n   ja 12b\n   jmp 13b\n"
+    "14: mov %r11, %rsi\n   not %rsi  # 0x7f in every byte\n"
+    "mov %rax, %rdx\n   and %rsi, %rdx\n   add %rsi, %rdx\n   or %rax, %rdx\n   or %rsi, %rdx\n"
+    "not %rdx  # the matches, exactly\n"
+    "bsr %rdx, %rdx\n   shr $3, %rdx\n   lea (%rdi,%rdx), %rax\n"
+    ASM_RET
+    "15: xor %eax, %eax\n"
     ASM_RET
     ASM_END(string_last_of_or_end)
     //
@@ -5237,30 +5598,44 @@ __asm__(
     //       string_last_of takes p8 and is zero extended, which is a different
     //       answer to a different question.
     //
+    //
+    //       string_copy is string_length's scan, storing as it goes once the
+    //       string is long, and memory_copy_apart for what is left;
+    //       WIDE_COPY_HEAD and the two block loops under it say how. It had
+    //       a scan of its own: a thirty two byte vector a turn for the
+    //       terminator and eight bytes a turn under that, and it measured
+    //       384% over the copy floor at four thousand and ninety six bytes
+    //       and 109% at a megabyte on a 9950X. string_length's four vectors
+    //       a turn sit at the floor of their own traffic and
+    //       memory_copy_apart at the floor of its.
+    //
+    //       The scan is inline and not a call. A call to string_length with
+    //       the two arguments pushed around it measured seven ticks on a
+    //       sixty four byte copy, 14.5 against 21.8, and the shell copies
+    //       short strings all day; inline, the length lands in %rax and the
+    //       source in %r8, and the scan never touches %r9, which is where
+    //       the destination waits.
+    //
     ASM_FUNC(string_copy)
+    "mov %rdi, %r9  # the destination, where the scan will not look\n   mov %rsi, %rdi\n"
     ASM_USERSPACE_WIDE(
-    ASM_NARROW("cpu_has_avx2", "5f")
-    "vpxor %xmm1, %xmm1, %xmm1\n   mov %rsi, %r8\n   and $-32, %r8  # same page as the string: cannot fault\n"
-    "mov %esi, %ecx\n   and $31, %ecx\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n"
-    "shr %cl, %eax  # the bytes in front of the string are not ours\n"
-    "test %eax, %eax\n   jnz 2f\n"
-    "1:  add $32, %r8\n   vpcmpeqb (%r8), %ymm1, %ymm0\n   vpmovmskb %ymm0, %eax\n   test %eax, %eax\n"
-    "jz 1b\n   bsf %eax, %eax\n   add %r8, %rax\n   sub %rsi, %rax\n"
-    "jmp 3f\n"
-    "2:  bsf %eax, %eax\n"
-    "3:  lea 1(%rax), %rdx  # the terminator is copied too\n"
-    "vzeroupper\n   jmp memory_copy_apart\n"
+        ASM_NARROW("cpu_has_avx2", "5f")
+        WIDE_COPY_HEAD
+        AVX2_COPY_BLOCKS
+        "6:  " AVX512_COPY_BLOCKS
     )
-    //       No AVX2: the same scan eight bytes at a time, as string_length does it.
-    "5:  mov %rsi, %r8\n   mov %esi, %ecx\n   and $7, %ecx\n   and $-8, %r8\n"
-    "mov (%r8), %rdx\n   shl $3, %ecx\n   mov $1, %rax\n   shl %cl, %rax\n"
-    "dec %rax\n   or %rax, %rdx  # so the bytes in front cannot look like a terminator\n"
-    "movabs $0x0101010101010101, %r10\n   movabs $0x8080808080808080, %r11\n"
-    "1:  mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %r9\n   not %r9\n"
-    "and %r9, %rax\n   and %r11, %rax\n   jnz 2f\n   add $8, %r8\n"
-    "mov (%r8), %rdx\n   jmp 1b\n"
-    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %r8, %rax\n   sub %rsi, %rax\n"
-    "lea 1(%rax), %rdx\n   jmp memory_copy_apart\n"
+    //       string_length's word at a time loop, and the same tail.
+    ".balign 32\n"
+    "5:  mov %rdi, %r8  # keep the start\n"
+    "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n   shl $3, %ecx\n"
+    "mov $1, %rax\n   shl %cl, %rax\n   dec %rax\n   or %rax, %rdx  # so the bytes in front cannot look like a terminator\n"
+    "movabs $0xfefefefefefefeff, %r10  # -0x0101010101010101\n"
+    "movabs $0x8080808080808080, %r11\n"
+    "lea (%rdx,%r10), %rax\n   not %rdx\n   and %rdx, %rax\n   and %r11, %rax\n   jnz 2f\n"
+    "1:  add $8, %rdi\n   mov (%rdi), %rdx\n   lea (%rdx,%r10), %rax\n   not %rdx\n   and %rdx, %rax\n"
+    "and %r11, %rax\n   jz 1b\n"
+    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n   sub %r8, %rax\n"
+    STRING_COPY_TAIL
     ASM_END(string_copy)
     ASM_SECTION
     //
