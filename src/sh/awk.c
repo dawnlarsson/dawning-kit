@@ -60,6 +60,14 @@ typedef struct
         p8 text[1];
 } awk_text;
 
+// The same bytes: a length and a compare, which eleven lookups each spelled
+// on two lines of their own.
+static inline INLINE bool awk_text_is(awk_text address_to text,
+                                      string_address bytes, positive length)
+{
+        return text->length == length && !memory_compare(text->text, bytes, length);
+}
+
 static awk_text awk_empty_text = {1000000000, 0, {0}};
 
 static awk_text address_to awk_text_room(positive length)
@@ -1555,8 +1563,7 @@ static PURE awk_slot address_to awk_array_find_hash(awk_array address_to which,
         positive where = hash & (which->width - 1);
 
         for (awk_slot address_to slot = which->buckets[where]; slot; slot = slot->next)
-                if (slot->hash == hash && slot->key->length == length &&
-                    !memory_compare(slot->key->text, key, length))
+                if (slot->hash == hash && awk_text_is(slot->key, key, length))
                         return slot;
 
         return null;
@@ -1604,8 +1611,7 @@ static fn awk_array_remove(awk_array address_to which, string_address key, posit
         {
                 awk_slot address_to slot = address_to link;
 
-                if (slot->hash == hash && slot->key->length == length &&
-                    !memory_compare(slot->key->text, key, length))
+                if (slot->hash == hash && awk_text_is(slot->key, key, length))
                 {
                         address_to link = slot->next;
                         awk_text_drop(slot->key);
@@ -1721,8 +1727,7 @@ static fn awk_fatal(string_address about, string_address reason);
 static b32 awk_global_find(string_address name, positive length)
 {
         for (b32 i = 0; i < awk_global_count; i++)
-                if (awk_global_names[i]->length == length &&
-                    !memory_compare(awk_global_names[i]->text, name, length))
+                if (awk_text_is(awk_global_names[i], name, length))
                         return i;
 
         if (awk_global_count == AWK_GLOBALS_MAX)
@@ -1845,9 +1850,8 @@ static fn awk_regex_mark()
 static regex_program address_to awk_regex_dynamic(awk_text address_to pattern)
 {
         for (b32 i = 0; i < awk_regex_cache_count; i++)
-                if (awk_regex_cache_key[i]->length == pattern->length &&
-                    !memory_compare(awk_regex_cache_key[i]->text, pattern->text,
-                                    pattern->length))
+                if (awk_text_is(awk_regex_cache_key[i], pattern->text,
+                                pattern->length))
                         return address_of awk_regex_cache[i];
 
         if (awk_regex_cache_count == AWK_REGEX_CACHED)
@@ -2034,17 +2038,19 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
 
                 if (paragraph)
                 {
-                        for (positive scan = at; scan < length; scan++)
-                                if (text[scan] == '\n')
-                                {
-                                        if (cut == TEXT_UNSET || scan < cut)
-                                        {
-                                                cut = scan;
-                                                stop = scan + 1;
-                                        }
+                        p8 address_to newline = (p8 address_to)memory_first_of(
+                            text + at, '\n', length - at);
 
-                                        break;
+                        if (newline)
+                        {
+                                positive scan = (positive)(newline - text);
+
+                                if (cut == TEXT_UNSET || scan < cut)
+                                {
+                                        cut = scan;
+                                        stop = scan + 1;
                                 }
+                        }
                 }
 
                 if (cut == TEXT_UNSET)
@@ -2388,9 +2394,7 @@ static b32 awk_wait_for(bipolar child)
 
 static bool awk_name_is(awk_text address_to name, string_address what)
 {
-        positive length = string_length(what);
-
-        return name->length == length && !memory_compare(name->text, what, length);
+        return awk_text_is(name, what, string_length(what));
 }
 
 static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
@@ -2410,8 +2414,7 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
         {
                 if (awk_writers[i].live)
                 {
-                        if (awk_writers[i].name->length == name->length &&
-                            !memory_compare(awk_writers[i].name->text, name->text, name->length))
+                        if (awk_text_is(awk_writers[i].name, name->text, name->length))
                                 return address_of awk_writers[i];
                 }
                 else if (free_slot < 0)
@@ -2524,8 +2527,7 @@ static awk_reader address_to awk_reader_for(awk_text address_to name, bool pipe)
                 if (awk_readers[i].live)
                 {
                         if (awk_readers[i].pipe == pipe &&
-                            awk_readers[i].name->length == name->length &&
-                            !memory_compare(awk_readers[i].name->text, name->text, name->length))
+                            awk_text_is(awk_readers[i].name, name->text, name->length))
                                 return address_of awk_readers[i];
                 }
                 else if (free_slot < 0)
@@ -2930,9 +2932,18 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
         while (at < length)
         {
+                // The bytes up to the next conversion go across as one run.
+                // A byte at a time, with a room check in each, was the cost
+                // of every CONVFMT and OFMT conversion.
                 if (format[at] != '%')
                 {
-                        awk_builder_char(address_of build, format[at++]);
+                        p8 address_to next = (p8 address_to)memory_first_of(
+                            format + at, '%', length - at);
+                        positive run = next ? (positive)(next - (format + at))
+                                            : length - at;
+
+                        awk_builder_put(address_of build, format + at, run);
+                        at += run;
                         continue;
                 }
 
@@ -3964,8 +3975,7 @@ static b32 awk_resolve(awk_text address_to name)
 {
         if (awk_inside_function)
                 for (b32 i = 0; i < awk_local_count; i++)
-                        if (awk_local_names[i]->length == name->length &&
-                            !memory_compare(awk_local_names[i]->text, name->text, name->length))
+                        if (awk_text_is(awk_local_names[i], name->text, name->length))
                                 return -(i + 1);
 
         return awk_global_find(name->text, name->length);
@@ -3974,8 +3984,7 @@ static b32 awk_resolve(awk_text address_to name)
 static b32 awk_function_named(awk_text address_to name)
 {
         for (b32 i = 0; i < awk_function_count; i++)
-                if (awk_functions[i].name->length == name->length &&
-                    !memory_compare(awk_functions[i].name->text, name->text, name->length))
+                if (awk_text_is(awk_functions[i].name, name->text, name->length))
                         return i;
 
         if (awk_function_count == AWK_FUNCTIONS_MAX)
@@ -6033,9 +6042,8 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
 
                         for (b32 i = 0; i < AWK_STREAMS_MAX; i++)
                                 if (awk_writers[i].live &&
-                                    awk_writers[i].name->length == name->length &&
-                                    !memory_compare(awk_writers[i].name->text, name->text,
-                                                    name->length))
+                                    awk_text_is(awk_writers[i].name, name->text,
+                                                name->length))
                                         awk_writer_flush(address_of awk_writers[i]);
 
                         awk_text_drop(name);

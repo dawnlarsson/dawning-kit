@@ -1571,6 +1571,51 @@ static inline INLINE positive digit_known(p8 character, positive base)
 }
 
 /*
+        A run of digits in a folded base, refused rather than wrapped.
+
+        string_digits_max wraps by contract and says nothing, which every
+        size and count a shell parses is checked against its own limit
+        afterwards. A util-linux operand has no such limit behind it: a
+        priority or a descriptor that wrapped reached the kernel as a
+        different number. dd and the util-linux applets each wrote this
+        loop; it answers false with nothing consumed when there is no digit
+        or when a digit would not fit, and moves the cursor past the run
+        otherwise.
+*/
+static inline bool string_digits_checked(string_address address_to text,
+                                         positive base,
+                                         positive address_to value)
+{
+        string_address at = address_to text;
+        positive got = 0;
+        bool any = false;
+
+        while (1)
+        {
+                positive digit = digit_known(string_get(at), base);
+
+                if (digit >= base)
+                        break;
+
+                positive scaled;
+
+                if (__builtin_mul_overflow(got, base, address_of scaled) ||
+                    __builtin_add_overflow(scaled, digit, address_of got))
+                        return false;
+
+                at++;
+                any = true;
+        }
+
+        if (!any)
+                return false;
+
+        address_to text = at;
+        address_to value = got;
+        return true;
+}
+
+/*
         strtol and strtoul with the base folded.
 
         The signed and unsigned contracts differ only in what an overflow

@@ -163,32 +163,6 @@ static fn dd_summary()
         text_error_raw("/s\n");
 }
 
-static bool dd_digits(string_address address_to text, positive address_to value)
-{
-        string_address at = address_to text;
-        positive made = 0;
-        bool any = false;
-
-        while (byte_is_digit(string_get(at)))
-        {
-                positive digit = (positive)(string_get(at) - '0');
-
-                if (made > (positive_max - digit) / 10)
-                        return false;
-
-                made = made * 10 + digit;
-                at++;
-                any = true;
-        }
-
-        if (!any)
-                return false;
-
-        address_to text = at;
-        address_to value = made;
-        return true;
-}
-
 static bool dd_size(string_address text, positive address_to out)
 {
         positive total = 1;
@@ -201,7 +175,7 @@ static bool dd_size(string_address text, positive address_to out)
         {
                 positive value;
 
-                if (!dd_digits(address_of at, address_of value))
+                if (!string_digits_checked(address_of at, 10, address_of value))
                         return false;
 
                 positive power = file_size_power(string_get(at), false);
@@ -2862,7 +2836,7 @@ static bool diff_context_set(string_address value)
                 return true;
         }
 
-        if (!dd_digits(address_of at, address_of context) || string_get(at) ||
+        if (!string_digits_checked(address_of at, 10, address_of context) || string_get(at) ||
             context > (positive_max - 1) / 2)
         {
                 text_error(value, "invalid context length");
@@ -3556,7 +3530,7 @@ static bool ps_pid_list(string_address list,
                 positive value;
                 string_address at = item.from;
 
-                if (!dd_digits(address_of at, address_of value) ||
+                if (!string_digits_checked(address_of at, 10, address_of value) ||
                     !value || (positive)(at - item.from) != item.length)
                         return false;
 

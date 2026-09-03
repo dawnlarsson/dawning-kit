@@ -67,37 +67,6 @@ static COLD b32 ul_bad_usage(string_address program, string_address message)
         return 1;
 }
 
-static COLD bool ul_size_number(
-    string_address address_to text, positive base, positive address_to value)
-{
-        string_address at = address_to text;
-        positive got = 0;
-        bool any = false;
-
-        while (1)
-        {
-                positive digit = digit_known(string_get(at), 16);
-
-                if (digit >= base)
-                        break;
-
-                positive scaled;
-
-                if (__builtin_mul_overflow(got, base, address_of scaled) ||
-                    __builtin_add_overflow(scaled, digit, address_of got))
-                        return false;
-
-                at++;
-                any = true;
-        }
-
-        if (!any)
-                return false;
-
-        address_to text = at;
-        address_to value = got;
-        return true;
-}
 
 static bool ul_unsigned(string_address text, positive maximum,
                         positive address_to value)
@@ -112,7 +81,7 @@ static bool ul_unsigned(string_address text, positive maximum,
         else if (string_is(at, '-'))
                 return false;
 
-        if (!ul_size_number(address_of at, 10, address_of got) ||
+        if (!string_digits_checked(address_of at, 10, address_of got) ||
             string_get(at) || got > maximum)
                 return false;
 
@@ -135,7 +104,7 @@ static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
         if (negative || string_is(at, '+'))
                 at++;
 
-        if (!ul_size_number(address_of at, 10, address_of magnitude) ||
+        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
             string_get(at) ||
             magnitude > (positive)bipolar_max + (negative ? 1 : 0))
                 return false;
@@ -282,7 +251,7 @@ static bool ul_cpu_list(string_address text, positive address_to set)
                 positive last;
                 positive stride = 1;
 
-                if (!ul_size_number(address_of at, 10, address_of first) ||
+                if (!string_digits_checked(address_of at, 10, address_of first) ||
                     first >= UL_CPU_BITS)
                         return false;
 
@@ -290,7 +259,7 @@ static bool ul_cpu_list(string_address text, positive address_to set)
                 if (string_is(at, '-'))
                 {
                         at++;
-                        if (!ul_size_number(address_of at, 10, address_of last) ||
+                        if (!string_digits_checked(address_of at, 10, address_of last) ||
                             last < first || last >= UL_CPU_BITS)
                                 return false;
                 }
@@ -298,7 +267,7 @@ static bool ul_cpu_list(string_address text, positive address_to set)
                 if (string_is(at, ':'))
                 {
                         at++;
-                        if (!ul_size_number(address_of at, 10,
+                        if (!string_digits_checked(address_of at, 10,
                                             address_of stride) ||
                             !stride)
                                 return false;
@@ -451,7 +420,7 @@ static bool ul_size(string_address text, positive address_to value)
                         base = 8;
         }
 
-        if (!ul_size_number(address_of at, base, address_of whole))
+        if (!string_digits_checked(address_of at, base, address_of whole))
                 return false;
 
         if (string_is(at, '.'))
@@ -464,7 +433,7 @@ static bool ul_size(string_address text, positive address_to value)
                         at++;
                 }
                 if (byte_is_digit(string_get(at)) &&
-                    !ul_size_number(address_of at, 10, address_of fraction))
+                    !string_digits_checked(address_of at, 10, address_of fraction))
                         return false;
         }
 
@@ -2383,7 +2352,7 @@ static bool ul_personality_number(string_address text, p32 address_to out)
                 at++;
         if (string_is(at, '0') && byte_to_lower(string_get(at + 1)) == 'x')
                 at += 2;
-        if (!ul_size_number(address_of at, 16, address_of value) ||
+        if (!string_digits_checked(address_of at, 16, address_of value) ||
             string_get(at) ||
             (!negative && value > 0x7fffffff) ||
             (negative && value > ((positive)1 << 63)))
@@ -2589,7 +2558,7 @@ static bool ul_wait_operand(string_address text, b32 address_to pid,
         while (byte_is_space(string_get(at))) at++;
         if (string_is(at, '+')) at++;
         else if (string_is(at, '-')) return false;
-        if (!ul_size_number(address_of at, 10, address_of value) || !value ||
+        if (!string_digits_checked(address_of at, 10, address_of value) || !value ||
             value > b32_max || (colon ? at != colon : string_get(at)))
                 return false;
         address_to pid = (b32)value;
@@ -2599,7 +2568,7 @@ static bool ul_wait_operand(string_address text, b32 address_to pid,
         {
                 at = colon + 1;
                 positive got;
-                if (!ul_size_number(address_of at, 10, address_of got) ||
+                if (!string_digits_checked(address_of at, 10, address_of got) ||
                     string_get(at) || !got)
                         return false;
                 address_to inode = got;
@@ -2936,7 +2905,7 @@ static COLD bool ul_cap_status(p64 sets[5])
                 if (!found) return false;
                 found += string_length(names[i]);
                 positive value;
-                if (!ul_size_number(address_of found, 16, address_of value))
+                if (!string_digits_checked(address_of found, 16, address_of value))
                         return false;
                 sets[i] = value;
         }
@@ -3334,15 +3303,15 @@ static bool ul_namespace_range(string_address text,
         positive outside;
         positive count;
 
-        if (!ul_size_number(address_of at, 10, address_of inside) ||
+        if (!string_digits_checked(address_of at, 10, address_of inside) ||
             !string_is(at, ':'))
                 return false;
         at++;
-        if (!ul_size_number(address_of at, 10, address_of outside) ||
+        if (!string_digits_checked(address_of at, 10, address_of outside) ||
             !string_is(at, ':'))
                 return false;
         at++;
-        if (!ul_size_number(address_of at, 10, address_of count) ||
+        if (!string_digits_checked(address_of at, 10, address_of count) ||
             string_get(at) || !count || inside > p32_max ||
             outside > p32_max || count > p32_max ||
             inside + count > p32_max || outside + count > p32_max)

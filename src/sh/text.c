@@ -865,7 +865,11 @@ static positive regex_loop_at[REGEX_CODE_MAX];
 */
 #define REGEX_LITERAL_MAX 256
 
-static p8 regex_first_store[REGEX_FIRST_MAX][256];
+// Two tables in one row: the bytes a match can begin with, and behind them
+// their complement as a set for the span routine, which is how the skip to
+// the next possible start runs over a line eight or more bytes at a time
+// rather than one. A program's row moves with the program.
+static p8 regex_first_store[REGEX_FIRST_MAX][512];
 static p8 regex_last_store[REGEX_FIRST_MAX][256];
 static p8 regex_literal_store[REGEX_FIRST_MAX][REGEX_LITERAL_MAX];
 static b32 regex_first_used;
@@ -1973,6 +1977,10 @@ static fn regex_finish()
         memory_fill(regex_visited, 0, (positive)regex_length_code);
         regex_first_known = !regex_first_walk(0);
 
+        if (regex_first_known)
+                for (positive c = 0; c < 256; c++)
+                        regex_first[256 + c] = !regex_first[c];
+
         // Where the match can end in more than one place. A pattern of fixed
         // length always matches as far as it can, and asking for a longer
         // match than the one just found would be asking for nothing.
@@ -2349,8 +2357,8 @@ static bool regex_search(string_address text, positive length, positive from)
         {
                 if (regex_first_known)
                 {
-                        while (at < length && !regex_first[text[at]])
-                                at++;
+                        at += string_span_max(text + at, length - at,
+                                              (const b8 address_to)(regex_first + 256));
 
                         // The table exists only when a match must eat a
                         // character, so there is nothing left to try.
@@ -4827,10 +4835,13 @@ static b32 text_cut()
                                         while (at <= line_length)
                                         {
                                                 positive from = at;
+                                                p8 address_to next =
+                                                    (p8 address_to)memory_first_of(
+                                                        line + at, (b8)delimiter,
+                                                        line_length - at);
 
-                                                while (at < line_length &&
-                                                       line[at] != delimiter)
-                                                        at++;
+                                                at = next ? (positive)(next - line)
+                                                          : line_length;
 
                                                 if (text_list_has(which) != complement)
                                                 {
@@ -4904,10 +4915,20 @@ static b32 text_cut()
                                 {
                                         positive from = at;
 
-                                        while (at < line_length &&
-                                               (whitespace ? !byte_is_blank(line[at])
-                                                           : line[at] != delimiter))
-                                                at++;
+                                        if (whitespace)
+                                                at += string_span_max(
+                                                    line + at, line_length - at,
+                                                    text_inside());
+                                        else
+                                        {
+                                                p8 address_to next =
+                                                    (p8 address_to)memory_first_of(
+                                                        line + at, (b8)delimiter,
+                                                        line_length - at);
+
+                                                at = next ? (positive)(next - line)
+                                                          : line_length;
+                                        }
 
                                         if (text_list_has(which) != complement)
                                         {
@@ -5896,8 +5917,12 @@ static bool grep_skip(positive address_to lines, positive address_to bytes)
                                                  grep_literal_anchors.y);
                 positive stop = found ? (positive)(found - at) : left;
 
-                while (stop && at[stop - 1] != text_delimiter)
-                        stop--;
+                {
+                        p8 address_to last = (p8 address_to)memory_last_of(
+                            at, (b8)text_delimiter, stop);
+
+                        stop = last ? (positive)(last - at) + 1 : 0;
+                }
 
                 if (lines)
                         address_to lines += memory_count(at, stop,
@@ -7618,8 +7643,8 @@ static p8 sed_peek()
 
 static fn sed_skip_blanks()
 {
-        while (sed_at < sed_script_length && byte_is_blank(sed_script[sed_at]))
-                sed_at++;
+        sed_at += string_span_max(sed_script + sed_at,
+                                  sed_script_length - sed_at, string_set_blanks);
 }
 
 // Everything up to the next unescaped delimiter, with an escaped delimiter
@@ -9577,19 +9602,7 @@ static b32 sort_month_of(p8 address_to at, positive length)
 
         for (b32 m = 0; m < 12; m++)
         {
-                b32 c = 0;
-
-                for (; c < 3; c++)
-                {
-                        p8 one = at[scan + c];
-
-                        one = one >= 'a' && one <= 'z' ? (p8)(one - 32) : one;
-
-                        if (one != sort_months[m][c])
-                                break;
-                }
-
-                if (c == 3)
+                if (!memory_compare_ascii_case(at + scan, sort_months[m], 3))
                         return m + 1;
         }
 
