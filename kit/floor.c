@@ -318,6 +318,19 @@ b32 main(void)
 
         moonwater_cpu_detect();
 
+        /*
+                The kernel shape: a kernel build has no vector body, so what
+                it runs is the word at a time path under every routine here,
+                and the floor for that path is the scalar loop. Built with
+                -DFLOOR_NARROW this measures exactly that, natively, which a
+                kernel cannot do for itself.
+        */
+#ifdef FLOOR_NARROW
+        cpu_has_avx2 = 0;
+        cpu_has_avx512 = 0;
+        string_format(log, "  (narrow bodies against the scalar floor: the kernel shape)\n");
+#endif
+
         string_format(log, "  routine                 size     gap to traffic lower bound\n");
         string_format(log, "  -----------------------------------------------------\n");
 

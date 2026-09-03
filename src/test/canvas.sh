@@ -103,7 +103,9 @@ guest = subprocess.Popen([
     "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial",
     "-qmp", "unix:" + qmp + ",server,nowait",
     "-monitor", "unix:" + mon + ",server,nowait",
-    "-append", "console=ttyS0 drm_client_lib.active="],
+    # CANVAS_APPEND adds to the guest's command line: a profiling run wants
+    # nokaslr so the samples map onto System.map.
+    "-append", "console=ttyS0 drm_client_lib.active= " + os.environ.get("CANVAS_APPEND", "")],
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 for _ in range(200):
