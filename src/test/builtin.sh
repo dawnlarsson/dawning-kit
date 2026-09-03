@@ -217,6 +217,34 @@ answer 'precision zero escapes' "printf '[%5.0b]' 'a\\tb'; echo"
 answer 'precision zero held' "printf '[%.4b][%.0b]' WXYZ q; echo"
 answer 'long measured escapes' 'v=$(awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "x" }'\''); printf "%.6000b" "$v" | wc -c'
 
+#       The grammar an integer conversion reads: strtoimax's, with a quote
+#       meaning the byte after it. Nothing is zero and no complaint; a tail
+#       the digits did not use is a complaint after the number, and no digits
+#       at all is zero with the other complaint.
+group grammar
+answer 'empty is zero'   "printf '%d|' ''; echo"
+answer 'missing is zero' "printf '%d %d|' 1; echo \$?"
+answer 'quote is a byte' "printf '%d %d\\n' \"'a\" '\"b'"
+answer 'hexadecimal'     "printf '%d %d\\n' 0x10 -0X1f"
+answer 'octal'           "printf '%d %u\\n' 010 0"
+answer 'blanks in front' "printf '%d\\n' ' 12'; echo \$?"
+answer 'not completely'  "printf '%d\\n' 12abc; echo \$?"
+answer 'unsigned forms'  "printf '%u %o %x %X\\n' 42 8 255 255"
+answer 'alternate forms' "printf '%#x %#X %#o %#x %#o\\n' 255 255 8 0 0"
+answer 'alternate width' "printf '[%#6x][%-#6x][%#06x]\\n' 255 255 255"
+answer 'star grammar'    "printf '[%*d]' 0x3 7; echo"
+
+#       A \\c ends the output, and not before what stood in front of it.
+group cut
+answer 'cut in a field'  "printf '[%5b]' 'ab\\c'; echo"
+answer 'cut then more'   "printf '[%3b][%s]' 'a\\cz' next; echo done"
+
+#       \\0 opens an octal escape only in an argument; in the format it is
+#       the first of the digits, as the reference shell reads it.
+group format-octal
+answer 'format zero'     "printf 'x\\0101y' | od -An -c | tr -s ' '"
+answer 'argument zero'   "printf '%b' 'x\\0101y'; echo"
+
 group status
 answer 'not a number'    "printf '%d\\n' abc; echo \$?"
 answer 'bad star width'  "printf '[%*s]\\n' nope x; echo \$?"
@@ -416,6 +444,31 @@ section hash
 #       dash keeps its table in an order of its own and prints it in that
 #       order, so anything with more than one name in it is comparing hash
 #       functions. One name at a time is the same in both.
+#       trap takes a signal by any spelling kill does: either case, with or
+#       without SIG, the three Linux aliases, and numbers no further than 64.
+group signals
+answer 'lower case name' 'trap : int; echo $?; trap : Int; echo $?; trap : hUp; echo $?'
+answer 'linux io name'   'trap "echo io" IO; kill -IO $$; echo $?'
+answer 'past the last'   'trap : 64; echo $?; trap : 65 2>/dev/null; echo $?'
+answer 'real-time number' 'trap "echo rt" 40; kill -40 $$; echo $?'
+
+#       set with no words is every variable as a line the shell could be
+#       fed: sorted and quoted; export -p and readonly -p sort as well.
+group listing
+answer 'set sorted quoted' "b='x y'; a=\"it's\"; set | grep '^[ab]='"
+answer 'export sorted'   'export zz=1 aa=2; export -p | grep " [az][az]="'
+answer 'readonly sorted' 'readonly zz=1 aa=2; readonly -p | grep " [az][az]="'
+
+#       A special builtin that fails ends a script: set with a bad option
+#       name, and . with a file it cannot open.
+group fatal
+answer 'set option unknown' 'set -o nosuch 2>/dev/null; echo after'
+answer 'dot missing status' 'sh -c ". /nonexistent 2>/dev/null; echo after"; echo $?'
+
+#       echo takes one -n, and the reference shell prints the second.
+group echo
+answer 'echo -n twice'   'echo -n -n x; echo'
+
 group table
 answer 'nothing yet'     'hash; echo $?'
 answer 'a name asked'    'PATH=/usr/bin; hash ls; echo $?; hash'

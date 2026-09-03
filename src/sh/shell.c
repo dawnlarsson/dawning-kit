@@ -399,6 +399,10 @@ static bool shell_tail_command;
 static bool shell_tail_line_requested;
 fn shell_thread_instance_mode(bool preserve_ignored);
 
+// More than one line of source, run one at a time: what a trap action, eval
+// and dot hand over. Defined beside run_line below, after the executor.
+fn run_lines(string_address text);
+
 /* The mount table is shared by file and storage utilities. Its parser lives
    in storage_discovery.c, while this declaration keeps consumers independent
    of source inclusion order. */
@@ -577,18 +581,34 @@ string_address shell_arguments()
         return argument_line;
 }
 
+/*
+        A command gets the default disposition back, unless somebody chose
+        otherwise.
+
+        Ignored signals cross execve, and this shell ignores interrupt so that
+        control-C does not take it down with the command. Handing that
+        deafness on would leave the command uninterruptible -- but the
+        deafness is the shell's own, and two other decisions outrank it: the
+        script's, made with trap '' on the signal, and that of whoever started
+        this shell with the signal already ignored. Both mean "the commands
+        too", and giving the default back over either made a subshell or a
+        spawned program the one thing in the script control-C could reach.
+*/
+static fn shell_child_default(b32 number)
+{
+        if (!trap_ignored((positive)number) && !shell_was_ignored(number))
+                shell_default(number);
+}
+
 DEAD_END fn shell_thread_instance_mode(bool preserve_ignored)
 {
         string_address address_to environment;
 
-        // Ignored signals cross execve, and this shell ignores interrupt so
-        // that control-C does not take it down with the command. Handing that
-        // deafness on would leave the command uninterruptible.
-        if (!preserve_ignored && !shell_was_ignored(SIGNAL_INTERRUPT))
-                shell_default(SIGNAL_INTERRUPT);
-
-        if (!preserve_ignored && !shell_was_ignored(SIGNAL_QUIT))
-                shell_default(SIGNAL_QUIT);
+        if (!preserve_ignored)
+        {
+                shell_child_default(SIGNAL_INTERRUPT);
+                shell_child_default(SIGNAL_QUIT);
+        }
 
         environment = shell_environment();
         if (!environment)
@@ -983,7 +1003,6 @@ static fn run_line_inner(string_address line)
                 shell_tail_command = held_tail;
         }
         parse_reset();
-        shell_expand_reset();
 
         // A signal that arrived while the shell was reading rather than
         // running has no command boundary of its own to wait for.
@@ -1025,6 +1044,80 @@ fn run_line(string_address line)
 
         run_line_inner(line);
         shell_run_depth--;
+
+        /*
+                The words a line made die with it -- the outer line's.
+
+                A nested line runs while the command that started it is still
+                standing on its own words in the same store: argv, and the
+                assignments in front of it that have to be taken back when it
+                is over. Resetting from inside a sourced file or a trap action
+                handed those words to the next nested line to write over, and
+                an export meant for one command was released by name from
+                whatever had landed there instead.
+        */
+        if (top)
+                shell_expand_reset();
+}
+
+/*
+        More than one line, run one at a time.
+
+        run_line is one physical line: the lexer stops at a newline, so a trap
+        action or an eval argument with a second line lost everything after
+        the first. The parser already joins the lines that belong together --
+        an open quote, a substitution, a here-document body -- because that
+        is how the reader feeds it, so this hands over the same physical lines
+        the reader would and leaves the joining to the parser.
+
+        The text is copied before it is cut up, because it may not be there
+        by the time the second line runs: a trap action is the trap table's
+        own copy and the first line is allowed to be "trap - USR1".
+*/
+fn run_lines(string_address text)
+{
+        p8 address_to copy = null;
+        positive room = 0;
+        positive length;
+        string_address at;
+
+        if (!string_first_of(text, '\n'))
+        {
+                run_line(text);
+                return;
+        }
+
+        length = string_length(text);
+
+        if (length == positive_max ||
+            !shell_room((address_any address_to)address_of copy,
+                        address_of room, length + 1, 1))
+        {
+                string_format(exec_error, "No room to run lines\n");
+                shell_status = 2;
+                return;
+        }
+
+        memory_copy(copy, text, length + 1);
+        at = copy;
+
+        while (string_get(at))
+        {
+                string_address stop = string_first_of_or_end(at, '\n');
+
+                if (string_get(stop))
+                {
+                        address_to stop = end;
+                        stop++;
+                }
+
+                // An empty line is a line: it is a body line of a
+                // here-document, and it ends a command a backslash held open.
+                run_line(at);
+                at = stop;
+        }
+
+        memory_free(copy, room);
 }
 
 /*
@@ -1040,6 +1133,32 @@ fn shell_input_end()
 {
         if (!shell_more)
                 return;
+
+        /*
+                A here-document the input ended inside of.
+
+                dash takes the end of the input as the delimiter, says so on
+                stderr, and runs the command. Refusing the line here threw
+                away a script whose last line was the body -- which is what
+                a generated one looks like when the generator forgot the
+                delimiter, and what "cat <<EOF" typed into eval looks like
+                every time.
+        */
+        if (parse_here_open())
+        {
+                string_format(exec_error,
+                              "Warning: here-document ended by end of input"
+                              " (wanted %s)\n",
+                              parse_here_open());
+
+                while (parse_here_open())
+                        parse_here_close();
+
+                run_line_inner((string_address) "");
+
+                if (!shell_more)
+                        return;
+        }
 
         if (parse_eof_can_complete())
         {

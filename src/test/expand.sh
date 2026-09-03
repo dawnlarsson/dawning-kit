@@ -235,6 +235,9 @@ answer 'digits'         'set -- a b c; printf "[%s]" $1 $2 $3 END; echo'
 answer 'braced digits'  'set -- a b c; printf "[%s]" ${1}${2} END; echo'
 answer 'count'          'set -- a b c; printf "[%s]" $# END; echo'
 answer 'name in name'   'x=v; y=x; printf "[%s]" ${y} END; echo'
+#       ${#x} of an unset name is the same failure as $x under set -u.
+answer 'length nounset' 'set -u; unset x; echo before; printf "%s" "${#x}"; echo after'
+answer 'length nounset set' 'set -u; x=abc; printf "[%s]" "${#x}" END; echo'
 
 group default
 answer 'dash set'       'x=v; printf "[%s]" ${x-d} END; echo'
@@ -270,6 +273,12 @@ answer 'plus splits'     'x=v; printf "[%s]" ${x+D E} END; echo'
 answer 'splits on ifs'   'IFS=:; printf "[%s]" ${nosuch-D:E} END; echo'
 answer 'assign splits'   'printf "[%s]" ${x=D E} "$x" END; echo'
 answer 'nested inside'  'printf "[%s]" ${nosuch-${also-deep}} END; echo'
+#       The word is a word: a leading tilde in it expands, unless the whole
+#       form is inside double quotes.
+answer 'default tilde' 'HOME=/hh; unset x; printf "[%s]" ${x-~} ${x:-~/y} "${x-~}" END; echo'
+answer 'assign tilde' 'HOME=/hh; unset x; printf "[%s]" ${x:=~}; printf "[%s]" "$x" END; echo'
+answer 'alternate tilde' 'HOME=/hh; x=1; printf "[%s]" ${x:+~} "${x:+~}" END; echo'
+answer 'error tilde' 'HOME=/hh; x=1; printf "[%s]" ${x:?~} END; echo'
 
 group bash indirect
 bash_answer 'scalar target' \
@@ -354,6 +363,21 @@ bash_answer 'replacement fields' 'x=a-b; printf "[%s]" ${x/-/" X Y "} END; echo'
 bash_answer 'unset is empty' 'unset x; printf "[%s]" "${x/a/b}" END; echo'
 bash_check 'nounset stays fatal' 'set -u; unset x; printf before; printf "%s" "${x/a/b}"; echo after'
 bash_answer 'long replace all' "x=$long_a; y=\${x//a/bb}; echo \${#y}"
+#       A pattern that also matches nothing has matched everything once the
+#       value is used up; it does not match again at the end forever.
+bash_answer 'replace all with star' 'x=abc; printf "[%s]" "${x//*/X}" END; echo'
+bash_answer 'replace all empty with star' 'x=; printf "[%s]" "${x//*/X}" END; echo'
+bash_answer 'replace all tail star' 'x=abc; printf "[%s]" "${x//b*/X}" END; echo'
+bash_answer 'empty prefix pattern' 'x=abc; printf "[%s]" "${x/#/X}" END; echo'
+bash_answer 'empty suffix pattern' 'x=abc; printf "[%s]" "${x/%/X}" END; echo'
+#       Literal patterns take the bulk search; these keep it honest at the
+#       ends, on adjacent matches and where the pattern is longer than the
+#       value.
+bash_answer 'literal at both ends' 'x=abcab; printf "[%s]" "${x//ab/X}" END; echo'
+bash_answer 'literal adjacent' 'x=aaaa; printf "[%s]" "${x//aa/X}" "${x/aa/X}" END; echo'
+bash_answer 'literal longer than value' 'x=ab; printf "[%s]" "${x/abc/X}" "${x/#abc/X}" "${x/%abc/X}" END; echo'
+bash_answer 'literal anchored whole' 'x=abc; printf "[%s]" "${x/#abc/X}" "${x/%abc/X}" END; echo'
+bash_answer 'literal quoted star' 'x="a*c"; printf "[%s]" "${x/\*/X}" "${x/"*"/X}" END; echo'
 
 group bash substring
 bash_answer 'substring offset' 'x=abcdef; printf "[%s]" "${x:2}" END; echo'
@@ -417,6 +441,12 @@ answer 'question unset' 'unset x; printf "[%s]" "${x#?}" "${x%?}" END; echo'
 answer 'question head nounset' 'set -u; unset x; echo before; printf "%s" "${x#?}"; echo after'
 answer 'question tail nounset' 'set -u; unset x; echo before; printf "%s" "${x%?}"; echo after'
 answer 'a set'          'x=abc; printf "[%s]" ${x%[bc]} END; echo'
+#       One star beside one byte is the hunt for that byte; these keep the
+#       four directions and the missing-byte case honest.
+answer 'star byte missing' 'x=abc; printf "[%s]" "${x#*.}" "${x##*.}" "${x%.*}" "${x%%.*}" END; echo'
+answer 'star byte at ends' 'x=.a.b.; printf "[%s]" "${x#*.}" "${x##*.}" "${x%.*}" "${x%%.*}" END; echo'
+answer 'star byte alone' 'x=.; printf "[%s]" "${x#*.}" "${x##*.}" "${x%.*}" "${x%%.*}" END; echo'
+answer 'star beside star' 'x=a*b*c; printf "[%s]" "${x#*\*}" "${x##*\*}" "${x%\**}" "${x%%\**}" END; echo'
 #       The pattern is not inside the quotes around the substitution, which
 #       is where "${x##*/}" used to hand back the whole path: every byte of
 #       the pattern was marked quoted, so the star matched only a star.
@@ -428,6 +458,9 @@ answer 'quotes in it'   "x=abc; printf '[%s]' \"\${x#'a'}\" END; echo"
 #       byte to the matcher, inside the enclosing quotes as much as outside.
 answer 'escaped star'   'x="a*c"; printf "[%s]" "${x#a\*}" ${x#a\*} END; echo'
 answer 'pattern by name' 'x=/a/b/c; y="*/"; printf "[%s]" "${x#$y}" "${x#"$y"}" END; echo'
+#       Nothing to trim from an unset name, even before anything else has
+#       been expanded in the process.
+answer 'empty pattern unset first' 'printf "[%s]" "${nosuch#}" "${nosuch%}" END; echo'
 
 group special
 answer 'status'         'false; printf "[%s]" $?; true; printf "[%s]" $? END; echo'
@@ -643,6 +676,23 @@ answer 'long captured value' \
 #
 
 section glob
+#       A quoted piece that expands to nothing is still a field when it stands
+#       beside a separator: ""$x with a blank in x is one empty field, where
+#       $x alone is none. The bytes cannot say where the quotes stood, so the
+#       shell keeps a mark there instead, and these are the shapes it decides.
+answer 'quoted null before blank' 'x=" "; printf "[%s]" ""$x END; echo'
+answer 'quoted null after blank' 'x=" "; printf "[%s]" $x"" END; echo'
+answer 'quoted empty name before blank' 'a=""; b=" x"; printf "[%s]" "$a"$b END; echo'
+answer 'quoted null after word' 'x=" "; printf "[%s]" a$x"" END; echo'
+answer 'quoted null both sides' 'x=" a "; printf "[%s]" ""$x"" END; echo'
+answer 'single null after blank' "x=' '; printf '[%s]' \$x'' END; echo"
+answer 'empty at before blank' 'set -- ""; x=" "; printf "[%s]" "$@"$x END; echo'
+answer 'empty name after blank' 'x=" "; printf "[%s]" $x"$nosuch" END; echo'
+answer 'quoted null assigned' 'x=""abc; printf "[%s]" "$x" END; echo'
+answer 'quoted null redirected' 'echo hi > ""/dev/null; echo ok'
+answer 'quoted null in default' 'unset x; printf "[%s]" ${x:-""} END; echo'
+answer 'quoted null in case' 'case "" in "") echo empty;; esac'
+answer 'quoted null in for' 'x=" "; for f in ""$x; do printf "[%s]" "$f"; done; echo'
 
 group patterns
 answer 'a star'         "cd $tree; printf '[%s]' * END; echo"
@@ -680,6 +730,11 @@ answer 'class negated'  "cd $tree; printf '[%s]' [![:digit:]]*.txt END; echo"
 answer 'class and byte' "cd $tree; printf '[%s]' [[:digit:]b]*.txt END; echo"
 answer 'no such class'  "cd $tree; printf '[%s]' [[:nosuch:]]* END; echo"
 answer 'class trims'    'x=abc9; printf "[%s]" ${x%[[:digit:]]} END; echo'
+#       A backslash escapes the byte after it inside a set as well, so the
+#       set closes at the second bracket and not the escaped one.
+answer 'escaped bracket in set' 'case "]" in [\]]) echo yes;; *) echo no;; esac'
+answer 'escaped bracket member' 'case a in [\]a]) echo yes;; *) echo no;; esac'
+answer 'escaped bracket by name' 'p="[\]]"; case "]" in $p) echo yes;; *) echo no;; esac'
 
 group hidden
 #       A leading dot is not what a star matches, which is the one rule that
@@ -688,6 +743,9 @@ answer 'star skips dots' "cd $tree; printf '[%s]' * END; echo"
 answer 'dot star'       "cd $tree; printf '[%s]' .* END; echo"
 answer 'dot named'      "cd $tree; printf '[%s]' .h* END; echo"
 answer 'a set is not a dot' "cd $tree; printf '[%s]' [.]* END; echo"
+#       A dot escaped by a backslash out of an expansion is a dot written
+#       on purpose, and matches a hidden name.
+answer 'escaped dot hidden' 'cd "$tree"; x="\.h*"; printf "[%s]" $x END; echo'
 
 group quoted
 answer 'quoted star'    "cd $tree; printf '[%s]' '*' END; echo"

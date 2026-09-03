@@ -82,6 +82,10 @@ b32 shell_substitution_status;
 #define MARK_FIELD 1
 #define MARK_QUOTED 2
 #define MARK_BREAK 3
+// A quoted piece that produced no bytes. It is not a byte of the word: it
+// stands where "" stood so that splitting knows a field was there, and every
+// other reader of the text steps over it.
+#define MARK_EMPTY 4
 
 #define EXPAND_PARAMETER_INDIRECT 1
 #define EXPAND_PARAMETER_MISSING 2
@@ -97,6 +101,9 @@ static positive expand_mark_room;
 static positive expand_length;
 static bool expand_overflow;
 static bool expand_quoted_seen;
+// How many of the bytes in the buffer are empty marks and not bytes of the
+// word, so that "the word expanded to nothing" can still be asked.
+static positive expand_empty_count;
 static bool expand_failed;
 static bool expand_name_at_empty;
 static bool expand_explicit_empty;
@@ -156,6 +163,49 @@ static fn expand_push_run(string_address text, positive length, p8 mark)
         memory_copy_apart(expand_text + expand_length, text, length);
         memory_fill(expand_mark + expand_length, mark, length);
         expand_length += length;
+}
+
+/*
+        A quoted piece that produced nothing still stands in the word.
+
+        "" is an empty field, and ""$x with a blank in x is that empty field
+        and then a separator -- one field, where $x alone is none. Nothing in
+        the bytes says where the quotes stood once they have produced none,
+        so a byte that is not a byte stands there instead, marked empty. It
+        decides splitting and nothing else: every reader that copies the text
+        out steps over it, and expand_drop_empty removes it where the marks
+        have stopped mattering.
+*/
+static fn expand_push_empty()
+{
+        positive before = expand_length;
+
+        expand_push(0, MARK_EMPTY);
+
+        if (expand_length != before)
+                expand_empty_count++;
+}
+
+// The empty marks out of the text, once nothing more will ask the marks.
+static fn expand_drop_empty()
+{
+        positive used = 0;
+
+        if (!expand_empty_count)
+                return;
+
+        for (positive at = 0; at < expand_length; at++)
+        {
+                if (expand_mark[at] == MARK_EMPTY)
+                        continue;
+
+                expand_text[used] = expand_text[at];
+                expand_mark[used] = expand_mark[at];
+                used++;
+        }
+
+        expand_length = used;
+        expand_empty_count = 0;
 }
 
 static fn expand_push_string(string_address text, p8 mark)
@@ -218,6 +268,7 @@ static fn expand_begin()
         expand_sets_prepare();
 
         expand_length = 0;
+        expand_empty_count = 0;
         expand_overflow = false;
         expand_quoted_seen = false;
         expand_failed = false;
@@ -413,7 +464,12 @@ static PURE string_address expand_set_end(string_address at)
         {
                 string_address past = byte_class_end(step, null);
 
-                step = past ? past : step + 1;
+                if (past)
+                        step = past;
+                else if (string_is(step, '\\') && string_not(step + 1, end))
+                        step += 2;
+                else
+                        step++;
         }
 
         return string_get(step) ? step : null;
@@ -1013,6 +1069,8 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
 
 static COLD fn expand_fatal();
 static COLD fn expand_fatal_status(b32 status);
+static COLD fn expand_fatal_mode(b32 parameter_mode);
+static string_address expand_tilde(string_address step, bool assignment);
 
 /*
         A parameter pushed with the marks that decide its fate later.
@@ -1069,10 +1127,7 @@ static bool expand_push_parameter_as(string_address name, bool quoted,
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
                         string_format(expand_complain, "%s: parameter not set\n", name);
-                        if (mode & EXPAND_PARAMETER_INDIRECT)
-                                expand_fatal_status(1);
-                        else
-                                expand_fatal();
+                        expand_fatal_mode(mode);
                 }
 
                 return false;
@@ -1153,10 +1208,24 @@ static bool expand_sort_names(string_address address_to names, positive count);
 #define EXPAND_CAPTURE_TEXT 0
 #define EXPAND_CAPTURE_PATTERN 1
 #define EXPAND_CAPTURE_REPLACEMENT 2
+// The word of ${x:=word} and ${x:?word}: text, with a leading tilde expanded
+// first, as POSIX asks of every word a parameter form can substitute.
+#define EXPAND_CAPTURE_WORD 3
+
+// The word of ${x-word} and ${x:+word}, expanded in place: a leading tilde
+// first, unless the whole form sits inside double quotes.
+static fn expand_word_into(string_address word, bool quoted)
+{
+        if (!quoted && string_is(word, '~'))
+                word = expand_tilde(word, false);
+
+        expand_into(word, quoted, MARK_FIELD, false);
+}
 
 static string_address expand_capture(string_address text, bool quoted, b32 mode)
 {
         positive at = expand_length;
+        positive held_empty = expand_empty_count;
         bool held = expand_quoted_seen;
         bool held_name_at = expand_name_at_empty;
         bool held_explicit = expand_explicit_empty;
@@ -1165,11 +1234,17 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         positive used = 0;
         p8 address_to into;
 
+        if (mode == EXPAND_CAPTURE_WORD && !quoted && string_is(text, '~'))
+                text = expand_tilde(text, false);
+
         expand_into(text, quoted, MARK_PLAIN, false);
 
         for (step = at; step < expand_length; step++)
         {
                 p8 value = expand_text[step];
+
+                if (expand_mark[step] == MARK_EMPTY)
+                        continue;
 
                 if (room == positive_max)
                         break;
@@ -1188,6 +1263,7 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         {
                 expand_fail_state();
                 expand_length = at;
+                expand_empty_count = held_empty;
                 expand_quoted_seen = held;
                 expand_name_at_empty = held_name_at;
                 expand_explicit_empty = held_explicit;
@@ -1197,6 +1273,9 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
         for (step = at; step < expand_length; step++)
         {
                 p8 value = expand_text[step];
+
+                if (expand_mark[step] == MARK_EMPTY)
+                        continue;
 
                 if (expand_mark[step] == MARK_QUOTED &&
                     ((mode == EXPAND_CAPTURE_PATTERN &&
@@ -1209,6 +1288,7 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
 
         into[used] = end;
         expand_length = at;
+        expand_empty_count = held_empty;
         expand_quoted_seen = held;
         expand_name_at_empty = held_name_at;
         expand_explicit_empty = held_explicit;
@@ -2509,6 +2589,17 @@ static COLD fn expand_fatal()
         expand_fatal_status(2);
 }
 
+// An indirect ${!name} that fails is Bash's, and Bash leaves with 1 where
+// POSIX's own expansion errors leave with 2. Five places choose between the
+// two, and this is the one spelling of that choice.
+static COLD fn expand_fatal_mode(b32 parameter_mode)
+{
+        if (parameter_mode & EXPAND_PARAMETER_INDIRECT)
+                expand_fatal_status(1);
+        else
+                expand_fatal();
+}
+
 /*
         The word did not fit, so nothing that depends on it can go on.
 
@@ -2591,7 +2682,43 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
         bool found = false;
         positive at;
 
-        for (at = 0; at <= length; at++)
+        // An empty value cannot be shortened, and the buffer this reads is
+        // only made by the first push: ${nosuch#} as the first expansion of
+        // the process has nothing behind it yet.
+        if (!length)
+                return;
+
+        // The four forms a script writes most -- the basename and dirname
+        // idioms with a slash, ${x%%.*} and ${x#*.} -- are one star beside
+        // one plain byte, and each is answered by one hunt for that byte:
+        // the longest prefix ending in it runs to its last occurrence and
+        // the shortest to its first, and the suffixes are the mirror. The
+        // loop below asks the matcher about every cut in turn, which costs
+        // a pass over the value per byte of it and answers the same thing.
+        if (pattern[0] && pattern[1] && !pattern[2])
+        {
+                p8 star = prefix ? pattern[0] : pattern[1];
+                p8 plain = prefix ? pattern[1] : pattern[0];
+
+                if (star == '*' && plain != '*' && plain != '?' &&
+                    plain != '[' && plain != '\\')
+                {
+                        p8 address_to value = expand_text + start;
+                        bool last = prefix == longest;
+                        p8 address_to hit = (p8 address_to)(
+                            last ? memory_last_of(value, (b8)plain, length)
+                                 : memory_first_of(value, (b8)plain, length));
+
+                        if (!hit)
+                                return;
+
+                        cut = prefix ? (positive)(hit - value) + 1
+                                     : length - (positive)(hit - value);
+                        found = true;
+                }
+        }
+
+        for (at = 0; !found && at <= length; at++)
         {
                 positive size = longest ? (length - at) : at;
                 p8 held;
@@ -2743,6 +2870,55 @@ static fn expand_replace_push(string_address replacement,
         expand_push_run(run, (positive)(at - run), mark);
 }
 
+// The replacement of a literal pattern: a compare at the anchored end, or
+// the leftmost occurrence and, doubled, every one after it. A literal is
+// never empty here, so every match moves forward.
+static fn expand_replace_literal(p8 address_to source, positive length,
+                                 string_address pattern, positive need,
+                                 string_address replacement, p8 anchor,
+                                 bool global, p8 mark)
+{
+        positive copied = 0;
+
+        if (anchor)
+        {
+                positive where = anchor == '#' ? 0 : length - need;
+
+                if (need <= length && !memory_compare(source + where, pattern, need))
+                {
+                        expand_push_run(source, where, mark);
+                        expand_replace_push(replacement, source + where, need,
+                                            mark);
+                        copied = where + need;
+                }
+
+                expand_push_run(source + copied, length - copied, mark);
+                return;
+        }
+
+        positive2 anchors = memory_search_prepare(pattern, need, false);
+
+        while (copied < length)
+        {
+                p8 address_to hit = (p8 address_to)memory_search_prepared(
+                    source + copied, length - copied, pattern, need,
+                    anchors.x, anchors.y);
+
+                if (!hit)
+                        break;
+
+                expand_push_run(source + copied, (positive)(hit - source) - copied,
+                                mark);
+                expand_replace_push(replacement, hit, need, mark);
+                copied = (positive)(hit - source) + need;
+
+                if (!global)
+                        break;
+        }
+
+        expand_push_run(source + copied, length - copied, mark);
+}
+
 /*
         Bash ${name/pattern/replacement}.
 
@@ -2796,11 +2972,39 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 anchor = string_get(pattern++);
 
         // An empty pattern does not designate a match in Bash parameter
-        // replacement; the value passes through unchanged.
+        // replacement; the value passes through unchanged. Anchored, it is
+        // the empty string at that end and the replacement lands there.
         if (!string_get(pattern))
         {
+                if (anchor == '#')
+                        expand_replace_push(replacement, source, 0, mark);
+
                 expand_push_run(source, length, mark);
+
+                if (anchor == '%')
+                        expand_replace_push(replacement, source + length, 0,
+                                            mark);
+
                 return;
+        }
+
+        /*
+                A pattern with nothing magic in it is its own bytes, and the
+                bulk search finds them where the loop below would: it asks
+                the matcher about every cut of every position, which a
+                literal never needs, and ${x//,/ } over a long value paid for
+                that at every comma.
+        */
+        {
+                positive plain = string_span_without_set(pattern, "*?[\\");
+
+                if (!pattern[plain])
+                {
+                        expand_replace_literal(source, length, pattern, plain,
+                                               replacement, anchor, global,
+                                               mark);
+                        return;
+                }
         }
 
         while (at <= length)
@@ -2845,7 +3049,10 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 expand_replace_push(replacement, source + begin, size, mark);
                 copied = begin + size;
 
-                if (!global || anchor)
+                // The end of the value ends the search as well: a pattern
+                // that can also match nothing would otherwise match it there
+                // again on every turn, and the value would never be finished.
+                if (!global || anchor || copied >= length)
                         break;
 
                 // A zero-width match must still advance through the source;
@@ -2929,10 +3136,7 @@ static fn expand_substring(string_address name, string_address expression,
         if ((string_is(name, '@') || string_is(name, '*')) && !string_get(name + 1))
         {
                 string_format(expand_complain, "%s: bad substitution\n", name);
-                if (parameter_mode & EXPAND_PARAMETER_INDIRECT)
-                        expand_fatal_status(1);
-                else
-                        expand_fatal();
+                expand_fatal_mode(parameter_mode);
                 return;
         }
 
@@ -3312,10 +3516,7 @@ static string_address expand_braced(string_address step, bool quoted)
             (want_length && (operation || name_list)))
         {
                 string_format(expand_complain, "%s: bad substitution\n", name);
-                if (parameter_mode & EXPAND_PARAMETER_INDIRECT)
-                        expand_fatal_status(1);
-                else
-                        expand_fatal();
+                expand_fatal_mode(parameter_mode);
 
                 return close + 1;
         }
@@ -3406,7 +3607,17 @@ static string_address expand_braced(string_address step, bool quoted)
                                 address_of count);
 
                 if (!present)
+                {
+                        if (shell_options & ((positive)1 << ('u' - 'a')))
+                        {
+                                string_format(expand_complain,
+                                              "%s: parameter not set\n", name);
+                                expand_fatal_mode(parameter_mode);
+                                return close + 1;
+                        }
+
                         count = 0;
+                }
 
                 expand_push_run(written,
                                 bipolar_into_string(written, (bipolar)count),
@@ -3500,7 +3711,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (operation == '-')
                 {
                         if (missing)
-                                expand_into(word, quoted, MARK_FIELD, false);
+                                expand_word_into(word, quoted);
                         else
                                 expand_push_parameter(name, quoted);
 
@@ -3524,7 +3735,8 @@ static string_address expand_braced(string_address step, bool quoted)
                                         return close + 1;
                                 }
 
-                                made = expand_capture(word, quoted, false);
+                                made = expand_capture(word, quoted,
+                                                      EXPAND_CAPTURE_WORD);
 
                                 if (expand_failed)
                                         return close + 1;
@@ -3552,7 +3764,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (operation == '+')
                 {
                         if (!missing)
-                                expand_into(word, quoted, MARK_FIELD, false);
+                                expand_word_into(word, quoted);
 
                         return close + 1;
                 }
@@ -3563,7 +3775,8 @@ static string_address expand_braced(string_address step, bool quoted)
                         {
                                 string_address said;
 
-                                said = expand_capture(word, quoted, false);
+                                said = expand_capture(word, quoted,
+                                                      EXPAND_CAPTURE_WORD);
 
                                 if (expand_failed)
                                         return close + 1;
@@ -3571,10 +3784,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 string_format(expand_complain, "%s: %s\n", name,
                                               said[0] ? said : (string_address) "parameter not set");
 
-                                if (parameter_mode & EXPAND_PARAMETER_INDIRECT)
-                                        expand_fatal_status(1);
-                                else
-                                        expand_fatal();
+                                expand_fatal_mode(parameter_mode);
 
                                 return close + 1;
                         }
@@ -3650,6 +3860,7 @@ static string_address expand_simple(string_address step, bool quoted)
 static string_address expand_dollar_single(string_address step)
 {
         string_address at = step + 2;
+        positive begun = expand_length;
         bool discard = false;
 
         expand_quoted_seen = true;
@@ -3736,6 +3947,9 @@ static string_address expand_dollar_single(string_address step)
                         expand_push(value, MARK_QUOTED);
         }
 
+        if (expand_length == begun)
+                expand_push_empty();
+
         return string_get(at) ? at + 1 : at;
 }
 
@@ -3800,6 +4014,7 @@ RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
         else
                 result = expand_dollar(step, true);
 
+        expand_drop_empty();
         address_to text = expand_text;
         address_to length = expand_failed ? 0 : expand_length;
         address_to overflow = expand_overflow;
@@ -3809,6 +4024,8 @@ RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
 
 static string_address expand_double(string_address step)
 {
+        positive begun = expand_length;
+
         expand_quoted_seen = true;
 
         if (string_is(step + 1, '"'))
@@ -3874,6 +4091,9 @@ static string_address expand_double(string_address step)
                 expand_push(seen, MARK_QUOTED);
                 step++;
         }
+
+        if (expand_length == begun)
+                expand_push_empty();
 
         if (string_get(step))
                 step++;
@@ -3960,9 +4180,14 @@ static fn expand_into(string_address text, bool quoted, p8 plain,
                         stop = string_first_of_or_end(step, '\'');
 
                         if (stop == step)
+                        {
                                 expand_explicit_empty = true;
+                                expand_push_empty();
+                        }
+                        else
+                                expand_push_run(step, (positive)(stop - step),
+                                                MARK_QUOTED);
 
-                        expand_push_run(step, (positive)(stop - step), MARK_QUOTED);
                         step = stop;
 
                         if (string_get(step))
@@ -4038,12 +4263,16 @@ static fn expand_word(string_address word)
                 -- "a$@b" and "$nosuch$@" are both an empty field here as they
                 are in dash. This is the one shape that disappears.
         */
-        if (!expand_length &&
+        if (expand_length == expand_empty_count &&
             ((!shell_parameter_count &&
               (string_equals(word, "\"$@\"") ||
                string_equals(word, "\"${@}\""))) ||
              (expand_name_at_empty && !expand_explicit_empty)))
+        {
                 expand_quoted_seen = false;
+                expand_length = 0;
+                expand_empty_count = 0;
+        }
 }
 
 static bool expand_word_ready(string_address word)
@@ -4252,26 +4481,28 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
                                 step += entry->d_reclen;
 
-                                // A leading dot is only ever matched on purpose.
-                                if (named[0] == '.' && component[0] != '.')
+                                // A leading dot is only ever matched on
+                                // purpose, and an escaped one is on purpose.
+                                if (named[0] == '.' &&
+                                    component[component[0] == '\\'] != '.')
                                         continue;
 
                                 if (!shell_match(component, named))
                                         continue;
 
-                                while (named[at])
-                                {
-                                        if (out + 1 >= GLOB_PATH)
-                                        {
-                                                glob_failed = true;
-                                                break;
-                                        }
+                                positive run = string_length_max(
+                                    named, GLOB_PATH - out);
 
-                                        prefix[out++] = named[at++];
+                                // One byte stays for the terminator, so a name
+                                // that reaches the bound does not fit.
+                                if (out + run >= GLOB_PATH)
+                                {
+                                        glob_failed = true;
+                                        break;
                                 }
 
-                                if (glob_failed)
-                                        break;
+                                memory_copy_apart(prefix + out, named, run);
+                                out += run;
 
                                 glob_walk(prefix, out, rest, depth + 1);
 
@@ -4323,6 +4554,32 @@ static inline INLINE string_address expand_keep_bytes(string_address text,
         return result;
 }
 
+// One field's bytes, kept: the common word has no empty marks in it and is
+// one copy, and the rare one is copied a byte at a time around them.
+static string_address expand_keep_field(positive at, positive stop)
+{
+        p8 address_to result;
+        positive used = 0;
+
+        if (!expand_empty_count)
+                return expand_keep_bytes(expand_text + at, stop - at);
+
+        result = shell_store_take(address_of expand_store, stop - at + 1);
+
+        if (!result)
+        {
+                expand_fail_state();
+                return (string_address) "";
+        }
+
+        for (; at < stop; at++)
+                if (expand_mark[at] != MARK_EMPTY)
+                        result[used++] = expand_text[at];
+
+        result[used] = end;
+        return result;
+}
+
 /*
         One field, out of the working buffer and into the arena -- and through
         the filesystem on the way if anything unquoted in it was magic.
@@ -4362,6 +4619,9 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
         for (index = at; index < stop; index++)
         {
+                if (expand_mark[index] == MARK_EMPTY)
+                        continue;
+
                 if (room == positive_max)
                         break;
 
@@ -4387,6 +4647,9 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
         {
                 p8 value = expand_text[index];
                 bool special = value == '*' || value == '?' || value == '[';
+
+                if (expand_mark[index] == MARK_EMPTY)
+                        continue;
 
                 if (expand_mark[index] == MARK_QUOTED)
                 {
@@ -4455,8 +4718,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
         }
 
         {
-                string_address kept = expand_keep_bytes(expand_text + at,
-                                                        stop - at);
+                string_address kept = expand_keep_field(at, stop);
 
                 if (expand_failed || !shell_words_add(out, kept))
                 {
@@ -4952,6 +5214,7 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
         if (!expand_word_ready(word))
                 return (string_address) "";
 
+        expand_drop_empty();
         result = expand_keep_bytes(expand_text, expand_length);
 
         if (expand_overflow)
@@ -4976,6 +5239,7 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         expand_push_run(word, value_at, MARK_PLAIN);
         expand_into(word + value_at, false, MARK_PLAIN, true);
 
+        expand_drop_empty();
         result = expand_keep_bytes(expand_text, expand_length);
 
         if (expand_overflow)
@@ -5039,6 +5303,9 @@ static RETURNS_NONNULL string_address shell_expand_quoted(
 
         for (at = 0; at < expand_length; at++)
         {
+                if (expand_mark[at] == MARK_EMPTY)
+                        continue;
+
                 if (room == positive_max)
                         break;
 
@@ -5065,6 +5332,9 @@ static RETURNS_NONNULL string_address shell_expand_quoted(
         for (at = 0; at < expand_length; at++)
         {
                 p8 value = expand_text[at];
+
+                if (expand_mark[at] == MARK_EMPTY)
+                        continue;
 
                 if (expand_mark[at] == MARK_QUOTED &&
                     expand_quoted_metacharacter(value, regex))

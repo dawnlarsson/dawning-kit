@@ -135,6 +135,11 @@ fi
 same_status "findfs builtin status" "$direct_status" "$builtin_status"
 same_file "findfs builtin output" "$work/direct" "$work/builtin"
 
+#       A usage error is upstream's 2; 1 is reserved for a tag nobody has.
+if findfs > /dev/null 2>&1; then usage_want=0; else usage_want=$?; fi
+if "$farm/findfs" > /dev/null 2>&1; then usage_got=0; else usage_got=$?; fi
+same_status "findfs usage status" "$usage_want" "$usage_got"
+
 missing_mount="$work/not-a-mount"
 if "$farm/umount" "$missing_mount" > "$work/direct" 2> "$work/direct.err"; then
         direct_status=0

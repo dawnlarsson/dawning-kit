@@ -230,7 +230,33 @@ def body(name):
             return out
     sys.exit(f"extract: no arm64 {name} in {lib}")
 
-bodies = {n: body(n) for n in names}
+#
+#       A routine whose arm64 form is ASM_ALIAS(name, target) has no body of
+#       its own: .set makes it a second label on the target's address. That
+#       is lifted the same way -- the target's body comes along, and the alias
+#       is emitted as a .set after every body, which is what the library does
+#       and what keeps the native case on the bytes the file actually holds.
+#
+def alias_target(name):
+    for i, l in enumerate(lines):
+        m = re.fullmatch(r'\s*ASM_ALIAS\((\w+),\s*(\w+)\)\s*', l)
+        if m and m.group(1) == name and arch[i] == 'ARM64':
+            return m.group(2)
+    return None
+
+aliases = {}
+for n in list(names):
+    target = alias_target(n)
+    if not target:
+        continue
+    aliases[n] = target
+    if target not in names:
+        names.append(target)
+for n, target in aliases.items():
+    if target in aliases:
+        sys.exit(f"extract: arm64 {n} aliases {target}, itself an alias")
+
+bodies = {n: body(n) for n in names if n not in aliases}
 
 print(f'// Lifted from {lib} by src/test/native/extract.py -- do not edit.')
 
@@ -256,6 +282,11 @@ while i < len(lines):
     i += 1
 
 for n in names:
+    if n in aliases:
+        continue
     print(f'__asm__(\n    ".globl _{n}\\n"\n    ".p2align 4\\n"\n    "_{n}:\\n"')
     for l in bodies[n]: print(l)
     print(');')
+
+for n, target in aliases.items():
+    print(f'__asm__(\n    ".globl _{n}\\n"\n    ".set _{n}, _{target}\\n"\n);')

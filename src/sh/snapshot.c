@@ -168,10 +168,7 @@ static fn system_process_path(p8 address_to path, p32 pid,
 
 static PURE string_address system_field_start(string_address at)
 {
-        while (string_get(at) == ' ' || string_get(at) == '\t')
-                at++;
-
-        return at;
+        return at + string_span_of_set(at, " \t");
 }
 
 #define SYSTEM_FIELD(name, type, parse)                                     \
@@ -196,10 +193,7 @@ static fn system_fields_pass(string_address address_to at, positive count)
         while (count--)
         {
                 here = system_field_start(here);
-
-                while (string_get(here) && string_get(here) != ' ' &&
-                       string_get(here) != '\t' && string_get(here) != '\n')
-                        here++;
+                here += string_span_without_set(here, " \t\n");
         }
 
         address_to at = here;
@@ -366,12 +360,10 @@ static HOT bool system_snapshot_network(system_snapshot address_to sample)
         while (string_get(line))
         {
                 string_address next = string_first_of_or_end(line, '\n');
-                string_address colon = line;
+                string_address colon = (string_address)memory_first_of(
+                    line, ':', (positive)(next - line));
 
-                while (colon < next && string_get(colon) != ':')
-                        colon++;
-
-                if (colon < next)
+                if (colon)
                 {
                         string_address name = line;
                         string_address name_end = colon;

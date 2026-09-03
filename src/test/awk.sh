@@ -205,6 +205,33 @@ compare 'nr and fnr' "$work/letters" '{print NR, FNR}'
 compare 'filename' "$work/one" '{print FILENAME}' "$work/one" "$work/one"
 compare 'fnr per file' "$work/one" '{print FILENAME, FNR, NR}' "$work/one" "$work/one"
 compare 'filename in begin' /dev/null 'BEGIN{print "[" FILENAME "]"}'
+#       What the audit found, each against the reference awk.
+compare 'filename is input' "$work/one" '{print (FILENAME == 0), (FILENAME == FILENAME "")}' "$work/one"
+compare 'return of a call' /dev/null 'function g(){return "hi"} function f(){return g()} BEGIN{print f(); print (f() "")}'
+compare 'return of a conditional call' /dev/null 'function g(){return 1} function h(){return 2} function f(c){return c ? g() : h()} BEGIN{print f(1), f(0)}'
+printf '5 x\n' > "$work/five"
+compare 'field number after rebuild' "$work/five" '{ $2 = 7; print; print ($2 > 100), ($2 < 100) }'
+compare 'sub keeps a number' /dev/null 'BEGIN{x=0; sub(/z/,"",x); if (x) print "true"; else print "false"; y=5; sub(/z/,"",y); print (y<10)}'
+printf 'a b c\n' > "$work/abc"
+compare 'sub on rebuilt record' "$work/abc" '{ $1 = ""; sub(/^ /, ""); print }'
+compare 'gsub on rebuilt record' "$work/abc" '{ $2 = "a"; gsub(/a/, "X"); print }'
+compare 'record appended after field' "$work/abc" '{ $3 = "z"; $0 = $0 "!"; print; print NF }'
+printf '00000000000000000001\n0.00000000000000000012\n' > "$work/zeros"
+compare 'leading zeros' "$work/zeros" '{print $1+0}'
+compare 'tiny constant' /dev/null 'BEGIN{print 0.0000000000000000001, 0.000000000000000000000123}'
+printf '5\r\n' > "$work/crlf"
+compare 'carriage return number' "$work/crlf" '{print ($1 == 5), ($1 < 10)}'
+compare 'getline pipe compared' /dev/null 'BEGIN{while ("echo a; echo b" | getline line > 0) print line}'
+#       The reference awk leaves NR alone for a command's record as it
+#       does for a file's, whatever the standard's table says.
+compare 'getline pipe counts' /dev/null 'BEGIN{"echo hi" | getline; print NR; "echo yo" | getline x; print NR, x}'
+compare 'getline file does not count' "$work/one" 'NR==1{getline y < FILENAME; print NR, y}' "$work/one"
+compare 'triple backslash ampersand' /dev/null 'BEGIN{s="abc"; sub(/b/,"\\\\\\&",s); print s; t="abc"; sub(/b/,"\\\\&",t); print t; u="abc"; sub(/b/,"\\&",u); print u}'
+printf 'x\ny\n' > "$work/xy"
+compare 'next in a function' "$work/xy" 'function f(){next} {f(); print "after", $0} END{print NR}'
+compare 'nextfile in a function' "$work/xy" 'function f(){nextfile} {f(); print "after", $0} END{print NR}' "$work/xy" "$work/xy"
+compare 'unsigned precision fallback' /dev/null 'BEGIN{printf "%.3x|%.10x|%x\n", 123456789e20, 1.2e23, 2^70}'
+compare 'long fixed precision' /dev/null 'BEGIN{s = sprintf("%.1000f", 1e300); print length(s), substr(s, 1, 8), substr(s, length(s)-3)}'
 compare 'no trailing newline' "$work/bare" '{print NR, $0}'
 compare 'empty input' "$work/empty" '{print "never"} END{print NR}'
 compare 'blank lines' "$work/paragraphs" '{print NR, NF}'

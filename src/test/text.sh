@@ -1529,6 +1529,88 @@ compare 'fold'           fold long  -w 100
 compare 'rev'            rev long
 compare 'cut'            cut long   -c3990-
 
+#       What the audit found, each against the system tool.
+case_start audit
+printf 'aabbcc\n' > "$work/tr_ds"
+compare 'tr delete squeeze' tr tr_ds -ds a b
+compare 'tr delete squeeze none' tr tr_ds -d ab
+printf '*x\nx\n**\n' > "$work/stars"
+compare 'grep anchor star' grep - '^*' "$work/stars"
+compare 'grep anchor star star' grep - '^**' "$work/stars"
+compare 'grep anchor star group' grep - '\(^*\)' "$work/stars"
+printf 'aaaa\nb\n' > "$work/runs"
+compare 'grep interval no low' grep - -o 'a\{,3\}' "$work/runs"
+compare 'grep extended no low' grep - -oE 'a{,2}' "$work/runs"
+printf 'a b\nab a\nb  b\n' > "$work/words"
+compare 'grep only words adjacent' grep - -ow '[ab]' "$work/words"
+compare 'grep only words counted' grep - -cw 'b' "$work/words"
+grep_color_compare 'grep color words adjacent' '' --color=always -w '[ab]' "$work/words"
+printf 'aa\nbb\nab\naabb\n' > "$work/refs"
+compare 'grep line backref' grep - -x '\(a\)\1' "$work/refs"
+compare 'grep word backref' grep - -w '\(b\)\1' "$work/refs"
+compare 'grep two patterns backref' grep - -e '\(a\)\1' -e '\(b\)\1' "$work/refs"
+compare 'grep extended backrefs' grep - -E -x '(a)\1|(b)\2' "$work/refs"
+compare 'grep backref in set' grep - '[\1]' "$work/refs"
+compare 'sed separate last' sed - -s -n 'N;$p' "$work/a" "$work/b"
+compare 'sed separate next' sed - -s -n 'n;$p' "$work/a" "$work/b"
+compare 'sed joined last' sed - -n 'N;$p' "$work/a" "$work/b"
+printf '2\n10\n' > "$work/sortk"
+compare 'sort key own order' sort sortk -r -k1n
+compare 'sort key inherits' sort sortk -r -k1
+compare 'sort key blank only' sort sortk -r -k1b
+compare 'sort fold key reversed' sort f -f -k1,1r
+compare 'sort numeric key reversed' sort c -n -k1r
+
+#       head -n -N and tail on a seekable input that another command has
+#       already read from start where that command stopped.
+after_read()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        sh -c 'exec < "$1"; read -r first; shift; exec "$0" "$@"' "$tool" "$work/i" "$@" \
+                > "$work/want" 2> /dev/null
+        want_status=$?
+        sh -c 'exec < "$1"; read -r first; shift; exec "$0" "$@"' "$bin/$tool" "$work/i" "$@" \
+                > "$work/got" 2> /dev/null
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+after_read 'head short after read' head -n -1
+after_read 'head short bytes after read' head -c -3
+after_read 'tail after read' tail -n 3
+after_read 'tail all after read' tail -n 100
+
+#       A pattern space that outgrows its room is refused aloud, not
+#       written over the neighbours; a group loop deeper than the stack is
+#       refused, not a crash.
+seq 1 300000 | "$bin/sed" ':a;N;$!ba;s/\n/,/g' > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" = 4 ] && grep -q 'pattern space too large' "$work/err"; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'sed slurp refused' "$got_status"
+fi
+{ printf '%*s' 200000 '' | tr ' ' a; echo b; } | "$bin/grep" '\(a\)*b' > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" = 2 ] && grep -q 'too complex' "$work/err"; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'grep deep group refused' "$got_status"
+fi
+"$bin/sed" "1a$(printf 'x%.0s' $(seq 1 2000))" "$work/a" > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" -ne 0 ] && [ "$got_status" -lt 128 ]; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'sed long body refused' "$got_status"
+fi
+
 # One byte beyond the shared line buffer. Before the explicit check these
 # nine printed exactly one MiB, silently dropped the tail, and exited zero.
 head -c 1048577 /dev/zero | tr '\0' x > "$work/overlong"

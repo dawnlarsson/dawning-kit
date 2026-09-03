@@ -141,10 +141,22 @@ static fn dd_summary()
 
         text_error_raw(" s, ");
 
+        /*
+                Bytes per second from microseconds, not from whole seconds:
+                1.9 s rounded down to 1 s said a rate nearly twice the true
+                one. A count too large to scale up first is scaled after the
+                division instead, at a precision nobody reading a terabyte's
+                rate will miss.
+        */
         p8 rate[32];
-        positive per = elapsed >= 1000000000u
-                           ? dd_written / (elapsed / 1000000000u)
-                           : dd_written * (1000000000u / elapsed);
+        positive microseconds = elapsed / 1000u;
+
+        if (!microseconds)
+                microseconds = 1;
+
+        positive per = dd_written <= positive_max / 1000000u
+                           ? dd_written * 1000000u / microseconds
+                           : dd_written / microseconds * 1000000u;
 
         positive_into_human_nearest_string(rate, per, false);
         text_error_raw(rate);
@@ -266,13 +278,13 @@ static bool dd_quantity(string_address text, positive address_to out,
         return dd_size(text, out);
 }
 
+// name=value, which is the grammar an environment entry has.
 static bool dd_operand(string_address argument, string_address name,
                        string_address address_to value)
 {
         positive length = string_length(name);
 
-        if (string_compare_max(argument, name, length) ||
-            argument[length] != '=')
+        if (!environment_key_is(argument, name, length))
                 return false;
 
         address_to value = argument + length + 1;
@@ -297,6 +309,47 @@ static bool dd_word(string_address address_to at, string_address name)
 }
 
 /*
+        Every complaint dd makes about a file is the same sentence: dd, what
+        went wrong, which file, and the kernel's reason when there is one.
+        The verb sits before the name when it is an act that failed, "failed
+        to open 'x'", and after it when it is a finding about the file, "'x':
+        cannot seek", which is the only difference between the two shapes
+        coreutils uses. One writer keeps the ten of them from drifting
+        apart.
+*/
+static fn dd_complain(string_address before, string_address name,
+                      string_address fallback, string_address after,
+                      bipolar code)
+{
+        text_flush();
+        text_error_raw("dd: ");
+
+        if (before)
+        {
+                text_error_raw(before);
+                text_error_raw(" ");
+        }
+
+        text_error_raw("'");
+        text_error_raw(name ? name : fallback);
+        text_error_raw("'");
+
+        if (after)
+        {
+                text_error_raw(": ");
+                text_error_raw(after);
+        }
+
+        if (code < 0)
+        {
+                text_error_raw(": ");
+                text_error_raw(file_reason(code));
+        }
+
+        text_error_raw("\n");
+}
+
+/*
         Every output path has the same failure contract. Keeping it here
         prevents regrouped blocks, the final partial block and seek padding
         from quietly accepting a short write while the equal-size fast path
@@ -311,30 +364,48 @@ static positive dd_output(positive handle, string_address name,
                 dd_written += wrote;
 
         if (wrote != length)
-        {
-                text_flush();
-                text_error_raw("dd: error writing '");
-                text_error_raw(name ? name : (string_address) "standard output");
-                text_error_raw("'\n");
-        }
+                dd_complain("error writing", name, "standard output", null, 0);
 
         return wrote;
 }
 
-// Five failure paths say the same sentence: dd, what went wrong, which
-// file, and the kernel's reason. One writer keeps their shapes from
-// drifting apart.
-static fn dd_complain(string_address verb, string_address name,
-                      string_address fallback, bipolar code)
+/*
+        ftruncate refused after a seek, and whether that is dd's failure.
+        POSIX says what truncation does to a regular file, a directory and a
+        shared memory object and nothing about the rest, so coreutils reports
+        a refusal from those and goes on copying past one from a device or a
+        pipe, where "invalid argument" was never going to mean anything.
+*/
+static bool dd_truncate_failed(positive handle, string_address output,
+                               positive length, bipolar refused)
 {
-        text_flush();
-        text_error_raw("dd: ");
-        text_error_raw(verb);
-        text_error_raw(" '");
-        text_error_raw(name ? name : fallback);
-        text_error_raw("': ");
-        text_error_raw(file_reason(code));
-        text_error_raw("\n");
+        p8 raw[256];
+
+        memory_fill(raw, 0, sizeof(raw));
+
+        bipolar told = system_file_status(handle, raw);
+
+        if (told < 0)
+        {
+                dd_complain("cannot fstat", output, "standard output", null,
+                            told);
+                return true;
+        }
+
+        positive kind = address_to(p32 address_to)(raw + TEXT_STAT_MODE) &
+                        MODE_FORMAT;
+
+        if (kind != MODE_FILE && kind != MODE_DIRECTORY)
+                return false;
+
+        p8 sentence[72];
+        positive at = 22;
+
+        memory_copy_apart(sentence, "failed to truncate to ", at);
+        at += positive_into(sentence + at, length);
+        string_copy(sentence + at, " bytes in output file");
+        dd_complain(sentence, output, "standard output", null, refused);
+        return true;
 }
 
 // swab is one conversion over the byte stream, not one conversion per read.
@@ -570,6 +641,10 @@ static b32 tools_dd(void)
                 return 1;
         }
 
+        // The whole output blocks a seek covers, which is what coreutils
+        // decides the truncation by; a byte seek short of one block is
+        // none of them.
+        positive seek_records = seek_bytes ? seek / obs : seek;
         positive in_handle = 0;
         positive out_handle = 1;
 
@@ -580,7 +655,7 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         dd_complain("failed to open", input,
-                                    "standard input", opened);
+                                    "standard input", null, opened);
                         return 1;
                 }
 
@@ -600,7 +675,10 @@ static b32 tools_dd(void)
                 if (oflags & DD_APPEND)
                         flags |= DD_O_APPEND;
 
-                if (!(conv & DD_NOTRUNC))
+                // coreutils cuts the file at the seek rather than at its
+                // start when the seek is whole blocks, and only then: a byte
+                // seek short of one block truncates on open.
+                if (!(conv & DD_NOTRUNC) && !seek_records)
                         flags |= O_TRUNC;
 
                 bipolar opened = text_open_handle(output, flags, 0666);
@@ -608,7 +686,7 @@ static b32 tools_dd(void)
                 if (opened < 0)
                 {
                         dd_complain("failed to open", output,
-                                    "standard output", opened);
+                                    "standard output", null, opened);
                         return 1;
                 }
 
@@ -634,7 +712,10 @@ static b32 tools_dd(void)
         if (skip)
         {
                 positive want = skip_bytes ? skip : skip * ibs;
-                bipolar landed = system_seek(in_handle, want, 0);
+                // From where the input already is, not from its start: a dd
+                // reading after another command on the same input skips
+                // from where that command stopped.
+                bipolar landed = system_seek(in_handle, want, 1);
                 bool short_of_it = false;
 
                 if (landed >= 0)
@@ -648,7 +729,7 @@ static b32 tools_dd(void)
                                 // A size of zero is what a file that has no
                                 // size to report says, so it is not a file
                                 // that is too short.
-                                if (stop > 0 && (positive)stop < want)
+                                if (stop > 0 && stop < landed)
                                         short_of_it = true;
                         }
                 }
@@ -673,38 +754,39 @@ static b32 tools_dd(void)
                 // Asked to skip past what is there. Not fatal, and said only
                 // where a summary would have been said.
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
-                {
-                        text_flush();
-                        text_error_raw("dd: '");
-                        text_error_raw(input ? input : (string_address) "standard input");
-                        text_error_raw("': cannot skip to specified offset\n");
-                }
+                        dd_complain(null, input, "standard input",
+                                    "cannot skip to specified offset", 0);
         }
 
+        /*
+                seek moves the output on from where it already is, so a dd
+                sharing its standard output with the command before it
+                writes after what that command wrote. What is cut off after
+                the seek is coreutils' rule exactly: only a file dd opened
+                itself, only to a seek of whole blocks, and a refusal counts
+                only from the kinds of file dd_truncate_failed names.
+                Standard output is never truncated, whatever it is.
+        */
         if (seek)
         {
                 positive want = seek_bytes ? seek : seek * obs;
-                bipolar landed = system_seek(out_handle, want, 0);
+                bipolar landed = system_seek(out_handle, want, 1);
 
                 if (landed < 0)
                 {
-                        text_flush();
-                        text_error_raw("dd: '");
-                        text_error_raw(output ? output
-                                              : (string_address) "standard output");
-                        text_error_raw("': cannot seek\n");
+                        dd_complain(null, output, "standard output",
+                                    "cannot seek", landed);
                         status = 1;
                 }
-                else if (!(conv & DD_NOTRUNC))
+                else if (output && seek_records && !(conv & DD_NOTRUNC))
                 {
-                        bipolar truncated =
+                        bipolar refused =
                             system_truncate_handle(out_handle, want);
 
-                        if (truncated < 0)
-                        {
-                                text_error(output, "cannot truncate");
+                        if (refused < 0 &&
+                            dd_truncate_failed(out_handle, output, want,
+                                               refused))
                                 status = 1;
-                        }
                 }
         }
 
@@ -772,7 +854,7 @@ static b32 tools_dd(void)
                 if (got < 0)
                 {
                         dd_complain("error reading", input, "standard input",
-                                    got);
+                                    null, got);
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -917,7 +999,7 @@ static b32 tools_dd(void)
                 else if (done < 0)
                 {
                         dd_complain("fdatasync failed for", output,
-                                    "standard output", done);
+                                    "standard output", null, done);
                         result = 1;
                 }
         }
@@ -929,7 +1011,7 @@ static b32 tools_dd(void)
                 if (done < 0)
                 {
                         dd_complain("fsync failed for", output,
-                                    "standard output", done);
+                                    "standard output", null, done);
                         result = 1;
                 }
         }
@@ -1051,12 +1133,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                                 return true;
                         }
 
-                        text_flush();
-                        text_error_raw("diff: ");
-                        text_error_raw(path);
-                        text_error_raw(": ");
-                        text_error_raw(file_reason(handle));
-                        text_error_raw("\n");
+                        text_error(path, file_reason(handle));
                         return false;
                 }
 
@@ -2246,7 +2323,11 @@ static b32 diff_pair(string_address left, string_address right)
             (memory_first_of(a->base, 0, a->size) ||
              memory_first_of(b->base, 0, b->size)))
         {
-            if (a->size == b->size && !memory_compare(a->base, b->base, a->size))
+                // The newline a file did not end with is in its buffer all
+                // the same, so a file with one and a file without have the
+                // same size here; which of the two each is has to agree too.
+                if (a->size == b->size && a->incomplete == b->incomplete &&
+                    !memory_compare(a->base, b->base, a->size))
                 {
                         diff_identical_output(left, right);
                         return 0;
@@ -2284,8 +2365,12 @@ static b32 diff_pair(string_address left, string_address right)
                         bytes--;
         }
 
-        while (bytes && a->base[bytes - 1] != '\n')
-                bytes--;
+        {
+                p8 address_to line_end =
+                    (p8 address_to)memory_last_of(a->base, '\n', bytes);
+
+                bytes = line_end ? (positive)(line_end - a->base) + 1 : 0;
+        }
 
         while (prefix < a->lines && a->at[prefix] < bytes)
                 prefix++;
@@ -2323,10 +2408,12 @@ static b32 diff_pair(string_address left, string_address right)
 
                 while (drop && stop_a != a->size)
                 {
-                        drop--;
+                        p8 address_to line_end = (p8 address_to)memory_first_of(
+                            a->base + stop_a, '\n', a->size - stop_a);
 
-                        while (stop_a < a->size && a->base[stop_a++] != '\n')
-                                ;
+                        drop--;
+                        stop_a = line_end ? (positive)(line_end - a->base) + 1
+                                          : a->size;
                 }
 
                 while (suffix < a->lines - prefix &&
@@ -2512,10 +2599,7 @@ static bool diff_gather(string_address path, diff_names address_to names,
                 if (allow_missing)
                         return true;
 
-                text_flush();
-                text_error_raw("diff: ");
-                text_error_raw(path);
-                text_error_raw(": No such file or directory\n");
+                text_error(path, "No such file or directory");
                 return false;
         }
 
@@ -3160,18 +3244,13 @@ static fn ps_digits(positive value)
         ps_bytes(have, length);
 }
 
-static fn ps_put_time(positive nanoseconds)
-{
-        positive seconds = nanoseconds / SYSTEM_NANOSECONDS;
-
-        positive_to_padded(ps_bytes, seconds / 3600, 2, '0', 0);
-        ps_byte(':');
-        file_two(ps_bytes, (seconds / 60) % 60);
-        ps_byte(':');
-        file_two(ps_bytes, seconds % 60);
-}
-
-static fn ps_put_elapsed(positive seconds)
+/*
+        D-HH:MM:SS, the way procps spells both TIME and ELAPSED: the day
+        only when there is one, so the hours never climb past 23. The two
+        columns differ in one place, which is that ELAPSED under an hour is
+        MM:SS and TIME is never shorter than HH:MM:SS.
+*/
+static fn ps_put_clock(positive seconds, bool hours_always)
 {
         positive days = seconds / 86400;
         positive rest = seconds % 86400;
@@ -3180,24 +3259,27 @@ static fn ps_put_elapsed(positive seconds)
         {
                 ps_digits(days);
                 ps_byte('-');
-                file_two(ps_bytes, rest / 3600);
-        }
-        else if (rest >= 3600)
-        {
-                positive_to_padded(ps_bytes, rest / 3600, 2, '0', 0);
-        }
-        else
-        {
-                positive_to_padded(ps_bytes, (rest / 60) % 60, 2, '0', 0);
-                ps_byte(':');
-                file_two(ps_bytes, rest % 60);
-                return;
         }
 
-        ps_byte(':');
+        if (days || hours_always || rest >= 3600)
+        {
+                file_two(ps_bytes, rest / 3600);
+                ps_byte(':');
+        }
+
         file_two(ps_bytes, (rest / 60) % 60);
         ps_byte(':');
         file_two(ps_bytes, rest % 60);
+}
+
+static fn ps_put_time(positive nanoseconds)
+{
+        ps_put_clock(nanoseconds / SYSTEM_NANOSECONDS, true);
+}
+
+static fn ps_put_elapsed(positive seconds)
+{
+        ps_put_clock(seconds, false);
 }
 
 static fn ps_put_tty(positive tty)
@@ -3210,15 +3292,35 @@ static fn ps_put_tty(positive tty)
 
         positive major = (tty >> 8) & 0xfff;
         positive minor = (tty & 0xff) | ((tty >> 12) & 0xfff00);
+        string_address name = "tty";
 
-        if (major == 136)
+        /*
+                The kernel's fixed assignments rather than a walk of /dev:
+                eight majors of pseudo terminals numbered straight through,
+                the serial ports sharing the console major from minor 64
+                up, and the hypervisor and USB drivers a process is likely
+                to be sitting on. Anything else is a tty of its minor.
+        */
+        if (major >= 136 && major <= 143)
         {
-                ps_text("pts/");
-                ps_digits(minor);
-                return;
+                name = "pts/";
+                minor += (major - 136) * 256;
+        }
+        else if (major == 4 && minor >= 64)
+        {
+                name = "ttyS";
+                minor -= 64;
+        }
+        else if (major == 229)
+        {
+                name = "hvc";
+        }
+        else if (major == 188)
+        {
+                name = "ttyUSB";
         }
 
-        ps_text("tty");
+        ps_text(name);
         ps_digits(minor);
 }
 
@@ -3295,14 +3397,14 @@ static fn ps_draw(struct snapshot_process address_to process,
 
                 if (year == year_now && month == month_now && day == day_now)
                 {
-                        positive_to_padded(ps_bytes, hour, 2, '0', 0);
+                        file_two(ps_bytes, hour);
                         ps_byte(':');
                         file_two(ps_bytes, minute);
                 }
                 else if (year == year_now)
                 {
                         ps_text(months[month - 1]);
-                        positive_to_padded(ps_bytes, day, 2, '0', 0);
+                        file_two(ps_bytes, day);
                 }
                 else
                 {
@@ -3353,6 +3455,26 @@ typedef struct
         string_address header;
         bool custom_header;
 } ps_selected;
+
+/*
+        A column is as wide as its table entry or its heading, whichever is
+        longer, and the heading is the -o one when the caller wrote one. The
+        header line and every row under it have to agree on both, so both
+        ask here; a caller that wants only the width passes no header.
+*/
+static positive ps_column_width(ps_selected address_to selected,
+                                string_address address_to header)
+{
+        ps_column address_to column = ps_columns + selected->field;
+        string_address heading = selected->custom_header ? selected->header
+                                                         : column->header;
+        positive length = heading ? string_length(heading) : 0;
+
+        if (header)
+                address_to header = heading;
+
+        return length > column->width ? length : column->width;
+}
 
 static bool ps_field_add(ps_selected address_to address_to fields,
                          positive address_to count, positive address_to room,
@@ -3682,16 +3804,13 @@ static bool ps_long_value(string_address argument, string_address name,
 {
         positive length = string_length(name);
 
-        if (string_compare_max(argument, name, length))
-                return false;
-
-        if (argument[length] == '=')
+        if (environment_key_is(argument, name, length))
         {
                 address_to value = argument + length + 1;
                 return true;
         }
 
-        if (argument[length])
+        if (!string_equals(argument, name))
                 return false;
 
         address_to value = program_argument(++(address_to at));
@@ -3774,36 +3893,6 @@ static b32 tools_ps(void)
 
                         continue;
                 }
-                else if (argument[0] == '-' && argument[1] == 'p')
-                {
-                        argument += 2;
-
-                        if (!string_get(argument))
-                                argument = program_argument(++i);
-
-                        if (!argument ||
-                            !ps_pid_list(argument, address_of selected_pids,
-                                         address_of selected_count,
-                                         address_of selected_room, true))
-                        {
-                                text_error(argument, "invalid process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (argument[0] == 'p' && byte_is_digit(argument[1]))
-                {
-                        if (!ps_pid_list(argument + 1, address_of selected_pids,
-                                         address_of selected_count,
-                                         address_of selected_room, true))
-                        {
-                                text_error(argument, "invalid process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
                 else if (ps_long_value(argument, "--ppid", address_of i,
                                        address_of value))
                 {
@@ -3813,25 +3902,6 @@ static b32 tools_ps(void)
                                          address_of ppid_room, false))
                         {
                                 text_error(value, "invalid parent process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (argument[0] == '-' && argument[1] == 'C')
-                {
-                        argument += 2;
-
-                        if (!string_get(argument))
-                                argument = program_argument(++i);
-
-                        if (!argument ||
-                            !ps_command_list(argument,
-                                             address_of selected_commands,
-                                             address_of command_count,
-                                             address_of command_room))
-                        {
-                                text_error(argument, "invalid command list");
                                 return text_done(1);
                         }
 
@@ -3848,34 +3918,26 @@ static b32 tools_ps(void)
 
                         continue;
                 }
-                else if (argument[0] == '-' && argument[1] == 'o' && !argument[2])
-                {
-                        argument = program_argument(++i);
-
-                        if (!argument)
-                        {
-                                text_error(null, "option requires an argument -- o");
-                                return text_done(1);
-                        }
-                }
-                else if (argument[0] == '-' && argument[1] == 'o')
-                {
-                        argument += 2;
-                }
-                else if (argument[0] == 'o' && argument[1])
-                {
-                        argument += 1;
-                }
                 else
                 {
+                        /*
+                                A word of letters, with or without the dash.
+                                o, p and C carry a value, the rest of the
+                                word when there is one and the next argument
+                                otherwise, so any of them ends the word: -eo
+                                pid and -fp 1 are -e -o pid and -f -p 1,
+                                which is how procps reads them.
+                        */
                         string_address at = argument;
+                        bool dashed = string_get(at) == '-';
+                        p8 taking = 0;
 
-                        if (string_get(at) == '-')
+                        if (dashed)
                                 at++;
 
                         bool known = string_get(at) != end;
 
-                        for (; string_get(at); at++)
+                        for (; string_get(at) && !taking; at++)
                                 switch (string_get(at))
                                 {
                                 case 'e':
@@ -3883,6 +3945,22 @@ static b32 tools_ps(void)
                                 case 'f': full = true; break;
                                 case 'w': break;
                                 case 'h': no_headers = true; break;
+                                case 'o':
+                                case 'p':
+                                case 'C':
+                                        // BSD C is a CPU accounting switch,
+                                        // not the selector -C is.
+                                        if (string_get(at) == 'C' && !dashed)
+                                        {
+                                                known = false;
+                                                break;
+                                        }
+
+                                        taking = string_get(at);
+                                        value = string_get(at + 1)
+                                                    ? at + 1
+                                                    : program_argument(++i);
+                                        break;
                                 case 'a':
                                 case 'x':
                                 case 'u':
@@ -3905,7 +3983,47 @@ static b32 tools_ps(void)
                                 return text_done(1);
                         }
 
-                        continue;
+                        if (taking == 'p')
+                        {
+                                if (!value ||
+                                    !ps_pid_list(value, address_of selected_pids,
+                                                 address_of selected_count,
+                                                 address_of selected_room,
+                                                 true))
+                                {
+                                        text_error(value,
+                                                   "invalid process id list");
+                                        return text_done(1);
+                                }
+
+                                continue;
+                        }
+
+                        if (taking == 'C')
+                        {
+                                if (!value ||
+                                    !ps_command_list(value,
+                                                     address_of selected_commands,
+                                                     address_of command_count,
+                                                     address_of command_room))
+                                {
+                                        text_error(value, "invalid command list");
+                                        return text_done(1);
+                                }
+
+                                continue;
+                        }
+
+                        if (!taking)
+                                continue;
+
+                        if (!value)
+                        {
+                                text_error(null, "option requires an argument -- o");
+                                return text_done(1);
+                        }
+
+                        argument = value;
                 }
 
                 if (!ps_format_list(argument, address_of fields,
@@ -3995,9 +4113,9 @@ static b32 tools_ps(void)
         if (!force_headers && !no_headers)
                 for (positive f = 0; f < field_count; f++)
                 {
-                        string_address header = fields[f].custom_header
-                                                    ? fields[f].header
-                                                    : ps_columns[fields[f].field].header;
+                        string_address header;
+
+                        ps_column_width(fields + f, address_of header);
 
                         if (header && string_get(header))
                         {
@@ -4012,14 +4130,9 @@ static b32 tools_ps(void)
                 {
                         positive field = fields[f].field;
                         bool last = f + 1 == field_count;
-                        string_address header = fields[f].custom_header
-                                                    ? fields[f].header
-                                                    : ps_columns[field].header;
-                        positive width = ps_columns[field].width;
-                        positive header_length = header ? string_length(header) : 0;
-
-                        if (header_length > width)
-                                width = header_length;
+                        string_address header;
+                        positive width = ps_column_width(fields + f,
+                                                         address_of header);
 
                         string_to_field(text_put,
                                         header ? header : (string_address)"",
@@ -4074,22 +4187,10 @@ static b32 tools_ps(void)
                 for (positive repeat = 0; repeat < repeats; repeat++)
                 {
                         for (positive f = 0; f < field_count; f++)
-                        {
-                                positive field = fields[f].field;
-                                string_address header = fields[f].custom_header
-                                                            ? fields[f].header
-                                                            : ps_columns[field].header;
-                                positive width = ps_columns[field].width;
-                                positive header_length =
-                                    header ? string_length(header) : 0;
-
-                                if (header_length > width)
-                                        width = header_length;
-
                                 ps_column_out(process, address_of detail,
-                                              field, width,
+                                              fields[f].field,
+                                              ps_column_width(fields + f, null),
                                               f + 1 == field_count);
-                        }
 
                         text_put_character('\n');
                 }

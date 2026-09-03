@@ -1509,7 +1509,8 @@ static bool regex_parse_interval(b32 address_to low, b32 address_to high)
                                             address_of taken);
         b32 second = -1;
 
-        if (!taken)
+        // A missing lower bound is zero, {,3} being {0,3} to glibc.
+        if (!taken && !(at < regex_pattern_length && regex_pattern[at] == ','))
                 return false;
 
         at += taken;
@@ -1571,6 +1572,22 @@ static fn regex_parse_piece()
                 b32 low = 0;
                 b32 high = -1;
                 bool counted = false;
+
+                // In a basic expression a star with only an anchor in front
+                // of it is a plain star: ^* matches a line beginning with
+                // one, as it does for the reference grep, and repeating the
+                // anchor matched every line.
+                if (character == '*' && !regex_extended &&
+                    regex_code[start].code == REGEX_BOL)
+                {
+                        regex_pattern_at++;
+                        start = regex_length_code;
+
+                        b32 at = regex_emit(REGEX_CHAR);
+
+                        regex_code[at].value = '*';
+                        continue;
+                }
 
                 if (character == '*')
                 {
@@ -2029,7 +2046,24 @@ static bool regex_single(regex_instruction address_to inst, p8 character)
         return (regex_icase ? byte_to_lower(character) : character) == inst->value;
 }
 
-static b32 regex_run(b32 pc, positive sp)
+static b32 regex_run(b32 pc, positive sp);
+
+/*
+        How deep the runner may recurse before it gives up.
+
+        A group under a star costs a few C frames per repetition, and a line
+        of two hundred thousand of them ran the machine's stack out and took
+        the process with it. This many frames fit in the smallest stack a
+        process here is given; past it the match is refused and said so,
+        which is the answer GNU gives for the same expression on the same
+        line, rather than a crash.
+*/
+#define REGEX_DEPTH_MAX 20000
+
+static positive regex_depth;
+static bool regex_exhausted;
+
+static b32 regex_run_inner(b32 pc, positive sp)
 {
         for (;;)
         {
@@ -2233,6 +2267,36 @@ static b32 regex_run(b32 pc, positive sp)
         }
 }
 
+static b32 regex_run(b32 pc, positive sp)
+{
+        b32 answer;
+
+        if (regex_depth >= REGEX_DEPTH_MAX)
+        {
+                regex_exhausted = true;
+                return 0;
+        }
+
+        regex_depth++;
+        answer = regex_run_inner(pc, sp);
+        regex_depth--;
+
+        return answer;
+}
+
+// A match the runner gave up on is no match, and is said once: the answer
+// GNU gives for the same expression on the same line, not a crash.
+static bool regex_gave_up()
+{
+        if (!regex_exhausted)
+                return false;
+
+        regex_exhausted = false;
+        text_error(null, "regular expression too complex");
+        text_status = 2;
+        return true;
+}
+
 static fn regex_clear_state()
 {
         memory_fill(regex_slots, (b8)-1,
@@ -2299,7 +2363,7 @@ static bool regex_search(string_address text, positive length, positive from)
                 if (regex_run(0, at))
                         return true;
 
-                if (regex_anchored)
+                if (regex_gave_up() || regex_anchored)
                         return false;
         }
 
@@ -2370,7 +2434,7 @@ static bool regex_match_longest(string_address text, positive length,
         regex_text_length = length;
         regex_clear_state();
 
-        return regex_run(0, at) && regex_keep_longest(length);
+        return regex_run(0, at) && !regex_gave_up() && regex_keep_longest(length);
 }
 
 /*
@@ -3544,7 +3608,23 @@ static bool text_read_at(positive handle, positive offset, p8 address_to into, p
         The newline that ends the file is not one of the ones being counted --
         it terminates the last line rather than starting one.
 */
-static positive text_tail_start(positive handle, positive size, positive count)
+/*
+        Where the input stands, as the tool sees it: the descriptor's offset
+        less whatever the reader holds unread. A tool that reads standard
+        input after another command on the same file starts where that one
+        stopped, so this is the floor under head -n -N and tail, which used
+        to count from the file's first byte.
+*/
+static positive text_stream_floor()
+{
+        bipolar at = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
+        positive held = text_input.filled - text_input.position;
+
+        return at > 0 && (positive)at > held ? (positive)at - held : 0;
+}
+
+static positive text_tail_start(positive handle, positive size, positive count,
+                                positive floor)
 {
         p8 window[TEXT_READ_MAX];
         positive at = size;
@@ -3553,9 +3633,10 @@ static positive text_tail_start(positive handle, positive size, positive count)
         if (!count)
                 return size;
 
-        while (at)
+        while (at > floor)
         {
-                positive take = at < TEXT_READ_MAX ? at : TEXT_READ_MAX;
+                positive take = at - floor < TEXT_READ_MAX ? at - floor
+                                                           : TEXT_READ_MAX;
 
                 at -= take;
 
@@ -3595,7 +3676,7 @@ static positive text_tail_start(positive handle, positive size, positive count)
                 }
         }
 
-        return 0;
+        return floor;
 }
 
 static fn text_stream_count(positive left)
@@ -3657,9 +3738,13 @@ static fn text_head_short(positive count, bool by_bytes)
 
         if (text_regular_size(text_input.handle, address_of size))
         {
-                text_stream_span(0, by_bytes
-                                        ? (count < size ? size - count : 0)
-                                        : text_tail_start(text_input.handle, size, count));
+                positive floor = text_stream_floor();
+
+                text_stream_span(floor,
+                                 by_bytes ? (count < size - floor ? size - count
+                                                                  : floor)
+                                          : text_tail_start(text_input.handle,
+                                                            size, count, floor));
                 return;
         }
 
@@ -3899,9 +3984,13 @@ static b32 text_tail()
 
                 if (seekable)
                 {
-                        text_stream_from(by_bytes
-                                             ? (count < size ? size - count : 0)
-                                             : text_tail_start(text_input.handle, size, count));
+                        positive floor = text_stream_floor();
+
+                        text_stream_from(
+                            by_bytes ? (count < size - floor ? size - count
+                                                             : floor)
+                                     : text_tail_start(text_input.handle, size,
+                                                       count, floor));
                         text_close();
                         continue;
                 }
@@ -5137,8 +5226,11 @@ static b32 text_tr()
                 }
         }
 
-        // Without a second set, squeezing looks at the first one.
-        p8 address_to squeezed = second && !remove ? in_second : in_first;
+        // Without a second set, squeezing looks at the first one. With one,
+        // it is the second whether or not the first is being deleted: -ds
+        // deletes SET1 and squeezes SET2, and looking at SET1 there squeezed
+        // nothing, since every byte of it had just been deleted.
+        p8 address_to squeezed = second ? in_second : in_first;
 
         if (!text_open(null))
                 return text_done(1);
@@ -5544,6 +5636,106 @@ static b32 text_uniq()
 static p8 grep_pattern[GREP_PATTERN_MAX];
 static positive grep_pattern_length;
 static bool grep_pattern_any;
+// How many groups the patterns joined so far have opened, which is what a
+// backreference in the next one has to be counted past.
+static positive grep_pattern_groups;
+
+/*
+        The groups a pattern opens, and its backreferences moved along by
+        the groups placed in front of it.
+
+        Joining -e patterns with an alternation and wrapping the whole in
+        the groups -x and -w need both put groups before the user's own, so
+        \1 in the second -e pattern named the first pattern's group and \1
+        under -x named the wrapper's. Bracket expressions are stepped over,
+        since a backslash and a digit are two bytes in one; a backslash pair
+        is one escaped byte and looked at no further.
+*/
+static positive grep_pattern_set_end(string_address text, positive length,
+                                     positive at)
+{
+        // A ] first thing in the set, after any ^, is a member.
+        at++;
+
+        if (at < length && text[at] == '^')
+                at++;
+
+        if (at < length && text[at] == ']')
+                at++;
+
+        while (at < length)
+        {
+                string_address past = byte_class_end(text + at, text + length);
+
+                if (past)
+                {
+                        at = (positive)(past - text);
+                        continue;
+                }
+
+                if (text[at] == ']')
+                        return at + 1;
+
+                at++;
+        }
+
+        return length;
+}
+
+static positive grep_groups_in(string_address text, positive length,
+                               bool extended)
+{
+        positive groups = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = text[at];
+
+                if (byte == '[')
+                {
+                        at = grep_pattern_set_end(text, length, at) - 1;
+                        continue;
+                }
+
+                if (byte == '\\' && at + 1 < length)
+                {
+                        groups += !extended && text[at + 1] == '(';
+                        at++;
+                        continue;
+                }
+
+                groups += extended && byte == '(';
+        }
+
+        return groups;
+}
+
+static fn grep_shift_references(p8 address_to text, positive length,
+                                positive shift, bool extended)
+{
+        (void)extended;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = text[at];
+
+                if (byte == '[')
+                {
+                        at = grep_pattern_set_end(text, length, at) - 1;
+                        continue;
+                }
+
+                if (byte != '\\' || at + 1 >= length)
+                        continue;
+
+                p8 next = text[at + 1];
+
+                if (next >= '1' && next <= '9' && (positive)(next - '0') + shift <= 9)
+                        text[at + 1] = (p8)(next + shift);
+
+                at++;
+        }
+}
 static bool grep_pattern_broken;
 
 #define grep_pattern_put(character)                                          \
@@ -5567,6 +5759,8 @@ static fn grep_pattern_add(string_address text, positive length, bool fixed, boo
                         grep_pattern_put('|');
                 }
 
+                positive placed = grep_pattern_length;
+
                 for (positive c = from; c < at; c++)
                 {
                         p8 character = text[c];
@@ -5582,6 +5776,18 @@ static fn grep_pattern_add(string_address text, positive length, bool fixed, boo
                                 grep_pattern_put('\\');
 
                         grep_pattern_put(character);
+                }
+
+                // A fixed string has no groups and no references; a pattern
+                // has its references counted past the groups before it.
+                if (!fixed && placed <= grep_pattern_length)
+                {
+                        grep_shift_references(grep_pattern + placed,
+                                              grep_pattern_length - placed,
+                                              grep_pattern_groups, extended);
+                        grep_pattern_groups += grep_groups_in(
+                            grep_pattern + placed, grep_pattern_length - placed,
+                            extended);
                 }
 
                 grep_pattern_any = true;
@@ -6022,7 +6228,10 @@ static fn grep_color_line(string_address line, positive length, bool context,
                         grep_color_start(line_color);
 
                 from = stop;
-                search = whole_stop;
+                // From the end of the word, not of the match: -w's wrapper
+                // takes the separator after a word with it, and the word
+                // after that separator needs it in front to be a word.
+                search = grep_match_slot ? stop : whole_stop;
         }
 
         text_put(line + from, length - from);
@@ -6516,6 +6725,7 @@ static b32 text_grep()
         grep_pattern_broken = false;
         grep_pattern_length = 0;
         grep_pattern_any = false;
+        grep_pattern_groups = 0;
         grep_include = null;
         grep_exclude = null;
         grep_exclude_dir = null;
@@ -6692,6 +6902,10 @@ static b32 text_grep()
                 memory_copy_apart(around, head, head_length);
                 memory_copy_apart(around + head_length, grep_pattern,
                                  grep_pattern_length);
+                // The wrapper opens one group for -x and two for -w before
+                // the pattern's own, so its references move along by that.
+                grep_shift_references(around + head_length, grep_pattern_length,
+                                      whole_line ? 1 : 2, extended);
                 memory_copy_apart(around + head_length + grep_pattern_length,
                                  tail, tail_length);
 
@@ -7041,7 +7255,7 @@ static b32 text_grep()
                                                 text_put_character(text_delimiter);
                                         }
 
-                                        from = whole_stop;
+                                        from = grep_match_slot ? stop : whole_stop;
                                 }
 
                                 shown = number;
@@ -7105,7 +7319,9 @@ static b32 text_grep()
                 }
         }
 
-        if (trouble)
+        // Two for any trouble, including a read that failed or an expression
+        // the matcher gave up on, as the reference grep answers.
+        if (trouble || text_status)
                 return text_done(2);
 
         return text_done(found_any ? 0 : 1);
@@ -7299,6 +7515,74 @@ static b32 sed_file_of(p8 address_to name, positive length)
 
 static bool sed_extended;
 static bool sed_separate;
+
+/*
+        Whether a space has room for more bytes. The pattern and hold spaces
+        are one line's worth each, which is what every command but three
+        needs; N, H and G grow them, and s can grow the pattern space by the
+        length of its replacement at every match. A script that slurps a
+        whole file with N used to write past the end of the array and on
+        into whatever followed it. What does not fit is refused, with the
+        status sed keeps for its own failures.
+*/
+static bool sed_space_full;
+
+static bool sed_work_byte(positive address_to have, p8 value);
+
+static bool sed_space_fits(positive have, positive more)
+{
+        if (more <= TEXT_LINE_MAX - have)
+                return true;
+
+        if (!sed_space_full)
+                text_error(null, "pattern space too large");
+
+        sed_space_full = true;
+        return false;
+}
+
+static bool sed_work_byte(positive address_to have, p8 value)
+{
+        if (!sed_space_fits(address_to have, 1))
+                return false;
+
+        sed_work[(address_to have)++] = value;
+        return true;
+}
+
+// Whether the line just read was the last: of everything, or of this file
+// when -s makes each file its own stream. n and N used to ask without the
+// -s half and never saw the last line of any file but the last.
+static bool sed_input_ends(b32 i, b32 inputs)
+{
+        return !text_fill() && (sed_separate || i == inputs - 1);
+}
+
+/*
+        The next line for N, across a file boundary when the input is one
+        stream. Without -s the reference sed joins the last line of one file
+        to the first of the next, and N used to fail at every file's end,
+        pairing the lines of each file from its own first line. Under -s and
+        -i each file is its own stream, and the boundary is an end.
+*/
+static string_address sed_in_place;
+
+static bool sed_line_across(b32 address_to i, b32 inputs)
+{
+        while (!text_line_next())
+        {
+                if (sed_separate || sed_in_place || address_to i + 1 >= inputs)
+                        return false;
+
+                text_close();
+                (address_to i)++;
+
+                if (!text_open(text_file_name(address_to i)))
+                        text_status = 2;
+        }
+
+        return true;
+}
 static bool sed_null_data;
 static string_address sed_in_place;
 static bool sed_follow_symlinks;
@@ -7352,6 +7636,8 @@ static positive sed_take_until(p8 delimiter, p8 address_to into, positive room)
                         {
                                 if (have < room - 1)
                                         into[have++] = delimiter;
+                                else
+                                        sed_broken = true;
 
                                 sed_at += 2;
                                 continue;
@@ -7362,13 +7648,20 @@ static positive sed_take_until(p8 delimiter, p8 address_to into, positive room)
                                 into[have++] = '\\';
                                 into[have++] = sed_script[sed_at + 1];
                         }
+                        else
+                                sed_broken = true;
 
                         sed_at += 2;
                         continue;
                 }
 
+                // A piece longer than its room breaks the script rather than
+                // fitting: cut, a pattern compiles to some other pattern and
+                // matches the wrong lines without a word.
                 if (have < room - 1)
                         into[have++] = sed_script[sed_at];
+                else
+                        sed_broken = true;
 
                 sed_at++;
         }
@@ -7778,14 +8071,23 @@ static fn sed_parse()
 
                                         if (sed_script[sed_at] == 'n')
                                         {
-                                                body[have++] = '\n';
+                                                if (have < sizeof(body) - 1)
+                                                        body[have++] = '\n';
+                                                else
+                                                        sed_broken = true;
+
                                                 sed_at++;
                                                 continue;
                                         }
                                 }
 
+                                // A body longer than its room is not cut
+                                // to fit: a script that lost its tail would
+                                // write the wrong text and say nothing.
                                 if (have < sizeof(body) - 1)
                                         body[have++] = sed_script[sed_at];
+                                else
+                                        sed_broken = true;
 
                                 sed_at++;
                         }
@@ -8075,6 +8377,9 @@ static bool sed_substitute(sed_command address_to command)
                 positive from = regex_slots[0];
                 positive to = regex_slots[1];
 
+                if (!sed_space_fits(have, from - at))
+                        return false;
+
                 memory_copy(sed_work + have, sed_space + at, from - at);
                 have += from - at;
 
@@ -8088,7 +8393,8 @@ static bool sed_substitute(sed_command address_to command)
                                 break;
                         }
 
-                        sed_work[have++] = sed_space[from];
+                        if (!sed_work_byte(address_of have, sed_space[from]))
+                                        return false;
                         at = from + 1;
                         continue;
                 }
@@ -8125,18 +8431,27 @@ static bool sed_substitute(sed_command address_to command)
                                         }
                                         else
                                         {
-                                                sed_work[have++] = next == 'n'   ? '\n'
-                                                                   : next == 't' ? '\t'
-                                                                   : next == 'r' ? '\r'
-                                                                                 : next;
+                                                p8 escaped = next == 'n'   ? '\n'
+                                                             : next == 't' ? '\t'
+                                                             : next == 'r' ? '\r'
+                                                                           : next;
+
+                                                if (!sed_work_byte(address_of have,
+                                                                   escaped))
+                                                        return false;
+
                                                 continue;
                                         }
                                 }
                                 else
                                 {
-                                        sed_work[have++] = character;
+                                        if (!sed_work_byte(address_of have, character))
+                                        return false;
                                         continue;
                                 }
+
+                                if (!sed_space_fits(have, copy_to - copy_from))
+                                        return false;
 
                                 memory_copy(sed_work + have, sed_space + copy_from,
                                             copy_to - copy_from);
@@ -8147,6 +8462,9 @@ static bool sed_substitute(sed_command address_to command)
                 }
                 else
                 {
+                        if (!sed_space_fits(have, to - from))
+                                return false;
+
                         memory_copy(sed_work + have, sed_space + from, to - from);
                         have += to - from;
                 }
@@ -8159,7 +8477,8 @@ static bool sed_substitute(sed_command address_to command)
                 if (to == from)
                 {
                         if (from < sed_space_length)
-                                sed_work[have++] = sed_space[from];
+                                if (!sed_work_byte(address_of have, sed_space[from]))
+                                        return false;
 
                         at = from + 1;
                 }
@@ -8177,6 +8496,9 @@ static bool sed_substitute(sed_command address_to command)
 
         if (at < sed_space_length)
         {
+                if (!sed_space_fits(have, sed_space_length - at))
+                        return false;
+
                 memory_copy(sed_work + have, sed_space + at, sed_space_length - at);
                 have += sed_space_length - at;
         }
@@ -8401,7 +8723,7 @@ static b32 text_sed()
                         sed_space_length = text_line_length;
                         sed_space_ended = text_line_ended;
                         sed_number++;
-                        sed_last = !text_fill() && (sed_separate || i == inputs - 1);
+                        sed_last = sed_input_ends(i, inputs);
 
                         bool dropped = false;
                         b32 pc = 0;
@@ -8436,7 +8758,16 @@ static b32 text_sed()
 
                                 if (kind == 's')
                                 {
-                                        if (!sed_substitute(command))
+                                        bool did = sed_substitute(command);
+
+                                        if (sed_space_full)
+                                        {
+                                                leaving = 4;
+                                                dropped = true;
+                                                break;
+                                        }
+
+                                        if (!did)
                                                 continue;
 
                                         sed_replaced = true;
@@ -8586,15 +8917,23 @@ static b32 text_sed()
                                         sed_space_ended = text_line_ended;
                                         sed_number++;
                                         sed_replaced = false;
-                                        sed_last = !text_fill() && i == inputs - 1;
+                                        sed_last = sed_input_ends(i, inputs);
                                         continue;
                                 }
 
                                 if (kind == 'N')
                                 {
-                                        if (!text_line_next())
+                                        if (!sed_line_across(address_of i, inputs))
                                         {
                                                 sed_last = true;
+                                                break;
+                                        }
+
+                                        if (!sed_space_fits(sed_space_length,
+                                                            text_line_length + 1))
+                                        {
+                                                leaving = 4;
+                                                dropped = true;
                                                 break;
                                         }
 
@@ -8604,12 +8943,21 @@ static b32 text_sed()
                                         sed_space_length += text_line_length;
                                         sed_space_ended = text_line_ended;
                                         sed_number++;
-                                        sed_last = !text_fill() && i == inputs - 1;
+                                        sed_last = sed_input_ends(i, inputs);
                                         continue;
                                 }
 
                                 if (kind == 'h' || kind == 'H')
                                 {
+                                        if (kind == 'H' &&
+                                            !sed_space_fits(sed_hold_length,
+                                                            sed_space_length + 1))
+                                        {
+                                                leaving = 4;
+                                                dropped = true;
+                                                break;
+                                        }
+
                                         if (kind == 'H')
                                                 sed_hold[sed_hold_length++] = '\n';
                                         else
@@ -8623,6 +8971,15 @@ static b32 text_sed()
 
                                 if (kind == 'g' || kind == 'G')
                                 {
+                                        if (kind == 'G' &&
+                                            !sed_space_fits(sed_space_length,
+                                                            sed_hold_length + 1))
+                                        {
+                                                leaving = 4;
+                                                dropped = true;
+                                                break;
+                                        }
+
                                         if (kind == 'g')
                                                 sed_space_length = 0;
                                         else
@@ -8808,6 +9165,10 @@ typedef struct
         bool skip_blanks_first;
         bool skip_blanks_second;
         bool given;
+        // Whether the key spelled any ordering option of its own. One that
+        // did takes nothing from the command line: -r -k1n sorts the key
+        // numerically and forwards, as the reference sort does.
+        bool ordered;
 } sort_key;
 
 static sort_key sort_keys[SORT_KEYS_MAX];
@@ -9663,6 +10024,8 @@ static positive sort_key_flags(sort_key address_to key, string_address spec,
         {
                 p8 option = spec[at++];
 
+                key->ordered = true;
+
                 if (option == 'n' || option == 'h' ||
                     option == 'M' || option == 'V')
                 {
@@ -9708,11 +10071,12 @@ static bool sort_parse_key(string_address spec)
         key->first_char = 0;
         key->second_field = 0;
         key->second_char = 0;
-        key->kind = sort_kind;
-        key->how = sort_how;
-        key->reverse = sort_reverse;
-        key->skip_blanks_first = sort_skip_blanks;
-        key->skip_blanks_second = sort_skip_blanks;
+        key->kind = 0;
+        key->how = 0;
+        key->reverse = false;
+        key->skip_blanks_first = false;
+        key->skip_blanks_second = false;
+        key->ordered = false;
 
         key->first_field = string_digits(spec + at, address_of taken);
         at += taken;
@@ -9965,19 +10329,20 @@ static b32 text_sort()
                 sort_separator = escaped ? '\0' : said[0];
         }
 
-        // The global flags are the default for every key, and -n after -k on
-        // the command line still has to reach the key in front of it.
+        // The global flags are the default for a key that spelled none of
+        // its own, and -n after -k on the command line still has to reach
+        // the key in front of it. A key that did spell one takes none of
+        // them: -r -k1n is a numeric forward key, not a reversed one.
         for (b32 i = 0; i < sort_key_count; i++)
         {
-                if (!sort_keys[i].kind)
-                        sort_keys[i].kind = sort_kind;
+                if (sort_keys[i].ordered)
+                        continue;
 
-                sort_keys[i].reverse = sort_keys[i].reverse || sort_reverse;
-                sort_keys[i].how |= sort_how;
-
-                if (sort_skip_blanks)
-                        sort_keys[i].skip_blanks_first =
-                            sort_keys[i].skip_blanks_second = true;
+                sort_keys[i].kind = sort_kind;
+                sort_keys[i].reverse = sort_reverse;
+                sort_keys[i].how = sort_how;
+                sort_keys[i].skip_blanks_first =
+                    sort_keys[i].skip_blanks_second = sort_skip_blanks;
         }
 
         if (null_data)

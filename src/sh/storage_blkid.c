@@ -195,6 +195,22 @@ static fn storage_hex_padded(p8 address_to into, positive value,
         into[padding + count] = end;
 }
 
+/* Fourteen recognisers name their type and six copy a sixteen-byte UUID;
+   each spelled the three-argument store and the length by hand. */
+static fn storage_set_type(storage_identity address_to identity,
+                           string_address type)
+{
+        storage_text(identity->type, sizeof(identity->type),
+                     address_of identity->type_length, type);
+}
+
+static fn storage_set_uuid(storage_identity address_to identity,
+                           p8 address_to bytes)
+{
+        storage_uuid_bytes(identity->uuid, bytes);
+        identity->uuid_length = 36;
+}
+
 static fn storage_uuid_fat(p8 address_to into, p32 serial)
 {
         storage_hex_padded(into, (positive)(serial >> 16), 4, true);
@@ -340,20 +356,13 @@ static fn storage_probe_ext(storage_identity address_to identity,
         incompatible = storage_le32(bytes + 1024 + 96);
 
         if (incompatible & (0x40 | 0x80 | 0x200))
-                storage_text(identity->type, sizeof(identity->type),
-                             address_of identity->type_length,
-                             (string_address)"ext4");
+                storage_set_type(identity, (string_address)"ext4");
         else if (compatible & 0x4)
-                storage_text(identity->type, sizeof(identity->type),
-                             address_of identity->type_length,
-                             (string_address)"ext3");
+                storage_set_type(identity, (string_address)"ext3");
         else
-                storage_text(identity->type, sizeof(identity->type),
-                             address_of identity->type_length,
-                             (string_address)"ext2");
+                storage_set_type(identity, (string_address)"ext2");
 
-        storage_uuid_bytes(identity->uuid, bytes + 1024 + 104);
-        identity->uuid_length = 36;
+        storage_set_uuid(identity, bytes + 1024 + 104);
         storage_trimmed(identity->label, sizeof(identity->label),
                         address_of identity->label_length,
                         bytes + 1024 + 120, 16, false);
@@ -385,9 +394,7 @@ static fn storage_probe_fat(storage_identity address_to identity,
 
         serial_at = fat32 ? 67 : 39;
         label_at = fat32 ? 71 : 43;
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"vfat");
+        storage_set_type(identity, (string_address)"vfat");
         storage_uuid_fat(identity->uuid, storage_le32(bytes + serial_at));
         identity->uuid_length = 9;
         storage_trimmed(identity->label, sizeof(identity->label),
@@ -489,9 +496,7 @@ static fn storage_probe_exfat(bipolar handle,
             (p64)fat_at + (p64)fat_length * fats > heap_at)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"exfat");
+        storage_set_type(identity, (string_address)"exfat");
         storage_uuid_fat(identity->uuid, storage_le32(bytes + 100));
         identity->uuid_length = 9;
         storage_probe_exfat_label(handle, identity, bytes, have);
@@ -522,9 +527,7 @@ static fn storage_probe_ntfs(storage_identity address_to identity,
             !sectors || mft_cluster >= sectors / sectors_per_cluster)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"ntfs");
+        storage_set_type(identity, (string_address)"ntfs");
         storage_hex_padded(identity->uuid, (positive)storage_le64(bytes + 72),
                            16, true);
         identity->uuid_length = 16;
@@ -651,11 +654,8 @@ static fn storage_probe_erofs(storage_identity address_to identity,
         if (have < 1024 + 80 || storage_le32(bytes + 1024) != 0xe0f5e1e2)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"erofs");
-        storage_uuid_bytes(identity->uuid, bytes + 1024 + 48);
-        identity->uuid_length = 36;
+        storage_set_type(identity, (string_address)"erofs");
+        storage_set_uuid(identity, bytes + 1024 + 48);
         storage_trimmed(identity->label, sizeof(identity->label),
                         address_of identity->label_length,
                         bytes + 1024 + 64, 16, false);
@@ -703,11 +703,8 @@ static fn storage_probe_xfs(storage_identity address_to identity,
             !storage_uuid_present(bytes + 32))
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"xfs");
-        storage_uuid_bytes(identity->uuid, bytes + 32);
-        identity->uuid_length = 36;
+        storage_set_type(identity, (string_address)"xfs");
+        storage_set_uuid(identity, bytes + 32);
         storage_trimmed(identity->label, sizeof(identity->label),
                         address_of identity->label_length,
                         bytes + 108, 12, true);
@@ -761,11 +758,8 @@ static fn storage_probe_f2fs(storage_identity address_to identity,
             !storage_uuid_present(super + 108))
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"f2fs");
-        storage_uuid_bytes(identity->uuid, super + 108);
-        identity->uuid_length = 36;
+        storage_set_type(identity, (string_address)"f2fs");
+        storage_set_uuid(identity, super + 108);
         storage_utf16_label(identity->label, sizeof(identity->label),
                             address_of identity->label_length,
                             super + 124, 512);
@@ -809,9 +803,7 @@ static fn storage_probe_squashfs(storage_identity address_to identity,
             storage_le64(bytes + 72) == (p64)-1)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"squashfs");
+        storage_set_type(identity, (string_address)"squashfs");
 }
 
 static bool storage_udf_tag(p8 address_to descriptor, positive have,
@@ -824,9 +816,8 @@ static bool storage_udf_tag(p8 address_to descriptor, positive have,
             storage_le32(descriptor + 12) != location)
                 return false;
 
-        for (positive at = 0; at < 16; at++)
-                if (at != 4)
-                        checksum += descriptor[at];
+        // The tag's own checksum byte is left out of the sum over the tag.
+        checksum = memory_sum_bytes(descriptor, 16) - descriptor[4];
 
         return (p8)checksum == descriptor[4];
 }
@@ -970,11 +961,25 @@ static fn storage_probe_udf(bipolar handle,
                                              sizeof(descriptor), sector * 2048);
                 string_address name;
 
-                if (have != sizeof(descriptor) || descriptor[0] ||
-                    descriptor[6] != 1)
+                if (have != sizeof(descriptor) || descriptor[6] != 1)
                         return;
 
                 name = descriptor + 1;
+
+                /*
+                        A bridge disc -- what mkisofs -udf and every DVD
+                        writes -- puts the ISO 9660 descriptors first, and
+                        those carry their type in byte 0 where an ECMA-167
+                        structure has a zero. They are stepped over, as
+                        libblkid steps over them, and only the three UDF
+                        words are held to the zero: refusing the sequence at
+                        its first descriptor named every such disc iso9660.
+                */
+                if (memory_is_5(name, 'C', 'D', '0', '0', '1'))
+                        continue;
+
+                if (descriptor[0])
+                        return;
 
                 if (memory_is_5(name, 'B', 'E', 'A', '0', '1'))
                 {
@@ -995,13 +1000,10 @@ static fn storage_probe_udf(bipolar handle,
                             !storage_udf_metadata(handle, identity))
                                 return;
 
-                        storage_text(identity->type, sizeof(identity->type),
-                                     address_of identity->type_length,
-                                     (string_address)"udf");
+                        storage_set_type(identity, (string_address)"udf");
                         return;
                 }
-                else if (!memory_is_5(name, 'B', 'O', 'O', 'T', '2') &&
-                         !memory_is_5(name, 'C', 'D', '0', '0', '1'))
+                else if (!memory_is_5(name, 'B', 'O', 'O', 'T', '2'))
                         return;
         }
 }
@@ -1065,9 +1067,7 @@ static fn storage_probe_luks(storage_identity address_to identity,
         else
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"crypto_LUKS");
+        storage_set_type(identity, (string_address)"crypto_LUKS");
         storage_trimmed(identity->uuid, sizeof(identity->uuid),
                         address_of identity->uuid_length,
                         bytes + 168, 40, false);
@@ -1129,14 +1129,11 @@ static fn storage_probe_swap(bipolar handle,
         if (!recognised)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"swap");
+        storage_set_type(identity, (string_address)"swap");
 
         if (modern && have >= 1068)
         {
-                storage_uuid_bytes(identity->uuid, bytes + 1036);
-                identity->uuid_length = 36;
+                storage_set_uuid(identity, bytes + 1036);
                 storage_trimmed(identity->label, sizeof(identity->label),
                                 address_of identity->label_length,
                                 bytes + 1052, 16, false);
@@ -1164,11 +1161,8 @@ static fn storage_probe_btrfs(bipolar handle,
             node_size < sector_size || node_size > 65536)
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"btrfs");
-        storage_uuid_bytes(identity->uuid, bytes + 0x20);
-        identity->uuid_length = 36;
+        storage_set_type(identity, (string_address)"btrfs");
+        storage_set_uuid(identity, bytes + 0x20);
         storage_trimmed(identity->label, sizeof(identity->label),
                         address_of identity->label_length,
                         bytes + 0x12b, 256, false);
@@ -1185,9 +1179,7 @@ static fn storage_probe_iso9660(bipolar handle,
                            (p8 address_to)"CD001", 5))
                 return;
 
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length,
-                     (string_address)"iso9660");
+        storage_set_type(identity, (string_address)"iso9660");
         storage_trimmed(identity->label, sizeof(identity->label),
                         address_of identity->label_length,
                         bytes + 40, 32, true);
@@ -1263,7 +1255,6 @@ static fn storage_probe_partition(string_address path,
         positive used;
         positive major;
         positive minor;
-        bipolar handle;
         bipolar got;
 
         memory_zero(facts, sizeof(facts));
@@ -1280,16 +1271,9 @@ static fn storage_probe_partition(string_address path,
         used += positive_into_string(sysfs + used, minor);
         memory_copy(sysfs + used, "/uevent", sizeof("/uevent"));
 
-        handle = system_open_at(AT_FDCWD, sysfs,
-                               FILE_READ | O_CLOEXEC);
-        if (handle < 0)
-                return;
-
-        got = system_read_retry((positive)handle, text, sizeof(text) - 1);
-        system_close(handle);
+        got = file_slurp_once_at(AT_FDCWD, sysfs, text, sizeof(text));
         if (got <= 0)
                 return;
-        text[got] = end;
 
         {
                 p8 address_to line = text;
@@ -1381,9 +1365,7 @@ static const storage_tag_descriptor address_to storage_tag_find(
 {
         for (positive at = 0; at < array_count(storage_tags);
              at++)
-                if (length == storage_tags[at].length &&
-                    !memory_compare_ascii_case(tag, storage_tags[at].name,
-                                               length))
+                if (file_same_word(tag, length, storage_tags[at].name))
                         return storage_tags + at;
 
         return null;
@@ -1989,11 +1971,12 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
 {
         p8 path[STORAGE_PATH_ROOM];
 
+        // Two for a usage error, as upstream answers: one is "not found".
         if (argc != 2)
         {
                 error("findfs: usage: findfs UUID=value|LABEL=value|"
                       "PARTUUID=value|PARTLABEL=value\n", 0);
-                return 1;
+                return 2;
         }
 
         /* findfs doubles as the ordinary source-specifier normalizer used by

@@ -540,8 +540,7 @@ bool parse_here_line(string_address line)
 
         if (document->strip)
         {
-                while (string_is(line, '\t'))
-                        line++;
+                line += string_span_of_set(line, "\t");
 
                 if (!string_compare(line, here_names + document->delimiter))
                 {
@@ -658,6 +657,34 @@ static bool parse_copy_lex(parse_token address_to into,
         return true;
 }
 
+// One token of the line the lexer just cut, and whether it touched the one
+// before it -- which the lexer's positions say and only the parser keeps.
+static bool parse_copy_lexed(parse_token address_to into, b32 index,
+                             parse_alias_trace address_to trace)
+{
+        lex_token address_to source = lex_tokens + index;
+
+        into->joined = index && source->at == lex_tokens[index - 1].at +
+                                                  lex_tokens[index - 1].length;
+
+        return parse_copy_lex(into, source, trace);
+}
+
+// The newline that ends a line of tokens, which the lexer never makes: it
+// separates commands exactly as a semicolon does, and inside a construct it
+// is the only thing that does.
+static fn parse_token_newline(parse_token address_to into,
+                              parse_alias_trace address_to trace)
+{
+        into->kind = PT_NEWLINE;
+        into->op = 0;
+        into->joined = 0;
+        into->text = null;
+        into->length = 0;
+        into->alias_trace = trace;
+        into->alias_forced = false;
+}
+
 // Register a here-document as soon as its complete token line is available,
 // whether that line came from source or from an alias replacement.
 static bool parse_here_at(b32 at)
@@ -701,7 +728,6 @@ bool parse_feed(string_address line)
 {
         b32 count;
         positive token_start;
-        positive previous_stop = 0;
         b32 index;
         b32 unfinished;
 
@@ -736,20 +762,13 @@ bool parse_feed(string_address line)
 
         for (index = 0; index < count; index++)
         {
-                lex_token address_to source = lex_tokens + index;
-                parse_token address_to into;
-
                 //      Room taken before any address into the table is,
                 //      because taking room is what may move it.
                 if (!shell_array_room(parse_tokens, parse_token_room, parse_token_count + 2))
                         return false;
 
-                into = parse_tokens + parse_token_count;
-                into->joined = index && source->at == previous_stop;
-
-                previous_stop = source->at + source->length;
-
-                if (!parse_copy_lex(into, source, null))
+                if (!parse_copy_lexed(parse_tokens + parse_token_count, index,
+                                      null))
                         return false;
 
                 parse_token_count++;
@@ -770,13 +789,7 @@ bool parse_feed(string_address line)
         if (!shell_array_room(parse_tokens, parse_token_room, parse_token_count + 1))
                 return false;
 
-        parse_tokens[parse_token_count].kind = PT_NEWLINE;
-        parse_tokens[parse_token_count].op = 0;
-        parse_tokens[parse_token_count].joined = 0;
-        parse_tokens[parse_token_count].text = null;
-        parse_tokens[parse_token_count].length = 0;
-        parse_tokens[parse_token_count].alias_trace = null;
-        parse_tokens[parse_token_count].alias_forced = false;
+        parse_token_newline(parse_tokens + parse_token_count, null);
         parse_token_count++;
 
         return true;
@@ -974,6 +987,19 @@ static PURE b32 parse_redirect_prefix(b32 at)
                parse_redirect_operator(next->op) ? 1 : -1;
 }
 
+/* The token after a redirect: past its descriptor prefix, the operator, and
+   the operand word when there is one. The two alias scans step over
+   redirects this way and have to agree with each other about how far. */
+static PURE b32 parse_after_redirect(b32 at, b32 prefix)
+{
+        at += prefix + 1;
+
+        if (at < (b32)parse_token_count && parse_tokens[at].kind == PT_WORD)
+                at++;
+
+        return at;
+}
+
 /*
         Replace one eligible word with the tokens of its alias value.
 
@@ -1062,35 +1088,29 @@ static bool parse_alias_replace(b32 position)
                 }
 
                 for (index = 0; index < count; index++)
-                {
-                        lex_token address_to source = lex_tokens + index;
-                        parse_token address_to into =
-                            replacement + replacement_count++;
-
-                        into->joined = index &&
-                                       source->at == lex_tokens[index - 1].at +
-                                                         lex_tokens[index - 1].length;
-
-                        if (!parse_copy_lex(into, source, trace))
+                        if (!parse_copy_lexed(replacement + replacement_count++,
+                                              index, trace))
                         {
                                 parse_state = PARSE_SYNTAX;
                                 goto alias_done;
                         }
-                }
 
-                next_line = string_first_of(line, '\n');
-
-                if (!next_line)
                 {
-                        positive stopped = count
-                                               ? lex_tokens[count - 1].at +
-                                                     lex_tokens[count - 1].length
-                                               : 0;
+                        /*
+                                Where the lexer stopped, which its end token
+                                holds: the newline that ends this line, a
+                                comment in front of it, or the end of the
+                                value. A newline inside a quote was lexed as a
+                                byte of a word, and cutting the value at the
+                                first newline regardless put the rest of that
+                                word on a line of its own.
+                        */
+                        positive stopped = lex_tokens[count].at;
 
-                        while (line[stopped] == ' ' || line[stopped] == '\t')
-                                stopped++;
+                        next_line = string_first_of(line + stopped, '\n');
 
-                        final_comment = line[stopped] == '#';
+                        if (!next_line)
+                                final_comment = string_is(line + stopped, '#');
                 }
 
                 line = next_line;
@@ -1104,13 +1124,7 @@ static bool parse_alias_replace(b32 position)
                         goto alias_done;
                 }
 
-                replacement[replacement_count].kind = PT_NEWLINE;
-                replacement[replacement_count].op = 0;
-                replacement[replacement_count].joined = 0;
-                replacement[replacement_count].text = null;
-                replacement[replacement_count].length = 0;
-                replacement[replacement_count].alias_trace = trace;
-                replacement[replacement_count].alias_forced = false;
+                parse_token_newline(replacement + replacement_count, trace);
                 replacement_count++;
                 line++;
         }
@@ -1171,12 +1185,7 @@ static bool parse_alias_replace(b32 position)
 
                         if (prefix >= 0)
                         {
-                                at += prefix + 1;
-
-                                if (at < (b32)parse_token_count &&
-                                    parse_tokens[at].kind == PT_WORD)
-                                        at++;
-
+                                at = parse_after_redirect(at, prefix);
                                 continue;
                         }
 
@@ -1229,12 +1238,7 @@ static fn parse_alias_command()
 
                         if (prefix >= 0)
                         {
-                                at += prefix + 1;
-
-                                if (at < (b32)parse_token_count &&
-                                    parse_tokens[at].kind == PT_WORD)
-                                        at++;
-
+                                at = parse_after_redirect(at, prefix);
                                 continue;
                         }
 
@@ -2221,7 +2225,11 @@ static b32 parse_keep_redirects(b32 first, b32 count)
                     parse_redirects[first + index].text_length + 1;
 
                 // A here-document body lives in storage the next line reuses,
-                // so a kept redirection carries a copy of its own.
+                // so a kept redirection carries a copy of its own -- taken
+                // from the kept text again when the command it belongs to
+                // was itself kept, which is a function defined inside one:
+                // an offset into the kept text read against here_text is a
+                // body from some other line, or none.
                 if (parse_redirects[first + index].body_length)
                 {
                         positive length = parse_redirects[first + index].body_length;
@@ -2230,7 +2238,10 @@ static b32 parse_keep_redirects(b32 first, b32 count)
                                 return -1;
 
                         memory_copy_end(parse_kept_text + parse_kept_used,
-                                        here_text + parse_redirects[first + index].body,
+                                        (parse_redirects[first + index].kept
+                                             ? parse_kept_text
+                                             : here_text) +
+                                            parse_redirects[first + index].body,
                                         length);
                         parse_redirects[base + index].body = parse_kept_used;
                         parse_redirects[base + index].kept = true;

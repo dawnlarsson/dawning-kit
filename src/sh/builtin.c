@@ -133,18 +133,32 @@ bipolar shell_exec_file(string_address path,
 
 extern p8 address_to shell_directory;
 
+// The three questions faccessat answers. The path walk below is asked all of
+// them: whether a name can run, whether it can be read, which is what . wants
+// of a file, and whether it is there at all.
+#define ACCESS_READ 4
+#define ACCESS_WRITE 2
+#define ACCESS_EXECUTE 1
+
+/*
+        query says only where the name is and never whether it could run:
+        type and command -v answer with a path or nothing, where the executor
+        wants "found but cannot run" told apart from "not found".
+*/
 static bipolar shell_find_in_path_alloc_mode(string_address name,
                                               p8 address_to address_to into,
                                               positive address_to room,
-                                              bool query,
+                                              positive access, bool query,
                                               string_address fixed_path);
 #define shell_find_in_path_alloc(name, into, room)                            \
-        shell_find_in_path_alloc_mode((name), (into), (room), false, null)
+        shell_find_in_path_alloc_mode((name), (into), (room), ACCESS_EXECUTE, \
+                                      false, null)
 #define shell_find_in_path_query_alloc(name, into, room)                      \
-        shell_find_in_path_alloc_mode((name), (into), (room), true, null)
+        shell_find_in_path_alloc_mode((name), (into), (room), ACCESS_EXECUTE, \
+                                      true, null)
 #define shell_find_in_standard_path_alloc(name, into, room, query)            \
-        shell_find_in_path_alloc_mode((name), (into), (room), (query),        \
-                                      "/bin:/usr/bin")
+        shell_find_in_path_alloc_mode((name), (into), (room), ACCESS_EXECUTE, \
+                                      (query), "/bin:/usr/bin")
 bipolar shell_signed(string_address input, bool address_to good);
 bool test_facts(string_address path, file_facts address_to out, bool follow);
 bool word_is(string_address word, string_address text);
@@ -528,6 +542,12 @@ static fn env_variable_drop(positive index)
         positive left = shell_var_count - index - 1;
         env_variable dropped = shell_vars[index];
 
+        // Every path remembered was an answer about a PATH that is now gone,
+        // the same as when it is assigned over.
+        if (dropped.name_length == 4 &&
+            memory_is_4(dropped.text, 'P', 'A', 'T', 'H'))
+                hash_forget();
+
         if (env_index_slots)
                 name_index_remove(env_index, env_index_slots, dropped.hash,
                                   index, shell_var_count,
@@ -552,6 +572,43 @@ static fn env_variable_drop(positive index)
         shell_envp_dirty = true;
 }
 
+/*
+        A record on the end of the vector, and in the index.
+
+        Three places made one -- an exported name with no value yet, an
+        inherited assignment borrowed from the initial stack, and a value
+        written here -- and each wrote the eight fields and the index step by
+        hand. The caller has already made room in the table; what differs
+        between them is only who owns the text and whether it is exported.
+*/
+static env_variable address_to env_record_append(string_address text,
+                                                  positive hash,
+                                                  positive name_length,
+                                                  positive value_length,
+                                                  bool owned, bool permanent)
+{
+        env_variable address_to record = shell_vars + shell_var_count;
+
+        record->text = text;
+        record->hash = hash;
+        record->name_length = name_length;
+        record->value_length = value_length;
+        record->temporary = 0;
+        record->owned = owned;
+        record->permanent = permanent;
+        record->declared = true;
+        shell_var_count++;
+
+        if (!env_index_slots || shell_var_count > env_index_slots / 2)
+                env_index_rebuild(shell_var_count);
+        else
+                name_index_put(env_index, env_index_slots, hash, name_length,
+                               shell_var_count - 1,
+                               address_of env_index_tombstones);
+
+        return record;
+}
+
 static env_variable address_to env_export_take_hashed(const_string name,
                                                        positive length,
                                                        positive hash)
@@ -572,23 +629,8 @@ static env_variable address_to env_export_take_hashed(const_string name,
 
         memory_copy_end((p8 address_to)(cell + 1), (address_any)name, length);
 
-        shell_vars[shell_var_count].text = (string_address)(cell + 1);
-        shell_vars[shell_var_count].hash = hash;
-        shell_vars[shell_var_count].name_length = length;
-        shell_vars[shell_var_count].value_length = 0;
-        shell_vars[shell_var_count].temporary = 0;
-        shell_vars[shell_var_count].owned = true;
-        shell_vars[shell_var_count].permanent = false;
-        shell_vars[shell_var_count].declared = true;
-
-        if (!env_index_slots || shell_var_count + 1 > env_index_slots / 2)
-                env_index_rebuild(shell_var_count + 1);
-        else
-                name_index_put(env_index, env_index_slots, hash, length,
-                               shell_var_count,
-                               address_of env_index_tombstones);
-
-        return shell_vars + shell_var_count++;
+        return env_record_append((string_address)(cell + 1), hash, length, 0,
+                                 true, false);
 }
 
 static env_variable address_to env_export_take(const_string name,
@@ -767,7 +809,6 @@ static bool env_borrow_assignment(string_address entry, bool replace)
         positive length;
         positive hash;
         positive found;
-        bool added = false;
 
         if (!mark || mark == entry)
                 return false;
@@ -784,10 +825,12 @@ static bool env_borrow_assignment(string_address entry, bool replace)
                 if (!env_table_room(shell_var_count + 1))
                         return false;
 
-                found = shell_var_count++;
-                added = true;
+                env_record_append(entry, hash, length, string_length(mark + 1),
+                                  false, true);
+                return true;
         }
-        else if (shell_vars[found].owned)
+
+        if (shell_vars[found].owned)
                 env_cell_drop(shell_vars[found].text);
 
         shell_vars[found].text = entry;
@@ -798,16 +841,6 @@ static bool env_borrow_assignment(string_address entry, bool replace)
         shell_vars[found].owned = false;
         shell_vars[found].permanent = true;
         shell_vars[found].declared = true;
-
-        if (added)
-        {
-                if (!env_index_slots || shell_var_count > env_index_slots / 2)
-                        env_index_rebuild(shell_var_count);
-                else
-                        name_index_put(env_index, env_index_slots, hash,
-                                       length, found,
-                                       address_of env_index_tombstones);
-        }
 
         return true;
 }
@@ -1046,24 +1079,8 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                         env_cell_drop(old);
         }
         else
-        {
-                shell_vars[shell_var_count].text = (string_address)(cell + 1);
-                shell_vars[shell_var_count].hash = hash;
-                shell_vars[shell_var_count].name_length = name_len;
-                shell_vars[shell_var_count].value_length = value_len;
-                shell_vars[shell_var_count].temporary = 0;
-                shell_vars[shell_var_count].owned = true;
-                shell_vars[shell_var_count].permanent = allexport;
-                shell_vars[shell_var_count].declared = true;
-                shell_var_count++;
-
-                if (!env_index_slots || shell_var_count > env_index_slots / 2)
-                        env_index_rebuild(shell_var_count);
-                else
-                        name_index_put(env_index, env_index_slots, hash,
-                                       name_len, shell_var_count - 1,
-                                       address_of env_index_tombstones);
-        }
+                env_record_append((string_address)(cell + 1), hash, name_len,
+                                  value_len, true, allexport);
 
         if (allexport)
                 shell_vars[idx].permanent = true;
@@ -1114,31 +1131,62 @@ positive shell_number(string_address input)
 /*
         A value written so it can be read back.
 
-        Single quoted, and a single quote inside it closed, escaped and opened
-        again: 'it'\''s'. Anything printed by export -p or readonly -p is meant
-        to be a line the shell could be fed.
+        Single quoted, and a run of single quotes inside it closed, put in
+        double quotes and opened again: 'it'"'"'s'. That is the reference
+        shell's spelling to the byte -- a quote at the very end leaves no
+        empty '' behind it -- because anything printed by set, export -p,
+        readonly -p, trap or alias is meant to be a line the shell could be
+        fed, and a script that diffs two shells' listings should see none.
 */
 fn shell_quoted(writer write, string_address value)
 {
-        write("'", 1);
+        if (!value)
+                value = "";
 
-        while (value && string_get(value))
+        while (1)
         {
                 string_address stop = string_first_of_or_end(value, '\'');
+                positive quotes = 0;
+
+                write("'", 1);
 
                 if (stop > value)
                         write(value, (positive)(stop - value));
 
+                write("'", 1);
                 value = stop;
 
-                if (string_get(value))
-                {
-                        write("'\\''", 4);
-                        value++;
-                }
-        }
+                while (string_is(value + quotes, '\''))
+                        quotes++;
 
-        write("'", 1);
+                if (!quotes)
+                        return;
+
+                write("\"", 1);
+                write(value, quotes);
+                write("\"", 1);
+                value += quotes;
+
+                if (!string_get(value))
+                        return;
+        }
+}
+
+// Twenty places said this sentence and left two behind: what a builtin says
+// when the store is full, and the status it answers with.
+static fn shell_no_room(string_address command)
+{
+        string_format(shell_diagnostic, "%s: no room\n", command);
+        shell_answer(2);
+}
+
+// An assignment a readonly name refused stops a script where it stands,
+// which is what the reference shell does for a special builtin.
+static fn shell_readonly_refused(string_address name, positive length)
+{
+        shell_diagnostic(name, length);
+        shell_diagnostic(": is read only\n", 0);
+        expand_fatal();
 }
 
 static bool shell_valid_name(string_address name, positive length)
@@ -1180,85 +1228,78 @@ static positive shell_declaration_options(bool address_to listed)
         return index;
 }
 
-fn shell_export(writer write, string_address input)
+/*
+        The next option letter, and where the words stop being options.
+
+        Six builtins walked their -abc words with the same loop, and one of
+        them fell off the end of it in silence: `command -x foo` skipped the
+        word it did not understand and ran foo. This is that loop once.
+        Answers false with index on the first operand: at a word that does
+        not begin with a dash, at a lone dash, past "--" (which is stepped
+        over), or at the end of argv. A builtin that takes + words as well
+        says so with plus_too, and direction says which sign the letter came
+        under.
+
+        An option that takes the rest of its word as a value (read -n3) takes
+        it from `rest` and moves rest to the end of it; one that takes the
+        next word steps index onto that word and does the same. Either way
+        the walk carries on with the word after.
+*/
+typedef struct
 {
-        bool listed;
-        positive index = shell_declaration_options(address_of listed);
+        positive index;
+        string_address rest;
+        p8 direction;
+        bool plus_too;
+} shell_option_walk;
 
-        if (listed && index >= shell_argc)
+static bool shell_option_letter(shell_option_walk address_to walk,
+                                p8 address_to letter)
+{
+        while (1)
         {
-                for (positive at = 0; at < shell_var_count; at++)
+                string_address word;
+
+                if (walk->rest && string_get(walk->rest))
                 {
-                        env_variable address_to variable = shell_vars + at;
-
-                        if (!variable->permanent)
-                                continue;
-
-                        write("export ", 7);
-                        write(variable->text, variable->name_length);
-
-                        if (env_variable_has_value(variable))
-                        {
-                                write("=", 1);
-                                shell_quoted(write, variable->text +
-                                                         variable->name_length +
-                                                         1);
-                        }
-
-                        write("\n", 1);
+                        address_to letter = string_get(walk->rest++);
+                        return true;
                 }
 
-                return shell_answer(0);
+                if (walk->rest)
+                {
+                        walk->rest = null;
+                        walk->index++;
+                }
+
+                if (walk->index >= shell_argc)
+                        return false;
+
+                word = shell_argv[walk->index];
+                walk->direction = string_get(word);
+
+                if ((walk->direction != '-' &&
+                     (walk->direction != '+' || !walk->plus_too)) ||
+                    !string_get(word + 1))
+                        return false;
+
+                if (word_is(word, "--"))
+                {
+                        walk->index++;
+                        return false;
+                }
+
+                walk->rest = word + 1;
         }
-
-        while (index < shell_argc)
-        {
-                string_address word = shell_argv[index++];
-                string_address mark = string_first_of(word, '=');
-                positive length = mark ? (positive)(mark - word)
-                                       : string_length(word);
-
-                if (!shell_valid_name(word, length))
-                {
-                        shell_bad_name("export", word, length);
-                        return;
-                }
-
-                // A name on its own is already exported here: every variable
-                // assigned to it later inherits the export attribute.
-                if (!mark)
-                {
-                        if (!env_export_mark(word))
-                        {
-                                shell_diagnostic("export: no room\n", 0);
-                                return shell_answer(2);
-                        }
-
-                        continue;
-                }
-
-                address_to mark = end;
-
-                if (env_readonly(word))
-                {
-                        string_format(shell_diagnostic, "%s: is read only\n", word);
-                        address_to mark = '=';
-                        expand_fatal();
-                        return;
-                }
-
-                if (!env_set(word, mark + 1) || !env_export_mark(word))
-                {
-                        address_to mark = '=';
-                        shell_diagnostic("export: no room\n", 0);
-                        return shell_answer(2);
-                }
-
-                address_to mark = '=';
-        }
-
-        shell_answer(0);
 }
+
+// The one walk over every name the shell holds, in order. It lives with
+// declare below, which is what it was written for; set, export and readonly
+// list through it too so that the four agree on the order.
+typedef fn(address_to shell_name_writer)(writer write, string_address name,
+                                         positive length, p8 mark);
+static bool shell_names_sorted(writer write, p8 mark,
+                               shell_name_writer written);
 
 /*
         The directory the shell says it is in, which is not always the one the
@@ -1458,17 +1499,40 @@ bool shell_cd_walk(bool physical, bool address_to say,
                         while (segment)
                         {
                                 string_address next = string_cut(segment, ':');
+                                string_address base = segment;
+                                p8 under[4096];
 
-                                path_join(candidate, sizeof(candidate),
-                                          string_get(segment) ? segment
-                                                              : shell_directory,
+                                /*
+                                        An entry is a directory to look under,
+                                        and a relative one is relative to
+                                        where the shell is: joined onto that
+                                        first, or PWD would be left holding
+                                        "one/two" and every cd .. after it
+                                        would be lost. An empty entry is the
+                                        directory itself, and the one case
+                                        that is not said out loud afterwards,
+                                        because the script named the place it
+                                        landed.
+                                */
+                                if (!string_get(segment))
+                                        base = shell_directory;
+                                else if (string_get(segment) != '/')
+                                {
+                                        path_join(under, sizeof(under),
+                                                  shell_directory, segment);
+                                        base = under;
+                                }
+
+                                path_join(candidate, sizeof(candidate), base,
                                           shell_cd_target);
 
                                 if (shell_cd_try(candidate, physical,
                                                  physical_named,
                                                  variables_set))
                                 {
-                                        address_to say = true;
+                                        if (string_get(segment))
+                                                address_to say = true;
+
                                         return true;
                                 }
 
@@ -1604,7 +1668,9 @@ fn shell_echo(writer write, string_address input)
 
         printf_cut = false;
 
-        while (index < shell_argc && word_is(shell_argv[index], "-n"))
+        // One -n and no more: the second is a word, and the reference shell
+        // prints it.
+        if (index < shell_argc && word_is(shell_argv[index], "-n"))
         {
                 newline = false;
                 index++;
@@ -1650,8 +1716,7 @@ fn shell_exec(writer write, string_address input)
                 if (found)
                         memory_free(found, found_room);
 
-                shell_answer(2);
-                string_format(shell_diagnostic, "exec: no room\n");
+                shell_no_room("exec");
                 shell_stop_when_scripted(2);
 
                 return;
@@ -1806,10 +1871,6 @@ fn shell_poweroff(writer write, string_address input)
         this file are handed: printf, test and set all turn on knowing where
         one word ended and the next began, which joining throws away.
 */
-
-#define ACCESS_READ 4
-#define ACCESS_WRITE 2
-#define ACCESS_EXECUTE 1
 
 // The shell's own ioctl, spelled here because shell.c names it after this file
 // has already been read.
@@ -2044,6 +2105,26 @@ bool shell_option_named(string_address word, bool on)
         return true;
 }
 
+// A bare set is the variables as lines the shell could be fed: sorted, and
+// the value quoted, which is what the reference shell prints and what a
+// script that saves its state to a file is counting on.
+static fn shell_set_written(writer write, string_address name,
+                            positive length, p8 mark)
+{
+        positive found = env_find_span(name, length);
+
+        (void)mark;
+
+        if (found >= shell_var_count ||
+            !env_variable_has_value(shell_vars + found))
+                return;
+
+        write(name, length);
+        write("=", 1);
+        shell_quoted(write, shell_vars[found].text + length + 1);
+        write("\n", 1);
+}
+
 fn shell_set(writer write, string_address input)
 {
         positive index = 1;
@@ -2051,10 +2132,8 @@ fn shell_set(writer write, string_address input)
 
         if (shell_argc < 2)
         {
-                for (positive at = 0; at < shell_var_count; at++)
-                        if (env_variable_has_value(shell_vars + at))
-                                string_format(write, "%s\n",
-                                              shell_vars[at].text);
+                if (!shell_names_sorted(write, 0, shell_set_written))
+                        return shell_no_room("set");
 
                 return shell_answer(0);
         }
@@ -2092,18 +2171,22 @@ fn shell_set(writer write, string_address input)
                                                 continue;
                                         }
 
+                                        // A name nobody has ends the script
+                                        // the same as a letter nobody has:
+                                        // set is a special builtin, and the
+                                        // reference shell leaves 2 behind.
                                         if (!shell_option_named(shell_argv[++index], on))
                                         {
-                                                shell_answer(2);
-
                                                 shell_diagnostic(
                                                     on ? "set: Illegal option -o "
                                                        : "set: Illegal option +o ",
                                                     23);
-
-                                                return string_format(
-                                                    shell_diagnostic, "%s\n",
-                                                    shell_argv[index]);
+                                                string_format(shell_diagnostic,
+                                                              "%s\n",
+                                                              shell_argv[index]);
+                                                shell_answer(2);
+                                                expand_fatal();
+                                                return;
                                         }
 
                                         letter++;
@@ -2189,34 +2272,30 @@ fn shell_shift(writer write, string_address input)
 
 fn shell_unset(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        positive index;
         bool functions = false;
+        p8 letter;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of letter))
         {
-                if (word_is(shell_argv[index], "--"))
+                if (letter == 'f')
+                        functions = true;
+                else if (letter == 'v')
+                        functions = false;
+                else
                 {
-                        index++;
-                        break;
+                        // A special builtin, so a letter it does not have
+                        // ends the script, as the reference shell's does.
+                        string_format(shell_diagnostic,
+                                      "unset: Illegal option -%c\n", letter);
+                        shell_answer(2);
+                        expand_fatal();
+                        return;
                 }
-
-                string_address option = shell_argv[index] + 1;
-
-                while (string_get(option))
-                {
-                        if (string_get(option) == 'f')
-                                functions = true;
-                        else if (string_get(option) == 'v')
-                                functions = false;
-                        else
-                                return shell_answer(2);
-
-                        option++;
-                }
-
-                index++;
         }
+
+        index = walk.index;
 
         while (index < shell_argc)
         {
@@ -2230,8 +2309,7 @@ fn shell_unset(writer write, string_address input)
 
                 if (!functions && env_readonly(word))
                 {
-                        string_format(shell_diagnostic, "%s: is read only\n", word);
-                        expand_fatal();
+                        shell_readonly_refused(word, string_length(word));
                         return;
                 }
 
@@ -2488,8 +2566,7 @@ fn shell_local(writer write, string_address input)
 
                 if (mark && !env_assign(word, mark + 1))
                 {
-                        shell_diagnostic("local: no room\n", 0);
-                        shell_answer(2);
+                        shell_no_room("local");
                         failed = true;
                 }
 
@@ -2518,53 +2595,36 @@ typedef struct
 
 static bool shell_declare_options(shell_declare_state address_to state)
 {
-        while (state->index < shell_argc)
+        shell_option_walk walk = {state->index, null, 0, true};
+        p8 value;
+
+        while (shell_option_letter(address_of walk, address_of value))
         {
-                string_address word = shell_argv[state->index];
-                p8 direction = string_get(word);
-                string_address option;
+                p8 direction = walk.direction;
+                p8 flag;
 
-                if ((direction != '-' && direction != '+') ||
-                    !string_get(word + 1))
-                        break;
+                flag = value == 'x' ? DECLARE_EXPORT
+                       : value == 'r' ? DECLARE_READONLY
+                       : value == 'p' && direction == '-' ? DECLARE_PRINT
+                       : value == 'g' && direction == '-' ? DECLARE_GLOBAL
+                                                          : 0;
 
-                if (word_is(word, "--"))
+                if (!flag)
                 {
-                        state->index++;
-                        break;
+                        string_format(shell_diagnostic,
+                                      "%s: %c%c: invalid option\n",
+                                      shell_argv[0], direction, value);
+                        shell_answer(2);
+                        return false;
                 }
 
-                option = word + 1;
-
-                while (string_get(option))
-                {
-                        p8 value = string_get(option++);
-                        p8 flag;
-
-                        flag = value == 'x' ? DECLARE_EXPORT
-                               : value == 'r' ? DECLARE_READONLY
-                               : value == 'p' && direction == '-' ? DECLARE_PRINT
-                               : value == 'g' && direction == '-' ? DECLARE_GLOBAL
-                                                                  : 0;
-
-                        if (!flag)
-                        {
-                                string_format(shell_diagnostic,
-                                              "%s: %c%c: invalid option\n",
-                                              shell_argv[0], direction, value);
-                                shell_answer(2);
-                                return false;
-                        }
-
-                        if (direction == '-')
-                                state->set |= flag;
-                        else
-                                state->clear |= flag;
-                }
-
-                state->index++;
+                if (direction == '-')
+                        state->set |= flag;
+                else
+                        state->clear |= flag;
         }
 
+        state->index = walk.index;
         state->set &= (p8)~state->clear;
         return true;
 }
@@ -2670,7 +2730,16 @@ static bool shell_declare_print_one(writer write, string_address name,
         return true;
 }
 
-static bool shell_declare_print_all(writer write, p8 filter)
+/*
+        Every name the shell holds, sorted, handed to a writer one at a time.
+
+        The names are copied out first because the vector holds NAME=VALUE
+        and the writer will want to look the name up, which wants it on its
+        own. A readonly name with no value is not in the vector at all and is
+        added from its own table, so readonly -p can list it.
+*/
+static bool shell_names_sorted(writer write, p8 mark,
+                               shell_name_writer written)
 {
         positive count = shell_var_count;
         shell_mark held = shell_store_mark(address_of expand_store);
@@ -2714,8 +2783,7 @@ static bool shell_declare_print_all(writer write, p8 filter)
                 goto failed;
 
         for (positive at = 0; at < count; at++)
-                shell_declare_print_one(write, names[at],
-                                        string_length(names[at]), filter);
+                written(write, names[at], string_length(names[at]), mark);
 
         shell_store_rewind(address_of expand_store, held);
         return true;
@@ -2723,6 +2791,17 @@ static bool shell_declare_print_all(writer write, p8 filter)
 failed:
         shell_store_rewind(address_of expand_store, held);
         return false;
+}
+
+static fn shell_declare_written(writer write, string_address name,
+                                positive length, p8 filter)
+{
+        shell_declare_print_one(write, name, length, filter);
+}
+
+static bool shell_declare_print_all(writer write, p8 filter)
+{
+        return shell_names_sorted(write, filter, shell_declare_written);
 }
 
 static bool shell_declare_assign(string_address name, string_address value,
@@ -2903,10 +2982,8 @@ static fn shell_declare(writer write, string_address input)
 
                 if (mark && readonly)
                 {
-                        string_format(shell_diagnostic, "%s: is read only\n",
-                                      word);
                         address_to name_end = delimiter;
-                        expand_fatal();
+                        shell_readonly_refused(word, length);
                         return;
                 }
                 else if (mark ? !shell_declare_assign(word, mark + 1, append)
@@ -2927,90 +3004,117 @@ static fn shell_declare(writer write, string_address input)
                 continue;
 
         no_room:
-                shell_diagnostic("declare: no room\n", 0);
                 if (mark)
                         address_to name_end = delimiter;
-                return shell_answer(2);
+                return shell_no_room("declare");
         }
 
         shell_answer(failed ? 1 : 0);
 }
 
-fn shell_readonly(writer write, string_address input)
+/*
+        export and readonly, which are one command with two marks.
+
+        Both take -p, list what carries their mark when given nothing else,
+        and otherwise walk their words: a name alone gets the mark, and
+        name=value is assigned first and marked after. The two bodies had
+        drifted a word apart in four places, which is how a script comes to
+        see readonly refuse what export allowed. The listing is sorted and
+        quoted the way the reference shell's is, through the walk declare -p
+        already had.
+*/
+static fn shell_marked_written(writer write, string_address name,
+                               positive length, p8 mark)
 {
+        positive found = env_find_span(name, length);
+        env_variable address_to variable =
+            found < shell_var_count ? shell_vars + found : null;
+
+        if (mark == DECLARE_EXPORT ? !(variable && variable->permanent)
+                                   : !env_readonly(name))
+                return;
+
+        if (mark == DECLARE_EXPORT)
+                write("export ", 7);
+        else
+                write("readonly ", 9);
+
+        write(name, length);
+
+        if (variable && env_variable_has_value(variable))
+        {
+                write("=", 1);
+                shell_quoted(write, variable->text + length + 1);
+        }
+
+        write("\n", 1);
+}
+
+static fn shell_marked(writer write, p8 mark)
+{
+        string_address command = mark == DECLARE_EXPORT ? "export"
+                                                        : "readonly";
         bool listed;
         positive index = shell_declaration_options(address_of listed);
 
         if (listed && index >= shell_argc)
         {
-                positive at = 0;
-
-                while (at < readonly_count)
-                {
-                        string_address value = env_get(readonly_name[at]);
-
-                        string_format(write, "readonly %s", readonly_name[at]);
-
-                        if (value)
-                        {
-                                write("=", 1);
-                                shell_quoted(write, value);
-                        }
-
-                        write("\n", 1);
-                        at++;
-                }
+                if (!shell_names_sorted(write, mark, shell_marked_written))
+                        return shell_no_room(command);
 
                 return shell_answer(0);
         }
 
         while (index < shell_argc)
         {
-                string_address word = shell_argv[index];
-                string_address mark = string_first_of(word, '=');
-                positive length = mark ? (positive)(mark - word) : string_length(word);
+                string_address word = shell_argv[index++];
+                string_address value = string_first_of(word, '=');
+                positive length = value ? (positive)(value - word)
+                                        : string_length(word);
+                bool kept;
 
                 if (!shell_valid_name(word, length))
                 {
-                        shell_bad_name("readonly", word, length);
+                        shell_bad_name(command, word, length);
                         return;
                 }
 
-                if (mark)
+                // The name on its own while it is looked up and marked; the
+                // word is argv's and goes back the way it was.
+                if (value)
+                        address_to value = end;
+
+                if (value && env_readonly(word))
                 {
-                        bool set;
-
-                        address_to mark = end;
-
-                        if (env_readonly(word))
-                        {
-                                string_format(shell_diagnostic, "%s: is read only\n", word);
-                                address_to mark = '=';
-                                expand_fatal();
-                                return;
-                        }
-
-                        set = env_assign(word, mark + 1);
-
-                        if (!set || !readonly_add(word, length))
-                        {
-                                address_to mark = '=';
-                                shell_diagnostic("readonly: no room\n", 0);
-                                return shell_answer(2);
-                        }
-
-                        address_to mark = '=';
-                }
-                else if (!readonly_add(word, length))
-                {
-                        shell_diagnostic("readonly: no room\n", 0);
-                        return shell_answer(2);
+                        address_to value = '=';
+                        shell_readonly_refused(word, length);
+                        return;
                 }
 
-                index++;
+                // A name on its own is already marked here: every value
+                // assigned to it later inherits the attribute.
+                kept = (!value || env_assign(word, value + 1)) &&
+                       (mark == DECLARE_EXPORT ? env_export_mark(word)
+                                               : readonly_add(word, length));
+
+                if (value)
+                        address_to value = '=';
+
+                if (!kept)
+                        return shell_no_room(command);
         }
 
         shell_answer(0);
+}
+
+fn shell_export(writer write, string_address input)
+{
+        shell_marked(write, DECLARE_EXPORT);
+}
+
+fn shell_readonly(writer write, string_address input)
+{
+        shell_marked(write, DECLARE_READONLY);
 }
 
 /*
@@ -3061,7 +3165,31 @@ bool test_unary(p8 op, string_address value)
         if (op == 't')
         {
                 p8 settings[64];
-                bipolar descriptor = value ? (bipolar)shell_number(value) : 1;
+                bipolar descriptor = 1;
+
+                // strtol's grammar, which is what the reference shell reads
+                // the descriptor with: blanks either side are fine, and
+                // anything else after the digits is not a number, which is
+                // an error and not a false.
+                if (value)
+                {
+                        string_address step =
+                            value + string_span(value, string_set_blanks);
+                        positive used;
+
+                        descriptor = string_bipolar(step, address_of used);
+                        step += used;
+                        step += string_span(step, string_set_blanks);
+
+                        if (!used || string_get(step))
+                        {
+                                string_format(shell_diagnostic,
+                                              "%s: Illegal number: %s\n",
+                                              shell_argv[0], value);
+                                test_bad = true;
+                                return false;
+                        }
+                }
 
                 return system_control(descriptor, BUILTIN_TCGETS, settings) == 0;
         }
@@ -3608,7 +3736,10 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
 
         if (string_is(step, '0') || (string_get(step) >= '1' && string_get(step) <= '7'))
         {
-                if (string_is(step, '0'))
+                // \0ddd is the %b argument's spelling; in the format itself
+                // the zero is the first of up to three digits, so \0101 is
+                // a backspace and a one there and an A in an argument.
+                if (printf_in_b && string_is(step, '0'))
                         step++;
 
                 positive used;
@@ -3677,10 +3808,23 @@ fn printf_escaped(writer write, string_address text)
 }
 
 fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool upper,
-                 positive width, bipolar precision, bool left, bool zero)
+                 positive width, bipolar precision, bool left, bool zero,
+                 bool alternate)
 {
         positive style = sign | ((positive)upper << 26) |
                          ((positive)left << 27) | ((positive)zero << 28);
+
+        // The alternate form is a prefix, and only on a value that has
+        // digits to put it in front of: 0x before sixteen, 0 before eight.
+        if (alternate && magnitude)
+        {
+                if (base == 16)
+                        style |= ((positive)'0' << 8) |
+                                 ((positive)(upper ? 'X' : 'x') << 16) |
+                                 ((positive)2 << 24);
+                else if (base == 8)
+                        style |= ((positive)'0' << 8) | ((positive)1 << 24);
+        }
 
         positive_to_base_field(write, magnitude, base, width, precision, style);
 }
@@ -3693,6 +3837,88 @@ fn printf_not_a_number(string_address word)
         printf_status = 1;
 }
 
+/*
+        The number an integer conversion reads out of its argument.
+
+        strtoimax's grammar, which is what the reference shell reads with:
+        blanks in front, a sign, 0x for sixteen and a leading 0 for eight --
+        and before any of that, a quote, which means the byte after it. An
+        empty or missing argument is zero and no complaint. What the digits
+        leave behind is a complaint and not a refusal: the number read is
+        printed, and "not completely converted" is said afterwards with the
+        status, the same as no digits at all is zero and "expected numeric
+        value". A conversion that refused every one of those printed nothing
+        for "$maybe_empty" and set the status where every other shell did not.
+*/
+static bipolar printf_integer(string_address word)
+{
+        string_address at = word;
+        positive magnitude;
+        positive used = 0;
+        bool negative = false;
+
+        if (!word)
+                return 0;
+
+        at += string_span(at, string_set_blanks);
+
+        if (!string_get(at))
+                return 0;
+
+        if (string_is(at, '\'') || string_is(at, '"'))
+                return (bipolar)string_get(at + 1);
+
+        if (string_is(at, '-'))
+        {
+                negative = true;
+                at++;
+        }
+        else if (string_is(at, '+'))
+                at++;
+
+        if (string_is(at, '0') && (string_is(at + 1, 'x') || string_is(at + 1, 'X')))
+        {
+                magnitude = string_digits_hexadecimal_max(at + 2, positive_max,
+                                                          address_of used);
+
+                // "0x" with nothing after it is the zero and then an x.
+                if (used)
+                        at += 2 + used;
+                else
+                {
+                        magnitude = 0;
+                        used = 1;
+                        at++;
+                }
+        }
+        else if (string_is(at, '0'))
+        {
+                magnitude = string_digits_octal_max(at, positive_max,
+                                                    address_of used);
+                at += used;
+        }
+        else
+        {
+                magnitude = string_digits_max(at, positive_max, address_of used);
+                at += used;
+        }
+
+        if (!used)
+        {
+                printf_not_a_number(word);
+                return 0;
+        }
+
+        if (string_get(at))
+        {
+                string_format(shell_diagnostic,
+                              "printf: %s: not completely converted\n", word);
+                printf_status = 1;
+        }
+
+        return bipolar_from_magnitude(magnitude, negative);
+}
+
 fn printf_one(writer write, string_address format)
 {
         string_address step = format;
@@ -3701,10 +3927,11 @@ fn printf_one(writer write, string_address format)
 
         while (string_get(step) && !printf_cut)
         {
-                bool left = false;
-                bool zero = false;
-                bool plus = false;
-                bool space = false;
+                bool left;
+                bool zero;
+                bool plus;
+                bool space;
+                bool alternate;
                 positive width = 0;
                 bipolar precision = -1;
                 positive run = string_span(step, printf_plain);
@@ -3725,30 +3952,19 @@ fn printf_one(writer write, string_address format)
 
                 step++;
 
-                while (string_is(step, '-') || string_is(step, '0') ||
-                       string_is(step, '+') || string_is(step, ' ') ||
-                       string_is(step, '#'))
                 {
-                        if (string_is(step, '-'))
-                                left = true;
-                        else if (string_is(step, '0'))
-                                zero = true;
-                        else if (string_is(step, '+'))
-                                plus = true;
-                        else if (string_is(step, ' '))
-                                space = true;
+                        positive flags = conversion_flags_take(address_of step);
 
-                        step++;
+                        left = (flags & CONVERSION_FLAG_LEFT) != 0;
+                        zero = (flags & CONVERSION_FLAG_ZERO) != 0;
+                        plus = (flags & CONVERSION_FLAG_PLUS) != 0;
+                        space = (flags & CONVERSION_FLAG_SPACE) != 0;
+                        alternate = (flags & CONVERSION_FLAG_ALTERNATE) != 0;
                 }
 
                 if (string_is(step, '*'))
                 {
-                        bool good;
-                        string_address word = printf_next();
-                        bipolar asked = shell_signed(word, address_of good);
-
-                        if (!good)
-                                printf_not_a_number(word);
+                        bipolar asked = printf_integer(printf_next());
 
                         // A negative width is the minus flag written out long.
                         if (asked < 0)
@@ -3776,13 +3992,7 @@ fn printf_one(writer write, string_address format)
 
                         if (string_is(step, '*'))
                         {
-                                bool good;
-                                string_address word = printf_next();
-
-                                precision = shell_signed(word, address_of good);
-
-                                if (!good)
-                                        printf_not_a_number(word);
+                                precision = printf_integer(printf_next());
 
                                 if (precision < 0)
                                         precision = -1;
@@ -3842,9 +4052,9 @@ fn printf_one(writer write, string_address format)
                                 printf_escaped(printf_holder, value);
                                 printf_in_b = false;
 
-                                if (printf_cut)
-                                        break;
-
+                                // \c ends the output, but what stood in front
+                                // of it is still written, in its field; the
+                                // loop stops on the flag afterwards.
                                 value = printf_hold;
                                 length = printf_held;
                         }
@@ -3873,13 +4083,8 @@ fn printf_one(writer write, string_address format)
 
                 if (conversion == 'd' || conversion == 'i')
                 {
-                        bool good;
-                        string_address word = printf_next();
-                        bipolar value = shell_signed(word, address_of good);
+                        bipolar value = printf_integer(printf_next());
                         p8 sign = 0;
-
-                        if (!good)
-                                printf_not_a_number(word);
 
                         if (value < 0)
                                 sign = '-';
@@ -3893,24 +4098,19 @@ fn printf_one(writer write, string_address format)
                         if (value < 0)
                                 magnitude = (positive)0 - magnitude;
 
-                        printf_number(write, magnitude,
-                                      sign, 10, false, width, precision, left, zero);
+                        printf_number(write, magnitude, sign, 10, false, width,
+                                      precision, left, zero, false);
                         continue;
                 }
 
                 if (conversion == 'u' || conversion == 'o' ||
                     conversion == 'x' || conversion == 'X')
                 {
-                        bool good;
-                        string_address word = printf_next();
-                        bipolar value = shell_signed(word, address_of good);
+                        bipolar value = printf_integer(printf_next());
                         positive base = conversion == 'o' ? 8 : (conversion == 'u' ? 10 : 16);
 
-                        if (!good)
-                                printf_not_a_number(word);
-
                         printf_number(write, (positive)value, 0, base, conversion == 'X',
-                                      width, precision, left, zero);
+                                      width, precision, left, zero, alternate);
                         continue;
                 }
 
@@ -4000,11 +4200,54 @@ PURE bool read_blank(string_address ifs, positive at)
 
 // A tenth of a second at a time is close enough for a timeout measured in
 // whole seconds, and it keeps the wait in one place.
-bool read_waited(bipolar tenths)
-{
-        timespec span = {tenths / 10, (tenths % 10) * 100000000};
+/*
+        The moment read -t gives up, and whether a byte arrived before it.
 
-        return descriptor_wait_readable(0, address_of span, null) > 0;
+        The timeout is on the whole line, not on each byte of it: measured
+        again from every byte, a writer sending one byte every N seconds
+        kept a read -t N waiting forever. So the deadline is fixed once, on
+        the monotonic clock, and every wait is for what is left of it.
+*/
+#define READ_CLOCK_MONOTONIC 1
+
+static fn read_deadline(bipolar tenths, timespec address_to deadline)
+{
+        system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
+                      (positive)deadline);
+
+        deadline->tv_sec += (p64)(tenths / 10);
+        deadline->tv_nsec += (p64)(tenths % 10) * 100000000;
+
+        if (deadline->tv_nsec >= 1000000000)
+        {
+                deadline->tv_sec++;
+                deadline->tv_nsec -= 1000000000;
+        }
+}
+
+static bool read_waited(timespec address_to deadline)
+{
+        timespec now;
+        timespec left;
+
+        system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
+                      (positive)address_of now);
+
+        if (now.tv_sec > deadline->tv_sec ||
+            (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec))
+                return false;
+
+        left.tv_sec = deadline->tv_sec - now.tv_sec;
+
+        if (deadline->tv_nsec >= now.tv_nsec)
+                left.tv_nsec = deadline->tv_nsec - now.tv_nsec;
+        else
+        {
+                left.tv_sec--;
+                left.tv_nsec = deadline->tv_nsec + 1000000000 - now.tv_nsec;
+        }
+
+        return descriptor_wait_readable(0, address_of left, null) > 0;
 }
 
 fn shell_read(writer write, string_address input)
@@ -4018,6 +4261,7 @@ fn shell_read(writer write, string_address input)
         bool limited = false;
         positive limit = 0;
         bipolar tenths = -1;
+        timespec deadline;
         p8 stop_at = '\n';
         string_address ifs;
         p8 ifs_default[] = " \t\n";
@@ -4158,6 +4402,9 @@ fn shell_read(writer write, string_address input)
                 }
         }
 
+        if (tenths >= 0)
+                read_deadline(tenths, address_of deadline);
+
         while (!(limited && read_length >= limit))
         {
                 p8 value;
@@ -4168,7 +4415,7 @@ fn shell_read(writer write, string_address input)
                         return shell_answer(2);
                 }
 
-                if (tenths >= 0 && !read_waited(tenths))
+                if (tenths >= 0 && !read_waited(address_of deadline))
                 {
                         ended = true;
                         break;
@@ -4823,14 +5070,26 @@ static string_address trap_names[] = {
     "EXIT", "HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "BUS",
     "FPE", "KILL", "USR1", "SEGV", "USR2", "PIPE", "ALRM", "TERM",
     "STKFLT", "CHLD", "CONT", "STOP", "TSTP", "TTIN", "TTOU", "URG",
-    "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "POLL", "PWR", "SYS",
+    "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "PWR", "SYS",
     null,
 };
 
 #define TRAP_NAMES (array_count(trap_names))
+// The real-time signals have numbers and no names, up to the kernel's last.
+#define TRAP_NUMBER_MAX 64
 
+/*
+        The signal a word names: a number up to the last real-time signal,
+        or a name in either case with or without SIG in front, as the
+        reference shell reads it.
+*/
 bipolar trap_number(string_address word)
 {
+        // Linux's own second spelling of 29; the reference shell and kill
+        // both say IO and both take POLL as well.
+        static const named_byte aliases[] = {{"POLL", 29}};
+        p8 upper[16];
+        positive length;
         positive index = 0;
         bool good;
         bipolar value;
@@ -4838,18 +5097,33 @@ bipolar trap_number(string_address word)
         if (!word)
                 return -1;
 
-        if (string_is(word, 'S') && string_is(word + 1, 'I') && string_is(word + 2, 'G'))
-                word += 3;
+        length = string_length_max(word, sizeof(upper));
 
-        index = string_table_find(word, trap_names, sizeof(trap_names[0]),
-                                  TRAP_NAMES);
+        if (length < sizeof(upper))
+        {
+                memory_copy_apart(upper, word, length + 1);
+                memory_to_upper_ascii(upper, length);
 
-        if (index < TRAP_NAMES)
-                return (bipolar)index;
+                string_address name = upper;
+
+                if (string_is(name, 'S') && string_is(name + 1, 'I') &&
+                    string_is(name + 2, 'G'))
+                        name += 3;
+
+                index = string_table_find(name, trap_names,
+                                          sizeof(trap_names[0]), TRAP_NAMES);
+
+                if (index < TRAP_NAMES)
+                        return (bipolar)index;
+
+                for (index = 0; index < array_count(aliases); index++)
+                        if (string_equals(name, aliases[index].name))
+                                return aliases[index].value;
+        }
 
         value = shell_signed(word, address_of good);
 
-        return good ? value : -1;
+        return good && value >= 0 && value <= TRAP_NUMBER_MAX ? value : -1;
 }
 
 /*
@@ -4883,13 +5157,23 @@ bool trap_waiting()
         return trap_caught && !trap_inside;
 }
 
+// Where a signal is in the table, or trap_count when it is not: the three
+// readers below asked the same question with three loops.
+static PURE positive trap_index(positive number)
+{
+        positive at = 0;
+
+        while (at < trap_count && trap_table[at].number != number)
+                at++;
+
+        return at;
+}
+
 PURE bool trap_ignored(positive number)
 {
-        for (positive at = 0; at < trap_count; at++)
-                if (trap_table[at].number == number)
-                        return !string_get(trap_table[at].action);
+        positive at = trap_index(number);
 
-        return false;
+        return at < trap_count && !string_get(trap_table[at].action);
 }
 
 /* wait is the one command POSIX has a caught signal interrupt. Every other
@@ -4951,29 +5235,22 @@ fn trap_default_all()
 
 static string_address trap_detach(positive number, positive address_to room)
 {
-        positive index = 0;
+        positive index = trap_index(number);
+        string_address action;
 
-        while (index < trap_count)
-        {
-                if (trap_table[index].number == number)
-                {
-                        string_address action = trap_table[index].action;
+        if (index == trap_count)
+                return null;
 
-                        if (room)
-                                *room = trap_table[index].action_room;
+        action = trap_table[index].action;
 
-                        memory_copy(trap_table + index, trap_table + index + 1,
-                                    (trap_count - index - 1) *
-                                        sizeof(trap_table[0]));
+        if (room)
+                *room = trap_table[index].action_room;
 
-                        trap_count--;
-                        return action;
-                }
+        memory_copy(trap_table + index, trap_table + index + 1,
+                    (trap_count - index - 1) * sizeof(trap_table[0]));
 
-                index++;
-        }
-
-        return null;
+        trap_count--;
+        return action;
 }
 
 fn trap_forget(positive number)
@@ -5009,17 +5286,9 @@ static bool trap_record(positive number, string_address action)
 
 PURE string_address trap_action(positive number)
 {
-        positive index = 0;
+        positive index = trap_index(number);
 
-        while (index < trap_count)
-        {
-                if (trap_table[index].number == number)
-                        return trap_table[index].action;
-
-                index++;
-        }
-
-        return null;
+        return index < trap_count ? trap_table[index].action : null;
 }
 
 static fn trap_write_condition(writer write, positive number,
@@ -5094,7 +5363,7 @@ fn shell_trap(writer write, string_address input)
                         {
                                 bipolar number = trap_number(shell_argv[index++]);
 
-                                if (number < 0 || number >= TRAP_NAMES - 1)
+                                if (number < 0 || number > TRAP_NUMBER_MAX)
                                 {
                                         string_format(shell_diagnostic,
                                                       "trap: invalid signal: %s\n",
@@ -5156,7 +5425,7 @@ fn shell_trap(writer write, string_address input)
 
                 index++;
 
-                if (number < 0 || number >= TRAP_NAMES - 1)
+                if (number < 0 || number > TRAP_NUMBER_MAX)
                 {
                         string_format(log_error, "trap: invalid signal: %s\n",
                                       shell_argv[index - 1]);
@@ -5463,7 +5732,9 @@ fn shell_eval(writer write, string_address input)
 
                 lex_nest_enter(address_of frame);
 
-                run_line(eval_storage);
+                // Every line of it, not the first: eval "$(cmd)" is the
+                // idiom, and what cmd printed has as many lines as it likes.
+                run_lines(eval_storage);
                 shell_input_end();
 
                 lex_nest_leave(address_of frame);
@@ -5841,7 +6112,7 @@ fn shell_trap_exit()
 
         // Taken away first, so a trap that leaves again does not run twice.
         parse_nest_enter();
-        run_line(action);
+        run_lines(action);
         parse_nest_leave();
         memory_free(action, action_room);
 
@@ -6074,7 +6345,9 @@ fn shell_dot(writer write, string_address input)
                 memory_free(source_text, source_room);
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
                               shell_argv[0], shell_argv[1]);
-                shell_answer(1);
+                // Two, as the reference shell answers: the failure is the
+                // special builtin's own and not the file's.
+                shell_answer(2);
 
                 /*
                         A special builtin that fails ends the script.
@@ -6673,7 +6946,10 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
                         if (!system_access_at(AT_FDCWD, into, access))
                         {
-                                if (use_hash)
+                                // Remembered only as the executor's answer:
+                                // a query asks with access 0 and may name a
+                                // file nobody could run.
+                                if (use_hash && access == ACCESS_EXECUTE)
                                         hash_remember(name, into);
                                 return true;
                         }
@@ -6692,7 +6968,10 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
                         if (!system_access_at(AT_FDCWD, into, access))
                         {
-                                if (use_hash)
+                                // Remembered only as the executor's answer:
+                                // a query asks with access 0 and may name a
+                                // file nobody could run.
+                                if (use_hash && access == ACCESS_EXECUTE)
                                         hash_remember(name, into);
                                 return true;
                         }
@@ -6715,7 +6994,7 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 static bipolar shell_find_in_path_alloc_mode(string_address name,
                                               p8 address_to address_to into,
                                               positive address_to room,
-                                              bool query,
+                                              positive access, bool query,
                                               string_address fixed_path)
 {
         string_address value;
@@ -6758,8 +7037,16 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
         if (!shell_room((address_any address_to)into, room, wanted, 1))
                 return -1;
 
-        if (shell_find_in_path_mode(name, *into, *room,
-                                    query ? 0 : ACCESS_EXECUTE,
+        /*
+                A query asks where the name is, not whether it could run:
+                type and command -v name the first file of that name, as the
+                reference shell's do, and read the table the same as the
+                executor does. What a query finds is not written into it,
+                though: the table is the executor's answer to "what runs",
+                and a name remembered from a query put a file nobody could
+                run in front of the one that would have.
+        */
+        if (shell_find_in_path_mode(name, *into, *room, query ? 0 : access,
                                     !fixed_path, fixed_path))
                 return 1;
 

@@ -200,6 +200,10 @@ compare 'relative overflow clamps' renice \
 compare 'priority option after pid' renice \
         'out=$("$TOOL" -p $$ -n 0); status=$?; printf "%s" "$out"; exit "$status"'
 compare 'invalid priority' renice '"$TOOL" impossible -p $$'
+#       A digit string that wraps a 64-bit word is not a number, as strtol
+#       says; the shell's own wrapping scanner once let it through as zero.
+compare 'wrapped priority' renice '"$TOOL" 18446744073709551616 -p $$'
+compare 'wrapped relative' renice '"$TOOL" --relative 18446744073709551615 -p $$'
 compare 'missing identity' renice '"$TOOL" 0 -p'
 
 group prlimit

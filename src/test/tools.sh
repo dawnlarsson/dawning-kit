@@ -470,9 +470,13 @@ for one in 'seek=2' 'seek=2 conv=notrunc' 'seek=0'; do
 done
 
 #       oseek is seek, and a B suffix makes its displacement bytes. append is
-#       an output-open flag; with notrunc it preserves the old prefix.
+#       an output-open flag; with notrunc it preserves the old prefix. A seek
+#       of whole blocks keeps what was before it and cuts the file there,
+#       while a byte seek inside the first block truncates on open, which is
+#       coreutils' rule and not an obvious one: the three old bytes survive
+#       seek=1 and seek=5B, and not seek=2B.
 for one in 'oseek=2B' 'seek=2B' 'oflag=seek_bytes seek=2' \
-        'oflag=append conv=notrunc'; do
+        'oflag=append conv=notrunc' 'seek=1' 'seek=5B'; do
         printf old > "$work/out_want"
         printf old > "$work/out_got"
 
@@ -490,6 +494,76 @@ for one in 'oseek=2B' 'seek=2B' 'oflag=seek_bytes seek=2' \
                 report "$one" "output/status differ"
         fi
 done
+
+#       skip and seek move on from where the input and the output already
+#       are, which is how two commands share one redirection: the second dd
+#       reads from where the first stopped, and one writing after a printf
+#       lands after it rather than over it, with nothing cut off behind.
+{ dd bs=1 count=2 status=noxfer; dd bs=1 skip=1 count=2 status=noxfer; } \
+        < "$work/ten" > "$work/want" 2> "$work/want_err"
+want_status=$?
+{ "$bin/dd" bs=1 count=2 status=noxfer
+  "$bin/dd" bs=1 skip=1 count=2 status=noxfer; } \
+        < "$work/ten" > "$work/got" 2> "$work/got_err"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_err" "$work/got_err" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'skip from the inherited offset' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+{ printf XY; dd if="$work/ten" bs=2 seek=1 count=1 status=noxfer; } \
+        > "$work/want" 2> "$work/want_err"
+want_status=$?
+{ printf XY; "$bin/dd" if="$work/ten" bs=2 seek=1 count=1 status=noxfer; } \
+        > "$work/got" 2> "$work/got_err"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_err" "$work/got_err" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'seek from the inherited offset' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+#       Cutting the output off after the seek is an error on anything but a
+#       regular file, and dd only minds it on one: a device takes the seek
+#       and the copy, and a pipe cannot seek at all and says so before the
+#       records lines. The reason after "cannot seek" is cut off: the shared
+#       reason table has no word for ESPIPE yet, and the sentence, the two
+#       records lines and the status are the contract.
+dd if="$work/ten" of=/dev/null bs=4 seek=2 status=noxfer 2> "$work/want"
+want_status=$?
+"$bin/dd" if="$work/ten" of=/dev/null bs=4 seek=2 status=noxfer 2> "$work/got"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'seek on a device' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+{ dd if="$work/ten" bs=4 seek=2 status=noxfer 2> "$work/want_err"
+  echo $? > "$work/want_status"; } | cat > /dev/null
+{ "$bin/dd" if="$work/ten" bs=4 seek=2 status=noxfer 2> "$work/got_err"
+  echo $? > "$work/got_status"; } | cat > /dev/null
+sed 's/cannot seek.*/cannot seek/' < "$work/want_err" > "$work/want"
+sed 's/cannot seek.*/cannot seek/' < "$work/got_err" > "$work/got"
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_status" "$work/got_status"; then
+        pass=$((pass + 1))
+else
+        report 'seek on a pipe' \
+                "want $(show "$work/want")[$(cat "$work/want_status")] got $(show "$work/got")[$(cat "$work/got_status")]"
+fi
 
 #       if= that is not there: the exit status and the fact that nothing was
 #       written, not the wording, which quotes the name differently between
@@ -544,8 +618,33 @@ if [ -p "$work/pipe" ]; then
         else
                 report 'usr1 does not shorten a read' "$(tail -2 "$work/info_err" | tr '\n' '|')"
         fi
+
+        #       The rate is the bytes over the time they took, and the time
+        #       is not whole seconds: eight kilobytes over a second and a
+        #       half are 5.5 kB/s, and a rate taken over the whole second
+        #       alone said 8.2. The pause is in the input, and the seconds
+        #       dd itself printed are what the rate is checked against, so
+        #       a slow machine changes both together.
+        (head -c 4096 /dev/zero; sleep 1.5; head -c 4096 /dev/zero) \
+                > "$work/pipe" &
+        writer=$!
+        "$bin/dd" if="$work/pipe" of=/dev/null bs=4096 2> "$work/rate_err"
+        wait "$writer" 2> /dev/null
+
+        seconds=$(sed -n 's/.* copied, \([0-9.]*\) s, .*/\1/p' "$work/rate_err")
+        rate=$(sed -n 's/.* s, \([0-9.]*\) kB\/s$/\1/p' "$work/rate_err")
+
+        if [ -n "$seconds" ] && [ -n "$rate" ] &&
+                awk -v r="$rate" -v s="$seconds" \
+                    'BEGIN { want = 8192 / s / 1000
+                             exit !(r > want * 0.97 && r < want * 1.03) }'; then
+                pass=$((pass + 1))
+        else
+                report 'rate over a fraction of a second' \
+                        "$(tail -1 "$work/rate_err" 2> /dev/null)"
+        fi
 else
-        echo "  dd       usr1: no fifo here, the three signal cases did not run"
+        echo "  dd       usr1: no fifo here, the three signal cases and the rate case did not run"
 fi
 
 #
@@ -574,6 +673,8 @@ printf 'a\0b\0c\n'                              > "$work/bin1"
 printf 'a\0b\0d\n'                              > "$work/bin2"
 printf 'a\0b\0c\n'                              > "$work/bin1copy"
 printf 'a\0b\0c\0\n'                            > "$work/bin3"
+printf 'a\0b\0c'                                > "$work/binnonl"
+printf 'a\0b\0c'                                > "$work/binnonlcopy"
 printf 'alpha  \nbeta\t\n'                    > "$work/trailing1"
 printf 'alpha\nbeta\n'                         > "$work/trailing2"
 printf 'alpha\r\nbeta\r\n'                   > "$work/crlf"
@@ -681,6 +782,14 @@ compare_diff 'binary differ'   "$work/bin1" "$work/bin2"
 compare_diff 'binary same'     "$work/bin1" "$work/bin1"
 compare_diff 'binary two same' "$work/bin1" "$work/bin1copy"
 compare_diff 'binary lengths'  "$work/bin1" "$work/bin3"
+
+#       A binary file that ends without a newline is not the file that ends
+#       with one, however the buffer that read it rounds the last line out:
+#       that newline is the one byte the two differ by.
+compare_diff 'binary trailing newline' "$work/bin1" "$work/binnonl"
+compare_diff 'binary trailing newline reverse' "$work/binnonl" "$work/bin1"
+compare_diff 'binary trailing newline brief' -q "$work/bin1" "$work/binnonl"
+compare_diff 'binary no newline same' -s "$work/binnonl" "$work/binnonlcopy"
 compare_diff 'binary as text'  -a "$work/bin1" "$work/bin2"
 compare_diff 'binary brief'    -q "$work/bin1" "$work/bin2"
 
@@ -866,6 +975,27 @@ compare 'suppress headings' ps -p "$long_pid" --no-headers -o pid,comm
 compare 'force blank headings' ps -p "$long_pid" --headers -o pid=,comm=
 compare 'format long option' ps -p "$long_pid" --format=pid,ppid,comm
 compare 'format aliases' ps -p "$long_pid" -o cmd,command,ucmd
+
+# A cluster of letters ends at the one that takes a value: -eo, -fp and -ep
+# are -e -o, -f -p and -e -p, which scripts write and procps reads.
+compare 'clustered format letter' ps -eo pid,comm -p "$long_pid"
+compare 'clustered pid letter' ps -fp "$long_pid"
+compare 'clustered attached pid letter' ps -ep"$long_pid" -o pid=,comm=
+
+# The terminal is named the way the kernel numbers it: pts/N here when the
+# suite has one, and ? when it is run from nowhere.
+compare 'terminal name' ps -p "$long_pid" -o tty=
+
+# TIME is D-HH:MM:SS with the day only when there is one, so the hours never
+# reach 24. Nothing here has a day of CPU time to show, so what is checked is
+# that every row is that shape.
+if "$bin/ps" -e -o time= 2> /dev/null |
+        awk '$1 !~ /^([0-9]+-)?[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ { bad = 1 }
+             END { exit bad }'; then
+        pass=$((pass + 1))
+else
+        report 'time column shape' 'a row was not D-HH:MM:SS'
+fi
 want_elapsed=$(ps -p "$long_pid" -o etimes= | tr -d ' ')
 got_elapsed=$("$bin/ps" -p "$long_pid" -o etimes= 2> /dev/null | tr -d ' ')
 case $want_elapsed:$got_elapsed in
@@ -913,6 +1043,7 @@ comm_pid=$!
 sleep 0.1
 compare 'command selection' ps -C "$comm_name" -o pid,comm
 compare 'attached command selection' ps -C"$comm_name" -o pid=,comm=
+compare 'clustered command letter' ps -wC "$comm_name" -o pid,comm
 compare 'duplicate command list' ps -C "$comm_name,$comm_name" -o pid=
 
 long_comm=pscommselector-long

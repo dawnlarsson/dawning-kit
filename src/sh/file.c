@@ -81,6 +81,7 @@ static TEXT_ARENA_GROW bool text_arena_grow(
 #define ERROR_IS_DIRECTORY 21
 #define ERROR_INVALID 22
 #define ERROR_NOT_TERMINAL 25
+#define ERROR_ILLEGAL_SEEK 29
 #define ERROR_NOT_EMPTY 39
 
 #define STATX_BASIC 0x7ff
@@ -464,6 +465,8 @@ bool file_exists(bipolar directory, string_address path)
         return file_look(directory, path, AT_SYMLINK_NOFOLLOW, address_of facts);
 }
 
+static CONST positive file_device(p32 major, p32 minor);
+
 static bool file_same_identity(file_facts address_to one, file_facts address_to two)
 {
         return one->inode == two->inode && one->device_major == two->device_major &&
@@ -641,7 +644,12 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 if (rest[at] && fill + 1 < FILE_PATH_MAX)
                         merged[fill++] = '/';
 
-                positive left = string_length_max(rest + at, FILE_PATH_MAX - 1 - fill);
+                positive left = string_length_max(rest + at, FILE_PATH_MAX - fill);
+
+                // What follows the link has to fit behind it whole; a tail
+                // cut to fit is some other path.
+                if (left >= FILE_PATH_MAX - fill)
+                        return false;
 
                 fill = (positive)(memory_copy_apart_end(
                     merged + fill, rest + at, left) - merged);
@@ -2134,6 +2142,7 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code)
         case ERROR_INVALID: return (string_address)"Invalid argument";
         case ERROR_NOT_TERMINAL: return (string_address)"Inappropriate ioctl for device";
         case ERROR_CROSS_DEVICE: return (string_address)"Invalid cross-device link";
+        case ERROR_ILLEGAL_SEEK: return (string_address)"Illegal seek";
         default: return (string_address)"Error";
         }
 }
@@ -2981,6 +2990,16 @@ static bool ls_add(bipolar directory, string_address path, string_address shown)
 
 static fn ls_directory(string_address path, bool heading, positive depth);
 
+// Whether an operand is a directory whose contents are listed. A link to
+// one is followed only when nothing asked about the link itself: -l, -d
+// and -F all name the link, and the reference ls prints it as one.
+static bool ls_operand_lists(string_address path)
+{
+        return ls_long || ls_classify || ls_as_itself
+                   ? file_is_directory(AT_FDCWD, path)
+                   : file_is_directory_through(path);
+}
+
 static fn ls_below(string_address path, positive depth)
 {
         // The names of the subdirectories are taken out of the listing before
@@ -3168,9 +3187,30 @@ static b32 file_ls_as(string_address program, bool long_default,
                               file_color_active(when);
         }
 
+        /*
+                No operand is the working directory: under -d that is the
+                one entry ".", as the reference ls prints it, and under -R
+                the listing starts with the ".:" heading every directory
+                below it gets, so the output reads the same at every level.
+        */
         if (first >= count)
         {
-                ls_directory((string_address) ".", false, FILE_MAX_DEPTH);
+                if (ls_as_itself)
+                {
+                        ls_count = 0;
+                        ls_used = 0;
+
+                        if (ls_add(AT_FDCWD, (string_address) ".",
+                                   (string_address) "."))
+                        {
+                                ls_sort();
+                                ls_print(null);
+                        }
+                }
+                else
+                        ls_directory((string_address) ".", ls_recursive,
+                                     FILE_MAX_DEPTH);
+
                 log_flush();
                 return ls_status;
         }
@@ -3221,7 +3261,7 @@ static b32 file_ls_as(string_address program, bool long_default,
                         continue;
                 }
 
-                if (file_is_directory_through(path))
+                if (ls_operand_lists(path))
                 {
                         directories++;
                         continue;
@@ -3262,7 +3302,7 @@ static b32 file_ls_as(string_address program, bool long_default,
         {
                 string_address path = program_argument((b32)i);
 
-                if (!file_exists(AT_FDCWD, path) || !file_is_directory_through(path))
+                if (!file_exists(AT_FDCWD, path) || !ls_operand_lists(path))
                         continue;
 
                 order[have++] = i;
@@ -5251,7 +5291,8 @@ static fn stat_one_specifier(p8 letter, string_address path, address_any given)
                 return positive_to_string(log, facts->blocksize);
 
         case 'd':
-                return positive_to_string(log, facts->device_major * 256 + facts->device_minor);
+                return positive_to_string(log, file_device(facts->device_major,
+                                                           facts->device_minor));
 
         case 't':
                 return positive_to_base_field(log, facts->rdev_major, 16, 1,
@@ -6024,6 +6065,9 @@ static const file_long df_longs[] = {
 static b32 file_df()
 {
         positive count = (positive)program_argument_count();
+        // An operand that could not be measured is a failure df answers
+        // with, after the table for the rest.
+        bool df_failed = false;
         file_taking taking = {
             .program = (string_address) "df",
             .allowed = (string_address) "ahikPT",
@@ -6118,6 +6162,7 @@ static b32 file_df()
                 {
                         string_format(file_fail, "df: %s: %s\n", where,
                                       file_reason(answered));
+                        df_failed = true;
                         continue;
                 }
 
@@ -6152,6 +6197,7 @@ static b32 file_df()
                         {
                                 string_format(file_fail, "df: %s: %s\n", path,
                                               file_reason(answered));
+                                df_failed = true;
                                 continue;
                         }
 
@@ -6235,7 +6281,7 @@ static b32 file_df()
         storage_mount_table_release(address_of mounts);
         log_flush();
 
-        return 0;
+        return df_failed ? 1 : 0;
 }
 
 // chmod ------------------------------------------------------------
@@ -6286,10 +6332,15 @@ static fn chmod_said(string_address shown, positive was, positive now)
 static fn chmod_one(bipolar directory, string_address name, string_address shown)
 {
         file_facts facts;
+        // A name on the command line is followed, because Linux has no mode
+        // on a symlink of its own to change and chmod has always meant the
+        // thing pointed at. A link met under -R is not: the walk refuses to
+        // descend into one, and it must refuse to change through one too,
+        // or chmod -R 000 over a tree with a link to /etc in it changes /etc.
+        bool operand = directory == AT_FDCWD;
 
-        // Following the link, because Linux has no mode on a symlink of its
-        // own to change and chmod has always meant the thing pointed at.
-        if (!file_look(directory, name, 0, address_of facts))
+        if (!file_look(directory, name, operand ? 0 : AT_SYMLINK_NOFOLLOW,
+                       address_of facts))
         {
                 if (!chmod_quiet)
                         string_format(file_fail,
@@ -6299,6 +6350,9 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                 chmod_status = 1;
                 return;
         }
+
+        if (!operand && (facts.mode & MODE_FORMAT) == MODE_LINK)
+                return;
 
         positive wanted = chmod_reference_mode & 07777;
 
@@ -6718,6 +6772,41 @@ static bool ln_make(string_address target, string_address name)
         if (ln_ask && file_exists(AT_FDCWD, name) &&
             !file_ask((string_address) "ln", (string_address) "replace", name))
                 return false;
+
+        /*
+                A hard link needs its source to be there before the
+                destination is given up: unlinking first and linking second
+                left "ln -f missing keep" with neither, and "ln -f a a" with
+                nothing at all. The source is looked at first, as the
+                reference ln looks, and a destination that is the source is
+                refused rather than removed.
+        */
+        if (!ln_symbolic && (ln_force || ln_ask))
+        {
+                file_facts source;
+                file_facts destination;
+
+                if (!file_look(AT_FDCWD, target,
+                               ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
+                               address_of source))
+                {
+                        string_format(file_fail,
+                                      "ln: failed to access '%s': %s\n", target,
+                                      file_reason(-ERROR_NO_ENTRY));
+                        return false;
+                }
+
+                if (file_look(AT_FDCWD, name, AT_SYMLINK_NOFOLLOW,
+                              address_of destination) &&
+                    file_same_identity(address_of source,
+                                       address_of destination))
+                {
+                        string_format(file_fail,
+                                      "ln: '%s' and '%s' are the same file\n",
+                                      target, name);
+                        return false;
+                }
+        }
 
         if (ln_force || ln_ask)
                 system_remove_at(AT_FDCWD, name, 0);
@@ -7813,6 +7902,10 @@ static b32 file_mkdir()
                                       path, file_reason(made));
                         status = 1;
                 }
+                else if (given_mode)
+                        // mkdirat applies the umask; -m names the mode after
+                        // it, as the -p branch above already does.
+                        system_change_mode_at(AT_FDCWD, path, mode);
         }
 
         log_flush();
@@ -8620,9 +8713,19 @@ static b32 file_rmdir()
                         if (string_is(above, '/') && string_is(above + 1, end))
                                 break;
 
-                        if (system_remove_at(AT_FDCWD, above,
-                                          AT_REMOVEDIR) < 0)
+                        bipolar kept = system_remove_at(AT_FDCWD, above,
+                                                        AT_REMOVEDIR);
+
+                        // A parent that stays is a failure like the first
+                        // name's: said, and counted in the status.
+                        if (kept < 0)
+                        {
+                                string_format(file_fail,
+                                              "rmdir: failed to remove '%s': %s\n",
+                                              above, file_reason(kept));
+                                status = 1;
                                 break;
+                        }
 
                         string_copy_max_end(parent, above, FILE_PATH_MAX - 1);
                 }
@@ -9341,9 +9444,13 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 double the calls it takes. Only the flags that have a question
                 to ask about what a name is pay for the answer.
         */
+        bipolar tried = -ERROR_NO_ENTRY;
+
         if (!rm_careful)
         {
-                if (system_remove_at(directory, name, 0) == 0)
+                tried = system_remove_at(directory, name, 0);
+
+                if (tried == 0)
                         return true;
         }
         else if (!file_look(directory, name, AT_SYMLINK_NOFOLLOW, address_of facts))
@@ -9363,19 +9470,28 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                                         shown))
                         return false;
 
-                if (system_remove_at(directory, name, 0) == 0)
+                tried = system_remove_at(directory, name, 0);
+
+                if (tried == 0)
                 {
                         rm_said(shown, false);
                         return true;
                 }
         }
 
+        /*
+                Not a directory, and the unlink refused: the kernel's reason
+                is the one to give, and -f forgives only a name that is not
+                there. A file that could not be removed under -rf was passed
+                over in silence, its directory then refused as not empty in
+                the same silence, and rm answered 0 with the tree still there.
+        */
         if (!file_is_directory(directory, name))
         {
-                if (!rm_force)
+                if (!rm_force || tried != -ERROR_NO_ENTRY)
                 {
                         string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
-                                      file_reason(-ERROR_NO_ENTRY));
+                                      file_reason(tried));
                         rm_status = 1;
                 }
 
@@ -12491,10 +12607,14 @@ static b32 file_mktemp()
                 return 1;
         }
 
-        while (marks_at && path[marks_at - 1] != 'X')
+        // Only the template's own bytes are looked at for the run: a
+        // directory with an X in its name is not a place to put randomness.
+        positive template_at = length - added;
+
+        while (marks_at > template_at && path[marks_at - 1] != 'X')
                 marks_at--;
 
-        while (marks_at && path[marks_at - 1] == 'X')
+        while (marks_at > template_at && path[marks_at - 1] == 'X')
         {
                 marks_at--;
                 marks++;

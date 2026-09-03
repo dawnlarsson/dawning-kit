@@ -701,6 +701,11 @@ static fn awk_stream_round(b32 cut)
         if (cut < 0)
                 cut = 0;
 
+        // The stream is as long as awk_stream_need will make it and no
+        // longer; a cut past that read and carried into the bytes after it.
+        if (cut > AWK_STREAM_MAX - 2)
+                cut = AWK_STREAM_MAX - 2;
+
         awk_stream_need(cut + 1);
 
         p8 next = awk_stream[cut];
@@ -1102,7 +1107,7 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
 
         address_to used = 0;
 
-        while (at < length && (text[at] == ' ' || text[at] == '\t' || text[at] == '\n'))
+        while (at < length && byte_is_space(text[at]))
                 at++;
 
         if (at < length && (text[at] == '+' || text[at] == '-'))
@@ -1111,11 +1116,16 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                 at++;
         }
 
+        // Nineteen significant digits fit the mantissa; zeros in front of
+        // the first significant one are not among them, or twenty of them
+        // and a one read as zero.
         while (at < length && byte_is_digit(text[at]))
         {
                 any = true;
 
-                if (digits < 19)
+                if (!mantissa && text[at] == '0')
+                        ;
+                else if (digits < 19)
                 {
                         mantissa = mantissa * 10 + (positive)(text[at] - '0');
                         digits++;
@@ -1134,7 +1144,9 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
                 {
                         any = true;
 
-                        if (digits < 19)
+                        if (!mantissa && text[at] == '0')
+                                exponent--;
+                        else if (digits < 19)
                         {
                                 mantissa = mantissa * 10 + (positive)(text[at] - '0');
                                 digits++;
@@ -1209,7 +1221,12 @@ enum
         AWK_HAS_TEXT = 2,
         AWK_STRNUM = 4,
         AWK_UNSET = 8,
-        AWK_INPUT = 16
+        AWK_INPUT = 16,
+        // Made by arithmetic or a numeric constant, whatever spelling has
+        // been cached beside it since: still a number to a comparison and
+        // to a test, where a value assigned to a field and read back after
+        // the record was rebuilt used to turn into a string.
+        AWK_NUMERIC = 32
 };
 
 typedef struct
@@ -1240,7 +1257,7 @@ static inline INLINE fn awk_value_set(awk_value address_to which,
 #define awk_value_clear(which)                                              \
         awk_value_set((which), null, 0, AWK_UNSET)
 #define awk_set_number(which, number)                                       \
-        awk_value_set((which), null, (number), AWK_HAS_NUMBER)
+        awk_value_set((which), null, (number), AWK_HAS_NUMBER | AWK_NUMERIC)
 
 // Takes the reference the caller was holding.
 #define awk_set_text(which, text)                                           \
@@ -1291,10 +1308,10 @@ static fn awk_classify_input(awk_value address_to which)
 
         if (used)
         {
+                // isspace on both sides, as the reference awk reads it: a
+                // field ending in a carriage return is still a number.
                 while (used < which->text->length &&
-                       (which->text->text[used] == ' ' ||
-                        which->text->text[used] == '\t' ||
-                        which->text->text[used] == '\n'))
+                       byte_is_space(which->text->text[used]))
                         used++;
 
                 if (used == which->text->length)
@@ -1403,7 +1420,7 @@ static bool awk_truth(awk_value address_to which)
         if (which->state & AWK_UNSET)
                 return false;
 
-        if (which->state & AWK_HAS_TEXT)
+        if ((which->state & AWK_HAS_TEXT) && !(which->state & AWK_NUMERIC))
         {
                 if (which->state & AWK_STRNUM)
                         return awk_to_number(which) != 0;
@@ -1418,7 +1435,7 @@ static bool awk_numeric_side(awk_value address_to which)
 {
         awk_classify_input(which);
 
-        if (which->state & (AWK_UNSET | AWK_STRNUM))
+        if (which->state & (AWK_UNSET | AWK_STRNUM | AWK_NUMERIC))
                 return true;
 
         return (which->state & AWK_HAS_NUMBER) && !(which->state & AWK_HAS_TEXT);
@@ -2471,10 +2488,15 @@ static bool awk_reader_fill(awk_reader address_to which)
         if (which->ended)
                 return false;
 
-        if (which->at && which->at == which->filled)
+        // What has been consumed is moved out before more is read: kept,
+        // the buffer grew with the whole of the input rather than with the
+        // unread tail of it.
+        if (which->at)
         {
+                memory_copy(which->data, which->data + which->at,
+                            which->filled - which->at);
+                which->filled -= which->at;
                 which->at = 0;
-                which->filled = 0;
         }
 
         awk_reader_room(which, which->filled + AWK_READ_CHUNK + 1);
@@ -3073,7 +3095,9 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         break;
                                 }
 
-                                body = (b32)awk_write_general(exact, 6, room, false, alternate);
+                                body = (b32)awk_write_general(
+                                    exact, precision < 0 ? 6 : precision, room,
+                                    false, alternate);
 
                                 if (room[0] == '-')
                                 {
@@ -3082,6 +3106,10 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         body_at = room + 1;
                                 }
 
+                                // The precision was %g's; it is not a count
+                                // of digits to pad the text out to, which
+                                // made %.10x of 1.2e23 "0001.2e+23".
+                                precision = -1;
                                 break;
                         }
 
@@ -4408,9 +4436,14 @@ static awk_node address_to awk_in_level()
         return node;
 }
 
+static awk_node address_to awk_pipe_level();
+
+// A comparison's operands can each be a "cmd" | getline, which is how the
+// reference grammar puts it: the pipe binds tighter than the comparison, so
+// while ("cmd" | getline line > 0) reads until the command is done.
 static awk_node address_to awk_compare_level()
 {
-        awk_node address_to node = awk_in_level();
+        awk_node address_to node = awk_pipe_level();
 
         for (;;)
         {
@@ -4433,7 +4466,7 @@ static awk_node address_to awk_compare_level()
                         made->sub = (p8)which;
                         awk_next_token();
                         made->a = node;
-                        made->b = awk_in_level();
+                        made->b = awk_pipe_level();
                         node = made;
                         continue;
                 }
@@ -4460,7 +4493,7 @@ static awk_node address_to awk_compare_level()
 // grammar puts it and not where anybody would guess.
 static awk_node address_to awk_pipe_level()
 {
-        awk_node address_to node = awk_compare_level();
+        awk_node address_to node = awk_in_level();
 
         while (awk_token == T_PIPE)
         {
@@ -4516,7 +4549,7 @@ static awk_node address_to awk_pipe_level()
                 return node;                                                 \
         }
 
-AWK_LOGICAL_LEVEL(awk_and_level, awk_pipe_level, T_AND, N_AND)
+AWK_LOGICAL_LEVEL(awk_and_level, awk_compare_level, T_AND, N_AND)
 AWK_LOGICAL_LEVEL(awk_or_level, awk_and_level, T_OR, N_OR)
 
 static awk_node address_to awk_expression()
@@ -5006,6 +5039,9 @@ typedef struct
 
 static b32 awk_exit_code;
 static bool awk_exiting;
+// next or nextfile said inside a function: the call cannot answer with it,
+// so it is kept here and the statement after the call answers with it.
+static b32 awk_skipping;
 static awk_value awk_returned;
 static positive awk_seed = 1;
 static positive awk_seed_state = 1;
@@ -5109,6 +5145,11 @@ static fn awk_target_of(awk_node address_to node, awk_target address_to into)
 
                 if (into->field > awk_nf)
                         awk_field_grow(into->field);
+
+                // sub(/^ /, "") after $1 = "" works on the record the fields
+                // now spell, not the one that was read.
+                if (into->field == 0 && awk_record_stale)
+                        awk_record_rebuild();
 
                 return;
         }
@@ -5503,8 +5544,14 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
 
         if (answer == RUN_RETURN)
         {
-                awk_value_copy(out, address_of awk_returned);
-                awk_value_done(address_of awk_returned);
+                // "return g()" evaluates g() straight into the return slot;
+                // moving the slot onto itself and then clearing it is what
+                // made every function that returned a call return nothing.
+                if (out != address_of awk_returned)
+                {
+                        awk_value_copy(out, address_of awk_returned);
+                        awk_value_done(address_of awk_returned);
+                }
         }
         else
                 awk_value_clear(out);
@@ -5531,9 +5578,12 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
         awk_frame_size = kept_size;
 
         // exit inside a function still has to leave, and the answer above
-        // told the caller nothing about it.
+        // told the caller nothing about it. next and nextfile the same:
+        // dropped here, a function's next ran the rest of the rule.
         if (answer == RUN_EXIT)
                 awk_exiting = true;
+        else if (answer == RUN_NEXT || answer == RUN_NEXTFILE)
+                awk_skipping = answer;
 }
 
 static awk_text address_to awk_replace(awk_text address_to subject, regex_program address_to program,
@@ -5587,6 +5637,21 @@ static awk_text address_to awk_replace(awk_text address_to subject, regex_progra
                                 {
                                         awk_builder_char(address_of build, '&');
                                         i++;
+                                        continue;
+                                }
+
+                                // Three backslashes and an ampersand are a
+                                // literal backslash and a literal ampersand,
+                                // in the reference awk's table; asked after
+                                // the two-backslash case they read as that
+                                // case and the match.
+                                if (with->text[i + 1] == '\\' && i + 3 < with->length &&
+                                    with->text[i + 2] == '\\' &&
+                                    with->text[i + 3] == '&')
+                                {
+                                        awk_builder_char(address_of build, '\\');
+                                        awk_builder_char(address_of build, '&');
+                                        i += 3;
                                         continue;
                                 }
 
@@ -6346,6 +6411,14 @@ static b32 awk_run(awk_node address_to node)
 
                         return RUN_RETURN;
                 }
+
+                if (awk_skipping)
+                {
+                        b32 skip = awk_skipping;
+
+                        awk_skipping = RUN_ON;
+                        return skip;
+                }
         }
 
         return RUN_ON;
@@ -6517,9 +6590,10 @@ static bool awk_open_next_input()
                         awk_main.handle = (b32)handle;
                 }
 
-                awk_set_text(address_of awk_globals[awk_where_filename].value,
-                             awk_text_hold(name));
-                awk_globals[awk_where_filename].value.state |= AWK_STRNUM;
+                // Input, like a field: a number only when it looks like one,
+                // where every name used to compare equal to zero.
+                awk_set_input_bytes(address_of awk_globals[awk_where_filename].value,
+                                    name->text, name->length);
                 awk_set_global_number(awk_where_fnr, 0);
                 awk_text_drop(name);
                 awk_main_live = true;
@@ -6660,6 +6734,7 @@ static b32 awk_run_rules()
         }
 
         awk_exiting = false;
+        awk_skipping = RUN_ON;
 
         for (b32 i = 0; i < awk_rule_count; i++)
                 if (awk_rules[i].kind == RULE_END)

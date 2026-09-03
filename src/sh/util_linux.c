@@ -120,13 +120,29 @@ static bool ul_unsigned(string_address text, positive maximum,
         return true;
 }
 
+/* strtol refuses a digit string that wrapped.  The shell's nice scanner
+   wraps silently, which let 18446744073709551616 reach renice as zero. */
 static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
                       bipolar address_to value)
 {
-        bipolar got;
+        string_address at = text;
+        positive magnitude;
+        bool negative;
 
-        if (!nice_adjustment(text, address_of got) || got < minimum ||
-            got > maximum)
+        while (byte_is_space(string_get(at)))
+                at++;
+        negative = string_is(at, '-');
+        if (negative || string_is(at, '+'))
+                at++;
+
+        if (!ul_size_number(address_of at, 10, address_of magnitude) ||
+            string_get(at) ||
+            magnitude > (positive)bipolar_max + (negative ? 1 : 0))
+                return false;
+
+        bipolar got = bipolar_from_magnitude(magnitude, negative);
+
+        if (got < minimum || got > maximum)
                 return false;
 
         address_to value = got;
@@ -200,16 +216,33 @@ static PURE b32 ul_hex(p8 byte)
         return digit < 16 ? (b32)digit : -1;
 }
 
+/* Trailing whitespace is noise on an operand and on a procfs line alike. */
+static positive ul_trimmed(p8 address_to text, positive length)
+{
+        while (length && byte_is_space(text[length - 1]))
+                length--;
+        return length;
+}
+
+/* One procfs scalar as a word: the kernel ends the record with a newline
+   and no parser here wants it, nor any padding after the value. */
+static bipolar ul_slurp_word(string_address path, p8 address_to text,
+                             positive room)
+{
+        bipolar got = file_slurp(path, text, room);
+
+        if (got > 0)
+                text[ul_trimmed(text, (positive)got)] = end;
+        return got;
+}
+
 static bool ul_cpu_mask(string_address text, positive address_to set)
 {
-        positive length = string_length(text);
+        positive length = ul_trimmed(text, string_length(text));
         positive nibble = 0;
         bool any = false;
 
         memory_fill(set, 0, UL_CPU_WORDS * sizeof(*set));
-
-        while (length && byte_is_space(string_get(text + length - 1)))
-                length--;
 
         positive first = string_span(text, string_set_blanks);
         if (length >= first + 2 && string_is(text + first, '0') &&
@@ -1045,10 +1078,7 @@ static bool ul_limit_columns(string_address text, p8 address_to columns,
                 positive found = UL_LIMIT_COLUMNS;
 
                 for (positive at = 0; at < UL_LIMIT_COLUMNS; at++)
-                        if (length == string_length(ul_limit_headers[at]) &&
-                            !memory_compare_ascii_case(text,
-                                                       ul_limit_headers[at],
-                                                       length))
+                        if (file_same_word(text, length, ul_limit_headers[at]))
                         {
                                 found = at;
                                 break;
@@ -2373,7 +2403,7 @@ static b32 ul_setarch_show(string_address value, b32 pid)
 
                 system_process_path(path, (p32)pid, null,
                                     "personality");
-                bipolar got = file_slurp(path, text, sizeof(text));
+                bipolar got = ul_slurp_word(path, text, sizeof(text));
                 if (got <= 0)
                 {
                         string_format(file_fail,
@@ -2381,8 +2411,6 @@ static b32 ul_setarch_show(string_address value, b32 pid)
                           (bipolar)pid, file_reason(got));
                         return 1;
                 }
-                while (got && byte_is_space(text[got - 1]))
-                        text[--got] = 0;
                 value = text;
         }
 
@@ -2597,8 +2625,7 @@ static b32 util_linux_waitpid()
         };
         b32 answer;
 
-        file_operand_count = 0;
-        file_operand_failed = false;
+        file_operands_begin();
         if (!file_take(address_of taking))
                 return 1;
         if (ul_meta(address_of taking, "[options] PID[:inode]...",
@@ -3129,6 +3156,9 @@ static b32 util_linux_setpriv()
                           (positive)file_id_scratch) < 0)
                 return 127;
 
+        /* Upstream hands the effective id to the saved slot as well,
+           setres*id(r, e, e): a saved id left behind is one the program
+           could switch back to. */
         if (set.rgid_set || set.egid_set)
         {
                 p32 ids[3];
@@ -3139,7 +3169,7 @@ static b32 util_linux_setpriv()
                 if (set.rgid_set) ids[0] = set.rgid;
                 if (set.egid_set) ids[1] = set.egid;
                 if (system_call_3(syscall(setresgid), ids[0], ids[1],
-                                  ids[2]) < 0)
+                                  ids[1]) < 0)
                         return 127;
         }
         if (set.ruid_set || set.euid_set)
@@ -3152,7 +3182,7 @@ static b32 util_linux_setpriv()
                 if (set.ruid_set) ids[0] = set.ruid;
                 if (set.euid_set) ids[1] = set.euid;
                 if (system_call_3(syscall(setresuid), ids[0], ids[1],
-                                  ids[2]) < 0)
+                                  ids[1]) < 0)
                         return 127;
         }
 
@@ -3428,7 +3458,16 @@ static b32 ul_exec_shell(string_address program)
                         shell = "/bin/sh";
         }
 
-        string_address words[] = {(string_address)"", null};
+        /* The login spelling upstream's exec_shell builds: a dash before the
+           shell's basename, which is what makes it read its profile. */
+        p8 name[FILE_NAME_MAX + 1];
+        string_address slash = string_last_of_or_end(shell, '/');
+
+        name[0] = '-';
+        string_copy_max_end(name + 1, string_get(slash) ? slash + 1 : shell,
+                            sizeof(name) - 2);
+
+        string_address words[] = {name, null};
         bipolar error = file_exec_path_try_in(shell, words,
                                               file_environment_all(),
                                               file_environment("PATH"));
@@ -3442,7 +3481,6 @@ typedef struct
         bool uid;
         bool gid;
         bool deny_groups;
-        bool clear_groups;
         ul_id_map uid_single;
         ul_id_map gid_single;
         ul_id_map address_to uid_ranges;
@@ -3635,12 +3673,6 @@ static b32 ul_unshare_user(ul_user_mapping address_to map)
         bool failed = system_call_1(syscall(unshare), CLONE_NEWUSER) < 0;
         if (failed)
                 ul_bad_usage("unshare", "unshare failed");
-        if (!failed && map->clear_groups)
-        {
-                failed = system_call_2(syscall(setgroups), 0, 0) < 0;
-                if (failed)
-                        ul_bad_usage("unshare", "setgroups failed");
-        }
         if (!failed)
                 failed = system_write_all((positive)ready[1],
                                           address_of byte, 1) != 1;
@@ -3882,7 +3914,6 @@ static b32 util_linux_unshare()
                     .gid_ranges = gid_ranges,
                     .uid_range_count = ul_unshare_uid_range_count,
                     .gid_range_count = ul_unshare_gid_range_count,
-                    .clear_groups = set_gid != null,
                 };
 
                 positive id;
@@ -3910,8 +3941,7 @@ static b32 util_linux_unshare()
                         return 1;
 
                 if (map.uid || map.gid || map.uid_range_count ||
-                    map.gid_range_count || map.deny_groups ||
-                    map.clear_groups)
+                    map.gid_range_count || map.deny_groups)
                 {
                         answer = ul_unshare_user(address_of map);
                         if (answer)
@@ -4000,9 +4030,12 @@ static b32 util_linux_unshare()
                         return ul_bad_usage("unshare", "cannot mount proc");
         }
 
+        /* Supplementary groups go with the identity change, as upstream
+           orders it: before the helper has written the id maps the kernel
+           refuses setgroups in the new user namespace outright. */
         if (ul_namespace_identity("unshare", set_uid, set_gid, uid, gid, 0,
                                   uid_choice == 'r', gid_choice == 'r', -1,
-                                  (flags & CLONE_NEWUSER) != 0 && set_gid))
+                                  false))
                 return 1;
 
         return taking.first < count
@@ -4537,7 +4570,6 @@ static const file_long ul_ionice_longs[] = {
 static string_address ul_ionice_classes[] = {
     "none", "realtime", "best-effort", "idle",
 };
-static p8 ul_ionice_class_lengths[] = {4, 8, 11, 4};
 static p8 ul_ionice_identity;
 
 static bool ul_ionice_seen(p8 letter, string_address value)
@@ -4566,8 +4598,7 @@ static PURE b32 ul_ionice_class(string_address text)
 
         for (positive at = 0;
              at < array_count(ul_ionice_classes); at++)
-                if (length == ul_ionice_class_lengths[at] &&
-                    !memory_compare_ascii_case(text, ul_ionice_classes[at], length))
+                if (file_same_word(text, length, ul_ionice_classes[at]))
                         return (b32)at;
 
         return -1;
@@ -4731,14 +4762,10 @@ static const file_long ul_choom_longs[] = {
 static bool ul_choom_read(string_address path, b32 address_to value)
 {
         p8 text[32];
-        bipolar length = file_slurp(path, text, sizeof(text));
         bipolar parsed;
 
-        if (length <= 0)
-                return false;
-        while (length && byte_is_space(text[length - 1]))
-                text[--length] = end;
-        if (!ul_signed(text, b32_min, b32_max, address_of parsed))
+        if (ul_slurp_word(path, text, sizeof(text)) <= 0 ||
+            !ul_signed(text, b32_min, b32_max, address_of parsed))
                 return false;
 
         address_to value = (b32)parsed;

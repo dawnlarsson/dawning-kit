@@ -93,4 +93,37 @@ with tempfile.TemporaryDirectory(prefix='native-extract.') as directory:
     reject(replace_block(source, swapped_block), directory,
            'bad-checksum', 'checksum')
 
+#
+#       An ASM_ALIAS in the arm64 block is a routine with no body of its own.
+#       The lifter has to bring the target's body and spell the alias as the
+#       .set the library uses; this broke once without anything saying so.
+#       Which name is an alias is read off the library rather than written
+#       here, so turning an alias back into a body does not fail this.
+#
+arch = None
+alias = None
+for line in source.split('\n'):
+    if_arch = re.match(r'^#(?:el)?if (X64|ARM64|RISCV64)\b', line.strip())
+    if if_arch:
+        arch = if_arch.group(1)
+    is_alias = re.fullmatch(r'\s*ASM_ALIAS\((\w+),\s*(\w+)\)\s*', line)
+    if is_alias and arch == 'ARM64':
+        alias = is_alias.groups()
+        break
+
+if alias:
+    name, target = alias
+    result = subprocess.run(
+        [sys.executable, str(extract), str(library), name],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    if result.returncode:
+        sys.exit('native extract test: alias %s rejected: %s'
+                 % (name, result.stderr.strip()))
+    for required in ('"_%s:\\n"' % target,
+                     '.set _%s, _%s' % (name, target)):
+        if required not in result.stdout:
+            sys.exit('native extract test: lifted alias %s lacks %s'
+                     % (name, required))
+
 print('arm64 native extractor: object contract and corruption checks passed')

@@ -1792,6 +1792,28 @@ same 'realpath space'   realpath "$odd/with space"
 same 'readlink space'   readlink "$odd/link to space"
 same 'readlink broken'  readlink "$odd/broken"
 same 'stat space'       stat "$odd/with space"
+
+#       What the audit found, each against the system tool on twin trees.
+group audit
+effect 'ln force missing source' ln '"$TOOL" -f nosuch plain; echo $?'
+effect 'ln force same file' ln '"$TOOL" -f plain plain; echo $?'
+effect 'ln force replaces' ln '"$TOOL" -f tree/one plain; echo $?'
+effect 'rm force unwritable' rm 'mkdir d; : > d/f; chmod 555 d; "$TOOL" -rf d 2>&1 | sed "s/: .*//"; echo $?; chmod 755 d'
+effect 'rm recursive unwritable' rm 'mkdir d; : > d/f; chmod 555 d; "$TOOL" -r d 2>&1 | sed "s/: .*//"; echo $?; chmod 755 d'
+effect 'chmod recursive through link' chmod 'mkdir t; ln -s ../plain t/l; "$TOOL" -R 600 t; stat -c %a plain t; chmod 755 t'
+effect 'chmod operand link' chmod 'ln -s plain pl; "$TOOL" 600 pl; stat -c %a plain'
+effect 'mkdir mode under umask' mkdir 'umask 077; "$TOOL" -m 755 d; stat -c %a d'
+effect 'mkdir parents mode under umask' mkdir 'umask 077; "$TOOL" -pm 755 d/e; stat -c %a d/e'
+effect 'rmdir parents that stay' rmdir 'mkdir -p a1/b a1/c; "$TOOL" -p a1/b 2>&1 | sed "s/: .*//"; echo $?'
+effect 'df missing status' df '"$TOOL" /nonexistent > /dev/null 2>&1; echo $?'
+effect 'mktemp x in directory' mktemp 'mkdir buildXXX; TMPDIR=$PWD/buildXXX "$TOOL" -t job > /dev/null 2>&1; echo $?; ls buildXXX | wc -l'
+effect 'ls itself no operand' ls '"$TOOL" -d'
+effect 'ls recursive no operand' ls '"$TOOL" -R | head -1'
+effect 'ls long link to directory' ls 'ln -s tree dl; "$TOOL" -l dl | cut -c1'
+effect 'ls classify link to directory' ls 'ln -s tree dl; "$TOOL" -F dl'
+effect 'ls follows link to directory' ls 'ln -s tree dl; "$TOOL" dl'
+effect 'ls itself link to directory' ls 'ln -s tree dl; "$TOOL" -d dl'
+effect 'stat device number' stat '"$TOOL" -c %d plain tree'
 near 'stat link'        "grep -v '^Access: 2'" stat "$odd/link to space"
 near 'stat broken'      "grep -v '^Access: 2'" stat "$odd/broken"
 near 'stat loop'        "grep -v '^Access: 2'" stat "$odd/loop"

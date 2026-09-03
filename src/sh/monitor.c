@@ -46,20 +46,28 @@ static fn monitor_fill(positive count, p8 byte)
                 memory_fill(room, byte, count);
 }
 
-static fn monitor_tenths_field(writer write, positive value, positive width)
+/*
+        A number scaled by ten or a hundred, the whole part in a field and
+        the fraction after the point: the cpu tenths and the load hundredths
+        are one shape with a different number of places. The point and the
+        places count in the width, and a width of zero pads nothing.
+*/
+static fn monitor_fixed(writer write, positive value, positive places,
+                        positive width)
 {
-        p8 fraction[2] = {'.', (p8)('0' + value % 10)};
+        p8 fraction[3];
 
-        positive_to_base_field(write, value / 10, 10,
-                               width > 2 ? width - 2 : 0, -1, 0);
-        write(fraction, sizeof(fraction));
-}
+        fraction[0] = '.';
 
-static fn monitor_hundredths(positive value)
-{
-        positive_to_string(text_put, value / 100);
-        text_put_character('.');
-        positive_to_padded(text_put, value % 100, 2, '0', 0);
+        if (places == 1)
+                fraction[1] = (p8)('0' + value % 10);
+        else
+                positive_into_pair(fraction + 1, value % 100);
+
+        positive_to_base_field(write, value / (places == 1 ? 10 : 100), 10,
+                               width > places + 1 ? width - places - 1 : 0,
+                               -1, 0);
+        write(fraction, places + 1);
 }
 
 static CONST positive monitor_percent(positive part, positive whole,
@@ -75,6 +83,22 @@ static CONST positive monitor_percent(positive part, positive whole,
         return scaled <= positive_max - whole / 2
                    ? (scaled + whole / 2) / whole
                    : scaled / whole;
+}
+
+// Swap in use and how full that is, which the layout asks before a frame
+// is drawn and the memory rows ask again while drawing it.
+static positive monitor_swap_percent(system_snapshot address_to sample,
+                                     positive address_to used)
+{
+        positive total = sample->header.swap_total;
+        positive taken = total >= sample->header.swap_free
+                             ? total - sample->header.swap_free
+                             : 0;
+
+        if (used)
+                address_to used = taken;
+
+        return monitor_percent(taken, total, 100);
 }
 
 static fn monitor_bar(positive percent, positive width)
@@ -139,7 +163,7 @@ static fn monitor_header(system_snapshot address_to sample,
                 text_put_string("load ");
                 for (positive i = 0; i < 3; i++)
                 {
-                        monitor_hundredths(sample->header.load[i]);
+                        monitor_fixed(text_put, sample->header.load[i], 2, 0);
                         text_put_character(' ');
                 }
         }
@@ -211,7 +235,7 @@ static fn monitor_cpus(system_snapshot address_to old,
                 text_put_string(" ");
                 monitor_bar((tenths + 5) / 10, bar_width);
                 text_put_character(' ');
-                monitor_tenths_field(text_put, tenths, 5);
+                monitor_fixed(text_put, tenths, 1, 5);
                 text_put_string("%\033[K\n");
                 shown++;
         }
@@ -241,11 +265,9 @@ static fn monitor_memory(system_snapshot address_to sample,
         text_put(total_text, total_length);
         text_put_string("\033[K\n");
 
-        positive swap_total = sample->header.swap_total;
-        positive swap_used = swap_total >= sample->header.swap_free
-                                 ? swap_total - sample->header.swap_free
-                                 : 0;
-        positive swap_percent = monitor_percent(swap_used, swap_total, 100);
+        positive swap_used;
+        positive swap_percent = monitor_swap_percent(sample,
+                                                     address_of swap_used);
 
         if (swap_percent)
         {
@@ -410,8 +432,8 @@ static bool monitor_processes(system_snapshot address_to old,
                     monitor_row_write, (address_to top)[i].process->pid, 10,
                     7, -1, (positive)1 << 27);
                 monitor_row_write(" ", 1);
-                monitor_tenths_field(monitor_row_write,
-                                     (address_to top)[i].tenths, 6);
+                monitor_fixed(monitor_row_write, (address_to top)[i].tenths, 1,
+                              6);
                 monitor_row_write(" ", 1);
                 writer_field(monitor_row_write, memory_text, memory_length, 9,
                              ' ', false);
@@ -431,23 +453,62 @@ static fn monitor_caught(b32 number)
         monitor_stopping = 1;
 }
 
+#define MONITOR_SIGNAL_BLOCK 0
+#define MONITOR_SIGNAL_SET_MASK 2
+#define MONITOR_EINTR 4
+
+/*
+        The interval, cut short by a signal: one when it slept, zero when
+        it was told to stop, negative when the kernel refused.
+
+        The three signals that stop the monitor are blocked while the flag
+        is read and let through only inside ppoll, which swaps the mask in
+        and sleeps as one step. A signal landing between the test and the
+        call is then delivered inside the call and ends it, where nanosleep
+        after the same test slept the whole interval with the flag already
+        set. ppoll with nothing to poll is the sleep every architecture
+        has, and the last argument is the size of a signal set, which the
+        kernel checks.
+*/
 static b32 monitor_sleep(p64 address_to span)
 {
-        p64 left[2] = {span[0], span[1]};
+        positive stopping = ((positive)1 << 0) | ((positive)1 << 1) |
+                            ((positive)1 << 14);
+        positive previous = 0;
+        b32 answer = -1;
 
-        while (!monitor_stopping)
+        if (system_signal_mask(MONITOR_SIGNAL_BLOCK, address_of stopping,
+                               address_of previous, 8) < 0)
+                return -1;
+
+        while (1)
         {
-                bipolar answer = system_call_2(syscall(nanosleep),
-                                               (positive)left,
-                                               (positive)left);
+                if (monitor_stopping)
+                {
+                        answer = 0;
+                        break;
+                }
 
-                if (answer >= 0)
-                        return 1;
-                if (answer != -4)
-                        return -1;
+                bipolar polled = system_call_5(syscall(ppoll), 0, 0,
+                                               (positive)span,
+                                               (positive)address_of previous,
+                                               8);
+
+                if (polled >= 0)
+                {
+                        answer = 1;
+                        break;
+                }
+
+                // Some other signal cut the sleep short, and the interval
+                // starts over.
+                if (polled != -MONITOR_EINTR)
+                        break;
         }
 
-        return 0;
+        system_signal_mask(MONITOR_SIGNAL_SET_MASK, address_of previous, 0, 8);
+
+        return answer;
 }
 
 static HOT b32 tools_monitor()
@@ -564,14 +625,7 @@ static HOT b32 tools_monitor()
                                 networks += !string_equals(
                                     sample->networks[i].name, "lo");
 
-                        positive swap_used = sample->header.swap_total >=
-                                                     sample->header.swap_free
-                                                 ? sample->header.swap_total -
-                                                       sample->header.swap_free
-                                                 : 0;
-                        positive swap = monitor_percent(
-                                            swap_used,
-                                            sample->header.swap_total, 100) != 0;
+                        positive swap = monitor_swap_percent(sample, null) != 0;
                         positive network_room = rows > 7 + swap
                                                     ? rows - 7 - swap
                                                     : 0;
@@ -631,3 +685,6 @@ finished:
 }
 
 #undef MONITOR_RESTORE
+#undef MONITOR_SIGNAL_BLOCK
+#undef MONITOR_SIGNAL_SET_MASK
+#undef MONITOR_EINTR

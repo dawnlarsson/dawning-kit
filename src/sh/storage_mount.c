@@ -227,7 +227,13 @@ static bool storage_options_parse(storage_mount_options address_to out,
                         set = option->set_length & STORAGE_OPTION_FLAG_MASK;
                         clear = option->clear_action & STORAGE_OPTION_FLAG_MASK;
                         if (action == STORAGE_OPTION_PROPAGATION)
+                        {
+                                /* Propagation is its own mount(2) call once
+                                   the mount exists; carried in the flags it
+                                   would turn `bind,rshared` into an rbind. */
                                 out->propagation = set;
+                                set = 0;
+                        }
                         else if (action == STORAGE_OPTION_NOAUTO)
                                 out->noauto = true;
                         else if (action == STORAGE_OPTION_NOFAIL)

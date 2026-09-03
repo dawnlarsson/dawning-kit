@@ -299,20 +299,40 @@ static string_address lex_nested_at(string_address at);
 static string_address lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
 
-/*
-        Where a POSIX dollar-single-quoted run closes.
-
-        Unlike an ordinary single quote, a backslash carries the byte behind
-        it, in particular \' does not close the run.  The escape is interpreted
-        immediately before expansion; the lexer only has to keep the quoted
-        bytes together and keep delimiters inside them out of the grammar.
-*/
-static PURE string_address lex_dollar_quote_end(string_address at)
+// The three bytes that separate words and lines. Asked in five places, which
+// used to be five spellings of the same three comparisons.
+static CONST inline INLINE bool lex_is_space(p8 value)
 {
-        while (string_get(at) && string_not(at, '\''))
+        return value == ' ' || value == '\t' || value == '\n';
+}
+
+/*
+        Where a run closes in which a backslash carries the byte behind it.
+
+        A dollar-single-quoted run is one: unlike an ordinary single quote,
+        \' does not close it. The inside of a double quote seen from within a
+        nesting is the other, where the closing quote is the only thing being
+        looked for and a substitution inside it is not opened again. Same walk
+        either way, so it is one walk with the quote as its argument.
+*/
+static PURE string_address lex_escaped_end(string_address at, p8 quote)
+{
+        while (string_get(at) && string_get(at) != quote)
                 at += string_is(at, '\\') && string_get(at + 1) ? 2 : 1;
 
         return at;
+}
+
+/*
+        Where a POSIX dollar-single-quoted run closes.
+
+        The escape is interpreted immediately before expansion; the lexer
+        only has to keep the quoted bytes together and keep delimiters inside
+        them out of the grammar.
+*/
+static PURE string_address lex_dollar_quote_end(string_address at)
+{
+        return lex_escaped_end(at, '\'');
 }
 
 /*
@@ -446,14 +466,11 @@ static PURE string_address lex_conditional_end(string_address start)
                         continue;
 
                 if (value == ']' && string_is(at + 1, ']') &&
-                    at > start + 2 &&
-                    (string_is(at - 1, ' ') || string_is(at - 1, '\t') ||
-                     string_is(at - 1, '\n')))
+                    at > start + 2 && lex_is_space(string_get(at - 1)))
                 {
                         p8 after = string_get(at + 2);
 
-                        if (!after || after == ' ' || after == '\t' ||
-                            after == '\n' || lex_operator[after])
+                        if (!after || lex_is_space(after) || lex_operator[after])
                                 return at + 2;
                 }
 
@@ -579,11 +596,7 @@ static PURE string_address lex_nesting(string_address at)
                         if (c == '\'')
                                 step = string_first_of_or_end(step, '\'');
                         else
-                                while (string_get(step) && string_get(step) != '"')
-                                        step += string_get(step) == '\\' &&
-                                                        string_get(step + 1)
-                                                    ? 2
-                                                    : 1;
+                                step = lex_escaped_end(step, '"');
 
                         if (string_get(step))
                                 step++;
@@ -645,8 +658,7 @@ b32 lex_unfinished(string_address line)
                 positive run;
 
                 if (fresh && c == '[' && string_is(step + 1, '[') &&
-                    (string_is(step + 2, ' ') || string_is(step + 2, '\t') ||
-                     string_is(step + 2, '\n')))
+                    lex_is_space(string_get(step + 2)))
                 {
                         string_address stop = lex_conditional_end(step);
 
@@ -880,8 +892,7 @@ HOT b32 lex_line(string_address line)
                 lex_at = (positive)(step - line);
 
                 if (string_is(step, '[') && string_is(step + 1, '[') &&
-                    (string_is(step + 2, ' ') || string_is(step + 2, '\t') ||
-                     string_is(step + 2, '\n')))
+                    lex_is_space(string_get(step + 2)))
                 {
                         string_address stop = lex_conditional_end(step);
 

@@ -960,6 +960,11 @@ check 'quote in a body' 'f() {
 }
 f "two
 lines"'
+#       An alias value is lexed before it is cut into lines, so a newline
+#       inside its quotes stays inside the word.
+check 'alias quoted newline' 'alias a="echo \"one
+two\""
+a'
 
 group control
 check 'if true'         'if true; then echo yes; fi'
@@ -974,6 +979,10 @@ check 'break'           'for i in 1 2 3; do [ $i = 2 ] && break; echo $i; done'
 check 'continue'        'for i in 1 2 3; do [ $i = 2 ] && continue; echo $i; done'
 check 'subshell'        '(echo inside); echo outside'
 check 'group'           '{ echo a; echo b; }'
+#       The condition is inside the loop: break in it ends this loop.
+answer 'break in condition' 'for i in 1 2; do while break; do :; done; echo $i; done'
+answer 'break in top condition' 'while break; do echo x; done; echo after'
+answer 'continue in condition' 'n=0; while [ $n -lt 3 ] && { n=$((n+1)); [ $n -eq 2 ] && continue; true; }; do echo $n; done'
 
 group operators
 check 'and'             'true && echo yes'
@@ -1009,6 +1018,16 @@ answer 'one thousand function calls with locals' 'n=outer; f() { local n=$1; if 
 answer 'two hundred fifty six locals' 'f() { i=0; while [ "$i" -lt 256 ]; do eval "local v$i=$i"; i=$((i+1)); done; echo "$v0:$v127:$v255"; }; f; echo "${v0-unset}:${v255-unset}"'
 answer 'long local name' 'local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=outer; f() { local local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=inner; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"; }; f; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"'
 bash_answer 'function simple body rejected' 'function f echo body'
+#       A function that redefines itself is still running the old body,
+#       which stays where it is until the call comes back.
+answer 'function redefines itself' 'f() { f() { echo new; }; echo old; }; f; f'
+answer 'function unsets itself' 'f() { unset -f f; echo still; }; f; f 2>/dev/null; echo $?'
+#       A here-document inside a function inside a function is kept twice,
+#       and the second copy is taken from the first.
+answer 'heredoc kept twice' 'outer() { inner() { cat <<EOF
+hello
+EOF
+}; }; outer; inner'
 
 group redirection
 check 'out'             'echo x > /tmp/pt1; cat /tmp/pt1'
@@ -1062,6 +1081,24 @@ bash_answer 'here string fd' 'cat 3<<< data <&3'
 bash_answer 'here string pipeline' 'cat <<< abc | tr a-z A-Z'
 bash_answer 'here string function' 'f() { read x; echo "[$x]"; }; f <<< "a b"'
 bash_answer 'here string missing' 'cat <<<'
+#       exec with nothing to run keeps its redirections; a function that
+#       runs one must not make the redirections on the call permanent.
+answer 'bare exec inside function' 'f() { exec 3>/dev/null; }; f >/dev/null; echo visible'
+#       A backslash before a newline joins the lines of an unquoted body.
+answer 'heredoc continuation' 'cat <<EOF
+a\
+b
+EOF'
+#       The delimiter is never expanded: what stands after << is the word
+#       with its quotes removed, and nothing in it runs.
+answer 'heredoc delimiter literal' 'i=0; cat <<$((i=i+1))
+x
+$((i=i+1))
+echo $i'
+#       A here-document the input ends inside of is closed by the end of
+#       the input, with a warning, and the command runs.
+answer 'heredoc ended by input' 'sh -c '"'"'cat <<EOF
+hi'"'"' 2>/dev/null'
 
 group builtins
 check 'xargs joins'     'printf "a\nb\nc\n" | xargs echo'
@@ -1218,6 +1255,9 @@ answer 'dot break reaches loop' 'p=/tmp/dot-break.$$; printf '\''echo in\nbreak\
 answer 'dot continue reaches loop' 'p=/tmp/dot-continue.$$; printf '\''echo in\ncontinue\necho BAD\n'\'' > "$p"; for i in a b; do . "$p"; echo LOOP-BAD; done; rm -f "$p"; echo after'
 check 'dot path need not execute' 'p=/tmp/dot-path.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/include"; /bin/chmod 600 "$p/include"; cd /; PATH=$p; . include; /bin/rm -f "$p/include"; /bin/rmdir "$p"'
 check 'dot reads one stream' '{ printf '\''x=first\n#'\''; awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "a" }'\''; printf '\''\necho "$x"\n'\''; } | "$0" -c '\''. /dev/stdin'\'''
+#       A temporary export made for one command must be taken back by
+#       that command, even after a sourced file ran lines of its own.
+answer 'dot keeps temporary export' 'p=/tmp/dot-temp.$$; printf '\''echo a\necho "$x"\n'\'' > "$p"; f() { . "$p"; }; x=0; y=1; x=$y f; rm -f "$p"; sh -c '\''echo ${x-unset}'\'''
 
 group naming
 check 'type builtin'    'type echo'
@@ -1243,6 +1283,16 @@ check 'exit trap'       'trap "echo bye" EXIT; echo hi'
 check 'exit trap code'  'trap "echo bye" EXIT; exit 3'
 check 'exit trap gone'  'trap "echo bye" EXIT; trap - EXIT; echo hi'
 check 'wait for all'    'true & wait; echo done'
+#       An action is source, however many lines it has: the second line
+#       used to be lost, and the first line may take the trap away.
+check 'trap runs every line' 'trap '"'"'echo a
+echo b'"'"' USR1; kill -USR1 $$; echo c'
+check 'trap first line removes it' 'trap '"'"'echo t1
+trap - USR1
+echo t2'"'"' USR1; kill -USR1 $$; echo done'
+#       trap '' on a signal reaches the commands too: a child does not get
+#       the default back over the script'"'"'s own decision.
+check 'ignored signal inherited' 'trap "" INT; sh -c '"'"'kill -INT $$; echo child alive'"'"''
 
 #
 #       The same language again, with the exit status looked at too.
@@ -1291,6 +1341,10 @@ answer 'loop body'       'for i in 1; do false; done; echo $?'
 answer 'branch taken'    'if true; then if false; then echo a; else echo b; fi; fi'
 answer 'not a command'   'nosuchcommand12345; echo $?'
 answer 'external exit 127' '/bin/sh -c "exit 127"; echo $?'
+#       Starting a command in the background is a command with a status.
+answer 'status after background' 'false; sleep 0 & echo $?; wait'
+#       A matched item with nothing in it succeeds.
+answer 'case empty item' 'false; case a in a) ;; esac; echo $?'
 
 group interactive-fatal
 interactive_fatal 'unsupported transform' 'bad substitution' 'x=ab' \
@@ -2554,13 +2608,18 @@ bash_set_option_inventory()
                 if [ "$state" = supported ]; then
                         bash_answer "ledger set option $item" "$probe"
                 else
+                        #       An option name the shell does not have ends
+                        #       a script, as dash's set does, so the ledger
+                        #       records no listing and a status of 2 for
+                        #       those; the two names it does have are listed.
                         recorded=
+                        status=2
                         case $item in
-                        monitor) recorded='off|' ;;
-                        noexec)  recorded='on|' ;;
+                        monitor) recorded='off|'; status=0 ;;
+                        noexec)  recorded='on|'; status=0 ;;
                         esac
                         bash_remaining "ledger set option $item" \
-                                "$recorded" 0 "$probe"
+                                "$recorded" "$status" "$probe"
                 fi
         done
 }

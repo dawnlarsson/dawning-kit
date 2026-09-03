@@ -78,6 +78,27 @@ static bool storage_octal(p8 address_to at, p8 address_to value)
         return true;
 }
 
+/* One decoding step shared by the mountinfo and fstab readers: a complete
+   backslash-octal escape becomes its byte, anything else copies through. */
+static inline INLINE fn storage_unescape_step(p8 address_to address_to read,
+                                              p8 address_to address_to write)
+{
+        p8 address_to at = address_to read;
+        p8 address_to out = address_to write;
+        p8 value;
+
+        if (*at == '\\' && storage_octal(at + 1, address_of value))
+        {
+                *out++ = value;
+                at += 4;
+        }
+        else
+                *out++ = *at++;
+
+        address_to read = at;
+        address_to write = out;
+}
+
 /* mountinfo and fstab both use backslash-octal.  Decode every valid escape,
    including \134 itself; limiting this to \040 is how names with tabs or
    backslashes become impossible to round-trip. */
@@ -95,18 +116,7 @@ static fn storage_unescape(string_address field)
         write = read;
 
         while (*read)
-        {
-                p8 value;
-
-                if (*read == '\\' && storage_octal(read + 1,
-                                                   address_of value))
-                {
-                        *write++ = value;
-                        read += 4;
-                }
-                else
-                        *write++ = *read++;
-        }
+                storage_unescape_step(address_of read, address_of write);
 
         *write = end;
 }
@@ -315,22 +325,9 @@ static positive storage_fstab_fields(p8 address_to line,
 
                 field[count++] = write;
 
-                while (*read)
-                {
-                        p8 value;
-
-                        if (*read == ' ' || *read == '\t')
-                                break;
-
-                        if (*read == '\\' &&
-                            storage_octal(read + 1, address_of value))
-                        {
-                                *write++ = value;
-                                read += 4;
-                        }
-                        else
-                                *write++ = *read++;
-                }
+                while (*read && *read != ' ' && *read != '\t')
+                        storage_unescape_step(address_of read,
+                                              address_of write);
 
                 /* Advance the reader before terminating the compacted field:
                    with no escapes read == write at the delimiter. */
@@ -429,44 +426,35 @@ PURE storage_mount address_to storage_mount_find_target(
         return null;
 }
 
+/* libmount's match_fstype: one leading `no` inverts the whole list, so
+   `nofoo,bar` means `nofoo,nobar`; a token's own `no` prefix is read
+   literally, and names compare without case. */
 static PURE bool storage_type_match(string_address list, string_address type)
 {
-        bool include_seen = false;
-        bool included = false;
+        bool negated = false;
         string_address cursor = list;
         string_address at;
-        positive type_length;
         positive length;
 
         if (!list)
                 return true;
-        if (!*list)
-                return false;
 
-        type_length = string_length(type);
+        if (list[0] == 'n' && list[1] == 'o')
+        {
+                negated = true;
+                cursor = list + 2;
+        }
 
         while ((at = storage_comma_next(address_of cursor, address_of length)))
         {
-                bool exclude = length > 2 && at[0] == 'n' && at[1] == 'o';
-                string_address name = exclude ? at + 2 : at;
-                positive name_length = length - (exclude ? 2 : 0);
-                bool equal = type_length == name_length &&
-                             !string_compare_max(type, name, name_length);
-
-                if (exclude && equal)
+                if (at[0] == 'n' && at[1] == 'o' &&
+                    file_same_word(at + 2, length - 2, type))
                         return false;
-
-                if (!exclude)
-                {
-                        include_seen = true;
-
-                        if (equal)
-                                included = true;
-                }
-
+                if (file_same_word(at, length, type))
+                        return !negated;
         }
 
-        return !include_seen || included;
+        return negated;
 }
 
 /* One column schema drives option parsing, headings and record projection.
@@ -496,13 +484,11 @@ enum storage_column
 typedef struct
 {
         string_address name;
-        p8 length;
         p16 offset;
 } storage_column_descriptor;
 
 #define STORAGE_COLUMN_ENTRY(symbol, text, member_offset)                   \
-        [STORAGE_##symbol] = {(string_address)text, sizeof(text) - 1,        \
-                              (p16)(member_offset)},
+        [STORAGE_##symbol] = {(string_address)text, (p16)(member_offset)},
 static const storage_column_descriptor storage_column_table[] = {
     STORAGE_COLUMNS(STORAGE_COLUMN_ENTRY)};
 #undef STORAGE_COLUMN_ENTRY
@@ -601,9 +587,7 @@ static bool storage_columns(string_address list,
                         const storage_column_descriptor address_to descriptor =
                             storage_column_table + column;
 
-                        if (length == descriptor->length &&
-                            !memory_compare_ascii_case(at, descriptor->name,
-                                                       length))
+                        if (file_same_word(at, length, descriptor->name))
                                 break;
                 }
 
@@ -788,6 +772,17 @@ static bool storage_source_matches(storage_mount address_to mount,
                wanted[source_length + root_length + 1] == ']';
 }
 
+/* A cell pads to its column only between columns and never in raw mode;
+   the last column stays ragged so no line carries trailing blanks. */
+static fn storage_findmnt_pad(writer output,
+                              storage_findmnt_options address_to options,
+                              positive address_to widths, positive at,
+                              positive length)
+{
+        if (!options->raw && at + 1 < options->count && widths[at] > length)
+                writer_fill(output, widths[at] - length, ' ');
+}
+
 static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                               storage_findmnt_options address_to options,
                               positive address_to widths, bool heading)
@@ -847,28 +842,16 @@ static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                                                     : mount->parent_id;
 
                         positive_to_string(output, value_number);
-                        if (!options->raw && at + 1 < options->count)
-                        {
-                                positive length = positive_digits(value_number);
-
-                                if (widths[at] > length)
-                                        writer_fill(output,
-                                                    widths[at] - length, ' ');
-                        }
+                        storage_findmnt_pad(output, options, widths, at,
+                                            positive_digits(value_number));
                 }
                 else if (!heading && options->columns[at] == STORAGE_OPTIONS)
                 {
                         storage_combined_options_write(output, mount,
                                                        options->raw, false);
-                        if (!options->raw && at + 1 < options->count)
-                        {
-                                positive length =
-                                    storage_combined_options_length(mount);
-
-                                if (widths[at] > length)
-                                        writer_fill(output,
-                                                    widths[at] - length, ' ');
-                        }
+                        storage_findmnt_pad(
+                            output, options, widths, at,
+                            storage_combined_options_length(mount));
                 }
                 else if (!heading && options->columns[at] == STORAGE_SOURCE &&
                          storage_source_has_root(mount) && !options->no_fsroot)
@@ -879,16 +862,10 @@ static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                         storage_findmnt_value(output, mount->root,
                                               options->raw);
                         output((address_any)"]", 1);
-
-                        if (!options->raw && at + 1 < options->count)
-                        {
-                                positive length = storage_findmnt_cell_length(
-                                    mount, STORAGE_SOURCE, true);
-
-                                if (widths[at] > length)
-                                        writer_fill(output,
-                                                    widths[at] - length, ' ');
-                        }
+                        storage_findmnt_pad(
+                            output, options, widths, at,
+                            storage_findmnt_cell_length(mount, STORAGE_SOURCE,
+                                                        true));
                 }
                 else if (!options->raw && at + 1 < options->count)
                         string_to_field(output, value, widths[at], ' ', true);
