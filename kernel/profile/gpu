@@ -38,6 +38,9 @@ CONFIG_MOONWATER_CANVAS=y
 # default follows whatever interval the device reports, which for cheap mice
 # is 8 ms -- the largest single number in the input path once the vblank wait
 # is out of it, and one that no amount of work further down can recover.
+# kbpoll and jspoll are the same request of keyboards and game controllers:
+# a keystroke or a stick reads at the device's own 8 or 10 ms otherwise, and
+# the terminal echo and the game are both waiting on that report.
 #
 # This is the whole command line for the image, not a line to append to. There
 # is one CONFIG_CMDLINE and the last profile to set it wins outright, so every
@@ -60,7 +63,7 @@ CONFIG_CMDLINE_BOOL=y
 # a desktop's whole uptime, which is a decision about the machine rather than
 # about latency. Add it to this line to take it.
 #
-CONFIG_CMDLINE="drm_client_lib.active= usbhid.mousepoll=1 intel_idle.max_cstate=1 processor.max_cstate=1"
+CONFIG_CMDLINE="drm_client_lib.active= usbhid.mousepoll=1 usbhid.kbpoll=1 usbhid.jspoll=1 intel_idle.max_cstate=1 processor.max_cstate=1"
 
 #
 # Core modesetting

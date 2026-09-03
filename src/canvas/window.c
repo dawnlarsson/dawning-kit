@@ -367,6 +367,7 @@ static inline int window_key(struct window *window, struct window_key *key)
 #define WINDOW_SYS_MUNMAP 11
 #define WINDOW_SYS_IOCTL 16
 #define WINDOW_SYS_CLOSE 3
+#define WINDOW_SYS_PPOLL 271
 #else
 // arm64 and riscv share the asm-generic numbering.
 #define WINDOW_SYS_OPENAT 56
@@ -374,6 +375,7 @@ static inline int window_key(struct window *window, struct window_key *key)
 #define WINDOW_SYS_MUNMAP 215
 #define WINDOW_SYS_IOCTL 29
 #define WINDOW_SYS_CLOSE 57
+#define WINDOW_SYS_PPOLL 73
 #endif
 
 /*
@@ -499,6 +501,33 @@ static struct window *window_open_text(unsigned int columns, unsigned int rows)
         struct window_request request = {0, 0, columns, rows};
 
         return window_request_open(request);
+}
+
+/*
+        Sleeps until there is something for the program: a key in its ring,
+        a grid the compositor changed, or the other descriptor -- a pty
+        master, for a terminal -- having bytes. Napping and looking was how
+        a terminal used to find a keystroke, and every keystroke paid half
+        the nap on average; the compositor wakes this the moment it writes
+        the key, so what is left is the wakeup itself.
+
+        A negative timeout is no timeout. Answers what ppoll answers: how
+        many descriptors are ready, zero on the timeout, negative on refusal.
+*/
+struct window_poll
+{
+        int handle;
+        short events;
+        short returned;
+};
+
+static long window_wait(struct window *window, long other, long nanoseconds)
+{
+        struct window_poll wanted[2] = {{(int)window->handle, 1, 0}, {(int)other, 1, 0}};
+        long timeout[2] = {nanoseconds / 1000000000, nanoseconds % 1000000000};
+
+        return window_call(WINDOW_SYS_PPOLL, (long)wanted, other >= 0 ? 2 : 1,
+                           nanoseconds < 0 ? 0 : (long)timeout, 0, 0, 0);
 }
 
 /*

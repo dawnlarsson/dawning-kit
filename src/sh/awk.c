@@ -2620,8 +2620,8 @@ static b32 awk_close_named(awk_text address_to name)
         {
                 awk_writer address_to which = address_of awk_writers[i];
 
-                if (!which->live || which->name->length != name->length ||
-                    memory_compare(which->name->text, name->text, name->length))
+                if (!which->live ||
+                    !awk_text_is(which->name, name->text, name->length))
                         continue;
 
                 answer = awk_writer_close(which);
@@ -2631,8 +2631,8 @@ static b32 awk_close_named(awk_text address_to name)
         {
                 awk_reader address_to which = address_of awk_readers[i];
 
-                if (!which->live || which->name->length != name->length ||
-                    memory_compare(which->name->text, name->text, name->length))
+                if (!which->live ||
+                    !awk_text_is(which->name, name->text, name->length))
                         continue;
 
                 answer = awk_reader_close(which);
@@ -5290,6 +5290,9 @@ static bool awk_matches(awk_node address_to pattern, awk_text address_to subject
 static fn awk_call(awk_node address_to node, awk_value address_to out);
 
 static fn awk_builtin(awk_node address_to node, awk_value address_to out);
+static awk_text address_to awk_format_list(awk_text address_to format,
+                                           awk_node address_to arguments,
+                                           b32 want);
 
 static fn awk_getline(awk_node address_to node, awk_value address_to out);
 
@@ -5909,29 +5912,8 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         case B_SPRINTF:
         {
                 awk_text address_to format = awk_eval_text(first);
-                awk_value few[16];
-                b32 want = node->count - 1;
-                awk_value address_to room = want <= 16
-                                                ? few
-                                                : (awk_value address_to)awk_take(
-                                                      (positive)want * sizeof(awk_value));
-                b32 have = 0;
 
-                for (awk_node address_to one = second; one; one = one->next)
-                {
-                        awk_value_start(room[have]);
-                        awk_eval(one, address_of room[have]);
-                        have++;
-                }
-
-                awk_set_text(out, awk_sprintf(format->text, format->length, room, have));
-
-                for (b32 i = 0; i < have; i++)
-                        awk_value_done(address_of room[i]);
-
-                if (room != few)
-                        memory_give(room);
-
+                awk_set_text(out, awk_format_list(format, second, node->count - 1));
                 awk_text_drop(format);
                 return;
         }
@@ -6166,22 +6148,23 @@ static fn awk_do_print(awk_node address_to node)
                 memory_give(build.data);
 }
 
-static fn awk_do_printf(awk_node address_to node)
+/*
+        A format and the list of arguments after it, evaluated and handed to
+        the formatter as one: what printf and sprintf both do before they
+        differ in where the text goes. A few arguments live on the stack;
+        more than sixteen come from the arena.
+*/
+static awk_text address_to awk_format_list(awk_text address_to format,
+                                           awk_node address_to arguments,
+                                           b32 want)
 {
         awk_value few[16];
-        b32 want = node->count > 1 ? node->count - 1 : 0;
         awk_value address_to room = want <= 16 ? few
                                                : (awk_value address_to)awk_take(
                                                      (positive)want * sizeof(awk_value));
         b32 have = 0;
-        awk_writer address_to where;
 
-        if (!node->a)
-                awk_fatal(null, "printf wants a format");
-
-        awk_text address_to format = awk_eval_text(node->a);
-
-        for (awk_node address_to one = node->a->next; one; one = one->next)
+        for (awk_node address_to one = arguments; one; one = one->next)
         {
                 awk_value_start(room[have]);
                 awk_eval(one, address_of room[have]);
@@ -6195,6 +6178,20 @@ static fn awk_do_printf(awk_node address_to node)
 
         if (room != few)
                 memory_give(room);
+
+        return made;
+}
+
+static fn awk_do_printf(awk_node address_to node)
+{
+        awk_writer address_to where;
+
+        if (!node->a)
+                awk_fatal(null, "printf wants a format");
+
+        awk_text address_to format = awk_eval_text(node->a);
+        awk_text address_to made = awk_format_list(
+            format, node->a->next, node->count > 1 ? node->count - 1 : 0);
 
         where = awk_output_of(node);
         awk_writer_put(where, made->text, made->length);

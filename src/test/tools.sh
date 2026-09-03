@@ -1154,6 +1154,24 @@ fi
 
 compare_ps_full
 
+case_start monitor
+#       The interval is honoured on every frame, not only the first: the
+#       kernel writes what is left of a timespec back into it, and a sleep
+#       that reused the same one slept once and then drew every frame at
+#       once, which a dashboard on the screen showed as a picture that never
+#       changed again. Ten frames at fifty milliseconds are at least nine
+#       sleeps, four hundred and fifty milliseconds by the wall clock.
+monitor_started=$(date +%s%N)
+"$bin/monitor" 0.05 10 > "$work/monitor.out" 2> /dev/null
+monitor_status=$?
+monitor_took=$(( ($(date +%s%N) - monitor_started) / 1000000 ))
+monitor_frames=$(grep -c '2026h' "$work/monitor.out")
+if [ "$monitor_status" = 0 ] && [ "$monitor_frames" = 10 ] && [ "$monitor_took" -ge 400 ]; then
+        pass=$((pass + 1))
+else
+        report 'monitor paces its frames' "status $monitor_status, $monitor_frames frames in $monitor_took ms"
+fi
+
 printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'tools-listed %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"

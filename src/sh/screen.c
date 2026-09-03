@@ -340,7 +340,15 @@ static b32 screen_term()
                 if (gone)
                         break;
 
-                system_call_2(syscall(nanosleep), (positive)address_of nap, 0);
+                /*
+                        Asleep until a key, a resize or the shell's output,
+                        rather than for four milliseconds at a time. The nap
+                        stays only while a synchronized frame is being held,
+                        where the turns of this loop are what counts the
+                        200 ms ceiling above.
+                */
+                window_wait(window, master,
+                            synchronized_output ? (long)nap.tv_nsec : -1);
         }
 
         positive status = 0;

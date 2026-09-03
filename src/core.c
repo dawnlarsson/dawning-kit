@@ -17,6 +17,8 @@
 #include <linux/refcount.h>
 #include <linux/cred.h>
 #include <linux/file.h>
+// Before the library's own spellings below: poll.h names a bool of its own.
+#include <linux/poll.h>
 #include <linux/kernel_stat.h>
 #include <linux/cpumask.h>
 #include <linux/timekeeping.h>
@@ -1205,6 +1207,7 @@ static const struct file_operations device_ops = {
     .release = device_close,
 #ifdef CONFIG_MOONWATER_CANVAS
     .mmap = window_mmap,
+    .poll = window_poll,
 #endif
     .llseek = noop_llseek,
 };

@@ -251,4 +251,8 @@ static void keys_deliver(void)
         }
 
         atomic_set(&desktop.key_tail, (int)head);
+
+        // The program may be asleep on its file; this is what it was waiting
+        // for, and the wake is the whole of the latency from here on.
+        wake_up_interruptible(&pane->wait);
 }

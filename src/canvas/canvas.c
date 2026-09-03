@@ -94,6 +94,13 @@ struct pane
         struct window *shared;
         u32 *pixels;
 
+        // Where the program sleeps until there is something for it: a key
+        // in its ring, or a grid that changed under it. A poll on the window
+        // file waits here, and the thread that wrote the key wakes it, so a
+        // keystroke reaches the program in the time a wakeup takes rather
+        // than at the end of whatever nap the program was taking.
+        wait_queue_head_t wait;
+
         // A window of text instead: cells the compositor draws the glyphs for.
         struct window_cell *cells;
         unsigned int columns, rows;

@@ -438,6 +438,8 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         if (!pane)
                 return NULL;
 
+        init_waitqueue_head(&pane->wait);
+
         // Not vmalloc_user when it is the compositor's own: nothing maps it.
         pane->mapping = owned ? vzalloc(bytes) : vmalloc_user(bytes);
         if (!pane->mapping)
@@ -570,6 +572,10 @@ static void pane_regrid(struct pane *pane)
         WRITE_ONCE(pane->shared->rows, pane->rows);
         WRITE_ONCE(pane->shared->width, (unsigned int)pane->width);
         WRITE_ONCE(pane->shared->height, (unsigned int)pane->height);
+
+        // A program asleep on its file lays out to the new grid now, not
+        // when its next key arrives.
+        wake_up_interruptible(&pane->wait);
 }
 
 static void pane_refresh(struct pane *pane)
@@ -1044,6 +1050,35 @@ static long window_ioctl_create(struct file *file, unsigned long argument)
 
         // How much to map, which the program cannot work out for itself.
         return (long)bytes;
+}
+
+/*
+        Whether the program has anything to wake up for: a key it has not
+        read, or a grid the compositor changed that it has not laid out to.
+        The wait queue is the pane's, and the pane outlives every poll on its
+        file, since only the file's own release frees it.
+*/
+static __poll_t window_poll(struct file *file, poll_table *wait)
+{
+        struct device_context *context = file->private_data;
+        struct pane *pane = smp_load_acquire(&context->pane);
+        struct window *shared;
+
+        if (!pane || !pane->shared)
+                return 0;
+
+        shared = pane->shared;
+        poll_wait(file, &pane->wait, wait);
+
+        // The grid the program laid out to is its own record in the page;
+        // the compositor's columns and rows moving away from it is a resize
+        // it has not seen yet, the same test window_regrid makes.
+        if (READ_ONCE(shared->key_head) != READ_ONCE(shared->key_tail) ||
+            READ_ONCE(shared->columns) != READ_ONCE(shared->grid_columns) ||
+            READ_ONCE(shared->rows) != READ_ONCE(shared->grid_rows))
+                return EPOLLIN | EPOLLRDNORM;
+
+        return 0;
 }
 
 static long window_ioctl_commit(struct file *file)
