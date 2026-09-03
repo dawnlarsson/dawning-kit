@@ -32,7 +32,9 @@ binaries=${1:-/tmp/multi}
 export TZ=UTC0
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT INT TERM
+# Cases leave trees with their modes taken away; put them back before the
+# removal, or the removal is the one thing in the lane that fails.
+trap 'chmod -R u+rwx "$work" 2>/dev/null; rm -rf "$work"' EXIT INT TERM
 
 started=$(date +%s)
 
@@ -557,6 +559,75 @@ refuses_ln_relative_ceiling() {
 
         report bad 'relative link ceiling' \
                 "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
+# The walkers that used to stop at their frame ceiling in silence and answer
+# 0. What is wanted now is what du does: whatever was reached is printed,
+# the ceiling is named, and the status says the walk is not the whole tree.
+refuses_walk_depth_ceiling() {
+        name=$1
+        tool=$2
+        shift 2
+
+        if "$binaries/$tool" "$@" > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ -s "$work/got" ] &&
+           grep -q "^$tool: '.*' is nested too deep\$" "$work/got.err"; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "wanted loud refusal, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status] $(head -1 "$work/got.err")"
+}
+
+# A destination spelled through a link into the source is inside the source,
+# and cp has to see that before it starts rather than after it has copied
+# the tree into itself all the way down to the frame ceiling. The reference
+# cp notices one level late and leaves a copy behind, so only the refusal
+# itself is compared.
+refuses_cp_into_itself() {
+        rm -rf "$work/b"
+        mkdir -p "$work/b/tree/x"
+        : > "$work/b/tree/f"
+        ln -s tree "$work/b/link"
+
+        if (cd "$work/b" && "$binaries/cp" -r tree link/x) \
+                > "$work/got" 2> "$work/got.err"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q "cannot copy a directory, 'tree', into itself" "$work/got.err" &&
+           [ ! -e "$work/b/tree/x/tree" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad 'cp into itself through link' \
+                "wanted a refusal before copying, got [$got_status] $(head -1 "$work/got.err") $(ls "$work/b/tree/x")"
+}
+
+# More input than the arena holds, so a batch's bytes have to be given back
+# once it has run; before that they were kept until the input ended, and an
+# input this long was refused as too large.
+xargs_arena_stress() {
+        yes abcdefghijklmnopqrstuvwxyz | head -c 250000000 |
+                xargs -n 50000 true > "$work/want" 2>/dev/null; want_status=$?
+        yes abcdefghijklmnopqrstuvwxyz | head -c 250000000 |
+                "$binaries/xargs" -n 50000 true > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '250 MB of items' "$want_status" "$got_status"
+
+        yes abcdefghijklmnopqrstuvwxyz | head -n 3000 |
+                xargs -I{} echo {} > "$work/want" 2>/dev/null; want_status=$?
+        yes abcdefghijklmnopqrstuvwxyz | head -n 3000 |
+                "$binaries/xargs" -I{} echo {} > "$work/got" 2>/dev/null; got_status=$?
+        generated_answer '3000 replaced items' "$want_status" "$got_status"
 }
 
 # When a file was last written, or the word now.
@@ -1832,6 +1903,171 @@ effect 'remove a space' rm '$TOOL "nothing here" 2>/dev/null'
 effect 'make a space'   mkdir '$TOOL "a made dir"'
 effect 'touch a space'  touch '$TOOL "a touched file"'
 effect 'link a space'   ln '$TOOL -s "tree/one" "a linked name"'
+
+#       A symbolic mode with no class named goes through the umask, and a
+#       directory keeps its set-user-ID and set-group-ID bits unless the
+#       mode mentions them. "-w" is a mode and not an option, and under a
+#       umask that keeps a bit the reference chmod says what it did and
+#       answers 1.
+effect 'chmod keeps setgid directory' chmod 'mkdir d; chmod g+s d; "$TOOL" 755 d; echo $?'
+effect 'chmod five digits clear setgid' chmod 'mkdir d; chmod g+s d; "$TOOL" 00755 d'
+effect 'chmod equals keeps setgid' chmod 'mkdir d; chmod g+s d; "$TOOL" =rwx d'
+effect 'chmod class keeps special bits' chmod 'mkdir d; chmod u+s,g+s d; "$TOOL" u=rwx d'
+effect 'chmod equals keeps special bits' chmod 'mkdir d; chmod u+s,g+s d; "$TOOL" =r d'
+effect 'chmod all minus s' chmod 'mkdir d; chmod 2755 d; "$TOOL" a-s d'
+effect 'chmod user minus s' chmod 'mkdir d; chmod 6755 d; "$TOOL" u-s d'
+effect 'chmod sticky keeps setgid' chmod 'mkdir d; chmod g+s d; "$TOOL" 1755 d'
+effect 'chmod plus under umask' chmod 'umask 022; chmod 444 plain; "$TOOL" +w plain'
+effect 'chmod minus under umask' chmod 'umask 022; chmod 666 plain; "$TOOL" -w plain 2>/dev/null; echo $?'
+effect 'chmod minus word recursive' chmod 'umask 022; chmod 666 tree/one; "$TOOL" -R -w tree 2>/dev/null; echo $?; chmod -R u+w tree'
+effect 'chmod minus letters' chmod 'chmod 777 plain; "$TOOL" -rwx plain; "$TOOL" -u+x plain; chmod u+r plain'
+effect 'chmod equals under umask' chmod 'umask 077; chmod 0 plain; "$TOOL" =rwx plain'
+effect 'chmod equals clears the rest' chmod 'umask 022; chmod 777 plain; "$TOOL" =r plain'
+effect 'chmod others sticky' chmod 'mkdir d; "$TOOL" o+t d'
+effect 'chmod sticky under umask' chmod 'umask 077; mkdir d; "$TOOL" +t d'
+effect 'chmod copies class under umask' chmod 'umask 022; chmod 700 plain; "$TOOL" +u plain'
+effect 'chmod capital x under umask' chmod 'umask 077; mkdir d; chmod 0 d; "$TOOL" +X d; chmod u+r d'
+effect 'mkdir mode equals under umask' mkdir 'umask 022; "$TOOL" -m =rwx d'
+effect 'mkdir mode plus under umask' mkdir 'umask 022; "$TOOL" -m +w d'
+effect 'mkfifo mode equals under umask' mkfifo 'umask 022; "$TOOL" -m =rwx p'
+effect 'mkfifo mode class and plus' mkfifo 'umask 022; "$TOOL" -m u=rwx,g+r p'
+
+#       An entry the kernel will not describe: a plain listing prints its
+#       name and says nothing, and every column that would need the answer
+#       reports the failure, prints a question mark, and answers 1. A
+#       directory that will not open answers 2 when it was named and 1 when
+#       -R met it, and every refusal carries the kernel's reason.
+unread=$work/unread
+mkdir "$unread" "$unread/tree" "$unread/tree/shut"
+: > "$unread/f"
+: > "$unread/g"
+: > "$unread/tree/shut/inside"
+# The inner directory first: once the parent has no execute bit nothing
+# below it can be reached, chmod included.
+chmod 0000 "$unread/tree/shut"
+chmod 0644 "$unread"
+spoken 'ls unreadable entries' ls "$unread"
+spoken 'ls unreadable long' ls -l "$unread"
+spoken 'ls unreadable inodes' ls -li "$unread"
+spoken 'ls unreadable numeric' ls -n "$unread"
+spoken 'ls unreadable classified' ls -F "$unread"
+spoken 'ls unreadable operand' ls -l "$unread/f"
+spoken 'ls itself unreadable operand' ls -d "$unread/f"
+# The parent becomes passable again so the refusals below come from the
+# shut directory itself rather than from the walk to it.
+chmod 0755 "$unread"
+spoken 'ls unopenable operand' ls "$unread/tree/shut"
+spoken 'ls unopenable below' ls -R "$unread/tree"
+spoken 'ls says why' ls "$unread/tree/shut/inside"
+spoken 'stat says why' stat "$unread/tree/shut/inside"
+spoken 'du says why' du "$unread/tree/shut/inside"
+spoken 'chmod says why' chmod 644 "$unread/tree/shut/inside"
+spoken 'chmod reference says why' chmod --reference="$unread/tree/shut/inside" "$unread/f"
+spoken 'chown reference says why' chown --reference="$unread/tree/shut/inside" "$unread/f"
+spoken 'find says why' find "$unread/tree/shut/inside"
+spoken 'find below says why' find "$unread/tree"
+spoken 'find newer says why' find "$unread" -newer "$unread/tree/shut/inside"
+spoken 'cp says why' cp "$unread/tree/shut/inside" "$unread/nowhere"
+spoken 'date reference says why' date -r "$unread/tree/shut/inside"
+spoken 'ln force says why' ln -f "$unread/tree/shut/inside" "$unread/nowhere"
+spoken 'rm force says why' rm -f "$unread/tree/shut/inside"
+spoken 'rm verbose says why' rm -v "$unread/tree/shut/inside"
+
+#       A device node has no size worth a column; ls -l prints its major
+#       and minor numbers there, aligned down the listing.
+wide_device=/dev/null
+for candidate in /dev/fuse /dev/kvm /dev/autofs /dev/cpu_dma_latency /dev/ptmx; do
+        if [ -c "$candidate" ]; then
+                wide_device=$candidate
+                break
+        fi
+done
+same 'ls long device'   ls -l /dev/null
+same 'ls long devices'  ls -l /dev/null /dev/zero
+same 'ls long wide device' ls -ln /dev/null "$wide_device"
+same 'ls long device by size' ls -lS /dev/zero "$wide_device"
+same 'ls human device'  ls -lh /dev/null
+
+#       cp gives a new file the source's mode under the umask and leaves an
+#       existing one its own; a directory is made writable first and given
+#       its mode last, so a read-only tree copies; a pipe under -r is made
+#       again rather than read. mv across devices keeps the mode whole.
+effect 'cp new file under umask' cp 'umask 077; "$TOOL" tree/two made'
+effect 'cp onto existing keeps mode' cp 'chmod 600 plain; "$TOOL" tree/two plain'
+effect 'cp preserve onto existing' cp 'chmod 600 plain; "$TOOL" -p tree/two plain'
+effect 'cp read-only tree' cp 'chmod 555 tree/deep; timeout 10 "$TOOL" -r tree copy; echo $?; chmod -R u+w tree copy'
+effect 'cp directories under umask' cp 'umask 077; "$TOOL" -r tree copy'
+effect 'cp preserve directories' cp 'umask 077; "$TOOL" -rp tree copy'
+effect 'cp onto existing directory' cp 'mkdir copy; chmod 711 copy; "$TOOL" -r tree/. copy'
+effect 'cp recursive pipe' cp 'mkfifo tree/pipe; chmod 620 tree/pipe; timeout 10 "$TOOL" -r tree copy; echo $?'
+effect 'cp recursive pipe alone' cp 'mkfifo pipe; chmod 620 pipe; timeout 10 "$TOOL" -r pipe copy; echo $?'
+effect 'cp preserve pipe' cp 'mkfifo pipe; chmod 620 pipe; timeout 10 "$TOOL" -rp pipe copy; echo $?'
+effect 'cp recursive device' cp '"$TOOL" -r /dev/null made 2>/dev/null; echo $?'
+refuses_cp_into_itself
+far=/dev/shm/mw-files-$$
+if [ -d /dev/shm ] && [ "$(stat -c %d /dev/shm)" != "$(stat -c %d "$work")" ]; then
+        effect 'mv across devices' mv 'rm -rf "$far"; chmod 750 tree; chmod 600 tree/two; mkfifo tree/pipe; chmod 600 tree/pipe; timeout 10 "$TOOL" tree "$far"; echo $?; mv "$far" tree'
+        effect 'mv across devices read-only' mv 'rm -rf "$far"; chmod 555 tree/deep; timeout 10 "$TOOL" tree "$far" 2>/dev/null; echo $?; chmod -R u+w tree "$far" 2>/dev/null; rm -rf "$far"'
+fi
+
+#       The walkers that stopped at their frame ceiling in silence, and the
+#       -delete that unlinked by the path it had built rather than by the
+#       directory it was in.
+refuses_walk_depth_ceiling 'find depth ceiling' find "$deep_du"
+refuses_walk_depth_ceiling 'ls depth ceiling' ls -R "$deep_du"
+effect 'find deletes a tree' find '"$TOOL" tree -delete; echo $?'
+effect 'find deletes named files' find '"$TOOL" tree -mindepth 1 -maxdepth 2 -type f -delete; echo $?'
+effect 'ln relative through link' ln 'mkdir real other; ln -s real alias; : > other/target; "$TOOL" -sr other/target alias/link'
+effect 'ln relative replaces link' ln 'mkdir real other; ln -s real alias; : > other/target; ln -s nowhere alias/link; "$TOOL" -srf other/target alias/link'
+xargs_arena_stress
+
+#       What stat and date print can be read back by touch -d and date -d:
+#       the fraction, the zone, the month by its name, the weekday.
+effect 'touch from stat' touch '"$TOOL" -d "$(stat -c %y tree/one)" plain'
+effect 'touch keeps the fraction' touch 'touch -d "2001-09-09 01:46:40.123456789" tree/one; "$TOOL" -d "$(stat -c %y tree/one)" plain; [ "$(stat -c %y plain)" = "$(stat -c %y tree/one)" ]'
+effect 'touch epoch fraction' touch '"$TOOL" -d @1000000000.25 plain; [ "$(stat -c %y plain)" = "2001-09-09 01:46:40.250000000 +0000" ]'
+same 'read stat output' date -d "$(stat -c %y "$fixture/ancient")" '+%Y-%m-%d %H:%M:%S'
+same 'read rfc output'  date -d "$(date -R -d @1000000000)" '+%Y-%m-%d %H:%M:%S'
+same 'read date output' date -d "$(date -d @1000000000)" '+%Y-%m-%d %H:%M:%S'
+same 'read zone hours minutes' date -d '2001-09-09 01:46:40 +0100' '+%Y-%m-%d %H:%M:%S'
+same 'read zone behind' date -d '2001-09-09 01:46:40 -0130' '+%Y-%m-%d %H:%M:%S'
+same 'read zone with colon' date -d '2001-09-09 01:46:40 +01:30' '+%Y-%m-%d %H:%M:%S'
+same 'read zone hours' date -d '2001-09-09 01:46:40 +01' '+%Y-%m-%d %H:%M:%S'
+same 'read zone three digits' date -d '2001-09-09 01:46:40 +100' '+%Y-%m-%d %H:%M:%S'
+same 'read zone attached' date -d '2001-09-09T01:46:40+0100' '+%Y-%m-%d %H:%M:%S'
+same 'read zone after utc' date -d '2001-09-09 01:46:40 UTC +0100' '+%Y-%m-%d %H:%M:%S'
+same 'read zone then a day' date -d '2001-09-09 01:46:40 +0100 +1 day' '+%Y-%m-%d %H:%M:%S'
+same 'read zone then ago' date -d '2001-09-09 01:46:40 +0100 1 day ago' '+%Y-%m-%d %H:%M:%S'
+same 'read sign after time' date -d '2001-09-09 12:00 +1 day' '+%Y-%m-%d %H:%M:%S'
+same 'read fraction'    date -d '2001-09-09 01:46:40.5' '+%Y-%m-%d %H:%M:%S'
+same 'read comma fraction' date -d '2001-09-09 01:46:40,5' '+%Y-%m-%d %H:%M:%S'
+same 'read month name'  date -d 'Sep 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read day first'   date -d '9 Sep 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read day comma'   date -d 'Sep 9, 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read month whole' date -d 'September 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read sept'        date -d 'sept 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read weekday first' date -d 'Sun Sep 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read weekday passed over' date -d 'Mon Sep 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read weekday comma' date -d 'Sun, 09 Sep 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read weekday beside iso' date -d 'Fri 2001-09-09' '+%Y-%m-%d %H:%M:%S'
+same 'read month name and time' date -d 'Sep 9 2001 12:00' '+%Y-%m-%d %H:%M:%S'
+same 'read time then month name' date -d '12:00 Sep 9 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read year after time' date -d 'Sep 9 01:46:40 2001' '+%Y-%m-%d %H:%M:%S'
+same 'read time then iso' date -d '01:46:40 2001-09-09' '+%Y-%m-%d %H:%M:%S'
+same 'read named leap day' date -d 'Feb 29 2000' '+%Y-%m-%d %H:%M:%S'
+same 'read weekday alone' date -d monday '+%Y-%m-%d %H:%M:%S'
+same 'read weekday with time' date -d 'monday 12:00' '+%Y-%m-%d %H:%M:%S'
+answered 'named day the month has not' date -d 'Feb 29 2001'
+answered 'named day past the month' date -d 'Sep 32 2001'
+answered 'a zone said twice' date -d '2001-09-09 01:46:40 +0100 +0200'
+answered 'utc after a zone' date -d '2001-09-09 01:46:40 +0100 UTC'
+answered 'a zone without a time' date -d '2001-09-09 +0100'
+answered 'a date said twice by name' date -d 'Sep 9 2001-09-09'
+
+# The reference chmod -R stats what is under a directory before it changes
+# the directory, so a directory without search permission is opened by hand.
+chmod u+rwx "$unread"
+chmod u+rwx "$unread/tree/shut"
 
 #       mktemp, whose whole point is a name nobody can predict -- so what the
 #       two tools print cannot be compared with each other directly. What is

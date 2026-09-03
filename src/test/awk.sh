@@ -60,6 +60,7 @@ printf '1 2 3\n4 5 6\n7 8 9\n' > "$work/grid"
 printf 'no newline at the end' > "$work/bare"
 printf 'a\nb\n\n\nc\nd\n\ne\n' > "$work/paragraphs"
 printf '10.0\n010\n1e2\n+3\n abc \n\n0x10\n3.\n' > "$work/looks"
+printf '+inf\n-inf\n+nan\n-nan\n+INF\n-NaN\n +inf \n+inf5\n+infinity\n-nan(1)\n+in\ninf\nnan\n' > "$work/words"
 printf 'x\n' > "$work/one"
 : > "$work/empty"
 
@@ -649,6 +650,14 @@ compare 'a file that is not there' /dev/null '{print}' "$work/letters" /nonesuch
 compare 'a nan through arithmetic' /dev/null 'BEGIN{x = log(-1); print (x==x), (x!=x), (x<1), (x>1), (x<=1), (x>=1)}'
 compare 'a nan against itself' /dev/null 'BEGIN{x = sqrt(-1); y = x + 1; print (y==y), (x==0), length(x "")}'
 compare 'infinities' /dev/null 'BEGIN{x=1e300*1e300; print x, -x, 1/x, (x>1e308), (x==x)}'
+#       The four words the reference reads as numbers, and the spellings
+#       around them that it reads as text.
+compare 'signed infinity words' /dev/null 'BEGIN{print "+inf"+0, "-inf"+0, "+INF"+0, " -Inf "+0, ("+inf"+0 > 1e308), "+inf5"+0, "+infinity"+0, "inf"+0}'
+compare 'signed nan words' /dev/null 'BEGIN{x = "+nan"+0; y = "-NaN"+0; print x, y, (x==x), (y<1), "nan"+0, "-nan(1)"+0, length(x "")}'
+compare 'signed words as fields' "$work/words" '{print "[" $1 "]", $1+0, ($1<1), ($1==$1+0), ($1=="+inf"), length($1+0)}'
+compare 'printf bases far below range' /dev/null 'BEGIN{printf "[%x][%o][%u][%d][%.3x][%10x][%-10x][%#x]\n", -1e30, -1e30, -1e30, -1e30, -1e30, -1e30, -1e30, -1e30}'
+compare 'a negative zero' /dev/null 'BEGIN{x=-0.0; printf "[%f][%.0f][%g][%e][%d][%5.1f][%05.1f][%+f]\n", x, x, x, x, x, x, x, x; print x, x ""}'
+compare 'a program that ends in a number' "$work/letters" 'NR%3==1'
 compare 'thirty six patterns' /dev/null 'BEGIN{s="abcdefghij"; n=0
 if (s~/a/) n++; if (s~/b/) n++; if (s~/c/) n++; if (s~/d/) n++; if (s~/e/) n++
 if (s~/f/) n++; if (s~/g/) n++; if (s~/h/) n++; if (s~/i/) n++; if (s~/j/) n++

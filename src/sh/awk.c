@@ -121,8 +121,9 @@ static fn awk_text_drop(awk_text address_to which)
         transcendental reducers and compensated arithmetic cost 2.7K more
         linked text than these compact awk routines, so those stay local.
         The two conversions between a double and its decimal spelling are
-        exact: a double is a finite decimal, and printing 1e300 in full is
-        what the reference does.
+        the layer's as well: its printf writes a double's digits exactly and
+        its strtod rounds correctly, so printing 1e300 in full comes out as
+        the reference prints it.
 */
 #define awk_bits_of(value) memory_cast(positive, (value))
 #define awk_from_bits(value) memory_cast(decimal, (value))
@@ -471,283 +472,30 @@ static decimal awk_power(decimal base, decimal exponent)
 /*
         A double, spelled out exactly.
 
-        m * 2 ^ e is a finite decimal for every finite double, so the digits
-        are generated rather than approximated: the whole part by dividing a
-        wide integer down by a billion at a time, the fraction by multiplying
-        the leftover bits by ten and taking what rises above the point. That
-        is what makes print 1e300 the same three hundred and nine digits the
-        reference prints, and it is what makes the rounding at a cut the same
-        rounding: to nearest, and to even when the rest is exactly a half.
+        The standard layer's printf generates a double's digits rather than
+        estimating them, rounds half to even at the cut, and keeps %g's
+        trailing zeros under the # flag -- which is what makes print 1e300
+        the same three hundred and nine digits the reference prints. The
+        field around the number is awk's own: width, zero fill and the
+        sign flags go on in awk_sprintf, so the formatter is asked for the
+        bare body. That body carries a minus whenever the sign bit is set,
+        -0 included, which is how the reference writes one.
 */
-#define AWK_LIMBS 40
-#define AWK_STREAM_MAX 1200
-
-typedef struct
+static positive awk_write_decimal(decimal value, b32 precision, p8 address_to out,
+                                  positive room, p8 conversion, bool alternate)
 {
-        p32 limb[AWK_LIMBS];
-        b32 count;
-} awk_big;
+        format_sink sink = {0};
+        format_spec spec = {0};
 
-static fn awk_big_set(awk_big address_to big, positive value)
-{
-        big->count = 0;
+        spec.flags = alternate ? FORMAT_FLAG_ALTERNATE : 0;
+        spec.precision = precision;
+        spec.conversion = conversion;
+        sink.buffer = out;
+        sink.capacity = room - 1;
 
-        while (value)
-        {
-                big->limb[big->count++] = (p32)value;
-                value >>= 32;
-        }
-}
-
-static fn awk_big_shift(awk_big address_to big, b32 bits)
-{
-        b32 words = bits / 32;
-        b32 rest = bits % 32;
-
-        if (words)
-        {
-                for (b32 i = big->count - 1; i >= 0; i--)
-                        if (i + words < AWK_LIMBS)
-                                big->limb[i + words] = big->limb[i];
-
-                for (b32 i = 0; i < words && i < AWK_LIMBS; i++)
-                        big->limb[i] = 0;
-
-                big->count += words;
-
-                if (big->count > AWK_LIMBS)
-                        big->count = AWK_LIMBS;
-        }
-
-        if (!rest)
-                return;
-
-        p32 carry = 0;
-
-        for (b32 i = 0; i < big->count; i++)
-        {
-                p64 value = ((p64)big->limb[i] << rest) | carry;
-
-                big->limb[i] = (p32)value;
-                carry = (p32)(value >> 32);
-        }
-
-        if (carry && big->count < AWK_LIMBS)
-                big->limb[big->count++] = carry;
-}
-
-static p32 awk_big_divide(awk_big address_to big, p32 by)
-{
-        p64 rest = 0;
-
-        for (b32 i = big->count - 1; i >= 0; i--)
-        {
-                p64 current = (rest << 32) | big->limb[i];
-
-                big->limb[i] = (p32)(current / by);
-                rest = current % by;
-        }
-
-        while (big->count && !big->limb[big->count - 1])
-                big->count--;
-
-        return (p32)rest;
-}
-
-static fn awk_big_multiply(awk_big address_to big, p32 by)
-{
-        p64 carry = 0;
-
-        for (b32 i = 0; i < big->count; i++)
-        {
-                p64 value = (p64)big->limb[i] * by + carry;
-
-                big->limb[i] = (p32)value;
-                carry = value >> 32;
-        }
-
-        while (carry && big->count < AWK_LIMBS)
-        {
-                big->limb[big->count++] = (p32)carry;
-                carry >>= 32;
-        }
-}
-
-// What rose above the binary point, taken and cleared in one go.
-static p32 awk_big_carry(awk_big address_to big, b32 point)
-{
-        b32 word = point / 32;
-        b32 bit = point % 32;
-        p32 high = 0;
-
-        if (word < big->count)
-        {
-                high = big->limb[word] >> bit;
-                big->limb[word] &= bit ? (((p32)1 << bit) - 1) : 0;
-        }
-
-        if (bit && word + 1 < big->count)
-        {
-                high |= big->limb[word + 1] << (32 - bit);
-                big->limb[word + 1] = 0;
-        }
-
-        for (b32 i = word + 2; i < big->count; i++)
-                big->limb[i] = 0;
-
-        while (big->count && !big->limb[big->count - 1])
-                big->count--;
-
-        return high;
-}
-
-static p8 awk_stream[AWK_STREAM_MAX];
-static b32 awk_stream_count;
-static b32 awk_stream_point;
-static awk_big awk_stream_frac;
-static b32 awk_stream_bits;
-static bool awk_stream_over;
-
-static fn awk_stream_begin(decimal value)
-{
-        positive bits = awk_bits_of(value);
-        b32 exponent = (b32)((bits >> 52) & 0x7ff);
-        positive mantissa = bits & (((positive)1 << 52) - 1);
-        b32 power;
-        awk_big whole;
-
-        if (value < 0)
-                value = -value;
-
-        if (!exponent)
-                power = -1074;
-        else
-        {
-                mantissa |= (positive)1 << 52;
-                power = exponent - 1075;
-        }
-
-        awk_stream_count = 0;
-        awk_stream_over = true;
-        awk_stream_bits = 0;
-        awk_stream_frac.count = 0;
-
-        if (power >= 0)
-        {
-                awk_big_set(address_of whole, mantissa);
-                awk_big_shift(address_of whole, power);
-        }
-        else
-        {
-                b32 shift = -power;
-
-                awk_big_set(address_of whole, shift < 64 ? mantissa >> shift : 0);
-
-                positive kept = shift < 64 ? mantissa & (((positive)1 << shift) - 1)
-                                           : mantissa;
-
-                if (kept)
-                {
-                        awk_big_set(address_of awk_stream_frac, kept);
-                        awk_stream_bits = shift;
-                        awk_stream_over = false;
-                }
-        }
-
-        p8 groups[400];
-        b32 have = 0;
-
-        if (!whole.count)
-                groups[have++] = '0';
-
-        while (whole.count)
-        {
-                p32 rest = awk_big_divide(address_of whole, 1000000000u);
-
-                for (b32 i = 0; i < 9; i++)
-                {
-                        groups[have++] = (p8)('0' + rest % 10);
-                        rest /= 10;
-                }
-        }
-
-        while (have > 1 && groups[have - 1] == '0')
-                have--;
-
-        for (b32 i = 0; i < have; i++)
-                awk_stream[i] = groups[have - 1 - i];
-
-        awk_stream_count = have;
-        awk_stream_point = have;
-}
-
-static fn awk_stream_need(b32 want)
-{
-        if (want > AWK_STREAM_MAX - 2)
-                want = AWK_STREAM_MAX - 2;
-
-        while (awk_stream_count < want)
-        {
-                if (awk_stream_over)
-                {
-                        awk_stream[awk_stream_count++] = '0';
-                        continue;
-                }
-
-                awk_big_multiply(address_of awk_stream_frac, 10);
-                awk_stream[awk_stream_count++] =
-                    (p8)('0' + awk_big_carry(address_of awk_stream_frac, awk_stream_bits));
-
-                if (!awk_stream_frac.count)
-                        awk_stream_over = true;
-        }
-}
-
-// Keeps cut digits and rounds what follows into them.
-static fn awk_stream_round(b32 cut)
-{
-        if (cut < 0)
-                cut = 0;
-
-        // The stream is as long as awk_stream_need will make it and no
-        // longer; a cut past that read and carried into the bytes after it.
-        if (cut > AWK_STREAM_MAX - 2)
-                cut = AWK_STREAM_MAX - 2;
-
-        awk_stream_need(cut + 1);
-
-        p8 next = awk_stream[cut];
-        bool rest = !awk_stream_over;
-
-        for (b32 i = cut + 1; i < awk_stream_count && !rest; i++)
-                if (awk_stream[i] != '0')
-                        rest = true;
-
-        bool up = next > '5' ||
-                  (next == '5' && (rest || (cut > 0 && ((awk_stream[cut - 1] - '0') & 1))));
-
-        awk_stream_count = cut;
-
-        if (!up)
-                return;
-
-        for (b32 i = cut - 1; i >= 0; i--)
-        {
-                if (awk_stream[i] != '9')
-                {
-                        awk_stream[i]++;
-                        return;
-                }
-
-                awk_stream[i] = '0';
-        }
-
-        for (b32 i = cut; i > 0; i--)
-                awk_stream[i] = awk_stream[i - 1];
-
-        awk_stream[0] = '1';
-        awk_stream_count = cut + 1;
-        awk_stream_point++;
+        format_decimal_field(address_of sink, value, address_of spec);
+        out[sink.used] = end;
+        return sink.used;
 }
 
 // The reference spells these with a sign, always, wherever they are written.
@@ -759,359 +507,27 @@ static string_address awk_not_finite_name(decimal value)
         return value < 0 ? "-inf" : "+inf";
 }
 
-static positive awk_write_fixed(decimal value, b32 precision,
-                                p8 address_to restrict out, bool point_always)
-{
-        positive at = 0;
-
-        awk_stream_begin(value);
-        awk_stream_round(awk_stream_point + precision);
-
-        b32 whole = awk_stream_point;
-
-        if (whole <= 0)
-                out[at++] = '0';
-        else
-                for (b32 i = 0; i < whole; i++)
-                        out[at++] = awk_stream[i];
-
-        if (precision > 0 || point_always)
-                out[at++] = '.';
-
-        for (b32 i = 0; i < precision; i++)
-        {
-                b32 which = whole + i;
-
-                out[at++] = which >= 0 && which < awk_stream_count ? awk_stream[which] : '0';
-        }
-
-        out[at] = end;
-        return at;
-}
-
-static fn awk_write_exponent(p8 address_to out, positive address_to at, b32 exponent, bool upper)
-{
-        positive where = address_to at;
-        b32 magnitude = exponent < 0 ? -exponent : exponent;
-
-        out[where++] = upper ? 'E' : 'e';
-        out[where++] = exponent < 0 ? '-' : '+';
-        where += positive_into_padded(out + where, (positive)magnitude, 2, '0');
-
-        address_to at = where;
-}
-
-// The first digit that is not a zero, and where the point stands relative to
-// it. A value of zero has none, and answers with a zero exponent.
-static b32 awk_stream_first()
-{
-        b32 first = 0;
-
-        for (;;)
-        {
-                awk_stream_need(first + 1);
-
-                if (awk_stream[first] != '0')
-                        return first;
-
-                if (awk_stream_over && first >= awk_stream_count - 1)
-                        return -1;
-
-                first++;
-
-                if (first > AWK_STREAM_MAX - 8)
-                        return -1;
-        }
-}
-
-static b32 awk_stream_nonzero()
-{
-        if (awk_stream_count >= 64)
-                return (b32)memory_span_byte(awk_stream, '0',
-                                             (positive)awk_stream_count);
-
-        b32 first = 0;
-
-        while (first < awk_stream_count && awk_stream[first] == '0')
-                first++;
-
-        return first;
-}
-
-static positive awk_write_scientific(decimal value, b32 precision, p8 address_to out,
-                                     bool upper, bool point_always)
-{
-        positive at = 0;
-
-        if (value == 0)
-        {
-                out[at++] = '0';
-
-                if (precision > 0 || point_always)
-                        out[at++] = '.';
-
-                for (b32 i = 0; i < precision; i++)
-                        out[at++] = '0';
-
-                awk_write_exponent(out, address_of at, 0, upper);
-                out[at] = end;
-                return at;
-        }
-
-        awk_stream_begin(value);
-
-        b32 first = awk_stream_first();
-
-        awk_stream_round(first + precision + 1);
-
-        first = awk_stream_nonzero();
-
-        b32 exponent = awk_stream_point - 1 - first;
-
-        out[at++] = awk_stream[first];
-
-        if (precision > 0 || point_always)
-                out[at++] = '.';
-
-        for (b32 i = 1; i <= precision; i++)
-                out[at++] = first + i < awk_stream_count ? awk_stream[first + i] : '0';
-
-        awk_write_exponent(out, address_of at, exponent, upper);
-        out[at] = end;
-        return at;
-}
-
-static positive awk_write_general(decimal value, b32 precision, p8 address_to out,
-                                  bool upper, bool keep_zeros)
-{
-        positive length;
-        b32 exponent = 0;
-
-        if (precision < 1)
-                precision = 1;
-
-        if (value != 0)
-        {
-                awk_stream_begin(value);
-
-                b32 first = awk_stream_first();
-
-                awk_stream_round(first + precision);
-
-                first = awk_stream_nonzero();
-
-                exponent = awk_stream_point - 1 - first;
-        }
-
-        if (exponent < -4 || exponent >= precision)
-                length = awk_write_scientific(value, precision - 1, out, upper, keep_zeros);
-        else
-                length = awk_write_fixed(value, precision - 1 - exponent, out, keep_zeros);
-
-        if (keep_zeros)
-                return length;
-
-        // Trailing zeros go, and the point with them if nothing is left after
-        // it, but only in the part before any exponent.
-        positive stop = 0;
-        bool dotted = false;
-
-        while (stop < length && out[stop] != 'e' && out[stop] != 'E')
-        {
-                if (out[stop] == '.')
-                        dotted = true;
-
-                stop++;
-        }
-
-        if (!dotted)
-                return length;
-
-        positive cut = stop;
-
-        while (cut > 0 && out[cut - 1] == '0')
-                cut--;
-
-        if (cut > 0 && out[cut - 1] == '.')
-                cut--;
-
-        if (cut == stop)
-                return length;
-
-        copy_short_apart(out + cut, out + stop, length - stop, 5);
-        cut += length - stop;
-
-        out[cut] = end;
-        return cut;
-}
-
-static b32 awk_big_length(awk_big address_to big)
-{
-        if (!big->count)
-                return 0;
-
-        p32 top = big->limb[big->count - 1];
-
-        return (big->count - 1) * 32 +
-               (top ? (b32)top_bit_known(top) + 1 : 0);
-}
-
-static p32 awk_big_word(awk_big address_to big, b32 which)
-{
-        return which >= 0 && which < big->count ? big->limb[which] : 0;
-}
-
-static bool awk_big_bit(awk_big address_to big, b32 at)
-{
-        return at >= 0 && ((awk_big_word(big, at / 32) >> (at % 32)) & 1) != 0;
-}
-
-static bool awk_big_under(awk_big address_to big, b32 at)
-{
-        b32 word = at / 32;
-
-        for (b32 i = 0; i < word && i < big->count; i++)
-                if (big->limb[i])
-                        return true;
-
-        return (awk_big_word(big, word) & ((((p32)1 << (at % 32)) - 1))) != 0;
-}
-
-static positive awk_big_window(awk_big address_to big, b32 from)
-{
-        b32 word = from / 32;
-        b32 bit = from % 32;
-        positive raw = ((positive)awk_big_word(big, word + 1) << 32) |
-                       awk_big_word(big, word);
-        positive value = raw >> bit;
-
-        if (bit)
-                value |= (positive)awk_big_word(big, word + 2) << (64 - bit);
-
-        return value;
-}
-
-/*
-        A wide integer rounded into a double, to nearest and to even.
-
-        This is the half of the conversion that decides the last bit, and it
-        is done on the integer rather than in floating point because the
-        answer has to be the same on three machines: a compiler that fuses a
-        multiply and an add is free to give a different one to the same
-        arithmetic, and one of the three does.
-*/
-static decimal awk_big_decimal(awk_big address_to big, b32 power, bool rest)
-{
-        b32 length = awk_big_length(big);
-
-        if (!length)
-                return 0;
-
-        if (length <= 53)
-        {
-                positive whole = awk_big_window(big, 0);
-
-                return awk_scale2((decimal)whole, power);
-        }
-
-        b32 drop = length - 53;
-        positive mantissa = awk_big_window(big, drop);
-        bool half = awk_big_bit(big, drop - 1);
-
-        if (drop > 1 && awk_big_under(big, drop - 1))
-                rest = true;
-
-        if (half && (rest || (mantissa & 1)))
-                mantissa++;
-
-        return awk_scale2((decimal)mantissa, power + drop);
-}
-
-static p32 awk_five_power[13] = {1,        5,        25,       125,      625,
-                                 3125,     15625,    78125,    390625,   1953125,
-                                 9765625,  48828125, 244140625};
-
-/*
-        A mantissa and a power of ten, made into the double they spell.
-
-        Multiplying up is exact. Dividing down is exact as well, because
-        dividing an integer by five and then by five again is dividing it by
-        twenty five -- so the whole division is one truncation, and whether
-        anything was truncated is remembered and decides the rounding.
-*/
-static PURE decimal awk_scale_ten(positive mantissa, b32 power)
-{
-        awk_big big;
-
-        if (!mantissa)
-                return 0;
-
-        if (!power && mantissa < ((positive)1 << 53))
-                return (decimal)mantissa;
-
-        if (power > 340)
-                return awk_infinity;
-
-        if (power < -400)
-                return 0;
-
-        awk_big_set(address_of big, mantissa);
-
-        if (power >= 0)
-        {
-                while (power >= 9)
-                {
-                        awk_big_multiply(address_of big, 1000000000u);
-                        power -= 9;
-                }
-
-                if (power)
-                {
-                        p32 ten = 1;
-
-                        while (power--)
-                                ten *= 10;
-
-                        awk_big_multiply(address_of big, ten);
-                }
-
-                return awk_big_decimal(address_of big, 0, false);
-        }
-
-        b32 want = -power;
-        b32 lift = want * 233 / 100 + 70;
-        bool rest = false;
-
-        awk_big_shift(address_of big, lift);
-
-        for (b32 left = want; left > 0;)
-        {
-                b32 step = left > 12 ? 12 : left;
-
-                if (awk_big_divide(address_of big, awk_five_power[step]))
-                        rest = true;
-
-                left -= step;
-        }
-
-        return awk_big_decimal(address_of big, -lift - want, rest);
-}
-
 /*
         A number read out of a string, and how much of the string it took.
 
         Every rule about what counts as a number here is asked through this
         one: a field is a number to compare against a number only when this
-        reaches the end of it.
+        reaches the end of it. The digits are read by the standard layer's
+        strtod, which rounds correctly; what is decided here is the
+        reference's grammar around them, which is narrower than C's. Space
+        and a sign, then digits with a point and an exponent -- but no 0x,
+        so "0x1A" is a zero followed by text, and no words, except that a
+        string which is exactly +inf, -inf, +nan or -nan in any case, with
+        nothing but space around it, is the value it names.
+
+        The text is terminated at length: a field always is, and the program
+        source is given one before the lexer starts.
 */
 static decimal awk_scan_number(string_address text, positive length, positive address_to used)
 {
         positive at = 0;
+        bool marked = false;
         bool negative = false;
-        positive mantissa = 0;
-        b32 digits = 0;
-        b32 exponent = 0;
-        bool any = false;
 
         address_to used = 0;
 
@@ -1120,89 +536,59 @@ static decimal awk_scan_number(string_address text, positive length, positive ad
 
         if (at < length && (text[at] == '+' || text[at] == '-'))
         {
+                marked = true;
                 negative = text[at] == '-';
                 at++;
         }
 
-        // Nineteen significant digits fit the mantissa; zeros in front of
-        // the first significant one are not among them, or twenty of them
-        // and a one read as zero.
-        while (at < length && byte_is_digit(text[at]))
-        {
-                any = true;
-
-                if (!mantissa && text[at] == '0')
-                        ;
-                else if (digits < 19)
-                {
-                        mantissa = mantissa * 10 + (positive)(text[at] - '0');
-                        digits++;
-                }
-                else
-                        exponent++;
-
-                at++;
-        }
-
-        if (at < length && text[at] == '.')
-        {
-                at++;
-
-                while (at < length && byte_is_digit(text[at]))
-                {
-                        any = true;
-
-                        if (!mantissa && text[at] == '0')
-                                exponent--;
-                        else if (digits < 19)
-                        {
-                                mantissa = mantissa * 10 + (positive)(text[at] - '0');
-                                digits++;
-                                exponent--;
-                        }
-
-                        at++;
-                }
-        }
-
-        if (!any)
+        if (at >= length)
                 return 0;
 
-        positive after = at;
-
-        if (at < length && (text[at] == 'e' || text[at] == 'E'))
+        if (byte_is_alpha(text[at]))
         {
-                positive step = at + 1;
-                bool minus = false;
+                bool infinite;
+                positive stop = at + 3;
 
-                if (step < length && (text[step] == '+' || text[step] == '-'))
-                {
-                        minus = text[step] == '-';
-                        step++;
-                }
+                if (!marked || length - at < 3)
+                        return 0;
 
-                if (step < length && byte_is_digit(text[step]))
-                {
-                        b32 value = 0;
+                if (!string_compare_folded_max(text + at, "inf", 3))
+                        infinite = true;
+                else if (!string_compare_folded_max(text + at, "nan", 3))
+                        infinite = false;
+                else
+                        return 0;
 
-                        while (step < length && byte_is_digit(text[step]))
-                        {
-                                if (value < 100000)
-                                        value = value * 10 + (text[step] - '0');
+                // Only the bare word: "+inf5" and "+infinity" are text.
+                while (stop < length && byte_is_space(text[stop]))
+                        stop++;
 
-                                step++;
-                        }
+                if (stop != length)
+                        return 0;
 
-                        exponent += minus ? -value : value;
-                        after = step;
-                }
+                address_to used = at + 3;
+
+                if (infinite)
+                        return negative ? -awk_infinity : awk_infinity;
+
+                // The quiet nan, with the sign that was written.
+                return awk_from_bits(negative ? (positive)0xfff8000000000000ull
+                                              : (positive)0x7ff8000000000000ull);
         }
 
-        address_to used = after;
+        // strtod would read the hexadecimal; the reference stops at the x.
+        if (text[at] == '0' && at + 1 < length &&
+            (text[at + 1] == 'x' || text[at + 1] == 'X'))
+        {
+                address_to used = at + 1;
+                return negative ? -0.0 : 0.0;
+        }
 
-        decimal value = awk_scale_ten(mantissa, exponent);
+        string_address stopped;
+        decimal value = string_to_decimal(text, address_of stopped);
 
-        return negative ? -value : value;
+        address_to used = (positive)(stopped - text);
+        return value;
 }
 
 static PURE decimal awk_number_of(string_address text, positive length)
@@ -1370,12 +756,8 @@ static awk_text address_to awk_text_of_number(decimal number, string_address for
                         return awk_text_new(room, at);
                 }
 
-                positive at = 0;
+                positive at = awk_write_decimal(number, 0, room, sizeof(room), 'f', false);
 
-                if (number < 0)
-                        room[at++] = '-';
-
-                at += awk_write_fixed(number, 0, room + at, false);
                 return awk_text_new(room, at);
         }
 
@@ -2888,7 +2270,8 @@ static awk_text address_to awk_builder_text(awk_builder address_to build)
         C's -- a number is a character code and a string is its first byte,
         and which one a value is follows the same rule comparison follows.
 */
-static b32 awk_integer_digits(decimal value, p8 address_to out, bool address_to negative)
+static b32 awk_integer_digits(decimal value, p8 address_to out, positive room,
+                              bool address_to negative)
 {
         address_to negative = value < 0;
 
@@ -2914,7 +2297,7 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, bool address_to 
                 return at;
         }
 
-        return (b32)awk_write_fixed(magnitude, 0, out, false);
+        return (b32)awk_write_decimal(magnitude, 0, out, room, 'f', false);
 }
 
 static awk_text address_to awk_sprintf(string_address format, positive length,
@@ -3062,7 +2445,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         bool negative;
 
                         body = awk_integer_digits(awk_to_number(argument), room,
-                                                  address_of negative);
+                                                  sizeof(room), address_of negative);
 
                         // A precision of zero on a value of zero writes no
                         // digits at all, which is C's rule and awk's.
@@ -3106,9 +2489,9 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         break;
                                 }
 
-                                body = (b32)awk_write_general(
+                                body = (b32)awk_write_decimal(
                                     exact, precision < 0 ? 6 : precision, room,
-                                    false, alternate);
+                                    sizeof(room), 'g', alternate);
 
                                 if (room[0] == '-')
                                 {
@@ -3206,24 +2589,25 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 break;
                         }
 
-                        if (value < 0 || awk_negative(value))
+                        if (places > 1000)
+                                places = 1000;
+
+                        body = (b32)awk_write_decimal(value, places, room, sizeof(room),
+                                                      conversion, alternate);
+
+                        // The minus is the formatter's and the field is
+                        // awk's: it has to stand in front of the zero fill,
+                        // so it moves out of the body and into the prefix.
+                        if (room[0] == '-')
+                        {
                                 prefix[prefixed++] = '-';
+                                body--;
+                                body_at = room + 1;
+                        }
                         else if (sign)
                                 prefix[prefixed++] = '+';
                         else if (space)
                                 prefix[prefixed++] = ' ';
-
-                        if (places > 1000)
-                                places = 1000;
-
-                        if (conversion == 'f' || conversion == 'F')
-                                body = (b32)awk_write_fixed(value, places, room, alternate);
-                        else if (conversion == 'e' || conversion == 'E')
-                                body = (b32)awk_write_scientific(value, places, room,
-                                                                 conversion == 'E', alternate);
-                        else
-                                body = (b32)awk_write_general(value, places, room,
-                                                              conversion == 'G', alternate);
 
                         break;
                 }
@@ -6993,6 +6377,10 @@ static b32 text_awk()
         }
 
         awk_set_global_number(awk_where_argc, (decimal)count);
+
+        // The builder keeps a byte past the end for this: the lexer hands
+        // a number's text to strtod, which reads to a terminator.
+        program.data[program.used] = end;
 
         awk_source = program.data;
         awk_source_length = program.used;
