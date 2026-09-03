@@ -654,6 +654,31 @@ static b32 screen_pointer()
         string_format(log, "cursor outputs   %p wanted, recovery %p\n",
                       (positive)cursor.wanted, (positive)cursor.recovering);
 
+        // Every device the kernel attached, so a mouse that is silent can be
+        // told from one whose reports the cursor did not follow.
+        struct input_devices devices;
+
+        if (system_control(device, SPARK_IOCTL_INPUT_DEVICES,
+                          address_of devices) == 0)
+        {
+                positive listed = devices.count < INPUT_DEVICES_MAX
+                                      ? devices.count : INPUT_DEVICES_MAX;
+
+                string_format(log, "input devices    %p\n", devices.count);
+
+                for (positive i = 0; i < listed; i++)
+                {
+                        if (devices.device[i].opened)
+                                string_format(log, "  %s: would not open (%b)\n",
+                                              devices.device[i].name,
+                                              (bipolar)devices.device[i].opened);
+                        else
+                                string_format(log, "  %s: %p reports\n",
+                                              devices.device[i].name,
+                                              devices.device[i].events);
+                }
+        }
+
         if (!stats.events)
         {
                 string_format(log, "no pointer movement seen yet\n");

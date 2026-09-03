@@ -181,6 +181,25 @@ struct cursor_stats {
         unsigned int recovering;    // a full commit still has to clear a plane
 };
 
+// _IOR('s', 7, struct input_devices). Every input device the compositor is
+// attached to, whether it opened, and how many reports it has delivered.
+// A mouse that is dead until it is plugged in again is either one the
+// kernel never heard from or one whose reports went nowhere, and only a
+// count per device tells the two apart from a stuck cursor.
+#define SPARK_IOCTL_INPUT_DEVICES 0x82487307u
+#define INPUT_DEVICES_MAX 8
+
+struct input_device_stats {
+        char name[56];
+        unsigned long events;  // reports delivered to the compositor
+        long opened;           // 0 once open, else the error the last try gave
+};
+
+struct input_devices {
+        unsigned long count;   // devices attached, listed or not
+        struct input_device_stats device[INPUT_DEVICES_MAX];
+};
+
 /*
         One versioned view of the kernel data read by system utilities.
 

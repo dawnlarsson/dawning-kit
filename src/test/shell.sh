@@ -1255,6 +1255,13 @@ answer 'dot break reaches loop' 'p=/tmp/dot-break.$$; printf '\''echo in\nbreak\
 answer 'dot continue reaches loop' 'p=/tmp/dot-continue.$$; printf '\''echo in\ncontinue\necho BAD\n'\'' > "$p"; for i in a b; do . "$p"; echo LOOP-BAD; done; rm -f "$p"; echo after'
 check 'dot path need not execute' 'p=/tmp/dot-path.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/include"; /bin/chmod 600 "$p/include"; cd /; PATH=$p; . include; /bin/rm -f "$p/include"; /bin/rmdir "$p"'
 check 'dot reads one stream' '{ printf '\''x=first\n#'\''; awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "a" }'\''; printf '\''\necho "$x"\n'\''; } | "$0" -c '\''. /dev/stdin'\'''
+# A bare name is looked for along PATH the way a command is: an empty field
+# is the current directory, a field may be relative or end in a slash, and
+# a later field is reached when an earlier one has nothing.
+check 'dot empty path field' 'p=/tmp/dot-empty.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/dotprobe"; cd "$p"; PATH=:/bin; . dotprobe; PATH=/bin:; . dotprobe; PATH=/bin::/usr/bin; . dotprobe; /bin/rm -f "$p/dotprobe"; /bin/rmdir "$p"'
+check 'dot later path field' 'p=/tmp/dot-later.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/dotprobe"; cd /; PATH=/nowhere:$p; . dotprobe; /bin/rm -f "$p/dotprobe"; /bin/rmdir "$p"'
+check 'dot slashed path field' 'p=/tmp/dot-slash.$$; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/dotprobe"; cd /; PATH=$p/; . dotprobe; /bin/rm -f "$p/dotprobe"; /bin/rmdir "$p"'
+check 'dot relative path field' 'p=dot-relative.$$; cd /tmp; /bin/mkdir "$p"; printf '\''echo sourced\n'\'' > "$p/dotprobe"; PATH=$p; . dotprobe; /bin/rm -f "$p/dotprobe"; /bin/rmdir "$p"'
 #       A temporary export made for one command must be taken back by
 #       that command, even after a sourced file ran lines of its own.
 answer 'dot keeps temporary export' 'p=/tmp/dot-temp.$$; printf '\''echo a\necho "$x"\n'\'' > "$p"; f() { . "$p"; }; x=0; y=1; x=$y f; rm -f "$p"; sh -c '\''echo ${x-unset}'\'''

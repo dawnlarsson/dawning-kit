@@ -2339,29 +2339,18 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         continue;
                 }
 
-                bool left = false;
-                bool sign = false;
-                bool space = false;
-                bool zero = false;
-                bool alternate = false;
+                string_address flags_at = format + at;
+                positive flags = conversion_flags_take_max(address_of flags_at,
+                                                           length - at);
+                bool left = (flags & CONVERSION_FLAG_LEFT) != 0;
+                bool sign = (flags & CONVERSION_FLAG_PLUS) != 0;
+                bool space = (flags & CONVERSION_FLAG_SPACE) != 0;
+                bool zero = (flags & CONVERSION_FLAG_ZERO) != 0;
+                bool alternate = (flags & CONVERSION_FLAG_ALTERNATE) != 0;
                 b32 width = 0;
                 b32 precision = -1;
 
-                for (; at < length; at++)
-                {
-                        if (format[at] == '-')
-                                left = true;
-                        else if (format[at] == '+')
-                                sign = true;
-                        else if (format[at] == ' ')
-                                space = true;
-                        else if (format[at] == '0')
-                                zero = true;
-                        else if (format[at] == '#')
-                                alternate = true;
-                        else
-                                break;
-                }
+                at = (positive)(flags_at - format);
 
                 if (at < length && format[at] == '*')
                 {

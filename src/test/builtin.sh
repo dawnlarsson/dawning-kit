@@ -361,6 +361,18 @@ answer 'found along it'  'mkdir -p one/two; CDPATH=$PWD/one; cd two > /dev/null;
 answer 'said out loud'   'mkdir -p one/two; CDPATH=$PWD/one; cd two | sed "s|.*/||"'
 answer 'not for dots'    'mkdir -p one/two two; CDPATH=$PWD/one; cd ./two > /dev/null; pwd | sed "s|.*/one/two$|WRONG|"'
 
+#       An empty entry is the directory the shell is in and is not said; a
+#       relative one is under that directory, so cd .. afterwards still
+#       goes where it should. What cd says is read back from where it was
+#       written, since the shell has moved on by then.
+answer 'empty entry first' 'mkdir -p one/two two; CDPATH=:$PWD/one; cd two; echo "${PWD#"$OLDPWD"}"'
+answer 'empty entry last' 'mkdir -p two; CDPATH=$PWD/nowhere:; cd two; echo "${PWD#"$OLDPWD"}"'
+answer 'double colon'    'mkdir -p one/two two; CDPATH=$PWD/nowhere::$PWD/one; cd two; echo "${PWD#"$OLDPWD"}"'
+answer 'relative entry'  'mkdir -p one/two; CDPATH=one; cd two > said; echo "${PWD#"$OLDPWD"}"; read said < "$OLDPWD/said"; echo "${said#"$OLDPWD"}"'
+answer 'relative keeps dots' 'mkdir -p one/two; CDPATH=one; cd two > /dev/null; cd ..; pwd | sed "s|.*/||"'
+answer 'trailing slash entry' 'mkdir -p one/two; CDPATH=$PWD/one/; cd two > said; echo "${PWD#"$OLDPWD"}"; read said < "$OLDPWD/said"; echo "${said#"$OLDPWD"}"'
+answer 'later entry only' 'mkdir -p one/two; CDPATH=$PWD/nowhere:$PWD/one; cd two > said; echo "${PWD#"$OLDPWD"}"; read said < "$OLDPWD/said"; echo "${said#"$OLDPWD"}"'
+
 group issue8
 written 'empty operand rejected' 'rejected same|' 0 \
         'before=$PWD; if cd "" 2>/dev/null; then echo BAD; else printf "rejected "; fi; [ "$PWD" = "$before" ] && echo same'
@@ -395,6 +407,18 @@ answer 'V is a sentence' 'command -V echo'
 answer 'V finds a file'  'PATH=/usr/bin; command -V sh'
 answer 'V says nothing found' 'command -V nosuch12345; echo $?'
 answer 'options compacted' 'command -p -- printf "[%s]\\n" compact'
+
+#       Where along PATH a bare name is: an empty field is the directory the
+#       shell is in, a relative field is under it, and the executor walks on
+#       past a file of that name it could not run to one it can.
+group search
+answer 'leading colon'   'mkdir -p bin; : > bin/zz2; chmod +x bin/zz2; cd bin; PATH=:/usr/bin; command -v zz2'
+answer 'trailing colon'  'mkdir -p bin; : > bin/zz3; chmod +x bin/zz3; cd bin; PATH=/usr/bin:; command -v zz3'
+answer 'double colon'    'mkdir -p bin; : > bin/zz4; chmod +x bin/zz4; cd bin; PATH=/usr/bin::/bin; command -v zz4'
+answer 'trailing slash'  'mkdir -p bin; printf "#!/bin/sh\necho ran\n" > bin/zz5; chmod +x bin/zz5; PATH=$PWD/bin/:/usr/bin; zz5; type zz5 > /dev/null; echo $?'
+answer 'relative field'  'mkdir -p bin; printf "#!/bin/sh\necho ran\n" > bin/zz6; chmod +x bin/zz6; PATH=bin:/usr/bin; command -v zz6; zz6'
+answer 'later field only' 'mkdir -p first second; printf "#!/bin/sh\necho ran\n" > second/zz7; chmod +x second/zz7; PATH=$PWD/first:$PWD/second; command -v zz7 | /bin/sed "s|.*/second/|second/|"; zz7'
+answer 'denied then found' 'mkdir -p first second; echo bad > first/zz8; chmod 600 first/zz8; printf "#!/bin/sh\necho ran\n" > second/zz8; chmod +x second/zz8; PATH=$PWD/first:$PWD/second; zz8; command -v zz8 > /dev/null; echo $?'
 
 group type
 answer 'several names'   'type echo true'

@@ -433,13 +433,20 @@ static const p8 conversion_flag_bytes['0' + 1] = {
     ['0'] = CONVERSION_FLAG_ZERO,
 };
 
-static inline INLINE positive conversion_flags_take(
-    string_address address_to source)
+/* The bounded form is for a format that is a counted run rather than a
+   string, awk's, whose bytes after the run are whatever the value store
+   holds next; the flag bytes are never the terminator, so the plain form
+   is the same walk with no bound to reach. */
+static inline INLINE positive conversion_flags_take_max(
+    string_address address_to source, positive length)
 {
         string_address at = address_to source;
         positive flags = 0;
 
-        while (true)
+        // Counted down rather than compared against an end address: the
+        // unbounded caller passes the largest count there is, and adding
+        // that to a pointer would wrap it.
+        while (length)
         {
                 p8 byte = string_get(at);
                 p8 flag = byte < array_count(conversion_flag_bytes)
@@ -450,10 +457,17 @@ static inline INLINE positive conversion_flags_take(
 
                 flags |= flag;
                 at++;
+                length--;
         }
 
         address_to source = at;
         return flags;
+}
+
+static inline INLINE positive conversion_flags_take(
+    string_address address_to source)
+{
+        return conversion_flags_take_max(source, positive_max);
 }
 
 /* printf and scanf assign different meanings to `l`, but recognize the same

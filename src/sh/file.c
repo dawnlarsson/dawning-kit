@@ -579,6 +579,82 @@ static bool file_path_join(p8 address_to into, string_address directory,
         return path_join(into, FILE_PATH_MAX, directory, name) == wanted;
 }
 
+/*
+        One walk for every colon-separated search: CDPATH, the PATH that .
+        reads along, the one command -v and the executor look along, and
+        the one execvp tries.  Each used to split at the colon and glue
+        "segment/name" on its own, and the empty component -- after a
+        leading, doubled or trailing colon -- was a separate decision in
+        each of them.
+*/
+typedef struct
+{
+        string_address at;
+        string_address segment;
+        positive length;
+        bool done;
+} path_walk;
+
+// Every component, the empty ones included: a colon at the end names one
+// more after it, and a value with no colon in it at all is exactly one.
+static bool path_walk_next(path_walk address_to walk)
+{
+        string_address stop;
+
+        if (walk->done)
+                return false;
+
+        stop = string_first_of_or_end(walk->at, ':');
+        walk->segment = walk->at;
+        walk->length = (positive)(stop - walk->at);
+
+        if (string_get(stop))
+                walk->at = stop + 1;
+        else
+                walk->done = true;
+
+        return true;
+}
+
+/*
+        "segment/name" into room bytes, the slash added only when the
+        segment does not already end in one.  What an empty component
+        stands for belongs to the caller: "." for execvp, nothing at all
+        for a name the shell opens bare, and the directory the shell is in
+        for cd.  A candidate that does not fit is refused rather than cut,
+        for the reason file_path_join gives.
+*/
+static bool path_walk_join(p8 address_to into, positive room,
+                           string_address segment, positive length,
+                           string_address name, string_address empty_as)
+{
+        positive named = string_length(name);
+        positive slash;
+
+        if (!length)
+        {
+                segment = empty_as;
+                length = string_length(segment);
+        }
+
+        slash = length && segment[length - 1] != '/';
+
+        // Each part is held under room before the parts are added, so the
+        // pair of positive_max guards every walker carried is this one.
+        if (length > room || named > room - length ||
+            room - length - named < slash + 1)
+                return false;
+
+        memory_copy_apart(into, segment, length);
+
+        if (slash)
+                into[length++] = '/';
+
+        memory_copy_apart_end(into + length, name, named);
+
+        return true;
+}
+
 CONST RETURNS_NONNULL string_address file_reason(bipolar code);
 
 static COLD fn file_too_long(string_address program, string_address verb,
@@ -4037,6 +4113,7 @@ static bipolar file_exec_path_try_in(string_address name,
 {
         p8 candidate[FILE_PATH_MAX];
         bool denied = false;
+        path_walk walk = {path, null, 0, false};
 
         if (string_first_of(name, '/'))
         {
@@ -4046,52 +4123,23 @@ static bipolar file_exec_path_try_in(string_address name,
         }
 
         if (!path)
-                path = "/bin:/usr/bin:/";
+                walk.at = "/bin:/usr/bin:/";
 
         // An empty PATH component is the current directory. That includes a
         // completely empty PATH and the component after a trailing colon.
-        while (1)
+        while (path_walk_next(address_of walk))
         {
-                string_address stop = string_first_of_or_end(path, ':');
-                positive length = (positive)(stop - path);
-                positive named = string_length(name);
-                positive filled = length ? length : 1;
+                if (!path_walk_join(candidate, FILE_PATH_MAX, walk.segment,
+                                    walk.length, name, "."))
+                        continue;
 
-                if (named <= positive_max - 2 &&
-                    filled <= positive_max - named - 2)
-                {
-                        positive needed = filled + named + 2;
+                bipolar answer = system_execute(candidate, words, environment);
 
-                        if (length && path[length - 1] == '/')
-                                needed--;
+                if (answer == -ERROR_ARGUMENT_LIST)
+                        return answer;
 
-                        if (needed <= FILE_PATH_MAX)
-                        {
-                                if (length)
-                                        memory_copy_apart(candidate, path, length);
-                                else
-                                        candidate[0] = '.';
-
-                                if (candidate[filled - 1] != '/')
-                                        candidate[filled++] = '/';
-
-                                memory_copy_apart_end(candidate + filled, name, named);
-
-                                bipolar answer =
-                                    system_execute(candidate, words, environment);
-
-                                if (answer == -ERROR_ARGUMENT_LIST)
-                                        return answer;
-
-                                if (answer == -ERROR_ACCESS)
-                                        denied = true;
-                        }
-                }
-
-                if (!string_get(stop))
-                        break;
-
-                path = stop + 1;
+                if (answer == -ERROR_ACCESS)
+                        denied = true;
         }
 
         return denied ? -ERROR_ACCESS : -ERROR_NO_ENTRY;

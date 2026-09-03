@@ -1491,52 +1491,54 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
                 if (value && string_get(value))
                 {
-                        string_address segment;
+                        path_walk walk = {search, null, 0, false};
+                        p8 under[4096];
 
                         string_copy_max_end(search, value, sizeof(search) - 1);
-                        segment = search;
 
-                        while (segment)
+                        while (path_walk_next(address_of walk))
                         {
-                                string_address next = string_cut(segment, ':');
-                                string_address base = segment;
-                                p8 under[4096];
+                                string_address base = candidate;
 
                                 /*
-                                        An entry is a directory to look under,
-                                        and a relative one is relative to
-                                        where the shell is: joined onto that
-                                        first, or PWD would be left holding
-                                        "one/two" and every cd .. after it
-                                        would be lost. An empty entry is the
-                                        directory itself, and the one case
-                                        that is not said out loud afterwards,
-                                        because the script named the place it
-                                        landed.
+                                        An entry is a directory to look under.
+                                        An empty entry is the directory
+                                        itself, and the one case that is not
+                                        said out loud afterwards, because the
+                                        script named the place it landed. A
+                                        relative one is relative to where
+                                        the shell is: joined onto that, or
+                                        PWD would be left holding "one/two"
+                                        and every cd .. after it would be
+                                        lost.
                                 */
-                                if (!string_get(segment))
-                                        base = shell_directory;
-                                else if (string_get(segment) != '/')
+                                if (!path_walk_join(candidate, sizeof(candidate),
+                                                    walk.segment, walk.length,
+                                                    shell_cd_target,
+                                                    shell_directory))
+                                        continue;
+
+                                if (walk.length && walk.segment[0] != '/')
                                 {
-                                        path_join(under, sizeof(under),
-                                                  shell_directory, segment);
+                                        if (!path_walk_join(
+                                                under, sizeof(under),
+                                                shell_directory,
+                                                string_length(shell_directory),
+                                                candidate, ""))
+                                                continue;
+
                                         base = under;
                                 }
 
-                                path_join(candidate, sizeof(candidate), base,
-                                          shell_cd_target);
-
-                                if (shell_cd_try(candidate, physical,
+                                if (shell_cd_try(base, physical,
                                                  physical_named,
                                                  variables_set))
                                 {
-                                        if (string_get(segment))
+                                        if (walk.length)
                                                 address_to say = true;
 
                                         return true;
                                 }
-
-                                segment = next;
                         }
                 }
         }
@@ -6073,23 +6075,12 @@ fn shell_trap_exit()
 static bool shell_path_wanted(string_address value, positive name_length,
                               positive address_to wanted)
 {
-        string_address segment = value;
+        path_walk walk = {value, null, 0, false};
         positive longest = 0;
 
-        while (1)
-        {
-                string_address next = string_first_of(segment, ':');
-                positive length = next ? (positive)(next - segment)
-                                       : string_length(segment);
-
-                if (length > longest)
-                        longest = length;
-
-                if (!next)
-                        break;
-
-                segment = next + 1;
-        }
+        while (path_walk_next(address_of walk))
+                if (walk.length > longest)
+                        longest = walk.length;
 
         if (name_length > positive_max - 2 ||
             longest > positive_max - name_length - 2)
@@ -6105,8 +6096,7 @@ static bipolar shell_source_open(string_address name,
                                   bool address_to no_room)
 {
         string_address value;
-        string_address segment;
-        positive name_length;
+        path_walk walk;
 
         if (!name || !string_get(name))
                 return -1;
@@ -6128,12 +6118,10 @@ static bipolar shell_source_open(string_address name,
         if (!value)
                 value = "/bin:/usr/bin:/";
 
-        name_length = string_length(name);
-
         {
                 positive wanted;
 
-                if (!shell_path_wanted(value, name_length,
+                if (!shell_path_wanted(value, string_length(name),
                                        address_of wanted) ||
                     !shell_room((address_any address_to)found, found_room,
                                 wanted, 1))
@@ -6143,26 +6131,15 @@ static bipolar shell_source_open(string_address name,
                 }
         }
 
-        segment = value;
+        walk = (path_walk){value, null, 0, false};
 
-        while (1)
+        while (path_walk_next(address_of walk))
         {
-                string_address next = string_first_of(segment, ':');
-                positive length = next ? (positive)(next - segment)
-                                       : string_length(segment);
-                positive used = 0;
                 bipolar handle;
 
-                if (length)
-                {
-                        memory_copy(*found, segment, length);
-                        used = length;
-
-                        if ((*found)[used - 1] != '/')
-                                (*found)[used++] = '/';
-                }
-
-                string_copy(*found + used, name);
+                if (!path_walk_join(*found, *found_room, walk.segment,
+                                    walk.length, name, ""))
+                        continue;
 
                 do
                         handle = system_open_at(AT_FDCWD,
@@ -6171,11 +6148,6 @@ static bipolar shell_source_open(string_address name,
 
                 if (handle >= 0)
                         return handle;
-
-                if (!next)
-                        break;
-
-                segment = next + 1;
         }
 
         return -1;
@@ -6831,15 +6803,14 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
                                    positive room, positive access,
                                    bool use_hash, string_address value)
 {
-        string_address segment;
-        positive name_length;
+        path_walk walk;
 
         if (name == null || !string_get(name) || !room)
                 return false;
 
         if (string_first_of(name, '/'))
         {
-                name_length = string_length(name);
+                positive name_length = string_length(name);
 
                 if (system_access_at(AT_FDCWD, name, access))
                         return false;
@@ -6869,56 +6840,23 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
         if (value == null && !(value = env_get("PATH")))
                 value = "/bin:/usr/bin:/";
 
-        segment = value;
-        name_length = string_length(env_reading(name));
+        walk = (path_walk){value, null, 0, false};
 
-        while (1)
+        while (path_walk_next(address_of walk))
         {
-                string_address next = string_first_of(segment, ':');
-                positive length = next ? (positive)(next - segment)
-                                       : string_length(segment);
+                if (!path_walk_join(into, room, walk.segment, walk.length,
+                                    name, ""))
+                        continue;
 
-                if (!length && name_length < room)
-                {
-                        string_copy(into, name);
+                if (system_access_at(AT_FDCWD, into, access))
+                        continue;
 
-                        if (!system_access_at(AT_FDCWD, into, access))
-                        {
-                                // Remembered only as the executor's answer:
-                                // a query asks with access 0 and may name a
-                                // file nobody could run.
-                                if (use_hash && access == ACCESS_EXECUTE)
-                                        hash_remember(name, into);
-                                return true;
-                        }
-                }
-                else if (length && name_length <= positive_max - 2 &&
-                         length <= positive_max - name_length - 2 &&
-                         length + name_length + 2 <= room)
-                {
-                        memory_copy(into, segment, length);
-                        into[length] = end;
+                // Remembered only as the executor's answer: a query asks
+                // with access 0 and may name a file nobody could run.
+                if (use_hash && access == ACCESS_EXECUTE)
+                        hash_remember(name, into);
 
-                        if (into[length - 1] != '/')
-                                into[length++] = '/';
-
-                        string_copy(into + length, name);
-
-                        if (!system_access_at(AT_FDCWD, into, access))
-                        {
-                                // Remembered only as the executor's answer:
-                                // a query asks with access 0 and may name a
-                                // file nobody could run.
-                                if (use_hash && access == ACCESS_EXECUTE)
-                                        hash_remember(name, into);
-                                return true;
-                        }
-                }
-
-                if (!next)
-                        break;
-
-                segment = next + 1;
+                return true;
         }
 
         return false;

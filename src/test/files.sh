@@ -246,6 +246,31 @@ env_stress() {
         generated_answer 'large split string' "$want_status" "$got_status"
 }
 
+# One name looked for along a PATH of the case's choosing, by the system's
+# tool and by ours, from inside the work directory so that an empty or a
+# relative field has somewhere to point.
+exec_path_case() {
+        name=$1
+        search=$2
+        tool=$3
+        shift 3
+        system_tool=$(command -v "$tool")
+
+        if (cd "$work" && env -i PATH="$search" "$system_tool" "$@") \
+                > "$work/want" 2>/dev/null < /dev/null; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+        if (cd "$work" && env -i PATH="$search" "$binaries/$tool" "$@") \
+                > "$work/got" 2>/dev/null < /dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+        generated_answer "$name" "$want_status" "$got_status"
+}
+
 exec_path_stress() {
         local_command=$work/path-local
         denied_command=$work/path-denied
@@ -296,6 +321,24 @@ PY
         (cd "$work" && PATH= "$binaries/find" "$fixture" -maxdepth 0 \
                 -exec path-local ';') > "$work/got" 2>/dev/null; got_status=$?
         generated_answer 'find exec empty PATH' "$want_status" "$got_status"
+
+        # The same name twice along the path, unrunnable in the earlier
+        # place: denied is the answer only when nothing later ran.
+        mkdir -p "$work/path-first" "$work/path-second"
+        printf '#!/bin/sh\nprintf "second\\n"\n' > "$work/path-second/path-later"
+        chmod 0755 "$work/path-second/path-later"
+        cp "$denied_command" "$work/path-first/path-later"
+        chmod 0644 "$work/path-first/path-later"
+
+        exec_path_case 'leading colon is current directory' ":$work/path-second" env path-local
+        exec_path_case 'double colon is current directory' "/nowhere::$work/path-second" env path-local
+        exec_path_case 'trailing slash component' "$work/" env path-local
+        exec_path_case 'relative component' "path-second" env path-later
+        exec_path_case 'later component only' "/nowhere:$work" env path-local
+        exec_path_case 'denied then found later' "$work/path-first:$work/path-second" env path-later
+        exec_path_case 'denied and nothing later' "$work/path-first:/nowhere" env path-later
+        exec_path_case 'nice walks the path' ":/nowhere" nice -n 1 path-local
+        exec_path_case 'xargs walks the path' "/nowhere:$work/" xargs path-local
 }
 
 yes_stress() {

@@ -95,6 +95,11 @@ guest = subprocess.Popen([
     "qemu-system-x86_64", "-m", "2G", "-smp", "2"] + processor + [
     "-kernel", image, "-vga", "none", "-device", "virtio-gpu-pci",
     "-device", "qemu-xhci", "-device", "usb-tablet", "-device", "usb-kbd",
+    # A relative mouse on each kind of controller a desktop has. The tablet
+    # proves absolute motion; a real mouse is REL_X and REL_Y through usbhid,
+    # and on a Haswell desktop the USB 2 ports hang off EHCI, not xHCI.
+    "-device", "usb-mouse,id=xhcimouse",
+    "-device", "usb-ehci,id=ehci", "-device", "usb-mouse,bus=ehci.0,id=ehcimouse",
     "-no-reboot", "-display", "none", "-serial", "file:" + work + "/serial",
     "-qmp", "unix:" + qmp + ",server,nowait",
     "-monitor", "unix:" + mon + ",server,nowait",
@@ -173,6 +178,18 @@ def moveto(x, y):
 time.sleep(25)
 
 out = []
+
+#       The pointer applet, written to the serial line so the kernel's list
+#       of attached input devices can be read back. Typed first, into the
+#       terminal that has the keyboard at boot, before any window is touched.
+#       The arrow and the capital go in as chords: type_text knows only the
+#       plain keys, and a qcode a key does not have is an error, not a key.
+type_text("pointer ")
+chord("shift", "dot")
+type_text(" /dev/tty")
+chord("shift", "s")
+type_text("0\n")
+time.sleep(1.0)
 
 shot("first")
 w, h, px = load("first")
@@ -607,6 +624,58 @@ try:
     serial = open(work + "/serial", "rb").read().lower()
 except OSError:
     serial = b""
+
+#       A USB mouse moves the cursor. The arrow's fill is 55 pixels of pure
+#       white, which nothing else on the desktop uses, so counting them at the
+#       expected place is the cursor being there. The tablet parks the cursor
+#       first so the count is taken from a known spot on bare desktop, and
+#       the movement goes in small reports a few milliseconds apart, the way
+#       a hand moves, so the compositor's acceleration leaves the distance
+#       alone. Each mouse is selected through the monitor: naming the device
+#       in input-send-event is not an option, QEMU 11 aborts on it.
+if len(runs) >= 1:
+    def arrow_pixels(data, width, height, x, y):
+        return sum(1 for py in range(max(y, 0), min(y + 20, height))
+                   for px in range(max(x, 0), min(x + 16, width))
+                   if pixel(data, width, px, py) == b"\xff\xff\xff")
+
+    def monitor(line):
+        return qcmd({"execute": "human-monitor-command",
+                     "arguments": {"command-line": line}}).get("return", "")
+
+    def mouse_rel(dx, dy, steps):
+        for step in range(steps):
+            send([{"type": "rel", "data": {"axis": "x", "value": dx}},
+                  {"type": "rel", "data": {"axis": "y", "value": dy}}])
+            time.sleep(0.01)
+        time.sleep(0.2)
+
+    mice = [line.split("#")[1].split(":")[0]
+            for line in monitor("info mice").splitlines()
+            if "HID Mouse" in line]
+    out.append(("usb mice attached", str(len(mice)), "2"))
+
+    # A different parking spot for each mouse: the tablet reports nothing for
+    # a position equal to its last, so parking twice at one spot would leave
+    # the cursor where the previous mouse put it.
+    for turn, index in enumerate(mice):
+        park_x, park_y = w - 200 - 60 * turn, h - 200 - 40 * turn
+        moveto(park_x, park_y)
+        shot("mouse-parked-" + index, 0.3)
+        parked_w, parked_h, parked = load("mouse-parked-" + index)
+        before = arrow_pixels(parked, parked_w, parked_h, park_x, park_y)
+        monitor("mouse_set " + index)
+        mouse_rel(-3, -2, 40)
+        shot("mouse-moved-" + index, 0.3)
+        moved_w, moved_h, moved = load("mouse-moved-" + index)
+        after = arrow_pixels(moved, moved_w, moved_h, park_x - 120, park_y - 80)
+        still = arrow_pixels(moved, moved_w, moved_h, park_x, park_y)
+        out.append(("usb mouse " + index + " moves the cursor",
+                    "yes" if before == 55 and after == 55 and still == 0
+                    else "%d %d %d" % (before, after, still), "yes"))
+
+# The kernel names them "QEMU QEMU USB Mouse"; the serial log is lower case.
+out.append(("pointer lists the mice", str(serial.count(b"usb mouse: ")), "2"))
 
 for name, marker in (("no protection fault", b"general protection fault"),
                      ("no oops", b"oops:"),

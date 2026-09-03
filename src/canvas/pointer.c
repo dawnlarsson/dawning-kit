@@ -449,10 +449,50 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
         }
 }
 
+/*
+        One attached device, with what it has done.
+
+        The count is per device because the one fault this has to explain is
+        a mouse that does nothing until it is plugged in again: whether the
+        kernel delivered nothing from it, or delivered reports the cursor did
+        not follow, is the whole question, and a total over every device
+        cannot answer it. The list is kept here under the input lock rather
+        than read out of the input core, whose handle list has a lock of its
+        own that a stats ioctl has no business taking.
+
+        An open that fails is tried again. The input core drops a device a
+        connect refuses, and a mouse the BIOS was still driving when the
+        kernel took the controller can refuse its first open and accept the
+        next; a device that stays refused is logged and left, with the error
+        where the pointer applet can show it.
+*/
+#define POINTER_OPEN_TRIES 30
+
+struct pointer_handle
+{
+        struct input_handle handle;
+        struct list_head link;
+        struct delayed_work reopen;
+        unsigned long events;
+        int opened;
+        unsigned int tries;
+};
+
+static LIST_HEAD(pointer_handles);
+
+static inline struct pointer_handle *pointer_handle_of(struct input_handle *handle)
+{
+        return container_of(handle, struct pointer_handle, handle);
+}
+
 static HOT void pointer_event(struct input_handle *handle, unsigned int type,
                               unsigned int code, int value)
 {
         unsigned long flags;
+
+        // Counted before the desktop check: a report that arrived while there
+        // was no screen is still a report the device sent.
+        pointer_handle_of(handle)->events++;
 
         if (!READ_ONCE(desktop.width))
                 return;
@@ -462,44 +502,119 @@ static HOT void pointer_event(struct input_handle *handle, unsigned int type,
         spin_unlock_irqrestore(&desktop.input_lock, flags);
 }
 
+static const char *pointer_device_name(struct input_handle *handle)
+{
+        return handle->dev->name ? handle->dev->name : "unnamed";
+}
+
+static void pointer_reopen(struct work_struct *work)
+{
+        struct pointer_handle *pointer =
+            container_of(to_delayed_work(work), struct pointer_handle, reopen);
+        int ret = input_open_device(&pointer->handle);
+
+        pointer->opened = ret;
+
+        if (!ret)
+        {
+                log_canvas("input: %s opened on try %u\n",
+                           pointer_device_name(&pointer->handle), pointer->tries + 1);
+                return;
+        }
+
+        if (++pointer->tries < POINTER_OPEN_TRIES)
+                schedule_delayed_work(&pointer->reopen, HZ);
+        else
+                log_canvas("input: %s would not open (%d), given up\n",
+                           pointer_device_name(&pointer->handle), ret);
+}
+
 static COLD int pointer_connect(struct input_handler *handler,
                                 struct input_dev *dev,
                                 const struct input_device_id *id)
 {
-        struct input_handle *handle;
+        struct pointer_handle *pointer;
+        unsigned long flags;
         int ret;
 
-        handle = kzalloc(sizeof(*handle), GFP_KERNEL);
-        if (!handle)
+        pointer = kzalloc(sizeof(*pointer), GFP_KERNEL);
+        if (!pointer)
                 return -ENOMEM;
 
-        handle->dev = dev;
-        handle->handler = handler;
-        handle->name = "moonwater";
+        pointer->handle.dev = dev;
+        pointer->handle.handler = handler;
+        pointer->handle.name = "moonwater";
+        INIT_DELAYED_WORK(&pointer->reopen, pointer_reopen);
 
-        ret = input_register_handle(handle);
+        ret = input_register_handle(&pointer->handle);
         if (ret)
-                goto err_free;
+        {
+                kfree(pointer);
+                return ret;
+        }
 
-        ret = input_open_device(handle);
-        if (ret)
-                goto err_unregister;
+        spin_lock_irqsave(&desktop.input_lock, flags);
+        list_add_tail(&pointer->link, &pointer_handles);
+        spin_unlock_irqrestore(&desktop.input_lock, flags);
 
-        log_canvas("input: %s\n", dev->name ? dev->name : "unnamed");
+        pointer->opened = input_open_device(&pointer->handle);
+
+        if (pointer->opened)
+        {
+                log_canvas("input: %s would not open (%d), trying again\n",
+                           pointer_device_name(&pointer->handle), pointer->opened);
+                schedule_delayed_work(&pointer->reopen, HZ);
+        }
+        else
+                log_canvas("input: %s\n", pointer_device_name(&pointer->handle));
+
         return 0;
-
-err_unregister:
-        input_unregister_handle(handle);
-err_free:
-        kfree(handle);
-        return ret;
 }
 
 static COLD void pointer_disconnect(struct input_handle *handle)
 {
-        input_close_device(handle);
+        struct pointer_handle *pointer = pointer_handle_of(handle);
+        unsigned long flags;
+
+        cancel_delayed_work_sync(&pointer->reopen);
+
+        spin_lock_irqsave(&desktop.input_lock, flags);
+        list_del(&pointer->link);
+        spin_unlock_irqrestore(&desktop.input_lock, flags);
+
+        // Closing a handle that never opened would take the input core's
+        // open count below zero.
+        if (!pointer->opened)
+                input_close_device(handle);
+
         input_unregister_handle(handle);
-        kfree(handle);
+        kfree(pointer);
+}
+
+static void canvas_input_devices(struct input_devices *out)
+{
+        struct pointer_handle *pointer;
+        unsigned long flags;
+
+        memory_fill(out, 0, sizeof(*out));
+
+        spin_lock_irqsave(&desktop.input_lock, flags);
+        list_for_each_entry(pointer, &pointer_handles, link)
+        {
+                struct input_device_stats *device;
+
+                if (out->count < INPUT_DEVICES_MAX)
+                {
+                        device = &out->device[out->count];
+                        strscpy(device->name, pointer_device_name(&pointer->handle),
+                                sizeof(device->name));
+                        device->events = READ_ONCE(pointer->events);
+                        device->opened = pointer->opened;
+                }
+
+                out->count++;
+        }
+        spin_unlock_irqrestore(&desktop.input_lock, flags);
 }
 
 // Anything that reports motion or keys: mice, tablets, touchpads, keyboards.

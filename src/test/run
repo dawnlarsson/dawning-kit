@@ -39,6 +39,13 @@ esac
 work=$(mktemp -d "${TMPDIR:-/tmp}/dawning-test.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
 
+#       Every lane makes its own directory with mktemp, and a lane that is
+#       killed never reaches its trap. Nested under this one, whatever a lane
+#       leaves behind goes when this run's trap runs, and a run that was
+#       itself killed leaves one directory to remove rather than hundreds.
+TMPDIR=$work
+export TMPDIR
+
 TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
