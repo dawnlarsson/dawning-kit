@@ -2445,51 +2445,36 @@ static bool regex_match_longest(string_address text, positive length,
         return regex_run(0, at) && !regex_gave_up() && regex_keep_longest(length);
 }
 
-/*
-        What the kernel's stat says, read where the kernel actually puts it.
-
-        struct file's status is laid out differently from the kernel's on
-        arm64 and riscv64 -- library.c says as much where it declares it, and
-        pins only the size -- so wc, which needs the mode as well to know
-        whether a size is meaningful, reads the raw buffer itself.
-*/
-#if X64
-#define TEXT_STAT_MODE 24
-#else
-#define TEXT_STAT_MODE 16
-#endif
-#define TEXT_STAT_SIZE 48
-#define TEXT_STAT_BLOCKS 64
+// What the kernel says about an open descriptor, through the one statx
+// layout file.c reads everywhere rather than a struct stat whose field
+// offsets differ between x86_64, arm64 and riscv64.
+static bool text_handle_facts(positive handle, file_facts address_to facts)
+{
+        return file_look((bipolar)handle, (string_address) "", AT_EMPTY_PATH,
+                         facts);
+}
 
 static bool text_directory(positive handle)
 {
-        p8 raw[256];
+        file_facts facts;
 
-        memory_fill(raw, 0, sizeof(raw));
-
-        if (system_file_status(handle, raw) < 0)
-                return false;
-
-        return (address_to(p32 address_to)(raw + TEXT_STAT_MODE) & 0170000) == 0040000;
+        return text_handle_facts(handle, address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 }
 
 static bool text_regular_size(positive handle, positive address_to size)
 {
-        p8 raw[256];
+        file_facts facts;
         p8 edge;
 
-        memory_fill(raw, 0, sizeof(raw));
-
-        if (system_file_status(handle, raw) < 0)
+        if (!text_handle_facts(handle, address_of facts))
                 return false;
 
-        p32 mode = address_to(p32 address_to)(raw + TEXT_STAT_MODE);
-
-        if ((mode & 0170000) != 0100000)
+        if ((facts.mode & MODE_FORMAT) != MODE_FILE)
                 return false;
 
-        positive bytes = address_to(positive address_to)(raw + TEXT_STAT_SIZE);
-        positive blocks = address_to(positive address_to)(raw + TEXT_STAT_BLOCKS);
+        positive bytes = facts.size;
+        positive blocks = facts.blocks;
 
         /* procfs and sysfs report dynamic regular files as zero bytes or one
            page. For an unallocated file, prove st_size by finding its last
@@ -3585,6 +3570,43 @@ static fn text_put_slice(text_slice address_to line)
                 text_put_character(text_delimiter);
 }
 
+/*
+        Whatever is left of the input, held whole in the arena, for the byte
+        counts head and tail can only answer once a pipe has ended.
+
+        One arena object retaken at its full length after every fill, the way
+        text_arena_read_all grows, rather than one take per fill: a take is
+        rounded up to sixteen bytes and a pipe hands over runs of any length,
+        so the pieces would not sit end to end and the gap between two of
+        them would be printed as part of the answer. Null is the arena
+        refusing, which it has already said aloud.
+*/
+static p8 address_to text_arena_hold_rest(positive address_to have)
+{
+        p8 address_to held = (p8 address_to)text_arena_take(0);
+        positive mark = text_arena_used;
+
+        address_to have = 0;
+        if (!held)
+                return null;
+
+        while (text_fill())
+        {
+                positive left = text_input.filled - text_input.position;
+
+                text_arena_used = mark;
+                if (!text_arena_take(address_to have + left))
+                        return null;
+
+                memory_copy(held + address_to have,
+                            text_input.buffer + text_input.position, left);
+                address_to have += left;
+                text_input.position = text_input.filled;
+        }
+
+        return held;
+}
+
 static bool text_read_at(positive handle, positive offset, p8 address_to into, positive want)
 {
         positive have = 0;
@@ -3761,24 +3783,11 @@ static fn text_head_short(positive count, bool by_bytes)
 
         if (by_bytes)
         {
-                p8 address_to held = (p8 address_to)text_arena_take(0);
-                positive have = 0;
+                positive have;
+                p8 address_to held = text_arena_hold_rest(address_of have);
 
-                while (text_fill())
-                {
-                        positive left = text_input.filled - text_input.position;
-                        p8 address_to room = (p8 address_to)text_arena_take(left);
-
-                        if (!room)
-                                return;
-
-                        if (!have)
-                                held = room;
-
-                        memory_copy(room, text_input.buffer + text_input.position, left);
-                        have += left;
-                        text_input.position = text_input.filled;
-                }
+                if (!held)
+                        return;
 
                 if (count < have)
                         text_put(held, have - count);
@@ -4010,24 +4019,11 @@ static b32 text_tail()
                         if (!text_lines_ready())
                                 return text_done(1);
 
-                        p8 address_to held = (p8 address_to)text_arena_take(0);
-                        positive have = 0;
+                        positive have;
+                        p8 address_to held = text_arena_hold_rest(address_of have);
 
-                        while (text_fill())
-                        {
-                                positive left = text_input.filled - text_input.position;
-                                p8 address_to room = (p8 address_to)text_arena_take(left);
-
-                                if (!room)
-                                        return text_done(1);
-
-                                if (!have)
-                                        held = room;
-
-                                memory_copy(room, text_input.buffer + text_input.position, left);
-                                have += left;
-                                text_input.position = text_input.filled;
-                        }
+                        if (!held)
+                                return text_done(1);
 
                         if (from_start)
                         {
@@ -6364,22 +6360,17 @@ static PURE bool grep_wanted_directory(string_address path)
 // The kernel's mode for a path, or zero when there is none to be had.
 static p32 text_path_mode(string_address path)
 {
-        p8 raw[256];
+        file_facts facts;
         bipolar handle = text_open_handle(path, FILE_READ, 0);
 
         if (handle < 0)
                 return 0;
 
-        memory_fill(raw, 0, sizeof(raw));
-
-        bipolar told = system_file_status(handle, raw);
+        bool told = text_handle_facts((positive)handle, address_of facts);
 
         system_close(handle);
 
-        if (told < 0)
-                return 0;
-
-        return address_to(p32 address_to)(raw + TEXT_STAT_MODE);
+        return told ? facts.mode : 0;
 }
 
 static bool grep_path_add(string_address path)
@@ -6439,8 +6430,6 @@ enum
 // through stops that where it starts, and the depth stops what the pair
 // cannot -- a mount arranged to be its own child.
 #define GREP_DEPTH_MAX 64
-#define TEXT_STAT_DEVICE 0
-#define TEXT_STAT_NODE 8
 
 static positive grep_seen_device[GREP_DEPTH_MAX + 1];
 static positive grep_seen_node[GREP_DEPTH_MAX + 1];
@@ -6462,14 +6451,13 @@ static bool grep_walk(string_address path, b32 depth)
         if (handle < 0)
                 return false;
 
-        p8 raw[256];
+        file_facts facts;
 
-        memory_fill(raw, 0, sizeof(raw));
-
-        if (system_file_status(handle, raw) >= 0)
+        if (text_handle_facts((positive)handle, address_of facts))
         {
-                positive device = address_to(positive address_to)(raw + TEXT_STAT_DEVICE);
-                positive node = address_to(positive address_to)(raw + TEXT_STAT_NODE);
+                positive device = file_device_key(facts.device_major,
+                                                  facts.device_minor);
+                positive node = facts.inode;
 
                 for (b32 up = 0; up < depth; up++)
                         if (grep_seen_device[up] == device &&
@@ -9587,9 +9575,8 @@ static PURE bipolar sort_compare_human(p8 address_to a, positive la, p8 address_
 
 // -M, in the C locale, which is the only one this has. Anything that is not
 // one of the twelve is month zero and ties with every other such line, so the
-// last resort is what actually orders the text.
-static string_address sort_months[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-                                         "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+// last resort is what actually orders the text. The names are date's, read
+// three letters deep without regard to case.
 
 static b32 sort_month_of(p8 address_to at, positive length)
 {
@@ -9602,7 +9589,7 @@ static b32 sort_month_of(p8 address_to at, positive length)
 
         for (b32 m = 0; m < 12; m++)
         {
-                if (!memory_compare_ascii_case(at + scan, sort_months[m], 3))
+                if (!memory_compare_ascii_case(at + scan, file_month_names[m], 3))
                         return m + 1;
         }
 

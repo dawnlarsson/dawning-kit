@@ -438,6 +438,15 @@ answer 'no who'          'umask 0; umask =rx; umask'
 answer 'from spoken'     'umask -S u=rwx,g=rx,o=rx; umask'
 answer 'not a mode'      'umask zzz 2>/dev/null; echo $?; umask'
 answer 'bad octal tail'  'umask 022; umask 078 2>/dev/null; echo $?; umask'
+answer 'several actions' 'umask 0777; umask u+w+r; umask'
+answer 'last equals wins' 'umask 0777; umask u=r=w; umask'
+answer 'copies a class'  'umask 0077; umask g=u,o+g; umask'
+answer 'capital x'       'umask 0077; umask g+X; umask'
+answer 'capital x none'  'umask 0177; umask a+X; umask'
+answer 'special bit'     'umask 0077; umask g+s; umask'
+answer 'no sticky'       'umask 022; umask g+t 2>/dev/null; echo $?; umask'
+answer 'trailing comma'  'umask 0777; umask u+r,; umask'
+answer 'comma alone'     'umask 022; umask , 2>/dev/null; echo $?; umask'
 
 section hash
 

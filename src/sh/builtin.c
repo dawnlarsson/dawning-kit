@@ -4785,87 +4785,25 @@ fn shell_getopts(writer write, string_address input)
 /*
         umask, in both spellings.
 
-        The symbolic form talks about what a file is allowed, and the mask is
-        the other way round -- "u=rwx" says the owner keeps everything, which
-        is nothing masked off. So the letters are read into permissions and the
-        answer is inverted on the way out.
+        The symbolic form is chmod's grammar read against what a file is
+        allowed, and the mask is the other way round -- "u=rwx" says the
+        owner keeps everything, which is nothing masked off. So the allowance
+        goes through the reader chmod uses, X and the copied classes
+        included, and is inverted on the way out. The reference shell departs
+        from chmod twice: it does not know t, which no mask could hold
+        anyway, and a copied class is what the mask allowed before the
+        command rather than what the clauses so far have made.
 */
-positive umask_letters(string_address address_to step)
-{
-        positive bits = 0;
-
-        while (string_get(address_to step))
-        {
-                p8 letter = string_get(address_to step);
-
-                if (letter == 'r')
-                        bits |= 4;
-                else if (letter == 'w')
-                        bits |= 2;
-                else if (letter == 'x')
-                        bits |= 1;
-                else
-                        break;
-
-                address_to step = address_to step + 1;
-        }
-
-        return bits;
-}
-
 bool umask_symbolic(string_address step, positive address_to mask)
 {
-        positive allowed = 07777 & ~(address_to mask);
+        positive allowed;
 
-        while (string_get(step))
-        {
-                positive who = 0;
-                positive bits;
-                p8 action;
+        if (string_first_of(step, 't'))
+                return false;
 
-                while (string_is(step, 'u') || string_is(step, 'g') ||
-                       string_is(step, 'o') || string_is(step, 'a'))
-                {
-                        p8 letter = string_get(step++);
-
-                        if (letter == 'u' || letter == 'a')
-                                who |= 0700;
-
-                        if (letter == 'g' || letter == 'a')
-                                who |= 0070;
-
-                        if (letter == 'o' || letter == 'a')
-                                who |= 0007;
-                }
-
-                if (!who)
-                        who = 0777;
-
-                action = string_get(step);
-
-                if (action != '=' && action != '+' && action != '-')
-                        return false;
-
-                step++;
-                bits = umask_letters(address_of step);
-                bits = ((bits << 6) | (bits << 3) | bits) & who;
-
-                if (action == '=')
-                        allowed = (allowed & ~who) | bits;
-                else if (action == '+')
-                        allowed |= bits;
-                else
-                        allowed &= ~bits;
-
-                if (string_is(step, ','))
-                {
-                        step++;
-                        continue;
-                }
-
-                if (string_get(step))
-                        return false;
-        }
+        if (!file_mode_adjust(step, 0777 & ~(address_to mask), false, 07777,
+                              true, address_of allowed))
+                return false;
 
         address_to mask = 0777 & ~allowed;
 

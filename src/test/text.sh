@@ -43,6 +43,7 @@ printf 'apple\napple\nbanana\ncherry\ncherry\ncherry\ndate\n' > "$work/e"
 printf 'Hello World\nHELLO world\nhello WORLD\n' > "$work/f"
 printf 'aaa\tbbb\tccc\nddd\teee\tfff\n' > "$work/g"
 printf 'no newline at the end' > "$work/h"
+: > "$work/empty"
 printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n' > "$work/i"
 printf 'foo123bar\nbaz456qux\nnothing here\nFOO789BAR\n' > "$work/j"
 printf 'x\n\ny\n\n\nz\n' > "$work/k"
@@ -1110,6 +1111,11 @@ printf 'gamma only\n' > "$work/tree/three.txt"
 printf 'alpha inner\n' > "$work/tree/inner/deep.txt"
 printf 'alpha other\n' > "$work/tree/other/far.log"
 ln -s one.txt "$work/tree/link.txt"
+# A link back up the tree, which -R would follow forever without the walk's
+# device and node check.
+mkdir -p "$work/loop_tree/inner"
+printf 'alpha down here\n' > "$work/loop_tree/inner/deep.txt"
+ln -s .. "$work/loop_tree/inner/back"
 printf 'alpha alpha beta\nzero\nalpha tail\n' > "$work/grep_color"
 printf 'raw\033[0m alpha byte\n' > "$work/grep_color_control"
 printf 'ALPHA alpha beta\na.*a\nsword word wordy\nalpha\nababa\n' > "$work/grep_color_patterns"
@@ -1138,6 +1144,8 @@ compare 'recursive two'    grep - -rl alpha "$work/tree" "$work/bare"
 compare 'directories recurse' grep - -d recurse alpha "$work/tree"
 compare 'directories skip' grep -  -d skip alpha "$work/tree"
 compare 'plain directory' grep -   alpha "$work/tree"
+compare 'directory then file' grep - alpha "$work/tree" "$work/a"
+compare 'recursive loop'  grep -  -R alpha "$work/loop_tree"
 compare 'include suffix'  grep -  -rl --include='*.txt' alpha "$work/tree"
 compare 'include two'     grep -  -rl --include='*.txt' --include='*.log' alpha "$work/tree"
 compare 'include one letter' grep - -rl --include='?.txt' alpha "$work/tree"
@@ -1582,6 +1590,40 @@ after_read 'head short after read' head -n -1
 after_read 'head short bytes after read' head -c -3
 after_read 'tail after read' tail -n 3
 after_read 'tail all after read' tail -n 100
+
+#       tail -c and head -c -N on a pipe hold everything in the arena, and a
+#       pipe hands it over in runs of any length, not sixteen bytes at a
+#       time: the pause makes two reads of it, twenty-three bytes and
+#       seventeen, which have to sit end to end before the last ten are
+#       counted back from the end.
+in_pieces()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        { printf 'abcdefghijklmnopqrstuvw'; sleep 0.2; printf 'xyz0123456789ABCD'; } |
+                "$tool" "$@" > "$work/want" 2> /dev/null
+        want_status=$?
+        { printf 'abcdefghijklmnopqrstuvw'; sleep 0.2; printf 'xyz0123456789ABCD'; } |
+                "$bin/$tool" "$@" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+in_pieces 'tail bytes in pieces' tail -c 10
+in_pieces 'tail bytes from in pieces' tail -c +30
+in_pieces 'head short bytes in pieces' head -c -10
+
+#       An empty regular file has a size to trust and no block behind it, and
+#       a proc file has neither: the stat answer is proved or refused before
+#       wc, head and tail count on it.
+compare 'bytes of nothing' wc empty -c
+compare 'bytes of nothing by name' wc - -c "$work/empty"
+compare 'short bytes of nothing' head empty -c -1
+compare 'bytes of nothing from end' tail empty -c 5
+[ -r /proc/version ] && compare 'bytes of a proc file' wc - -c /proc/version
+[ -r /proc/version ] && compare 'short bytes of a proc file' head - -c -3 /proc/version
 
 #       A pattern space that outgrows its room is refused aloud, not
 #       written over the neighbours; a group loop deeper than the stack is

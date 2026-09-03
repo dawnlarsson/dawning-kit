@@ -315,10 +315,15 @@ fn file_mode_letters(p8 address_to into, positive mode)
         caller supplies -- the umask-filtered set for chmod and for the tools
         that create something, every bit for find -- and "=" with no class
         clears everything else, as the reference does.
+
+        A copied class ("g=u") is read from what the clauses so far have
+        made, which is chmod's reading; the shell's umask reads it from what
+        the mask was before the command, so "u=rw,g+u" gives the group all
+        three bits there, and the caller says which it wants.
 */
 static bool file_mode_adjust(string_address specification, positive current,
                              bool directory, positive unnamed,
-                             positive address_to result)
+                             bool copies_original, positive address_to result)
 {
         positive mode = current & 07777;
         positive kept = directory ? 06000 : 0;
@@ -379,6 +384,7 @@ static bool file_mode_adjust(string_address specification, positive current,
                 while (string_is(step, '+') || string_is(step, '-') || string_is(step, '='))
                 {
                         p8 action = string_get(step);
+                        positive copied = copies_original ? current & 07777 : mode;
                         positive bits = 0;
 
                         step++;
@@ -405,11 +411,11 @@ static bool file_mode_adjust(string_address specification, positive current,
                                 else if (letter == 't')
                                         bits |= 01000;
                                 else if (letter == 'u')
-                                        bits |= ((mode & 00700) >> 6) * 00111;
+                                        bits |= ((copied & 00700) >> 6) * 00111;
                                 else if (letter == 'g')
-                                        bits |= ((mode & 00070) >> 3) * 00111;
+                                        bits |= ((copied & 00070) >> 3) * 00111;
                                 else if (letter == 'o')
-                                        bits |= (mode & 00007) * 00111;
+                                        bits |= (copied & 00007) * 00111;
                                 else
                                         return false;
 
@@ -446,7 +452,7 @@ bool file_mode_of(string_address specification, positive current, bool directory
                   positive address_to result)
 {
         return file_mode_adjust(specification, current, directory, 07777,
-                                result);
+                                false, result);
 }
 
 // The process umask, read without changing it.  Asked once per command and
@@ -471,7 +477,7 @@ static bool file_mode_masked(string_address specification, positive current,
                              positive address_to result)
 {
         return file_mode_adjust(specification, current, directory,
-                                07000 | (0777 & ~mask), result);
+                                07000 | (0777 & ~mask), false, result);
 }
 
 // Looking at files ------------------------------------------
@@ -1074,6 +1080,24 @@ b64 file_now()
         return (b64)wall[0];
 }
 
+// Month and weekday names as the reference date's own output spells them:
+// the whole word or its first three letters, and "sept" for the one month
+// whose four letter form is the usual one.
+static const string_address file_month_names[12] = {
+    "january", "february", "march",     "april",   "may",      "june",
+    "july",    "august",   "september", "october", "november", "december"};
+
+// The three-letter form the listings print, spelt with a capital the way
+// the reference ls and ps spell it, taken from the one table rather than
+// kept as a second one in every printer.
+static fn file_month_short(writer write, positive month)
+{
+        string_address full = file_month_names[month - 1];
+        p8 name[3] = {(p8)(full[0] - ('a' - 'A')), full[1], full[2]};
+
+        write(name, 3);
+}
+
 /*
         The date a listing puts beside a name, which is two different dates.
         Anything within the last half year gets a time of day, because that is
@@ -1086,15 +1110,13 @@ b64 file_now()
 */
 fn file_stamp_short(writer write, b64 seconds, b64 now)
 {
-        p8 months[12][4] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         b64 year;
         positive month, day, hour, minute, second;
 
         file_split_moment(seconds, address_of year, address_of month, address_of day,
                           address_of hour, address_of minute, address_of second);
 
-        write(months[month - 1], 3);
+        file_month_short(write, month);
         write(" ", 1);
         positive_to_padded(write, day, 2, ' ', 0);
         write(" ", 1);
@@ -1243,13 +1265,6 @@ static positive file_read_fraction(string_address text, positive at,
 
         return at;
 }
-
-// Month and weekday names as the reference date's own output spells them:
-// the whole word or its first three letters, and "sept" for the one month
-// whose four letter form is the usual one.
-static const string_address file_month_names[12] = {
-    "january", "february", "march",     "april",   "may",      "june",
-    "july",    "august",   "september", "october", "november", "december"};
 
 static const string_address file_weekday_names[7] = {
     "sunday",   "monday", "tuesday", "wednesday",

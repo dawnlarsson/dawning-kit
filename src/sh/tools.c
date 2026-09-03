@@ -353,11 +353,13 @@ static positive dd_output(positive handle, string_address name,
 static bool dd_truncate_failed(positive handle, string_address output,
                                positive length, bipolar refused)
 {
-        p8 raw[256];
+        file_facts facts;
 
-        memory_fill(raw, 0, sizeof(raw));
-
-        bipolar told = system_file_status(handle, raw);
+        // The refusal's errno is part of dd's message, and file_look folds
+        // it into a bool, so this is the bare statx that file_look wraps.
+        bipolar told = system_stat_at(handle, "",
+                                      AT_EMPTY_PATH | AT_NO_AUTOMOUNT,
+                                      STATX_BASIC, address_of facts);
 
         if (told < 0)
         {
@@ -366,8 +368,7 @@ static bool dd_truncate_failed(positive handle, string_address output,
                 return true;
         }
 
-        positive kind = address_to(p32 address_to)(raw + TEXT_STAT_MODE) &
-                        MODE_FORMAT;
+        positive kind = facts.mode & MODE_FORMAT;
 
         if (kind != MODE_FILE && kind != MODE_DIRECTORY)
                 return false;
@@ -3359,9 +3360,6 @@ static fn ps_draw(struct snapshot_process address_to process,
                 b64 year, year_now;
                 positive month, day, hour, minute, second;
                 positive month_now, day_now, hour_now, minute_now, second_now;
-                string_address months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
-                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-
                 file_split_moment(began, address_of year, address_of month,
                                   address_of day, address_of hour,
                                   address_of minute, address_of second);
@@ -3377,7 +3375,7 @@ static fn ps_draw(struct snapshot_process address_to process,
                 }
                 else if (year == year_now)
                 {
-                        ps_text(months[month - 1]);
+                        file_month_short(ps_bytes, month);
                         file_two(ps_bytes, day);
                 }
                 else
