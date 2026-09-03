@@ -1960,6 +1960,137 @@ __asm__(
     "vpcmpneqb (3*" AVX512_WIDTH ")(%rsi), %zmm3, %k1\n"               \
     "korq %k1, %k0, %k0\n   kmovq %k0, %rcx\n   jmp 38f\n"
 
+/*
+        The byte or the terminator, four vectors a turn, for the unbounded
+        hunts. EITHER_AT is the one vector form at a displacement, as
+        ZEROS_AT is for WIDE_LENGTH, and the loop is written the way that
+        one is: four vectors folded and one question asked of two hundred
+        and fifty six bytes.
+
+        Zero where the byte is c or the terminator is v ^ c, which is zero
+        exactly where v is c, taken under a minimum with v itself, which
+        keeps a zero from either. That is two instructions a vector, and
+        it leaves the fold the same vpminub the length hunt folds with, so
+        the four are one minimum tree and one test. The test is one, not
+        two with a kortest between them, and the fold is in vector
+        registers and not in masks, because on a 9950X an instruction that
+        writes a mask is the dear one: four compares into masks measured
+        6.5 ticks a turn against 4.1 for four exclusive-ors, three minima
+        and one vptestnmb over the same bytes, and the two testnm form of
+        this loop measured 5.8 against 4.8 for the one.
+
+        The vector is read twice, once into each instruction, rather than
+        loaded once and read from a register. That is eight loads a turn
+        where four would do, and it measured quicker -- 4.8 ticks a turn
+        against 5.8 -- because what bounds this loop is not the loads, it
+        is instructions: a vmovdqa64 is one more of them and the fold with
+        the load inside it is not. Against the floor's 2.1 the loop is
+        still twice as long, and that is the floor of this formulation:
+        three vector instructions a vector, where the floor is one load.
+
+        Each vector's fold stays live so QUAD_WHICH can ask which one
+        answered without reading anything again.
+*/
+#define AVX2_EITHER_AT(D)                                              \
+    "vpxor " D "(%rdi), %ymm1, %ymm0\n"                                \
+    "vpminub " D "(%rdi), %ymm0, %ymm0\n"                              \
+    "vpcmpeqb %ymm0, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+#define AVX2_EITHER_QUAD                                               \
+    "vpxor (4*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm4\n"                   \
+    "vpminub (4*" AVX2_WIDTH ")(%rdi), %ymm4, %ymm4\n"                 \
+    "vpxor (5*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm6\n"                   \
+    "vpminub (5*" AVX2_WIDTH ")(%rdi), %ymm6, %ymm6\n"                 \
+    "vpxor (6*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm8\n"                   \
+    "vpminub (6*" AVX2_WIDTH ")(%rdi), %ymm8, %ymm8\n"                 \
+    "vpxor (7*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm10\n"                  \
+    "vpminub (7*" AVX2_WIDTH ")(%rdi), %ymm10, %ymm10\n"               \
+    "vpminub %ymm4, %ymm6, %ymm11\n   vpminub %ymm8, %ymm10, %ymm12\n" \
+    "vpminub %ymm11, %ymm12, %ymm0\n"                                  \
+    "vpcmpeqb %ymm0, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "add $(4*" AVX2_WIDTH "), %rdi\n   test %eax, %eax\n"
+#define AVX2_EITHER_QUAD_WHICH                                         \
+    "vpcmpeqb %ymm4, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 2f\n"                                     \
+    "vpcmpeqb %ymm6, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 21f\n"                                    \
+    "vpcmpeqb %ymm8, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 22f\n"                                    \
+    "vpcmpeqb %ymm10, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n   jmp 23f\n"
+
+#define AVX512_EITHER_AT(D)                                            \
+    "vpxorq " D "(%rdi), %zmm1, %zmm0\n"                               \
+    "vpminub " D "(%rdi), %zmm0, %zmm0\n"                              \
+    "vptestnmb %zmm0, %zmm0, %k0\n   kmovq %k0, %rax\n"
+#define AVX512_EITHER_QUAD                                             \
+    "vpxorq (4*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm4\n"                \
+    "vpminub (4*" AVX512_WIDTH ")(%rdi), %zmm4, %zmm4\n"               \
+    "vpxorq (5*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm6\n"                \
+    "vpminub (5*" AVX512_WIDTH ")(%rdi), %zmm6, %zmm6\n"               \
+    "vpxorq (6*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm8\n"                \
+    "vpminub (6*" AVX512_WIDTH ")(%rdi), %zmm8, %zmm8\n"               \
+    "vpxorq (7*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm10\n"               \
+    "vpminub (7*" AVX512_WIDTH ")(%rdi), %zmm10, %zmm10\n"             \
+    "vpminub %zmm4, %zmm6, %zmm11\n   vpminub %zmm8, %zmm10, %zmm12\n" \
+    "vpminub %zmm11, %zmm12, %zmm11\n   vptestnmb %zmm11, %zmm11, %k0\n" \
+    "add $(4*" AVX512_WIDTH "), %rdi\n   kortestq %k0, %k0\n"
+#define AVX512_EITHER_QUAD_WHICH                                       \
+    "vptestnmb %zmm4, %zmm4, %k1\n   kmovq %k1, %rax\n"                \
+    "test %rax, %rax\n   jnz 2f\n"                                     \
+    "vptestnmb %zmm6, %zmm6, %k1\n   kmovq %k1, %rax\n"                \
+    "test %rax, %rax\n   jnz 21f\n"                                    \
+    "vptestnmb %zmm8, %zmm8, %k1\n   kmovq %k1, %rax\n"                \
+    "test %rax, %rax\n   jnz 22f\n"                                    \
+    "vptestnmb %zmm10, %zmm10, %k1\n   kmovq %k1, %rax\n   jmp 23f\n"
+
+/*
+        The bounded hunt's turn: the same exclusive-or with the load
+        inside it, one a vector, and the fold and the test as above. There
+        is no terminator to look for, so the minimum against the raw
+        vector is not needed and this is eight vector instructions a turn
+        to the other's twelve. Four compares into masks folded with kor,
+        which reads as the obvious way to write it, measured 6.5 ticks a
+        turn against this form's 4.1 on a 9950X, and the one vector a turn
+        it replaced 7.1; memory_first_of at four thousand and ninety six
+        bytes was 100 percent over the floor with that loop.
+
+        The four exclusive-ors stay live so QUAD_WHICH can ask which one
+        holds the zero.
+*/
+#define AVX2_HUNT_QUAD                                                 \
+    "vpxor (0*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm3\n"                   \
+    "vpxor (1*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm4\n"                   \
+    "vpxor (2*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm5\n"                   \
+    "vpxor (3*" AVX2_WIDTH ")(%rdi), %ymm1, %ymm6\n"                   \
+    "vpminub %ymm4, %ymm3, %ymm7\n   vpminub %ymm6, %ymm5, %ymm0\n"    \
+    "vpminub %ymm7, %ymm0, %ymm0\n"                                    \
+    "vpcmpeqb %ymm0, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n"
+#define AVX2_HUNT_QUAD_WHICH                                           \
+    "vpcmpeqb %ymm3, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 2f\n"                                     \
+    "vpcmpeqb %ymm4, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 21f\n"                                    \
+    "vpcmpeqb %ymm5, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n"         \
+    "test %eax, %eax\n   jnz 22f\n"                                    \
+    "vpcmpeqb %ymm6, %ymm2, %ymm0\n   vpmovmskb %ymm0, %eax\n   jmp 23f\n"
+
+#define AVX512_HUNT_QUAD                                               \
+    "vpxorq (0*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm3\n"                \
+    "vpxorq (1*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm4\n"                \
+    "vpxorq (2*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm5\n"                \
+    "vpxorq (3*" AVX512_WIDTH ")(%rdi), %zmm1, %zmm6\n"                \
+    "vpminub %zmm4, %zmm3, %zmm7\n   vpminub %zmm6, %zmm5, %zmm8\n"    \
+    "vpminub %zmm7, %zmm8, %zmm7\n   vptestnmb %zmm7, %zmm7, %k0\n"    \
+    "kortestq %k0, %k0\n"
+#define AVX512_HUNT_QUAD_WHICH                                         \
+    "vptestnmb %zmm3, %zmm3, %k0\n   kmovq %k0, %rax\n"                \
+    "test %rax, %rax\n   jnz 2f\n"                                     \
+    "vptestnmb %zmm4, %zmm4, %k0\n   kmovq %k0, %rax\n"                \
+    "test %rax, %rax\n   jnz 21f\n"                                    \
+    "vptestnmb %zmm5, %zmm5, %k0\n   kmovq %k0, %rax\n"                \
+    "test %rax, %rax\n   jnz 22f\n"                                    \
+    "vptestnmb %zmm6, %zmm6, %k0\n   kmovq %k0, %rax\n   jmp 23f\n"
+
 // The kernel never owns the vector register file here. Its implementations
 // are the scalar paths below, so emitting the userspace-only alternatives in
 // a kernel object merely leaves dead AVX instructions behind unconditional
@@ -2053,12 +2184,14 @@ __asm__(
     LEAVE ASM_RET
 
 //
-//      The word at a time hunt underneath all three, written once. BYTE is
-//      where the byte starts out and MASK which register masks off what
-//      sits before the string; both are spent before the loop, which is why
-//      %sil is still the byte inside it and why %r8 serves as MASK and as
-//      scratch at once. FENCE_ENTRY and FENCE_STEP are empty for the two
-//      that run to a terminator, and TAIL turns the address into the answer.
+//      The word at a time hunt under string_first_of_max, a word a turn
+//      inside its fence; the two that run to a terminator take four words a
+//      turn and are written below this. BYTE is where the byte starts out
+//      and MASK which register masks off what sits before the string; both
+//      are spent before the loop, which is why %sil is still the byte
+//      inside it and why %r8 serves as MASK and as scratch at once.
+//      FENCE_ENTRY and FENCE_STEP are the fence, and TAIL turns the address
+//      into the answer.
 //
 //      Both hunts read the same word, so the bytes in front of the string
 //      have to be neither zero nor the byte being searched for. ~c with bit
@@ -2088,21 +2221,166 @@ __asm__(
     TAIL ASM_RET
 
 //
+//      The same two hunts four words a turn, for string_first_of and
+//      string_first_of_or_end. The shape is WIDE_LENGTH's at word width:
+//      the first word aligned down and its prefix neutralised as above,
+//      three more straight line, each guarded by the one before it, then
+//      the cursor rounded down to four words -- an aligned thirty two byte
+//      block is inside one page as an aligned vector is -- and four a turn
+//      from there, folded and asked one question. Three straight line and
+//      not four, and no step forward before the rounding down: rounding
+//      the cursor down puts the block's first word at most three words
+//      back, which is inside the four already read, and its last at least
+//      one word on, which is the first not read; nothing is skipped and
+//      nothing is read that the string does not reach.
+//
+//      This is the body a kernel build runs under strchr and strchrnul,
+//      and it is measured against the scalar floor, one add a word. A
+//      word a turn was seventeen instructions and a taken jump a word,
+//      which measured 4.1 ticks a word against the floor's 2.4 on a 9950X
+//      with the floor's loop split across a fetch window and 1.2 with it
+//      inside one; this is twelve a word, two of them copies the renamer
+//      takes, and measured 2.9, with the branch one in four. One word a
+//      turn with the same test and the branch rotated to the bottom
+//      measured 3.6: the four are worth a fifth, and that is all the block
+//      is for.
+//
+//      The test is not the (w - 0x01..) & ~w one the word loops above use,
+//      whose flag can lie about a byte above the first zero: it is
+//      ((w & 0x7f..) + 0x7f..) | w, whose high bit is set exactly where a
+//      byte is not zero. Exact is what lets the two answers be combined
+//      with an and -- a high bit clear where either the word or the word
+//      exclusive-ored with c has a zero byte -- and the words of a block
+//      folded with more of them, and one question asked of the fold. It
+//      measured 2.83 against 3.00 for the inexact form ored together, for
+//      the same count of instructions. The exclusive-or is done in place
+//      once the terminator's test has read the word, so a word in flight
+//      is three registers and the five scratch ones hold a word, the first
+//      word's answer and the fold of the other three.
+//
+#define NARROW_EITHER                                                         \
+    "mov %rdx, %rax\n   and %r10, %rax\n   add %r10, %rax\n   or %rdx, %rax  # high bit clear at the terminator\n" \
+    "xor %rsi, %rdx  # zero where the byte matched\n"                          \
+    "mov %rdx, %rcx\n   and %r10, %rcx\n   add %r10, %rcx\n   or %rdx, %rcx  # high bit clear at the byte\n" \
+    "and %rcx, %rax\n   not %rax\n   and %r11, %rax\n"
+
+//      One word of the block, at a displacement, its answer in %rax and
+//      then whatever KEEP says.
+#define NARROW_EITHER_INTO(D, KEEP)                                           \
+    "mov " D "(%rdi), %rdx\n"                                                 \
+    "mov %rdx, %rax\n   and %r10, %rax\n   add %r10, %rax\n   or %rdx, %rax\n" \
+    "xor %rsi, %rdx\n"                                                        \
+    "mov %rdx, %rcx\n   and %r10, %rcx\n   add %r10, %rcx\n   or %rdx, %rcx\n" \
+    "and %rcx, %rax\n" KEEP
+
+//      The first word's answer is kept whole in %r9, the second and third
+//      are folded into %r8, and the fourth is left where it was made, in
+//      %rax, since nothing needs the scratch registers after it. Every
+//      high bit still set in the three together means no word answered.
+#define NARROW_EITHER_FOUR                                                    \
+    NARROW_EITHER_INTO("32", "mov %rax, %r9\n")                                \
+    NARROW_EITHER_INTO("40", "mov %rax, %r8\n")                                \
+    NARROW_EITHER_INTO("48", "and %rax, %r8\n")                                \
+    NARROW_EITHER_INTO("56", "")                                              \
+    "add $32, %rdi\n   mov %r9, %rcx\n   and %r8, %rcx\n   and %rax, %rcx\n" \
+    "and %r11, %rcx\n   cmp %r11, %rcx\n"
+
+//      Which word of the block answered. The first and the fourth are
+//      read off their registers, three instructions each. The second and
+//      third share a fold, and a word with no hit has every high bit set
+//      and changes an and by nothing: so if the fold says no, the fourth
+//      answered; if it says yes, the second is asked again, and if that
+//      says no the fold is the third alone. One word is asked twice at
+//      most, once a call.
+#define NARROW_EITHER_WHICH                                                   \
+    "mov %rax, %rcx  # the fourth word's answer, aside\n"                      \
+    "mov %r9, %rax\n   and %r11, %rax\n   xor %r11, %rax\n   jnz 2f\n"       \
+    "mov %r8, %rax\n   and %r11, %rax\n   xor %r11, %rax\n   jz 31f\n"       \
+    "mov 8(%rdi), %rdx\n" NARROW_EITHER "jnz 21f\n"                           \
+    "mov %r8, %rax\n   and %r11, %rax\n   xor %r11, %rax\n   jmp 22f\n"      \
+    "31: mov %rcx, %rax\n   and %r11, %rax\n   xor %r11, %rax\n   jmp 23f\n"
+
+//      %r10 is 0x01.. for the broadcast and the prefix, then 0x7f.. for
+//      everything after; the two are never wanted at once.
+#define NARROW_FIRST_OF_FOUR(TAIL)                                            \
+    "movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n   mov %rcx, %rsi\n   imul %r10, %rsi  # c in every byte; %sil is still c\n" \
+    "movabs $0x8080808080808080, %r11\n   mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n" \
+    "mov (%rdi), %rdx\n   shl $3, %ecx\n   mov $-1, %r9\n   shl %cl, %r9  # which bytes of this word are ours\n" \
+    "mov %rsi, %rax\n   not %rax\n   or %r10, %rax  # ~c with bit zero set: neither zero nor c\n" \
+    "mov %r9, %rcx\n   not %rcx\n   and %rcx, %rax  # only in front of the string\n" \
+    "and %r9, %rdx\n   or %rax, %rdx\n"                                       \
+    "movabs $0x7f7f7f7f7f7f7f7f, %r10\n"                                      \
+    NARROW_EITHER "jnz 2f\n"                                                  \
+    "mov 8(%rdi), %rdx\n" NARROW_EITHER "jnz 21f\n"                           \
+    "mov 16(%rdi), %rdx\n" NARROW_EITHER "jnz 22f\n"                          \
+    "mov 24(%rdi), %rdx\n" NARROW_EITHER "jnz 23f\n"                          \
+    "and $-32, %rdi  # four words, one page\n"                                \
+    ".balign 32\n"                                                            \
+    "1:  " NARROW_EITHER_FOUR "je 1b\n"                                       \
+    NARROW_EITHER_WHICH                                                       \
+    "23: add $8, %rdi\n"                                                      \
+    "22: add $8, %rdi\n"                                                      \
+    "21: add $8, %rdi\n"                                                      \
+    "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax  # the byte or the terminator, whichever\n" \
+    TAIL ASM_RET
+
+//
+//      The bounded hunt's word, with nothing but the byte to look for: the
+//      word arrives already exclusive-ored with the broadcast, so this is
+//      the has-zero test and no more. NARROW_HIT_FOUR is four of them ored
+//      and tested once, at displacements the count is known to cover.
+//
+#define NARROW_HIT                                                            \
+    "mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %rcx\n   not %rcx\n"     \
+    "and %rcx, %rax\n   and %r11, %rax\n"
+
+#define NARROW_HIT_INTO(D, INTO)                                              \
+    "mov " D "(%rdi), %rdx\n   xor %rsi, %rdx\n   mov %rdx, %rcx\n   sub %r10, %rcx\n" \
+    "not %rdx\n   and %rdx, %rcx\n   " INTO " %rcx, %rax\n"
+
+#define NARROW_HIT_FOUR                                                       \
+    NARROW_HIT_INTO("", "mov") NARROW_HIT_INTO("8", "or")                     \
+    NARROW_HIT_INTO("16", "or") NARROW_HIT_INTO("24", "or")                   \
+    "test %r11, %rax\n"
+
+//
 //      An unbounded hunt for the byte and for the terminator at once,
 //      whichever comes first. TAIL says what happens once the lowest flag has
 //      become an address, which is the only place the two callers differ.
 //
-#define WIDE_FIRST_OF(W, BROADCAST, ZEROED, EITHER, LEAVE, TAIL)              \
+//      The shape is WIDE_LENGTH's, for the reasons given over it: the first
+//      vector aligned down with the bytes in front of the string taken out
+//      of its mask, four more read straight line off a displacement, each
+//      guarded by the one before it finding neither the byte nor the end,
+//      then the cursor rounded down to four vectors and four a turn from
+//      there. A vector a turn, with a kmov, a test and a branch each,
+//      measured 260 percent over the floor at four thousand and ninety six
+//      bytes and 85 percent at a megabyte; a call that ends in the first
+//      vector, which is most of what the shell makes, runs as many
+//      instructions as it did. ZEROED is the AVX2 body's zero vector for
+//      its compares, and empty for AVX-512, whose vptestnmb needs none.
+//
+#define WIDE_FIRST_OF(W, BROADCAST, ZEROED, EITHER_AT, QUAD, QUAD_WHICH,      \
+                      LEAVE, TAIL)                                            \
     "movzbl %sil, %ecx\n"                                                     \
     BROADCAST                                                                 \
     ZEROED                                                                    \
     "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
     "mov $-1, %rdx\n   shl %cl, %rdx  # which bytes of this vector are ours\n" \
-    EITHER                                                                    \
+    EITHER_AT("")                                                             \
     "and %rdx, %rax\n   jnz 2f\n"                                             \
-    "1:  add $" W ", %rdi\n"                                                  \
-    EITHER                                                                    \
-    "test %rax, %rax\n   jz 1b\n"                                             \
+    EITHER_AT("(1*" W ")") "test %rax, %rax\n   jnz 21f\n"                    \
+    EITHER_AT("(2*" W ")") "test %rax, %rax\n   jnz 22f\n"                    \
+    EITHER_AT("(3*" W ")") "test %rax, %rax\n   jnz 23f\n"                    \
+    EITHER_AT("(4*" W ")") "test %rax, %rax\n   jnz 24f\n"                    \
+    "add $" W ", %rdi\n   and $(-4*" W "), %rdi  # four vectors, one page\n"  \
+    ".balign 32\n"                                                            \
+    "4:  " QUAD "jz 4b\n"                                                      \
+    QUAD_WHICH                                                                \
+    "24: add $" W ", %rdi\n"                                                  \
+    "23: add $" W ", %rdi\n"                                                  \
+    "22: add $" W ", %rdi\n"                                                  \
+    "21: add $" W ", %rdi\n"                                                  \
     "2:  bsf %rax, %rax\n   add %rdi, %rax\n"                                 \
     TAIL                                                                      \
     LEAVE ASM_RET
@@ -2202,18 +2480,40 @@ __asm__(
 //      match. Handing the remainder down cost thirteen instructions for every
 //      eight bytes of remainder: on a processor with AVX-512 a count of sixty
 //      three cost 111 instructions a call and now costs 40.
-#define WIDE_MEMORY(W, BROADCAST, HUNT, LEAVE, SHORT)                         \
+//
+//      Four vectors a turn while four whole vectors are left, then the one
+//      vector loop for what remains, then the overlapping last vector. The
+//      four are read unaligned, as the one is: every byte of them is inside
+//      the count, which is the bounded hunt's contract, and the aligning the
+//      string hunts do would be a cost for nothing here. The four vector
+//      loop is entered only above four vectors, so a count under that --
+//      the common one -- pays one compare for it and nothing else. ZEROED
+//      is the AVX2 body's zero vector for the fold's compare, and is empty
+//      for AVX-512, where vptestnmb asks the question of the fold itself.
+#define WIDE_MEMORY(W, BROADCAST, ZEROED, HUNT, QUAD, QUAD_WHICH, LEAVE,      \
+                    SHORT)                                                    \
     "cmp $" W ", %rdx\n   jb " SHORT "\n"                                     \
     "movzbl %sil, %ecx\n"                                                     \
     BROADCAST                                                                 \
+    "cmp $(4*" W "), %rdx\n   jb 1f\n"                                        \
+    ZEROED                                                                    \
+    ".balign 32\n"                                                            \
+    "4:  " QUAD "jnz 25f\n"                                                    \
+    "add $(4*" W "), %rdi\n   sub $(4*" W "), %rdx\n"                          \
+    "cmp $(4*" W "), %rdx\n   jae 4b\n"                                       \
+    "cmp $" W ", %rdx\n   jb 6f\n"                                            \
     "1:  " HUNT                                                               \
     "test %rax, %rax\n   jnz 2f\n"                                            \
     "add $" W ", %rdi\n   sub $" W ", %rdx\n   cmp $" W ", %rdx\n   jae 1b\n" \
-    "test %rdx, %rdx\n   jz 3f  # the count was whole vectors and no more\n"  \
+    "6:  test %rdx, %rdx\n   jz 3f  # the count was whole vectors and no more\n" \
     "lea -" W "(%rdi,%rdx), %rdi  # the last one, overlapping\n"              \
     HUNT                                                                      \
     "test %rax, %rax\n   jnz 2f\n"                                            \
     "3:  " LEAVE "xor %eax, %eax\n" ASM_RET                                   \
+    "25: " QUAD_WHICH                                                         \
+    "23: add $" W ", %rdi\n"                                                  \
+    "22: add $" W ", %rdi\n"                                                  \
+    "21: add $" W ", %rdi\n"                                                  \
     "2:  bsf %rax, %rax\n   add %rdi, %rax\n" LEAVE ASM_RET
 
 //
@@ -2653,12 +2953,15 @@ __asm__(
     ASM_FUNC(string_first_of)
     ASM_USERSPACE_WIDE(
         WIDE_PICK
-        WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
-                      AVX2_LEAVE, WIDE_FIRST_TAIL)
-        "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
-                             AVX512_EITHER, AVX512_LEAVE, WIDE_FIRST_TAIL)
+        WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER_AT,
+                      AVX2_EITHER_QUAD, AVX2_EITHER_QUAD_WHICH, AVX2_LEAVE,
+                      WIDE_FIRST_TAIL)
+        "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, "",
+                             AVX512_EITHER_AT, AVX512_EITHER_QUAD,
+                             AVX512_EITHER_QUAD_WHICH, AVX512_LEAVE,
+                             WIDE_FIRST_TAIL)
     )
-    "5:  " NARROW_FIRST_OF("%sil", "%r9", "", "",
+    "5:  " NARROW_FIRST_OF_FOUR(
     "movzbl (%rax), %ecx\n   cmp %sil, %cl\n   je 3f\n   xor %eax, %eax  # it was the terminator: not found\n"
         "3:  ")
     ASM_END(string_first_of)
@@ -2689,17 +2992,35 @@ __asm__(
     "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
     ASM_USERSPACE_WIDE(
         WIDE_PICK_MAX
-        WIDE_MEMORY(AVX512_WIDTH, AVX512_BROADCAST, AVX512_HUNT, AVX512_LEAVE, "7f")
+        WIDE_MEMORY(AVX512_WIDTH, AVX512_BROADCAST, "", AVX512_HUNT,
+                    AVX512_HUNT_QUAD, AVX512_HUNT_QUAD_WHICH, AVX512_LEAVE, "7f")
         "7:\n" ASM_NARROW("cpu_has_avx2", "5f")
-        WIDE_MEMORY(AVX2_WIDTH, AVX2_BROADCAST, AVX2_HUNT, AVX2_LEAVE, "5f")
+        WIDE_MEMORY(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_HUNT,
+                    AVX2_HUNT_QUAD, AVX2_HUNT_QUAD_WHICH, AVX2_LEAVE, "5f")
     )
     "5:  test %rdx, %rdx\n   jz 9f\n   movzbl %sil, %ecx\n   movabs $0x0101010101010101, %r10\n"
     "mov %rcx, %rsi\n   imul %r10, %rsi\n   movabs $0x8080808080808080, %r11\n   lea (%rdi,%rdx), %r9  # one past the last byte we may report\n"
     "mov %edi, %ecx\n   and $7, %ecx\n   and $-8, %rdi\n   mov (%rdi), %rdx\n"
     "xor %rsi, %rdx\n   shl $3, %ecx\n   mov $-1, %r8\n   shl %cl, %r8\n"
     "not %r8\n   or %r8, %rdx  # in front of the string: never zero, so never a match\n"
-    "1:  mov %rdx, %rax\n   sub %r10, %rax\n   mov %rdx, %rcx\n   not %rcx\n"
-    "and %rcx, %rax\n   and %r11, %rax\n   jnz 2f\n   add $8, %rdi\n"
+    NARROW_HIT "jnz 2f\n   add $8, %rdi\n   cmp %r9, %rdi\n   jae 8f\n"
+    //
+    //      Four words a turn while four whole words are left past the
+    //      cursor. They are inside the count, so they need no aligning to
+    //      be safe to read; the word loop under them reads the last word
+    //      aligned, and overreads, as it always did. A word a turn measured
+    //      64 percent over the scalar floor at four thousand and ninety six
+    //      bytes, seven instructions of test and a taken jump for each add
+    //      the floor makes. A hit in a block is found by the word loop,
+    //      which is entered at the block and cannot miss it.
+    //
+    "mov %r9, %r8\n   sub %rdi, %r8  # what is left from here\n   cmp $32, %r8\n   jb 6f\n"
+    ".balign 32\n"
+    "3:  " NARROW_HIT_FOUR "jnz 6f\n"
+    "add $32, %rdi\n   sub $32, %r8\n   cmp $32, %r8\n   jae 3b\n"
+    "cmp %r9, %rdi\n   jae 8f\n"
+    "6:  mov (%rdi), %rdx\n   xor %rsi, %rdx\n"
+    "1:  " NARROW_HIT "jnz 2f\n   add $8, %rdi\n"
     "cmp %r9, %rdi\n   jae 8f\n   mov (%rdi), %rdx\n   xor %rsi, %rdx\n"
     "jmp 1b\n"
     "2:  bsf %rax, %rax\n   shr $3, %rax\n   add %rdi, %rax\n   cmp %r9, %rax\n"
@@ -3702,12 +4023,15 @@ __asm__(
     ASM_FUNC(string_first_of_or_end)
     ASM_USERSPACE_WIDE(
         WIDE_PICK
-        WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER,
-                      AVX2_LEAVE, WIDE_OR_END_TAIL)
-        "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, AVX512_ZEROED,
-                             AVX512_EITHER, AVX512_LEAVE, WIDE_OR_END_TAIL)
+        WIDE_FIRST_OF(AVX2_WIDTH, AVX2_BROADCAST, AVX2_ZEROED, AVX2_EITHER_AT,
+                      AVX2_EITHER_QUAD, AVX2_EITHER_QUAD_WHICH, AVX2_LEAVE,
+                      WIDE_OR_END_TAIL)
+        "6:  " WIDE_FIRST_OF(AVX512_WIDTH, AVX512_BROADCAST, "",
+                             AVX512_EITHER_AT, AVX512_EITHER_QUAD,
+                             AVX512_EITHER_QUAD_WHICH, AVX512_LEAVE,
+                             WIDE_OR_END_TAIL)
     )
-    "5:  " NARROW_FIRST_OF("%sil", "%r9", "", "", "")
+    "5:  " NARROW_FIRST_OF_FOUR("")
     ASM_END(string_first_of_or_end)
     //
     //       char *strnchr(const char *s, size_t count, int c)

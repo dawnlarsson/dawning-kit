@@ -7206,6 +7206,283 @@ fn check_compare_blocks()
 }
 
 /*
+        The four vector turn under the byte hunts, and the four word one.
+
+        string_first_of and string_first_of_or_end read one vector aligned
+        down and four more straight line, then round the cursor down to four
+        vectors and take four a turn with one question of the fold, as
+        string_length does; the word at a time body under them does the same
+        with words, and memory_first_of takes four a turn inside its count.
+        hunts_wide_sweep stops at three hundred and twenty bytes, which on a
+        processor with AVX-512 is the straight line and one vector of the
+        first block, so the loop, the fold and the ladder that says which
+        vector answered would be reached by nothing.
+
+        So: a string beginning at every offset into a two hundred and fifty
+        six byte block, the widest any body rounds to, with its terminator at
+        every length through the straight line and the first turns of the
+        loop and then at a coarser step out to five blocks; the hunted byte
+        nowhere, with the poison on either side of the string being that
+        byte; and the byte at the front and the back of the string and at the
+        front of every thirty two byte block it crosses, which is where a
+        fold that knows the block and not the vector answers with the wrong
+        one. Then the same for the bounded hunt, with the byte one past the
+        count as well, and in the last byte of a count that is not whole
+        vectors, which only the overlapping last vector can see.
+*/
+#define BLOCKS_LONGEST 1400
+#define BLOCKS_ROOM (256 + 256 + BLOCKS_LONGEST + 320)
+
+static p8 blocks_room[BLOCKS_ROOM];
+
+static p8 address_to blocks_base(void)
+{
+        positive at = (positive)(address_any)blocks_room + 256;
+
+        return (p8 address_to)((at + 255) & ~(positive)255);
+}
+
+// Every length through the straight line and the first turns of the loop,
+// then coarser: thirteen is odd, so over the offsets the coarse lengths
+// still end on every lane of a vector.
+static positive blocks_next(positive length)
+{
+        return length + (length < 336 ? 1 : 13);
+}
+
+fn blocks_plant(string_address text, positive where, bool or_end_too)
+{
+        text[where] = 'z';
+
+        same("string_first_of", "blocks present",
+             (positive)string_first_of(text, 'z'),
+             (positive)reference_first_of(text, 'z'));
+
+        if (or_end_too && wide_or_end)
+                same("string_first_of_or_end", "blocks present",
+                     (positive)wide_or_end(text, 'z'),
+                     (positive)reference_or_end(text, 'z'));
+
+        text[where] = (p8)('a' + where % 3);
+}
+
+fn first_of_blocks_sweep()
+{
+        p8 address_to base = blocks_base();
+
+        for (positive offset = 0; offset < 256; offset++)
+        {
+                string_address text = base + offset;
+
+                reference_fill(base - 256, 'z', 256 + 256 + BLOCKS_LONGEST + 64);
+
+                for (positive i = 0; i < BLOCKS_LONGEST + 8; i++)
+                        text[i] = (p8)('a' + i % 3);
+
+                for (positive length = 0; length <= BLOCKS_LONGEST;
+                     length = blocks_next(length))
+                {
+                        text[length] = 0;
+
+                        // the hunted byte right past the terminator, where
+                        // the rest of the block is
+                        text[length + 1] = 'z';
+
+                        same("string_first_of", "blocks absent",
+                             (positive)string_first_of(text, 'z'),
+                             (positive)reference_first_of(text, 'z'));
+
+                        same("string_first_of", "blocks terminator",
+                             (positive)string_first_of(text, 0),
+                             (positive)reference_first_of(text, 0));
+
+                        if (wide_or_end)
+                                same("string_first_of_or_end", "blocks absent",
+                                     (positive)wide_or_end(text, 'z'),
+                                     (positive)reference_or_end(text, 'z'));
+
+                        if (length)
+                        {
+                                blocks_plant(text, 0, true);
+
+                                if (length > 1)
+                                        blocks_plant(text, length - 1, true);
+
+                                for (positive front = (offset + 31) & ~(positive)31;
+                                     front < offset + length; front += 32)
+                                {
+                                        positive where = front - offset;
+
+                                        if (where && where != length - 1)
+                                                blocks_plant(text, where,
+                                                             (front & 255) == 0);
+                                }
+                        }
+
+                        text[length] = (p8)('a' + length % 3);
+                        text[length + 1] = (p8)('a' + (length + 1) % 3);
+                }
+        }
+}
+
+fn memory_blocks_plant(p8 address_to block, positive count, positive where,
+                       string_address detail)
+{
+        block[where] = 'z';
+
+        same("memory_first_of", detail,
+             (positive)memory_first_of(block, 'z', count),
+             (positive)reference_memory_first_of(block, 'z', count));
+
+        block[where] = 'a';
+}
+
+fn memory_first_of_blocks_sweep()
+{
+        p8 address_to base = blocks_base();
+
+        for (positive offset = 0; offset < 72; offset++)
+        {
+                p8 address_to block = base + offset;
+
+                reference_fill(base - 64, 'a', 64 + 72 + BLOCKS_LONGEST + 64);
+
+                for (positive count = 0; count <= BLOCKS_LONGEST;
+                     count = blocks_next(count))
+                {
+                        same("memory_first_of", "blocks absent",
+                             (positive)memory_first_of(block, 'z', count),
+                             (positive)reference_memory_first_of(block, 'z', count));
+
+                        memory_blocks_plant(block, count, count, "one past the blocks");
+
+                        if (!count)
+                                continue;
+
+                        // the last byte of the count, which for a count that
+                        // is not whole vectors only the overlapping last
+                        // vector sees
+                        memory_blocks_plant(block, count, count - 1, "blocks last byte");
+
+                        // and the front of every vector the count crosses,
+                        // counted from the block itself: the bounded hunt
+                        // reads from where it is told to and aligns nothing
+                        for (positive where = 32; where + 1 < count; where += 32)
+                                memory_blocks_plant(block, count, where, "blocks present");
+                }
+        }
+}
+
+/*
+        A terminator on the last byte of a page, and nothing mapped after it.
+
+        The four vector turn reads two hundred and fifty six bytes at once and
+        the four word one thirty two, and both may because an aligned block
+        never crosses a page: the terminator ends the string inside the block
+        and the rest of the block is the same page. That argument is what
+        keeps every long string safe, and a test of it has to put the string
+        where the argument is all there is -- ending on the last byte of a
+        page whose neighbour has been taken away with mprotect, the way
+        exact_scan.c takes its neighbours away, so that a hunt reading one
+        byte too far dies here rather than in a shell.
+
+        Every length that ends there, from nothing to five blocks; the byte
+        absent, which walks the whole string, at the front, and the
+        terminator itself. Then memory_first_of with a count that ends on that
+        byte, which is the bounded hunt's version of the same promise, with
+        the byte absent and in the last byte of the count.
+*/
+#define PAGE_END_PROT_NONE 0
+
+fn check_first_of_page_end()
+{
+        p8 address_to pages = (p8 address_to)memory(3 * 4096);
+
+        same("string_first_of", "page end room",
+             (positive)((bipolar)(positive)pages > 0), 1);
+
+        if ((bipolar)(positive)pages <= 0)
+                return;
+
+        //      The third page taken away, so a string ending on the last
+        //      byte of the second has nothing readable after it.
+        system_call_3(syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
+                      PAGE_END_PROT_NONE);
+
+        p8 address_to last = pages + 2 * 4096 - 1;
+
+        reference_fill(pages, 'a', 2 * 4096);
+        address_to last = 0;
+
+        for (positive length = 0; length <= BLOCKS_LONGEST;
+             length = blocks_next(length))
+        {
+                string_address text = last - length;
+
+                same("string_first_of", "page end absent",
+                     (positive)string_first_of(text, 'z'),
+                     (positive)reference_first_of(text, 'z'));
+
+                same("string_first_of", "page end terminator",
+                     (positive)string_first_of(text, 0),
+                     (positive)reference_first_of(text, 0));
+
+                if (wide_or_end)
+                        same("string_first_of_or_end", "page end absent",
+                             (positive)wide_or_end(text, 'z'),
+                             (positive)reference_or_end(text, 'z'));
+
+                if (length)
+                {
+                        text[0] = 'z';
+                        same("string_first_of", "page end present",
+                             (positive)string_first_of(text, 'z'),
+                             (positive)reference_first_of(text, 'z'));
+                        text[0] = 'a';
+                }
+
+                same("memory_first_of", "page end absent",
+                     (positive)memory_first_of(text, 'z', length + 1),
+                     (positive)reference_memory_first_of(text, 'z', length + 1));
+
+                address_to last = 'z';
+                same("memory_first_of", "page end last byte",
+                     (positive)memory_first_of(text, 'z', length + 1),
+                     (positive)reference_memory_first_of(text, 'z', length + 1));
+                address_to last = 0;
+        }
+
+        memory_free(pages, 3 * 4096);
+}
+
+fn first_of_blocks_tier()
+{
+        first_of_blocks_sweep();
+        memory_first_of_blocks_sweep();
+        check_first_of_page_end();
+}
+
+// Once for each body, as check_hunts_wide runs its sweep.
+fn check_first_of_blocks()
+{
+        p8 avx2 = cpu_has_avx2;
+        p8 avx512 = cpu_has_avx512;
+
+        wide_bind();
+
+        first_of_blocks_tier();
+
+        cpu_has_avx512 = 0;
+        first_of_blocks_tier();
+
+        cpu_has_avx2 = 0;
+        first_of_blocks_tier();
+
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+}
+
+/*
         The six number routines, deeply.
 
         check_bulk_numbers above is thirteen values and a round trip. That is
@@ -8405,6 +8682,7 @@ b32 main()
 #endif
         check_first_of_wide();
         check_hunts_wide();
+        check_first_of_blocks();
         check_copy();
         check_exchange();
         check_frob();
