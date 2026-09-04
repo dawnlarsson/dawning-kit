@@ -18319,6 +18319,69 @@ static b32 file_whoami()
         return 0;
 }
 
+// nologin --------------------------------------------------------
+/*
+        A login shell has one job here: refuse the session.  Keep the optional
+        site message on the same bounded streaming path as the file tools so a
+        large /etc/nologin.txt neither allocates nor gets truncated.  util-linux
+        accepts -c for su compatibility but deliberately does not execute it.
+*/
+static const file_long nologin_longs[] = {
+    {(string_address)"command", 'c'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 file_nologin()
+{
+        file_taking taking = {
+            .program = (string_address)"nologin",
+            .allowed = (string_address)"chV",
+            .valued = (string_address)"c",
+            .longs = nologin_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (taking.flags & FILE_FLAG('h'))
+                string_format(log,
+                              "Usage: nologin [options]\n"
+                              "  -c, --command COMMAND  ignored for su compatibility\n"
+                              "  -h, --help             display this help\n"
+                              "  -V, --version          display version\n");
+        else if (taking.flags & FILE_FLAG('V'))
+                string_format(log, "nologin from dawning-kit\n");
+        else
+        {
+                bipolar handle = system_open_at(
+                    AT_FDCWD, (string_address)"/etc/nologin.txt", FILE_READ);
+
+                if (handle < 0)
+                        log("This account is currently not available.\n", 41);
+                else
+                {
+                        while (1)
+                        {
+                                bipolar got = system_read_retry(
+                                    (positive)handle, file_transfer,
+                                    sizeof(file_transfer));
+
+                                if (got <= 0)
+                                        break;
+                                log((string_address)file_transfer,
+                                    (positive)got);
+                        }
+
+                        system_close(handle);
+                }
+        }
+
+        log_flush();
+        return 1;
+}
+
 // logname --------------------------------------------------------
 typedef struct
 {

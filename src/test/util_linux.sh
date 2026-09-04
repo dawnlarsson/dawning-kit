@@ -24,7 +24,7 @@ mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
         getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
-        logger look line ul wall write; do
+        logger look line nologin ul wall write; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -1820,6 +1820,14 @@ subject 'overlapping oversized tree is indexed once' hardlink \
         'd=$(mktemp -d "$1/hardlink-many.XXXXXX"); i=0; while [ "$i" -lt 2000 ]; do printf x >"$d/f$i"; i=$((i+1)); done; lines=$(timeout 10 "$TOOL" -l -b4096 "$d" "$d" | wc -l) || exit; [ "$lines" -eq 2000 ]' \
         sh "$work"
 
+section nologin
+compare 'default refusal' nologin '"$TOOL"'
+compare 'su command compatibility is ignored' nologin '"$TOOL" -c ignored'
+subject 'help still refuses the login' nologin \
+        '"$TOOL" -h >/dev/null 2>&1; [ "$?" -eq 1 ]'
+subject 'missing compatibility command is rejected' nologin \
+        '"$TOOL" -c >/dev/null 2>&1; [ "$?" -eq 1 ]'
+
 section whereis
 whereis_tree="$work/whereis-tree"
 mkdir -p "$whereis_tree/bin" "$whereis_tree/man" "$whereis_tree/src"
@@ -1855,7 +1863,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid wall whereis write'
+supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid wall whereis write'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"
