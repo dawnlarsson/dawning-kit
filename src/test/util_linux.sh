@@ -23,7 +23,8 @@ trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino lsns; do
+        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei whereis mcookie uuidgen uuidparse col colcrt colrm column dmesg \
+        logger look line ul; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -135,13 +136,178 @@ section util-linux
 group reference
 for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino lsns; do
+        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei mcookie uuidgen uuidparse col colcrt colrm column dmesg \
+        logger look ul; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
         *) lost "$utility" "need util-linux 2.42.2 reference, got [$version]" ;;
         esac
 done
+
+group lsblk
+compare 'default device tree' lsblk '"$TOOL"'
+compare 'flat device list' lsblk '"$TOOL" -l'
+compare 'raw device tree order' lsblk '"$TOOL" -r'
+compare 'byte sizes' lsblk '"$TOOL" -b'
+compare 'top-level devices only' lsblk '"$TOOL" -d'
+compare 'absolute device paths' lsblk '"$TOOL" -p'
+compare 'filesystem inventory' lsblk '"$TOOL" -f'
+compare 'device permissions' lsblk '"$TOOL" -m'
+compare 'queue topology' lsblk '"$TOOL" -t'
+compare 'SCSI inventory' lsblk '"$TOOL" -S'
+compare 'selected device identity metadata' lsblk \
+        '"$TOOL" -d -n -r -o KNAME,SERIAL,VENDOR,MODEL,REV,HCTL,TRAN'
+subject 'all mode matches kernel block census' lsblk \
+        'want=$(find /sys/class/block -mindepth 1 -maxdepth 1 | wc -l); got=$("$TOOL" -a -l -n -r -o KNAME | wc -l); [ "$got" = "$want" ]'
+subject 'byte sizes follow kernel sectors' lsblk \
+        '"$TOOL" -a -l -b -n -r -o KNAME,SIZE | python3 -c '\''import sys
+for line in sys.stdin:
+ name,size=line.split(); expected=int(open("/sys/class/block/"+name+"/size").read())*512; assert int(size)==expected'\'''
+subject 'JSON is parseable and booleans are typed' lsblk \
+        '"$TOOL" -J -a -o NAME,KNAME,SIZE,RO,RM,TYPE,MOUNTPOINTS | python3 -c '\''import json,sys
+rows=json.load(sys.stdin)["blockdevices"]
+def walk(items):
+ for item in items:
+  assert isinstance(item["ro"],bool) and isinstance(item["rm"],bool)
+  assert isinstance(item["mountpoints"],list)
+  yield item
+  yield from walk(item.get("children",[]))
+assert list(walk(rows))'\'''
+subject 'named device selection is bounded' lsblk \
+        'dev=$("$TOOL" -d -n -r -o PATH | sed -n 1p); [ -n "$dev" ] && [ "$("$TOOL" -d -n -r -o PATH "$dev")" = "$dev" ]'
+subject 'discard columns rejected explicitly' lsblk \
+        '"$TOOL" -D >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'zoned columns rejected explicitly' lsblk \
+        '"$TOOL" -z >/dev/null 2>&1; [ "$?" -ne 0 ]'
+if sudo -n unshare -m true >/dev/null 2>&1; then
+        compare 'multi-mount aligned continuation rows' lsblk \
+                'sudo -n unshare -m sh -c '\''mount --make-rprivate /; mkdir -p "$2/a" "$2/b"; mount --bind / "$2/a"; mount --bind / "$2/b"; LC_ALL=C "$1" -n -o NAME,MOUNTPOINTS'\'' sh "$TOOL" "$0"' \
+                "$work"
+        compare 'multi-mount raw newline escaping' lsblk \
+                'sudo -n unshare -m sh -c '\''mount --make-rprivate /; mkdir -p "$2/a" "$2/b"; mount --bind / "$2/a"; mount --bind / "$2/b"; LC_ALL=C "$1" -n -r -o KNAME,MOUNTPOINTS'\'' sh "$TOOL" "$0"' \
+                "$work"
+fi
+
+group lscpu
+compare 'custom parsable topology' lscpu \
+        '"$TOOL" -p=CPU,CORE'
+compare 'extended core topology' lscpu \
+        '"$TOOL" -e=CPU,CORE,SOCKET,NODE,ONLINE'
+compare 'extended JSON types' lscpu \
+        '"$TOOL" -J -e=CPU,CORE,ONLINE'
+compare 'cache inventory' lscpu '"$TOOL" -C'
+compare 'raw byte cache inventory' lscpu '"$TOOL" -C -r -B'
+compare 'cache JSON types' lscpu '"$TOOL" -J -C'
+subject 'summary core fields agree with sysfs' lscpu \
+        'cpus=$(cat /sys/devices/system/cpu/present); online=$(cat /sys/devices/system/cpu/online); "$TOOL" > "$0/out" && grep -Eq "^Architecture:[[:space:]]+$(uname -m)$" "$0/out" && grep -Eq "^On-line CPU.s. list:[[:space:]]+$online$" "$0/out" && grep -q "^Flags:" "$0/out" && grep -q "^NUMA node(s):" "$0/out"' \
+        "$work"
+subject 'default parse topology invariants' lscpu \
+        '"$TOOL" -p | awk -F, '\''!/^#/ { if ($1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ || $4 !~ /^[0-9]+$/ || seen[$1]++) bad=1; rows++ } END { exit bad || !rows }'\'''
+subject 'online filter follows kernel set' lscpu \
+        'want=$(cat /sys/devices/system/cpu/online); got=$("$TOOL" -b -e=CPU -r | sed 1d | paste -sd, -); case $want in *-*) first=${want%%-*}; last=${want##*-}; expected=$(seq "$first" "$last" | paste -sd, -);; *) expected=$want;; esac; [ "$got" = "$expected" ]'
+subject 'summary JSON is structured' lscpu \
+        '"$TOOL" -J | grep -q '\''"field": "Architecture:"'\'''
+subject 'physical identifiers rejected' lscpu \
+        '"$TOOL" -y -e >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'configured column rejected' lscpu \
+        '"$TOOL" -e=CPU,CONFIGURED >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'address column rejected' lscpu \
+        '"$TOOL" -p=CPU,ADDRESS >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'sysroot rejected' lscpu \
+        '"$TOOL" --sysroot / >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group lsmem
+compare 'default aggregated ranges and summary' lsmem '"$TOOL"'
+compare 'individual memory blocks' lsmem '"$TOOL" -a'
+compare 'aggregated JSON types' lsmem '"$TOOL" -J'
+compare 'raw suppresses summary' lsmem '"$TOOL" -r'
+compare 'byte sizes and summary' lsmem '"$TOOL" -b'
+compare 'projected topology fields' lsmem \
+        '"$TOOL" -n -o RANGE,SIZE,STATE,REMOVABLE,BLOCK,NODE,ZONES'
+compare 'additive projection splits ranges' lsmem \
+        '"$TOOL" -o +NODE,ZONES'
+compare 'explicit zone split' lsmem '"$TOOL" -S ZONES'
+compare 'summary only' lsmem '"$TOOL" --summary=only'
+compare 'summary disabled' lsmem '"$TOOL" --summary=never'
+compare 'JSON summary disabled' lsmem '"$TOOL" -J --summary=never'
+compare 'JSON with requested trailing summary' lsmem \
+        '"$TOOL" -J --summary=always'
+compare 'JSON summary-only rejection' lsmem \
+        '"$TOOL" -J --summary=only'
+compare 'bare summary-only mode' lsmem '"$TOOL" --summary'
+subject 'aggregated ranges exactly cover reported bytes' lsmem \
+        '"$TOOL" -b -n --summary=never -o RANGE,SIZE | python3 -c '\''import sys
+last=-1
+seen=False
+for line in sys.stdin:
+ r,size=line.split(); lo,hi=(int(x,16) for x in r.split("-")); assert lo>last and hi-lo+1==int(size); last=hi; seen=True
+assert seen'\'''
+subject 'all mode matches kernel memory-block census' lsmem \
+        'want=$(find /sys/devices/system/memory -maxdepth 1 -type d -name "memory[0-9]*" | wc -l); got=$("$TOOL" -a -n -r --summary=never -o BLOCK | wc -l); [ "$got" = "$want" ]'
+subject 'JSON is typed and parseable' lsmem \
+        '"$TOOL" -J -a -o RANGE,SIZE,STATE,REMOVABLE,BLOCK,NODE,ZONES | python3 -c '\''import json,sys; rows=json.load(sys.stdin)["memory"]; assert rows and all(isinstance(x["removable"],bool) and (x["node"] is None or isinstance(x["node"],int)) for x in rows)'\'''
+subject 'configured metadata rejected' lsmem \
+        '"$TOOL" -o CONFIGURED >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'pairs rejected explicitly' lsmem \
+        '"$TOOL" -P >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'sysroot rejected explicitly' lsmem \
+        '"$TOOL" --sysroot / >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group uuidgen
+compare 'RFC DNS MD5 name UUID' uuidgen \
+        '"$TOOL" -n @dns -N x -m'
+compare 'RFC DNS SHA1 name UUID' uuidgen \
+        '"$TOOL" -n @dns -N x -s'
+compare 'hexadecimal SHA1 name' uuidgen \
+        '"$TOOL" -n @dns -N 616263 -x -s'
+compare 'zero count' uuidgen '"$TOOL" -r -C 0'
+subject 'random version, variant and uniqueness' uuidgen \
+        '"$TOOL" -r -C 256 | awk '\''length($0) != 36 || substr($0,15,1) != "4" || index("89ab",substr($0,20,1)) == 0 || seen[$0]++ { bad=1 } END { exit bad || NR != 256 }'\'''
+subject 'time version, variant and uniqueness' uuidgen \
+        '"$TOOL" -t -C 64 | awk '\''length($0) != 36 || substr($0,15,1) != "1" || index("89ab",substr($0,20,1)) == 0 || seen[$0]++ { bad=1 } END { exit bad || NR != 64 }'\'''
+subject 'time-v6 version and variant' uuidgen \
+        '"$TOOL" -6 -C 64 | awk '\''length($0) != 36 || substr($0,15,1) != "6" || index("89ab",substr($0,20,1)) == 0 || seen[$0]++ { bad=1 } END { exit bad || NR != 64 }'\'''
+subject 'time-v7 version and variant' uuidgen \
+        '"$TOOL" -7 -C 64 | awk '\''length($0) != 36 || substr($0,15,1) != "7" || index("89ab",substr($0,20,1)) == 0 || seen[$0]++ { bad=1 } END { exit bad || NR != 64 }'\'''
+subject 'name count rejected' uuidgen \
+        '"$TOOL" -n @dns -N x -m -C 2 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'time-safe rejected explicitly' uuidgen \
+        '"$TOOL" --time-safe >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group uuidparse
+compare 'default random row' uuidparse \
+        '"$TOOL" 550e8400-e29b-41d4-a716-446655440000'
+compare 'no headings fixed columns' uuidparse \
+        '"$TOOL" -n 550e8400-e29b-41d4-a716-446655440000'
+compare 'raw type and Gregorian time' uuidparse \
+        'TZ=UTC0 "$TOOL" -n -r 00000000-0000-0000-8000-000000000001 00000000-0000-1000-8000-000000000001 00000000-0000-2000-8000-000000000001 00000000-0000-6000-8000-000000000001 00000000-0000-7000-8000-000000000001 00000000-0000-f000-8000-000000000001'
+compare 'known RFC time UUID' uuidparse \
+        'TZ=UTC0 "$TOOL" -n -r 6ba7b810-9dad-11d1-80b4-00c04fd430c8'
+compare 'reordered output columns' uuidparse \
+        '"$TOOL" -n -o TYPE,UUID 550e8400-e29b-41d4-a716-446655440000'
+compare 'nil max and invalid UUIDs' uuidparse \
+        '"$TOOL" 00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff bad'
+compare 'JSON valid and invalid rows' uuidparse \
+        '"$TOOL" -J bad 550e8400-e29b-41d4-a716-446655440000'
+compare 'JSON projection' uuidparse \
+        '"$TOOL" -J -o TYPE,UUID 550e8400-e29b-41d4-a716-446655440000'
+subject 'unknown column rejected' uuidparse \
+        '"$TOOL" -o IMPOSSIBLE x >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'raw JSON combination rejected' uuidparse \
+        '"$TOOL" -r -J x >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group mcookie
+subject 'cookie width alphabet and uniqueness' mcookie \
+        'for n in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32; do "$TOOL"; done | awk '\''length($0) != 32 || $0 !~ /^[0123456789abcdef]+$/ || seen[$0]++ { bad=1 } END { exit bad || NR != 32 }'\'''
+subject 'descriptor input and verbose accounting' mcookie \
+        'printf abc | "$TOOL" -f /dev/fd/0 -m 3 -v > "$0/cookie" 2> "$0/error" && [ "$(wc -c < "$0/cookie")" = 33 ] && grep -qx "Got 3 bytes from /dev/fd/0" "$0/error" && grep -qx "Got 128 bytes from getrandom() function" "$0/error"' \
+        "$work"
+subject 'missing file is nonfatal' mcookie \
+        '"$TOOL" -f /definitely/absent > "$0/cookie" 2> "$0/error"; [ "$?" = 0 ] && [ "$(wc -c < "$0/cookie")" = 33 ] && [ -s "$0/error" ]' \
+        "$work"
+subject 'invalid maximum rejected' mcookie \
+        '"$TOOL" -m impossible >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
 group getopt
 compare 'short required optional and permutation' getopt \
@@ -656,6 +822,653 @@ if [ "$(id -u)" = 0 ]; then
                 "$work"
 fi
 
+group fincore
+fincore_empty="$work/fincore-empty"
+fincore_cached="$work/fincore-cached"
+fincore_sparse="$work/fincore-sparse"
+: > "$fincore_empty"
+dd if=/dev/zero of="$fincore_cached" bs=4096 count=16 status=none
+truncate -s 16777216 "$fincore_sparse"
+cat "$fincore_cached" >/dev/null
+cat > "$work/fincore-enosys.py" <<'PY'
+import ctypes, os, sys
+
+class Filter(ctypes.Structure):
+    _fields_ = [('code', ctypes.c_ushort), ('jt', ctypes.c_ubyte),
+                ('jf', ctypes.c_ubyte), ('value', ctypes.c_uint)]
+class Program(ctypes.Structure):
+    _fields_ = [('length', ctypes.c_ushort),
+                ('filters', ctypes.POINTER(Filter))]
+
+rules = (Filter * 4)(
+    Filter(0x20, 0, 0, 0),             # load seccomp_data.nr
+    Filter(0x15, 0, 1, 451),           # cachestat on x86/ARM64
+    Filter(0x06, 0, 0, 0x00050000 | 38), # SECCOMP_RET_ERRNO | ENOSYS
+    Filter(0x06, 0, 0, 0x7fff0000),    # SECCOMP_RET_ALLOW
+)
+libc = ctypes.CDLL(None, use_errno=True)
+if libc.prctl(38, 1, 0, 0, 0) or libc.prctl(22, 2,
+                                            ctypes.byref(Program(4, rules))):
+    raise OSError(ctypes.get_errno(), 'prctl seccomp')
+os.execv(sys.argv[1], [sys.argv[1], *sys.argv[2:]])
+PY
+
+compare 'empty and cached default table' fincore \
+        '"$TOOL" "$1" "$2"' sh "$fincore_empty" "$fincore_cached"
+compare 'byte counts' fincore \
+        '"$TOOL" -b "$1" "$2"' sh "$fincore_empty" "$fincore_cached"
+compare 'raw no-heading projection' fincore \
+        '"$TOOL" -n -r -o FILE,RES,PAGES,SIZE "$1" "$2"' \
+        sh "$fincore_empty" "$fincore_cached"
+compare 'human JSON field types' fincore \
+        '"$TOOL" -J "$1" "$2"' sh "$fincore_empty" "$fincore_cached"
+compare 'byte JSON field types' fincore \
+        '"$TOOL" -J -b "$1" "$2"' sh "$fincore_empty" "$fincore_cached"
+compare 'ENOSYS mincore fallback' fincore \
+        'python3 "$1" "$TOOL" -b -n -r -o RES,PAGES,SIZE "$2"' \
+        sh "$work/fincore-enosys.py" "$fincore_cached"
+compare_full 'missing file continues with valid rows' fincore \
+        '"$TOOL" "$1" "$2/missing" "$3"' \
+        sh "$fincore_cached" "$work" "$fincore_empty"
+
+subject 'cached page accounting invariant' fincore \
+        'page=$(getconf PAGESIZE); set -- $("$TOOL" -b -n -r -o RES,PAGES,SIZE "$1"); expected=$(($2 * page)); [ "$1" = "$expected" ] && [ "$1" -le "$3" ] && [ "$2" -gt 0 ]' \
+        sh "$fincore_cached"
+subject 'sparse page accounting invariant' fincore \
+        'page=$(getconf PAGESIZE); set -- $("$TOOL" -b -n -r -o RES,PAGES,SIZE "$1"); expected=$(($2 * page)); [ "$1" = "$expected" ] && [ "$1" -le "$3" ] && [ "$3" = 16777216 ]' \
+        sh "$fincore_sparse"
+subject 'additive core columns accepted' fincore \
+        '"$TOOL" -o +PAGES "$1" >/dev/null' sh "$fincore_cached"
+subject 'extended cachestat columns rejected' fincore \
+        '! "$TOOL" -o DIRTY "$1" >/dev/null 2>&1' sh "$fincore_cached"
+subject 'recursive mode rejected' fincore \
+        '! "$TOOL" -R "$1" >/dev/null 2>&1' sh "$work"
+subject 'forced cachestat mode rejected' fincore \
+        '! "$TOOL" -C "$1" >/dev/null 2>&1' sh "$fincore_cached"
+
+group namei
+namei_tree="$work/namei-tree"
+mkdir -p "$namei_tree/a/b" "$namei_tree/other"
+printf data > "$namei_tree/a/b/file"
+printf other > "$namei_tree/other/file"
+ln -s b/file "$namei_tree/a/relative"
+ln -s "$namei_tree/other" "$namei_tree/a/absolute"
+ln -s ../a/b "$namei_tree/other/up"
+ln -s self "$namei_tree/a/self"
+
+compare 'default relative symlink expansion' namei \
+        '"$TOOL" "$1/a/relative"' sh "$namei_tree"
+compare 'multiple paths and missing component' namei \
+        '"$TOOL" "$1/a/b/file" "$1/a/missing/tail" "$1/other/file"' \
+        sh "$namei_tree"
+mkdir -p "$namei_tree/locked/child"
+chmod 000 "$namei_tree/locked"
+compare 'inaccessible component stops cleanly' namei \
+        '"$TOOL" "$1/locked/child"' sh "$namei_tree"
+chmod 700 "$namei_tree/locked"
+compare 'mode component listing' namei \
+        '"$TOOL" -m "$1/a/relative"' sh "$namei_tree"
+compare 'owner component listing' namei \
+        '"$TOOL" -o "$1/a/relative"' sh "$namei_tree"
+compare 'long vertical component listing' namei \
+        '"$TOOL" -l "$1/a/relative"' sh "$namei_tree"
+compare 'explicit vertical indentation' namei \
+        '"$TOOL" -v "$1/a/relative"' sh "$namei_tree"
+compare 'symlink expansion disabled' namei \
+        '"$TOOL" -n "$1/a/relative"' sh "$namei_tree"
+compare 'absolute symlink target and suffix' namei \
+        '"$TOOL" "$1/a/absolute/file"' sh "$namei_tree"
+compare 'mountpoint markers' namei \
+        '"$TOOL" -x / /tmp "$1"' sh "$namei_tree"
+compare 'repeated slash dot and dotdot components' namei \
+        '"$TOOL" "//tmp///$(basename "$1")/a/./b/../b/file"' \
+        sh "$namei_tree"
+compare 'file trailing slash status' namei \
+        '"$TOOL" "$1/a/b/file/"' sh "$namei_tree"
+compare_full 'symlink cycle depth guard' namei \
+        '"$TOOL" "$1/a/self"' sh "$namei_tree"
+
+python3 - "$namei_tree/generated" <<'PY'
+import os, sys
+root = sys.argv[1]
+os.makedirs(root)
+at = root
+for i in range(40):
+    name = 'd%02d' % i
+    at = os.path.join(at, name)
+    os.mkdir(at)
+open(os.path.join(at, 'leaf'), 'w').close()
+PY
+subject 'generated deep walk row invariant' namei \
+        'path="$1/generated"; i=0; while [ "$i" -lt 40 ]; do piece=$(printf "d%02d" "$i"); path="$path/$piece"; i=$((i+1)); done; out="$1/out"; "$TOOL" "$path/leaf" > "$out"; [ "$(wc -l < "$out")" -ge 43 ] && tail -1 "$out" | grep -q -- "- leaf$"' \
+        sh "$namei_tree"
+
+subject 'symlink replacement race is bounded' namei \
+        'ln -s a "$1/race"; (i=0; while [ "$i" -lt 200 ]; do ln -sfn a "$1/race"; ln -sfn other "$1/race"; i=$((i+1)); done) & swap=$!; i=0; while [ "$i" -lt 50 ]; do timeout 1 "$TOOL" "$1/race/b/file" >/dev/null 2>&1; status=$?; [ "$status" = 0 ] || [ "$status" = 1 ] || { kill "$swap" 2>/dev/null; exit 1; }; i=$((i+1)); done; wait "$swap"' \
+        sh "$namei_tree"
+
+group dmesg
+dmesg_log="$work/dmesg-log"
+dmesg_kmsg="$work/dmesg-kmsg"
+dmesg_unsafe="$work/dmesg-unsafe"
+printf '<6>[    1.250000] hello world\n<3>[    3.500000] bad thing\n<13>[    4.000000] user notice\n' \
+        > "$dmesg_log"
+printf '6,10,1250000,-;hello world\n\0' > "$dmesg_kmsg"
+printf '3,11,3500000,-;bad thing\n\0' >> "$dmesg_kmsg"
+printf '13,12,4000000,-;user notice\n\0' >> "$dmesg_kmsg"
+printf '<6>[    1.250000] a\001b\tb\\c\n' > "$dmesg_unsafe"
+
+compare 'legacy snapshot default' dmesg '"$TOOL" -F "$0"' "$dmesg_log"
+compare 'legacy snapshot raw' dmesg '"$TOOL" -r -F "$0"' "$dmesg_log"
+compare 'decoded facility and level' dmesg '"$TOOL" -x -F "$0"' "$dmesg_log"
+compare 'timestamp suppression' dmesg '"$TOOL" -t -F "$0"' "$dmesg_log"
+compare 'level filter' dmesg '"$TOOL" -l err -F "$0"' "$dmesg_log"
+compare 'level range filter' dmesg '"$TOOL" -l err+ -F "$0"' "$dmesg_log"
+compare 'facility filter' dmesg '"$TOOL" -f user -F "$0"' "$dmesg_log"
+compare 'kernel facility shortcut' dmesg '"$TOOL" -k -F "$0"' "$dmesg_log"
+compare 'userspace facility shortcut' dmesg '"$TOOL" -u -F "$0"' "$dmesg_log"
+compare 'relative and delta time' dmesg 'TZ=UTC0 "$TOOL" -e -F "$0"' "$dmesg_log"
+compare 'human time without pager' dmesg \
+        'TZ=UTC0 "$TOOL" -H -P -F "$0"' "$dmesg_log"
+compare 'ctime from boot clock' dmesg 'TZ=UTC0 "$TOOL" -T -F "$0"' "$dmesg_log"
+compare 'raw clock with delta' dmesg '"$TOOL" -d -F "$0"' "$dmesg_log"
+compare 'JSON records and types' dmesg '"$TOOL" -J -F "$0"' "$dmesg_log"
+compare 'kmsg record framing' dmesg '"$TOOL" -K "$0"' "$dmesg_kmsg"
+compare 'safe control escaping' dmesg '"$TOOL" -F "$0"' "$dmesg_unsafe"
+compare 'explicit unsafe bytes' dmesg '"$TOOL" --noescape -F "$0"' "$dmesg_unsafe"
+compare 'no pager and no color' dmesg \
+        'TERM=dumb "$TOOL" -P --color=never -F "$0"' "$dmesg_log"
+compare_full 'missing fixture file' dmesg \
+        '"$TOOL" -F /definitely/absent/dmesg-log'
+subject 'live permission result is loud' dmesg \
+        '"$TOOL" >"$0/out" 2>"$0/error" || [ -s "$0/error" ]' "$work"
+subject 'raw decode conflict rejected' dmesg \
+        '"$TOOL" -r -x -F "$0" >/dev/null 2>&1; [ "$?" -ne 0 ]' "$dmesg_log"
+subject 'unsupported time window rejected' dmesg \
+        '"$TOOL" --since yesterday -F "$0" >/dev/null 2>&1; [ "$?" -ne 0 ]' "$dmesg_log"
+subject 'invalid buffer size rejected before reading' dmesg \
+        '"$TOOL" -s nope -F "$0" >/dev/null 2>&1; [ "$?" -ne 0 ]' "$dmesg_log"
+subject 'invalid level fuzz rejected' dmesg \
+        'for x in nope 8 -1 err,,warn +err+; do "$TOOL" -l "$x" -F "$0" >/dev/null 2>&1 && exit 1; done; exit 0' "$dmesg_log"
+subject 'invalid facility fuzz rejected' dmesg \
+        'for x in nope 24 -1 kern,,user; do "$TOOL" -f "$x" -F "$0" >/dev/null 2>&1 && exit 1; done; exit 0' "$dmesg_log"
+
+group lsfd
+if command -v python3 >/dev/null 2>&1; then
+        fd_file="$work/lsfd-file"
+        fd_state="$work/lsfd-state"
+        printf abc > "$fd_file"
+        python3 -c 'import os,select,socket,sys,time
+f=open(sys.argv[1], "r+")
+d=os.open(sys.argv[2], os.O_RDONLY | os.O_DIRECTORY)
+r,w=os.pipe()
+s=socket.socket()
+s.bind(("127.0.0.1", 0))
+s.listen()
+e=select.epoll()
+e.register(r, select.EPOLLIN)
+open(sys.argv[3], "w").write("%d %d %d %d %d %d %d\n" % (os.getpid(), f.fileno(), d, r, w, s.fileno(), e.fileno()))
+time.sleep(60)' "$fd_file" "$work" "$fd_state" &
+        fd_holder=$!
+        fd_tries=0
+        while [ ! -s "$fd_state" ] && [ "$fd_tries" -lt 100 ]; do
+                sleep .02
+                fd_tries=$((fd_tries + 1))
+        done
+
+        if [ -s "$fd_state" ]; then
+                read -r fd_pid fd_regular fd_directory fd_pipe_r fd_pipe_w fd_socket fd_anon < "$fd_state"
+                compare 'numeric descriptor kernel identity' lsfd \
+                        '"$TOOL" -p "$1" -n -r -o FD,MODE,KNAME,INODE,MAJ:MIN | awk '\''$1 ~ /^[0-9]+$/ { print }'\''' \
+                        sh "$fd_pid"
+                compare 'regular directory and pipe names' lsfd \
+                        '"$TOOL" -p "$1" -n -r -o FD,NAME | awk -v a="$2" -v b="$3" -v c="$4" -v d="$5" '\''$1 == a || $1 == b || $1 == c || $1 == d { print }'\''' \
+                        sh "$fd_pid" "$fd_regular" "$fd_directory" "$fd_pipe_r" "$fd_pipe_w"
+                compare 'numeric descriptor JSON types' lsfd \
+                        '"$TOOL" -J -p "$1" -o FD,MODE,KNAME,INODE,MAJ:MIN | python3 -c '\''import json,sys; data=json.load(sys.stdin); rows=data[next(iter(data))]; print(json.dumps([x for x in rows if isinstance(x["fd"], int)], sort_keys=True, separators=(",", ":")))'\''' \
+                        sh "$fd_pid"
+                subject 'basic descriptor classification' lsfd \
+                        '"$TOOL" -p "$1" -n -r -o FD,TYPE | awk -v f="$2" -v d="$3" -v r="$4" -v w="$5" -v s="$6" -v a="$7" '\''$1==f { good += $2=="REG" } $1==d { good += $2=="DIR" } $1==r || $1==w { good += $2=="FIFO" } $1==s { good += $2=="SOCK" } $1==a { good += $2=="anon_inode" } END { exit good != 6 }'\''' \
+                        sh "$fd_pid" "$fd_regular" "$fd_directory" "$fd_pipe_r" "$fd_pipe_w" "$fd_socket" "$fd_anon"
+                subject 'additive output projection' lsfd \
+                        '"$TOOL" -p "$1" -o +UID | head -1 | awk '\''{ exit $1!="COMMAND" || $NF!="UID" }'\''' \
+                        sh "$fd_pid"
+        else
+                lost 'controlled descriptor fixture' 'holder did not publish its descriptor set'
+        fi
+        kill "$fd_holder" 2>/dev/null || true
+        wait "$fd_holder" 2>/dev/null || true
+else
+        lost 'controlled descriptor fixture' 'python3 is required'
+fi
+
+subject 'PID list accepted' lsfd \
+        '"$TOOL" -p "$$,1" -n -r -o PID,FD >/dev/null'
+subject 'display filter rejected' lsfd \
+        '"$TOOL" --filter PID=1 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'counter rejected' lsfd \
+        '"$TOOL" --counter count:FD:FD -p 1 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'eventpoll detail column rejected' lsfd \
+        '"$TOOL" -o EVENTPOLL.TFDS -p 1 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'thread census rejected' lsfd \
+        '"$TOOL" --threads -p 1 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group lslocks
+lock_file="$work/lslocks-file"
+printf '1234567890' > "$lock_file"
+flock -x "$lock_file" sleep 15 &
+lock_holder=$!
+lock_inode=$(stat -Lc %i "$lock_file")
+lock_tries=0
+while ! grep -q " $lock_holder .*:$lock_inode " /proc/locks 2>/dev/null &&
+      [ "$lock_tries" -lt 100 ]; do
+        sleep .02
+        lock_tries=$((lock_tries + 1))
+done
+
+if grep -q " $lock_holder .*:$lock_inode " /proc/locks 2>/dev/null; then
+        compare 'default holder row' lslocks '"$TOOL" -p "$1"' "$lock_holder"
+        compare 'raw core columns' lslocks \
+                '"$TOOL" -p "$1" -n -r -o COMMAND,PID,TYPE,SIZE,INODE,MAJ:MIN,MODE,M,START,END,PATH,BLOCKER' \
+                "$lock_holder"
+        compare 'byte size' lslocks \
+                '"$TOOL" -b -p "$1" -n -r -o SIZE,INODE,PATH' \
+                "$lock_holder"
+        compare 'json types and null blocker' lslocks \
+                '"$TOOL" -J -p "$1" -o COMMAND,PID,TYPE,SIZE,M,BLOCKER' \
+                "$lock_holder"
+        compare 'additive output list' lslocks \
+                '"$TOOL" -p "$1" -n -r -o +INODE' "$lock_holder"
+
+        flock -x "$lock_file" /bin/true &
+        lock_waiter=$!
+        lock_tries=0
+        while ! grep -q -- '->.*'" $lock_waiter " /proc/locks 2>/dev/null &&
+              [ "$lock_tries" -lt 100 ]; do
+                sleep .02
+                lock_tries=$((lock_tries + 1))
+        done
+        if grep -q -- '->.*'" $lock_waiter " /proc/locks 2>/dev/null; then
+                compare 'blocked waiter relation' lslocks \
+                        '"$TOOL" -p "$1" -n -r -o PID,MODE,BLOCKER' \
+                        "$lock_waiter"
+        else
+                lost 'blocked waiter relation' 'waiter did not reach /proc/locks'
+        fi
+        kill "$lock_waiter" 2>/dev/null || true
+        wait "$lock_waiter" 2>/dev/null || true
+
+        chmod 000 "$lock_file"
+        compare 'noinaccessible resolved fd' lslocks \
+                '"$TOOL" -i -u -p "$1" -n -r -o PID,PATH' "$lock_holder"
+        chmod 600 "$lock_file"
+else
+        lost 'controlled flock fixture' 'holder did not reach /proc/locks'
+fi
+kill "$lock_holder" 2>/dev/null || true
+wait "$lock_holder" 2>/dev/null || true
+
+if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import fcntl,sys,time; f=open(sys.argv[1], "r+"); fcntl.lockf(f, fcntl.LOCK_EX, 4, 2); time.sleep(10)' \
+                "$lock_file" &
+        posix_holder=$!
+        lock_tries=0
+        while ! grep -q " $posix_holder .*:$lock_inode " /proc/locks 2>/dev/null &&
+              [ "$lock_tries" -lt 100 ]; do
+                sleep .02
+                lock_tries=$((lock_tries + 1))
+        done
+        if grep -q " $posix_holder .*:$lock_inode " /proc/locks 2>/dev/null; then
+                compare 'POSIX byte range' lslocks \
+                        '"$TOOL" -p "$1" -n -r -o PID,TYPE,MODE,START,END,PATH' \
+                        "$posix_holder"
+        else
+                lost 'POSIX byte range' 'holder did not reach /proc/locks'
+        fi
+        kill "$posix_holder" 2>/dev/null || true
+        wait "$posix_holder" 2>/dev/null || true
+fi
+
+subject 'display filter rejected' lslocks \
+        '"$TOOL" --filter PID=1 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'column metadata rejected' lslocks \
+        '"$TOOL" --list-columns >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'holders census rejected' lslocks \
+        '"$TOOL" -o HOLDERS >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group logger
+cat > "$work/logger-wire.py" <<'PY'
+import os
+import socket
+import subprocess
+import sys
+import tempfile
+
+tool, mode = sys.argv[1:]
+environment = dict(os.environ, TZ="UTC", LC_ALL="C")
+temporary = None
+
+if mode == "unix":
+    temporary = tempfile.mktemp(prefix="moonwater-logger-")
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    listener.bind(temporary)
+    transport = ["-u", temporary, "--socket-errors=on"]
+elif mode in ("udp", "records", "size", "id", "file"):
+    listener = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    listener.bind(("127.0.0.1", 0))
+    transport = ["-n", "127.0.0.1", "-P",
+                 str(listener.getsockname()[1]), "-d"]
+else:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    transport = ["-n", "127.0.0.1", "-P",
+                 str(listener.getsockname()[1]), "-T"]
+
+stable = ["--rfc5424=notime,notq,nohost", "-t", "moon"]
+payload = None
+messages = 1
+arguments = ["alpha", "beta"]
+
+if mode == "octet":
+    stable.insert(0, "--octet-count")
+elif mode == "octet-long":
+    stable += ["--octet-count", "--size", "8192"]
+    payload = b"x" * 8192 + b"\n"
+    arguments = []
+elif mode == "records":
+    stable += ["--prio-prefix", "--skip-empty"]
+    payload = b"<134>hello\n\n<3>bad\n"
+    arguments = []
+    messages = 2
+elif mode == "size":
+    stable += ["--size", "5"]
+    payload = b"abcdefghijkl\n"
+    arguments = []
+    messages = 3
+elif mode == "id":
+    stable += ["--id=4242"]
+    payload = b"hello\n"
+    arguments = []
+elif mode == "file":
+    source = tempfile.NamedTemporaryFile(delete=False)
+    source.write(b"one\ntwo\n")
+    source.close()
+    stable += ["--file", source.name]
+    arguments = []
+    messages = 2
+elif mode == "long":
+    stable += ["--size", "70000"]
+    payload = b"x" * 70000 + b"\n"
+    arguments = []
+
+subprocess.run([tool] + transport + stable + arguments, input=payload,
+               check=True, env=environment)
+
+received = []
+if mode in ("tcp", "octet", "octet-long", "long"):
+    connection, _ = listener.accept()
+    while True:
+        part = connection.recv(65536)
+        if not part:
+            break
+        received.append(part)
+    connection.close()
+    received = [b"".join(received)]
+else:
+    listener.settimeout(2)
+    received = [listener.recv(131072) for _ in range(messages)]
+
+listener.close()
+if temporary:
+    os.unlink(temporary)
+if mode == "file":
+    os.unlink(source.name)
+sys.stdout.buffer.write(b"\0".join(received))
+PY
+
+compare 'Unix datagram wire' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" unix' sh "$work"
+compare 'loopback UDP wire' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" udp' sh "$work"
+compare 'loopback TCP newline framing' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" tcp' sh "$work"
+compare 'RFC6587 octet-count framing' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" octet' sh "$work"
+compare 'RFC6587 overlapping long frame' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" octet-long' sh "$work"
+compare 'priority-prefixed stdin records' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" records' sh "$work"
+compare 'message-size record chunks' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" size' sh "$work"
+compare 'explicit RFC5424 process id' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" id' sh "$work"
+compare 'file records' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" file' sh "$work"
+compare 'refill-crossing TCP record' logger \
+        'python3 "$1/logger-wire.py" "$TOOL" long' sh "$work"
+printf 'MESSAGE=one\nFIELD=value\n' > "$work/logger-journal"
+compare 'journald native payload dry run' logger \
+        '"$TOOL" --journald="$1" --no-act --stderr 2>&1' sh "$work/logger-journal"
+subject 'structured data extension rejected' logger \
+        '"$TOOL" --sd-id meta --no-act message >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+group ul
+printf 'plain\n_\bU x\bx R\bS \016g\017\n\0339sub\0338 normal \0338sup\0339\nform\fnext\n' \
+        > "$work/ul-controls"
+compare 'dumb terminal overstrikes' ul \
+        'TERM=dumb "$TOOL" < "$1"' sh "$work/ul-controls"
+compare 'indicated attribute plane' ul \
+        'TERM=dumb "$TOOL" -i < "$1"' sh "$work/ul-controls"
+compare 'ANSI attribute capabilities' ul \
+        'TERM=ansi "$TOOL" < "$1"' sh "$work/ul-controls"
+compare 'xterm attribute capabilities' ul \
+        'TERM=xterm "$TOOL" < "$1"' sh "$work/ul-controls"
+compare 'terminal override aliases' ul \
+        'TERM=dumb "$TOOL" -T linux < "$1"' sh "$work/ul-controls"
+compare 'full and repeated half-line motion' ul \
+        'printf "one\n\0337two\nab\0339c\0339d\nab\0338c\0338d\n" | TERM=ansi "$TOOL" -i'
+compare 'multiple input files' ul \
+        'printf "_\bA\n" > "$1"; printf "b\bb\n" > "$2"; TERM=dumb "$TOOL" -i "$1" "$2"' \
+        sh "$work/ul-one" "$work/ul-two"
+compare 'unknown terminal falls back to dumb' ul \
+        'TERM=ansi "$TOOL" -t no-such-moonwater-terminal < "$1"' \
+        sh "$work/ul-controls"
+compare 'unknown escape is fatal' ul \
+        'printf "before\033Xafter\n" | TERM=dumb "$TOOL"'
+compare 'missing input is fatal' ul \
+        'TERM=dumb "$TOOL" "$1"' sh "$work/no-such-ul-input"
+
+python3 - "$work/ul-generated" <<'PY'
+import random, sys
+random.seed(9241)
+atoms = [b'a', b'b', b'_', b' ', b'\b', b'\t', b'\r', b'\n', b'\f',
+         b'\016', b'\017', b'\0337', b'\0338', b'\0339']
+open(sys.argv[1], 'wb').write(b''.join(random.choice(atoms)
+                                      for _ in range(50000)))
+PY
+compare 'generated mixed control stream' ul \
+        'TERM=ansi "$TOOL" -i < "$1"' sh "$work/ul-generated"
+python3 - "$work/ul-long" <<'PY'
+import sys
+open(sys.argv[1], 'wb').write(b'x' * 200000 + b'\r' + b'x' * 200000 + b'\n')
+PY
+compare 'long bold plane' ul \
+        'TERM=dumb "$TOOL" -i < "$1"' sh "$work/ul-long"
+
+group look-line
+printf 'aardvark\napp\napple\napricot\nbanana\n' > "$work/look-raw"
+compare 'look raw prefix range' look \
+        '"$TOOL" app "$1"' sh "$work/look-raw"
+compare 'look absent prefix status' look \
+        '"$TOOL" azure "$1"' sh "$work/look-raw"
+
+printf 'A pple\nA!pricot\nbanana\n' > "$work/look-dictionary"
+LC_ALL=C sort -df "$work/look-dictionary" -o "$work/look-dictionary"
+compare 'look dictionary and case order' look \
+        '"$TOOL" -df ap "$1"' sh "$work/look-dictionary"
+compare 'look termination character included' look \
+        'printf "a:1\na:2\nab:3\nb:4\n" > "$1"; "$TOOL" -t: a:any "$1"' \
+        sh "$work/look-terminate"
+compare 'look WORDLIST default flags' look \
+        'WORDLIST="$1" "$TOOL" ap' sh "$work/look-dictionary"
+compare 'look unterminated matching record' look \
+        'printf "a\nlast value" > "$1"; "$TOOL" last "$1"' \
+        sh "$work/look-unterminated"
+
+python3 - "$work/look-generated" <<'PY'
+import random, string, sys
+random.seed(8712)
+rows = []
+for _ in range(30000):
+    rows.append(''.join(random.choice(string.ascii_letters + string.digits + ' ._-\t')
+                        for _ in range(random.randrange(0, 55))))
+rows.sort(key=lambda row: row.encode())
+open(sys.argv[1], 'wb').write(('\n'.join(rows) + '\n').encode())
+PY
+compare 'look generated lower bound' look \
+        '"$TOOL" M "$1"' sh "$work/look-generated"
+
+python3 - "$work/look-long" <<'PY'
+import sys
+open(sys.argv[1], 'wb').write(b'a\nlong' + b'x' * 200000 + b'\nz\n')
+PY
+compare 'look refill crossing record' look \
+        '"$TOOL" long "$1"' sh "$work/look-long"
+subject 'look streaming fallback' look \
+        'out="$1.out"; printf "a\nlong one\nlong two\nz\n" | "$TOOL" long - > "$out"; printf "long one\nlong two\n" | cmp -s - "$out"' \
+        sh "$work/look-stream"
+subject 'look legacy binary selector' look \
+        'out="$1.out"; "$TOOL" -b app "$1" > "$out"; printf "app\napple\n" | cmp -s - "$out"' \
+        sh "$work/look-raw"
+
+subject 'line emits one terminated record' line \
+        'out="$1"; printf "one\ntwo\n" | "$TOOL" > "$out"; [ "$?" = 0 ] && printf "one\n" | cmp -s - "$out"' \
+        sh "$work/line-terminated"
+subject 'line adds newline at unterminated EOF' line \
+        'out="$1"; status=0; printf one | "$TOOL" > "$out" || status=$?; [ "$status" = 1 ] && printf "one\n" | cmp -s - "$out"' \
+        sh "$work/line-unterminated"
+subject 'line empty EOF status and output' line \
+        'out="$1"; status=0; "$TOOL" </dev/null > "$out" || status=$?; [ "$status" = 1 ] && printf "\n" | cmp -s - "$out"' \
+        sh "$work/line-empty"
+subject 'line leaves following pipe record unread' line \
+        'out="$1"; printf "one\ntwo\n" | { "$TOOL"; cat; } > "$out"; printf "one\ntwo\n" | cmp -s - "$out"' \
+        sh "$work/line-pipe"
+subject 'line rejects operands' line \
+        '! "$TOOL" extra >/dev/null 2>&1'
+python3 - "$work/line-long" <<'PY'
+import sys
+open(sys.argv[1], 'wb').write(b'x' * 1500000 + b'\nsecond\n')
+PY
+subject 'line has no record-size ceiling' line \
+        'out="$1.out"; "$TOOL" < "$1" > "$out"; [ "$(wc -c < "$out")" = 1500001 ]' \
+        sh "$work/line-long"
+
+group col-family
+compare 'col basic line normalization' col \
+        'printf "abc" | "$TOOL"'
+compare 'col retained overstrike' col \
+        'printf "A\bB\n" | "$TOOL"'
+compare 'col last overstrike only' col \
+        'printf "abc\rZ\n" | "$TOOL" -b'
+compare 'col reverse full line motions' col \
+        'printf "a\nb\vX\n" | "$TOOL"'
+compare 'col reverse escape motion' col \
+        'printf "a\nb\033\007X\n" | "$TOOL"'
+compare 'col rounded half line' col \
+        'printf "a\033\tb\n" | "$TOOL"'
+compare 'col fine half lines' col \
+        'printf "a\033\tb\n" | "$TOOL" -f'
+compare 'col expands tab gaps' col \
+        'printf "a\tb\n" | "$TOOL" -x'
+compare 'col passed unknown control' col \
+        'printf "a\001b\n" | "$TOOL" -p'
+compare 'col character-set shifts' col \
+        'printf "a\016B\017c\n" | "$TOOL"'
+compare 'col accepts deep line buffer' col \
+        'printf "a\n\nb\n" | "$TOOL" -l 512'
+
+compare 'colcrt plain unterminated input' colcrt \
+        'printf "abc" | "$TOOL"'
+compare 'colcrt underline plane' colcrt \
+        'printf "_\bA\n" | "$TOOL"'
+compare 'colcrt underline suppression' colcrt \
+        'printf "_\bA\n" | "$TOOL" -'
+compare 'colcrt half-line display' colcrt \
+        'printf "foo\nbar\n" | "$TOOL" -2'
+compare 'colcrt tab expansion and escape rubout' colcrt \
+        'printf "a\tb\nab\033\067Z\n" | "$TOOL"'
+compare 'colcrt multiple files' colcrt \
+        'printf "one\n" > "$1/a"; printf "two\n" > "$1/b"; "$TOOL" "$1/a" "$1/b"' \
+        sh "$work"
+
+compare 'colrm pass through' colrm \
+        'printf "abcdef\n" | "$TOOL"'
+compare 'colrm open ended removal' colrm \
+        'printf "abcdef\n" | "$TOOL" 3'
+compare 'colrm bounded removal' colrm \
+        'printf "abcdef\n" | "$TOOL" 3 4'
+compare 'colrm tab intersection padding' colrm \
+        'printf "a\tb\n" | "$TOOL" 3 4'
+compare 'colrm backspace columns' colrm \
+        'printf "abc\bZdef\n" | "$TOOL" 1 1'
+compare 'colrm carriage return byte' colrm \
+        'printf "ab\rZ\n" | "$TOOL" 3 4'
+
+awk 'BEGIN { for (i = 0; i < 800; i++) printf "r%04d\tv%d\bX\rP\n", i, i % 97 }' \
+        > "$work/col-family-generated"
+compare 'generated col controls' col \
+        '"$TOOL" -b -x < "$1"' sh "$work/col-family-generated"
+compare 'generated colrm controls' colrm \
+        '"$TOOL" 5 11 < "$1"' sh "$work/col-family-generated"
+
+awk 'BEGIN { for (i = 0; i < 70000; i++) printf "x"; printf "\tb\n" }' \
+        > "$work/col-family-long"
+compare 'colrm refill crossing record' colrm \
+        '"$TOOL" 65534 65538 < "$1"' sh "$work/col-family-long"
+
+group column
+compare 'fill columns at fixed width' column \
+        'printf "a\nbb\nccc\ndddd\neeeee\n" | "$TOOL" -c 20'
+compare 'fill rows at fixed width' column \
+        'printf "a\nbb\nccc\ndddd\neeeee\n" | "$TOOL" -c 20 -x'
+compare 'space separated fill columns' column \
+        'printf "a\nbb\nccc\ndddd\neeeee\n" | "$TOOL" -c 20 -S 2'
+compare 'kept empty list entries' column \
+        'printf "a\n\nb\n" | "$TOOL" -L'
+compare 'blank separated table' column \
+        'printf " a  bb ccc \nx yyyy z\n" | "$TOOL" -t'
+compare 'literal separator empty cells' column \
+        'printf "a,,c\n,bb,\nx,y,z,q\n" | "$TOOL" -t -s, -o "|"'
+compare 'named hidden ordered right table' column \
+        'printf "a 1 c d\nx 22 z q\n" | "$TOOL" -t -N A,B,C,D -H D -O C,A -R B'
+compare 'header from first record' column \
+        'printf "A B C\na bb c\nx yy z\n" | "$TOOL" -t -K'
+compare 'table JSON with null fields' column \
+        'printf "a b\nx\n" | "$TOOL" -J -N A,B,C -n things'
+compare 'wrapped table width' column \
+        'printf "a abcdefghi c\nx y z\n" | "$TOOL" -t -c 12 -N A,B,C -W B'
+compare 'truncated table width' column \
+        'printf "a bb abcdefghijkl\nx yy z\n" | "$TOOL" -t -c 10 -N A,B,C -T C'
+compare 'multiple input files' column \
+        'printf "one 1\n" > "$1/a"; printf "two 22\n" > "$1/b"; "$TOOL" -t "$1/a" "$1/b"' \
+        sh "$work"
+
+awk 'BEGIN { for (i = 0; i < 1200; i++) printf "r%04d,%s,%d,%s\n", i, (i % 5 ? "alpha" : ""), i % 97, (i % 11 ? "tail" : "") }' \
+        > "$work/column-generated"
+compare 'generated CSV-ish projection' column \
+        '"$TOOL" -t -s, -N ROW,WORD,NUMBER,TAIL -O NUMBER,ROW -H TAIL -R NUMBER "$1"' \
+        sh "$work/column-generated"
+
+awk 'BEGIN { for (i = 0; i < 70000; i++) printf "x"; printf ",right\n" }' \
+        > "$work/column-long"
+compare 'record crossing reader refill' column \
+        '"$TOOL" -t -s, -o : "$1"' sh "$work/column-long"
+subject 'complex column properties rejected' column \
+        'printf "a b\n" | "$TOOL" -t --table-column name=A >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'tree column mode rejected' column \
+        'printf "a b\n" | "$TOOL" -t --tree 1 --tree-id 1 --tree-parent 2 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
 group lsns
 compare 'task namespaces raw' lsns \
         'target=$$; "$TOOL" -p "$target" -n -r -o NS,TYPE'
@@ -683,11 +1496,42 @@ if unshare -Urn /bin/true >/dev/null 2>&1; then
                 'parent=$(stat -Lc %i /proc/$$/ns/net); export TOOL parent; unshare -Urn /bin/sh -c '\''now=$(stat -Lc %i /proc/$$/ns/net); [ "$now" != "$parent" ] && "$TOOL" -t net -p $$ -n -r -o NS,TYPE | grep -q "^$now net$"'\'''
 fi
 
+section whereis
+whereis_tree="$work/whereis-tree"
+mkdir -p "$whereis_tree/bin" "$whereis_tree/man" "$whereis_tree/src"
+touch "$whereis_tree/bin/foo" "$whereis_tree/bin/single" \
+      "$whereis_tree/man/foo.1" "$whereis_tree/man/foo.1.gz" \
+      "$whereis_tree/man/foo.info.xz" "$whereis_tree/man/foo.conf.5" \
+      "$whereis_tree/src/foo.c" "$whereis_tree/src/foo.h" \
+      "$whereis_tree/src/s.foo.c" "$whereis_tree/src/foo.c.gz"
+ln -s "$whereis_tree/bin" "$whereis_tree/bin-alias"
+
+compare 'custom binary path' whereis \
+        '"$TOOL" -b -B "$1/bin" -f foo single absent' sh "$whereis_tree"
+compare 'custom manual suffix and compression matching' whereis \
+        '"$TOOL" -m -M "$1/man" -f foo' sh "$whereis_tree"
+compare 'custom source and SCCS matching' whereis \
+        '"$TOOL" -s -S "$1/src" -f foo' sh "$whereis_tree"
+compare 'combined custom categories' whereis \
+        '"$TOOL" -B "$1/bin" -M "$1/man" -S "$1/src" -f foo' sh "$whereis_tree"
+compare 'glob applies to raw entry names' whereis \
+        '"$TOOL" -g -s -S "$1/src" -f "*foo*"' sh "$whereis_tree"
+compare 'unusual suppresses zero and singleton results' whereis \
+        '"$TOOL" -u -b -B "$1/bin" -f foo single absent' sh "$whereis_tree"
+compare 'directory identity is deduplicated' whereis \
+        '"$TOOL" -b -B "$1/bin" "$1/bin-alias" -f foo' sh "$whereis_tree"
+compare 'missing search directories are quiet' whereis \
+        '"$TOOL" -b -B "$1/missing" "$1/bin" -f foo' sh "$whereis_tree"
+compare 'unsupported long category option is rejected' whereis \
+        '"$TOOL" --binary foo' sh "$whereis_tree"
+subject 'list emits canonical existing directories' whereis \
+        '"$TOOL" -B "$1/bin" -l 2>/dev/null | grep -qx "bin: $1/bin"' sh "$whereis_tree"
+
 # Exact upstream executable denominator. The supported list is intentionally
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt copyfilerange exch fadvise fallocate findfs findmnt flock getino getopt hexdump ionice kill lsns mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
+supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hexdump ionice kill line logger look lsblk lscpu lsfd lslocks lsmem lsns mcookie mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid whereis'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

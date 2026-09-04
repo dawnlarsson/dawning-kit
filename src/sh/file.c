@@ -8316,6 +8316,827 @@ static b32 file_unlink()
         return 0;
 }
 
+// namei ---------------------------------------------------------------
+
+/* namei reports the walk rather than only its final answer.  The statx and
+   readlink operations remain the same shared metadata path used by stat,
+   find and readlink; this layer only remembers the component rows so owner
+   and group columns can be aligned without walking the filesystem twice. */
+#define NAMEI_LINK_LIMIT 20
+typedef struct
+{
+        file_facts facts;
+        string_address reason;
+        positive name_at;
+        positive target_at;
+        positive depth;
+        bool known;
+        bool mountpoint;
+} namei_row;
+
+static namei_row address_to namei_rows;
+static positive namei_row_count;
+static positive namei_row_room;
+static p8 address_to namei_text;
+static positive namei_text_used;
+static positive namei_text_room;
+static string_address namei_operand;
+static bool namei_no_symlinks;
+static bool namei_mounts;
+
+static const file_long namei_longs[] = {
+    {(string_address)"long", 'l'},
+    {(string_address)"modes", 'm'},
+    {(string_address)"owners", 'o'},
+    {(string_address)"mountpoints", 'x'},
+    {(string_address)"nosymlinks", 'n'},
+    {(string_address)"vertical", 'v'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool namei_save(string_address text, positive length,
+                       positive address_to offset)
+{
+        if (length == positive_max ||
+            !shell_array_room(namei_text, namei_text_room,
+                              namei_text_used + length + 1))
+        {
+                file_fail("namei: out of memory while recording path\n", 0);
+                return false;
+        }
+        address_to offset = namei_text_used;
+        memory_copy_apart_end(namei_text + namei_text_used, text, length);
+        namei_text_used += length + 1;
+        return true;
+}
+
+static bool namei_is_mountpoint(string_address path,
+                                file_facts address_to facts)
+{
+        if (!namei_mounts ||
+            (facts->mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return false;
+
+        p8 parent_path[FILE_PATH_MAX];
+        if (!file_path_join(parent_path, path, (string_address)".."))
+                return false;
+
+        file_facts parent;
+        if (!file_look(AT_FDCWD, parent_path, 0, address_of parent))
+                return false;
+
+        return facts->mount_id != parent.mount_id ||
+               (facts->inode == parent.inode &&
+                facts->device_major == parent.device_major &&
+                facts->device_minor == parent.device_minor);
+}
+
+static namei_row address_to namei_add(string_address name, positive length,
+                                      positive depth)
+{
+        if (!shell_array_room(namei_rows, namei_row_room,
+                              namei_row_count + 1))
+        {
+                file_fail("namei: out of memory while recording path\n", 0);
+                return null;
+        }
+
+        positive saved;
+        if (!namei_save(name, length, address_of saved))
+                return null;
+
+        namei_row address_to row = namei_rows + namei_row_count++;
+        memory_fill(row, 0, sizeof(*row));
+        row->name_at = saved;
+        row->target_at = positive_max;
+        row->depth = depth;
+        return row;
+}
+
+static bool namei_join_component(p8 address_to into, string_address directory,
+                                 string_address component, positive length)
+{
+        positive head = string_length(directory);
+        positive slash = head && directory[head - 1] != '/';
+
+        if (head >= FILE_PATH_MAX || length >= FILE_PATH_MAX - head ||
+            slash >= FILE_PATH_MAX - head - length)
+                return false;
+
+        memory_copy_apart(into, directory, head);
+        if (slash)
+                into[head++] = '/';
+        memory_copy_apart_end(into + head, component, length);
+        return true;
+}
+
+/* Resolve one written sequence from base.  Symlink text is recursively
+   walked at one deeper display level, while the caller's remaining suffix
+   resumes at its original level.  current is always the actual absolute
+   directory/object reached, so . and .. after a link keep kernel semantics. */
+static bool namei_walk(string_address path, string_address base,
+                       positive depth, positive address_to hops,
+                       p8 address_to resolved)
+{
+        positive length = string_length(path);
+        bool absolute = length && path[0] == '/';
+        bool trailing = length > 1 && path[length - 1] == '/';
+        p8 current[FILE_PATH_MAX];
+
+        if (absolute)
+        {
+                string_copy_end(current, "/");
+                namei_row address_to root = namei_add("/", 1, depth);
+                if (!root)
+                        return false;
+                bipolar told = file_look_code(AT_FDCWD, "/",
+                                              AT_SYMLINK_NOFOLLOW,
+                                              address_of root->facts);
+                if (told < 0)
+                {
+                        root->reason = file_reason(told);
+                        return false;
+                }
+                root->known = true;
+                root->mountpoint = namei_mounts;
+        }
+        else
+                string_copy_max_end(current, base, FILE_PATH_MAX - 1);
+
+        positive at = 0;
+        namei_row address_to last = null;
+        while (at < length)
+        {
+                while (at < length && path[at] == '/')
+                        at++;
+                if (at == length)
+                        break;
+
+                positive start = at;
+                while (at < length && path[at] != '/')
+                        at++;
+                positive part = at - start;
+                p8 candidate[FILE_PATH_MAX];
+                if (!namei_join_component(candidate, current,
+                                          path + start, part))
+                {
+                        string_format(file_fail, "namei: %s: %s\n",
+                                      namei_operand,
+                                      file_reason(-ERROR_NAME_TOO_LONG));
+                        return false;
+                }
+
+                namei_row address_to row = namei_add(path + start, part,
+                                                     depth);
+                if (!row)
+                        return false;
+                last = row;
+                bipolar told = file_look_code(AT_FDCWD, candidate,
+                                              AT_SYMLINK_NOFOLLOW,
+                                              address_of row->facts);
+                if (told < 0)
+                {
+                        row->reason = file_reason(told);
+                        return false;
+                }
+                row->known = true;
+                row->mountpoint = namei_is_mountpoint(candidate,
+                                                      address_of row->facts);
+
+                if ((row->facts.mode & MODE_FORMAT) == MODE_LINK)
+                {
+                        p8 target[FILE_PATH_MAX];
+                        bipolar target_length = file_link_text(
+                            candidate, target, sizeof(target));
+                        if (target_length < 0)
+                        {
+                                row->reason = file_reason(target_length);
+                                return false;
+                        }
+                        if (!namei_save(target, (positive)target_length,
+                                        address_of row->target_at))
+                                return false;
+
+                        if (!namei_no_symlinks)
+                        {
+                                if ((address_to hops)++ >= NAMEI_LINK_LIMIT)
+                                {
+                                        string_format(file_fail,
+                                                      "namei: %s: exceeded limit of symlinks\n",
+                                                      namei_operand);
+                                        return false;
+                                }
+
+                                p8 followed[FILE_PATH_MAX];
+                                if (!namei_walk(target, current, depth + 1,
+                                                hops, followed))
+                                        return false;
+                                string_copy_max_end(current, followed,
+                                                    FILE_PATH_MAX - 1);
+                                continue;
+                        }
+                }
+
+                if (part == 1 && path[start] == '.')
+                        continue;
+                if (part == 2 && path[start] == '.' && path[start + 1] == '.')
+                {
+                        p8 actual[FILE_PATH_MAX];
+                        if (!file_real(candidate, actual))
+                                return false;
+                        string_copy_max_end(current, actual, FILE_PATH_MAX - 1);
+                }
+                else
+                        string_copy_max_end(current, candidate,
+                                            FILE_PATH_MAX - 1);
+        }
+
+        if (trailing && last)
+        {
+                file_facts through;
+                if (!file_look(AT_FDCWD, current, 0, address_of through) ||
+                    (through.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        return false;
+        }
+
+        string_copy_max_end(resolved, current, FILE_PATH_MAX - 1);
+        return true;
+}
+
+static fn namei_put_padding(positive count)
+{
+        writer_fill(log, count, ' ');
+}
+
+static fn namei_show(bool modes, bool owners, bool vertical)
+{
+        positive user_width = 0;
+        positive group_width = 0;
+        p8 label[FILE_NAME_MAX];
+
+        if (owners)
+                for (positive i = 0; i < namei_row_count; i++)
+                        if (namei_rows[i].known)
+                        {
+                                file_account_label(namei_rows[i].facts.owner,
+                                                   false, true, label);
+                                user_width = max(user_width,
+                                                 string_length(label));
+                                file_account_label(namei_rows[i].facts.group,
+                                                   true, true, label);
+                                group_width = max(group_width,
+                                                  string_length(label));
+                        }
+
+        for (positive i = 0; i < namei_row_count; i++)
+        {
+                namei_row address_to row = namei_rows + i;
+                if (!vertical)
+                        namei_put_padding(1 + row->depth * 2);
+
+                positive metadata = modes ? 10 : 1;
+                if (owners)
+                        metadata += 1 + user_width + 1 + group_width;
+
+                if (!row->known)
+                        namei_put_padding(metadata);
+                else
+                {
+                        if (modes)
+                        {
+                                p8 letters[11];
+                                file_mode_letters(letters, row->facts.mode);
+                                if (row->mountpoint)
+                                        letters[0] = 'D';
+                                log(letters, 10);
+                        }
+                        else
+                        {
+                                p8 kind = row->mountpoint
+                                    ? 'D' : file_kind_letter(row->facts.mode);
+                                log(address_of kind, 1);
+                        }
+
+                        if (owners)
+                        {
+                                log(" ", 1);
+                                file_account_label(row->facts.owner, false,
+                                                   true, label);
+                                string_to_field(log, label, user_width, ' ',
+                                                false);
+                                log(" ", 1);
+                                file_account_label(row->facts.group, true,
+                                                   true, label);
+                                string_to_field(log, label, group_width, ' ',
+                                                false);
+                        }
+                }
+
+                namei_put_padding(row->known ? 1 : 2);
+                if (vertical)
+                        namei_put_padding(row->depth * 2);
+                log(namei_text + row->name_at, 0);
+                if (row->target_at != positive_max)
+                {
+                        log(" -> ", 4);
+                        log(namei_text + row->target_at, 0);
+                }
+                if (row->reason)
+                {
+                        log(" - ", 3);
+                        log(row->reason, 0);
+                }
+                log("\n", 1);
+        }
+}
+
+static b32 file_namei()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"namei",
+            .allowed = (string_address)"lmoxnvhV",
+            .valued = (string_address)"",
+            .longs = namei_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log, "Usage: namei [options] pathname...\n");
+                log_flush();
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "namei from dawning-kit\n");
+                log_flush();
+                return 0;
+        }
+        if (!file_operand_count)
+        {
+                string_format(file_fail, "namei: pathname argument is missing\n");
+                return 1;
+        }
+
+        namei_row_count = 0;
+        namei_text_used = 0;
+
+        positive flags = taking.flags;
+        bool long_form = (flags & FILE_FLAG('l')) != 0;
+        bool modes = long_form || (flags & FILE_FLAG('m')) != 0;
+        bool owners = long_form || (flags & FILE_FLAG('o')) != 0;
+        bool vertical = long_form || (flags & FILE_FLAG('v')) != 0;
+        namei_no_symlinks = (flags & FILE_FLAG('n')) != 0;
+        namei_mounts = (flags & FILE_FLAG('x')) != 0;
+        b32 status = 0;
+
+        for (positive i = 0; i < file_operand_count; i++)
+        {
+                namei_row_count = 0;
+                namei_text_used = 0;
+                namei_operand = file_operand_at(i);
+                string_format(log, "f: %s\n", namei_operand);
+
+                positive hops = 0;
+                p8 resolved[FILE_PATH_MAX];
+                string_address cwd = working_directory_get();
+                if (!cwd || !namei_walk(namei_operand, cwd, 0,
+                                         address_of hops, resolved))
+                        status = 1;
+                namei_show(modes, owners, vertical);
+        }
+        log_flush();
+        return status;
+}
+
+// whereis ------------------------------------------------------------
+/*
+        The directory stream is the same getdents64 walker used by ls/find.
+        whereis only supplies the small policy layer: which directories to
+        visit, and which conventional source/manual suffixes are namesakes.
+        Keeping an identity beside the resolved spelling avoids rescanning a
+        directory mentioned through both PATH and the built-in list.
+*/
+enum
+{
+        WHEREIS_BINARY,
+        WHEREIS_MANUAL,
+        WHEREIS_SOURCE,
+        WHEREIS_KINDS
+};
+
+typedef struct
+{
+        p8 path[FILE_PATH_MAX];
+        file_facts facts;
+        p8 kind;
+} whereis_directory;
+
+typedef struct
+{
+        positive directory;
+        p8 name[256];
+} whereis_match;
+
+static whereis_directory address_to whereis_directories;
+static positive whereis_directory_count;
+static positive whereis_directory_room;
+static whereis_match address_to whereis_matches;
+static positive whereis_match_count;
+static positive whereis_match_room;
+
+static bool whereis_add_directory(positive kind, string_address path)
+{
+        p8 resolved[FILE_PATH_MAX];
+        file_facts facts;
+
+        if (!path || !file_real(path, resolved) ||
+            !file_look(AT_FDCWD, resolved, 0, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return true; // Search-list holes and races are not errors.
+
+        for (positive i = 0; i < whereis_directory_count; i++)
+                if (whereis_directories[i].kind == kind &&
+                    file_same_identity(address_of whereis_directories[i].facts,
+                                       address_of facts))
+                        return true;
+
+        if (!shell_array_room(whereis_directories, whereis_directory_room,
+                              whereis_directory_count + 1))
+        {
+                string_format(file_fail,
+                              "whereis: out of memory while recording search paths\n");
+                return false;
+        }
+
+        whereis_directory address_to directory =
+            whereis_directories + whereis_directory_count++;
+        string_copy_max_end(directory->path, resolved, FILE_PATH_MAX - 1);
+        directory->facts = facts;
+        directory->kind = (p8)kind;
+        return true;
+}
+
+static bool whereis_add_environment(positive kind, string_address value)
+{
+        if (!value)
+                return true;
+
+        path_walk walk = {.at = value};
+        while (path_walk_next(address_of walk))
+        {
+                p8 directory[FILE_PATH_MAX];
+
+                if (!walk.length)
+                        string_copy_max_end(directory, (string_address)".",
+                                            FILE_PATH_MAX - 1);
+                else
+                {
+                        if (walk.length >= FILE_PATH_MAX)
+                                continue;
+                        memory_copy_apart_end(directory, walk.segment,
+                                             walk.length);
+                }
+
+                if (!whereis_add_directory(kind, directory))
+                        return false;
+        }
+        return true;
+}
+
+static bool whereis_add_children(positive kind, string_address root)
+{
+        file_walk walk;
+        if (!file_walk_open(address_of walk, AT_FDCWD, root))
+                return true;
+
+        struct linux_dirent64 address_to entry;
+        bool okay = true;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                p8 path[FILE_PATH_MAX];
+
+                if (file_is_dot(entry->d_name) ||
+                    !file_path_join(path, root, entry->d_name))
+                        continue;
+                if (!whereis_add_directory(kind, path))
+                {
+                        okay = false;
+                        break;
+                }
+        }
+        file_walk_close(address_of walk);
+        return okay;
+}
+
+static bool whereis_add_defaults(positive kind)
+{
+        static const string_address binary[] = {
+            (string_address)"/usr/bin",       (string_address)"/usr/lib",
+            (string_address)"/usr/lib32",     (string_address)"/etc",
+            (string_address)"/usr/local/bin", (string_address)"/usr/local/sbin",
+            (string_address)"/usr/local/etc", (string_address)"/usr/local/lib",
+            (string_address)"/usr/local/games", (string_address)"/usr/include",
+            (string_address)"/usr/local",     (string_address)"/usr/share",
+            null};
+
+        if (kind == WHEREIS_BINARY)
+        {
+                for (positive i = 0; binary[i]; i++)
+                        if (!whereis_add_directory(kind, binary[i]))
+                                return false;
+                return whereis_add_environment(kind,
+                                               file_environment((string_address)"PATH"));
+        }
+
+        if (kind == WHEREIS_MANUAL)
+        {
+                if (!whereis_add_children(kind, (string_address)"/usr/share/man") ||
+                    !whereis_add_directory(kind, (string_address)"/usr/share/info"))
+                        return false;
+                return whereis_add_environment(
+                    kind, file_environment((string_address)"MANPATH"));
+        }
+
+        return whereis_add_children(kind, (string_address)"/usr/src");
+}
+
+static bool whereis_compression(string_address suffix)
+{
+        static const string_address names[] = {
+            (string_address)"gz",   (string_address)"bz2",
+            (string_address)"xz",   (string_address)"zst",
+            (string_address)"lz",   (string_address)"lzma",
+            (string_address)"lzo",  (string_address)"Z", null};
+
+        for (positive i = 0; names[i]; i++)
+                if (string_equals(suffix, names[i]))
+                        return true;
+        return false;
+}
+
+/* One conventional suffix belongs to a source or manual name.  Manuals may
+   additionally carry one compression suffix.  s.NAME is SCCS source syntax. */
+static bool whereis_suffix_match(positive kind, string_address query,
+                                 string_address candidate)
+{
+        if (kind == WHEREIS_SOURCE && candidate[0] == 's' &&
+            candidate[1] == '.')
+                candidate += 2;
+
+        positive wanted = string_length(query);
+        positive have = string_length(candidate);
+        if (have < wanted || string_compare_max(candidate, query, wanted))
+                return false;
+        if (have == wanted)
+                return true;
+        if (candidate[wanted] != '.')
+                return false;
+
+        string_address suffix = candidate + wanted + 1;
+        string_address second = string_first_of_or_end(suffix, '.');
+        if (!string_get(second))
+                return true;
+
+        return kind == WHEREIS_MANUAL && whereis_compression(second + 1) &&
+               !string_first_of(second + 1, '.');
+}
+
+static bool whereis_name_matches(positive kind, string_address query,
+                                 string_address candidate, bool glob)
+{
+        if (glob)
+                return shell_match(query, candidate);
+        if (kind == WHEREIS_BINARY)
+                return string_equals(query, candidate);
+        return whereis_suffix_match(kind, query, candidate);
+}
+
+static bool whereis_scan(positive kind, string_address query, bool glob)
+{
+        for (positive directory_at = 0;
+             directory_at < whereis_directory_count; directory_at++)
+        {
+                whereis_directory address_to directory =
+                    whereis_directories + directory_at;
+                if (directory->kind != kind)
+                        continue;
+
+                file_walk walk;
+                if (!file_walk_open(address_of walk, AT_FDCWD,
+                                    directory->path))
+                        continue;
+
+                struct linux_dirent64 address_to entry;
+                while ((entry = file_walk_next(address_of walk)))
+                {
+                        if (file_is_dot(entry->d_name) ||
+                            !whereis_name_matches(kind, query, entry->d_name,
+                                                  glob))
+                                continue;
+                        if (!shell_array_room(whereis_matches,
+                                              whereis_match_room,
+                                              whereis_match_count + 1))
+                        {
+                                file_walk_close(address_of walk);
+                                string_format(file_fail,
+                                              "whereis: out of memory while recording matches\n");
+                                return false;
+                        }
+
+                        whereis_match address_to match =
+                            whereis_matches + whereis_match_count++;
+                        match->directory = directory_at;
+                        string_copy_max_end(match->name, entry->d_name, 255);
+                }
+                file_walk_close(address_of walk);
+
+                /* Matches stay in the kernel directory order, as util-linux does. */
+        }
+        return true;
+}
+
+static bool whereis_long(string_address word, string_address name)
+{
+        return word[0] == '-' && word[1] == '-' &&
+               string_equals(word + 2, name);
+}
+
+static b32 file_whereis()
+{
+        positive count = (positive)program_argument_count();
+        bool selected[WHEREIS_KINDS] = {false, false, false};
+        bool custom[WHEREIS_KINDS] = {false, false, false};
+        bool unusual = false;
+        bool glob = false;
+        bool list = false;
+        bool names = false;
+        bipolar collecting = -1;
+        b32 status = 0;
+
+        whereis_directory_count = 0;
+        whereis_match_count = 0;
+        file_operands_begin();
+
+        for (positive i = 1; i < count; i++)
+        {
+                string_address word = program_argument((b32)i);
+
+                if (names)
+                {
+                        file_operand((b32)i);
+                        continue;
+                }
+                if (collecting >= 0 && word[0] != '-')
+                {
+                        if (!whereis_add_directory((positive)collecting, word))
+                                return 1;
+                        continue;
+                }
+                collecting = -1;
+
+                if (string_equals(word, (string_address)"-f") ||
+                    string_equals(word, (string_address)"--"))
+                {
+                        names = true;
+                        continue;
+                }
+                if (string_equals(word, (string_address)"-h") ||
+                    whereis_long(word, (string_address)"help"))
+                {
+                        string_format(
+                            log,
+                            "Usage: whereis [options] NAME...\n"
+                            "  -b, -m, -s       search binaries, manuals, sources\n"
+                            "  -B, -M, -S DIR... -f  set category search paths\n"
+                            "  -u unusual  -g glob  -l list paths\n");
+                        return 0;
+                }
+                if (string_equals(word, (string_address)"-V") ||
+                    whereis_long(word, (string_address)"version"))
+                {
+                        string_format(log, "whereis from dawning-kit\n");
+                        return 0;
+                }
+                if (word[0] == '-' && word[1])
+                {
+                        for (positive at = 1; word[at]; at++)
+                        {
+                                p8 option = word[at];
+                                if (option == 'b')
+                                        selected[WHEREIS_BINARY] = true;
+                                else if (option == 'm')
+                                        selected[WHEREIS_MANUAL] = true;
+                                else if (option == 's')
+                                        selected[WHEREIS_SOURCE] = true;
+                                else if (option == 'u')
+                                        unusual = true;
+                                else if (option == 'g')
+                                        glob = true;
+                                else if (option == 'l')
+                                        list = true;
+                                else if (option == 'B' || option == 'M' ||
+                                         option == 'S')
+                                {
+                                        collecting = option == 'B'
+                                                         ? WHEREIS_BINARY
+                                                         : option == 'M'
+                                                               ? WHEREIS_MANUAL
+                                                               : WHEREIS_SOURCE;
+                                        custom[collecting] = true;
+                                        if (word[at + 1])
+                                        {
+                                                if (!whereis_add_directory(
+                                                        (positive)collecting,
+                                                        word + at + 1))
+                                                        return 1;
+                                                collecting = -1;
+                                        }
+                                        break;
+                                }
+                                else
+                                {
+                                        string_format(file_fail,
+                                                      "whereis: invalid option -- '%c'\n",
+                                                      option);
+                                        return 1;
+                                }
+                        }
+                }
+                else
+                        file_operand((b32)i);
+        }
+
+        if (file_operand_failed)
+        {
+                string_format(file_fail, "whereis: out of memory\n");
+                return 1;
+        }
+
+        if (!selected[0] && !selected[1] && !selected[2])
+                selected[0] = selected[1] = selected[2] = true;
+
+        for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
+                if ((selected[kind] && !custom[kind]) || list)
+                        if (!whereis_add_defaults(kind))
+                                return 1;
+
+        if (list)
+        {
+                static const string_address label[] = {
+                    (string_address)"bin", (string_address)"man",
+                    (string_address)"src"};
+                for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
+                        for (positive i = 0; i < whereis_directory_count; i++)
+                                if (whereis_directories[i].kind == kind)
+                                        string_format(log, "%s: %s\n",
+                                                      label[kind],
+                                                      whereis_directories[i].path);
+        }
+
+        if (!file_operand_count)
+        {
+                if (list)
+                {
+                        log_flush();
+                        return 0;
+                }
+                string_format(file_fail, "whereis: missing name\n");
+                return 1;
+        }
+
+        for (positive operand = 0; operand < file_operand_count; operand++)
+        {
+                string_address query =
+                    file_last_component(file_operand_at(operand));
+                whereis_match_count = 0;
+
+                for (positive kind = 0; kind < WHEREIS_KINDS; kind++)
+                        if (selected[kind] && !whereis_scan(kind, query, glob))
+                                return 1;
+
+                if (unusual && whereis_match_count <= 1)
+                        continue;
+
+                string_format(log, "%s:", query);
+                for (positive i = 0; i < whereis_match_count; i++)
+                {
+                        whereis_match address_to match = whereis_matches + i;
+                        string_format(log, " %s/%s",
+                                      whereis_directories[match->directory].path,
+                                      match->name);
+                }
+                string_format(log, "\n");
+        }
+        log_flush();
+        return status;
+}
+
 // readlink ------------------------------------------------------------
 /*
         readlink [-f|-e|-m] [-n] [-q] [-z] FILE...

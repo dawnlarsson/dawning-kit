@@ -90,6 +90,939 @@ static b32 tools_hostid()
         return text_done(0);
 }
 
+// logger ----------------------------------------------------
+
+/*
+        logger is a formatter in front of the socket layer, not another
+        network stack.  The connected Unix/IPv4 sockets below are the same
+        socket_new/socket_connect/socket_send floor used by DNS and HTTP, and
+        input is the text reader used by the line tools.  One arena slice is
+        retained for the whole invocation so neither a message nor a refill
+        allocates.
+
+        Linux credentials are deliberately not forged for --id.  The value
+        belongs in PROCID/the traditional tag and is emitted there, but the
+        SCM_CREDENTIALS extension which can impersonate another extant task
+        as root is a privilege operation rather than syslog framing.  The
+        receiving kernel still supplies the logger process's real credentials.
+*/
+
+#define LOGGER_DEFAULT_SIZE 1024
+#define LOGGER_HEADER_ROOM 4096
+#define LOGGER_FRAME_ROOM 64
+#define LOGGER_UNIX_PATH 108
+
+enum
+{
+        LOGGER_PROTOCOL_LOCAL,
+        LOGGER_PROTOCOL_3164,
+        LOGGER_PROTOCOL_5424,
+};
+
+enum
+{
+        LOGGER_TRANSPORT_ANY,
+        LOGGER_TRANSPORT_DGRAM,
+        LOGGER_TRANSPORT_STREAM,
+};
+
+typedef struct
+{
+        bipolar handle;
+        positive priority;
+        positive process;
+        positive maximum;
+        p8 protocol;
+        p8 transport;
+        bool protocol_given;
+        bool octet_count;
+        bool standard_error;
+        bool no_action;
+        bool socket_errors;
+        bool skip_empty;
+        bool priority_prefix;
+        bool rfc_time;
+        bool rfc_quality;
+        bool rfc_host;
+        string_address tag;
+        string_address server;
+        string_address port;
+        string_address socket_path;
+        string_address message_id;
+        p8 login[FILE_NAME_MAX];
+        p8 hostname[65];
+        p8 address_to workspace;
+        p8 address_to body;
+} logger_control;
+
+typedef struct
+{
+        p8 address_to bytes;
+        positive used;
+        positive room;
+        bool failed;
+} logger_builder;
+
+static fn logger_build_bytes(logger_builder address_to build,
+                             address_any bytes, positive length)
+{
+        if (build->failed || length > build->room - min(build->used, build->room))
+        {
+                build->failed = true;
+                return;
+        }
+
+        memory_copy(build->bytes + build->used, bytes, length);
+        build->used += length;
+}
+
+static fn logger_build_string(logger_builder address_to build,
+                              string_address text)
+{
+        logger_build_bytes(build, text, string_length(text));
+}
+
+static fn logger_build_character(logger_builder address_to build, p8 character)
+{
+        logger_build_bytes(build, address_of character, 1);
+}
+
+static fn logger_build_positive(logger_builder address_to build, positive value)
+{
+        p8 digits[24];
+        positive length = positive_into(digits, value);
+        logger_build_bytes(build, digits, length);
+}
+
+static fn logger_build_padded(logger_builder address_to build, positive value,
+                              positive width)
+{
+        p8 digits[24];
+        positive length = positive_into_padded(digits, value, width, '0');
+        logger_build_bytes(build, digits, length);
+}
+
+static bool logger_named(string_address given, string_address expected)
+{
+        return string_compare_folded(given, expected) == 0;
+}
+
+typedef struct
+{
+        string_address name;
+        p8 value;
+} logger_name;
+
+static const logger_name logger_facilities[] = {
+    {(string_address)"kern", 0},       {(string_address)"user", 8},
+    {(string_address)"mail", 16},      {(string_address)"daemon", 24},
+    {(string_address)"auth", 32},      {(string_address)"security", 32},
+    {(string_address)"syslog", 40},    {(string_address)"lpr", 48},
+    {(string_address)"news", 56},      {(string_address)"uucp", 64},
+    {(string_address)"cron", 72},      {(string_address)"authpriv", 80},
+    {(string_address)"ftp", 88},       {(string_address)"local0", 128},
+    {(string_address)"local1", 136},   {(string_address)"local2", 144},
+    {(string_address)"local3", 152},   {(string_address)"local4", 160},
+    {(string_address)"local5", 168},   {(string_address)"local6", 176},
+    {(string_address)"local7", 184},   {null, 0},
+};
+
+static const logger_name logger_levels[] = {
+    {(string_address)"emerg", 0},   {(string_address)"panic", 0},
+    {(string_address)"alert", 1},   {(string_address)"crit", 2},
+    {(string_address)"err", 3},     {(string_address)"error", 3},
+    {(string_address)"warning", 4}, {(string_address)"warn", 4},
+    {(string_address)"notice", 5},  {(string_address)"info", 6},
+    {(string_address)"debug", 7},   {null, 0},
+};
+
+static bipolar logger_decode(string_address word,
+                             const logger_name address_to names)
+{
+        positive number;
+
+        if (string_digits_exact(word, address_of number))
+        {
+                for (positive at = 0; names[at].name; at++)
+                        if (names[at].value == number)
+                                return (bipolar)number;
+                return -1;
+        }
+
+        for (positive at = 0; names[at].name; at++)
+                if (logger_named(word, names[at].name))
+                        return names[at].value;
+
+        return -1;
+}
+
+static bool logger_priority(string_address word, positive address_to priority)
+{
+        p8 facility_text[32];
+        string_address dot = string_first_of(word, '.');
+        bipolar facility = 8;
+        string_address level_text = word;
+
+        if (dot)
+        {
+                positive length = (positive)(dot - word);
+                if (!length || length >= sizeof(facility_text))
+                        return false;
+                memory_copy(facility_text, word, length);
+                facility_text[length] = end;
+                facility = logger_decode(facility_text, logger_facilities);
+                level_text = dot + 1;
+        }
+
+        bipolar level = logger_decode(level_text, logger_levels);
+        if (facility < 0 || level < 0)
+                return false;
+
+        /* LOG_KERN cannot be originated by a user process. */
+        if (!facility)
+                facility = 8;
+        address_to priority = ((positive)facility & 0xf8) |
+                              ((positive)level & 7);
+        return true;
+}
+
+static bool logger_size(string_address text, positive address_to size)
+{
+        positive digits;
+        p64 value = string_digits_max(text, 20, address_of digits);
+        if (!digits || digits == 20)
+                return false;
+        text += digits;
+
+        p8 power = file_size_power(string_get(text), true);
+        if (power)
+        {
+                text++;
+                p64 base = 1024;
+                if (string_is(text, 'B'))
+                {
+                        base = 1000;
+                        text++;
+                }
+                else if (string_is(text, 'i') && string_is(text + 1, 'B'))
+                        text += 2;
+
+                while (power--)
+                {
+                        if (value > (p64)positive_max / base)
+                                return false;
+                        value *= base;
+                }
+        }
+
+        if (string_get(text) || !value || value > TEXT_ARENA_BYTES -
+                                                 LOGGER_HEADER_ROOM - 2)
+                return false;
+
+        address_to size = (positive)value;
+        return true;
+}
+
+static bool logger_rfc_flags(logger_control address_to control,
+                             string_address flags)
+{
+        while (flags && string_get(flags))
+        {
+                string_address comma = string_first_of(flags, ',');
+                positive length = comma ? (positive)(comma - flags)
+                                        : string_length(flags);
+
+                if (length == 6 && !string_compare_max(flags, "notime", 6))
+                {
+                        control->rfc_time = false;
+                        control->rfc_quality = false;
+                }
+                else if (length == 4 && !string_compare_max(flags, "notq", 4))
+                        control->rfc_quality = false;
+                else if (length == 6 && !string_compare_max(flags, "nohost", 6))
+                        control->rfc_host = false;
+                else
+                        return false;
+
+                flags += length;
+                if (comma)
+                        flags++;
+        }
+
+        return true;
+}
+
+static positive logger_timestamp_3164(logger_builder address_to build,
+                                      p64 seconds)
+{
+        time_t stamp = (time_t)seconds;
+        tm broken;
+        p8 time_text[32];
+
+        if (!localtime_r(address_of stamp, address_of broken))
+                return 0;
+
+        positive length = strftime(time_text, sizeof(time_text),
+                                   (string_address)"%b %e %H:%M:%S",
+                                   address_of broken);
+        if (!length)
+                return 0;
+        logger_build_bytes(build, time_text, length);
+        return length;
+}
+
+static positive logger_timestamp_5424(logger_builder address_to build,
+                                      p64 seconds, positive nanoseconds)
+{
+        time_t stamp = (time_t)seconds;
+        tm broken;
+        p8 time_text[32];
+
+        if (!localtime_r(address_of stamp, address_of broken))
+                return 0;
+
+        positive length = strftime(time_text, sizeof(time_text),
+                                   (string_address)"%Y-%m-%dT%H:%M:%S",
+                                   address_of broken);
+        if (!length)
+                return 0;
+        logger_build_bytes(build, time_text, length);
+        logger_build_character(build, '.');
+        logger_build_padded(build, nanoseconds / 1000, 6);
+        logger_build_string(build, "+00:00");
+        return length + 13;
+}
+
+static bool logger_header(logger_control address_to control,
+                          p8 address_to into, positive room,
+                          positive priority, positive address_to length)
+{
+        logger_builder build = {.bytes = into, .room = room};
+        p64 now[2] = {0, 0};
+        if (control->protocol != LOGGER_PROTOCOL_5424 || control->rfc_time)
+                system_call_2(syscall(clock_gettime), CLOCK_REALTIME,
+                              (positive)now);
+
+        logger_build_character(address_of build, '<');
+        logger_build_positive(address_of build, priority);
+        logger_build_character(address_of build, '>');
+
+        if (control->protocol == LOGGER_PROTOCOL_5424)
+        {
+                logger_build_string(address_of build, "1 ");
+                if (control->rfc_time)
+                {
+                        if (!logger_timestamp_5424(address_of build, now[0],
+                                                   (positive)now[1]))
+                                return false;
+                }
+                else
+                        logger_build_character(address_of build, '-');
+
+                logger_build_character(address_of build, ' ');
+                logger_build_string(address_of build,
+                                    control->rfc_host ? control->hostname
+                                                      : (string_address)"-");
+                logger_build_character(address_of build, ' ');
+                logger_build_string(address_of build, control->tag);
+                logger_build_character(address_of build, ' ');
+                if (control->process)
+                        logger_build_positive(address_of build, control->process);
+                else
+                        logger_build_character(address_of build, '-');
+                logger_build_character(address_of build, ' ');
+                logger_build_string(address_of build,
+                                    control->message_id ? control->message_id
+                                                        : (string_address)"-");
+                logger_build_character(address_of build, ' ');
+                if (control->rfc_quality)
+                        logger_build_string(address_of build,
+                            "[timeQuality tzKnown=\"1\" isSynced=\"0\"]");
+                else
+                        logger_build_character(address_of build, '-');
+                logger_build_character(address_of build, ' ');
+        }
+        else
+        {
+                if (!logger_timestamp_3164(address_of build, now[0]))
+                        return false;
+                logger_build_character(address_of build, ' ');
+
+                if (control->protocol == LOGGER_PROTOCOL_3164)
+                {
+                        positive host_length = string_length(control->hostname);
+                        string_address dot = string_first_of(control->hostname, '.');
+                        if (dot)
+                                host_length = (positive)(dot - control->hostname);
+                        logger_build_bytes(address_of build, control->hostname,
+                                           host_length);
+                        logger_build_character(address_of build, ' ');
+                }
+
+                positive tag_length = string_length(control->tag);
+                if (control->protocol == LOGGER_PROTOCOL_3164 && tag_length > 200)
+                        tag_length = 200;
+                logger_build_bytes(address_of build, control->tag, tag_length);
+                if (control->process)
+                {
+                        logger_build_character(address_of build, '[');
+                        logger_build_positive(address_of build, control->process);
+                        logger_build_character(address_of build, ']');
+                }
+                logger_build_string(address_of build, ": ");
+        }
+
+        if (build.failed)
+                return false;
+        address_to length = build.used;
+        return true;
+}
+
+#if defined(LINUX) && !defined(KERNEL_MODE)
+typedef struct
+{
+        p16 family;
+        p8 path[LOGGER_UNIX_PATH];
+} logger_unix_address;
+
+static bipolar logger_connect_kind(logger_control address_to control,
+                                   p8 transport)
+{
+        b32 kind = transport == LOGGER_TRANSPORT_STREAM ? SOCK_STREAM
+                                                        : SOCK_DGRAM;
+        bipolar handle = socket_new(control->server ? AF_INET : AF_UNIX,
+                                    kind | SOCK_CLOEXEC, 0);
+        if (handle < 0)
+                return handle;
+
+        bipolar connected;
+        if (control->server)
+        {
+                bipolar host = string_to_host(control->server);
+                if (host < 0)
+                {
+                        p32 found;
+                        if (dns_resolve_any((string_address)"/etc/resolv.conf",
+                                            control->server, address_of found,
+                                            3))
+                        {
+                                socket_close((b32)handle);
+                                return -ERROR_NO_ENTRY;
+                        }
+                        host = (bipolar)found;
+                }
+
+                positive port = transport == LOGGER_TRANSPORT_STREAM ? 601 : 514;
+                if (control->port &&
+                    (!string_digits_exact(control->port, address_of port) ||
+                     !port || port > 65535))
+                {
+                        socket_close((b32)handle);
+                        return -ERROR_INVALID;
+                }
+
+                socket_address_internet where = {
+                    .family = AF_INET,
+                    .port = network_order_16((p16)port),
+                    .host = network_order_32((p32)host),
+                };
+                connected = socket_connect((b32)handle, address_of where,
+                                           sizeof(where));
+        }
+        else
+        {
+                logger_unix_address where = {.family = AF_UNIX};
+                string_address path = control->socket_path
+                                          ? control->socket_path
+                                          : (string_address)"/dev/log";
+                positive length = string_length(path);
+                if (!length || length >= sizeof(where.path))
+                {
+                        socket_close((b32)handle);
+                        return -ERROR_INVALID;
+                }
+                memory_copy(where.path, path, length + 1);
+                connected = socket_connect((b32)handle, address_of where,
+                                           sizeof(where));
+        }
+
+        if (connected < 0)
+        {
+                socket_close((b32)handle);
+                return connected;
+        }
+
+        control->transport = transport;
+        return handle;
+}
+
+static bool logger_connect(logger_control address_to control)
+{
+        if (control->handle >= 0)
+                socket_close((b32)control->handle);
+        control->handle = -1;
+
+        if (control->no_action)
+                return true;
+
+        if (control->transport != LOGGER_TRANSPORT_STREAM)
+                control->handle = logger_connect_kind(control,
+                                                     LOGGER_TRANSPORT_DGRAM);
+        if (control->handle < 0 && control->transport != LOGGER_TRANSPORT_DGRAM)
+                control->handle = logger_connect_kind(control,
+                                                     LOGGER_TRANSPORT_STREAM);
+
+        if (control->handle >= 0)
+                return true;
+
+        if (control->server || control->socket_errors)
+        {
+                text_error(control->server ? control->server
+                                           : control->socket_path,
+                           "cannot connect to logging socket");
+                return false;
+        }
+        return true;
+}
+
+static bool logger_send_once(logger_control address_to control,
+                             p8 address_to bytes, positive length)
+{
+        if (control->no_action || control->handle < 0)
+                return true;
+
+        if (control->transport == LOGGER_TRANSPORT_DGRAM)
+                return socket_send((b32)control->handle, bytes, length,
+                                   MSG_NOSIGNAL, null, 0) == (bipolar)length;
+
+        positive sent = 0;
+        while (sent < length)
+        {
+                bipolar wrote = socket_send((b32)control->handle, bytes + sent,
+                                            length - sent, MSG_NOSIGNAL,
+                                            null, 0);
+                if (wrote <= 0)
+                        return false;
+                sent += (positive)wrote;
+        }
+        return true;
+}
+#endif
+
+static bool logger_emit(logger_control address_to control,
+                        positive length, positive priority)
+{
+#if defined(LINUX) && !defined(KERNEL_MODE)
+        p8 address_to content = control->workspace + LOGGER_FRAME_ROOM;
+        positive header_length;
+
+        if (!logger_header(control, content, LOGGER_HEADER_ROOM -
+                                             LOGGER_FRAME_ROOM,
+                           priority, address_of header_length))
+        {
+                text_error(null, "cannot construct syslog header");
+                return false;
+        }
+
+        memory_copy(content + header_length, control->body, length);
+        positive content_length = header_length + length;
+        p8 address_to wire = content;
+        positive wire_length = content_length;
+
+        if (control->octet_count)
+        {
+                p8 digits[24];
+                positive digit_count = positive_into(digits, content_length);
+                wire = control->workspace;
+                memory_copy(wire, digits, digit_count);
+                wire[digit_count] = ' ';
+                memory_copy(wire + digit_count + 1, content, content_length);
+                wire_length += digit_count + 1;
+        }
+        else if (control->transport == LOGGER_TRANSPORT_STREAM)
+                wire[wire_length++] = '\n';
+
+        bool sent = logger_send_once(control, wire, wire_length);
+        if (!sent)
+        {
+                if (logger_connect(control))
+                        sent = logger_send_once(control, wire, wire_length);
+                if (!sent)
+                        text_error(null, "send message failed");
+        }
+
+        if (control->standard_error)
+        {
+                text_out_to(2);
+                text_put(wire, wire_length);
+                if (!wire_length || wire[wire_length - 1] != '\n')
+                        text_put_character('\n');
+                text_flush();
+                text_out_to(1);
+        }
+
+        return sent;
+#else
+        (void)control;
+        (void)length;
+        (void)priority;
+        return false;
+#endif
+}
+
+static bool logger_message_id_valid(string_address message_id)
+{
+        if (!message_id || !string_get(message_id))
+                return false;
+        for (string_address at = message_id; string_get(at); at++)
+                if (byte_is_space(string_get(at)))
+                        return false;
+        return true;
+}
+
+static bool logger_stream(logger_control address_to control,
+                          string_address path)
+{
+        if (!text_open(path))
+                return false;
+
+        bool answer = true;
+        positive default_priority = control->priority;
+        while (text_line_next())
+        {
+                positive from = 0;
+                positive priority = default_priority;
+
+                if (control->priority_prefix && text_line_length >= 3 &&
+                    text_line[0] == '<')
+                {
+                        positive at = 1;
+                        positive prefixed = 0;
+                        while (at < text_line_length && at <= 3 &&
+                               byte_is_digit(text_line[at]))
+                        {
+                                prefixed = prefixed * 10 + text_line[at] - '0';
+                                at++;
+                        }
+                        if (at < text_line_length && text_line[at] == '>' &&
+                            at > 1 && prefixed <= 191)
+                        {
+                                if (!(prefixed & 0xf8))
+                                        prefixed |= default_priority & 0xf8;
+                                priority = prefixed;
+                                from = at + 1;
+                        }
+                }
+
+                positive available = text_line_length - from;
+                if (!available)
+                {
+                        if (!control->skip_empty)
+                                answer &= logger_emit(control, 0, priority);
+                        continue;
+                }
+
+                while (available)
+                {
+                        positive take = min(available, control->maximum);
+                        memory_copy(control->body, text_line + from, take);
+                        answer &= logger_emit(control, take, priority);
+                        from += take;
+                        available -= take;
+                }
+        }
+
+        if (text_input.failed)
+                answer = false;
+        text_close();
+        return answer;
+}
+
+static bool logger_operands(logger_control address_to control, positive first)
+{
+        positive count = (positive)program_argument_count();
+        positive used = 0;
+        bool answer = true;
+
+        for (positive index = first; index < count; index++)
+        {
+                string_address word = program_argument((b32)index);
+                positive length = string_length(word);
+
+                if (length > control->maximum)
+                {
+                        if (used)
+                        {
+                                answer &= logger_emit(control, used,
+                                                      control->priority);
+                                used = 0;
+                        }
+                        memory_copy(control->body, word, control->maximum);
+                        answer &= logger_emit(control, control->maximum,
+                                              control->priority);
+                        continue;
+                }
+
+                positive need = length + (used ? 1 : 0);
+                if (need > control->maximum - min(used, control->maximum))
+                {
+                        answer &= logger_emit(control, used, control->priority);
+                        used = 0;
+                }
+                if (used)
+                        control->body[used++] = ' ';
+                memory_copy(control->body + used, word, length);
+                used += length;
+        }
+
+        if (used)
+                answer &= logger_emit(control, used, control->priority);
+        return answer;
+}
+
+static const file_long logger_longs[] = {
+    {(string_address)"skip-empty", 'e'},
+    {(string_address)"file", 'f'},
+    {(string_address)"id", 'I'},
+    {(string_address)"priority", 'p'},
+    {(string_address)"stderr", 's'},
+    {(string_address)"size", 'S'},
+    {(string_address)"tag", 't'},
+    {(string_address)"socket", 'u'},
+    {(string_address)"udp", 'd'},
+    {(string_address)"tcp", 'T'},
+    {(string_address)"server", 'n'},
+    {(string_address)"port", 'P'},
+    {(string_address)"no-act", 'A'},
+    {(string_address)"octet-count", 'O'},
+    {(string_address)"prio-prefix", 'q'},
+    {(string_address)"rfc3164", '3'},
+    {(string_address)"rfc5424", '4'},
+    {(string_address)"msgid", 'm'},
+    {(string_address)"socket-errors", 'E'},
+    {(string_address)"journald", 'J'},
+    {(string_address)"sd-id", 'D'},
+    {(string_address)"sd-param", 'X'},
+    {null, 0},
+};
+
+static bool logger_journald(logger_control address_to control,
+                            string_address path)
+{
+#if defined(LINUX) && !defined(KERNEL_MODE)
+        text_arena_used = 0;
+        if (!text_open(path))
+                return false;
+
+        positive length;
+        bool failed;
+        p8 address_to entry = text_arena_read_all(text_input.handle, 65536,
+                                                   address_of length,
+                                                   address_of failed);
+        text_close();
+        if (!entry || failed)
+                return false;
+
+        if (control->standard_error)
+        {
+                text_out_to(2);
+                text_put(entry, length);
+                if (!length || entry[length - 1] != '\n')
+                        text_put_character('\n');
+                text_flush();
+                text_out_to(1);
+        }
+
+        if (control->no_action)
+                return true;
+
+        control->socket_path = (string_address)"/run/systemd/journal/socket";
+        control->transport = LOGGER_TRANSPORT_DGRAM;
+        control->socket_errors = true;
+        if (!logger_connect(control))
+                return false;
+        return logger_send_once(control, entry, length);
+#else
+        (void)control;
+        (void)path;
+        return false;
+#endif
+}
+
+static b32 tools_logger()
+{
+        p8 chosen_transport = LOGGER_TRANSPORT_ANY;
+        p8 chosen_protocol = 0;
+        const file_supersede supersedes[] = {
+            {(string_address)"dT", address_of chosen_transport},
+            {(string_address)"34", address_of chosen_protocol},
+            {null, null},
+        };
+        file_taking taking = {
+            .program = (string_address)"logger",
+            .allowed = (string_address)"efipSstudTnP",
+            .valued = (string_address)"fpStunPEmDX",
+            .optional = (string_address)"I4J",
+            .long_optional = (string_address)"I4J",
+            .longs = logger_longs,
+            .supersedes = supersedes,
+        };
+
+        text_begin("logger");
+        text_delimiter = '\n';
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('X')))
+                return text_refuse(null,
+                    "structured-data and signature fields are not supported", 1);
+
+        logger_control control = {
+            .handle = -1,
+            .priority = 13,
+            .maximum = LOGGER_DEFAULT_SIZE,
+            .transport = LOGGER_TRANSPORT_ANY,
+            .protocol = LOGGER_PROTOCOL_LOCAL,
+            .rfc_time = true,
+            .rfc_quality = true,
+            .rfc_host = true,
+            .skip_empty = (taking.flags & FILE_FLAG('e')) != 0,
+            .standard_error = (taking.flags & FILE_FLAG('s')) != 0,
+            .no_action = (taking.flags & FILE_FLAG('A')) != 0,
+            .octet_count = (taking.flags & FILE_FLAG('O')) != 0,
+            .priority_prefix = (taking.flags & FILE_FLAG('q')) != 0,
+            .tag = file_option_value(address_of taking, 't'),
+            .server = file_option_value(address_of taking, 'n'),
+            .port = file_option_value(address_of taking, 'P'),
+            .socket_path = file_option_value(address_of taking, 'u'),
+            .message_id = file_option_value(address_of taking, 'm'),
+        };
+
+        if (chosen_transport == 'd')
+                control.transport = LOGGER_TRANSPORT_DGRAM;
+        else if (chosen_transport == 'T')
+                control.transport = LOGGER_TRANSPORT_STREAM;
+
+        if (chosen_protocol == '3')
+        {
+                control.protocol = LOGGER_PROTOCOL_3164;
+                control.protocol_given = true;
+        }
+        else if (chosen_protocol == '4')
+        {
+                control.protocol = LOGGER_PROTOCOL_5424;
+                control.protocol_given = true;
+        }
+
+        string_address priority_text = file_option_value(address_of taking, 'p');
+        if (priority_text && !logger_priority(priority_text, address_of control.priority))
+                return text_refuse(priority_text, "unknown priority", 1);
+
+        string_address size_text = file_option_value(address_of taking, 'S');
+        if (size_text && !logger_size(size_text, address_of control.maximum))
+                return text_refuse(size_text, "invalid message size", 1);
+
+        if (control.message_id && !logger_message_id_valid(control.message_id))
+                return text_refuse(control.message_id,
+                                   "message id cannot contain whitespace", 1);
+
+        string_address socket_errors = file_option_value(address_of taking, 'E');
+        if (socket_errors)
+        {
+                if (!string_compare(socket_errors, "on"))
+                        control.socket_errors = true;
+                else if (!string_compare(socket_errors, "off"))
+                        control.socket_errors = false;
+                else if (string_compare(socket_errors, "auto"))
+                        return text_refuse(socket_errors,
+                                           "invalid socket error mode", 1);
+        }
+        else
+                control.socket_errors = control.standard_error || control.no_action;
+
+        if (taking.flags & FILE_FLAG('i'))
+                control.process = (positive)system_call(syscall(getpid));
+        if (taking.flags & FILE_FLAG('I'))
+        {
+                string_address identity = file_option_value(address_of taking, 'I');
+                if (identity)
+                {
+                        if (!string_digits_exact(identity, address_of control.process) ||
+                            !control.process || control.process > p32_max)
+                                return text_refuse(identity, "invalid process id", 1);
+                }
+                else
+                        control.process = (positive)system_call(syscall(getpid));
+        }
+
+        if (control.server && !control.protocol_given)
+                control.protocol = LOGGER_PROTOCOL_5424;
+
+        string_address rfc_flags = file_option_value(address_of taking, '4');
+        if (rfc_flags && !logger_rfc_flags(address_of control, rfc_flags))
+                return text_refuse(rfc_flags, "unsupported RFC 5424 qualifier", 1);
+
+        if (!control.tag)
+        {
+                positive user = (positive)system_call(syscall(geteuid));
+                if (!file_user_name(user, control.login, sizeof(control.login)))
+                        string_copy_max_end(control.login, "<someone>",
+                                            sizeof(control.login) - 1);
+                control.tag = control.login;
+        }
+
+        file_machine facts;
+        memory_fill(address_of facts, 0, sizeof(facts));
+        if (system_call_1(syscall(uname), (positive)address_of facts) >= 0 &&
+            facts.node[0])
+                string_copy_max_end(control.hostname, facts.node,
+                                    sizeof(control.hostname) - 1);
+        else
+                string_copy_max_end(control.hostname, "-",
+                                    sizeof(control.hostname) - 1);
+
+        if (control.protocol == LOGGER_PROTOCOL_5424 &&
+            string_length(control.tag) > 48)
+                return text_refuse(control.tag, "tag is too long for RFC 5424", 1);
+
+        if (taking.flags & FILE_FLAG('J'))
+        {
+                bool answer = logger_journald(
+                    address_of control, file_option_value(address_of taking, 'J'));
+#if defined(LINUX) && !defined(KERNEL_MODE)
+                if (control.handle >= 0)
+                        socket_close((b32)control.handle);
+#endif
+                return text_done(answer ? 0 : 1);
+        }
+
+#if !defined(LINUX) || defined(KERNEL_MODE)
+        return text_refuse(null, "logging sockets require Linux", 1);
+#else
+        text_arena_used = 0;
+        control.workspace = (p8 address_to)text_arena_take(
+            LOGGER_HEADER_ROOM + control.maximum + 2);
+        if (!control.workspace)
+                return text_done(1);
+        control.body = control.workspace + LOGGER_HEADER_ROOM;
+
+        if (!logger_connect(address_of control))
+                return text_done(1);
+
+        bool answer;
+        positive count = (positive)program_argument_count();
+        if (taking.first < count)
+                answer = logger_operands(address_of control, taking.first);
+        else
+                answer = logger_stream(address_of control,
+                                       file_option_value(address_of taking, 'f'));
+
+        if (control.handle >= 0)
+                socket_close((b32)control.handle);
+        return text_done(answer ? 0 : 1);
+#endif
+}
+
 // Login records: who, users and pinky -----------------------
 
 /* The common fields have one Linux layout through offset 336. x86 keeps the
@@ -2970,6 +3903,899 @@ static b32 tools_factor()
 
         return text_done(failed ? 1 : 0);
 }
+
+// UUID identities: uuidgen, uuidparse and mcookie -----------------
+
+/* blkid already owns the canonical UUID byte formatter, shred owns the one
+   kernel-seeded random stream, and checksum owns the one MD5/SHA1 backend.
+   These three applets join those primitives here instead of bringing in
+   libuuid, another PRNG, or software copies of either digest. */
+typedef struct
+{
+        p8 bytes[16];
+} tools_uuid;
+
+static bipolar tools_uuid_nibble(p8 byte)
+{
+        if (byte >= '0' && byte <= '9')
+                return byte - '0';
+        byte = byte_to_lower(byte);
+        return byte >= 'a' && byte <= 'f' ? byte - 'a' + 10 : -1;
+}
+
+static bool tools_uuid_parse(string_address text,
+                             tools_uuid address_to uuid)
+{
+        if (string_length(text) != 36)
+                return false;
+
+        positive from = 0;
+        for (positive at = 0; at < sizeof(uuid->bytes); at++)
+        {
+                if (at == 4 || at == 6 || at == 8 || at == 10)
+                {
+                        if (text[from++] != '-')
+                                return false;
+                }
+
+                bipolar high = tools_uuid_nibble(text[from++]);
+                bipolar low = tools_uuid_nibble(text[from++]);
+                if (high < 0 || low < 0)
+                        return false;
+                uuid->bytes[at] = (p8)((positive)high << 4 | (positive)low);
+        }
+
+        return true;
+}
+
+static fn tools_uuid_put(tools_uuid address_to uuid)
+{
+        p8 text[37];
+        storage_uuid_bytes(text, uuid->bytes);
+        text_put(text, 36);
+}
+
+static fn tools_uuid_random_bytes(file_random_state address_to random,
+                                  tools_uuid address_to uuid)
+{
+        shred_random_fill(random, uuid->bytes, sizeof(uuid->bytes));
+}
+
+static fn tools_uuid_version(tools_uuid address_to uuid, p8 version)
+{
+        uuid->bytes[6] = (p8)((uuid->bytes[6] & 0x0f) | (version << 4));
+        uuid->bytes[8] = (p8)((uuid->bytes[8] & 0x3f) | 0x80);
+}
+
+static fn tools_uuid_store_16(p8 address_to into, p16 value)
+{
+        into[0] = (p8)(value >> 8);
+        into[1] = (p8)value;
+}
+
+static fn tools_uuid_store_32(p8 address_to into, p32 value)
+{
+        into[0] = (p8)(value >> 24);
+        into[1] = (p8)(value >> 16);
+        into[2] = (p8)(value >> 8);
+        into[3] = (p8)value;
+}
+
+static p16 tools_uuid_load_16(p8 address_to from)
+{
+        return ((p16)from[0] << 8) | from[1];
+}
+
+static p32 tools_uuid_load_32(p8 address_to from)
+{
+        return ((p32)from[0] << 24) | ((p32)from[1] << 16) |
+               ((p32)from[2] << 8) | from[3];
+}
+
+static p64 tools_uuid_gregorian_now(p64 seconds, p64 nanoseconds)
+{
+        return seconds * 10000000 + nanoseconds / 100 +
+               (p64)0x01b21dd213814000ULL;
+}
+
+static fn tools_uuid_time_one(tools_uuid address_to uuid, p64 timestamp,
+                              p16 sequence, p8 address_to node)
+{
+        tools_uuid_store_32(uuid->bytes, (p32)timestamp);
+        tools_uuid_store_16(uuid->bytes + 4, (p16)(timestamp >> 32));
+        tools_uuid_store_16(uuid->bytes + 6,
+                            (p16)((timestamp >> 48) & 0x0fff));
+        tools_uuid_store_16(uuid->bytes + 8,
+                            (p16)((sequence & 0x3fff) | 0x8000));
+        memory_copy(uuid->bytes + 10, node, 6);
+        tools_uuid_version(uuid, 1);
+}
+
+static fn tools_uuid_time_six(tools_uuid address_to uuid, p64 timestamp,
+                              file_random_state address_to random)
+{
+        tools_uuid_random_bytes(random, uuid);
+        tools_uuid_store_32(uuid->bytes, (p32)(timestamp >> 28));
+        tools_uuid_store_16(uuid->bytes + 4, (p16)(timestamp >> 12));
+        tools_uuid_store_16(uuid->bytes + 6,
+                            (p16)(timestamp & 0x0fff));
+        tools_uuid_version(uuid, 6);
+}
+
+static fn tools_uuid_time_seven(tools_uuid address_to uuid, p64 milliseconds,
+                                file_random_state address_to random)
+{
+        tools_uuid_random_bytes(random, uuid);
+        for (positive at = 0; at < 6; at++)
+                uuid->bytes[5 - at] = (p8)(milliseconds >> (at * 8));
+        tools_uuid_version(uuid, 7);
+}
+
+#if defined(LINUX)
+static bipolar tools_uuid_name_transform(bool sha1)
+{
+        const checksum_algorithm address_to algorithm =
+            checksum_algorithm_find(sha1 ? (string_address)"sha1sum"
+                                         : (string_address)"md5sum");
+
+        return algorithm ? checksum_kernel_open(algorithm) : -ERROR_INVALID;
+}
+
+static bool tools_uuid_name(bipolar transform, tools_uuid address_to space,
+                            p8 address_to name, positive name_length,
+                            bool sha1, tools_uuid address_to uuid)
+{
+        bipolar operation = checksum_operation_open(transform);
+        if (operation < 0)
+                return false;
+
+        p8 digest[20];
+        bipolar answer = checksum_send_more(operation, space->bytes,
+                                             sizeof(space->bytes));
+        if (!answer)
+                answer = checksum_send_more(operation, name, name_length);
+        if (!answer)
+                answer = checksum_digest_read(operation, digest,
+                                              sha1 ? 20 : 16);
+        system_close((positive)operation);
+
+        if (answer < 0)
+                return false;
+
+        memory_copy(uuid->bytes, digest, sizeof(uuid->bytes));
+        tools_uuid_version(uuid, sha1 ? 5 : 3);
+        return true;
+}
+#endif
+
+static const file_long tools_uuidgen_longs[] = {
+    {(string_address)"count", 'C'},
+    {(string_address)"hex", 'x'},
+    {(string_address)"md5", 'm'},
+    {(string_address)"name", 'N'},
+    {(string_address)"namespace", 'n'},
+    {(string_address)"random", 'r'},
+    {(string_address)"sha1", 's'},
+    {(string_address)"time", 't'},
+    {(string_address)"time-v6", '6'},
+    {(string_address)"time-v7", '7'},
+    {null, 0},
+};
+
+static bool tools_uuidgen_namespace(string_address text,
+                                    tools_uuid address_to space)
+{
+        static const string_address shortcuts[] = {
+            (string_address)"@dns", (string_address)"@url",
+            (string_address)"@oid", (string_address)"@x500",
+        };
+        static const string_address uuids[] = {
+            (string_address)"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+            (string_address)"6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+            (string_address)"6ba7b812-9dad-11d1-80b4-00c04fd430c8",
+            (string_address)"6ba7b814-9dad-11d1-80b4-00c04fd430c8",
+        };
+
+        for (positive at = 0; at < array_count(shortcuts); at++)
+                if (string_equals(text, shortcuts[at]))
+                        return tools_uuid_parse(uuids[at], space);
+
+        return tools_uuid_parse(text, space);
+}
+
+static bool tools_uuidgen_hex_name(string_address text,
+                                   p8 address_to address_to bytes,
+                                   positive address_to length)
+{
+        positive count = string_length(text);
+        if (count & 1)
+                return false;
+
+        p8 address_to decoded = text_arena_take(count / 2 + 1);
+        if (!decoded)
+                return false;
+
+        for (positive at = 0; at < count; at += 2)
+        {
+                bipolar high = tools_uuid_nibble(text[at]);
+                bipolar low = tools_uuid_nibble(text[at + 1]);
+                if (high < 0 || low < 0)
+                        return false;
+                decoded[at / 2] = (p8)((positive)high << 4 | (positive)low);
+        }
+
+        address_to bytes = decoded;
+        address_to length = count / 2;
+        return true;
+}
+
+static b32 tools_uuidgen()
+{
+        file_taking taking = {
+            .program = (string_address)"uuidgen",
+            .allowed = (string_address)"rtmnNsC67x",
+            .valued = (string_address)"nNC",
+            .longs = tools_uuidgen_longs,
+        };
+
+        text_begin("uuidgen");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive flags = taking.flags;
+        string_address namespace = file_option_value(address_of taking, 'n');
+        string_address name = file_option_value(address_of taking, 'N');
+        string_address count_text = file_option_value(address_of taking, 'C');
+        bool md5 = (flags & FILE_FLAG('m')) != 0;
+        bool sha1 = (flags & FILE_FLAG('s')) != 0;
+        bool hex = (flags & FILE_FLAG('x')) != 0;
+        bool named = namespace || name || md5 || sha1;
+        positive count = 1;
+
+        if (count_text)
+        {
+                string_address after = count_text;
+                if (!string_digits_checked(address_of after, 10,
+                                           address_of count) || string_get(after))
+                        return text_refuse(count_text, "invalid count", 1);
+        }
+
+        positive modes = ((flags & FILE_FLAG('r')) != 0) +
+                         ((flags & FILE_FLAG('t')) != 0) +
+                         ((flags & FILE_FLAG('6')) != 0) +
+                         ((flags & FILE_FLAG('7')) != 0) + named;
+
+        if (modes > 1)
+                return text_refuse(null, "generation modes cannot be combined",
+                                   1);
+
+        if (named)
+        {
+                if (count_text)
+                        return text_refuse(null,
+                                           "name mode and --count cannot be combined",
+                                           1);
+                if (!namespace || !name || md5 == sha1)
+                        return text_refuse(null,
+                                           "name mode needs namespace, name and exactly one digest",
+                                           1);
+
+                tools_uuid space;
+                if (!tools_uuidgen_namespace(namespace, address_of space))
+                        return text_refuse(namespace, "invalid namespace UUID",
+                                           1);
+
+                p8 address_to name_bytes = (p8 address_to)name;
+                positive name_length = string_length(name);
+                if (hex &&
+                    !tools_uuidgen_hex_name(name, address_of name_bytes,
+                                            address_of name_length))
+                        return text_refuse(name, "invalid hexadecimal name", 1);
+
+#if defined(LINUX)
+                bipolar transform = tools_uuid_name_transform(sha1);
+                if (transform < 0)
+                        return text_refuse(null,
+                                           "kernel MD5/SHA1 service is unavailable",
+                                           1);
+
+                tools_uuid uuid;
+                bool made = tools_uuid_name(transform, address_of space,
+                                            name_bytes, name_length, sha1,
+                                            address_of uuid);
+                system_close((positive)transform);
+                if (!made)
+                        return text_refuse(null,
+                                           "kernel UUID digest failed", 1);
+                tools_uuid_put(address_of uuid);
+                text_put_character('\n');
+                return text_done(0);
+#else
+                return text_refuse(null,
+                                   "name UUIDs require the Linux hash service",
+                                   1);
+#endif
+        }
+
+        if (!count)
+                return text_done(0);
+
+        file_random_state random;
+        if (!file_random_seed(address_of random))
+                return text_refuse(null, "kernel random source failed", 1);
+
+        bool time_one = (flags & FILE_FLAG('t')) != 0;
+        bool time_six = (flags & FILE_FLAG('6')) != 0;
+        bool time_seven = (flags & FILE_FLAG('7')) != 0;
+        p64 wall[2] = {0, 0};
+        p64 timestamp = 0;
+        p64 milliseconds = 0;
+        p16 sequence = (p16)file_random_word(address_of random);
+        p8 node[6];
+        shred_random_fill(address_of random, node, sizeof(node));
+        node[0] |= 1;
+
+        if ((time_one || time_six || time_seven) &&
+            system_call_2(syscall(clock_gettime), 0,
+                          (positive)wall) < 0)
+                return text_refuse(null, "realtime clock failed", 1);
+
+        if (time_one || time_six)
+                timestamp = tools_uuid_gregorian_now(wall[0], wall[1]);
+        else if (time_seven)
+                milliseconds = wall[0] * 1000 + wall[1] / 1000000;
+
+        for (positive at = 0; at < count; at++)
+        {
+                tools_uuid uuid;
+
+                if (time_one)
+                        tools_uuid_time_one(address_of uuid, timestamp + at,
+                                            sequence, node);
+                else if (time_six)
+                        tools_uuid_time_six(address_of uuid, timestamp + at,
+                                            address_of random);
+                else if (time_seven)
+                        tools_uuid_time_seven(address_of uuid, milliseconds,
+                                              address_of random);
+                else
+                {
+                        tools_uuid_random_bytes(address_of random,
+                                                address_of uuid);
+                        tools_uuid_version(address_of uuid, 4);
+                }
+
+                tools_uuid_put(address_of uuid);
+                text_put_character('\n');
+        }
+
+        return text_done(0);
+}
+
+typedef enum
+{
+        TOOLS_UUID_COLUMN_UUID,
+        TOOLS_UUID_COLUMN_VARIANT,
+        TOOLS_UUID_COLUMN_TYPE,
+        TOOLS_UUID_COLUMN_TIME,
+} tools_uuid_column;
+
+typedef struct
+{
+        string_address original;
+        tools_uuid uuid;
+        bool valid;
+        string_address variant;
+        string_address type;
+        p8 time[40];
+} tools_uuid_record;
+
+static string_address tools_uuid_variant(tools_uuid address_to uuid)
+{
+        p8 mark = uuid->bytes[8];
+        if (!(mark & 0x80))
+                return (string_address)"NCS";
+        if ((mark & 0xc0) == 0x80)
+                return (string_address)"DCE";
+        if ((mark & 0xe0) == 0xc0)
+                return (string_address)"Microsoft";
+        return (string_address)"other";
+}
+
+static bool tools_uuid_all(tools_uuid address_to uuid, p8 value)
+{
+        for (positive at = 0; at < sizeof(uuid->bytes); at++)
+                if (uuid->bytes[at] != value)
+                        return false;
+        return true;
+}
+
+static positive tools_uuid_time_text(p8 address_to into, b64 seconds,
+                                     positive microseconds)
+{
+        b64 year;
+        positive month, day, hour, minute, second;
+        file_split_moment((b64)seconds, address_of year, address_of month,
+                          address_of day, address_of hour, address_of minute,
+                          address_of second);
+
+        positive made = positive_into_padded(into, (positive)year, 4, '0');
+        into[made++] = '-';
+        made += positive_into_padded(into + made, month, 2, '0');
+        into[made++] = '-';
+        made += positive_into_padded(into + made, day, 2, '0');
+        into[made++] = ' ';
+        made += positive_into_padded(into + made, hour, 2, '0');
+        into[made++] = ':';
+        made += positive_into_padded(into + made, minute, 2, '0');
+        into[made++] = ':';
+        made += positive_into_padded(into + made, second, 2, '0');
+        into[made++] = ',';
+        made += positive_into_padded(into + made, microseconds, 6, '0');
+        memory_copy(into + made, "+00:00", 6);
+        made += 6;
+        into[made] = end;
+        return made;
+}
+
+static fn tools_uuid_record_read(string_address text,
+                                 tools_uuid_record address_to record)
+{
+        memory_fill(record, 0, sizeof(*record));
+        record->original = text;
+        record->valid = tools_uuid_parse(text, address_of record->uuid);
+
+        if (!record->valid)
+        {
+                record->variant = (string_address)"invalid";
+                record->type = (string_address)"invalid";
+                memory_copy(record->time, "invalid", 8);
+                return;
+        }
+
+        record->variant = tools_uuid_variant(address_of record->uuid);
+        record->type = (string_address)"";
+        if (tools_uuid_all(address_of record->uuid, 0) ||
+            tools_uuid_all(address_of record->uuid, 0xff))
+                return;
+
+        p8 version = record->uuid.bytes[6] >> 4;
+        static const string_address types[9] = {
+            (string_address)"", (string_address)"time-based",
+            (string_address)"DCE", (string_address)"name-based",
+            (string_address)"random", (string_address)"sha1-based",
+            (string_address)"time-v6", (string_address)"time-v7",
+            (string_address)"vendor",
+        };
+        record->type = version < array_count(types) && types[version][0]
+                           ? types[version] : (string_address)"unknown";
+
+        b64 seconds;
+        positive microseconds;
+        if (version == 1)
+        {
+                p64 timestamp = tools_uuid_load_32(record->uuid.bytes) |
+                                ((p64)tools_uuid_load_16(
+                                     record->uuid.bytes + 4) << 32) |
+                                ((p64)(tools_uuid_load_16(
+                                      record->uuid.bytes + 6) & 0x0fff) << 48);
+                b64 ticks = (b64)timestamp -
+                            (b64)0x01b21dd213814000ULL;
+                seconds = ticks / 10000000;
+                b64 rest = ticks % 10000000;
+                if (rest < 0)
+                {
+                        seconds--;
+                        rest += 10000000;
+                }
+                microseconds = (positive)(rest / 10);
+        }
+        else if (version == 6)
+        {
+                p64 timestamp =
+                    ((p64)tools_uuid_load_32(record->uuid.bytes) << 28) |
+                    ((p64)tools_uuid_load_16(record->uuid.bytes + 4) << 12) |
+                    (tools_uuid_load_16(record->uuid.bytes + 6) & 0x0fff);
+                b64 ticks = (b64)timestamp -
+                            (b64)0x01b21dd213814000ULL;
+                seconds = ticks / 10000000;
+                b64 rest = ticks % 10000000;
+                if (rest < 0)
+                {
+                        seconds--;
+                        rest += 10000000;
+                }
+                microseconds = (positive)(rest / 10);
+        }
+        else if (version == 7)
+        {
+                p64 milliseconds = 0;
+                for (positive at = 0; at < 6; at++)
+                        milliseconds = (milliseconds << 8) |
+                                       record->uuid.bytes[at];
+                seconds = milliseconds / 1000;
+                microseconds = (positive)(milliseconds % 1000) * 1000;
+        }
+        else
+                return;
+
+        tools_uuid_time_text(record->time, seconds, microseconds);
+}
+
+static const string_address tools_uuid_column_names[] = {
+    (string_address)"UUID", (string_address)"VARIANT",
+    (string_address)"TYPE", (string_address)"TIME",
+};
+
+static bool tools_uuid_columns(string_address text, p8 address_to columns,
+                               positive address_to count)
+{
+        positive used = 0;
+        while (string_get(text))
+        {
+                string_address comma = string_first_of(text, ',');
+                positive length = comma ? (positive)(comma - text)
+                                        : string_length(text);
+                bool found = false;
+
+                for (positive at = 0; at < array_count(tools_uuid_column_names);
+                     at++)
+                        if (string_length(tools_uuid_column_names[at]) == length &&
+                            !string_compare_max(tools_uuid_column_names[at], text,
+                                                length))
+                        {
+                                if (used == 32)
+                                        return false;
+                                columns[used++] = (p8)at;
+                                found = true;
+                                break;
+                        }
+
+                if (!found)
+                        return false;
+                text += length;
+                if (!comma)
+                        break;
+                text++;
+                if (!string_get(text))
+                        return false;
+        }
+
+        address_to count = used;
+        return used != 0;
+}
+
+static string_address tools_uuid_cell(tools_uuid_record address_to record,
+                                      p8 column)
+{
+        if (column == TOOLS_UUID_COLUMN_UUID)
+                return record->original;
+        if (column == TOOLS_UUID_COLUMN_VARIANT)
+                return record->variant;
+        if (column == TOOLS_UUID_COLUMN_TYPE)
+                return record->type;
+        return record->time;
+}
+
+static fn tools_uuid_json_string(string_address value)
+{
+        text_put_character('"');
+        while (string_get(value))
+        {
+                p8 byte = string_get(value++);
+                if (byte == '"' || byte == '\\')
+                {
+                        text_put_character('\\');
+                        text_put_character(byte);
+                }
+                else if (byte < ' ')
+                {
+                        p8 escaped[6] = {'\\', 'u', '0', '0',
+                                         storage_hex_digit(byte >> 4, false),
+                                         storage_hex_digit(byte & 15, false)};
+                        text_put(escaped, sizeof(escaped));
+                }
+                else
+                        text_put_character(byte);
+        }
+        text_put_character('"');
+}
+
+static fn tools_uuid_safe_cell(string_address value)
+{
+        while (string_get(value))
+        {
+                p8 byte = string_get(value++);
+                if (byte <= ' ' || byte == 0x7f || byte == '\\')
+                {
+                        p8 escaped[4] = {'\\', 'x',
+                                         storage_hex_digit(byte >> 4, false),
+                                         storage_hex_digit(byte & 15, false)};
+                        text_put(escaped, sizeof(escaped));
+                }
+                else
+                        text_put_character(byte);
+        }
+}
+
+static const file_long tools_uuidparse_longs[] = {
+    {(string_address)"json", 'J'},
+    {(string_address)"noheadings", 'n'},
+    {(string_address)"output", 'o'},
+    {(string_address)"raw", 'r'},
+    {null, 0},
+};
+
+static b32 tools_uuidparse()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"uuidparse",
+            .allowed = (string_address)"Jnro",
+            .valued = (string_address)"o",
+            .longs = tools_uuidparse_longs,
+            .operand = file_operand,
+        };
+
+        text_begin("uuidparse");
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+
+        bool json = (taking.flags & FILE_FLAG('J')) != 0;
+        bool noheadings = (taking.flags & FILE_FLAG('n')) != 0;
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        if (json && raw)
+                return text_refuse(null,
+                                   "--json and --raw cannot be combined", 1);
+
+        p8 columns[32] = {
+            TOOLS_UUID_COLUMN_UUID, TOOLS_UUID_COLUMN_VARIANT,
+            TOOLS_UUID_COLUMN_TYPE, TOOLS_UUID_COLUMN_TIME,
+        };
+        positive column_count = 4;
+        string_address output = file_option_value(address_of taking, 'o');
+        if (output && !tools_uuid_columns(output, columns, address_of column_count))
+                return text_refuse(output, "unknown or excessive output column",
+                                   1);
+
+        if (json)
+        {
+                text_put_string("{\n   \"uuids\": [\n");
+                for (positive row = 0; row < file_operand_count; row++)
+                {
+                        tools_uuid_record record;
+                        tools_uuid_record_read(file_operand_at(row),
+                                               address_of record);
+                        text_put_string(row ? ",{\n" : "      {\n");
+                        for (positive at = 0; at < column_count; at++)
+                        {
+                                p8 column = columns[at];
+                                text_put_string("         \"");
+                                string_address key =
+                                    tools_uuid_column_names[column];
+                                while (string_get(key))
+                                        text_put_character(byte_to_lower(
+                                            string_get(key++)));
+                                text_put_string("\": ");
+                                string_address value =
+                                    tools_uuid_cell(address_of record, column);
+                                if (column == TOOLS_UUID_COLUMN_TIME &&
+                                    record.valid && !string_get(value))
+                                        text_put_string("null");
+                                else
+                                        tools_uuid_json_string(value);
+                                text_put_string(at + 1 < column_count
+                                                    ? ",\n" : "\n");
+                        }
+                        text_put_string("      }");
+                }
+                text_put_string(file_operand_count
+                                    ? "\n   ]\n}\n" : "\n   ]\n}\n");
+                return text_done(0);
+        }
+
+        positive widths[32];
+        for (positive at = 0; at < column_count; at++)
+                widths[at] = noheadings ? 0
+                                        : string_length(
+                                              tools_uuid_column_names[columns[at]]);
+
+        for (positive row = 0; row < file_operand_count; row++)
+        {
+                tools_uuid_record record;
+                tools_uuid_record_read(file_operand_at(row), address_of record);
+                for (positive at = 0; at < column_count; at++)
+                        widths[at] = max(widths[at],
+                                         string_length(tools_uuid_cell(
+                                             address_of record, columns[at])));
+        }
+
+        if (!raw)
+                for (positive at = 0; at < column_count; at++)
+                        if (columns[at] == TOOLS_UUID_COLUMN_UUID)
+                                widths[at] = max(widths[at], (positive)36);
+                        else if (columns[at] == TOOLS_UUID_COLUMN_VARIANT)
+                                widths[at] = max(widths[at], noheadings
+                                                                ? (positive)9
+                                                                : (positive)7);
+                        else if (columns[at] == TOOLS_UUID_COLUMN_TYPE)
+                                widths[at] = max(widths[at], (positive)10);
+
+        if (!noheadings)
+        {
+                for (positive at = 0; at < column_count; at++)
+                {
+                        if (at)
+                                writer_fill(text_put,
+                                            !raw && columns[at - 1] ==
+                                                            TOOLS_UUID_COLUMN_UUID
+                                                ? 2 : 1,
+                                            ' ');
+                        string_address value = tools_uuid_column_names[columns[at]];
+                        positive length = string_length(value);
+                        if (raw)
+                                tools_uuid_safe_cell(value);
+                        else
+                                text_put((p8 address_to)value, length);
+                        if (!raw && at + 1 < column_count)
+                                writer_fill(text_put, widths[at] - length, ' ');
+                }
+                text_put_character('\n');
+        }
+
+        for (positive row = 0; row < file_operand_count; row++)
+        {
+                tools_uuid_record record;
+                tools_uuid_record_read(file_operand_at(row), address_of record);
+                for (positive at = 0; at < column_count; at++)
+                {
+                        if (at)
+                                writer_fill(text_put,
+                                            !raw && columns[at - 1] ==
+                                                            TOOLS_UUID_COLUMN_UUID
+                                                ? 2 : 1,
+                                            ' ');
+                        string_address value =
+                            tools_uuid_cell(address_of record, columns[at]);
+                        positive length = string_length(value);
+                        if (raw)
+                                tools_uuid_safe_cell(value);
+                        else
+                                text_put((p8 address_to)value, length);
+                        if (!raw && at + 1 < column_count)
+                                writer_fill(text_put, widths[at] - length, ' ');
+                }
+                text_put_character('\n');
+        }
+
+        return text_done(0);
+}
+
+static const file_long tools_mcookie_longs[] = {
+    {(string_address)"file", 'f'},
+    {(string_address)"max-size", 'm'},
+    {(string_address)"verbose", 'v'},
+    {null, 0},
+};
+
+static fn tools_mcookie_mix(file_random_state address_to random,
+                            p8 address_to bytes, positive length,
+                            positive address_to position)
+{
+        for (positive at = 0; at < length; at++, (address_to position)++)
+        {
+                positive place = address_to position;
+                random->words[place & 3] ^=
+                    (p64)bytes[at] << (((place >> 2) & 7) * 8);
+                if ((place & 31) == 31)
+                        (void)file_random_word(random);
+        }
+}
+
+static b32 tools_mcookie()
+{
+        file_taking taking = {
+            .program = (string_address)"mcookie",
+            .allowed = (string_address)"fmv",
+            .valued = (string_address)"fm",
+            .longs = tools_mcookie_longs,
+        };
+
+        text_begin("mcookie");
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive maximum = 4096;
+        string_address maximum_text = file_option_value(address_of taking, 'm');
+        if (maximum_text &&
+            !(string_is(maximum_text, '0') && !string_get(maximum_text + 1)) &&
+            !split_size(maximum_text, address_of maximum))
+                return text_refuse(maximum_text, "invalid maximum size", 1);
+
+        file_random_state random;
+        if (!file_random_seed(address_of random))
+                return text_refuse(null, "kernel random source failed", 1);
+
+        /* Upstream draws 128 kernel bytes.  Four uses of the existing
+           32-byte seeder preserve that entropy budget without a direct
+           getrandom implementation beside file_random_seed. */
+        for (positive round = 1; round < 4; round++)
+        {
+                file_random_state additional;
+                if (!file_random_seed(address_of additional))
+                        return text_refuse(null, "kernel random source failed", 1);
+                for (positive at = 0; at < array_count(random.words); at++)
+                        random.words[at] ^= additional.words[at];
+                (void)file_random_word(address_of random);
+        }
+
+        string_address path = file_option_value(address_of taking, 'f');
+        positive mixed = 0;
+        if (path && maximum)
+        {
+                bipolar handle = string_is(path, '-') && !string_get(path + 1)
+                                     ? 0
+                                     : system_open_at(AT_FDCWD, path,
+                                                      FILE_READ | O_CLOEXEC);
+                if (handle < 0)
+                        text_error(path, file_reason(handle));
+                else
+                {
+                        while (mixed < maximum)
+                        {
+                                positive want = min(maximum - mixed,
+                                                    sizeof(file_transfer));
+                                bipolar got = system_read_retry(
+                                    (positive)handle, file_transfer, want);
+                                if (got < 0)
+                                {
+                                        text_error(path, file_reason(got));
+                                        break;
+                                }
+                                if (!got)
+                                        break;
+                                tools_mcookie_mix(address_of random,
+                                                  file_transfer, (positive)got,
+                                                  address_of mixed);
+                        }
+                        if (handle)
+                                system_close((positive)handle);
+                }
+        }
+
+        if (taking.flags & FILE_FLAG('v'))
+        {
+                if (path)
+                {
+                        text_error_raw("Got ");
+                        p8 number[24];
+                        positive length = positive_into_string(number, mixed);
+                        number[length] = end;
+                        text_error_raw(number);
+                        text_error_raw(" bytes from ");
+                        text_error_raw(path);
+                        text_error_raw("\n");
+                }
+                text_error_raw("Got 128 bytes from getrandom() function\n");
+        }
+
+        for (positive warm = 0; warm < 8; warm++)
+                (void)file_random_word(address_of random);
+        tools_uuid cookie;
+        tools_uuid_random_bytes(address_of random, address_of cookie);
+        for (positive at = 0; at < sizeof(cookie.bytes); at++)
+        {
+                text_put_character(storage_hex_digit(cookie.bytes[at] >> 4,
+                                                     false));
+                text_put_character(storage_hex_digit(cookie.bytes[at] & 15,
+                                                     false));
+        }
+        text_put_character('\n');
+        return text_done(0);
+}
+
 
 // dd --------------------------------------------------------
 
@@ -7874,4 +9700,1207 @@ static b32 tools_ps(void)
         return text_done(ps_failed || (selectors && !matched) ? 1 : 0);
 }
 
+// dmesg -----------------------------------------------------
+
+/* Linux's syslog(2) operation numbers are an ABI, despite the syscall's
+   unfortunate collision with libc's unrelated syslog function. */
+#define DMESG_CLOSE 0
+#define DMESG_OPEN 1
+#define DMESG_READ 2
+#define DMESG_READ_ALL 3
+#define DMESG_READ_CLEAR 4
+#define DMESG_CLEAR 5
+#define DMESG_CONSOLE_OFF 6
+#define DMESG_CONSOLE_ON 7
+#define DMESG_CONSOLE_LEVEL 8
+#define DMESG_SIZE_UNREAD 9
+#define DMESG_SIZE_BUFFER 10
+
+typedef struct
+{
+        p8 address_to raw;
+        positive raw_length;
+        p8 address_to message;
+        positive message_length;
+        p64 microseconds;
+        p32 priority;
+        bool priority_known;
+        bool time_known;
+        bool timestamp_present;
+        bool continuation;
+} tools_dmesg_record;
+
+typedef struct
+{
+        p32 levels;
+        p32 facilities;
+        p64 previous;
+        p64 realtime_base;
+        positive rows;
+        bool raw;
+        bool decode;
+        bool no_time;
+        bool ctime;
+        bool relative;
+        bool delta;
+        bool json;
+        bool noescape;
+        bool color;
+        bool previous_known;
+} tools_dmesg_state;
+
+static const string_address tools_dmesg_levels[] = {
+    (string_address)"emerg", (string_address)"alert",
+    (string_address)"crit", (string_address)"err",
+    (string_address)"warn", (string_address)"notice",
+    (string_address)"info", (string_address)"debug",
+};
+
+static const string_address tools_dmesg_facilities[] = {
+    (string_address)"kern", (string_address)"user",
+    (string_address)"mail", (string_address)"daemon",
+    (string_address)"auth", (string_address)"syslog",
+    (string_address)"lpr", (string_address)"news",
+    (string_address)"uucp", (string_address)"cron",
+    (string_address)"authpriv", (string_address)"ftp",
+    (string_address)"res0", (string_address)"res1",
+    (string_address)"res2", (string_address)"res3",
+    (string_address)"local0", (string_address)"local1",
+    (string_address)"local2", (string_address)"local3",
+    (string_address)"local4", (string_address)"local5",
+    (string_address)"local6", (string_address)"local7",
+};
+
+static const file_long tools_dmesg_longs[] = {
+    {(string_address)"clear", 'C'},
+    {(string_address)"read-clear", 'c'},
+    {(string_address)"console-off", 'D'},
+    {(string_address)"console-on", 'E'},
+    {(string_address)"file", 'F'},
+    {(string_address)"kmsg-file", 'K'},
+    {(string_address)"facility", 'f'},
+    {(string_address)"human", 'H'},
+    {(string_address)"json", 'J'},
+    {(string_address)"kernel", 'k'},
+    {(string_address)"color", 'L'},
+    {(string_address)"level", 'l'},
+    {(string_address)"console-level", 'n'},
+    {(string_address)"nopager", 'P'},
+    {(string_address)"force-prefix", 'p'},
+    {(string_address)"raw", 'r'},
+    {(string_address)"noescape", 'N'},
+    {(string_address)"syslog", 'S'},
+    {(string_address)"buffer-size", 's'},
+    {(string_address)"userspace", 'u'},
+    {(string_address)"follow", 'w'},
+    {(string_address)"follow-new", 'W'},
+    {(string_address)"decode", 'x'},
+    {(string_address)"show-delta", 'd'},
+    {(string_address)"reltime", 'e'},
+    {(string_address)"ctime", 'T'},
+    {(string_address)"notime", 't'},
+    {(string_address)"time-format", 'q'},
+    {(string_address)"since", 'a'},
+    {(string_address)"until", 'b'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool tools_dmesg_span_number(p8 address_to address_to cursor,
+                                    p8 address_to stop, p8 delimiter,
+                                    positive address_to value)
+{
+        p8 address_to at = address_to cursor;
+        positive made = 0;
+        bool any = false;
+
+        while (at < stop && byte_is_digit(*at))
+        {
+                positive digit = *at++ - '0';
+
+                if (made > (positive_max - digit) / 10)
+                        return false;
+                made = made * 10 + digit;
+                any = true;
+        }
+        if (!any || at == stop || *at != delimiter)
+                return false;
+        address_to cursor = at + 1;
+        address_to value = made;
+        return true;
+}
+
+static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
+                                      p32 inherited,
+                                      tools_dmesg_record address_to record)
+{
+        memory_fill(record, 0, sizeof(*record));
+        record->raw = bytes;
+        record->raw_length = length;
+        record->priority = inherited;
+
+        p8 address_to at = bytes;
+        p8 address_to stop = bytes + length;
+        if (at < stop && *at == '<')
+        {
+                positive priority;
+
+                at++;
+                if (!tools_dmesg_span_number(address_of at, stop, '>',
+                                              address_of priority) ||
+                    priority > 191)
+                        return false;
+                record->priority = (p32)priority;
+                record->priority_known = true;
+        }
+        else
+                record->continuation = true;
+
+        p8 address_to stamp = at;
+        if (at < stop && *at == '[')
+        {
+                at++;
+                while (at < stop && *at == ' ')
+                        at++;
+                positive seconds = 0;
+                bool any = false;
+                while (at < stop && byte_is_digit(*at))
+                {
+                        positive digit = *at++ - '0';
+                        if (seconds > (positive_max - digit) / 10)
+                                return false;
+                        seconds = seconds * 10 + digit;
+                        any = true;
+                }
+
+                positive fraction = 0;
+                positive digits = 0;
+                if (at < stop && *at == '.')
+                {
+                        at++;
+                        while (at < stop && byte_is_digit(*at))
+                        {
+                                if (digits < 6)
+                                        fraction = fraction * 10 + (*at - '0');
+                                digits++;
+                                at++;
+                        }
+                }
+                if (any && at < stop && *at == ']')
+                {
+                        record->microseconds = (p64)seconds * 1000000 +
+                                               fraction;
+                        record->time_known = true;
+                        record->timestamp_present = true;
+                        at++;
+                        if (at < stop && *at == ' ')
+                                at++;
+                }
+                else
+                        at = stamp;
+        }
+
+        /* A priority with no timestamp is still a complete syslog record;
+           util-linux renders its missing kernel clock as zero. */
+        if (record->priority_known && !record->time_known)
+                record->time_known = true;
+
+        record->message = at;
+        record->message_length = (positive)(stop - at);
+        return true;
+}
+
+static bool tools_dmesg_kmsg_record(p8 address_to bytes, positive length,
+                                    tools_dmesg_record address_to record)
+{
+        memory_fill(record, 0, sizeof(*record));
+        record->raw = bytes;
+        record->raw_length = length;
+
+        p8 address_to at = bytes;
+        p8 address_to stop = bytes + length;
+        positive priority;
+        positive sequence;
+        positive microseconds;
+
+        if (!tools_dmesg_span_number(address_of at, stop, ',',
+                                      address_of priority) ||
+            !tools_dmesg_span_number(address_of at, stop, ',',
+                                      address_of sequence) ||
+            !tools_dmesg_span_number(address_of at, stop, ',',
+                                      address_of microseconds) ||
+            priority > 191)
+                return false;
+        (void)sequence;
+
+        while (at < stop && *at != ';')
+                at++;
+        if (at == stop)
+                return false;
+        at++;
+
+        p8 address_to message_stop = at;
+        while (message_stop < stop && *message_stop != '\n' && *message_stop)
+                message_stop++;
+
+        record->priority = (p32)priority;
+        record->priority_known = true;
+        record->microseconds = microseconds;
+        record->time_known = true;
+        record->timestamp_present = true;
+        record->message = at;
+        record->message_length = (positive)(message_stop - at);
+        return true;
+}
+
+static b32 tools_dmesg_named(p8 address_to word, positive length,
+                             const string_address address_to names,
+                             positive count)
+{
+        for (positive i = 0; i < count; i++)
+                if (file_same_word(word, length, names[i]))
+                        return (b32)i;
+
+        if (names == tools_dmesg_levels)
+        {
+                if (file_same_word(word, length, (string_address)"panic"))
+                        return 0;
+                if (file_same_word(word, length, (string_address)"error"))
+                        return 3;
+                if (file_same_word(word, length, (string_address)"warning"))
+                        return 4;
+        }
+        return -1;
+}
+
+static bool tools_dmesg_mask(string_address list,
+                             const string_address address_to names,
+                             positive name_count, p32 address_to result,
+                             bool ranges)
+{
+        ps_list_cursor item = {.at = list};
+        p32 mask = 0;
+
+        if (!string_get(list))
+        {
+                address_to result = ((p32)1 << name_count) - 1;
+                return true;
+        }
+
+        positive first_nonblank = string_span(list, string_set_blanks);
+        if (string_is(list + first_nonblank, ','))
+                return false;
+        for (positive at = first_nonblank; string_get(list + at); at++)
+                if (string_is(list + at, ','))
+                {
+                        positive next = at + 1;
+                        while (byte_is_space(string_get(list + next)))
+                                next++;
+                        if (!string_get(list + next) ||
+                            string_is(list + next, ','))
+                                return false;
+                }
+
+        while (ps_list_next(address_of item, (string_address)", "))
+        {
+                if (!item.length)
+                        return false;
+
+                bool from_zero = ranges && item.from[item.length - 1] == '+';
+                bool through_end = ranges && item.from[0] == '+';
+                p8 address_to word = item.from + through_end;
+                positive length = item.length - from_zero - through_end;
+                b32 number = tools_dmesg_named(word, length, names,
+                                                name_count);
+
+                if (number < 0 && length == 1 && byte_is_digit(*word) &&
+                    (positive)(*word - '0') < name_count)
+                        number = *word - '0';
+                if (number < 0 || !length || (from_zero && through_end))
+                        return false;
+
+                positive first = from_zero ? 0 : (positive)number;
+                positive last = through_end ? name_count - 1
+                                            : (positive)number;
+                for (positive bit = first; bit <= last; bit++)
+                        mask |= (p32)1 << bit;
+        }
+
+        address_to result = mask;
+        return mask != 0;
+}
+
+static fn tools_dmesg_timestamp(p64 microseconds, bool signed_value,
+                                bool negative)
+{
+        positive seconds = (positive)(microseconds / 1000000);
+        positive fraction = (positive)(microseconds % 1000000);
+
+        text_put_character('[');
+        if (signed_value)
+        {
+                p8 number[24];
+                positive digits = positive_into(number, seconds);
+                writer_fill(text_put, digits < 3 ? 3 - digits : 0, ' ');
+                text_put_character(negative ? '-' : '+');
+                text_put(number, digits);
+        }
+        else
+                positive_to_padded(text_put, seconds, 5, ' ', 0);
+        text_put_character('.');
+        positive_to_padded(text_put, fraction, 6, '0', 0);
+        text_put_string("] ");
+}
+
+static fn tools_dmesg_timestamp_delta(p64 microseconds, p64 delta,
+                                      bool negative)
+{
+        text_put_character('[');
+        positive_to_padded(text_put, (positive)(microseconds / 1000000),
+                           5, ' ', 0);
+        text_put_character('.');
+        positive_to_padded(text_put, (positive)(microseconds % 1000000),
+                           6, '0', 0);
+        text_put_string(" <");
+        if (negative)
+        {
+                p8 number[24];
+                positive seconds = (positive)(delta / 1000000);
+                positive digits = positive_into(number, seconds);
+                writer_fill(text_put, digits < 4 ? 4 - digits : 0, ' ');
+                text_put_character('-');
+                text_put(number, digits);
+        }
+        else
+                positive_to_padded(text_put, (positive)(delta / 1000000),
+                                   5, ' ', 0);
+        text_put_character('.');
+        positive_to_padded(text_put, (positive)(delta % 1000000),
+                           6, '0', 0);
+        text_put_string(">] ");
+}
+
+static fn tools_dmesg_calendar(tools_dmesg_state address_to state,
+                               p64 microseconds, bool compact)
+{
+        time_t stamp = (time_t)(state->realtime_base +
+                                microseconds / 1000000);
+        tm broken;
+        p8 made[64];
+        string_address format = compact ? (string_address)"%b%e %H:%M"
+                                        : (string_address)"%a %b %e %H:%M:%S %Y";
+
+        if (!localtime_r(address_of stamp, address_of broken))
+                return;
+        positive length = clock_format_extended(made, sizeof(made), format,
+                                                address_of broken);
+        if (!length)
+                return;
+        text_put_character('[');
+        text_put(made, length);
+        text_put_string("] ");
+}
+
+static fn tools_dmesg_message(p8 address_to bytes, positive length,
+                              bool noescape)
+{
+        for (positive i = 0; i < length; i++)
+        {
+                p8 byte = bytes[i];
+
+                if (noescape || byte == '\t' || (byte >= ' ' && byte != 0x7f))
+                        text_put_character(byte);
+                else
+                {
+                        p8 escaped[4] = {'\\', 'x',
+                            storage_hex_digit(byte >> 4, false),
+                            storage_hex_digit(byte & 15, false)};
+                        text_put(escaped, sizeof(escaped));
+                }
+        }
+}
+
+static fn tools_dmesg_emit(tools_dmesg_state address_to state,
+                           tools_dmesg_record address_to record)
+{
+        positive level = record->priority & 7;
+        positive facility = record->priority >> 3;
+
+        if (facility >= array_count(tools_dmesg_facilities) ||
+            !(state->levels & ((p32)1 << level)) ||
+            !(state->facilities & ((p32)1 << facility)))
+                return;
+
+        if (state->json)
+        {
+                text_put_string(state->rows ? ",{\n" : "      {\n");
+                text_put_string("         \"pri\": ");
+                positive_to_string(text_put, record->priority);
+                text_put_string(",\n         \"time\": ");
+                positive_to_padded(text_put,
+                                   (positive)(record->microseconds / 1000000),
+                                   5, ' ', 0);
+                text_put_character('.');
+                positive_to_padded(text_put,
+                                   (positive)(record->microseconds % 1000000),
+                                   6, '0', 0);
+                text_put_string(",\n         \"msg\": ");
+                column_json_string((column_cell){record->message,
+                                                  record->message_length},
+                                   false);
+                text_put_string("\n      }");
+                state->rows++;
+                return;
+        }
+
+        if (state->raw)
+        {
+                if (record->priority_known)
+                {
+                        text_put_character('<');
+                        positive_to_string(text_put, record->priority);
+                        text_put_character('>');
+                }
+                if (record->timestamp_present)
+                        tools_dmesg_timestamp(record->microseconds, false,
+                                              false);
+                tools_dmesg_message(record->message, record->message_length,
+                                    state->noescape);
+                text_put_character('\n');
+                state->rows++;
+                return;
+        }
+
+        if (state->decode)
+        {
+                if (record->continuation)
+                        writer_fill(text_put, 15, ' ');
+                else
+                {
+                        string_address name = tools_dmesg_facilities[facility];
+                        text_put_string(name);
+                        writer_fill(text_put, 6 - string_length(name), ' ');
+                        text_put_character(':');
+                        name = tools_dmesg_levels[level];
+                        text_put_string(name);
+                        writer_fill(text_put, 6 - string_length(name), ' ');
+                        text_put_string(": ");
+                }
+        }
+
+        p64 delta = 0;
+        bool delta_negative = false;
+        if (state->previous_known)
+        {
+                delta_negative = record->microseconds < state->previous;
+                delta = delta_negative ? state->previous - record->microseconds
+                                       : record->microseconds - state->previous;
+        }
+
+        if (!state->no_time)
+        {
+                if (record->continuation)
+                        writer_fill(text_put, 15, ' ');
+                else
+                {
+                        if (state->relative)
+                        {
+                                if (!state->previous_known)
+                                        tools_dmesg_calendar(state,
+                                                             record->microseconds,
+                                                             true);
+                                else
+                                        tools_dmesg_timestamp(delta, true,
+                                                              delta_negative);
+                        }
+                        if (state->ctime)
+                                tools_dmesg_calendar(state,
+                                                     record->microseconds,
+                                                     false);
+                        if (!state->relative && !state->ctime)
+                        {
+                                if (state->color)
+                                        text_put_string("\033[32m");
+                                if (state->delta)
+                                        tools_dmesg_timestamp_delta(
+                                            record->microseconds, delta,
+                                            delta_negative);
+                                else
+                                        tools_dmesg_timestamp(
+                                            record->microseconds, false,
+                                            false);
+                                if (state->color)
+                                        text_put_string("\033[0m");
+                        }
+                }
+        }
+
+        if (state->color && level <= 3)
+                text_put_string("\033[31m");
+        tools_dmesg_message(record->message, record->message_length,
+                            state->noescape);
+        if (state->color && level <= 3)
+                text_put_string("\033[0m");
+        text_put_character('\n');
+        if (record->time_known)
+        {
+                state->previous = record->microseconds;
+                state->previous_known = true;
+        }
+        state->rows++;
+}
+
+static fn tools_dmesg_buffer(tools_dmesg_state address_to state,
+                             p8 address_to bytes, positive length, bool kmsg)
+{
+        positive at = 0;
+        p32 inherited = 7;
+
+        while (at < length)
+        {
+                positive stop = at;
+                p8 delimiter = kmsg ? '\0' : '\n';
+
+                while (stop < length && bytes[stop] != delimiter)
+                        stop++;
+                positive record_length = stop - at;
+                if (kmsg && record_length && bytes[stop - 1] == '\n')
+                        record_length--;
+
+                tools_dmesg_record record;
+                bool valid = kmsg
+                    ? tools_dmesg_kmsg_record(bytes + at, record_length,
+                                               address_of record)
+                    : tools_dmesg_legacy_record(bytes + at, record_length,
+                                                inherited,
+                                                address_of record);
+                if (valid)
+                {
+                        inherited = record.priority;
+                        tools_dmesg_emit(state, address_of record);
+                }
+
+                at = stop < length ? stop + 1 : length;
+        }
+}
+
+static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
+                                 string_address path, bool kmsg)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                text_flush();
+                string_format(file_fail, "dmesg: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return text_done(1);
+        }
+
+        positive length = 0;
+        bool failed = false;
+        p8 address_to bytes = text_arena_read_all(
+            (positive)handle, 16384, address_of length, address_of failed);
+        system_close(handle);
+        if (!bytes)
+                return text_done(1);
+
+        if (state->json)
+                text_put_string("{\n   \"dmesg\": [\n");
+        tools_dmesg_buffer(state, bytes, length, kmsg);
+        if (state->json)
+                text_put_string(state->rows ? "\n   ]\n}\n"
+                                           : "   ]\n}\n");
+        return text_done(failed ? 1 : 0);
+}
+
+static b32 tools_dmesg_follow(tools_dmesg_state address_to state,
+                              bool only_new)
+{
+#if defined(LINUX)
+        bipolar handle = system_open_at(AT_FDCWD, "/dev/kmsg",
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+                return text_refuse("read kernel buffer failed",
+                                   file_reason(handle), 1);
+        if (only_new && system_seek(handle, 0, FILE_SEEK_END) < 0)
+        {
+                system_close(handle);
+                return text_refuse("read kernel buffer failed",
+                                   "cannot seek /dev/kmsg", 1);
+        }
+
+        p8 record_bytes[65536];
+        while (!text_out_failed)
+        {
+                bipolar got = system_read_retry((positive)handle,
+                                                record_bytes,
+                                                sizeof(record_bytes));
+                if (got < 0)
+                {
+                        system_close(handle);
+                        return text_refuse("read kernel buffer failed",
+                                           file_reason(got), 1);
+                }
+                if (!got)
+                        continue;
+                tools_dmesg_record record;
+                if (tools_dmesg_kmsg_record(record_bytes, (positive)got,
+                                             address_of record))
+                        tools_dmesg_emit(state, address_of record);
+                text_flush();
+        }
+        system_close(handle);
+        return text_done(1);
+#else
+        (void)state;
+        (void)only_new;
+        return text_refuse(null, "kernel log requires Linux", 1);
+#endif
+}
+
+static b32 tools_dmesg_control(b32 operation, positive value,
+                               string_address action)
+{
+#if defined(LINUX)
+        bipolar answer = system_call_3(syscall(syslog), operation, 0, value);
+        return answer < 0 ? text_refuse(action, file_reason(answer), 1)
+                          : text_done(0);
+#else
+        (void)operation;
+        (void)value;
+        return text_refuse(action, "requires Linux", 1);
+#endif
+}
+
+static b32 tools_dmesg_main()
+{
+        file_taking taking = {
+            .program = (string_address)"dmesg",
+            .allowed = (string_address)"CcDEFKfHjkLlnoPprSsuwWxdeTtJVh",
+            .valued = (string_address)"FKflnsqab",
+            .long_optional = (string_address)"L",
+            .longs = tools_dmesg_longs,
+        };
+
+        text_begin("dmesg");
+        text_arena_used = 0;
+        if (!file_take(address_of taking))
+                return text_done(1);
+        if (taking.first != (positive)program_argument_count())
+                return text_refuse(program_argument((b32)taking.first),
+                                   "extra operand", 1);
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                text_put_string("Usage: dmesg [options]\n"
+                                "Display or control the kernel ring buffer.\n");
+                return text_done(0);
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                text_put_string("dmesg from dawning-kit\n");
+                return text_done(0);
+        }
+
+        positive flags = taking.flags;
+        if ((flags & FILE_FLAG('F')) && (flags & FILE_FLAG('K')))
+                return text_refuse(null, "--file and --kmsg-file cannot be combined", 1);
+        if ((flags & FILE_FLAG('r')) &&
+            (flags & (FILE_FLAG('x') | FILE_FLAG('t') | FILE_FLAG('T') |
+                      FILE_FLAG('e') | FILE_FLAG('d') | FILE_FLAG('J'))))
+                return text_refuse(null, "--raw cannot be combined with decoded output", 1);
+        if ((flags & FILE_FLAG('J')) &&
+            (flags & (FILE_FLAG('T') | FILE_FLAG('e') | FILE_FLAG('d'))))
+                return text_refuse(null, "JSON time transformations are not supported", 1);
+        if (flags & (FILE_FLAG('a') | FILE_FLAG('b')))
+                return text_refuse(null, "--since and --until are not supported", 1);
+
+        positive control_count = ((flags & FILE_FLAG('C')) != 0) +
+                                 ((flags & FILE_FLAG('D')) != 0) +
+                                 ((flags & FILE_FLAG('E')) != 0) +
+                                 ((flags & FILE_FLAG('n')) != 0);
+        if (control_count > 1)
+                return text_refuse(null, "kernel log controls cannot be combined", 1);
+
+        if (flags & FILE_FLAG('C'))
+                return tools_dmesg_control(DMESG_CLEAR, 0,
+                                           "clear kernel buffer failed");
+        if (flags & FILE_FLAG('D'))
+                return tools_dmesg_control(DMESG_CONSOLE_OFF, 0,
+                                           "klogctl failed");
+        if (flags & FILE_FLAG('E'))
+                return tools_dmesg_control(DMESG_CONSOLE_ON, 0,
+                                           "klogctl failed");
+        if (flags & FILE_FLAG('n'))
+        {
+                string_address level_name = file_option_value(address_of taking,
+                                                               'n');
+                positive length = string_length(level_name);
+                b32 level = tools_dmesg_named((p8 address_to)level_name, length,
+                                              tools_dmesg_levels,
+                                              array_count(tools_dmesg_levels));
+                if (level < 0 && length == 1 && level_name[0] >= '1' &&
+                    level_name[0] <= '8')
+                        level = level_name[0] - '1';
+                if (level < 0)
+                        return text_refuse(level_name, "unknown console level", 1);
+                return tools_dmesg_control(DMESG_CONSOLE_LEVEL,
+                                           (positive)level + 1,
+                                           "klogctl failed");
+        }
+
+        tools_dmesg_state state = {
+            .levels = 0xff,
+            .facilities = 0xffffff,
+            .raw = (flags & FILE_FLAG('r')) != 0,
+            .decode = (flags & FILE_FLAG('x')) != 0,
+            .no_time = (flags & FILE_FLAG('t')) != 0,
+            .ctime = (flags & FILE_FLAG('T')) != 0,
+            .relative = (flags & (FILE_FLAG('e') | FILE_FLAG('H'))) != 0,
+            .delta = (flags & FILE_FLAG('d')) != 0,
+            .json = (flags & FILE_FLAG('J')) != 0,
+            .noescape = (flags & FILE_FLAG('N')) != 0,
+        };
+
+        string_address value = file_option_value(address_of taking, 'q');
+        if (value)
+        {
+                if (string_equals(value, "notime"))
+                        state.no_time = true;
+                else if (string_equals(value, "ctime"))
+                        state.ctime = true;
+                else if (string_equals(value, "reltime"))
+                        state.relative = true;
+                else if (string_equals(value, "delta"))
+                        state.delta = true;
+                else if (!string_equals(value, "raw"))
+                        return text_refuse(value, "unsupported time format", 1);
+        }
+
+        value = file_option_value(address_of taking, 'l');
+        if (value && !tools_dmesg_mask(value, tools_dmesg_levels,
+                                       array_count(tools_dmesg_levels),
+                                       address_of state.levels, true))
+                return text_refuse(value, "unknown log level", 1);
+
+        value = file_option_value(address_of taking, 'f');
+        if (value && !tools_dmesg_mask(value, tools_dmesg_facilities,
+                                       array_count(tools_dmesg_facilities),
+                                       address_of state.facilities, false))
+                return text_refuse(value, "unknown log facility", 1);
+        if (flags & (FILE_FLAG('k') | FILE_FLAG('u')))
+        {
+                state.facilities = 0;
+                if (flags & FILE_FLAG('k'))
+                        state.facilities |= 1;
+                if (flags & FILE_FLAG('u'))
+                        state.facilities |= 0xfffffe;
+        }
+
+        b32 color = file_color_when(file_option_value(address_of taking, 'L'),
+                                    FILE_COLOR_AUTO);
+        if (color < 0)
+                return text_refuse(file_option_value(address_of taking, 'L'),
+                                   "invalid color mode", 1);
+        state.color = file_color_active(color);
+
+        p64 real = system_clock_ns(0);
+        p64 boot = system_clock_ns(7);
+        state.realtime_base = real >= boot
+            ? (real - boot) / SYSTEM_NANOSECONDS : 0;
+
+        positive capacity = 0;
+        value = file_option_value(address_of taking, 's');
+        if (value && (!text_unsigned_option(value, false,
+                                             address_of capacity) ||
+                      !capacity || capacity >= TEXT_ARENA_BYTES))
+                return text_refuse(value, "invalid buffer size", 1);
+
+        string_address file = file_option_value(address_of taking, 'F');
+        string_address kmsg_file = file_option_value(address_of taking, 'K');
+        if (file || kmsg_file)
+        {
+                if (flags & (FILE_FLAG('c') | FILE_FLAG('w') |
+                             FILE_FLAG('W') | FILE_FLAG('p')))
+                        return text_refuse(null, "selected mode requires a live kernel log", 1);
+                return tools_dmesg_read_file(address_of state,
+                                             file ? file : kmsg_file,
+                                             kmsg_file != null);
+        }
+
+        if (flags & (FILE_FLAG('w') | FILE_FLAG('W')))
+        {
+                if (flags & FILE_FLAG('c'))
+                        return text_refuse(null, "--read-clear and --follow cannot be combined", 1);
+                if (state.json)
+                        return text_refuse(null, "JSON follow output is not supported", 1);
+                return tools_dmesg_follow(address_of state,
+                                          (flags & FILE_FLAG('W')) != 0);
+        }
+
+#if defined(LINUX)
+        if (!capacity)
+        {
+                bipolar size = system_call_3(syscall(syslog),
+                                             DMESG_SIZE_BUFFER, 0, 0);
+                capacity = size > 0 ? (positive)size : 16384;
+        }
+        p8 address_to buffer = (p8 address_to)text_arena_take(capacity + 1);
+        if (!buffer)
+                return text_done(1);
+        b32 action = (flags & FILE_FLAG('c')) ? DMESG_READ_CLEAR
+                                              : DMESG_READ_ALL;
+        bipolar got = system_call_3(syscall(syslog), action,
+                                    (positive)buffer, capacity);
+        if (got < 0)
+                return text_refuse("read kernel buffer failed",
+                                   file_reason(got), 1);
+        if (state.json)
+                text_put_string("{\n   \"dmesg\": [\n");
+        tools_dmesg_buffer(address_of state, buffer, (positive)got, false);
+        if (state.json)
+                text_put_string(state.rows ? "\n   ]\n}\n"
+                                           : "   ]\n}\n");
+        return text_done(0);
+#else
+        return text_refuse(null, "kernel log requires Linux", 1);
+#endif
+}
+
 #include "util_linux.c"
+
+// fincore ----------------------------------------------------------
+
+/*
+        cachestat is the constant-work answer on current kernels.  One whole
+        file query gives the same cached-page count without walking a sparse
+        mapping.  Kernels and policies that refuse that newer syscall fall
+        through to mmap plus mincore.  The unclaimed tail of the shared text
+        arena is scratch for the one-byte-per-page vector; file_transfer is
+        the bounded fallback.  There is still one row engine and no pread.
+*/
+enum
+{
+        TOOLS_FINCORE_RES,
+        TOOLS_FINCORE_PAGES,
+        TOOLS_FINCORE_SIZE,
+        TOOLS_FINCORE_FILE,
+        TOOLS_FINCORE_COLUMNS,
+};
+
+typedef struct
+{
+        string_address path;
+        p64 resident;
+        p64 pages;
+        p64 size;
+} tools_fincore_row;
+
+typedef struct
+{
+        p64 offset;
+        p64 length;
+} tools_fincore_range;
+
+typedef struct
+{
+        p64 cached;
+        p64 dirty;
+        p64 writeback;
+        p64 evicted;
+        p64 recently_evicted;
+} tools_fincore_cache;
+
+static bool tools_fincore_bytes;
+
+static ul_table_column tools_fincore_columns[] = {
+    {(string_address)"res", (string_address)"RES", 0, true, UL_TABLE_STRING},
+    {(string_address)"pages", (string_address)"PAGES", 0, true, UL_TABLE_NUMBER},
+    {(string_address)"size", (string_address)"SIZE", 0, true, UL_TABLE_STRING},
+    {(string_address)"file", (string_address)"FILE", 0, false, UL_TABLE_STRING},
+};
+
+static const file_long tools_fincore_longs[] = {
+    {(string_address)"json", 'J'},
+    {(string_address)"bytes", 'b'},
+    {(string_address)"total", 'c'},
+    {(string_address)"noheadings", 'n'},
+    {(string_address)"output", 'o'},
+    {(string_address)"output-all", 'A'},
+    {(string_address)"raw", 'r'},
+    {(string_address)"recursive", 'R'},
+    {(string_address)"cachestat", 'C'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+/* Adapt the shared nearest IEC formatter to util-linux's compact spelling:
+   "1.5 KiB" becomes "1.5K", "8.0 KiB" becomes "8K", and "3 B"
+   becomes "3B".  Keep the unit selected by the value, since fincore prints
+   1048575 as 1024K instead of carrying the rounded value into 1M. */
+static fn tools_fincore_human(p8 address_to into, p64 value)
+{
+        positive unit = 0;
+        p64 scaled = value;
+        while (scaled >= 1024 && unit < 6)
+        {
+                scaled >>= 10;
+                unit++;
+        }
+
+        p8 made[24];
+        positive length = positive_into_human_nearest_string(
+            made, (positive)value, true);
+        positive space = 0;
+        while (space < length && made[space] != ' ')
+                space++;
+
+        static const p8 units[] = "BKMGTPE";
+        p8 actual = space + 1 < length ? made[space + 1] : 'B';
+        if (actual != units[unit])
+        {
+                positive_into_human_1024_string(into, (positive)value);
+                return;
+        }
+
+        if (space >= 2 && made[space - 2] == '.' && made[space - 1] == '0')
+                space -= 2;
+        memory_copy_apart(into, made, space);
+        into[space++] = units[unit];
+        into[space] = end;
+}
+
+static string_address tools_fincore_field(address_any row, p8 column,
+                                          p8 address_to scratch)
+{
+        tools_fincore_row address_to entry = (tools_fincore_row address_to)row;
+
+        if (column == TOOLS_FINCORE_FILE)
+                return entry->path;
+
+        p64 value = column == TOOLS_FINCORE_RES ? entry->resident
+                    : column == TOOLS_FINCORE_PAGES ? entry->pages
+                                                    : entry->size;
+        if (tools_fincore_bytes || column == TOOLS_FINCORE_PAGES)
+                positive_into_string(scratch, (positive)value);
+        else
+                tools_fincore_human(scratch, value);
+        return scratch;
+}
+
+static bool tools_fincore_one(string_address path,
+                              tools_fincore_row address_to row)
+{
+#if defined(LINUX)
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "fincore: failed to open: %s: %s\n",
+                              path, file_reason(handle));
+                return false;
+        }
+
+        file_facts facts;
+        bipolar told = file_look_code(handle, (string_address)"",
+                                      AT_EMPTY_PATH, address_of facts);
+        if (told < 0)
+        {
+                string_format(file_fail, "fincore: failed to stat: %s: %s\n",
+                              path, file_reason(told));
+                system_close(handle);
+                return false;
+        }
+        if ((facts.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                string_format(file_fail,
+                              "fincore: not a regular file: %s\n", path);
+                system_close(handle);
+                return false;
+        }
+
+        positive page = system_page_size();
+        p64 pages = facts.size / page + (facts.size % page != 0);
+        p64 resident = 0;
+        bool cache_answered = false;
+
+        if (facts.size)
+        {
+                tools_fincore_range range = {0, facts.size};
+                tools_fincore_cache cache = {0, 0, 0, 0, 0};
+                bipolar cached = system_call_4(
+                    syscall(cachestat), (positive)handle,
+                    (positive)address_of range, (positive)address_of cache, 0);
+
+                if (!cached)
+                {
+                        resident = cache.cached < pages ? cache.cached : pages;
+                        cache_answered = true;
+                }
+        }
+
+        if (facts.size && !cache_answered)
+        {
+                bipolar mapped = system_call_6(
+                    syscall(mmap), 0, (positive)facts.size, FILE_PROTECT_NONE,
+                    FILE_MAP_SHARED, (positive)handle, 0);
+                if (mapped < 0)
+                {
+                        string_format(file_fail,
+                                      "fincore: failed to mmap: %s: %s\n",
+                                      path, file_reason(mapped));
+                        system_close(handle);
+                        return false;
+                }
+
+                p64 done = 0;
+                p8 address_to vector = file_transfer;
+                positive vector_room = sizeof(file_transfer);
+                if (text_arena && text_arena_used < TEXT_ARENA_BYTES)
+                {
+                        vector = text_arena + text_arena_used;
+                        vector_room = TEXT_ARENA_BYTES - text_arena_used;
+                }
+                while (done < pages)
+                {
+                        positive count = pages - done > vector_room
+                            ? vector_room : (positive)(pages - done);
+                        positive length = count * page;
+                        p64 remaining = facts.size - done * page;
+                        if (remaining < length)
+                                length = (positive)remaining;
+
+                        bipolar answer = system_call_3(
+                            syscall(mincore),
+                            (positive)((p8 address_to)(positive)mapped +
+                                       done * page),
+                            length, (positive)vector);
+                        if (answer < 0)
+                        {
+                                string_format(file_fail,
+                                              "fincore: failed to do mincore: %s: %s\n",
+                                              path, file_reason(answer));
+                                system_call_2(syscall(munmap),
+                                              (positive)mapped,
+                                              (positive)facts.size);
+                                system_close(handle);
+                                return false;
+                        }
+                        for (positive i = 0; i < count; i++)
+                                resident += (vector[i] & 1) != 0;
+                        done += count;
+                }
+
+                system_call_2(syscall(munmap), (positive)mapped,
+                              (positive)facts.size);
+        }
+        system_close(handle);
+
+        row->path = path;
+        row->pages = resident;
+        row->resident = resident * page;
+        row->size = facts.size;
+        return true;
+#else
+        (void)path;
+        (void)row;
+        string_format(file_fail, "fincore: mincore requires Linux\n");
+        return false;
+#endif
+}
+
+static b32 tools_fincore_main()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"fincore",
+            .allowed = (string_address)"JbcnorRCAhV",
+            .valued = (string_address)"o",
+            .longs = tools_fincore_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+                return ul_usage("fincore", "[options] file...");
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "fincore from dawning-kit\n");
+                log_flush();
+                return 0;
+        }
+        if (!file_operand_count)
+                return ul_bad_usage("fincore", "no file specified");
+        if (taking.flags & FILE_FLAG('c'))
+                return ul_bad_usage("fincore", "grand totals are not supported");
+        if (taking.flags & FILE_FLAG('R'))
+                return ul_bad_usage("fincore", "recursive traversal is not supported");
+        if (taking.flags & FILE_FLAG('C'))
+                return ul_bad_usage("fincore", "cachestat option is not supported");
+        if (taking.flags & FILE_FLAG('A'))
+                return ul_bad_usage("fincore", "extended output metadata is not supported");
+
+        static const p8 defaults[] = {
+            TOOLS_FINCORE_RES, TOOLS_FINCORE_PAGES,
+            TOOLS_FINCORE_SIZE, TOOLS_FINCORE_FILE,
+        };
+        p8 columns[TOOLS_FINCORE_COLUMNS];
+        positive column_count = 0;
+        string_address output = file_option_value(address_of taking, 'o');
+        if (output)
+        {
+                if (!ul_table_column_list(
+                        output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
+                        defaults, array_count(defaults), columns,
+                        address_of column_count))
+                        return ul_bad_usage("fincore", "unknown output column");
+        }
+        else
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[column_count++] = defaults[i];
+
+        text_begin("fincore");
+        text_arena_used = 0;
+        if (file_operand_count > positive_max / sizeof(tools_fincore_row))
+                return text_refuse(null, "too many files", 1);
+        tools_fincore_row address_to rows =
+            (tools_fincore_row address_to)text_arena_take(
+                file_operand_count * sizeof(*rows));
+        if (!rows)
+                return text_done(1);
+
+        positive count = 0;
+        bool failed = false;
+        for (positive i = 0; i < file_operand_count; i++)
+        {
+                tools_fincore_row row;
+                if (tools_fincore_one(file_operand_at(i), address_of row))
+                        rows[count++] = row;
+                else
+                        failed = true;
+        }
+
+        tools_fincore_bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        tools_fincore_columns[TOOLS_FINCORE_RES].width =
+            tools_fincore_bytes ? 5 : 0;
+        tools_fincore_columns[TOOLS_FINCORE_RES].json = tools_fincore_bytes
+            ? UL_TABLE_NUMBER : UL_TABLE_STRING;
+        tools_fincore_columns[TOOLS_FINCORE_SIZE].json = tools_fincore_bytes
+            ? UL_TABLE_NUMBER : UL_TABLE_STRING;
+
+        if (taking.flags & FILE_FLAG('J'))
+                ul_table_json("fincore", rows, sizeof(*rows), count,
+                              tools_fincore_columns, columns, column_count,
+                              tools_fincore_field);
+        else
+                ul_table_out(rows, sizeof(*rows), count,
+                             tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
+                             columns, column_count,
+                             !(taking.flags & FILE_FLAG('n')),
+                             (taking.flags & FILE_FLAG('r')) != 0,
+                             tools_fincore_field);
+        log_flush();
+        return failed ? text_done(1) : 0;
+}

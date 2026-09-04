@@ -1420,7 +1420,14 @@ static bool storage_selector_parse(string_address text,
 typedef bool (*storage_visitor)(storage_identity address_to identity,
                                 address_any context);
 
-static bool storage_each_device(storage_visitor visit, address_any context)
+typedef bool (*storage_path_visitor)(string_address path,
+                                     address_any context);
+
+/* The class directory is the kernel's one complete block-device census.
+   Keep its checked dirent walk shared by metadata consumers; callbacks must
+   consume the stack-backed path before returning. */
+static bool storage_each_block_path(storage_path_visitor visit,
+                                    address_any context)
 {
         bipolar directory;
         p8 block[STORAGE_DEVICE_BLOCK];
@@ -1450,7 +1457,6 @@ static bool storage_each_device(storage_visitor visit, address_any context)
                         positive name_room;
                         positive name_length;
                         p8 path[STORAGE_PATH_ROOM];
-                        storage_identity identity;
 
                         if (remaining < 19)
                         {
@@ -1482,8 +1488,7 @@ static bool storage_each_device(storage_visitor visit, address_any context)
                                     entry->d_name, name_length);
                         path[sizeof("/dev/") - 1 + name_length] = end;
 
-                        if (storage_probe_device(path, address_of identity) &&
-                            !visit(address_of identity, context))
+                        if (!visit(path, context))
                         {
                                 stopped = true;
                                 break;
@@ -1493,6 +1498,30 @@ static bool storage_each_device(storage_visitor visit, address_any context)
 
         system_close(directory);
         return stopped;
+}
+
+typedef struct
+{
+        storage_visitor visit;
+        address_any context;
+} storage_device_visit;
+
+static bool storage_device_probe_visit(string_address path,
+                                       address_any opaque)
+{
+        storage_device_visit address_to request =
+            (storage_device_visit address_to)opaque;
+        storage_identity identity;
+
+        return !storage_probe_device(path, address_of identity) ||
+               request->visit(address_of identity, request->context);
+}
+
+static bool storage_each_device(storage_visitor visit, address_any context)
+{
+        storage_device_visit request = {visit, context};
+        return storage_each_block_path(storage_device_probe_visit,
+                                       address_of request);
 }
 
 typedef struct

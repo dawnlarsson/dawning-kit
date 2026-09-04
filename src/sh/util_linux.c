@@ -3276,18 +3276,26 @@ typedef struct
         string_address heading;
         positive width;
         bool number;
-} ul_lsns_column;
+        p8 json;
+        bool multiline;
+} ul_table_column;
 
-static const ul_lsns_column ul_lsns_columns[] = {
-    {(string_address)"ns", (string_address)"NS", 10, true},
-    {(string_address)"type", (string_address)"TYPE", 0, false},
-    {(string_address)"path", (string_address)"PATH", 0, false},
-    {(string_address)"nprocs", (string_address)"NPROCS", 5, true},
-    {(string_address)"pid", (string_address)"PID", 5, true},
-    {(string_address)"ppid", (string_address)"PPID", 4, true},
-    {(string_address)"command", (string_address)"COMMAND", 0, false},
-    {(string_address)"uid", (string_address)"UID", 3, true},
-    {(string_address)"user", (string_address)"USER", 0, false},
+#define UL_TABLE_STRING 0
+#define UL_TABLE_NUMBER 1
+#define UL_TABLE_BOOLEAN 2
+#define UL_TABLE_NULL_STRING 3
+#define UL_TABLE_NULL_NUMBER 4
+
+static const ul_table_column ul_lsns_columns[] = {
+    {(string_address)"ns", (string_address)"NS", 10, true, UL_TABLE_NUMBER},
+    {(string_address)"type", (string_address)"TYPE", 0, false, UL_TABLE_STRING},
+    {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_STRING},
+    {(string_address)"nprocs", (string_address)"NPROCS", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"ppid", (string_address)"PPID", 4, true, UL_TABLE_NUMBER},
+    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
+    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER},
+    {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
 };
 
 typedef struct
@@ -3340,34 +3348,32 @@ static b32 ul_lsns_type(string_address name)
         return -1;
 }
 
-static bool ul_lsns_column_add(p8 address_to columns, positive address_to count,
-                               p8 column)
+static bool ul_table_column_add(p8 address_to columns, positive address_to count,
+                                positive maximum, p8 column)
 {
         for (positive i = 0; i < address_to count; i++)
                 if (columns[i] == column)
                         return true;
 
-        if (address_to count == UL_LSNS_COLUMNS)
+        if (address_to count == maximum)
                 return false;
 
         columns[(address_to count)++] = column;
         return true;
 }
 
-static bool ul_lsns_column_list(string_address text, p8 address_to columns,
-                                positive address_to count)
+static bool ul_table_column_list(
+    string_address text, const ul_table_column address_to definitions,
+    positive definition_count, const p8 address_to defaults,
+    positive default_count, p8 address_to columns, positive address_to count)
 {
-        static const p8 defaults[] = {
-            UL_LSNS_NS, UL_LSNS_TYPE, UL_LSNS_NPROCS,
-            UL_LSNS_PID, UL_LSNS_USER, UL_LSNS_COMMAND,
-        };
         bool append = string_is(text, '+');
 
         address_to count = 0;
         if (append)
         {
                 text++;
-                for (positive i = 0; i < array_count(defaults); i++)
+                for (positive i = 0; i < default_count; i++)
                         columns[(address_to count)++] = defaults[i];
         }
 
@@ -3376,18 +3382,19 @@ static bool ul_lsns_column_list(string_address text, p8 address_to columns,
                 string_address comma = string_first_of(text, ',');
                 positive length = comma ? (positive)(comma - text)
                                         : string_length(text);
-                positive found = UL_LSNS_COLUMNS;
+                positive found = definition_count;
 
-                for (positive i = 0; i < UL_LSNS_COLUMNS; i++)
+                for (positive i = 0; i < definition_count; i++)
                         if (file_same_word(text, length,
-                                           ul_lsns_columns[i].name))
+                                           definitions[i].name))
                         {
                                 found = i;
                                 break;
                         }
 
-                if (found == UL_LSNS_COLUMNS ||
-                    !ul_lsns_column_add(columns, count, (p8)found))
+                if (found == definition_count ||
+                    !ul_table_column_add(columns, count, definition_count,
+                                         (p8)found))
                         return false;
 
                 text += length;
@@ -3434,6 +3441,15 @@ static string_address ul_lsns_field(ul_lsns_entry address_to entry,
         }
 }
 
+typedef string_address (*ul_table_field)(address_any row, p8 column,
+                                         p8 address_to scratch);
+
+static string_address ul_lsns_table_field(address_any row, p8 column,
+                                          p8 address_to scratch)
+{
+        return ul_lsns_field((ul_lsns_entry address_to)row, column, scratch);
+}
+
 /* libsmartcols' raw mode protects field separators.  Process arguments may
    also contain literal controls or backslashes, so keep every record on one
    unambiguous physical line instead of escaping spaces alone. */
@@ -3470,6 +3486,63 @@ static PURE positive ul_lsns_safe_length(string_address text)
         return length;
 }
 
+static PURE positive ul_table_line_count(string_address text,
+                                         bool multiline)
+{
+        positive count = 1;
+        if (multiline)
+                while (string_get(text))
+                        if (string_get(text++) == '\n')
+                                count++;
+        return count;
+}
+
+static string_address ul_table_line(string_address text, positive wanted,
+                                    positive address_to length)
+{
+        while (wanted && string_get(text))
+                if (string_get(text++) == '\n')
+                        wanted--;
+        if (wanted)
+        {
+                address_to length = 0;
+                return (string_address)"";
+        }
+        string_address stop = text;
+        while (string_get(stop) && string_get(stop) != '\n')
+                stop++;
+        address_to length = (positive)(stop - text);
+        return text;
+}
+
+static PURE positive ul_lsns_safe_span_length(string_address text,
+                                               positive bytes)
+{
+        positive length = 0;
+        for (positive i = 0; i < bytes; i++)
+        {
+                p8 byte = string_get(text + i);
+                length += byte < ' ' || byte == 0x7f ? 4 : 1;
+        }
+        return length;
+}
+
+static PURE positive ul_table_safe_width(string_address text, bool multiline)
+{
+        if (!multiline)
+                return ul_lsns_safe_length(text);
+        positive width = 0;
+        positive lines = ul_table_line_count(text, true);
+        for (positive line = 0; line < lines; line++)
+        {
+                positive bytes;
+                string_address part = ul_table_line(text, line,
+                                                     address_of bytes);
+                width = max(width, ul_lsns_safe_span_length(part, bytes));
+        }
+        return width;
+}
+
 static fn ul_lsns_safe(string_address text)
 {
         static const p8 hex[] = "0123456789abcdef";
@@ -3487,6 +3560,35 @@ static fn ul_lsns_safe(string_address text)
                         log(escaped, sizeof(escaped));
                 }
         }
+}
+
+static fn ul_lsns_safe_span(string_address text, positive bytes)
+{
+        static const p8 hex[] = "0123456789abcdef";
+        for (positive i = 0; i < bytes; i++)
+        {
+                p8 byte = string_get(text + i);
+                if (byte >= ' ' && byte != 0x7f)
+                        log(text + i, 1);
+                else
+                {
+                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
+                                         hex[byte & 15]};
+                        log(escaped, sizeof(escaped));
+                }
+        }
+}
+
+static fn ul_lsns_safe_span_field(string_address text, positive bytes,
+                                  positive width, bool left)
+{
+        positive length = ul_lsns_safe_span_length(text, bytes);
+        positive padding = width > length ? width - length : 0;
+        if (!left)
+                writer_fill(log, padding, ' ');
+        ul_lsns_safe_span(text, bytes);
+        if (left)
+                writer_fill(log, padding, ' ');
 }
 
 static fn ul_lsns_safe_field(string_address text, positive width, bool left)
@@ -3527,10 +3629,13 @@ static fn ul_lsns_json_string(string_address text)
         log("\"", 1);
 }
 
-static fn ul_lsns_json(ul_lsns_entry address_to entries, positive count,
-                       p8 address_to columns, positive column_count)
+static fn ul_table_json(string_address name, address_any rows,
+                        positive row_size, positive count,
+                        const ul_table_column address_to definitions,
+                        p8 address_to columns, positive column_count,
+                        ul_table_field field_of)
 {
-        log("{\n   \"namespaces\": [", 20);
+        string_format(log, "{\n   \"%s\": [", name);
 
         for (positive row = 0; row < count; row++)
         {
@@ -3540,14 +3645,29 @@ static fn ul_lsns_json(ul_lsns_entry address_to entries, positive count,
                 {
                         p8 column = columns[field];
                         p8 scratch[96];
-                        string_address value = ul_lsns_field(
-                            entries + row, column, scratch);
+                        string_address value = field_of(
+                            (p8 address_to)rows + row * row_size, column,
+                            scratch);
 
                         if (field)
                                 log(",\n", 2);
                         string_format(log, "         \"%s\": ",
-                                      ul_lsns_columns[column].name);
-                        if (ul_lsns_columns[column].number)
+                                      definitions[column].name);
+                        p8 json = definitions[column].json;
+
+                        if ((json == UL_TABLE_NULL_STRING ||
+                             json == UL_TABLE_NULL_NUMBER) &&
+                            !string_get(value))
+                                log("null", 4);
+                        else if (json == UL_TABLE_BOOLEAN)
+                        {
+                                bool false_value = string_equals(value, "0") ||
+                                                   string_equals(value, "no");
+                                log(false_value ? "false" : "true",
+                                    false_value ? 5 : 4);
+                        }
+                        else if (json == UL_TABLE_NUMBER ||
+                                 json == UL_TABLE_NULL_NUMBER)
                                 log(value, string_length(value));
                         else
                                 ul_lsns_json_string(value);
@@ -3560,19 +3680,21 @@ static fn ul_lsns_json(ul_lsns_entry address_to entries, positive count,
         log("\n   ]\n}\n", 8);
 }
 
-static fn ul_lsns_table(ul_lsns_entry address_to entries, positive count,
-                        p8 address_to columns, positive column_count,
-                        bool headings, bool raw)
+static fn ul_table_out(address_any rows, positive row_size, positive count,
+                       const ul_table_column address_to definitions,
+                       positive definition_count, p8 address_to columns,
+                       positive column_count, bool headings, bool raw,
+                       ul_table_field field_of)
 {
-        positive widths[UL_LSNS_COLUMNS] = {0};
+        positive widths[64] = {0};
 
-        if (!count)
+        if (!count || definition_count > array_count(widths))
                 return;
 
         for (positive i = 0; i < column_count; i++)
         {
                 p8 column = columns[i];
-                widths[column] = ul_lsns_columns[column].width;
+                widths[column] = definitions[column].width;
         }
 
         if (headings)
@@ -3580,7 +3702,7 @@ static fn ul_lsns_table(ul_lsns_entry address_to entries, positive count,
                 {
                         p8 column = columns[i];
                         positive heading = string_length(
-                            ul_lsns_columns[column].heading);
+                            definitions[column].heading);
 
                         if (heading > widths[column])
                                 widths[column] = heading;
@@ -3592,9 +3714,11 @@ static fn ul_lsns_table(ul_lsns_entry address_to entries, positive count,
                         {
                                 p8 column = columns[field];
                                 p8 scratch[96];
-                                positive length = ul_lsns_safe_length(
-                                    ul_lsns_field(entries + row, column,
-                                                  scratch));
+                                positive length = ul_table_safe_width(
+                                    field_of((p8 address_to)rows +
+                                                 row * row_size,
+                                             column, scratch),
+                                    definitions[column].multiline);
 
                                 if (length > widths[column])
                                         widths[column] = length;
@@ -3603,33 +3727,66 @@ static fn ul_lsns_table(ul_lsns_entry address_to entries, positive count,
         for (positive row = 0; row < count + (headings ? 1 : 0); row++)
         {
                 bool heading = headings && !row;
-                ul_lsns_entry address_to entry = entries +
-                    (heading ? 0 : row - (headings ? 1 : 0));
+                address_any entry = (p8 address_to)rows +
+                    (heading ? 0 : row - (headings ? 1 : 0)) * row_size;
 
-                for (positive field = 0; field < column_count; field++)
-                {
-                        p8 column = columns[field];
-                        p8 scratch[96];
-                        string_address value = heading
-                            ? ul_lsns_columns[column].heading
-                            : ul_lsns_field(entry, column, scratch);
-
-                        if (field)
-                                log(" ", 1);
-                        if (raw)
-                                ul_lsns_raw(value);
-                        else
+                positive lines = 1;
+                if (!heading && !raw)
+                        for (positive field = 0; field < column_count; field++)
                         {
-                                bool number = ul_lsns_columns[column].number;
-                                bool last_text = field + 1 == column_count &&
-                                                 !number;
-
-                                ul_lsns_safe_field(
-                                    value, last_text ? 0 : widths[column],
-                                    !number);
+                                p8 column = columns[field];
+                                if (!definitions[column].multiline)
+                                        continue;
+                                p8 scratch[96];
+                                positive have = ul_table_line_count(
+                                    field_of(entry, column, scratch), true);
+                                lines = max(lines, have);
                         }
+
+                for (positive line = 0; line < lines; line++)
+                {
+                        for (positive field = 0; field < column_count; field++)
+                        {
+                                p8 column = columns[field];
+                                p8 scratch[96];
+                                string_address value = heading
+                                    ? definitions[column].heading
+                                    : field_of(entry, column, scratch);
+                                positive bytes = string_length(value);
+                                if (!raw && !heading)
+                                {
+                                        if (definitions[column].multiline)
+                                                value = ul_table_line(
+                                                    value, line,
+                                                    address_of bytes);
+                                        else if (line)
+                                                bytes = 0;
+                                }
+
+                                if (field)
+                                        log(" ", 1);
+                                if (raw)
+                                        ul_lsns_raw(value);
+                                else
+                                {
+                                        bool number =
+                                            definitions[column].number;
+                                        bool last_text =
+                                            field + 1 == column_count &&
+                                            !number;
+                                        bool empty_last =
+                                            field + 1 == column_count &&
+                                            !bytes;
+
+                                        ul_lsns_safe_span_field(
+                                            value, bytes,
+                                            (last_text || empty_last)
+                                                ? 0 : widths[column],
+                                            !number);
+                                }
+                        }
+                        log("\n", 1);
                 }
-                log("\n", 1);
         }
 }
 
@@ -3697,14 +3854,23 @@ static b32 util_linux_lsns()
             UL_LSNS_NS, UL_LSNS_TYPE, UL_LSNS_NPROCS,
             UL_LSNS_PID, UL_LSNS_USER, UL_LSNS_COMMAND,
         };
+        static const p8 inode_defaults[] = {
+            UL_LSNS_PID, UL_LSNS_PPID, UL_LSNS_USER, UL_LSNS_COMMAND,
+        };
         p8 columns[UL_LSNS_COLUMNS];
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
         if (output)
         {
-                if (!ul_lsns_column_list(output, columns,
-                                         address_of column_count))
+                const p8 address_to initial = inode_selected
+                    ? inode_defaults : defaults;
+                positive initial_count = inode_selected
+                    ? array_count(inode_defaults) : array_count(defaults);
+
+                if (!ul_table_column_list(
+                        output, ul_lsns_columns, UL_LSNS_COLUMNS, initial,
+                        initial_count, columns, address_of column_count))
                         return ul_bad_usage("lsns", "unknown output column");
         }
         else if (inode_selected)
@@ -3845,14 +4011,1035 @@ static b32 util_linux_lsns()
         }
 
         if (taking.flags & FILE_FLAG('J'))
-                ul_lsns_json(entries, groups, columns, column_count);
+                ul_table_json("namespaces", entries, sizeof(*entries), groups,
+                              ul_lsns_columns, columns, column_count,
+                              ul_lsns_table_field);
         else
-                ul_lsns_table(entries, groups, columns, column_count,
-                              !(taking.flags & FILE_FLAG('n')),
-                              (taking.flags & FILE_FLAG('r')) != 0);
+                ul_table_out(entries, sizeof(*entries), groups,
+                             ul_lsns_columns, UL_LSNS_COLUMNS, columns,
+                             column_count,
+                             !(taking.flags & FILE_FLAG('n')),
+                             (taking.flags & FILE_FLAG('r')) != 0,
+                             ul_lsns_table_field);
 
         log_flush();
         return 0;
+}
+
+// lslocks ---------------------------------------------------------
+
+enum
+{
+        UL_LOCKS_COMMAND,
+        UL_LOCKS_PID,
+        UL_LOCKS_TYPE,
+        UL_LOCKS_SIZE,
+        UL_LOCKS_INODE,
+        UL_LOCKS_DEVICE,
+        UL_LOCKS_MODE,
+        UL_LOCKS_MANDATORY,
+        UL_LOCKS_START,
+        UL_LOCKS_END,
+        UL_LOCKS_PATH,
+        UL_LOCKS_BLOCKER,
+        UL_LOCKS_HOLDERS,
+        UL_LOCKS_COLUMNS,
+};
+
+static ul_table_column ul_lslocks_columns[] = {
+    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
+    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"type", (string_address)"TYPE", 5, true, UL_TABLE_STRING},
+    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NULL_STRING},
+    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
+    {(string_address)"mode", (string_address)"MODE", 5, false, UL_TABLE_STRING},
+    {(string_address)"m", (string_address)"M", 1, true, UL_TABLE_BOOLEAN},
+    {(string_address)"start", (string_address)"START", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"end", (string_address)"END", 3, true, UL_TABLE_NUMBER},
+    {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_NULL_STRING},
+    {(string_address)"blocker", (string_address)"BLOCKER", 7, true, UL_TABLE_NULL_NUMBER},
+    {(string_address)"holders", (string_address)"HOLDERS", 0, false, UL_TABLE_NULL_STRING},
+};
+
+typedef struct
+{
+        p64 id;
+        p64 inode;
+        p64 start;
+        p64 finish;
+        p64 size;
+        struct snapshot_process address_to process;
+        string_address path;
+        b32 pid;
+        b32 blocker;
+        p32 major;
+        p32 minor;
+        p8 type;
+        p8 mode;
+        bool mandatory;
+        bool blocked;
+        bool size_known;
+        bool accessible;
+} ul_lslocks_entry;
+
+static system_snapshot ul_lslocks_snapshot;
+static bool ul_lslocks_bytes;
+
+static const file_long ul_lslocks_longs[] = {
+    {(string_address)"bytes", 'b'},
+    {(string_address)"json", 'J'},
+    {(string_address)"noinaccessible", 'i'},
+    {(string_address)"noheadings", 'n'},
+    {(string_address)"output", 'o'},
+    {(string_address)"output-all", 'A'},
+    {(string_address)"pid", 'p'},
+    {(string_address)"filter", 'Q'},
+    {(string_address)"raw", 'r'},
+    {(string_address)"notruncate", 'u'},
+    {(string_address)"list-columns", 'H'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static string_address ul_lslocks_word(p8 address_to address_to cursor,
+                                      p8 address_to stop)
+{
+        p8 address_to at = address_to cursor;
+
+        while (at < stop && byte_is_space(*at))
+                at++;
+        if (at == stop)
+        {
+                address_to cursor = at;
+                return null;
+        }
+
+        p8 address_to word = at;
+        while (at < stop && !byte_is_space(*at))
+                at++;
+        if (at < stop)
+                *at++ = end;
+        address_to cursor = at;
+        return word;
+}
+
+static bool ul_lslocks_id(string_address text, positive address_to value)
+{
+        string_address at = text;
+
+        return string_digits_checked(address_of at, 10, value) &&
+               string_is(at, ':') && !string_get(at + 1);
+}
+
+static bool ul_lslocks_device(string_address text,
+                              p32 address_to major, p32 address_to minor,
+                              positive address_to inode)
+{
+        string_address at = text;
+        positive high;
+        positive low;
+        positive node;
+
+        if (!string_digits_checked(address_of at, 16, address_of high) ||
+            !string_is(at, ':'))
+                return false;
+        at++;
+        if (!string_digits_checked(address_of at, 16, address_of low) ||
+            !string_is(at, ':'))
+                return false;
+        at++;
+        if (!string_digits_checked(address_of at, 10, address_of node) ||
+            string_get(at) || high > p32_max || low > p32_max)
+                return false;
+
+        address_to major = (p32)high;
+        address_to minor = (p32)low;
+        address_to inode = node;
+        return true;
+}
+
+static b32 ul_lslocks_kind(string_address text)
+{
+        static const string_address kinds[] = {
+            (string_address)"POSIX", (string_address)"FLOCK",
+            (string_address)"OFDLCK",
+        };
+
+        for (positive i = 0; i < array_count(kinds); i++)
+                if (string_equals(text, kinds[i]))
+                        return (b32)i;
+        return -1;
+}
+
+static struct snapshot_process address_to ul_lslocks_process(b32 pid)
+{
+        positive low = 0;
+        positive high = ul_lslocks_snapshot.header.process_count;
+
+        while (low < high)
+        {
+                positive middle = low + (high - low) / 2;
+                struct snapshot_process address_to process =
+                    ul_lslocks_snapshot.processes + middle;
+
+                if (process->pid < (p32)pid)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        if (low < ul_lslocks_snapshot.header.process_count &&
+            ul_lslocks_snapshot.processes[low].pid == (p32)pid)
+                return ul_lslocks_snapshot.processes + low;
+        return null;
+}
+
+/* Resolve one device/inode through the holder's already-open descriptors.
+   There is still one shared PID snapshot and no second walk of /proc itself;
+   a disappearing fd or task simply leaves this racing record unresolved. */
+static fn ul_lslocks_resolve(ul_lslocks_entry address_to lock)
+{
+        if (lock->pid < 0)
+                return;
+
+        p8 directory[64];
+        system_process_path(directory, (p32)lock->pid, null, "fd");
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD, directory))
+                return;
+
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                positive fd;
+                file_facts facts;
+
+                if (!ul_unsigned(entry->d_name, b32_max, address_of fd) ||
+                    !file_look(walk.handle, entry->d_name, 0,
+                               address_of facts) ||
+                    facts.inode != lock->inode ||
+                    facts.device_major != lock->major ||
+                    facts.device_minor != lock->minor)
+                        continue;
+
+                p8 path[FILE_PATH_MAX];
+                bipolar length = system_read_link_at(
+                    walk.handle, entry->d_name, path, sizeof(path) - 1);
+
+                lock->size = facts.size;
+                lock->size_known = true;
+
+                if (length >= 0 && (positive)length < sizeof(path) - 1)
+                {
+                        p8 address_to copy = (p8 address_to)text_arena_take(
+                            (positive)length + 1);
+
+                        if (copy)
+                        {
+                                memory_copy_apart_end(copy, path,
+                                                     (positive)length);
+                                lock->path = copy;
+                                lock->accessible = true;
+                        }
+                }
+                break;
+        }
+
+        file_walk_close(address_of walk);
+}
+
+static string_address ul_lslocks_field(address_any row, p8 column,
+                                       p8 address_to scratch)
+{
+        static const string_address kinds[] = {
+            (string_address)"POSIX", (string_address)"FLOCK",
+            (string_address)"OFDLCK",
+        };
+        ul_lslocks_entry address_to lock = (ul_lslocks_entry address_to)row;
+
+        switch (column)
+        {
+        case UL_LOCKS_COMMAND:
+                return lock->process
+                           ? (string_address)lock->process->command
+                                     : (string_address)"";
+        case UL_LOCKS_PID:
+                if (lock->pid < 0)
+                        return (string_address)"-1";
+                positive_into_string(scratch, (positive)(p32)lock->pid);
+                return scratch;
+        case UL_LOCKS_TYPE:
+                return kinds[lock->type];
+        case UL_LOCKS_SIZE:
+                if (!lock->size_known || !lock->size)
+                        return (string_address)"";
+                if (ul_lslocks_bytes)
+                        positive_into_string(scratch, (positive)lock->size);
+                else
+                {
+                        positive length = positive_into_human_1024_string(
+                            scratch, (positive)lock->size);
+
+                        if (length && byte_is_digit(scratch[length - 1]))
+                        {
+                                scratch[length++] = 'B';
+                                scratch[length] = end;
+                        }
+                }
+                return scratch;
+        case UL_LOCKS_INODE:
+                positive_into_string(scratch, (positive)lock->inode);
+                return scratch;
+        case UL_LOCKS_DEVICE:
+        {
+                positive at = positive_into(scratch, lock->major);
+                scratch[at++] = ':';
+                positive_into_string(scratch + at, lock->minor);
+                return scratch;
+        }
+        case UL_LOCKS_MODE:
+                memory_copy_apart_end(scratch,
+                                      lock->mode ? (address_any)"WRITE"
+                                                 : (address_any)"READ",
+                                      lock->mode ? 5 : 4);
+                if (lock->blocked)
+                {
+                        positive at = string_length(scratch);
+                        scratch[at++] = '*';
+                        scratch[at] = end;
+                }
+                return scratch;
+        case UL_LOCKS_MANDATORY:
+                return lock->mandatory ? (string_address)"1"
+                                       : (string_address)"0";
+        case UL_LOCKS_START:
+                positive_into_string(scratch, (positive)lock->start);
+                return scratch;
+        case UL_LOCKS_END:
+                positive_into_string(scratch, (positive)lock->finish);
+                return scratch;
+        case UL_LOCKS_PATH:
+                return lock->path ? lock->path : (string_address)"";
+        case UL_LOCKS_BLOCKER:
+                if (!lock->blocker)
+                        return (string_address)"";
+                positive_into_string(scratch, (positive)(p32)lock->blocker);
+                return scratch;
+        default:
+                return (string_address)"";
+        }
+}
+
+static b32 util_linux_lslocks()
+{
+        file_taking taking = {
+            .program = (string_address)"lslocks",
+            .allowed = (string_address)"bJinorupQHVh",
+            .valued = (string_address)"opQ",
+            .longs = ul_lslocks_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("lslocks", "unexpected operand");
+        if ((taking.flags & FILE_FLAG('J')) &&
+            (taking.flags & FILE_FLAG('r')))
+                return ul_bad_usage("lslocks",
+                                    "--json and --raw are mutually exclusive");
+        if (taking.flags & FILE_FLAG('Q'))
+                return ul_bad_usage("lslocks", "display filters are not supported");
+        if (taking.flags & FILE_FLAG('H'))
+                return ul_bad_usage("lslocks",
+                                    "column metadata output is not supported");
+        if (taking.flags & FILE_FLAG('A'))
+                return ul_bad_usage("lslocks", "--output-all is not supported");
+
+        b32 wanted_pid = 0;
+        bool pid_selected = file_option_value(address_of taking, 'p') != null;
+        if (pid_selected &&
+            !ul_pid(file_option_value(address_of taking, 'p'), "lslocks", "PID",
+                    address_of wanted_pid))
+                return 1;
+
+        static const p8 defaults[] = {
+            UL_LOCKS_COMMAND, UL_LOCKS_PID, UL_LOCKS_TYPE, UL_LOCKS_SIZE,
+            UL_LOCKS_MODE, UL_LOCKS_MANDATORY, UL_LOCKS_START, UL_LOCKS_END,
+            UL_LOCKS_PATH,
+        };
+        p8 columns[UL_LOCKS_COLUMNS];
+        positive column_count = 0;
+        string_address output = file_option_value(address_of taking, 'o');
+
+        if (output)
+        {
+                if (!ul_table_column_list(
+                        output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
+                        array_count(defaults), columns,
+                        address_of column_count))
+                        return ul_bad_usage("lslocks", "unknown output column");
+        }
+        else
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[column_count++] = defaults[i];
+
+        for (positive i = 0; i < column_count; i++)
+                if (columns[i] == UL_LOCKS_HOLDERS)
+                        return ul_bad_usage(
+                            "lslocks",
+                            "HOLDERS requires an unsupported second process-fd census");
+
+        text_begin("lslocks");
+        text_arena_used = 0;
+        bipolar handle = system_open_at(AT_FDCWD, "/proc/locks",
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+                return text_refuse("/proc/locks", "cannot read", 1);
+
+        positive length = 0;
+        bool read_failed = false;
+        p8 address_to input = text_arena_read_all(
+            (positive)handle, 4096, address_of length, address_of read_failed);
+        system_close(handle);
+        if (!input)
+                return text_done(1);
+
+        positive lines = memory_count(input, length, '\n') +
+                         (length && input[length - 1] != '\n');
+        ul_lslocks_entry address_to locks =
+            (ul_lslocks_entry address_to)text_arena_take(
+                lines * sizeof(ul_lslocks_entry));
+        if (!locks && lines)
+                return text_done(1);
+
+        positive count = 0;
+        p8 address_to cursor = input;
+        p8 address_to input_end = input + length;
+
+        while (cursor < input_end)
+        {
+                p8 address_to line_end = memory_first_of(
+                    cursor, '\n', (positive)(input_end - cursor));
+                if (!line_end)
+                        line_end = input_end;
+                else
+                        *line_end = end;
+
+                p8 address_to at = cursor;
+                string_address id_text = ul_lslocks_word(address_of at,
+                                                         line_end);
+                string_address kind_text = ul_lslocks_word(address_of at,
+                                                           line_end);
+                bool blocked = kind_text && string_equals(kind_text, "->");
+                if (blocked)
+                        kind_text = ul_lslocks_word(address_of at, line_end);
+                string_address scope = ul_lslocks_word(address_of at, line_end);
+                string_address mode = ul_lslocks_word(address_of at, line_end);
+                string_address pid_text = ul_lslocks_word(address_of at,
+                                                          line_end);
+                string_address device = ul_lslocks_word(address_of at,
+                                                        line_end);
+                string_address start_text = ul_lslocks_word(address_of at,
+                                                            line_end);
+                string_address end_text = ul_lslocks_word(address_of at,
+                                                          line_end);
+                positive id;
+                positive inode;
+                positive start;
+                positive finish = 0;
+                bipolar pid;
+                p32 major;
+                p32 minor;
+                b32 kind = kind_text ? ul_lslocks_kind(kind_text) : -1;
+
+                if (id_text && scope && mode && pid_text && device &&
+                    start_text && end_text && kind >= 0 &&
+                    ul_lslocks_id(id_text, address_of id) &&
+                    ul_signed(pid_text, -1, b32_max, address_of pid) &&
+                    ul_lslocks_device(device, address_of major,
+                                      address_of minor, address_of inode) &&
+                    ul_unsigned(start_text, positive_max,
+                                address_of start) &&
+                    (string_equals(end_text, "EOF") ||
+                     ul_unsigned(end_text, positive_max,
+                                 address_of finish)))
+                {
+                        b32 blocker = 0;
+
+                        if (blocked)
+                                for (positive i = count; i; i--)
+                                        if (!locks[i - 1].blocked &&
+                                            locks[i - 1].id == id)
+                                        {
+                                                blocker = locks[i - 1].pid;
+                                                break;
+                                        }
+
+                        locks[count++] = (ul_lslocks_entry){
+                            .id = id,
+                            .inode = inode,
+                            .start = start,
+                            .finish = finish,
+                            .pid = (b32)pid,
+                            .blocker = blocker,
+                            .major = major,
+                            .minor = minor,
+                            .type = (p8)kind,
+                            .mode = string_equals(mode, "WRITE"),
+                            .mandatory = string_equals(scope, "MANDATORY"),
+                            .blocked = blocked,
+                        };
+                }
+
+                cursor = line_end < input_end ? line_end + 1 : input_end;
+        }
+
+        if (!system_snapshot_take(address_of ul_lslocks_snapshot,
+                                  SPARK_SNAPSHOT_PROCESS, false))
+                return text_refuse("/proc", "cannot read", 1);
+
+        positive shown = 0;
+        bool inaccessible = (taking.flags & FILE_FLAG('i')) != 0;
+        for (positive i = 0; i < count; i++)
+        {
+                if (pid_selected && locks[i].pid != wanted_pid)
+                        continue;
+                locks[i].process = ul_lslocks_process(locks[i].pid);
+                ul_lslocks_resolve(locks + i);
+
+                if (inaccessible && !locks[i].accessible)
+                        continue;
+                locks[shown++] = locks[i];
+        }
+
+        ul_lslocks_bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        ul_lslocks_columns[UL_LOCKS_SIZE].json = ul_lslocks_bytes
+            ? UL_TABLE_NULL_NUMBER : UL_TABLE_NULL_STRING;
+
+        if (taking.flags & FILE_FLAG('J'))
+                ul_table_json("locks", locks, sizeof(*locks), shown,
+                              ul_lslocks_columns, columns, column_count,
+                              ul_lslocks_field);
+        else
+                ul_table_out(locks, sizeof(*locks), shown,
+                             ul_lslocks_columns, UL_LOCKS_COLUMNS, columns,
+                             column_count,
+                             !(taking.flags & FILE_FLAG('n')),
+                             (taking.flags & FILE_FLAG('r')) != 0,
+                             ul_lslocks_field);
+
+        log_flush();
+        return read_failed ? 1 : 0;
+}
+
+// lsfd ------------------------------------------------------------
+
+enum
+{
+        UL_LSFD_COMMAND,
+        UL_LSFD_PID,
+        UL_LSFD_USER,
+        UL_LSFD_FD,
+        UL_LSFD_MODE,
+        UL_LSFD_XMODE,
+        UL_LSFD_TYPE,
+        UL_LSFD_NAME,
+        UL_LSFD_KNAME,
+        UL_LSFD_INODE,
+        UL_LSFD_DEVICE,
+        UL_LSFD_MNTID,
+        UL_LSFD_SIZE,
+        UL_LSFD_POS,
+        UL_LSFD_UID,
+        UL_LSFD_DELETED,
+        UL_LSFD_COLUMNS,
+};
+
+static const ul_table_column ul_lsfd_columns[] = {
+    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
+    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
+    {(string_address)"fd", (string_address)"FD", 2, true, UL_TABLE_NUMBER},
+    {(string_address)"mode", (string_address)"MODE", 4, false, UL_TABLE_STRING},
+    {(string_address)"xmode", (string_address)"XMODE", 6, false, UL_TABLE_STRING},
+    {(string_address)"type", (string_address)"TYPE", 5, false, UL_TABLE_STRING},
+    {(string_address)"name", (string_address)"NAME", 0, false, UL_TABLE_STRING},
+    {(string_address)"kname", (string_address)"KNAME", 0, false, UL_TABLE_STRING},
+    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
+    {(string_address)"mntid", (string_address)"MNTID", 5, true, UL_TABLE_NULL_NUMBER},
+    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NUMBER},
+    {(string_address)"pos", (string_address)"POS", 3, true, UL_TABLE_NULL_NUMBER},
+    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER},
+    {(string_address)"deleted", (string_address)"DELETED", 7, false, UL_TABLE_BOOLEAN},
+};
+
+typedef struct
+{
+        struct snapshot_process address_to process;
+        string_address user;
+        string_address name;
+        string_address type;
+        p64 inode;
+        p64 mount_id;
+        p64 size;
+        p64 position;
+        p32 major;
+        p32 minor;
+        p32 fd;
+        p8 access;
+        bool access_known;
+        bool mount_known;
+        bool position_known;
+        bool deleted;
+} ul_lsfd_entry;
+
+static system_snapshot ul_lsfd_snapshot;
+static ul_lsfd_entry address_to ul_lsfd_entries;
+static positive ul_lsfd_entry_room;
+static positive ul_lsfd_entry_count;
+static positive address_to ul_lsfd_pids;
+static positive ul_lsfd_pid_room;
+static positive ul_lsfd_pid_count;
+
+static const file_long ul_lsfd_longs[] = {
+    {(string_address)"threads", 'l'},
+    {(string_address)"json", 'J'},
+    {(string_address)"noheadings", 'n'},
+    {(string_address)"output", 'o'},
+    {(string_address)"raw", 'r'},
+    {(string_address)"notruncate", 'u'},
+    {(string_address)"pid", 'p'},
+    {(string_address)"inet", 'i'},
+    {(string_address)"filter", 'Q'},
+    {(string_address)"debug-filter", 'D'},
+    {(string_address)"counter", 'C'},
+    {(string_address)"dump-counters", 'd'},
+    {(string_address)"hyperlink", 'k'},
+    {(string_address)"summary", 's'},
+    {(string_address)"list-columns", 'H'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static fn ul_lsfd_release()
+{
+        array_store_release(ul_lsfd_entries, ul_lsfd_entry_room,
+                            ul_lsfd_entry_count);
+        array_store_release(ul_lsfd_pids, ul_lsfd_pid_room,
+                            ul_lsfd_pid_count);
+}
+
+/* fdinfo is deliberately read from the holder already admitted by the shared
+   process snapshot. Parse its three small scalar records in place, without a
+   second proc walker or a per-descriptor general-purpose parser. */
+static bool ul_lsfd_fdinfo_value(p8 address_to bytes, positive length,
+                                 string_address field, positive base,
+                                 positive address_to value)
+{
+        positive field_length = string_length(field);
+        positive at = 0;
+
+        while (at < length)
+        {
+                positive finish = at;
+
+                while (finish < length && bytes[finish] != '\n')
+                        finish++;
+                if (finish - at > field_length &&
+                    !memory_compare(bytes + at, field, field_length))
+                {
+                        positive cursor = at + field_length;
+                        positive made = 0;
+                        bool any = false;
+
+                        while (cursor < finish && byte_is_space(bytes[cursor]))
+                                cursor++;
+                        while (cursor < finish)
+                        {
+                                positive digit = digit_known(bytes[cursor], base);
+
+                                if (digit >= base ||
+                                    made > (positive_max - digit) / base)
+                                        return false;
+                                made = made * base + digit;
+                                any = true;
+                                cursor++;
+                        }
+
+                        if (any)
+                        {
+                                address_to value = made;
+                                return true;
+                        }
+                        return false;
+                }
+                at = finish < length ? finish + 1 : length;
+        }
+        return false;
+}
+
+static fn ul_lsfd_fdinfo(ul_lsfd_entry address_to descriptor)
+{
+        p8 path[FILE_PATH_MAX];
+        p8 bytes[1024];
+
+        system_process_path(path, descriptor->process->pid, "fdinfo", "");
+        positive at = string_length(path);
+        positive_into_string(path + at, descriptor->fd);
+
+        bipolar got = file_slurp_once_at(AT_FDCWD, path, bytes, sizeof(bytes));
+        if (got <= 0)
+                return;
+
+        positive value;
+        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "flags:", 8,
+                                 address_of value))
+        {
+                descriptor->access = (p8)(value & 3);
+                descriptor->access_known = descriptor->access <= 2;
+        }
+        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "pos:", 10,
+                                 address_of value))
+        {
+                descriptor->position = value;
+                descriptor->position_known = true;
+        }
+        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "mnt_id:", 10,
+                                 address_of value))
+        {
+                descriptor->mount_id = value;
+                descriptor->mount_known = true;
+        }
+}
+
+static PURE string_address ul_lsfd_type(p16 mode, string_address name)
+{
+        if (name && string_length(name) >= 11 &&
+            !memory_compare(name, "anon_inode:", 11))
+                return (string_address)"anon_inode";
+
+        switch (mode & MODE_FORMAT)
+        {
+        case MODE_FILE:      return (string_address)"REG";
+        case MODE_DIRECTORY: return (string_address)"DIR";
+        case MODE_PIPE:      return (string_address)"FIFO";
+        case MODE_SOCKET:    return (string_address)"SOCK";
+        case MODE_CHARACTER: return (string_address)"CHR";
+        case MODE_BLOCK:     return (string_address)"BLK";
+        default:             return (string_address)"UNKN";
+        }
+}
+
+/* One means copied, minus one is an ordinary procfs race, and zero is the
+   arena refusing the retained name. */
+static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
+                                 bipolar directory, string_address fd)
+{
+        p8 path[FILE_PATH_MAX];
+        bipolar length = system_read_link_at(directory, fd, path,
+                                              sizeof(path) - 1);
+
+        if (length < 0 || (positive)length >= sizeof(path) - 1)
+                return -1;
+
+        p8 address_to copy = (p8 address_to)text_arena_take(
+            (positive)length + 1);
+        if (!copy)
+                return 0;
+        memory_copy_apart_end(copy, path, (positive)length);
+        descriptor->name = copy;
+        descriptor->deleted = length >= 10 &&
+            !memory_compare(copy + length - 10, " (deleted)", 10);
+        return 1;
+}
+
+static bool ul_lsfd_process(struct snapshot_process address_to process)
+{
+        p8 directory[64];
+        file_walk walk;
+        string_address user = null;
+
+        system_process_path(directory, process->pid, null, "fd");
+        if (!file_walk_open(address_of walk, AT_FDCWD, directory))
+                return true;
+
+        struct linux_dirent64 address_to dirent;
+        while ((dirent = file_walk_next(address_of walk)))
+        {
+                positive fd;
+                file_facts facts;
+
+                if (!ul_unsigned(dirent->d_name, p32_max, address_of fd) ||
+                    !file_look(walk.handle, dirent->d_name, 0,
+                               address_of facts))
+                        continue;
+
+                if (!array_store_reserve(ul_lsfd_entries, ul_lsfd_entry_room,
+                                         ul_lsfd_entry_count,
+                                         ul_lsfd_entry_count + 1, 64))
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
+
+                ul_lsfd_entry address_to descriptor =
+                    ul_lsfd_entries + ul_lsfd_entry_count;
+                memory_fill(descriptor, 0, sizeof(*descriptor));
+                descriptor->process = process;
+                descriptor->inode = facts.inode;
+                descriptor->mount_id = facts.mount_id;
+                descriptor->mount_known = facts.mount_id != 0;
+                descriptor->size = facts.size;
+                bool device = (facts.mode & MODE_FORMAT) == MODE_CHARACTER ||
+                              (facts.mode & MODE_FORMAT) == MODE_BLOCK;
+                descriptor->major = device ? facts.rdev_major
+                                           : facts.device_major;
+                descriptor->minor = device ? facts.rdev_minor
+                                           : facts.device_minor;
+                descriptor->fd = (p32)fd;
+
+                bipolar named = ul_lsfd_copy_name(descriptor, walk.handle,
+                                                  dirent->d_name);
+                if (named <= 0)
+                {
+                        if (!named)
+                        {
+                                file_walk_close(address_of walk);
+                                return false;
+                        }
+                        continue;
+                }
+
+                descriptor->type = ul_lsfd_type(facts.mode,
+                                                 descriptor->name);
+                ul_lsfd_fdinfo(descriptor);
+                if (!user)
+                        user = ps_name_of(process->uid);
+                if (!user)
+                {
+                        file_walk_close(address_of walk);
+                        return false;
+                }
+                descriptor->user = user;
+                ul_lsfd_entry_count++;
+        }
+
+        file_walk_close(address_of walk);
+        return true;
+}
+
+static PURE bipolar ul_lsfd_order(ul_lsfd_entry left, ul_lsfd_entry right)
+{
+        if (left.process->pid != right.process->pid)
+                return left.process->pid < right.process->pid ? -1 : 1;
+        if (left.fd != right.fd)
+                return left.fd < right.fd ? -1 : 1;
+        return 0;
+}
+
+static string_address ul_lsfd_field(address_any row, p8 column,
+                                    p8 address_to scratch)
+{
+        ul_lsfd_entry address_to descriptor = (ul_lsfd_entry address_to)row;
+
+        switch (column)
+        {
+        case UL_LSFD_COMMAND:
+                return descriptor->process->command;
+        case UL_LSFD_PID:
+                positive_into_string(scratch, descriptor->process->pid);
+                return scratch;
+        case UL_LSFD_USER:
+                return descriptor->user;
+        case UL_LSFD_FD:
+                positive_into_string(scratch, descriptor->fd);
+                return scratch;
+        case UL_LSFD_MODE:
+                if (!descriptor->access_known)
+                        return (string_address)"";
+                return descriptor->access == 0 ? (string_address)"r--"
+                     : descriptor->access == 1 ? (string_address)"-w-"
+                                               : (string_address)"rw-";
+        case UL_LSFD_XMODE:
+                if (!descriptor->access_known)
+                        return (string_address)"";
+                return descriptor->access == 0 ? (string_address)"r-----"
+                     : descriptor->access == 1 ? (string_address)"-w----"
+                                               : (string_address)"rw----";
+        case UL_LSFD_TYPE:
+                return descriptor->type;
+        case UL_LSFD_NAME:
+        case UL_LSFD_KNAME:
+                return descriptor->name;
+        case UL_LSFD_INODE:
+                positive_into_string(scratch, (positive)descriptor->inode);
+                return scratch;
+        case UL_LSFD_DEVICE:
+        {
+                positive at = positive_into_string(scratch, descriptor->major);
+                scratch[at++] = ':';
+                positive_into_string(scratch + at, descriptor->minor);
+                return scratch;
+        }
+        case UL_LSFD_MNTID:
+                if (!descriptor->mount_known)
+                        return (string_address)"";
+                positive_into_string(scratch, (positive)descriptor->mount_id);
+                return scratch;
+        case UL_LSFD_SIZE:
+                positive_into_string(scratch, (positive)descriptor->size);
+                return scratch;
+        case UL_LSFD_POS:
+                if (!descriptor->position_known)
+                        return (string_address)"";
+                positive_into_string(scratch, (positive)descriptor->position);
+                return scratch;
+        case UL_LSFD_UID:
+                positive_into_string(scratch, descriptor->process->uid);
+                return scratch;
+        default:
+                return descriptor->deleted ? (string_address)"1"
+                                           : (string_address)"0";
+        }
+}
+
+static b32 util_linux_lsfd()
+{
+        file_taking taking = {
+            .program = (string_address)"lsfd",
+            .allowed = (string_address)"lJnorupiQDCHVh",
+            .valued = (string_address)"opQC",
+            .optional = (string_address)"i",
+            .long_optional = (string_address)"ks",
+            .longs = ul_lsfd_longs,
+        };
+        b32 answer;
+
+        ul_lsfd_release();
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("lsfd", "unexpected operand");
+        if ((taking.flags & FILE_FLAG('J')) &&
+            (taking.flags & FILE_FLAG('r')))
+                return ul_bad_usage("lsfd",
+                                    "--json and --raw are mutually exclusive");
+        if (taking.flags & FILE_FLAG('l'))
+                return ul_bad_usage("lsfd", "thread descriptors are not supported");
+        if (taking.flags & FILE_FLAG('i'))
+                return ul_bad_usage("lsfd", "network endpoint filtering is not supported");
+        if (taking.flags & FILE_FLAG('Q'))
+                return ul_bad_usage("lsfd", "display filters are not supported");
+        if (taking.flags & FILE_FLAG('D'))
+                return ul_bad_usage("lsfd", "filter debugging is not supported");
+        if ((taking.flags & FILE_FLAG('C')) ||
+            (taking.flags & FILE_FLAG('d')) ||
+            (taking.flags & FILE_FLAG('s')))
+                return ul_bad_usage("lsfd", "descriptor counters are not supported");
+        if (taking.flags & FILE_FLAG('k'))
+                return ul_bad_usage("lsfd", "terminal hyperlinks are not supported");
+        if (taking.flags & FILE_FLAG('H'))
+                return ul_bad_usage("lsfd", "column metadata output is not supported");
+
+        static const p8 defaults[] = {
+            UL_LSFD_COMMAND, UL_LSFD_PID, UL_LSFD_USER, UL_LSFD_FD,
+            UL_LSFD_MODE, UL_LSFD_TYPE, UL_LSFD_INODE, UL_LSFD_NAME,
+        };
+        p8 columns[UL_LSFD_COLUMNS];
+        positive column_count = 0;
+        string_address output = file_option_value(address_of taking, 'o');
+
+        if (output)
+        {
+                if (!ul_table_column_list(
+                        output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
+                        array_count(defaults), columns,
+                        address_of column_count))
+                        return ul_bad_usage("lsfd", "unknown output column");
+        }
+        else
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[column_count++] = defaults[i];
+
+        text_begin("lsfd");
+        text_arena_used = 0;
+
+        string_address pid_list = file_option_value(address_of taking, 'p');
+        if (pid_list &&
+            !ps_pid_list(pid_list, address_of ul_lsfd_pids,
+                         address_of ul_lsfd_pid_count,
+                         address_of ul_lsfd_pid_room, false))
+        {
+                ul_lsfd_release();
+                return text_refuse(pid_list, "invalid PID list", 1);
+        }
+
+        if (!system_snapshot_take(address_of ul_lsfd_snapshot,
+                                  SPARK_SNAPSHOT_PROCESS, true))
+        {
+                ul_lsfd_release();
+                return text_refuse("/proc", "cannot read", 1);
+        }
+
+        bool failed = false;
+        for (positive i = 0; i < ul_lsfd_snapshot.header.process_count; i++)
+        {
+                struct snapshot_process address_to process =
+                    ul_lsfd_snapshot.processes + i;
+
+                if (ul_lsfd_pid_count &&
+                    !ps_value_has(ul_lsfd_pids, ul_lsfd_pid_count,
+                                  process->pid))
+                        continue;
+                if (!ul_lsfd_process(process))
+                {
+                        failed = true;
+                        break;
+                }
+        }
+
+        ul_lsfd_entry address_to rows = ul_lsfd_entries;
+        if (!failed && ul_lsfd_entry_count)
+        {
+                ul_lsfd_entry address_to spare =
+                    (ul_lsfd_entry address_to)text_arena_take(
+                        ul_lsfd_entry_count * sizeof(*spare));
+                if (!spare)
+                        failed = true;
+                else
+                        rows = array_merge_sort(rows, spare,
+                                                ul_lsfd_entry_count,
+                                                ul_lsfd_order);
+        }
+
+        if (!failed)
+        {
+                if (taking.flags & FILE_FLAG('J'))
+                        ul_table_json("lsfd", rows, sizeof(*rows),
+                                      ul_lsfd_entry_count, ul_lsfd_columns,
+                                      columns, column_count, ul_lsfd_field);
+                else
+                        ul_table_out(rows, sizeof(*rows), ul_lsfd_entry_count,
+                                     ul_lsfd_columns, UL_LSFD_COLUMNS, columns,
+                                     column_count,
+                                     !(taking.flags & FILE_FLAG('n')),
+                                     (taking.flags & FILE_FLAG('r')) != 0,
+                                     ul_lsfd_field);
+                log_flush();
+        }
+
+        ul_lsfd_release();
+        return failed ? text_done(1) : 0;
 }
 
 static bipolar ul_directory_open_at(string_address program, bipolar base,
@@ -6485,4 +7672,2985 @@ static b32 util_linux_getopt()
         }
 
         return failed ? 1 : 0;
+}
+
+// lscpu ------------------------------------------------------------
+
+/* Linux has already normalized CPU topology into sysfs, and /proc/cpuinfo
+   has the descriptive strings.  Reading those exports avoids a second CPUID
+   implementation beside moonwater_cpu_detect; every output mode below is a
+   view of this one snapshot and reuses the common CPU-list and table engines. */
+#define UL_LSCPU_CACHE_MAX 8
+
+typedef struct
+{
+        positive id;
+        bipolar core;
+        bipolar socket;
+        bipolar cluster;
+        bipolar node;
+        positive current_khz;
+        positive maximum_khz;
+        positive minimum_khz;
+        b32 cache[UL_LSCPU_CACHE_MAX];
+        bool online;
+} ul_lscpu_cpu;
+
+typedef struct
+{
+        p8 name[8];
+        p8 type[16];
+        positive level;
+        positive size;
+        positive ways;
+        positive sets;
+        positive physical_line;
+        positive coherency;
+        positive instances;
+} ul_lscpu_cache;
+
+typedef struct
+{
+        p8 kind;
+        positive first_cpu;
+        b32 id;
+} ul_lscpu_instance;
+
+typedef struct
+{
+        string_address vendor;
+        string_address model_name;
+        string_address family;
+        string_address model;
+        string_address stepping;
+        string_address microcode;
+        string_address bogomips;
+        string_address flags;
+        string_address implementer;
+} ul_lscpu_info;
+
+typedef struct
+{
+        ul_lscpu_cpu address_to cpus;
+        ul_lscpu_instance address_to instances;
+        positive cpu_count;
+        positive present_count;
+        positive online_count;
+        positive core_count;
+        positive socket_count;
+        positive cluster_count;
+        positive node_count;
+        positive instance_count;
+        positive cache_count;
+        ul_lscpu_cache caches[UL_LSCPU_CACHE_MAX];
+        ul_lscpu_info info;
+        file_machine machine;
+} ul_lscpu_snapshot;
+
+static ul_lscpu_snapshot ul_lscpu;
+static positive ul_lscpu_present[UL_CPU_WORDS];
+static positive ul_lscpu_online[UL_CPU_WORDS];
+static positive ul_lscpu_scratch_set[UL_CPU_WORDS];
+static p8 ul_lscpu_cpuinfo[64 << 10];
+static p8 ul_lscpu_cache_heading[64];
+
+static positive ul_lscpu_set_count(positive address_to set)
+{
+        positive count = 0;
+        for (positive i = 0; i < UL_CPU_WORDS; i++)
+                count += bits_counted(set[i]);
+        return count;
+}
+
+static bool ul_lscpu_set_read(string_address path, positive address_to set)
+{
+        p8 text[FILE_PATH_MAX];
+        return ul_slurp_word(path, text, sizeof(text)) > 0 &&
+               ul_cpu_list(text, set);
+}
+
+static string_address ul_lscpu_keep(string_address text)
+{
+        positive length = string_length(text);
+        p8 address_to copy = text_arena_take(length + 1);
+        if (!copy)
+                return (string_address)"";
+        memory_copy(copy, text, length + 1);
+        return copy;
+}
+
+static string_address ul_lscpu_number(positive value)
+{
+        p8 text[24];
+        positive length = positive_into_string(text, value);
+        text[length] = end;
+        return ul_lscpu_keep(text);
+}
+
+static fn ul_lscpu_cpu_path(p8 address_to path, positive cpu,
+                            string_address property)
+{
+        string_address base =
+            (string_address)"/sys/devices/system/cpu/cpu";
+        positive at = string_length(base);
+        memory_copy(path, base, at);
+        at += positive_into_string(path + at, cpu);
+        path[at++] = '/';
+        positive length = string_length(property);
+        memory_copy(path + at, property, length + 1);
+}
+
+static fn ul_lscpu_cache_path(p8 address_to path, positive cpu,
+                              positive index, string_address property)
+{
+        ul_lscpu_cpu_path(path, cpu, (string_address)"cache/index");
+        positive at = string_length(path);
+        at += positive_into_string(path + at, index);
+        path[at++] = '/';
+        positive length = string_length(property);
+        memory_copy(path + at, property, length + 1);
+}
+
+static bool ul_lscpu_file_number(string_address path,
+                                 positive address_to value)
+{
+        p8 text[64];
+        return ul_slurp_word(path, text, sizeof(text)) > 0 &&
+               ul_unsigned(text, positive_max, value);
+}
+
+static bool ul_lscpu_cpu_number(positive cpu, string_address property,
+                                positive address_to value)
+{
+        p8 path[192];
+        ul_lscpu_cpu_path(path, cpu, property);
+        return ul_lscpu_file_number(path, value);
+}
+
+static fn ul_lscpu_info_read()
+{
+        ul_lscpu_info address_to info = address_of ul_lscpu.info;
+        memory_fill(info, 0, sizeof(*info));
+        bipolar got = file_slurp((string_address)"/proc/cpuinfo",
+                                 ul_lscpu_cpuinfo,
+                                 sizeof(ul_lscpu_cpuinfo));
+        if (got <= 0)
+                return;
+
+        positive at = 0;
+        while (at < (positive)got)
+        {
+                positive start = at;
+                while (at < (positive)got && ul_lscpu_cpuinfo[at] != '\n')
+                        at++;
+                positive finish = at;
+                if (at < (positive)got)
+                        ul_lscpu_cpuinfo[at++] = end;
+                while (finish > start &&
+                       byte_is_space(ul_lscpu_cpuinfo[finish - 1]))
+                        ul_lscpu_cpuinfo[--finish] = end;
+                if (finish == start)
+                        break;
+
+                p8 address_to colon = memory_first_of(
+                    ul_lscpu_cpuinfo + start, ':', finish - start);
+                if (!colon)
+                        continue;
+                positive key_length =
+                    (positive)(colon - (ul_lscpu_cpuinfo + start));
+                while (key_length &&
+                       byte_is_space(ul_lscpu_cpuinfo[start + key_length - 1]))
+                        key_length--;
+                p8 address_to value = colon + 1;
+                while (byte_is_space(*value))
+                        value++;
+                p8 address_to key = ul_lscpu_cpuinfo + start;
+
+#define UL_LSCPU_INFO(member, spelling)                                     \
+                if (!info->member &&                                        \
+                    file_same_word(key, key_length,                          \
+                                   (string_address)spelling))                \
+                        info->member = value
+                UL_LSCPU_INFO(vendor, "vendor_id");
+                UL_LSCPU_INFO(model_name, "model name");
+                UL_LSCPU_INFO(family, "cpu family");
+                UL_LSCPU_INFO(model, "model");
+                UL_LSCPU_INFO(stepping, "stepping");
+                UL_LSCPU_INFO(microcode, "microcode");
+                UL_LSCPU_INFO(bogomips, "bogomips");
+                UL_LSCPU_INFO(flags, "flags");
+                UL_LSCPU_INFO(flags, "features");
+                UL_LSCPU_INFO(implementer, "cpu implementer");
+                UL_LSCPU_INFO(model, "cpu part");
+                UL_LSCPU_INFO(stepping, "cpu variant");
+#undef UL_LSCPU_INFO
+        }
+
+        if (!info->vendor && info->implementer)
+        {
+                static const struct
+                {
+                        string_address id;
+                        string_address name;
+                } vendors[] = {
+                    {"0x41", "ARM"}, {"0x42", "Broadcom"},
+                    {"0x43", "Cavium"}, {"0x46", "Fujitsu"},
+                    {"0x4e", "NVIDIA"}, {"0x51", "Qualcomm"},
+                    {"0x53", "Samsung"}, {"0x56", "Marvell"},
+                    {"0x61", "Apple"}, {"0x69", "Intel"},
+                };
+                for (positive i = 0; i < array_count(vendors); i++)
+                        if (file_same_word(info->implementer,
+                                           string_length(info->implementer),
+                                           vendors[i].id))
+                                info->vendor = vendors[i].name;
+        }
+
+        if (!info->flags)
+        {
+#if X64 || X86
+                info->flags = cpu_has_avx512 ? (string_address)"avx2 avx512f"
+                              : cpu_has_avx2 ? (string_address)"avx2"
+                                             : (string_address)"";
+#else
+                info->flags = (string_address)"";
+#endif
+        }
+
+#if ARM64
+        if (info->model && string_is(info->model, '0') &&
+            byte_to_lower(info->model[1]) == 'x')
+        {
+                string_address at = info->model + 2;
+                positive number;
+                if (string_digits_checked(address_of at, 16,
+                                           address_of number) && !string_get(at))
+                        info->model = ul_lscpu_number(number);
+        }
+#endif
+}
+
+static b32 ul_lscpu_cache_kind(positive level, string_address type)
+{
+        p8 name[8] = {'L'};
+        positive length = 1 + positive_into_string(name + 1, level);
+        p8 kind = byte_to_lower(string_get(type));
+        if (kind == 'd' || kind == 'i')
+                name[length++] = kind;
+        name[length] = end;
+
+        for (positive i = 0; i < ul_lscpu.cache_count; i++)
+                if (string_equals(name, ul_lscpu.caches[i].name))
+                        return (b32)i;
+        if (ul_lscpu.cache_count == UL_LSCPU_CACHE_MAX)
+                return -1;
+
+        positive i = ul_lscpu.cache_count++;
+        string_copy_max_end(ul_lscpu.caches[i].name, name,
+                            sizeof(ul_lscpu.caches[i].name) - 1);
+        string_copy_max_end(ul_lscpu.caches[i].type, type,
+                            sizeof(ul_lscpu.caches[i].type) - 1);
+        ul_lscpu.caches[i].level = level;
+        return (b32)i;
+}
+
+static b32 ul_lscpu_cache_instance(p8 kind, positive first_cpu)
+{
+        for (positive i = 0; i < ul_lscpu.instance_count; i++)
+                if (ul_lscpu.instances[i].kind == kind &&
+                    ul_lscpu.instances[i].first_cpu == first_cpu)
+                        return ul_lscpu.instances[i].id;
+
+        ul_lscpu_instance address_to item =
+            ul_lscpu.instances + ul_lscpu.instance_count++;
+        item->kind = kind;
+        item->first_cpu = first_cpu;
+        item->id = (b32)ul_lscpu.caches[kind].instances++;
+        return item->id;
+}
+
+static fn ul_lscpu_cache_read(ul_lscpu_cpu address_to cpu)
+{
+        for (positive index = 0; index < UL_LSCPU_CACHE_MAX; index++)
+        {
+                p8 path[192];
+                p8 type[32];
+                positive level;
+                ul_lscpu_cache_path(path, cpu->id, index, "level");
+                if (!ul_lscpu_file_number(path, address_of level))
+                        continue;
+                ul_lscpu_cache_path(path, cpu->id, index, "type");
+                if (ul_slurp_word(path, type, sizeof(type)) <= 0)
+                        continue;
+                b32 kind = ul_lscpu_cache_kind(level, type);
+                if (kind < 0)
+                        continue;
+
+                positive first = cpu->id;
+                p8 shared[FILE_PATH_MAX];
+                ul_lscpu_cache_path(path, cpu->id, index, "shared_cpu_list");
+                if (ul_slurp_word(path, shared, sizeof(shared)) > 0 &&
+                    ul_cpu_list(shared, ul_lscpu_scratch_set))
+                        for (positive i = 0; i < UL_CPU_BITS; i++)
+                                if (ul_cpu_has(ul_lscpu_scratch_set, i))
+                                {
+                                        first = i;
+                                        break;
+                                }
+                cpu->cache[kind] =
+                    ul_lscpu_cache_instance((p8)kind, first);
+
+                ul_lscpu_cache address_to cache = ul_lscpu.caches + kind;
+                if (cache->size)
+                        continue;
+                p8 size[64];
+                ul_lscpu_cache_path(path, cpu->id, index, "size");
+                if (ul_slurp_word(path, size, sizeof(size)) > 0)
+                        (void)split_size(size, address_of cache->size);
+#define UL_LSCPU_CACHE_NUMBER(member, property)                              \
+                ul_lscpu_cache_path(path, cpu->id, index, property);         \
+                (void)ul_lscpu_file_number(path, address_of cache->member)
+                UL_LSCPU_CACHE_NUMBER(ways, "ways_of_associativity");
+                UL_LSCPU_CACHE_NUMBER(sets, "number_of_sets");
+                UL_LSCPU_CACHE_NUMBER(physical_line,
+                                      "physical_line_partition");
+                UL_LSCPU_CACHE_NUMBER(coherency, "coherency_line_size");
+#undef UL_LSCPU_CACHE_NUMBER
+        }
+}
+
+static fn ul_lscpu_numa_read()
+{
+        file_walk walk;
+        if (file_walk_open(address_of walk, AT_FDCWD,
+                           (string_address)"/sys/devices/system/node"))
+        {
+                struct linux_dirent64 address_to entry;
+                while ((entry = file_walk_next(address_of walk)))
+                {
+                        string_address name = (string_address)entry->d_name;
+                        if (string_compare_max(name, "node", 4))
+                                continue;
+                        positive node;
+                        if (!ul_unsigned(name + 4, positive_max,
+                                         address_of node))
+                                continue;
+                        p8 directory[96];
+                        p8 path[112];
+                        path_join(directory, sizeof(directory),
+                                  (string_address)"/sys/devices/system/node",
+                                  name);
+                        path_join(path, sizeof(path), directory,
+                                  (string_address)"cpulist");
+                        if (!ul_lscpu_set_read(path, ul_lscpu_scratch_set))
+                                continue;
+                        ul_lscpu.node_count++;
+                        for (positive i = 0; i < ul_lscpu.cpu_count; i++)
+                                if (ul_cpu_has(ul_lscpu_scratch_set,
+                                               ul_lscpu.cpus[i].id))
+                                        ul_lscpu.cpus[i].node = (bipolar)node;
+                }
+                file_walk_close(address_of walk);
+        }
+
+        if (!ul_lscpu.node_count)
+        {
+                ul_lscpu.node_count = 1;
+                for (positive i = 0; i < ul_lscpu.cpu_count; i++)
+                        ul_lscpu.cpus[i].node = 0;
+        }
+}
+
+static bool ul_lscpu_take()
+{
+        memory_fill(address_of ul_lscpu, 0, sizeof(ul_lscpu));
+        memory_fill(ul_lscpu_present, 0, sizeof(ul_lscpu_present));
+        memory_fill(ul_lscpu_online, 0, sizeof(ul_lscpu_online));
+
+        bool present = ul_lscpu_set_read(
+            (string_address)"/sys/devices/system/cpu/present",
+            ul_lscpu_present);
+        if (!present)
+                present = ul_lscpu_set_read(
+                    (string_address)"/sys/devices/system/cpu/possible",
+                    ul_lscpu_present);
+        bool online = ul_lscpu_set_read(
+            (string_address)"/sys/devices/system/cpu/online",
+            ul_lscpu_online);
+
+        if (!present)
+        {
+                if (!nproc_affinity_count())
+                        return false;
+                memory_copy(ul_lscpu_present, nproc_affinity_words,
+                            sizeof(ul_lscpu_present));
+        }
+        if (!online)
+                memory_copy(ul_lscpu_online, ul_lscpu_present,
+                            sizeof(ul_lscpu_online));
+
+        ul_lscpu.present_count = ul_lscpu_set_count(ul_lscpu_present);
+        ul_lscpu.online_count = ul_lscpu_set_count(ul_lscpu_online);
+        if (!ul_lscpu.present_count ||
+            ul_lscpu.present_count >
+                TEXT_ARENA_BYTES / sizeof(ul_lscpu_cpu))
+                return false;
+        ul_lscpu.cpus = text_arena_take(
+            ul_lscpu.present_count * sizeof(ul_lscpu_cpu));
+        positive maximum_instances =
+            ul_lscpu.present_count * UL_LSCPU_CACHE_MAX;
+        if (!ul_lscpu.cpus ||
+            maximum_instances > (TEXT_ARENA_BYTES - text_arena_used) /
+                                    sizeof(ul_lscpu_instance))
+                return false;
+        ul_lscpu.instances = text_arena_take(
+            maximum_instances * sizeof(ul_lscpu_instance));
+        if (!ul_lscpu.instances)
+                return false;
+
+        ul_lscpu_info_read();
+        memory_fill(address_of ul_lscpu.machine, 0,
+                    sizeof(ul_lscpu.machine));
+        (void)system_call_1(syscall(uname),
+                            (positive)address_of ul_lscpu.machine);
+
+        for (positive id = 0; id < UL_CPU_BITS; id++)
+        {
+                if (!ul_cpu_has(ul_lscpu_present, id))
+                        continue;
+                ul_lscpu_cpu address_to cpu =
+                    ul_lscpu.cpus + ul_lscpu.cpu_count++;
+                memory_fill(cpu, 0, sizeof(*cpu));
+                cpu->id = id;
+                cpu->core = cpu->socket = cpu->cluster = cpu->node = -1;
+                for (positive c = 0; c < UL_LSCPU_CACHE_MAX; c++)
+                        cpu->cache[c] = -1;
+                cpu->online = ul_cpu_has(ul_lscpu_online, id);
+
+                positive value;
+                if (ul_lscpu_cpu_number(id, "topology/core_id",
+                                        address_of value))
+                        cpu->core = (bipolar)value;
+                if (ul_lscpu_cpu_number(id, "topology/physical_package_id",
+                                        address_of value))
+                        cpu->socket = (bipolar)value;
+                if (ul_lscpu_cpu_number(id, "topology/cluster_id",
+                                        address_of value) && value != 65535)
+                        cpu->cluster = (bipolar)value;
+#if ARM64
+                if (cpu->cluster < 0 && cpu->socket >= 0)
+                {
+                        cpu->cluster = cpu->socket;
+                        cpu->socket = -1;
+                }
+#endif
+                if (ul_lscpu_cpu_number(id, "cpufreq/scaling_cur_freq",
+                                        address_of value))
+                        cpu->current_khz = value;
+                if (ul_lscpu_cpu_number(id, "cpufreq/cpuinfo_max_freq",
+                                        address_of value))
+                        cpu->maximum_khz = value;
+                if (ul_lscpu_cpu_number(id, "cpufreq/cpuinfo_min_freq",
+                                        address_of value))
+                        cpu->minimum_khz = value;
+                ul_lscpu_cache_read(cpu);
+        }
+
+        ul_lscpu_numa_read();
+
+        positive cache_heading = 0;
+        for (positive i = 0; i < ul_lscpu.cache_count; i++)
+        {
+                if (i)
+                        ul_lscpu_cache_heading[cache_heading++] = ':';
+                positive length = string_length(ul_lscpu.caches[i].name);
+                memory_copy(ul_lscpu_cache_heading + cache_heading,
+                            ul_lscpu.caches[i].name, length);
+                cache_heading += length;
+        }
+        ul_lscpu_cache_heading[cache_heading] = end;
+
+        for (positive i = 0; i < ul_lscpu.cpu_count; i++)
+        {
+                ul_lscpu_cpu address_to cpu = ul_lscpu.cpus + i;
+                bool core_first = true;
+                bool socket_first = cpu->socket >= 0;
+                bool cluster_first = cpu->cluster >= 0;
+                for (positive j = 0; j < i; j++)
+                {
+                        ul_lscpu_cpu address_to old = ul_lscpu.cpus + j;
+                        if (old->core == cpu->core &&
+                            old->socket == cpu->socket)
+                                core_first = false;
+                        if (old->socket == cpu->socket)
+                                socket_first = false;
+                        if (old->cluster == cpu->cluster)
+                                cluster_first = false;
+                }
+                if (core_first)
+                        ul_lscpu.core_count++;
+                if (socket_first)
+                        ul_lscpu.socket_count++;
+                if (cluster_first)
+                        ul_lscpu.cluster_count++;
+        }
+        return true;
+}
+
+static positive ul_lscpu_set_text(p8 address_to text, positive room,
+                                  positive address_to set, bool hex)
+{
+        positive used = 0;
+        if (hex)
+        {
+                positive nibbles = UL_CPU_BITS / 4;
+                while (nibbles > 1)
+                {
+                        positive n = nibbles - 1;
+                        if ((set[n / (positive_bits / 4)] >>
+                             ((n % (positive_bits / 4)) * 4)) & 15)
+                                break;
+                        nibbles--;
+                }
+                for (positive left = nibbles; left && used + 1 < room; left--)
+                {
+                        positive n = left - 1;
+                        positive digit = set[n / (positive_bits / 4)] >>
+                            ((n % (positive_bits / 4)) * 4) & 15;
+                        if (left != nibbles && !(left % 8))
+                                text[used++] = ',';
+                        text[used++] = storage_hex_digit((p8)digit, false);
+                }
+        }
+        else
+        {
+                bool comma = false;
+                for (positive first = 0; first < UL_CPU_BITS; first++)
+                {
+                        if (!ul_cpu_has(set, first))
+                                continue;
+                        positive last = first;
+                        while (last + 1 < UL_CPU_BITS &&
+                               ul_cpu_has(set, last + 1))
+                                last++;
+                        if (comma)
+                                text[used++] = ',';
+                        used += positive_into_string(text + used, first);
+                        if (last != first)
+                        {
+                                text[used++] = '-';
+                                used += positive_into_string(text + used, last);
+                        }
+                        if (used + 24 >= room)
+                                break;
+                        comma = true;
+                        first = last;
+                }
+        }
+        text[min(used, room - 1)] = end;
+        return used;
+}
+
+typedef struct
+{
+        string_address field;
+        string_address data;
+} ul_lscpu_summary_item;
+
+static string_address ul_lscpu_summary_field(address_any row, p8 column,
+                                              p8 address_to scratch)
+{
+        (void)scratch;
+        ul_lscpu_summary_item address_to item =
+            (ul_lscpu_summary_item address_to)row;
+        return column ? item->data : item->field;
+}
+
+static const ul_table_column ul_lscpu_summary_columns[] = {
+    {"field", "FIELD", 0, false, UL_TABLE_STRING},
+    {"data", "DATA", 0, false, UL_TABLE_STRING},
+};
+
+static fn ul_lscpu_summary_add(ul_lscpu_summary_item address_to items,
+                               positive address_to count,
+                               string_address field, string_address data)
+{
+        if (data && string_get(data))
+                items[(address_to count)++] =
+                    (ul_lscpu_summary_item){field, data};
+}
+
+static string_address ul_lscpu_cache_size(positive size, bool bytes,
+                                          bool spaced)
+{
+        p8 text[48];
+        positive used;
+        if (bytes)
+                used = positive_into_string(text, size);
+        else
+        {
+                positive unit = 1;
+                p8 suffix = 'B';
+                static const p8 suffixes[] = "KMGTPE";
+                for (positive power = 0;
+                     power + 1 < sizeof(suffixes) &&
+                     unit <= positive_max / 1024 && size >= unit * 1024;
+                     power++)
+                {
+                        unit *= 1024;
+                        suffix = suffixes[power];
+                }
+
+                positive whole = size / unit;
+                positive remainder = size % unit;
+                positive tenth = 0;
+                positive fraction = 0;
+                /* Compute remainder * 10 / unit without widening division:
+                   every step adds modulo unit with an overflow-free compare.
+                   The final remainder decides round-to-nearest. */
+                for (positive i = 0; remainder && i < 10; i++)
+                        if (fraction >= unit - remainder)
+                        {
+                                fraction -= unit - remainder;
+                                tenth++;
+                        }
+                        else
+                                fraction += remainder;
+                if (fraction >= (unit + 1) / 2)
+                        tenth++;
+                if (tenth == 10)
+                {
+                        whole++;
+                        tenth = 0;
+                }
+                used = positive_into_string(text, whole);
+                if (tenth)
+                {
+                        text[used++] = '.';
+                        text[used++] = (p8)('0' + tenth);
+                }
+                if (spaced)
+                        text[used++] = ' ';
+                text[used++] = suffix;
+                if (spaced && suffix != 'B')
+                {
+                        text[used++] = 'i';
+                        text[used++] = 'B';
+                }
+        }
+        text[used] = end;
+        return ul_lscpu_keep(text);
+}
+
+static string_address ul_lscpu_cache_summary(ul_lscpu_cache address_to cache,
+                                             bool bytes)
+{
+        positive total = cache->size;
+        if (cache->instances && total <= positive_max / cache->instances)
+                total *= cache->instances;
+        string_address size = ul_lscpu_cache_size(total, bytes, true);
+        if (cache->instances <= 1)
+                return size;
+
+        p8 text[80];
+        positive used = string_length(size);
+        memory_copy(text, size, used);
+        memory_copy(text + used, " (", 2);
+        used += 2;
+        used += positive_into_string(text + used, cache->instances);
+        memory_copy(text + used, " instances)", 11);
+        used += 11;
+        text[used] = end;
+        return ul_lscpu_keep(text);
+}
+
+static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
+{
+        ul_lscpu_summary_item address_to items = text_arena_take(
+            96 * sizeof(ul_lscpu_summary_item));
+        if (!items)
+                return;
+        positive count = 0;
+        ul_lscpu_info address_to info = address_of ul_lscpu.info;
+
+        ul_lscpu_summary_add(items, address_of count, "Architecture:",
+                             ul_lscpu.machine.machine);
+        ul_lscpu_summary_add(items, address_of count, "CPU op-mode(s):",
+#if X64 || X86
+                             "32-bit, 64-bit"
+#else
+                             "64-bit"
+#endif
+        );
+        ul_lscpu_summary_add(items, address_of count, "Byte Order:",
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+                             "Little Endian"
+#else
+                             "Big Endian"
+#endif
+        );
+        ul_lscpu_summary_add(items, address_of count, "CPU(s):",
+                             ul_lscpu_number(ul_lscpu.present_count));
+
+        p8 set[FILE_PATH_MAX];
+        ul_lscpu_set_text(set, sizeof(set), ul_lscpu_online, hex);
+        ul_lscpu_summary_add(items, address_of count,
+                             "On-line CPU(s) list:", ul_lscpu_keep(set));
+        for (positive i = 0; i < UL_CPU_WORDS; i++)
+                ul_lscpu_scratch_set[i] =
+                    ul_lscpu_present[i] & ~ul_lscpu_online[i];
+        if (ul_lscpu_set_count(ul_lscpu_scratch_set))
+        {
+                ul_lscpu_set_text(set, sizeof(set), ul_lscpu_scratch_set, hex);
+                ul_lscpu_summary_add(items, address_of count,
+                                     "Off-line CPU(s) list:",
+                                     ul_lscpu_keep(set));
+        }
+
+        ul_lscpu_summary_add(items, address_of count, "Vendor ID:",
+                             info->vendor ? info->vendor
+                                          : (string_address)"-");
+        ul_lscpu_summary_add(items, address_of count, "Model name:",
+                             info->model_name ? info->model_name
+                                              : (string_address)"-");
+        ul_lscpu_summary_add(items, address_of count, "CPU family:",
+                             info->family);
+        ul_lscpu_summary_add(items, address_of count, "Model:", info->model);
+        positive threads = ul_lscpu.core_count
+                               ? ul_lscpu.present_count / ul_lscpu.core_count
+                               : 1;
+        ul_lscpu_summary_add(items, address_of count, "Thread(s) per core:",
+                             ul_lscpu_number(max(threads, (positive)1)));
+        if (ul_lscpu.socket_count)
+        {
+                ul_lscpu_summary_add(
+                    items, address_of count, "Core(s) per socket:",
+                    ul_lscpu_number(ul_lscpu.core_count /
+                                    ul_lscpu.socket_count));
+                ul_lscpu_summary_add(items, address_of count, "Socket(s):",
+                                     ul_lscpu_number(ul_lscpu.socket_count));
+        }
+        else
+                ul_lscpu_summary_add(items, address_of count, "Socket(s):",
+                                     "-");
+        if (ul_lscpu.cluster_count)
+        {
+                ul_lscpu_summary_add(
+                    items, address_of count, "Core(s) per cluster:",
+                    ul_lscpu_number(ul_lscpu.core_count /
+                                    ul_lscpu.cluster_count));
+                ul_lscpu_summary_add(items, address_of count, "Cluster(s):",
+                                     ul_lscpu_number(ul_lscpu.cluster_count));
+        }
+        ul_lscpu_summary_add(items, address_of count, "Stepping:",
+                             info->stepping);
+        ul_lscpu_summary_add(items, address_of count, "Microcode version:",
+                             info->microcode);
+        ul_lscpu_summary_add(items, address_of count, "BogoMIPS:",
+                             info->bogomips);
+        ul_lscpu_summary_add(items, address_of count, "Flags:", info->flags);
+
+        if (info->flags &&
+            (string_search(info->flags, " svm") ||
+             !string_compare_max(info->flags, "svm ", 4)))
+                ul_lscpu_summary_add(items, address_of count, "Virtualization:",
+                                     "AMD-V");
+        else if (info->flags &&
+                 (string_search(info->flags, " vmx") ||
+                  !string_compare_max(info->flags, "vmx ", 4)))
+                ul_lscpu_summary_add(items, address_of count, "Virtualization:",
+                                     "VT-x");
+
+        for (positive i = 0; i < ul_lscpu.cache_count; i++)
+        {
+                ul_lscpu_cache address_to cache = ul_lscpu.caches + i;
+                if (!cache->size)
+                        continue;
+                p8 label[24];
+                positive used = string_length(cache->name);
+                memory_copy(label, cache->name, used);
+                memory_copy(label + used, " cache:", 8);
+                label[used + 7] = end;
+                ul_lscpu_summary_add(items, address_of count,
+                                     ul_lscpu_keep(label),
+                                     ul_lscpu_cache_summary(cache, bytes));
+        }
+
+        ul_lscpu_summary_add(items, address_of count, "NUMA node(s):",
+                             ul_lscpu_number(ul_lscpu.node_count));
+        for (positive i = 0; i < ul_lscpu.cpu_count; i++)
+        {
+                bipolar node = ul_lscpu.cpus[i].node;
+                bool first = node >= 0;
+                for (positive j = 0; j < i; j++)
+                        if (ul_lscpu.cpus[j].node == node)
+                                first = false;
+                if (!first)
+                        continue;
+                memory_fill(ul_lscpu_scratch_set, 0,
+                            sizeof(ul_lscpu_scratch_set));
+                for (positive j = 0; j < ul_lscpu.cpu_count; j++)
+                        if (ul_lscpu.cpus[j].node == node)
+                        {
+                                positive cpu = ul_lscpu.cpus[j].id;
+                                ul_lscpu_scratch_set[cpu / positive_bits] |=
+                                    (positive)1 << (cpu % positive_bits);
+                        }
+                ul_lscpu_set_text(set, sizeof(set), ul_lscpu_scratch_set, hex);
+                p8 label[48];
+                positive used = memory_copy_end(label, "NUMA node", 9) - label;
+                used += positive_into_string(label + used, (positive)node);
+                memory_copy(label + used, " CPU(s):", 9);
+                label[used + 8] = end;
+                ul_lscpu_summary_add(items, address_of count,
+                                     ul_lscpu_keep(label), ul_lscpu_keep(set));
+        }
+
+        file_walk walk;
+        if (file_walk_open(address_of walk, AT_FDCWD,
+                           "/sys/devices/system/cpu/vulnerabilities"))
+        {
+                struct linux_dirent64 address_to entry;
+                while (count < 96 && (entry = file_walk_next(address_of walk)))
+                {
+                        string_address name = entry->d_name;
+                        if (string_is(name, '.'))
+                                continue;
+                        p8 path[160];
+                        p8 value[512];
+                        path_join(path, sizeof(path),
+                                  "/sys/devices/system/cpu/vulnerabilities",
+                                  name);
+                        if (ul_slurp_word(path, value, sizeof(value)) <= 0)
+                                continue;
+                        p8 label[128];
+                        positive used = memory_copy_end(
+                            label, "Vulnerability ", 14) - label;
+                        for (positive j = 0; string_get(name + j) &&
+                                             used + 2 < sizeof(label); j++)
+                        {
+                                p8 byte = name[j] == '_' ? ' ' : name[j];
+                                label[used++] = j ? byte : byte_to_upper(byte);
+                        }
+                        label[used++] = ':';
+                        label[used] = end;
+                        ul_lscpu_summary_add(items, address_of count,
+                                             ul_lscpu_keep(label),
+                                             ul_lscpu_keep(value));
+                }
+                file_walk_close(address_of walk);
+        }
+
+        p8 columns[] = {0, 1};
+        if (json)
+                ul_table_json("lscpu", items, sizeof(*items), count,
+                              ul_lscpu_summary_columns, columns, 2,
+                              ul_lscpu_summary_field);
+        else
+                ul_table_out(items, sizeof(*items), count,
+                             ul_lscpu_summary_columns, 2, columns, 2,
+                             false, false, ul_lscpu_summary_field);
+}
+
+enum
+{
+        UL_LSCPU_CPU,
+        UL_LSCPU_CORE,
+        UL_LSCPU_SOCKET,
+        UL_LSCPU_CLUSTER,
+        UL_LSCPU_NODE,
+        UL_LSCPU_CACHE,
+        UL_LSCPU_ONLINE,
+        UL_LSCPU_BOGOMIPS,
+        UL_LSCPU_MICROCODE,
+        UL_LSCPU_MHZ,
+        UL_LSCPU_SCALMHZ,
+        UL_LSCPU_MAXMHZ,
+        UL_LSCPU_MINMHZ,
+        UL_LSCPU_MODELNAME,
+        UL_LSCPU_COLUMNS,
+};
+
+static ul_table_column ul_lscpu_columns[] = {
+    {"cpu", "CPU", 3, true, UL_TABLE_NUMBER},
+    {"core", "CORE", 4, true, UL_TABLE_NULL_NUMBER},
+    {"socket", "SOCKET", 6, true, UL_TABLE_NULL_NUMBER},
+    {"cluster", "CLUSTER", 7, true, UL_TABLE_NULL_NUMBER},
+    {"node", "NODE", 4, true, UL_TABLE_NULL_NUMBER},
+    {"cache", "L1d:L1i:L2:L3", 0, false, UL_TABLE_STRING},
+    {"online", "ONLINE", 6, true, UL_TABLE_BOOLEAN},
+    {"bogomips", "BOGOMIPS", 0, true, UL_TABLE_NULL_NUMBER},
+    {"microcode", "MICROCODE", 0, false, UL_TABLE_NULL_STRING},
+    {"mhz", "MHZ", 0, true, UL_TABLE_NULL_NUMBER},
+    {"scalmhz%", "SCALMHZ%", 0, true, UL_TABLE_NULL_NUMBER},
+    {"maxmhz", "MAXMHZ", 0, true, UL_TABLE_NULL_NUMBER},
+    {"minmhz", "MINMHZ", 0, true, UL_TABLE_NULL_NUMBER},
+    {"modelname", "MODELNAME", 0, false, UL_TABLE_NULL_STRING},
+};
+
+static string_address ul_lscpu_frequency(p8 address_to text, positive khz)
+{
+        if (!khz)
+                return (string_address)"";
+        positive used = positive_into_string(text, khz / 1000);
+        text[used++] = '.';
+        used += positive_into_padded(text + used, khz % 1000, 3, '0');
+        text[used++] = '0';
+        text[used] = end;
+        return text;
+}
+
+static string_address ul_lscpu_cpu_field(address_any row, p8 column,
+                                         p8 address_to scratch)
+{
+        ul_lscpu_cpu address_to cpu = (ul_lscpu_cpu address_to)row;
+        bipolar number = -1;
+        switch (column)
+        {
+        case UL_LSCPU_CPU: number = (bipolar)cpu->id; break;
+        case UL_LSCPU_CORE: number = cpu->core; break;
+        case UL_LSCPU_SOCKET: number = cpu->socket; break;
+        case UL_LSCPU_CLUSTER: number = cpu->cluster; break;
+        case UL_LSCPU_NODE: number = cpu->node; break;
+        case UL_LSCPU_CACHE:
+        {
+                positive used = 0;
+                for (positive i = 0; i < ul_lscpu.cache_count; i++)
+                {
+                        if (i)
+                                scratch[used++] = ':';
+                        if (cpu->cache[i] >= 0)
+                                used += positive_into_string(
+                                    scratch + used, (positive)cpu->cache[i]);
+                }
+                scratch[used] = end;
+                return scratch;
+        }
+        case UL_LSCPU_ONLINE:
+                return cpu->online ? (string_address)"yes"
+                                   : (string_address)"no";
+        case UL_LSCPU_BOGOMIPS:
+                return ul_lscpu.info.bogomips
+                           ? ul_lscpu.info.bogomips : (string_address)"";
+        case UL_LSCPU_MICROCODE:
+                return ul_lscpu.info.microcode
+                           ? ul_lscpu.info.microcode : (string_address)"";
+        case UL_LSCPU_MHZ:
+                return ul_lscpu_frequency(scratch, cpu->current_khz);
+        case UL_LSCPU_SCALMHZ:
+                if (!cpu->current_khz || !cpu->maximum_khz)
+                        return (string_address)"";
+                positive_into_string(
+                    scratch, min((positive)100,
+                                 cpu->current_khz * 100 / cpu->maximum_khz));
+                return scratch;
+        case UL_LSCPU_MAXMHZ:
+                return ul_lscpu_frequency(scratch, cpu->maximum_khz);
+        case UL_LSCPU_MINMHZ:
+                return ul_lscpu_frequency(scratch, cpu->minimum_khz);
+        default:
+                return ul_lscpu.info.model_name
+                           ? ul_lscpu.info.model_name : (string_address)"";
+        }
+        if (number < 0)
+                return (string_address)"";
+        positive_into_string(scratch, (positive)number);
+        return scratch;
+}
+
+enum
+{
+        UL_LSCPU_C_NAME,
+        UL_LSCPU_C_ONE,
+        UL_LSCPU_C_ALL,
+        UL_LSCPU_C_WAYS,
+        UL_LSCPU_C_TYPE,
+        UL_LSCPU_C_LEVEL,
+        UL_LSCPU_C_SETS,
+        UL_LSCPU_C_PHY,
+        UL_LSCPU_C_COHERENCY,
+        UL_LSCPU_C_COLUMNS,
+};
+
+static const ul_table_column ul_lscpu_cache_columns[] = {
+    {"name", "NAME", 0, false, UL_TABLE_STRING},
+    {"one-size", "ONE-SIZE", 0, true, UL_TABLE_NULL_STRING},
+    {"all-size", "ALL-SIZE", 0, true, UL_TABLE_NULL_STRING},
+    {"ways", "WAYS", 0, true, UL_TABLE_NULL_NUMBER},
+    {"type", "TYPE", 11, false, UL_TABLE_STRING},
+    {"level", "LEVEL", 0, true, UL_TABLE_NUMBER},
+    {"sets", "SETS", 0, true, UL_TABLE_NULL_NUMBER},
+    {"phy-line", "PHY-LINE", 0, true, UL_TABLE_NULL_NUMBER},
+    {"coherency-size", "COHERENCY-SIZE", 0, true, UL_TABLE_NULL_NUMBER},
+};
+
+static bool ul_lscpu_bytes;
+
+static string_address ul_lscpu_cache_field(address_any row, p8 column,
+                                           p8 address_to scratch)
+{
+        ul_lscpu_cache address_to cache = (ul_lscpu_cache address_to)row;
+        positive value = 0;
+        switch (column)
+        {
+        case UL_LSCPU_C_NAME: return cache->name;
+        case UL_LSCPU_C_ONE:
+                if (!cache->size)
+                        return (string_address)"";
+                return ul_lscpu_cache_size(cache->size, ul_lscpu_bytes, false);
+        case UL_LSCPU_C_ALL:
+                if (!cache->size)
+                        return (string_address)"";
+                value = cache->size;
+                if (cache->instances && value <= positive_max / cache->instances)
+                        value *= cache->instances;
+                return ul_lscpu_cache_size(value, ul_lscpu_bytes, false);
+        case UL_LSCPU_C_WAYS: value = cache->ways; break;
+        case UL_LSCPU_C_TYPE: return cache->type;
+        case UL_LSCPU_C_LEVEL: value = cache->level; break;
+        case UL_LSCPU_C_SETS: value = cache->sets; break;
+        case UL_LSCPU_C_PHY: value = cache->physical_line; break;
+        default: value = cache->coherency; break;
+        }
+        if (!value && column != UL_LSCPU_C_LEVEL)
+                return (string_address)"";
+        positive_into_string(scratch, value);
+        return scratch;
+}
+
+static bool ul_lscpu_show(ul_lscpu_cpu address_to cpu, p8 filter)
+{
+        return filter == 'a' || (filter == 'b' && cpu->online) ||
+               (filter == 'c' && !cpu->online);
+}
+
+static fn ul_lscpu_parse(p8 address_to columns, positive column_count,
+                         bool defaults, p8 filter)
+{
+        string_address prelude =
+            "# The following is the parsable format, which can be fed to other\n"
+            "# programs. Each different item in every column has an unique ID\n"
+            "# starting usually from zero.\n# ";
+        log(prelude, string_length(prelude));
+        if (defaults)
+        {
+                log("CPU,Core,", 9);
+                string_address package = ul_lscpu.cluster_count
+                                             ? "Cluster" : "Socket";
+                log(package, string_length(package));
+                log(",Node,", 6);
+                for (positive i = 0; i < ul_lscpu.cache_count; i++)
+                {
+                        log(",", 1);
+                        log(ul_lscpu.caches[i].name,
+                            string_length(ul_lscpu.caches[i].name));
+                }
+        }
+        else
+                for (positive i = 0; i < column_count; i++)
+                {
+                        if (i)
+                                log(",", 1);
+                        string_address heading = ul_lscpu_columns[columns[i]].heading;
+                        for (positive at = 0; string_get(heading + at); at++)
+                        {
+                                p8 byte = !at || columns[i] == UL_LSCPU_CPU
+                                              ? heading[at]
+                                              : byte_to_lower(heading[at]);
+                                log(address_of byte, 1);
+                        }
+                }
+        log("\n", 1);
+
+        for (positive row = 0; row < ul_lscpu.cpu_count; row++)
+        {
+                ul_lscpu_cpu address_to cpu = ul_lscpu.cpus + row;
+                if (!ul_lscpu_show(cpu, filter))
+                        continue;
+                if (defaults)
+                {
+                        positive_to_string(log, cpu->id);
+                        log(",", 1);
+                        if (cpu->core >= 0)
+                                positive_to_string(log, (positive)cpu->core);
+                        log(",", 1);
+                        bipolar package = ul_lscpu.cluster_count
+                                              ? cpu->cluster : cpu->socket;
+                        if (package >= 0)
+                                positive_to_string(log, (positive)package);
+                        log(",", 1);
+                        if (cpu->node >= 0)
+                                positive_to_string(log, (positive)cpu->node);
+                        log(",", 1);
+                        for (positive i = 0; i < ul_lscpu.cache_count; i++)
+                        {
+                                log(",", 1);
+                                if (cpu->cache[i] >= 0)
+                                        positive_to_string(
+                                            log, (positive)cpu->cache[i]);
+                        }
+                }
+                else
+                        for (positive i = 0; i < column_count; i++)
+                        {
+                                if (i)
+                                        log(",", 1);
+                                p8 scratch[96];
+                                string_address value = ul_lscpu_cpu_field(
+                                    cpu, columns[i], scratch);
+                                log(value, string_length(value));
+                        }
+                log("\n", 1);
+        }
+}
+
+static const file_long ul_lscpu_longs[] = {
+    {"all", 'a'}, {"bytes", 'B'}, {"caches", 'C'},
+    {"extended", 'e'}, {"hex", 'x'}, {"json", 'J'},
+    {"offline", 'c'}, {"online", 'b'}, {"output", 'o'},
+    {"parse", 'p'}, {"physical", 'y'}, {"raw", 'r'},
+    {"sysroot", 's'}, {"list-columns", 'H'}, {"output-all", 'A'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static bool ul_lscpu_unsupported_column(string_address text)
+{
+        while (string_get(text))
+        {
+                positive length = string_first_of(text, ',')
+                                      ? (positive)(string_first_of(text, ',') - text)
+                                      : string_length(text);
+                if (file_same_word(text, length, "address") ||
+                    file_same_word(text, length, "configured"))
+                        return true;
+                text += length;
+                if (!string_get(text))
+                        break;
+                text++;
+        }
+        return false;
+}
+
+static b32 util_linux_lscpu()
+{
+        file_taking taking = {
+            .program = "lscpu", .allowed = "aBbCcJeoprxysHAVh",
+            .valued = "os", .optional = "peC", .sticky_optional = "peC",
+            .longs = ul_lscpu_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("lscpu", "unexpected operand");
+        if (taking.flags & FILE_FLAG('y'))
+                return ul_bad_usage("lscpu",
+                                    "physical identifiers are not supported");
+        if (file_option_value(address_of taking, 's'))
+                return ul_bad_usage("lscpu", "--sysroot is not supported");
+        if (taking.flags & (FILE_FLAG('H') | FILE_FLAG('A')))
+                return ul_bad_usage("lscpu", "column metadata is not supported");
+
+        positive modes = ((taking.flags & FILE_FLAG('p')) != 0) +
+                         ((taking.flags & FILE_FLAG('e')) != 0) +
+                         ((taking.flags & FILE_FLAG('C')) != 0);
+        positive filters = ((taking.flags & FILE_FLAG('a')) != 0) +
+                           ((taking.flags & FILE_FLAG('b')) != 0) +
+                           ((taking.flags & FILE_FLAG('c')) != 0);
+        if (modes > 1)
+                return ul_bad_usage("lscpu", "output modes are mutually exclusive");
+        if (filters > 1)
+                return ul_bad_usage("lscpu", "CPU filters are mutually exclusive");
+
+        string_address selected = null;
+        if (taking.flags & FILE_FLAG('p'))
+                selected = file_option_value(address_of taking, 'p');
+        else if (taking.flags & FILE_FLAG('e'))
+                selected = file_option_value(address_of taking, 'e');
+        else if (taking.flags & FILE_FLAG('C'))
+                selected = file_option_value(address_of taking, 'C');
+        string_address output = file_option_value(address_of taking, 'o');
+        if (output && !modes)
+                return ul_bad_usage("lscpu", "--output needs a table mode");
+        if (output)
+                selected = output;
+        if (selected && string_is(selected, '='))
+                selected++;
+        if (selected && ul_lscpu_unsupported_column(selected))
+                return ul_bad_usage(
+                    "lscpu", "physical-address/configured columns are not supported");
+
+        text_arena_used = 0;
+        if (!ul_lscpu_take())
+                return ul_bad_usage("lscpu", "cannot read CPU topology");
+        ul_lscpu_columns[UL_LSCPU_CACHE].heading = ul_lscpu_cache_heading;
+        bool json = (taking.flags & FILE_FLAG('J')) != 0;
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        ul_lscpu_bytes = (taking.flags & FILE_FLAG('B')) != 0;
+        p8 filter = taking.flags & FILE_FLAG('c') ? 'c'
+                    : taking.flags & FILE_FLAG('b') ? 'b'
+                    : taking.flags & FILE_FLAG('a') ? 'a'
+                    : taking.flags & FILE_FLAG('p') ? 'b' : 'a';
+
+        if (!modes)
+                ul_lscpu_summary(json,
+                                 (taking.flags & FILE_FLAG('x')) != 0,
+                                 ul_lscpu_bytes);
+        else if (taking.flags & FILE_FLAG('C'))
+        {
+                static const p8 defaults[] = {
+                    UL_LSCPU_C_NAME, UL_LSCPU_C_ONE, UL_LSCPU_C_ALL,
+                    UL_LSCPU_C_WAYS, UL_LSCPU_C_TYPE, UL_LSCPU_C_LEVEL,
+                    UL_LSCPU_C_SETS, UL_LSCPU_C_PHY, UL_LSCPU_C_COHERENCY,
+                };
+                p8 columns[UL_LSCPU_C_COLUMNS];
+                positive count = 0;
+                if (selected &&
+                    !ul_table_column_list(selected, ul_lscpu_cache_columns,
+                                          UL_LSCPU_C_COLUMNS, defaults,
+                                          array_count(defaults), columns,
+                                          address_of count))
+                        return ul_bad_usage("lscpu", "unknown cache column");
+                if (!selected)
+                        for (positive i = 0; i < array_count(defaults); i++)
+                                columns[count++] = defaults[i];
+                if (json)
+                        ul_table_json("caches", ul_lscpu.caches,
+                                      sizeof(ul_lscpu.caches[0]),
+                                      ul_lscpu.cache_count,
+                                      ul_lscpu_cache_columns, columns, count,
+                                      ul_lscpu_cache_field);
+                else
+                        ul_table_out(ul_lscpu.caches,
+                                     sizeof(ul_lscpu.caches[0]),
+                                     ul_lscpu.cache_count,
+                                     ul_lscpu_cache_columns,
+                                     UL_LSCPU_C_COLUMNS, columns, count,
+                                     true, raw, ul_lscpu_cache_field);
+        }
+        else
+        {
+                static const p8 socket_defaults[] = {
+                    UL_LSCPU_CPU, UL_LSCPU_NODE, UL_LSCPU_SOCKET,
+                    UL_LSCPU_CORE, UL_LSCPU_CACHE, UL_LSCPU_ONLINE,
+                    UL_LSCPU_MAXMHZ, UL_LSCPU_MINMHZ, UL_LSCPU_MHZ,
+                };
+                static const p8 cluster_defaults[] = {
+                    UL_LSCPU_CPU, UL_LSCPU_NODE, UL_LSCPU_CLUSTER,
+                    UL_LSCPU_CORE, UL_LSCPU_CACHE, UL_LSCPU_ONLINE,
+                };
+                const p8 address_to defaults = ul_lscpu.cluster_count
+                                                   ? cluster_defaults
+                                                   : socket_defaults;
+                positive default_count = ul_lscpu.cluster_count
+                                             ? array_count(cluster_defaults)
+                                             : array_count(socket_defaults);
+                p8 columns[UL_LSCPU_COLUMNS];
+                positive count = 0;
+                if (selected &&
+                    !ul_table_column_list(selected, ul_lscpu_columns,
+                                          UL_LSCPU_COLUMNS, defaults,
+                                          default_count, columns,
+                                          address_of count))
+                        return ul_bad_usage("lscpu", "unknown CPU column");
+                if (!selected)
+                        for (positive i = 0; i < default_count; i++)
+                                columns[count++] = defaults[i];
+
+                if (taking.flags & FILE_FLAG('p'))
+                        ul_lscpu_parse(columns, count, !selected, filter);
+                else
+                {
+                        positive shown = 0;
+                        for (positive i = 0; i < ul_lscpu.cpu_count; i++)
+                                if (ul_lscpu_show(ul_lscpu.cpus + i, filter))
+                                        ul_lscpu.cpus[shown++] = ul_lscpu.cpus[i];
+                        if (json)
+                                ul_table_json("cpus", ul_lscpu.cpus,
+                                              sizeof(ul_lscpu.cpus[0]), shown,
+                                              ul_lscpu_columns, columns, count,
+                                              ul_lscpu_cpu_field);
+                        else
+                                ul_table_out(ul_lscpu.cpus,
+                                             sizeof(ul_lscpu.cpus[0]), shown,
+                                             ul_lscpu_columns,
+                                             UL_LSCPU_COLUMNS, columns, count,
+                                             true, raw, ul_lscpu_cpu_field);
+                }
+        }
+        log_flush();
+        return 0;
+}
+
+// lsmem ------------------------------------------------------------
+
+/* Memory hotplug exports the same kind of small, normalized sysfs records as
+   CPU topology.  Keep one block snapshot and derive both coalesced ranges and
+   every output projection from it; the shared arena and table formatter avoid
+   another allocation, JSON, or smart-column layer. */
+typedef struct
+{
+        positive id;
+        string_address state;
+        string_address zones;
+        bipolar node;
+        bool removable;
+} ul_lsmem_block;
+
+typedef struct
+{
+        positive first;
+        positive last;
+        string_address state;
+        string_address zones;
+        bipolar node;
+        bool removable;
+} ul_lsmem_range;
+
+typedef struct
+{
+        ul_lsmem_block address_to blocks;
+        ul_lsmem_range address_to ranges;
+        positive block_count;
+        positive range_count;
+        positive block_size;
+        positive online_size;
+        positive offline_size;
+        string_address memmap;
+} ul_lsmem_snapshot;
+
+static ul_lsmem_snapshot ul_lsmem;
+static bool ul_lsmem_bytes;
+
+enum
+{
+        UL_LSMEM_RANGE,
+        UL_LSMEM_SIZE,
+        UL_LSMEM_STATE,
+        UL_LSMEM_REMOVABLE,
+        UL_LSMEM_BLOCK,
+        UL_LSMEM_NODE,
+        UL_LSMEM_ZONES,
+        UL_LSMEM_COLUMNS,
+};
+
+static const ul_table_column ul_lsmem_columns[] = {
+    {"range", "RANGE", 0, false, UL_TABLE_STRING},
+    {"size", "SIZE", 0, true, UL_TABLE_STRING},
+    {"state", "STATE", 0, true, UL_TABLE_STRING},
+    {"removable", "REMOVABLE", 0, true, UL_TABLE_BOOLEAN},
+    {"block", "BLOCK", 0, true, UL_TABLE_STRING},
+    {"node", "NODE", 0, true, UL_TABLE_NULL_NUMBER},
+    {"zones", "ZONES", 0, true, UL_TABLE_NULL_STRING},
+};
+
+static ul_table_column ul_lsmem_summary_columns[] = {
+    {"field", "FIELD", 32, false, UL_TABLE_STRING},
+    {"data", "DATA", 0, true, UL_TABLE_STRING},
+};
+
+static bool ul_lsmem_id(string_address name, positive address_to id)
+{
+        return !string_compare_max(name, "memory", 6) &&
+               ul_unsigned(name + 6, positive_max, id);
+}
+
+static fn ul_lsmem_path(p8 address_to path, positive id,
+                        string_address property)
+{
+        string_address base =
+            (string_address)"/sys/devices/system/memory/memory";
+        positive at = string_length(base);
+        memory_copy(path, base, at);
+        at += positive_into_string(path + at, id);
+        if (property)
+        {
+                path[at++] = '/';
+                positive length = string_length(property);
+                memory_copy(path + at, property, length + 1);
+        }
+        else
+                path[at] = end;
+}
+
+static bipolar ul_lsmem_node(positive id)
+{
+        p8 directory[160];
+        ul_lsmem_path(directory, id, null);
+        file_walk walk;
+        if (!file_walk_open(address_of walk, AT_FDCWD, directory))
+                return -1;
+
+        bipolar answer = -1;
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                string_address name = (string_address)entry->d_name;
+                positive node;
+                if (!string_compare_max(name, "node", 4) &&
+                    ul_unsigned(name + 4, (positive)bipolar_max,
+                                address_of node))
+                {
+                        answer = (bipolar)node;
+                        break;
+                }
+        }
+        file_walk_close(address_of walk);
+        return answer;
+}
+
+static PURE bipolar ul_lsmem_order(ul_lsmem_block left,
+                                    ul_lsmem_block right)
+{
+        if (left.id == right.id)
+                return 0;
+        return left.id < right.id ? -1 : 1;
+}
+
+static bool ul_lsmem_block_size(positive address_to value)
+{
+        p8 text[64];
+        if (ul_slurp_word(
+                (string_address)"/sys/devices/system/memory/block_size_bytes",
+                text, sizeof(text)) <= 0)
+                return false;
+        string_address at = text;
+        return string_digits_checked(address_of at, 16, value) &&
+               !string_get(at) && address_to value;
+}
+
+static bool ul_lsmem_take()
+{
+        memory_fill(address_of ul_lsmem, 0, sizeof(ul_lsmem));
+        if (!ul_lsmem_block_size(address_of ul_lsmem.block_size))
+                return false;
+
+        string_address root =
+            (string_address)"/sys/devices/system/memory";
+        file_walk walk;
+        if (!file_walk_open(address_of walk, AT_FDCWD, root))
+                return false;
+
+        positive capacity = 0;
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                positive id;
+                if (ul_lsmem_id((string_address)entry->d_name,
+                                address_of id) &&
+                    id <= positive_max / ul_lsmem.block_size)
+                        capacity++;
+        }
+        file_walk_close(address_of walk);
+        if (!capacity || capacity >
+                (TEXT_ARENA_BYTES - text_arena_used) /
+                    (sizeof(ul_lsmem_block) * 2 + sizeof(ul_lsmem_range)))
+                return false;
+
+        ul_lsmem.blocks = text_arena_take(
+            capacity * sizeof(ul_lsmem_block));
+        ul_lsmem_block address_to spare = text_arena_take(
+            capacity * sizeof(ul_lsmem_block));
+        ul_lsmem.ranges = text_arena_take(
+            capacity * sizeof(ul_lsmem_range));
+        if (!ul_lsmem.blocks || !spare || !ul_lsmem.ranges ||
+            !file_walk_open(address_of walk, AT_FDCWD, root))
+                return false;
+
+        while (ul_lsmem.block_count < capacity &&
+               (entry = file_walk_next(address_of walk)))
+        {
+                positive id;
+                if (!ul_lsmem_id((string_address)entry->d_name,
+                                 address_of id) ||
+                    id > positive_max / ul_lsmem.block_size)
+                        continue;
+
+                ul_lsmem_block address_to block =
+                    ul_lsmem.blocks + ul_lsmem.block_count++;
+                memory_fill(block, 0, sizeof(*block));
+                block->id = id;
+                block->node = ul_lsmem_node(id);
+
+                p8 path[192];
+                p8 text[128];
+                ul_lsmem_path(path, id, (string_address)"state");
+                if (ul_slurp_word(path, text, sizeof(text)) > 0)
+                        block->state = ul_lscpu_keep(text);
+                else
+                        block->state = (string_address)"unknown";
+
+                positive removable;
+                ul_lsmem_path(path, id, (string_address)"removable");
+                block->removable =
+                    ul_slurp_word(path, text, sizeof(text)) > 0 &&
+                    ul_unsigned(text, 1, address_of removable) && removable;
+
+                ul_lsmem_path(path, id, (string_address)"valid_zones");
+                if (ul_slurp_word(path, text, sizeof(text)) > 0)
+                {
+                        if (string_equals(text, "none"))
+                                block->zones = (string_address)"None";
+                        else
+                                block->zones = ul_lscpu_keep(text);
+                }
+                else
+                        block->zones = (string_address)"";
+        }
+        file_walk_close(address_of walk);
+        if (!ul_lsmem.block_count)
+                return false;
+
+        ul_lsmem.blocks = array_merge_sort(
+            ul_lsmem.blocks, spare, ul_lsmem.block_count, ul_lsmem_order);
+        for (positive i = 0; i < ul_lsmem.block_count; i++)
+        {
+                if (string_equals(ul_lsmem.blocks[i].state, "online"))
+                        ul_lsmem.online_size += ul_lsmem.block_size;
+                else
+                        ul_lsmem.offline_size += ul_lsmem.block_size;
+        }
+
+        p8 parameter[16];
+        if (ul_slurp_word(
+                (string_address)"/sys/module/memory_hotplug/parameters/memmap_on_memory",
+                parameter, sizeof(parameter)) > 0)
+                ul_lsmem.memmap =
+                    byte_to_lower(parameter[0]) == 'y'
+                        ? (string_address)"yes" : (string_address)"no";
+        return true;
+}
+
+static bool ul_lsmem_same(ul_lsmem_range address_to range,
+                          ul_lsmem_block address_to block,
+                          positive split)
+{
+        if (range->last == positive_max || block->id != range->last + 1)
+                return false;
+        if ((split & ((positive)1 << UL_LSMEM_STATE)) &&
+            !string_equals(range->state, block->state))
+                return false;
+        if ((split & ((positive)1 << UL_LSMEM_REMOVABLE)) &&
+            range->removable != block->removable)
+                return false;
+        if ((split & ((positive)1 << UL_LSMEM_NODE)) &&
+            range->node != block->node)
+                return false;
+        if ((split & ((positive)1 << UL_LSMEM_ZONES)) &&
+            !string_equals(range->zones, block->zones))
+                return false;
+        return true;
+}
+
+static fn ul_lsmem_ranges(positive split, bool every)
+{
+        ul_lsmem.range_count = 0;
+        for (positive i = 0; i < ul_lsmem.block_count; i++)
+        {
+                ul_lsmem_block address_to block = ul_lsmem.blocks + i;
+                ul_lsmem_range address_to range = ul_lsmem.range_count
+                    ? ul_lsmem.ranges + ul_lsmem.range_count - 1 : null;
+                if (!every && range && ul_lsmem_same(range, block, split))
+                {
+                        range->last = block->id;
+                        continue;
+                }
+                range = ul_lsmem.ranges + ul_lsmem.range_count++;
+                *range = (ul_lsmem_range){
+                    .first = block->id,
+                    .last = block->id,
+                    .state = block->state,
+                    .zones = block->zones,
+                    .node = block->node,
+                    .removable = block->removable,
+                };
+        }
+}
+
+static positive ul_lsmem_hex(p8 address_to text, positive value)
+{
+        memory_copy(text, "0x", 2);
+        for (positive i = 0; i < 16; i++)
+        {
+                positive shift = (15 - i) * 4;
+                text[2 + i] = storage_hex_digit((p8)(value >> shift & 15),
+                                                 false);
+        }
+        return 18;
+}
+
+static string_address ul_lsmem_field(address_any row, p8 column,
+                                     p8 address_to scratch)
+{
+        ul_lsmem_range address_to range = (ul_lsmem_range address_to)row;
+        switch (column)
+        {
+        case UL_LSMEM_RANGE:
+        {
+                positive used = ul_lsmem_hex(
+                    scratch, range->first * ul_lsmem.block_size);
+                scratch[used++] = '-';
+                used += ul_lsmem_hex(
+                    scratch + used,
+                    (range->last + 1) * ul_lsmem.block_size - 1);
+                scratch[used] = end;
+                return scratch;
+        }
+        case UL_LSMEM_SIZE:
+                return ul_lscpu_cache_size(
+                    (range->last - range->first + 1) * ul_lsmem.block_size,
+                    ul_lsmem_bytes, false);
+        case UL_LSMEM_STATE: return range->state;
+        case UL_LSMEM_REMOVABLE:
+                return range->removable ? (string_address)"yes"
+                                        : (string_address)"no";
+        case UL_LSMEM_BLOCK:
+        {
+                positive used = positive_into_string(scratch, range->first);
+                if (range->last != range->first)
+                {
+                        scratch[used++] = '-';
+                        used += positive_into_string(scratch + used,
+                                                     range->last);
+                }
+                scratch[used] = end;
+                return scratch;
+        }
+        case UL_LSMEM_NODE:
+                if (range->node < 0)
+                        return (string_address)"";
+                positive_into_string(scratch, (positive)range->node);
+                return scratch;
+        default: return range->zones;
+        }
+}
+
+static bool ul_lsmem_unsupported_column(string_address text)
+{
+        while (text && string_get(text))
+        {
+                if (string_is(text, '+'))
+                        text++;
+                string_address comma = string_first_of(text, ',');
+                positive length = comma ? (positive)(comma - text)
+                                        : string_length(text);
+                if (file_same_word(text, length, "configured") ||
+                    file_same_word(text, length, "memmap-on-memory"))
+                        return true;
+                text += length;
+                if (!string_get(text))
+                        break;
+                text++;
+        }
+        return false;
+}
+
+static fn ul_lsmem_summary()
+{
+        ul_lscpu_summary_item items[4];
+        positive count = 0;
+        items[count++] = (ul_lscpu_summary_item){
+            (string_address)"Memory block size:",
+            ul_lscpu_cache_size(ul_lsmem.block_size, ul_lsmem_bytes, false)};
+        items[count++] = (ul_lscpu_summary_item){
+            (string_address)"Total online memory:",
+            ul_lscpu_cache_size(ul_lsmem.online_size, ul_lsmem_bytes, false)};
+        items[count++] = (ul_lscpu_summary_item){
+            (string_address)"Total offline memory:",
+            ul_lscpu_cache_size(ul_lsmem.offline_size, ul_lsmem_bytes, false)};
+        if (ul_lsmem.memmap)
+                items[count++] = (ul_lscpu_summary_item){
+                    (string_address)"Memmap on memory parameter:",
+                    ul_lsmem.memmap};
+        ul_lsmem_summary_columns[0].width = ul_lsmem_bytes ? 36 : 32;
+        p8 columns[] = {0, 1};
+        ul_table_out(items, sizeof(items[0]), count,
+                     ul_lsmem_summary_columns, 2, columns, 2,
+                     false, false, ul_lscpu_summary_field);
+}
+
+static const file_long ul_lsmem_longs[] = {
+    {"json", 'J'}, {"pairs", 'P'}, {"all", 'a'}, {"bytes", 'b'},
+    {"noheadings", 'n'}, {"output", 'o'}, {"output-all", 'A'},
+    {"raw", 'r'}, {"split", 'S'}, {"sysroot", 's'},
+    {"summary", 'q'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_lsmem()
+{
+        file_taking taking = {
+            .program = "lsmem", .allowed = "JPabnroASsqhV",
+            .valued = "oSs", .optional = "q", .sticky_optional = "q",
+            .longs = ul_lsmem_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("lsmem", "unexpected operand");
+        if (taking.flags & FILE_FLAG('P'))
+                return ul_bad_usage("lsmem", "--pairs is not supported");
+        if (taking.flags & FILE_FLAG('A'))
+                return ul_bad_usage("lsmem", "--output-all is not supported");
+        if (file_option_value(address_of taking, 's'))
+                return ul_bad_usage("lsmem", "--sysroot is not supported");
+
+        string_address selected = file_option_value(address_of taking, 'o');
+        string_address splitting = file_option_value(address_of taking, 'S');
+        if (ul_lsmem_unsupported_column(selected) ||
+            ul_lsmem_unsupported_column(splitting))
+                return ul_bad_usage(
+                    "lsmem", "configured/memmap columns are not supported");
+
+        static const p8 defaults[] = {
+            UL_LSMEM_RANGE, UL_LSMEM_SIZE, UL_LSMEM_STATE,
+            UL_LSMEM_REMOVABLE, UL_LSMEM_BLOCK,
+        };
+        p8 columns[UL_LSMEM_COLUMNS];
+        positive column_count = 0;
+        if (selected &&
+            !ul_table_column_list(selected, ul_lsmem_columns,
+                                  UL_LSMEM_COLUMNS, defaults,
+                                  array_count(defaults), columns,
+                                  address_of column_count))
+                return ul_bad_usage("lsmem", "unknown output column");
+        if (!selected)
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[column_count++] = defaults[i];
+
+        positive split = ((positive)1 << UL_LSMEM_STATE) |
+                         ((positive)1 << UL_LSMEM_REMOVABLE);
+        for (positive i = 0; i < column_count; i++)
+                if (columns[i] == UL_LSMEM_STATE ||
+                    columns[i] == UL_LSMEM_REMOVABLE ||
+                    columns[i] == UL_LSMEM_NODE ||
+                    columns[i] == UL_LSMEM_ZONES)
+                        split |= (positive)1 << columns[i];
+        bool every = (taking.flags & FILE_FLAG('a')) != 0;
+        if (splitting)
+        {
+                p8 split_columns[UL_LSMEM_COLUMNS];
+                positive split_count = 0;
+                if (!ul_table_column_list(splitting, ul_lsmem_columns,
+                                          UL_LSMEM_COLUMNS, null, 0,
+                                          split_columns, address_of split_count))
+                        return ul_bad_usage("lsmem", "unknown split column");
+                for (positive i = 0; i < split_count; i++)
+                {
+                        p8 column = split_columns[i];
+                        if (column == UL_LSMEM_RANGE ||
+                            column == UL_LSMEM_SIZE ||
+                            column == UL_LSMEM_BLOCK)
+                                every = true;
+                        else
+                                split |= (positive)1 << column;
+                }
+        }
+
+        string_address summary = file_option_value(address_of taking, 'q');
+        bool summary_requested =
+            (taking.flags & FILE_FLAG('q')) != 0;
+        bool summary_only = summary_requested &&
+            (!summary || string_equals(summary, "only"));
+        bool summary_never = summary && string_equals(summary, "never");
+        bool summary_always = summary && string_equals(summary, "always");
+        if (summary && !summary_only && !summary_never &&
+            !summary_always)
+                return ul_bad_usage("lsmem", "invalid --summary mode");
+        bool json = (taking.flags & FILE_FLAG('J')) != 0;
+        if (json && summary_only)
+                return ul_bad_usage(
+                    "lsmem", "JSON and summary-only output are incompatible");
+
+        text_arena_used = 0;
+        if (!ul_lsmem_take())
+                return ul_bad_usage("lsmem", "memory hotplug sysfs is unavailable");
+        ul_lsmem_ranges(split, every);
+        ul_lsmem_bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        if (!summary_only)
+        {
+                if (json)
+                        ul_table_json("memory", ul_lsmem.ranges,
+                                      sizeof(ul_lsmem.ranges[0]),
+                                      ul_lsmem.range_count, ul_lsmem_columns,
+                                      columns, column_count, ul_lsmem_field);
+                else
+                        ul_table_out(ul_lsmem.ranges,
+                                     sizeof(ul_lsmem.ranges[0]),
+                                     ul_lsmem.range_count, ul_lsmem_columns,
+                                     UL_LSMEM_COLUMNS, columns, column_count,
+                                     !(taking.flags & FILE_FLAG('n')),
+                                     raw,
+                                     ul_lsmem_field);
+        }
+        if (!summary_never && ((!json && !raw) || summary_always))
+        {
+                if (!summary_only)
+                        log("\n", 1);
+                ul_lsmem_summary();
+        }
+        log_flush();
+        return 0;
+}
+
+// lsblk ------------------------------------------------------------
+
+#define UL_LSBLK_MOUNTS 16
+
+typedef struct ul_lsblk_device ul_lsblk_device;
+struct ul_lsblk_device
+{
+        string_address kname;
+        string_address path;
+        string_address type;
+        string_address mountpoints[UL_LSBLK_MOUNTS];
+        string_address mount_text;
+        string_address fstype;
+        string_address fsver;
+        string_address label;
+        string_address uuid;
+        string_address partuuid;
+        string_address partlabel;
+        string_address owner;
+        string_address group;
+        string_address mode;
+        string_address scheduler;
+        string_address transport;
+        string_address vendor;
+        string_address model;
+        string_address revision;
+        string_address serial;
+        string_address hctl;
+        ul_lsblk_device address_to parent;
+        positive major;
+        positive minor;
+        positive size;
+        positive fs_available;
+        positive fs_use;
+        positive alignment;
+        positive minimum_io;
+        positive optimal_io;
+        positive physical_sector;
+        positive logical_sector;
+        positive request_size;
+        positive read_ahead;
+        positive write_same;
+        positive mount_count;
+        positive depth;
+        positive mode_bits;
+        bool removable;
+        bool read_only;
+        bool rotational;
+        bool partition;
+        bool scsi;
+        bool last;
+        bool selected;
+        bool fs_measured;
+};
+
+typedef struct
+{
+        ul_lsblk_device address_to devices;
+        ul_lsblk_device address_to rows;
+        positive capacity;
+        positive count;
+        positive row_count;
+        bool failed;
+} ul_lsblk_snapshot;
+
+static ul_lsblk_snapshot ul_lsblk;
+static bool ul_lsblk_bytes;
+static bool ul_lsblk_tree;
+static bool ul_lsblk_json;
+static bool ul_lsblk_paths;
+
+enum
+{
+        UL_LSBLK_NAME,
+        UL_LSBLK_KNAME,
+        UL_LSBLK_PATH,
+        UL_LSBLK_MAJMIN,
+        UL_LSBLK_RM,
+        UL_LSBLK_SIZE,
+        UL_LSBLK_RO,
+        UL_LSBLK_TYPE,
+        UL_LSBLK_MOUNTPOINT,
+        UL_LSBLK_MOUNTPOINTS,
+        UL_LSBLK_FSTYPE,
+        UL_LSBLK_FSVER,
+        UL_LSBLK_LABEL,
+        UL_LSBLK_UUID,
+        UL_LSBLK_PARTUUID,
+        UL_LSBLK_PARTLABEL,
+        UL_LSBLK_FSAVAIL,
+        UL_LSBLK_FSUSE,
+        UL_LSBLK_OWNER,
+        UL_LSBLK_GROUP,
+        UL_LSBLK_MODE,
+        UL_LSBLK_ALIGNMENT,
+        UL_LSBLK_MINIO,
+        UL_LSBLK_OPTIO,
+        UL_LSBLK_PHYSEC,
+        UL_LSBLK_LOGSEC,
+        UL_LSBLK_ROTA,
+        UL_LSBLK_SCHED,
+        UL_LSBLK_RQSIZE,
+        UL_LSBLK_RA,
+        UL_LSBLK_WSAME,
+        UL_LSBLK_TRAN,
+        UL_LSBLK_VENDOR,
+        UL_LSBLK_MODEL,
+        UL_LSBLK_REV,
+        UL_LSBLK_SERIAL,
+        UL_LSBLK_HCTL,
+        UL_LSBLK_COLUMNS,
+};
+
+static const ul_table_column ul_lsblk_columns[] = {
+    {"name", "NAME", 0, false, UL_TABLE_STRING},
+    {"kname", "KNAME", 0, false, UL_TABLE_STRING},
+    {"path", "PATH", 0, false, UL_TABLE_STRING},
+    {"maj:min", "MAJ:MIN", 0, false, UL_TABLE_STRING},
+    {"rm", "RM", 0, true, UL_TABLE_BOOLEAN},
+    {"size", "SIZE", 4, true, UL_TABLE_STRING},
+    {"ro", "RO", 0, true, UL_TABLE_BOOLEAN},
+    {"type", "TYPE", 0, false, UL_TABLE_STRING},
+    {"mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING},
+    {"mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true},
+    {"fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING},
+    {"fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING},
+    {"label", "LABEL", 0, false, UL_TABLE_NULL_STRING},
+    {"uuid", "UUID", 0, false, UL_TABLE_NULL_STRING},
+    {"partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING},
+    {"partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING},
+    {"fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING},
+    {"fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING},
+    {"owner", "OWNER", 0, false, UL_TABLE_NULL_STRING},
+    {"group", "GROUP", 0, false, UL_TABLE_NULL_STRING},
+    {"mode", "MODE", 0, false, UL_TABLE_NULL_STRING},
+    {"alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER},
+    {"min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER},
+    {"opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER},
+    {"phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER},
+    {"log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER},
+    {"rota", "ROTA", 0, true, UL_TABLE_BOOLEAN},
+    {"sched", "SCHED", 0, false, UL_TABLE_NULL_STRING},
+    {"rq-size", "RQ-SIZE", 0, true, UL_TABLE_NULL_NUMBER},
+    {"ra", "RA", 0, true, UL_TABLE_NULL_NUMBER},
+    {"wsame", "WSAME", 0, true, UL_TABLE_STRING},
+    {"tran", "TRAN", 0, false, UL_TABLE_NULL_STRING},
+    {"vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING},
+    {"model", "MODEL", 0, false, UL_TABLE_NULL_STRING},
+    {"rev", "REV", 0, false, UL_TABLE_NULL_STRING},
+    {"serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING},
+    {"hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING},
+};
+
+static fn ul_lsblk_sysfs(p8 address_to path, string_address name,
+                         string_address property)
+{
+        string_address base = (string_address)"/sys/class/block/";
+        positive at = string_length(base);
+        memory_copy(path, base, at);
+        positive length = string_length(name);
+        memory_copy(path + at, name, length);
+        at += length;
+        if (property)
+        {
+                path[at++] = '/';
+                length = string_length(property);
+                memory_copy(path + at, property, length + 1);
+        }
+        else
+                path[at] = end;
+}
+
+static bool ul_lsblk_dev(string_address text, positive address_to major,
+                         positive address_to minor)
+{
+        string_address at = text;
+        return string_digits_checked(address_of at, 10, major) &&
+               string_is(at, ':') && (++at) &&
+               string_digits_checked(address_of at, 10, minor) &&
+               !string_get(at);
+}
+
+static bool ul_lsblk_count_path(string_address path, address_any context)
+{
+        (void)path;
+        positive address_to count = (positive address_to)context;
+        (address_to count)++;
+        return true;
+}
+
+static string_address ul_lsblk_word(string_address name,
+                                    string_address property)
+{
+        p8 path[384];
+        p8 text[512];
+        ul_lsblk_sysfs(path, name, property);
+        if (ul_slurp_word(path, text, sizeof(text)) <= 0)
+                return (string_address)"";
+        positive length = ul_trimmed(text, string_length(text));
+        text[length] = end;
+        return ul_lscpu_keep(text);
+}
+
+static positive ul_lsblk_number(string_address name,
+                                string_address property)
+{
+        p8 path[384];
+        positive value = 0;
+        ul_lsblk_sysfs(path, name, property);
+        (void)ul_lscpu_file_number(path, address_of value);
+        return value;
+}
+
+static string_address ul_lsblk_scheduler(string_address text)
+{
+        string_address open = string_first_of(text, '[');
+        if (!open)
+                return text;
+        string_address close = string_first_of(open + 1, ']');
+        if (!close)
+                return text;
+        positive length = (positive)(close - open - 1);
+        p8 copy[64];
+        length = min(length, sizeof(copy) - 1);
+        memory_copy(copy, open + 1, length);
+        copy[length] = end;
+        return ul_lscpu_keep(copy);
+}
+
+static bool ul_lsblk_take_path(string_address path, address_any context)
+{
+        (void)context;
+        if (ul_lsblk.count == ul_lsblk.capacity)
+        {
+                ul_lsblk.failed = true;
+                return false;
+        }
+        string_address name = path + sizeof("/dev/") - 1;
+        ul_lsblk_device address_to device =
+            ul_lsblk.devices + ul_lsblk.count++;
+        memory_fill(device, 0, sizeof(*device));
+        device->kname = ul_lscpu_keep(name);
+        device->path = ul_lscpu_keep(path);
+        device->parent = null;
+
+        p8 sysfs[384];
+        p8 text[64];
+        ul_lsblk_sysfs(sysfs, name, (string_address)"dev");
+        if (ul_slurp_word(sysfs, text, sizeof(text)) <= 0 ||
+            !ul_lsblk_dev(text, address_of device->major,
+                          address_of device->minor))
+                return true;
+        positive sectors = ul_lsblk_number(name, (string_address)"size");
+        if (sectors <= positive_max / 512)
+                device->size = sectors * 512;
+        device->read_only = ul_lsblk_number(name, (string_address)"ro") != 0;
+        device->removable =
+            ul_lsblk_number(name, (string_address)"removable") != 0;
+        device->partition =
+            ul_lsblk_number(name, (string_address)"partition") != 0;
+        device->alignment =
+            ul_lsblk_number(name, (string_address)"alignment_offset");
+        device->minimum_io =
+            ul_lsblk_number(name, (string_address)"queue/minimum_io_size");
+        device->optimal_io =
+            ul_lsblk_number(name, (string_address)"queue/optimal_io_size");
+        device->physical_sector =
+            ul_lsblk_number(name, (string_address)"queue/physical_block_size");
+        device->logical_sector =
+            ul_lsblk_number(name, (string_address)"queue/logical_block_size");
+        device->rotational =
+            ul_lsblk_number(name, (string_address)"queue/rotational") != 0;
+        device->request_size =
+            ul_lsblk_number(name, (string_address)"queue/nr_requests");
+        device->read_ahead =
+            ul_lsblk_number(name, (string_address)"queue/read_ahead_kb");
+        device->write_same =
+            ul_lsblk_number(name, (string_address)"queue/write_same_max_bytes");
+        device->scheduler = ul_lsblk_scheduler(
+            ul_lsblk_word(name, (string_address)"queue/scheduler"));
+
+        if (device->partition)
+                device->type = (string_address)"part";
+        else if (!string_compare_max(name, "loop", 4))
+                device->type = (string_address)"loop";
+        else if (!string_compare_max(name, "sr", 2))
+                device->type = (string_address)"rom";
+        else
+                device->type = (string_address)"disk";
+        return true;
+}
+
+static PURE bipolar ul_lsblk_order(ul_lsblk_device left,
+                                    ul_lsblk_device right)
+{
+        if (left.major != right.major)
+                return left.major < right.major ? -1 : 1;
+        if (left.minor != right.minor)
+                return left.minor < right.minor ? -1 : 1;
+        return string_compare(left.kname, right.kname);
+}
+
+static ul_lsblk_device address_to ul_lsblk_find(string_address name)
+{
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                if (string_equals(ul_lsblk.devices[i].kname, name))
+                        return ul_lsblk.devices + i;
+        return null;
+}
+
+static fn ul_lsblk_parents()
+{
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (!device->partition)
+                        continue;
+                p8 path[384];
+                p8 target[512];
+                ul_lsblk_sysfs(path, device->kname, null);
+                bipolar got = system_read_link_at(AT_FDCWD, path, target,
+                                                   sizeof(target) - 1);
+                if (got <= 0 || (positive)got >= sizeof(target))
+                        continue;
+                target[got] = end;
+                p8 address_to tail = (p8 address_to)string_last_of(target, '/');
+                if (!tail)
+                        continue;
+                *tail = end;
+                p8 address_to parent =
+                    (p8 address_to)string_last_of(target, '/');
+                parent = parent ? parent + 1 : target;
+                device->parent = ul_lsblk_find(parent);
+        }
+        /* Device-mapper, MD and similar stacked devices publish their upward
+           edges in holders.  Partitions already have the more precise parent
+           from their class symlink; retain the first holder edge on genuinely
+           multi-parent graphs so traversal stays finite and deterministic. */
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                p8 path[384];
+                ul_lsblk_sysfs(path, ul_lsblk.devices[i].kname,
+                               (string_address)"holders");
+                file_walk walk;
+                if (!file_walk_open(address_of walk, AT_FDCWD, path))
+                        continue;
+                struct linux_dirent64 address_to entry;
+                while ((entry = file_walk_next(address_of walk)))
+                {
+                        ul_lsblk_device address_to holder = ul_lsblk_find(
+                            (string_address)entry->d_name);
+                        if (holder && holder != ul_lsblk.devices + i &&
+                            !holder->parent)
+                                holder->parent = ul_lsblk.devices + i;
+                }
+                file_walk_close(address_of walk);
+        }
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (!device->parent)
+                        continue;
+                ul_lsblk_device address_to parent = device->parent;
+                if (!device->minimum_io) device->minimum_io = parent->minimum_io;
+                if (!device->physical_sector) device->physical_sector = parent->physical_sector;
+                if (!device->logical_sector) device->logical_sector = parent->logical_sector;
+                if (!device->request_size) device->request_size = parent->request_size;
+                if (!device->read_ahead) device->read_ahead = parent->read_ahead;
+                if (!string_get(device->scheduler)) device->scheduler = parent->scheduler;
+                device->rotational = parent->rotational;
+                device->removable = parent->removable;
+        }
+}
+
+static positive ul_lsblk_percent(p64 part, p64 whole)
+{
+        if (!whole || part >= whole)
+                return part ? 100 : 0;
+        p64 remainder = 0;
+        positive percent = 0;
+        for (positive i = 0; i < 100; i++)
+                if (remainder >= whole - part)
+                {
+                        remainder -= whole - part;
+                        percent++;
+                }
+                else
+                        remainder += part;
+        if (remainder >= whole / 2 + whole % 2)
+                percent++;
+        return percent;
+}
+
+static fn ul_lsblk_mounts()
+{
+        storage_mount_table mounts;
+        if (storage_mount_table_load(address_of mounts, null))
+        {
+                for (positive i = 0; i < mounts.count; i++)
+                {
+                        positive major;
+                        positive minor;
+                        if (!ul_lsblk_dev(mounts.entry[i].device,
+                                          address_of major, address_of minor))
+                                continue;
+                        for (positive j = 0; j < ul_lsblk.count; j++)
+                        {
+                                ul_lsblk_device address_to device =
+                                    ul_lsblk.devices + j;
+                                if (device->major != major ||
+                                    device->minor != minor ||
+                                    device->mount_count == UL_LSBLK_MOUNTS)
+                                        continue;
+                                string_address target =
+                                    ul_lscpu_keep(mounts.entry[i].target);
+                                /* libmount reports the most recently mounted
+                                   path first.  The shared mount snapshot is in
+                                   kernel order, so prepend each bounded entry. */
+                                for (positive mount = device->mount_count;
+                                     mount; mount--)
+                                        device->mountpoints[mount] =
+                                            device->mountpoints[mount - 1];
+                                device->mountpoints[0] = target;
+                                device->mount_count++;
+                                if (!device->fs_measured)
+                                {
+                                        file_mount_facts facts;
+                                        memory_fill(address_of facts, 0,
+                                                    sizeof(facts));
+                                        if (system_call_2(
+                                                syscall(statfs),
+                                                (positive)target,
+                                                (positive)address_of facts) >= 0)
+                                        {
+                                                positive unit = facts.fragment_size
+                                                    ? (positive)facts.fragment_size
+                                                    : (positive)facts.block_size;
+                                                if (unit && facts.blocks_available <=
+                                                        positive_max / unit)
+                                                        device->fs_available =
+                                                            facts.blocks_available * unit;
+                                                p64 used = facts.blocks - facts.blocks_free;
+                                                if (facts.blocks)
+                                                        device->fs_use = ul_lsblk_percent(
+                                                            used, facts.blocks);
+                                                device->fs_measured = true;
+                                        }
+                                }
+                                break;
+                        }
+                }
+                storage_mount_table_release(address_of mounts);
+        }
+
+        byte_store swaps = {0};
+        if (file_store_slurp((string_address)"/proc/swaps", address_of swaps))
+        {
+                p8 address_to cursor = swaps.bytes;
+                p8 address_to limit = cursor + swaps.used;
+                p8 address_to line = storage_line_next(address_of cursor, limit);
+                (void)line;
+                while ((line = storage_line_next(address_of cursor, limit)))
+                {
+                        p8 address_to at = line;
+                        string_address path = storage_field(address_of at);
+                        if (!path)
+                                continue;
+                        for (positive i = 0; i < ul_lsblk.count; i++)
+                                if (string_equals(path, ul_lsblk.devices[i].path) &&
+                                    ul_lsblk.devices[i].mount_count < UL_LSBLK_MOUNTS)
+                                {
+                                        ul_lsblk.devices[i].mountpoints[
+                                            ul_lsblk.devices[i].mount_count++] =
+                                                (string_address)"[SWAP]";
+                                        break;
+                                }
+                }
+                byte_store_release(address_of swaps);
+        }
+}
+
+static bool ul_lsblk_mount_texts()
+{
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (!device->mount_count)
+                        continue;
+                if (device->mount_count == 1)
+                {
+                        device->mount_text = device->mountpoints[0];
+                        continue;
+                }
+                positive bytes = 1;
+                for (positive mount = 0; mount < device->mount_count; mount++)
+                {
+                        positive length = string_length(
+                            device->mountpoints[mount]);
+                        if (bytes > positive_max - length - (mount != 0))
+                                return false;
+                        bytes += length + (mount != 0);
+                }
+                p8 address_to joined = text_arena_take(bytes);
+                if (!joined)
+                        return false;
+                positive used = 0;
+                for (positive mount = 0; mount < device->mount_count; mount++)
+                {
+                        if (mount) joined[used++] = '\n';
+                        positive length = string_length(
+                            device->mountpoints[mount]);
+                        memory_copy(joined + used, device->mountpoints[mount],
+                                    length);
+                        used += length;
+                }
+                joined[used] = end;
+                device->mount_text = joined;
+        }
+        return true;
+}
+
+static fn ul_lsblk_identity(ul_lsblk_device address_to device,
+                            bool probe_identity)
+{
+        p8 path[96];
+        p8 text[16384];
+        positive used = sizeof("/run/udev/data/b") - 1;
+        memory_copy(path, "/run/udev/data/b", used);
+        used += positive_into_string(path + used, device->major);
+        path[used++] = ':';
+        used += positive_into_string(path + used, device->minor);
+        path[used] = end;
+        bipolar got = file_slurp(path, text, sizeof(text) - 1);
+        if (got > 0)
+        {
+                text[got] = end;
+                p8 address_to line = text;
+                p8 address_to limit = text + got;
+                while (line < limit)
+                {
+                        p8 address_to newline = (p8 address_to)memory_first_of(
+                            line, '\n', (positive)(limit - line));
+                        p8 address_to stop = newline ? newline : limit;
+                        if (stop > line + 3 && line[0] == 'E' && line[1] == ':')
+                        {
+                                p8 address_to equal = (p8 address_to)memory_first_of(
+                                    line + 2, '=', (positive)(stop - line - 2));
+                                if (equal)
+                                {
+                                        p8 saved = *stop;
+                                        *stop = end;
+                                        string_address value = equal + 1;
+                                        positive length = (positive)(equal - line - 2);
+#define UL_LSBLK_UDEV(key, member)                                           \
+        if (file_same_word(line + 2, length, key))                           \
+                device->member = ul_lscpu_keep(value);                       \
+        else
+                                        UL_LSBLK_UDEV("ID_FS_TYPE", fstype)
+                                        UL_LSBLK_UDEV("ID_FS_VERSION", fsver)
+                                        UL_LSBLK_UDEV("ID_FS_LABEL", label)
+                                        UL_LSBLK_UDEV("ID_FS_UUID", uuid)
+                                        UL_LSBLK_UDEV("ID_PART_ENTRY_UUID", partuuid)
+                                        UL_LSBLK_UDEV("ID_PART_ENTRY_NAME", partlabel)
+                                        UL_LSBLK_UDEV("ID_BUS", transport)
+                                        UL_LSBLK_UDEV("ID_VENDOR", vendor)
+                                        UL_LSBLK_UDEV("ID_MODEL", model)
+                                        UL_LSBLK_UDEV("ID_REVISION", revision)
+                                        UL_LSBLK_UDEV("ID_SERIAL_SHORT", serial)
+                                                (void)value;
+#undef UL_LSBLK_UDEV
+                                        *stop = saved;
+                                }
+                        }
+                        line = newline ? newline + 1 : limit;
+                }
+        }
+
+        if (!probe_identity)
+                return;
+        storage_identity identity;
+        if (!storage_probe_device(device->path, address_of identity))
+                return;
+        if (!device->fstype && identity.type_length)
+                device->fstype = ul_lscpu_keep(identity.type);
+        if (!device->uuid && identity.uuid_length)
+                device->uuid = ul_lscpu_keep(identity.uuid);
+        if (!device->label && identity.label_length)
+                device->label = ul_lscpu_keep(identity.label);
+        if (!device->partuuid && identity.partuuid_length)
+                device->partuuid = ul_lscpu_keep(identity.partuuid);
+        if (!device->partlabel && identity.partlabel_length)
+                device->partlabel = ul_lscpu_keep(identity.partlabel);
+}
+
+static fn ul_lsblk_permissions(ul_lsblk_device address_to device)
+{
+        file_facts facts;
+        if (!file_look_at(device->path, address_of facts))
+                return;
+        p8 text[FILE_NAME_MAX];
+        file_account_label(facts.owner, false, true, text);
+        device->owner = ul_lscpu_keep(text);
+        file_account_label(facts.group, true, true, text);
+        device->group = ul_lscpu_keep(text);
+        file_mode_letters(text, facts.mode);
+        device->mode = ul_lscpu_keep(text);
+        device->mode_bits = facts.mode;
+}
+
+static string_address ul_lsblk_link_word(string_address name,
+                                         string_address property)
+{
+        p8 path[384];
+        p8 target[512];
+        ul_lsblk_sysfs(path, name, property);
+        bipolar got = system_read_link_at(AT_FDCWD, path, target,
+                                           sizeof(target) - 1);
+        if (got <= 0 || (positive)got >= sizeof(target))
+                return (string_address)"";
+        target[got] = end;
+        string_address tail = string_last_of(target, '/');
+        return ul_lscpu_keep(tail ? tail + 1 : target);
+}
+
+static bool ul_lsblk_hctl_valid(string_address text)
+{
+        for (positive field = 0; field < 4; field++)
+        {
+                positive number;
+                if (!string_digits_checked(address_of text, 10,
+                                           address_of number))
+                        return false;
+                if (field == 3)
+                        return !string_get(text);
+                if (!string_is(text, ':'))
+                        return false;
+                text++;
+        }
+        return false;
+}
+
+static fn ul_lsblk_scsi(ul_lsblk_device address_to device)
+{
+        string_address word = ul_lsblk_word(
+            device->kname, (string_address)"device/vendor");
+        if (string_get(word)) device->vendor = word;
+        word = ul_lsblk_word(device->kname, (string_address)"device/model");
+        if (string_get(word)) device->model = word;
+        word = ul_lsblk_word(device->kname, (string_address)"device/rev");
+        if (!string_get(word))
+                word = ul_lsblk_word(device->kname,
+                                     (string_address)"device/firmware_rev");
+        if (string_get(word)) device->revision = word;
+        word = ul_lsblk_word(device->kname, (string_address)"device/serial");
+        if (string_get(word)) device->serial = word;
+
+        string_address kind = ul_lsblk_word(device->kname,
+                                            (string_address)"device/type");
+        device->scsi = string_get(kind) != 0;
+        if (!device->transport)
+        {
+                word = ul_lsblk_link_word(
+                    device->kname, (string_address)"device/subsystem");
+                if (string_get(word)) device->transport = word;
+        }
+        word = ul_lsblk_link_word(device->kname, (string_address)"device");
+        if (ul_lsblk_hctl_valid(word)) device->hctl = word;
+}
+
+static bool ul_lsblk_take(bool identity, bool permissions, bool metadata)
+{
+        memory_fill(address_of ul_lsblk, 0, sizeof(ul_lsblk));
+        storage_each_block_path(ul_lsblk_count_path, address_of ul_lsblk.capacity);
+        if (!ul_lsblk.capacity ||
+            ul_lsblk.capacity > (TEXT_ARENA_BYTES - text_arena_used) /
+                                    (sizeof(ul_lsblk_device) * 3))
+                return false;
+        ul_lsblk.devices = text_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk_device));
+        ul_lsblk_device address_to spare = text_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk_device));
+        ul_lsblk.rows = text_arena_take(
+            ul_lsblk.capacity * sizeof(ul_lsblk_device));
+        if (!ul_lsblk.devices || !spare || !ul_lsblk.rows)
+                return false;
+        storage_each_block_path(ul_lsblk_take_path, null);
+        if (ul_lsblk.failed || !ul_lsblk.count)
+                return false;
+        ul_lsblk.devices = array_merge_sort(ul_lsblk.devices, spare,
+                                            ul_lsblk.count, ul_lsblk_order);
+        ul_lsblk_parents();
+        ul_lsblk_mounts();
+        if (!ul_lsblk_mount_texts())
+                return false;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                if (identity || metadata)
+                        ul_lsblk_identity(ul_lsblk.devices + i, identity);
+                if (permissions) ul_lsblk_permissions(ul_lsblk.devices + i);
+                if (metadata) ul_lsblk_scsi(ul_lsblk.devices + i);
+        }
+        if (metadata)
+                for (positive i = 0; i < ul_lsblk.count; i++)
+                {
+                        ul_lsblk_device address_to device =
+                            ul_lsblk.devices + i;
+                        if (!device->transport && device->parent)
+                                device->transport = device->parent->transport;
+                }
+        return true;
+}
+
+static string_address ul_lsblk_field(address_any row, p8 column,
+                                     p8 address_to scratch)
+{
+        ul_lsblk_device address_to device = (ul_lsblk_device address_to)row;
+        string_address blank = (string_address)"";
+        switch (column)
+        {
+        case UL_LSBLK_NAME:
+        {
+                string_address name = ul_lsblk_paths ? device->path
+                                                     : device->kname;
+                if (!ul_lsblk_tree || ul_lsblk_json || !device->depth)
+                        return name;
+                positive used = 0;
+                for (positive i = 1; i < device->depth; i++)
+                {
+                        scratch[used++] = '|';
+                        scratch[used++] = ' ';
+                }
+                scratch[used++] = device->last ? '`' : '|';
+                scratch[used++] = '-';
+                positive length = string_length(name);
+                memory_copy(scratch + used, name, length + 1);
+                return scratch;
+        }
+        case UL_LSBLK_KNAME: return device->kname;
+        case UL_LSBLK_PATH: return device->path;
+        case UL_LSBLK_MAJMIN:
+        {
+                positive used = positive_into_string(scratch, device->major);
+                scratch[used++] = ':';
+                used += positive_into_string(scratch + used, device->minor);
+                scratch[used] = end;
+                return scratch;
+        }
+        case UL_LSBLK_RM: return device->removable ? (string_address)"1" : (string_address)"0";
+        case UL_LSBLK_SIZE:
+                return ul_lscpu_cache_size(device->size, ul_lsblk_bytes,
+                                            false);
+        case UL_LSBLK_RO: return device->read_only ? (string_address)"1" : (string_address)"0";
+        case UL_LSBLK_TYPE: return device->type ? device->type : blank;
+        case UL_LSBLK_MOUNTPOINT:
+                return device->mount_count ? device->mountpoints[0] : blank;
+        case UL_LSBLK_MOUNTPOINTS:
+                return device->mount_text ? device->mount_text : blank;
+        case UL_LSBLK_FSTYPE: return device->fstype ? device->fstype : blank;
+        case UL_LSBLK_FSVER: return device->fsver ? device->fsver : blank;
+        case UL_LSBLK_LABEL: return device->label ? device->label : blank;
+        case UL_LSBLK_UUID: return device->uuid ? device->uuid : blank;
+        case UL_LSBLK_PARTUUID: return device->partuuid ? device->partuuid : blank;
+        case UL_LSBLK_PARTLABEL: return device->partlabel ? device->partlabel : blank;
+        case UL_LSBLK_FSAVAIL:
+                if (!device->fs_measured) return blank;
+                /* util-linux keeps a measured zero unitless (including in
+                   the human-size mode), rather than spelling it as 0B. */
+                if (!device->fs_available) return (string_address)"0";
+                return ul_lscpu_cache_size(device->fs_available,
+                                            ul_lsblk_bytes, false);
+        case UL_LSBLK_FSUSE:
+                if (!device->fs_measured) return blank;
+                positive_into_string(scratch, device->fs_use);
+                string_copy_end(scratch + string_length(scratch), "%");
+                return scratch;
+        case UL_LSBLK_OWNER: return device->owner ? device->owner : blank;
+        case UL_LSBLK_GROUP: return device->group ? device->group : blank;
+        case UL_LSBLK_MODE: return device->mode ? device->mode : blank;
+        case UL_LSBLK_SCHED:
+                return device->scheduler ? device->scheduler : blank;
+        case UL_LSBLK_TRAN:
+                return device->transport ? device->transport : blank;
+        case UL_LSBLK_VENDOR: return device->vendor ? device->vendor : blank;
+        case UL_LSBLK_MODEL: return device->model ? device->model : blank;
+        case UL_LSBLK_REV: return device->revision ? device->revision : blank;
+        case UL_LSBLK_SERIAL: return device->serial ? device->serial : blank;
+        case UL_LSBLK_HCTL: return device->hctl ? device->hctl : blank;
+        case UL_LSBLK_WSAME:
+                return ul_lscpu_cache_size(device->write_same,
+                                            ul_lsblk_bytes, false);
+        default:
+        {
+                positive value = 0;
+                switch (column)
+                {
+                case UL_LSBLK_ALIGNMENT: value = device->alignment; break;
+                case UL_LSBLK_MINIO: value = device->minimum_io; break;
+                case UL_LSBLK_OPTIO: value = device->optimal_io; break;
+                case UL_LSBLK_PHYSEC: value = device->physical_sector; break;
+                case UL_LSBLK_LOGSEC: value = device->logical_sector; break;
+                case UL_LSBLK_ROTA: value = device->rotational; break;
+                case UL_LSBLK_RQSIZE: value = device->request_size; break;
+                default: value = device->read_ahead; break;
+                }
+                if (column == UL_LSBLK_RQSIZE && !value)
+                        return blank;
+                positive_into_string(scratch, value);
+                return scratch;
+        }
+        }
+}
+
+static fn ul_lsblk_append(ul_lsblk_device address_to device,
+                          positive depth, bool last, bool dependencies)
+{
+        if (ul_lsblk.row_count == ul_lsblk.capacity)
+                return;
+        ul_lsblk.rows[ul_lsblk.row_count] = *device;
+        ul_lsblk.rows[ul_lsblk.row_count].depth = depth;
+        ul_lsblk.rows[ul_lsblk.row_count].last = last;
+        ul_lsblk.row_count++;
+        if (!dependencies || depth >= 32)
+                return;
+
+        positive children = 0;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                if (ul_lsblk.devices[i].parent == device)
+                        children++;
+        positive seen = 0;
+        for (positive i = 0; i < ul_lsblk.count; i++)
+                if (ul_lsblk.devices[i].parent == device)
+                        ul_lsblk_append(ul_lsblk.devices + i, depth + 1,
+                                        ++seen == children, true);
+}
+
+static bool ul_lsblk_under_selection(ul_lsblk_device address_to device)
+{
+        for (positive depth = 0; device && depth < 32;
+             depth++, device = device->parent)
+                if (device->selected)
+                        return true;
+        return false;
+}
+
+static bool ul_lsblk_select_operands(positive first)
+{
+        positive count = (positive)program_argument_count();
+        if (first == count)
+        {
+                for (positive i = 0; i < ul_lsblk.count; i++)
+                        ul_lsblk.devices[i].selected = true;
+                return true;
+        }
+
+        bool failed = false;
+        for (positive at = first; at < count; at++)
+        {
+                string_address operand = program_argument((b32)at);
+                file_facts facts;
+                ul_lsblk_device address_to found = null;
+                if (file_look_at(operand, address_of facts))
+                        for (positive i = 0; i < ul_lsblk.count; i++)
+                                if (facts.rdev_major == ul_lsblk.devices[i].major &&
+                                    facts.rdev_minor == ul_lsblk.devices[i].minor)
+                                {
+                                        found = ul_lsblk.devices + i;
+                                        break;
+                                }
+                if (!found)
+                {
+                        string_address slash = string_last_of(operand, '/');
+                        found = ul_lsblk_find(slash ? slash + 1 : operand);
+                }
+                if (!found)
+                {
+                        string_format(file_fail, "lsblk: %s: not a block device\n",
+                                      operand);
+                        failed = true;
+                }
+                else
+                        found->selected = true;
+        }
+        return !failed;
+}
+
+static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
+                        bool scsi)
+{
+        ul_lsblk.row_count = 0;
+        if (list)
+        {
+                for (positive i = 0; i < ul_lsblk.count; i++)
+                {
+                        ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                        if (!ul_lsblk_under_selection(device) ||
+                            (scsi && !device->scsi) ||
+                            ((!all || noempty) && !device->size &&
+                             !string_compare_max(device->kname, "loop", 4)))
+                                continue;
+                        ul_lsblk.rows[ul_lsblk.row_count] = *device;
+                        ul_lsblk.rows[ul_lsblk.row_count].depth = 0;
+                        ul_lsblk.row_count++;
+                }
+                return;
+        }
+
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (device->parent || !device->selected ||
+                    (scsi && !device->scsi) ||
+                    ((!all || noempty) && !device->size &&
+                     !string_compare_max(device->kname, "loop", 4)))
+                        continue;
+                ul_lsblk_append(device, 0, false, dependencies);
+        }
+        /* A named partition is its own root rather than disappearing because
+           its physical parent was not selected. */
+        for (positive i = 0; i < ul_lsblk.count; i++)
+        {
+                ul_lsblk_device address_to device = ul_lsblk.devices + i;
+                if (device->parent && device->selected &&
+                    !(device->parent->selected))
+                        ul_lsblk_append(device, 0, false, dependencies);
+        }
+}
+
+static fn ul_lsblk_json_scalar(ul_lsblk_device address_to device, p8 column)
+{
+        p8 scratch[96];
+        string_address value = ul_lsblk_field(device, column, scratch);
+        p8 kind = ul_lsblk_columns[column].json;
+        if ((kind == UL_TABLE_NULL_STRING || kind == UL_TABLE_NULL_NUMBER) &&
+            !string_get(value))
+                log("null", 4);
+        else if (kind == UL_TABLE_BOOLEAN)
+                log(string_equals(value, "0") ? "false" : "true",
+                    string_equals(value, "0") ? 5 : 4);
+        else if (kind == UL_TABLE_NUMBER || kind == UL_TABLE_NULL_NUMBER)
+                log(value, string_length(value));
+        else
+                ul_lsns_json_string(value);
+}
+
+static positive ul_lsblk_json_row(positive row, p8 address_to columns,
+                                   positive column_count, positive indent)
+{
+        ul_lsblk_device address_to device = ul_lsblk.rows + row;
+        writer_fill(log, indent, ' ');
+        log("{\n", 2);
+        for (positive i = 0; i < column_count; i++)
+        {
+                p8 column = columns[i];
+                if (i)
+                        log(",\n", 2);
+                writer_fill(log, indent + 3, ' ');
+                string_format(log, "\"%s\": ", ul_lsblk_columns[column].name);
+                if (column == UL_LSBLK_MOUNTPOINTS)
+                {
+                        log("[", 1);
+                        for (positive m = 0; m < device->mount_count; m++)
+                        {
+                                if (m) log(",", 1);
+                                ul_lsns_json_string(device->mountpoints[m]);
+                        }
+                        log("]", 1);
+                }
+                else
+                        ul_lsblk_json_scalar(device, column);
+        }
+
+        positive next = row + 1;
+        if (ul_lsblk_tree && next < ul_lsblk.row_count &&
+            ul_lsblk.rows[next].depth > device->depth)
+        {
+                log(",\n", 2);
+                writer_fill(log, indent + 3, ' ');
+                log("\"children\": [\n", 14);
+                bool comma = false;
+                while (next < ul_lsblk.row_count &&
+                       ul_lsblk.rows[next].depth > device->depth)
+                {
+                        if (comma) log(",\n", 2);
+                        next = ul_lsblk_json_row(next, columns, column_count,
+                                                indent + 6);
+                        comma = true;
+                }
+                log("\n", 1);
+                writer_fill(log, indent + 3, ' ');
+                log("]", 1);
+        }
+        log("\n", 1);
+        writer_fill(log, indent, ' ');
+        log("}", 1);
+        return next;
+}
+
+static fn ul_lsblk_json_out(p8 address_to columns, positive column_count)
+{
+        log("{\n   \"blockdevices\": [",
+            sizeof("{\n   \"blockdevices\": [") - 1);
+        positive row = 0;
+        bool comma = false;
+        while (row < ul_lsblk.row_count)
+        {
+                log(comma ? ",\n" : "\n", comma ? 2 : 1);
+                row = ul_lsblk_json_row(row, columns, column_count, 6);
+                comma = true;
+        }
+        log("\n   ]\n}\n", sizeof("\n   ]\n}\n") - 1);
+}
+
+static bool ul_lsblk_column_needs_identity(p8 column)
+{
+        return column == UL_LSBLK_FSTYPE || column == UL_LSBLK_FSVER ||
+               column == UL_LSBLK_LABEL || column == UL_LSBLK_UUID ||
+               column == UL_LSBLK_PARTUUID || column == UL_LSBLK_PARTLABEL;
+}
+
+static bool ul_lsblk_column_needs_permissions(p8 column)
+{
+        return column == UL_LSBLK_OWNER || column == UL_LSBLK_GROUP ||
+               column == UL_LSBLK_MODE;
+}
+
+static bool ul_lsblk_column_needs_metadata(p8 column)
+{
+        return column == UL_LSBLK_TRAN || column == UL_LSBLK_VENDOR ||
+               column == UL_LSBLK_MODEL || column == UL_LSBLK_REV ||
+               column == UL_LSBLK_SERIAL || column == UL_LSBLK_HCTL;
+}
+
+static const file_long ul_lsblk_longs[] = {
+    {"noempty", 'A'}, {"discard", 'D'}, {"json", 'J'},
+    {"output-all", 'O'}, {"pairs", 'P'}, {"scsi", 'S'},
+    {"all", 'a'}, {"bytes", 'b'}, {"nodeps", 'd'}, {"fs", 'f'},
+    {"ascii", 'i'}, {"list", 'l'}, {"perms", 'm'},
+    {"noheadings", 'n'}, {"output", 'o'}, {"paths", 'p'},
+    {"raw", 'r'}, {"topology", 't'}, {"zoned", 'z'},
+    {"sysroot", 's'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_lsblk()
+{
+        file_taking taking = {
+            .program = "lsblk", .allowed = "ADJOPSabdfilmnoprtszVh",
+            .valued = "os", .longs = ul_lsblk_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] [device ...]",
+                    address_of answer))
+                return answer;
+        if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('z')))
+                return ul_bad_usage(
+                    "lsblk", "discard/zoned fields are not supported");
+        if (taking.flags & (FILE_FLAG('O') | FILE_FLAG('P')))
+                return ul_bad_usage(
+                    "lsblk", "output-all/pairs metadata is not supported");
+        if (file_option_value(address_of taking, 's'))
+                return ul_bad_usage("lsblk", "--sysroot is not supported");
+
+        positive presets = ((taking.flags & FILE_FLAG('f')) != 0) +
+                           ((taking.flags & FILE_FLAG('m')) != 0) +
+                           ((taking.flags & FILE_FLAG('t')) != 0) +
+                           ((taking.flags & FILE_FLAG('S')) != 0);
+        if (presets > 1)
+                return ul_bad_usage("lsblk", "output presets are mutually exclusive");
+
+        static const p8 defaults[] = {
+            UL_LSBLK_NAME, UL_LSBLK_MAJMIN, UL_LSBLK_RM, UL_LSBLK_SIZE,
+            UL_LSBLK_RO, UL_LSBLK_TYPE, UL_LSBLK_MOUNTPOINTS,
+        };
+        static const p8 fs_defaults[] = {
+            UL_LSBLK_NAME, UL_LSBLK_FSTYPE, UL_LSBLK_FSVER, UL_LSBLK_LABEL,
+            UL_LSBLK_UUID, UL_LSBLK_FSAVAIL, UL_LSBLK_FSUSE,
+            UL_LSBLK_MOUNTPOINTS,
+        };
+        static const p8 perm_defaults[] = {
+            UL_LSBLK_NAME, UL_LSBLK_SIZE, UL_LSBLK_OWNER,
+            UL_LSBLK_GROUP, UL_LSBLK_MODE,
+        };
+        static const p8 topology_defaults[] = {
+            UL_LSBLK_NAME, UL_LSBLK_ALIGNMENT, UL_LSBLK_MINIO,
+            UL_LSBLK_OPTIO, UL_LSBLK_PHYSEC, UL_LSBLK_LOGSEC,
+            UL_LSBLK_ROTA, UL_LSBLK_SCHED, UL_LSBLK_RQSIZE,
+            UL_LSBLK_RA, UL_LSBLK_WSAME,
+        };
+        static const p8 scsi_defaults[] = {
+            UL_LSBLK_NAME, UL_LSBLK_HCTL, UL_LSBLK_TYPE,
+            UL_LSBLK_VENDOR, UL_LSBLK_MODEL, UL_LSBLK_REV,
+            UL_LSBLK_TRAN,
+        };
+        const p8 address_to chosen =
+            taking.flags & FILE_FLAG('f') ? fs_defaults :
+            taking.flags & FILE_FLAG('m') ? perm_defaults :
+            taking.flags & FILE_FLAG('t') ? topology_defaults :
+            taking.flags & FILE_FLAG('S') ? scsi_defaults : defaults;
+        positive chosen_count =
+            taking.flags & FILE_FLAG('f') ? array_count(fs_defaults) :
+            taking.flags & FILE_FLAG('m') ? array_count(perm_defaults) :
+            taking.flags & FILE_FLAG('t') ? array_count(topology_defaults) :
+            taking.flags & FILE_FLAG('S') ? array_count(scsi_defaults) :
+                                             array_count(defaults);
+        p8 columns[UL_LSBLK_COLUMNS];
+        positive column_count = 0;
+        string_address selected = file_option_value(address_of taking, 'o');
+        if (selected &&
+            !ul_table_column_list(selected, ul_lsblk_columns,
+                                  UL_LSBLK_COLUMNS, chosen, chosen_count,
+                                  columns, address_of column_count))
+                return ul_bad_usage(
+                    "lsblk", "unknown or unsupported output column");
+        if (!selected)
+                for (positive i = 0; i < chosen_count; i++)
+                        columns[column_count++] = chosen[i];
+
+        bool identity = false;
+        bool permissions = false;
+        bool metadata = false;
+        for (positive i = 0; i < column_count; i++)
+        {
+                identity |= ul_lsblk_column_needs_identity(columns[i]);
+                permissions |= ul_lsblk_column_needs_permissions(columns[i]);
+                metadata |= ul_lsblk_column_needs_metadata(columns[i]);
+        }
+        bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
+        text_arena_used = 0;
+        if (!ul_lsblk_take(identity, permissions, metadata))
+                return ul_bad_usage("lsblk", "block-device sysfs is unavailable");
+        if (!ul_lsblk_select_operands(taking.first))
+                return 1;
+
+        bool list = (taking.flags & FILE_FLAG('l')) != 0;
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        bool dependencies = !(taking.flags & FILE_FLAG('d'));
+        ul_lsblk_rows(list, dependencies,
+                      (taking.flags & FILE_FLAG('a')) != 0,
+                      (taking.flags & FILE_FLAG('A')) != 0, scsi);
+        ul_lsblk_bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        ul_lsblk_tree = !list && !raw && dependencies;
+        ul_lsblk_json = (taking.flags & FILE_FLAG('J')) != 0;
+        ul_lsblk_paths = (taking.flags & FILE_FLAG('p')) != 0;
+        if (ul_lsblk_json)
+                ul_lsblk_json_out(columns, column_count);
+        else
+                ul_table_out(ul_lsblk.rows, sizeof(ul_lsblk.rows[0]),
+                             ul_lsblk.row_count, ul_lsblk_columns,
+                             UL_LSBLK_COLUMNS, columns, column_count,
+                             !(taking.flags & FILE_FLAG('n')),
+                             raw,
+                             ul_lsblk_field);
+        log_flush();
+        return 0;
 }

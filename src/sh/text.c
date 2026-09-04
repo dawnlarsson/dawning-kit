@@ -435,7 +435,8 @@ static inline INLINE fn text_close_handle(bool address_to opened,
         the answer, because a tool that is only moving bytes does not need to
         know which of them happened.
 */
-static bool text_reader_fill(text_reader address_to reader)
+static bool text_reader_fill_amount(text_reader address_to reader,
+                                    positive amount)
 {
         if (reader->position < reader->filled)
                 return true;
@@ -444,7 +445,7 @@ static bool text_reader_fill(text_reader address_to reader)
                 return false;
 
         bipolar got = system_read_retry(reader->handle, reader->buffer,
-                                        TEXT_READ_MAX);
+                                        min(amount, (positive)TEXT_READ_MAX));
 
         if (got <= 0)
         {
@@ -462,6 +463,11 @@ static bool text_reader_fill(text_reader address_to reader)
         reader->filled = (positive)got;
         reader->position = 0;
         return true;
+}
+
+static inline INLINE bool text_reader_fill(text_reader address_to reader)
+{
+        return text_reader_fill_amount(reader, TEXT_READ_MAX);
 }
 
 /*
@@ -491,6 +497,17 @@ static bool text_fill()
 
         // Set on every later call as well as the one that failed, which
         // cannot change it: the first failure already made it one.
+        if (text_input.failed)
+                text_status = text_status ? text_status : 1;
+
+        return false;
+}
+
+static bool text_fill_amount(positive amount)
+{
+        if (text_reader_fill_amount(address_of text_input, amount))
+                return true;
+
         if (text_input.failed)
                 text_status = text_status ? text_status : 1;
 
@@ -8964,11 +8981,11 @@ typedef struct
 {
         p8 address_to bytes;
         positive length;
-} ptx_blob;
+} text_blob;
 
 typedef struct
 {
-        ptx_blob text;
+        text_blob text;
         string_address name;
         positive lines;
 } ptx_file;
@@ -9011,8 +9028,8 @@ static positive ptx_context_count;
 static ptx_occurrence address_to ptx_occurrences;
 static positive ptx_occurrence_count;
 static positive address_to ptx_order;
-static ptx_blob ptx_ignore;
-static ptx_blob ptx_only;
+static text_blob ptx_ignore;
+static text_blob ptx_only;
 static string_address ptx_sentence_pattern;
 static string_address ptx_word_pattern;
 static string_address ptx_truncation;
@@ -9034,8 +9051,13 @@ static bool ptx_lower_word;
 static bool ptx_alpha_word;
 static bool ptx_failed;
 
-static bool ptx_read_blob(string_address path, ptx_blob address_to blob)
+/* A whole-input view in the shared record arena.  ptx and column both need
+   stable offsets after the 64 KiB reader refills; this is their one common
+   bridge from the streaming reader, not a second input engine. */
+static bool text_blob_read(string_address path, text_blob address_to blob)
 {
+        bool failed = false;
+
         if (path && !path[0])
                 path = null;
 
@@ -9059,7 +9081,8 @@ static bool ptx_read_blob(string_address path, ptx_blob address_to blob)
                     left > TEXT_ARENA_BYTES - text_arena_used)
                 {
                         text_error(null, "input too large");
-                        ptx_failed = true;
+                        text_status = text_status ? text_status : 1;
+                        failed = true;
                         break;
                 }
 
@@ -9077,15 +9100,15 @@ static bool ptx_read_blob(string_address path, ptx_blob address_to blob)
             ((text_arena_used + 15) & ~(positive)15) > TEXT_ARENA_BYTES)
         {
                 text_error(null, "input too large");
-                ptx_failed = true;
+                text_status = text_status ? text_status : 1;
                 return false;
         }
 
         text_arena_used = (text_arena_used + 15) & ~(positive)15;
-        return !ptx_failed;
+        return !failed;
 }
 
-static positive ptx_count_lines(ptx_blob address_to text)
+static positive ptx_count_lines(text_blob address_to text)
 {
         positive lines = text->length ? 1 : 0;
 
@@ -9274,7 +9297,7 @@ static bool ptx_word_equal(p8 address_to one, positive one_length,
                                    ptx_fold ? 1 : 0);
 }
 
-static bool ptx_list_has(ptx_blob address_to list, p8 address_to word,
+static bool ptx_list_has(text_blob address_to list, p8 address_to word,
                          positive length)
 {
         positive at = 0;
@@ -9909,8 +9932,8 @@ static b32 text_ptx()
         ptx_width = (flags & FILE_FLAG('t')) ? 100 : 72;
         ptx_gap = 3;
         ptx_failed = false;
-        ptx_ignore = (ptx_blob){null, 0};
-        ptx_only = (ptx_blob){null, 0};
+        ptx_ignore = (text_blob){null, 0};
+        ptx_only = (text_blob){null, 0};
         ptx_reference_width = 0;
         ptx_maximum_word = 0;
 
@@ -9959,12 +9982,12 @@ static b32 text_ptx()
         }
 
         if ((flags & FILE_FLAG('i')) &&
-            !ptx_read_blob(file_option_value(address_of taking, 'i'),
+            !text_blob_read(file_option_value(address_of taking, 'i'),
                            address_of ptx_ignore))
                 return text_done(1);
 
         if ((flags & FILE_FLAG('o')) &&
-            !ptx_read_blob(file_option_value(address_of taking, 'o'),
+            !text_blob_read(file_option_value(address_of taking, 'o'),
                            address_of ptx_only))
                 return text_done(1);
 
@@ -9985,9 +10008,9 @@ static b32 text_ptx()
         }
         else if (flags & FILE_FLAG('b'))
         {
-                ptx_blob breaks;
+                text_blob breaks;
 
-                if (!ptx_read_blob(file_option_value(address_of taking, 'b'),
+                if (!text_blob_read(file_option_value(address_of taking, 'b'),
                                    address_of breaks))
                         return text_done(1);
 
@@ -10017,7 +10040,7 @@ static b32 text_ptx()
 
                 ptx_files[input].name = name;
 
-                if (!ptx_read_blob(name,
+                if (!text_blob_read(name,
                                    address_of ptx_files[input].text))
                         return text_done(1);
 
@@ -10121,6 +10144,2749 @@ static b32 text_ptx()
                 ptx_output_one(ptx_occurrences + ptx_order[at]);
 
         return text_done(text_status);
+}
+
+/*
+        Lists and tables.
+
+        The byte spans below all point into text_arena (or the option vector),
+        and the input blobs are filled by text_blob_read.  Planning is two
+        cheap linear passes: the first counts rows and cells, the second lays
+        down their descriptors.  No line copies, per-cell allocations, or
+        extra I/O buffers are involved.
+
+        Widths deliberately use C-locale bytes.  That is exact for ASCII and
+        keeps malformed/package-generated input lossless; terminal-dependent
+        wide-character and ANSI escape accounting is outside this applet's
+        stated boundary and is rejected where it can be requested explicitly.
+*/
+typedef struct
+{
+        p8 address_to bytes;
+        positive length;
+} column_cell;
+
+typedef struct
+{
+        positive first;
+        positive count;
+} column_row;
+
+enum
+{
+        COLUMN_HIDDEN = 1,
+        COLUMN_RIGHT = 2,
+        COLUMN_NOEXTREME = 4,
+        COLUMN_WRAP = 8,
+        COLUMN_TRUNCATE = 16,
+};
+
+static text_blob address_to column_files;
+static positive column_file_count;
+static column_row address_to column_rows;
+static positive column_row_count;
+static column_cell address_to column_cells;
+static positive column_cell_count;
+static column_cell address_to column_names;
+static positive column_name_count;
+static positive column_count;
+static positive column_row_at;
+static positive column_cell_at;
+static bool column_table;
+static bool column_keep_empty;
+static bool column_header_as_names;
+static bool column_header_taken;
+static bool column_custom_separator;
+static string_address column_input_separator;
+
+static bool column_is_separator(p8 character)
+{
+        if (!column_custom_separator)
+                return character == ' ' || character == '\t';
+
+        return string_first_of(column_input_separator, character) != null;
+}
+
+/* Split one table record exactly where util-linux's non-greedy -s tokenizer
+   does.  The default blank tokenizer is greedy; an explicit separator keeps
+   leading, adjacent and trailing empty fields. */
+static positive column_fields(p8 address_to bytes, positive length,
+                              column_cell address_to into, positive room)
+{
+        positive made = 0;
+        positive at = 0;
+
+        if (!length)
+                return 0;
+
+        if (!column_custom_separator)
+        {
+                while (at < length)
+                {
+                        while (at < length && column_is_separator(bytes[at]))
+                                at++;
+
+                        if (at == length)
+                                break;
+
+                        positive start = at;
+
+                        while (at < length && !column_is_separator(bytes[at]))
+                                at++;
+
+                        if (into && made < room)
+                                into[made] =
+                                    (column_cell){bytes + start, at - start};
+
+                        made++;
+                }
+
+                return made;
+        }
+
+        for (;;)
+        {
+                positive start = at;
+
+                while (at < length && !column_is_separator(bytes[at]))
+                        at++;
+
+                if (into && made < room)
+                        into[made] =
+                            (column_cell){bytes + start, at - start};
+
+                made++;
+
+                if (at == length)
+                        break;
+
+                at++;
+
+                if (at == length)
+                {
+                        if (into && made < room)
+                                into[made] =
+                                    (column_cell){bytes + at, 0};
+                        made++;
+                        break;
+                }
+        }
+
+        return made;
+}
+
+static bool column_blank(p8 address_to bytes, positive length)
+{
+        for (positive at = 0; at < length; at++)
+                if (!byte_is_space(bytes[at]))
+                        return false;
+
+        return true;
+}
+
+static fn column_accept_record(p8 address_to bytes, positive length,
+                               bool fill)
+{
+        if (column_blank(bytes, length))
+        {
+                if (!column_keep_empty)
+                        return;
+
+                length = 0;
+        }
+
+        if (!column_table)
+        {
+                if (fill)
+                {
+                        column_rows[column_row_at] =
+                            (column_row){column_cell_at, 1};
+                        column_cells[column_cell_at] =
+                            (column_cell){bytes, length};
+                }
+
+                column_row_at++;
+                column_cell_at++;
+                return;
+        }
+
+        positive fields = column_fields(bytes, length, null, 0);
+
+        if (column_header_as_names && !column_header_taken)
+        {
+                column_header_taken = true;
+
+                if (fill)
+                        column_fields(bytes, length, column_names,
+                                      column_name_count);
+                else
+                        column_name_count = fields;
+
+                return;
+        }
+
+        if (!fill && fields > column_count)
+                column_count = fields;
+
+        if (fill)
+        {
+                column_rows[column_row_at] =
+                    (column_row){column_cell_at, fields};
+                column_fields(bytes, length,
+                              fields ? column_cells + column_cell_at : null,
+                              fields);
+        }
+
+        column_row_at++;
+        column_cell_at += fields;
+}
+
+static fn column_scan(bool fill)
+{
+        column_row_at = 0;
+        column_cell_at = 0;
+        column_header_taken = false;
+
+        for (positive file = 0; file < column_file_count; file++)
+        {
+                text_blob address_to blob = column_files + file;
+                positive at = 0;
+
+                while (at < blob->length)
+                {
+                        p8 address_to newline = memory_first_of(
+                            blob->bytes + at, '\n', blob->length - at);
+                        positive finish = newline
+                                              ? (positive)(newline - blob->bytes)
+                                              : blob->length;
+
+                        column_accept_record(blob->bytes + at, finish - at,
+                                             fill);
+
+                        if (!newline)
+                                break;
+
+                        at = finish + 1;
+                }
+        }
+}
+
+static positive column_names_from_option(string_address names, bool fill,
+                                         positive room)
+{
+        positive count = 0;
+        positive at = 0;
+
+        for (;;)
+        {
+                positive start = at;
+
+                while (names[at] && names[at] != ',')
+                        at++;
+
+                if (fill && count < room)
+                        column_names[count] = (column_cell){
+                            (p8 address_to)names + start, at - start};
+
+                count++;
+
+                if (!names[at])
+                        break;
+
+                at++;
+        }
+
+        return count;
+}
+
+static bool column_span_unsigned(p8 address_to bytes, positive length,
+                                 positive address_to answer)
+{
+        positive made = 0;
+
+        if (!length)
+                return false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                if (!byte_is_digit(bytes[at]) ||
+                    made > (positive_max - (bytes[at] - '0')) / 10)
+                        return false;
+
+                made = made * 10 + bytes[at] - '0';
+        }
+
+        address_to answer = made;
+        return true;
+}
+
+static bool column_name_equal(column_cell name, p8 address_to bytes,
+                              positive length)
+{
+        return name.length == length &&
+               !memory_compare(name.bytes, bytes, length);
+}
+
+static bool column_resolve(p8 address_to bytes, positive length,
+                           positive address_to index)
+{
+        positive number;
+
+        if (length == 2 && bytes[0] == '-' && bytes[1] == '1')
+        {
+                if (!column_count)
+                        return false;
+
+                address_to index = column_count - 1;
+                return true;
+        }
+
+        if (column_span_unsigned(bytes, length, address_of number))
+        {
+                if (!number || number > column_count)
+                        return false;
+
+                address_to index = number - 1;
+                return true;
+        }
+
+        for (positive at = 0; at < column_name_count; at++)
+                if (column_name_equal(column_names[at], bytes, length))
+                {
+                        address_to index = at;
+                        return true;
+                }
+
+        return false;
+}
+
+static bool column_apply_list(string_address list, p8 flag,
+                              p8 address_to properties, bool unnamed)
+{
+        positive at = 0;
+
+        while (list[at])
+        {
+                positive start = at;
+
+                while (list[at] && list[at] != ',')
+                        at++;
+
+                positive length = at - start;
+                p8 address_to item = (p8 address_to)list + start;
+
+                if (length == 1 && item[0] == '0')
+                        for (positive col = 0; col < column_count; col++)
+                                properties[col] |= flag;
+                else if (unnamed && length == 1 && item[0] == '-')
+                        for (positive col = column_name_count;
+                             col < column_count; col++)
+                                properties[col] |= flag;
+                else
+                {
+                        positive dash = 0;
+
+                        while (dash < length && item[dash] != '-')
+                                dash++;
+
+                        positive low;
+                        positive high;
+
+                        if (dash && dash < length - 1 &&
+                            column_span_unsigned(item, dash, address_of low) &&
+                            column_span_unsigned(item + dash + 1,
+                                                 length - dash - 1,
+                                                 address_of high))
+                        {
+                                if (!low || low > high || high > column_count)
+                                        return false;
+
+                                for (positive col = low - 1; col < high; col++)
+                                        properties[col] |= flag;
+                        }
+                        else
+                        {
+                                positive col;
+
+                                if (!column_resolve(item, length,
+                                                    address_of col))
+                                        return false;
+
+                                properties[col] |= flag;
+                        }
+                }
+
+                if (list[at])
+                        at++;
+        }
+
+        return true;
+}
+
+static bool column_make_order(string_address list,
+                              positive address_to order,
+                              p8 address_to properties,
+                              positive address_to visible)
+{
+        positive made = 0;
+        positive at = 0;
+
+        if (list)
+                while (list[at])
+                {
+                        positive start = at;
+                        positive col;
+
+                        while (list[at] && list[at] != ',')
+                                at++;
+
+                        if (!column_resolve((p8 address_to)list + start,
+                                            at - start, address_of col))
+                                return false;
+
+                        bool repeated = false;
+
+                        for (positive prior = 0; prior < made; prior++)
+                                if (order[prior] == col)
+                                        repeated = true;
+
+                        if (!repeated && !(properties[col] & COLUMN_HIDDEN))
+                                order[made++] = col;
+
+                        if (list[at])
+                                at++;
+                }
+
+        for (positive col = 0; col < column_count; col++)
+        {
+                bool repeated = false;
+
+                for (positive prior = 0; prior < made; prior++)
+                        if (order[prior] == col)
+                                repeated = true;
+
+                if (!repeated && !(properties[col] & COLUMN_HIDDEN))
+                        order[made++] = col;
+        }
+
+        address_to visible = made;
+        return true;
+}
+
+static column_cell column_row_cell(column_row address_to row, positive col)
+{
+        if (col >= row->count)
+                return (column_cell){null, 0};
+
+        return column_cells[row->first + col];
+}
+
+static fn column_plain(bool fill_rows, bool spaces, positive spacing,
+                       positive width)
+{
+        if (!column_row_count)
+                return;
+
+        positive longest = 0;
+
+        for (positive at = 0; at < column_row_count; at++)
+                if (column_cells[column_rows[at].first].length > longest)
+                        longest = column_cells[column_rows[at].first].length;
+
+        if (!width || longest >= width)
+        {
+                for (positive at = 0; at < column_row_count; at++)
+                {
+                        column_cell cell = column_cells[column_rows[at].first];
+                        text_put(cell.bytes, cell.length);
+                        text_put_character('\n');
+                }
+
+                return;
+        }
+
+        positive stride = spaces ? longest + spacing
+                                  : (longest + 8) & ~(positive)7;
+
+        if (!stride)
+                stride = spaces ? 1 : 8;
+
+        positive columns = width / stride;
+        positive remains = width % stride;
+
+        if (!columns)
+                columns = 1;
+
+        if (spaces && remains <= positive_max - spacing &&
+            remains + spacing >= stride)
+                columns++;
+
+        positive rows = (column_row_count + columns - 1) / columns;
+
+        for (positive row = 0; row < rows; row++)
+        {
+                positive output_column = 0;
+
+                for (positive col = 0; col < columns; col++)
+                {
+                        positive entry = fill_rows ? row * columns + col
+                                                   : row + col * rows;
+
+                        if (entry >= column_row_count)
+                                break;
+
+                        column_cell cell =
+                            column_cells[column_rows[entry].first];
+                        text_put(cell.bytes, cell.length);
+                        output_column += cell.length;
+
+                        positive next = fill_rows ? entry + 1
+                                                  : entry + rows;
+
+                        if (col + 1 == columns || next >= column_row_count)
+                                break;
+
+                        positive target = (col + 1) * stride;
+
+                        if (spaces)
+                        {
+                                if (output_column < target)
+                                        text_tab_repeat_character(
+                                            ' ', target - output_column);
+                                output_column = target;
+                        }
+                        else
+                                while (((output_column + 8) & ~(positive)7) <=
+                                       target)
+                                {
+                                        text_put_character('\t');
+                                        output_column =
+                                            (output_column + 8) & ~(positive)7;
+                                }
+                }
+
+                text_put_character('\n');
+        }
+}
+
+static fn column_json_string(column_cell value, bool lower)
+{
+        text_put_character('"');
+
+        for (positive at = 0; at < value.length; at++)
+        {
+                p8 character = value.bytes[at];
+
+                if (lower && character >= 'A' && character <= 'Z')
+                        character += 'a' - 'A';
+
+                if (character == '"' || character == '\\')
+                {
+                        text_put_character('\\');
+                        text_put_character(character);
+                }
+                else if (character == '\b')
+                        text_put_string("\\b");
+                else if (character == '\f')
+                        text_put_string("\\f");
+                else if (character == '\n')
+                        text_put_string("\\n");
+                else if (character == '\r')
+                        text_put_string("\\r");
+                else if (character == '\t')
+                        text_put_string("\\t");
+                else if (character < 32)
+                {
+                        static const p8 hex[] = "0123456789abcdef";
+                        p8 escaped[6] = {'\\', 'u', '0', '0',
+                                         hex[character >> 4],
+                                         hex[character & 15]};
+                        text_put(escaped, sizeof(escaped));
+                }
+                else
+                        text_put_character(character);
+        }
+
+        text_put_character('"');
+}
+
+static bool column_json(string_address name, positive address_to order,
+                        positive visible)
+{
+        if (!column_row_count)
+                return true;
+
+        for (positive at = 0; at < visible; at++)
+                if (order[at] >= column_name_count ||
+                    !column_names[order[at]].length)
+                        return false;
+
+        text_put_string("{\n   ");
+        column_json_string((column_cell){(p8 address_to)name,
+                                         string_length(name)}, false);
+        text_put_string(": [\n");
+
+        for (positive row_at = 0; row_at < column_row_count; row_at++)
+        {
+                column_row address_to row = column_rows + row_at;
+
+                if (!row_at)
+                        text_put_string("      {\n");
+
+                for (positive shown = 0; shown < visible; shown++)
+                {
+                        positive col = order[shown];
+                        column_cell cell = column_row_cell(row, col);
+                        text_put_string("         ");
+                        column_json_string(column_names[col], true);
+                        text_put_string(": ");
+
+                        if (!cell.length)
+                                text_put_string("null");
+                        else
+                                column_json_string(cell, false);
+
+                        text_put_string(shown + 1 < visible ? ",\n" : "\n");
+                }
+
+                text_put_string(row_at + 1 < column_row_count
+                                    ? "      },{\n"
+                                    : "      }\n");
+        }
+
+        text_put_string("   ]\n}\n");
+        return true;
+}
+
+static positive column_cell_part(column_cell cell, p8 property,
+                                 positive width, positive part,
+                                 column_cell address_to answer)
+{
+        if (property & COLUMN_TRUNCATE)
+        {
+                if (part)
+                        return 0;
+
+                answer->bytes = cell.bytes;
+                answer->length = min(cell.length, width);
+                return answer->length;
+        }
+
+        if (property & COLUMN_WRAP)
+        {
+                positive start = part * width;
+
+                if (start >= cell.length)
+                        return 0;
+
+                answer->bytes = cell.bytes + start;
+                answer->length = min(width, cell.length - start);
+                return answer->length;
+        }
+
+        if (part)
+                return 0;
+
+        address_to answer = cell;
+        return cell.length;
+}
+
+static fn column_table_line(column_row address_to row, bool header,
+                            positive address_to order, positive visible,
+                            p8 address_to properties,
+                            positive address_to widths,
+                            string_address separator)
+{
+        positive parts = 1;
+
+        for (positive shown = 0; shown < visible; shown++)
+        {
+                positive col = order[shown];
+                column_cell cell = header
+                                       ? (col < column_name_count
+                                              ? column_names[col]
+                                              : (column_cell){null, 0})
+                                       : column_row_cell(row, col);
+
+                if ((properties[col] & COLUMN_WRAP) && widths[col] &&
+                    cell.length)
+                {
+                        positive needed =
+                            (cell.length + widths[col] - 1) / widths[col];
+                        if (needed > parts)
+                                parts = needed;
+                }
+        }
+
+        for (positive part = 0; part < parts; part++)
+        {
+                for (positive shown = 0; shown < visible; shown++)
+                {
+                        positive col = order[shown];
+                        column_cell whole = header
+                                                ? (col < column_name_count
+                                                       ? column_names[col]
+                                                       : (column_cell){null, 0})
+                                                : column_row_cell(row, col);
+                        column_cell cell = {null, 0};
+                        positive length = column_cell_part(
+                            whole, properties[col], widths[col], part,
+                            address_of cell);
+                        positive pad = length < widths[col]
+                                           ? widths[col] - length
+                                           : 0;
+
+                        if ((properties[col] & COLUMN_RIGHT) &&
+                            (length || shown + 1 < visible))
+                                text_tab_repeat_character(' ', pad);
+
+                        text_put(cell.bytes, cell.length);
+
+                        if (!(properties[col] & COLUMN_RIGHT) &&
+                            shown + 1 < visible)
+                                text_tab_repeat_character(' ', pad);
+
+                        if (shown + 1 < visible)
+                                text_put_string(separator);
+                }
+
+                text_put_character('\n');
+        }
+}
+
+static fn column_table_output(bool noheadings, positive width,
+                              string_address separator,
+                              positive address_to order, positive visible,
+                              p8 address_to properties)
+{
+        /* Names describe a table; they do not by themselves create one. */
+        if (!column_row_count)
+                return;
+
+        positive address_to widths = (positive address_to)text_arena_take(
+            column_count * sizeof(positive));
+        positive address_to second = (positive address_to)text_arena_take(
+            column_count * sizeof(positive));
+
+        if (column_count && (!widths || !second))
+                return;
+
+        memory_fill(widths, 0, column_count * sizeof(positive));
+        memory_fill(second, 0, column_count * sizeof(positive));
+
+        if (!noheadings)
+                for (positive col = 0; col < column_name_count; col++)
+                        widths[col] = column_names[col].length;
+
+        for (positive row_at = 0; row_at < column_row_count; row_at++)
+                for (positive col = 0;
+                     col < column_rows[row_at].count && col < column_count;
+                     col++)
+                {
+                        positive length =
+                            column_cells[column_rows[row_at].first + col].length;
+
+                        if (length > widths[col])
+                        {
+                                second[col] = widths[col];
+                                widths[col] = length;
+                        }
+                        else if (length > second[col])
+                                second[col] = length;
+                }
+
+        if (visible && width)
+        {
+                positive total = string_length(separator) * (visible - 1);
+
+                for (positive shown = 0; shown < visible; shown++)
+                        total += widths[order[shown]];
+
+                if (total > width)
+                {
+                        /* libsmartcols marks the last visible column this way
+                           by default.  Ignore its one extreme only when width
+                           pressure exists; an overlong final value remains
+                           lossless, exactly as the native renderer does. */
+                        if (!(properties[order[visible - 1]] &
+                              (COLUMN_WRAP | COLUMN_TRUNCATE)))
+                                properties[order[visible - 1]] |=
+                                    COLUMN_NOEXTREME;
+
+                        for (positive shown = 0; shown < visible; shown++)
+                        {
+                                positive col = order[shown];
+
+                                if ((properties[col] & COLUMN_NOEXTREME) &&
+                                    second[col] < widths[col])
+                                {
+                                        positive replacement = second[col]
+                                                                   ? second[col]
+                                                                   : 1;
+                                        total -= widths[col] - replacement;
+                                        widths[col] = replacement;
+                                }
+                        }
+
+                        while (total > width)
+                        {
+                                positive chosen = column_count;
+
+                                for (positive shown = 0; shown < visible; shown++)
+                                {
+                                        positive col = order[shown];
+
+                                        if ((properties[col] &
+                                             (COLUMN_WRAP | COLUMN_TRUNCATE)) &&
+                                            widths[col] > 1 &&
+                                            (chosen == column_count ||
+                                             widths[col] > widths[chosen]))
+                                                chosen = col;
+                                }
+
+                                if (chosen == column_count)
+                                        break;
+
+                                widths[chosen]--;
+                                total--;
+                        }
+                }
+        }
+
+        if (column_name_count && !noheadings)
+                column_table_line(null, true, order, visible, properties,
+                                  widths, separator);
+
+        for (positive row = 0; row < column_row_count; row++)
+                column_table_line(column_rows + row, false, order, visible,
+                                  properties, widths, separator);
+}
+
+static const file_long column_longs[] = {
+    {(string_address)"columns", 'c'},
+    {(string_address)"color", 'q'},
+    {(string_address)"fillrows", 'x'},
+    {(string_address)"input-separator", 's'},
+    {(string_address)"json", 'J'},
+    {(string_address)"keep-empty-lines", 'L'},
+    {(string_address)"output-separator", 'o'},
+    {(string_address)"output-width", 'c'},
+    {(string_address)"separator", 's'},
+    {(string_address)"table", 't'},
+    {(string_address)"table-colorscheme", 'Q'},
+    {(string_address)"table-columns", 'N'},
+    {(string_address)"table-column", 'C'},
+    {(string_address)"table-columns-limit", 'l'},
+    {(string_address)"table-hide", 'H'},
+    {(string_address)"table-name", 'n'},
+    {(string_address)"table-maxout", 'm'},
+    {(string_address)"table-noextreme", 'E'},
+    {(string_address)"table-noheadings", 'd'},
+    {(string_address)"table-order", 'O'},
+    {(string_address)"table-right", 'R'},
+    {(string_address)"table-truncate", 'T'},
+    {(string_address)"table-wrap", 'W'},
+    {(string_address)"table-empty-lines", 'L'},
+    {(string_address)"table-header-repeat", 'e'},
+    {(string_address)"table-header-as-columns", 'K'},
+    {(string_address)"tree", 'r'},
+    {(string_address)"tree-id", 'i'},
+    {(string_address)"tree-parent", 'p'},
+    {(string_address)"use-spaces", 'S'},
+    {(string_address)"wrap-separator", 'G'},
+    {null, 0},
+};
+
+static b32 text_column()
+{
+        file_taking taking = {
+            .program = (string_address)"column",
+            .allowed = (string_address)"CcdEeHiJKlLNnmOopRrSsTtWx",
+            .valued = (string_address)"CcEHilNnOopQRrSsTWG",
+            .long_optional = (string_address)"q",
+            .longs = column_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("column");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        positive flags = taking.flags;
+
+        if (flags & (FILE_FLAG('C') | FILE_FLAG('e') | FILE_FLAG('l') |
+                     FILE_FLAG('m') |
+                     FILE_FLAG('r') | FILE_FLAG('i') | FILE_FLAG('p') |
+                     FILE_FLAG('q') | FILE_FLAG('Q') | FILE_FLAG('G')))
+                return text_refuse(null,
+                                   "column properties, tree, color, header-repeat and custom wrap parsing are unsupported",
+                                   1);
+
+        column_table = (flags & (FILE_FLAG('t') | FILE_FLAG('J') |
+                                 FILE_FLAG('K'))) != 0;
+        bool fill_rows = (flags & FILE_FLAG('x')) != 0;
+
+        if (fill_rows && column_table)
+                return text_refuse(null,
+                                   "--fillrows and --table are mutually exclusive",
+                                   1);
+
+        positive table_options = FILE_FLAG('N') | FILE_FLAG('n') |
+                                 FILE_FLAG('O') | FILE_FLAG('H') |
+                                 FILE_FLAG('E') | FILE_FLAG('R') |
+                                 FILE_FLAG('T') | FILE_FLAG('W') |
+                                 FILE_FLAG('d') | FILE_FLAG('l');
+
+        if (!column_table && (flags & table_options))
+                return text_refuse(null,
+                                   "option --table required for all --table-*",
+                                   1);
+
+        if ((flags & FILE_FLAG('N')) && (flags & FILE_FLAG('K')))
+                return text_refuse(null,
+                                   "--table-columns and --table-header-as-columns are mutually exclusive",
+                                   1);
+
+        positive width = 80;
+        string_address width_option = file_option_value(address_of taking, 'c');
+
+        if (width_option)
+        {
+                if (string_equals(width_option, "unlimited"))
+                        width = 0;
+                else if (!text_unsigned_option(width_option, false,
+                                               address_of width))
+                        return text_refuse(width_option,
+                                           "invalid columns argument", 1);
+        }
+
+        bool spaces = (flags & FILE_FLAG('S')) != 0;
+        positive spacing = 0;
+
+        if (spaces &&
+            !text_unsigned_option(file_option_value(address_of taking, 'S'),
+                                  false, address_of spacing))
+                return text_refuse(file_option_value(address_of taking, 'S'),
+                                   "invalid spaces argument", 1);
+
+        column_keep_empty = (flags & FILE_FLAG('L')) != 0;
+        column_header_as_names = (flags & FILE_FLAG('K')) != 0;
+        column_custom_separator = (flags & FILE_FLAG('s')) != 0;
+        column_input_separator = column_custom_separator
+                                     ? file_option_value(address_of taking, 's')
+                                     : (string_address)" \t";
+
+        if ((flags & FILE_FLAG('J')) && !(flags & FILE_FLAG('N')) &&
+            !column_header_as_names)
+                return text_refuse(null,
+                                   "option --table-columns or --table-column required for --json",
+                                   1);
+
+        column_file_count = text_input_count();
+        column_files = (text_blob address_to)text_arena_take(
+            column_file_count * sizeof(text_blob));
+
+        if (!column_files)
+                return text_done(1);
+
+        for (positive file = 0; file < column_file_count; file++)
+        {
+                column_files[file] = (text_blob){null, 0};
+                text_blob_read(text_file_name((b32)file),
+                               column_files + file);
+        }
+
+        column_row_count = 0;
+        column_cell_count = 0;
+        column_name_count = 0;
+        column_count = 0;
+
+        if (flags & FILE_FLAG('N'))
+        {
+                column_name_count = column_names_from_option(
+                    file_option_value(address_of taking, 'N'), false, 0);
+                column_count = column_name_count;
+        }
+
+        column_scan(false);
+        column_row_count = column_row_at;
+        column_cell_count = column_cell_at;
+
+        if (column_name_count > column_count)
+                column_count = column_name_count;
+
+        column_rows = (column_row address_to)text_arena_take(
+            column_row_count * sizeof(column_row));
+        column_cells = (column_cell address_to)text_arena_take(
+            column_cell_count * sizeof(column_cell));
+        column_names = (column_cell address_to)text_arena_take(
+            column_count * sizeof(column_cell));
+
+        if ((column_row_count && !column_rows) ||
+            (column_cell_count && !column_cells) ||
+            (column_count && !column_names))
+                return text_done(1);
+
+        memory_fill(column_names, 0, column_count * sizeof(column_cell));
+
+        if (flags & FILE_FLAG('N'))
+                column_names_from_option(
+                    file_option_value(address_of taking, 'N'), true,
+                    column_name_count);
+
+        column_scan(true);
+
+        if (!column_table)
+        {
+                column_plain(fill_rows, spaces, spacing, width);
+                return text_done(text_status);
+        }
+
+        p8 address_to properties = (p8 address_to)text_arena_take(column_count);
+        positive address_to order = (positive address_to)text_arena_take(
+            column_count * sizeof(positive));
+
+        if (column_count && (!properties || !order))
+                return text_done(1);
+
+        memory_fill(properties, 0, column_count);
+
+#define COLUMN_LIST(letter, property, unnamed)                              \
+        if ((flags & FILE_FLAG(letter)) &&                                  \
+            !column_apply_list(file_option_value(address_of taking, letter),\
+                               property, properties, unnamed))              \
+                return text_refuse(file_option_value(address_of taking,     \
+                                                      letter),              \
+                                   "undefined column name", 1)
+
+        COLUMN_LIST('H', COLUMN_HIDDEN, true);
+        COLUMN_LIST('E', COLUMN_NOEXTREME, false);
+        COLUMN_LIST('R', COLUMN_RIGHT, false);
+        COLUMN_LIST('T', COLUMN_TRUNCATE, false);
+        COLUMN_LIST('W', COLUMN_WRAP, false);
+#undef COLUMN_LIST
+
+        positive visible;
+
+        if (!column_make_order((flags & FILE_FLAG('O'))
+                                   ? file_option_value(address_of taking, 'O')
+                                   : null,
+                               order, properties, address_of visible))
+                return text_refuse(file_option_value(address_of taking, 'O'),
+                                   "undefined column name", 1);
+
+        if (flags & FILE_FLAG('J'))
+        {
+                string_address name = (flags & FILE_FLAG('n'))
+                                          ? file_option_value(address_of taking,
+                                                              'n')
+                                          : (string_address)"table";
+
+                if (!column_json(name, order, visible))
+                        return text_refuse(null,
+                                           "for JSON every visible column requires a name",
+                                           1);
+        }
+        else
+                column_table_output((flags & FILE_FLAG('d')) != 0, width,
+                                    (flags & FILE_FLAG('o'))
+                                        ? file_option_value(address_of taking,
+                                                            'o')
+                                        : (string_address)"  ",
+                                    order, visible, properties);
+
+        return text_done(text_status);
+}
+
+/*
+        Terminal-column filters.
+
+        col, colcrt and colrm have one byte walker.  Their policies differ at
+        the event boundary -- col retains positioned overstrikes, colcrt
+        keeps the historical 132-column CRT planes, and colrm streams a
+        clipping state -- but no command grows a private reader or scanner.
+        C-locale bytes occupy one cell; controls named by the old terminal
+        protocol move the cursor and every other byte is either deliberately
+        dropped or, for col -p, preserved with zero width.
+*/
+enum
+{
+        TERMINAL_COL,
+        TERMINAL_COLCRT,
+        TERMINAL_COLRM,
+        TERMINAL_UL,
+};
+
+typedef struct
+{
+        /* text_arena caps one input below 192 MiB, so byte-C line and column
+           positions (including two half-lines per newline) fit signed and
+           unsigned 32-bit fields.  Keeping events at 12 rather than 24 bytes
+           is the difference between cache-resident nroff and allocator-like
+           traffic on ordinary manuals. */
+        b32 line;
+        p32 column;
+        p8 character;
+        p8 set;
+        p8 width;
+} terminal_event;
+
+typedef struct
+{
+        p8 mode;
+
+        /* col */
+        bipolar line;
+        bipolar maximum_line;
+        bipolar minimum_line;
+        positive column;
+        positive events;
+        bool fine;
+        bool pass;
+        bool no_backspaces;
+        bool compress;
+        bool ordered;
+        bool have_event;
+        bipolar prior_line;
+        positive prior_column;
+        p8 recent_width;
+        p8 character_set;
+        terminal_event address_to event;
+
+        /* colcrt */
+        positive crt_column;
+        bool crt_no_underlining;
+        bool crt_half_lines;
+        bool crt_need_under;
+        bool crt_print_newline;
+        bool crt_discard;
+
+        /* colrm */
+        positive remove_first;
+        positive remove_last;
+        positive remove_column;
+        p8 remove_phase;
+        bool remove_padded;
+
+        /* ul: text_line is the glyph plane and text_record_hold is its
+           attribute plane. They are idle while the arena-backed input blob
+           is scanned, so underlining adds policy, not another line store. */
+        positive ul_column;
+        positive ul_max_column;
+        positive ul_plane_column;
+        positive ul_up_line;
+        bipolar ul_half_position;
+        p8 ul_mode;
+        p8 ul_current_mode;
+        p8 ul_terminal;
+        bool ul_indicated;
+        bool ul_failed;
+} terminal_state;
+
+static terminal_event address_to terminal_events;
+static positive address_to terminal_order;
+
+static PURE HOT bipolar terminal_event_compare(positive left, positive right)
+{
+        terminal_event address_to one = terminal_events + left;
+        terminal_event address_to two = terminal_events + right;
+
+        if (one->line != two->line)
+                return one->line < two->line ? -1 : 1;
+
+        if (one->column != two->column)
+                return one->column < two->column ? -1 : 1;
+
+        return 0;
+}
+
+static fn terminal_col_event(terminal_state address_to state, p8 character,
+                             p8 width, bool fill)
+{
+        bipolar line = state->line;
+
+        if (!state->fine && (line & 1))
+                line++;
+
+        if (line < state->minimum_line)
+                state->minimum_line = line;
+
+        if (state->have_event &&
+            (line < state->prior_line ||
+             (line == state->prior_line &&
+              state->column < state->prior_column)))
+                state->ordered = false;
+
+        state->have_event = true;
+        state->prior_line = line;
+        state->prior_column = state->column;
+
+        if (fill)
+                state->event[state->events] = (terminal_event){
+                    line, state->column, character, state->character_set,
+                    width};
+
+        state->events++;
+        state->recent_width = width;
+
+        if (width && width != 255)
+                state->column += width;
+}
+
+static positive terminal_crt_length(p8 address_to line, positive room)
+{
+        positive length = 0;
+
+        while (length < room && line[length])
+                length++;
+
+        while (length && byte_is_space(line[length - 1]))
+                length--;
+
+        return length;
+}
+
+static fn terminal_crt_clear()
+{
+        memory_fill(text_line, 0, 133);
+        memory_fill(text_record_hold, ' ', 132);
+        text_record_hold[132] = 0;
+}
+
+static fn terminal_crt_output(terminal_state address_to state, bool eof)
+{
+        if (eof)
+                state->crt_print_newline = false;
+
+        positive length = terminal_crt_length(text_line, 132);
+        text_put(text_line, length);
+
+        if (state->crt_print_newline)
+                text_put_character('\n');
+
+        if (!state->crt_half_lines && !state->crt_no_underlining)
+                state->crt_print_newline = false;
+
+        memory_fill(text_line, 0, 133);
+
+        if (state->crt_need_under)
+        {
+                state->crt_need_under = false;
+                positive stop = min(state->crt_column, (positive)132);
+                text_record_hold[stop] = 0;
+                length = terminal_crt_length(text_record_hold, stop);
+                text_put(text_record_hold, length);
+                text_put_character('\n');
+                memory_fill(text_record_hold, ' ', 132);
+                text_record_hold[132] = 0;
+        }
+        else if (state->crt_half_lines && state->crt_column)
+                text_put_character('\n');
+}
+
+static fn terminal_crt_rub(terminal_state address_to state, positive count)
+{
+        positive col = state->crt_column;
+
+        while (count && col)
+        {
+                if (col < 132)
+                {
+                        text_line[col] = 0;
+                        text_record_hold[col] = ' ';
+                }
+
+                count--;
+                col--;
+        }
+
+        /* The historical loop increments once after consuming ESC plus its
+           command byte. */
+        state->crt_column = col + 1;
+}
+
+enum
+{
+        TERMINAL_UL_NORMAL = 0,
+        TERMINAL_UL_ALTERNATIVE = 1,
+        TERMINAL_UL_SUPER = 2,
+        TERMINAL_UL_SUB = 4,
+        TERMINAL_UL_UNDERLINE = 8,
+        TERMINAL_UL_BOLD = 16,
+};
+
+enum
+{
+        TERMINAL_UL_DUMB,
+        TERMINAL_UL_ANSI,
+        TERMINAL_UL_XTERM,
+        TERMINAL_UL_LINUX,
+        TERMINAL_UL_VT100,
+};
+
+static fn terminal_ul_clear(terminal_state address_to state)
+{
+        if (state->ul_max_column)
+        {
+                memory_fill(text_line, 0, state->ul_max_column);
+                memory_fill(text_record_hold, 0, state->ul_max_column);
+        }
+
+        state->ul_column = 0;
+        state->ul_max_column = 0;
+        state->ul_mode &= TERMINAL_UL_ALTERNATIVE;
+}
+
+static bool terminal_ul_set_column(terminal_state address_to state,
+                                   positive column)
+{
+        if (column > TEXT_LINE_MAX)
+        {
+                text_error(null, "line too long");
+                state->ul_failed = true;
+                return false;
+        }
+
+        state->ul_column = column;
+
+        if (state->ul_plane_column < column)
+        {
+                memory_fill(text_line + state->ul_plane_column, 0,
+                            column - state->ul_plane_column);
+                memory_fill(text_record_hold + state->ul_plane_column, 0,
+                            column - state->ul_plane_column);
+                state->ul_plane_column = column;
+        }
+
+        if (state->ul_max_column < column)
+                state->ul_max_column = column;
+
+        return true;
+}
+
+/* util-linux's need_column is subtly different from cursor movement: every
+   printable byte makes its right edge the new output edge, including after a
+   carriage return. Bytes already beyond that edge remain in the plane and
+   can become visible again after a later tab. */
+static bool terminal_ul_need_column(terminal_state address_to state,
+                                    positive column)
+{
+        if (column > TEXT_LINE_MAX)
+        {
+                text_error(null, "line too long");
+                state->ul_failed = true;
+                return false;
+        }
+
+        if (state->ul_plane_column < column)
+        {
+                memory_fill(text_line + state->ul_plane_column, 0,
+                            column - state->ul_plane_column);
+                memory_fill(text_record_hold + state->ul_plane_column, 0,
+                            column - state->ul_plane_column);
+                state->ul_plane_column = column;
+        }
+
+        state->ul_max_column = column;
+        return true;
+}
+
+static fn terminal_ul_cursor(terminal_state address_to state, bool up)
+{
+        if (state->ul_terminal == TERMINAL_UL_DUMB)
+                return;
+
+        text_put_string(up ? (string_address)"\033[A"
+                           : (string_address)"\033[C");
+}
+
+static fn terminal_ul_mode(terminal_state address_to state, p8 mode)
+{
+        if (state->ul_current_mode == mode)
+                return;
+
+        if (state->ul_indicated ||
+            state->ul_terminal == TERMINAL_UL_DUMB)
+        {
+                state->ul_current_mode = mode;
+                return;
+        }
+
+        /* terminfo's sgr modes do not compose portably. ul returns to normal
+           between two non-normal modes and then enters the next one. */
+        if (state->ul_current_mode && mode)
+                terminal_ul_mode(state, TERMINAL_UL_NORMAL);
+
+        if (!mode)
+        {
+                if (state->ul_current_mode == TERMINAL_UL_UNDERLINE)
+                {
+                        if (state->ul_terminal == TERMINAL_UL_XTERM ||
+                            state->ul_terminal == TERMINAL_UL_LINUX)
+                                text_put_string((string_address)"\033[24m");
+                        else
+                                text_put_string((string_address)"\033[m");
+                }
+                else if (state->ul_terminal == TERMINAL_UL_ANSI)
+                        text_put_string((string_address)"\033[0;10m");
+                else if (state->ul_terminal == TERMINAL_UL_XTERM)
+                        text_put_string((string_address)"\033(B\033[m");
+                else
+                        text_put_string((string_address)"\033[m\017");
+        }
+        else if (mode == TERMINAL_UL_UNDERLINE)
+                text_put_string((string_address)"\033[4m");
+        else if (mode == TERMINAL_UL_BOLD)
+                text_put_string((string_address)"\033[1m");
+        else if (mode == TERMINAL_UL_ALTERNATIVE)
+                text_put_string((string_address)"\033[7m");
+        else if (mode == TERMINAL_UL_SUPER)
+        {
+                text_put_string((string_address)"\033[4m");
+                text_put_string(state->ul_terminal == TERMINAL_UL_XTERM ||
+                                        state->ul_terminal == TERMINAL_UL_LINUX
+                                    ? (string_address)"\033[2m"
+                                    : (string_address)"\033[7m");
+        }
+        else if (mode == TERMINAL_UL_SUB)
+                text_put_string(state->ul_terminal == TERMINAL_UL_XTERM ||
+                                        state->ul_terminal == TERMINAL_UL_LINUX
+                                    ? (string_address)"\033[2m"
+                                    : (string_address)"\033[7m");
+        else
+                text_put_string((string_address)"\033[7m");
+
+        state->ul_current_mode = mode;
+}
+
+static p8 terminal_ul_indicator(p8 mode)
+{
+        switch (mode)
+        {
+        case TERMINAL_UL_NORMAL: return ' ';
+        case TERMINAL_UL_ALTERNATIVE: return 'g';
+        case TERMINAL_UL_SUPER: return '^';
+        case TERMINAL_UL_SUB: return 'v';
+        case TERMINAL_UL_UNDERLINE: return '_';
+        case TERMINAL_UL_BOLD: return '!';
+        default: return 'X';
+        }
+}
+
+static fn terminal_ul_flush(terminal_state address_to state)
+{
+        p8 last_mode = TERMINAL_UL_NORMAL;
+        bool had_mode = false;
+
+        for (positive column = 0; column < state->ul_max_column; column++)
+        {
+                p8 mode = text_record_hold[column];
+
+                if (mode != last_mode)
+                {
+                        had_mode = true;
+                        terminal_ul_mode(state, mode);
+                        last_mode = mode;
+                }
+
+                if (text_line[column])
+                        text_put_character(text_line[column]);
+                else if (state->ul_up_line)
+                        terminal_ul_cursor(state, false);
+                else
+                        text_put_character(' ');
+        }
+
+        if (last_mode)
+                terminal_ul_mode(state, TERMINAL_UL_NORMAL);
+
+        text_put_character('\n');
+
+        if (state->ul_indicated && had_mode)
+        {
+                positive stop = state->ul_max_column;
+
+                while (stop &&
+                       terminal_ul_indicator(text_record_hold[stop - 1]) == ' ')
+                        stop--;
+
+                for (positive column = 0; column < stop; column++)
+                        text_put_character(terminal_ul_indicator(
+                            text_record_hold[column]));
+
+                text_put_character('\n');
+        }
+
+        if (state->ul_up_line)
+                state->ul_up_line--;
+
+        terminal_ul_clear(state);
+}
+
+static fn terminal_ul_forward(terminal_state address_to state)
+{
+        positive column = state->ul_column;
+        positive maximum = state->ul_max_column;
+
+        terminal_ul_flush(state);
+        state->ul_column = column;
+        state->ul_max_column = maximum;
+}
+
+static fn terminal_ul_reverse(terminal_state address_to state)
+{
+        state->ul_up_line++;
+        terminal_ul_forward(state);
+        terminal_ul_cursor(state, true);
+        terminal_ul_cursor(state, true);
+        state->ul_up_line++;
+}
+
+static fn terminal_ul_escape(terminal_state address_to state, p8 command)
+{
+        if (command == '8')
+        {
+                if (state->ul_half_position > 0)
+                {
+                        state->ul_mode &= (p8)~TERMINAL_UL_SUB;
+                        state->ul_half_position--;
+                }
+                else if (!state->ul_half_position)
+                {
+                        state->ul_mode |= TERMINAL_UL_SUPER;
+                        state->ul_half_position--;
+                }
+                else
+                {
+                        state->ul_half_position = 0;
+                        terminal_ul_reverse(state);
+                }
+        }
+        else if (command == '9')
+        {
+                if (state->ul_half_position < 0)
+                {
+                        state->ul_mode &= (p8)~TERMINAL_UL_SUPER;
+                        state->ul_half_position++;
+                }
+                else if (!state->ul_half_position)
+                {
+                        state->ul_mode |= TERMINAL_UL_SUB;
+                        state->ul_half_position++;
+                }
+                else
+                {
+                        state->ul_half_position = 0;
+                        terminal_ul_forward(state);
+                }
+        }
+        else if (command == '7')
+                terminal_ul_reverse(state);
+        else
+        {
+                text_error(null, "unknown escape sequence in input");
+                state->ul_failed = true;
+        }
+}
+
+static fn terminal_ul_byte(terminal_state address_to state, p8 character)
+{
+        if (character == '\b')
+        {
+                if (state->ul_column)
+                        state->ul_column--;
+                return;
+        }
+        if (character == '\t')
+        {
+                terminal_ul_set_column(state,
+                                       (state->ul_column + 8) & ~(positive)7);
+                return;
+        }
+        if (character == '\r')
+        {
+                state->ul_column = 0;
+                return;
+        }
+        if (character == 016)
+        {
+                state->ul_mode |= TERMINAL_UL_ALTERNATIVE;
+                return;
+        }
+        if (character == 017)
+        {
+                state->ul_mode &= (p8)~TERMINAL_UL_ALTERNATIVE;
+                return;
+        }
+        if (character == '\n' || character == '\f')
+        {
+                terminal_ul_flush(state);
+
+                if (character == '\f')
+                        text_put_character('\f');
+
+                return;
+        }
+        if (character == ' ')
+        {
+                terminal_ul_set_column(state, state->ul_column + 1);
+                return;
+        }
+        if (!byte_is_printable(character))
+                return;
+
+        if (state->ul_column >= TEXT_LINE_MAX)
+        {
+                text_error(null, "line too long");
+                state->ul_failed = true;
+                return;
+        }
+
+        positive column = state->ul_column;
+
+        if (character == '_')
+        {
+                if (!terminal_ul_set_column(state, column + 1))
+                        return;
+
+                if (text_line[column])
+                        text_record_hold[column] |=
+                            TERMINAL_UL_UNDERLINE | state->ul_mode;
+                else
+                {
+                        text_line[column] = '_';
+                        /* A literal underscore is data, not an attributed
+                           glyph. The active mode joins it only if a later
+                           overstrike turns it into underlining. */
+                        text_record_hold[column] = TERMINAL_UL_NORMAL;
+                }
+        }
+        else
+        {
+                if (!terminal_ul_need_column(state, column + 1))
+                        return;
+
+                if (!text_line[column])
+                {
+                        text_line[column] = character;
+                        text_record_hold[column] = state->ul_mode;
+                }
+                else if (text_line[column] == '_')
+                {
+                        text_line[column] = character;
+                        text_record_hold[column] |=
+                            TERMINAL_UL_UNDERLINE | state->ul_mode;
+                }
+                else if (text_line[column] == character)
+                        text_record_hold[column] |=
+                            TERMINAL_UL_BOLD | state->ul_mode;
+                else
+                        text_record_hold[column] = state->ul_mode;
+
+                state->ul_column = column + 1;
+        }
+}
+
+static positive terminal_byte_width(p8 character, positive column)
+{
+        if (character == '\t')
+                return ((column + 8) & ~(positive)7) - column;
+
+        if (character == '\b')
+                return column ? (positive)-1 : 0;
+
+        return byte_is_printable(character) ? 1 : 0;
+}
+
+static fn terminal_colrm_byte(terminal_state address_to state, p8 character)
+{
+        if (character == '\n')
+        {
+                text_put_character(character);
+                state->remove_column = 0;
+                state->remove_phase = 0;
+                state->remove_padded = false;
+                return;
+        }
+
+        if (!state->remove_first)
+        {
+                text_put_character(character);
+                return;
+        }
+
+        if (state->remove_phase == 2)
+        {
+                if (!state->remove_padded &&
+                    state->remove_last < state->remove_column)
+                {
+                        text_tab_repeat_character(
+                            ' ', state->remove_column - state->remove_last);
+                        state->remove_padded = true;
+                }
+
+                text_put_character(character);
+                return;
+        }
+
+        positive before = state->remove_column;
+        positive width = terminal_byte_width(character, before);
+
+        if (width == (positive)-1)
+                state->remove_column = before ? before - 1 : 0;
+        else
+                state->remove_column += width;
+
+        if (!state->remove_phase)
+        {
+                if (state->remove_column < state->remove_first)
+                {
+                        text_put_character(character);
+                        return;
+                }
+
+                if (state->remove_first > before + 1)
+                        text_tab_repeat_character(
+                            ' ', state->remove_first - before - 1);
+
+                state->remove_phase = 1;
+        }
+
+        if (state->remove_last &&
+            state->remove_column >= state->remove_last)
+                state->remove_phase = 2;
+}
+
+/* The sole scanner for the family.  ESC consumes its command byte here, so a
+   refill boundary cannot make any renderer interpret it twice. */
+static fn terminal_scan(text_blob address_to blob,
+                        terminal_state address_to state, bool fill)
+{
+        positive at = 0;
+
+        while (at < blob->length)
+        {
+                p8 character = blob->bytes[at++];
+
+                if (state->mode == TERMINAL_UL)
+                {
+                        if (character == 033)
+                        {
+                                if (at >= blob->length)
+                                {
+                                        text_error(null,
+                                                   "unknown escape sequence in input");
+                                        state->ul_failed = true;
+                                        break;
+                                }
+
+                                terminal_ul_escape(state, blob->bytes[at++]);
+                        }
+                        else
+                                terminal_ul_byte(state, character);
+
+                        if (state->ul_failed)
+                                break;
+
+                        continue;
+                }
+
+                if (state->mode == TERMINAL_COLRM)
+                {
+                        terminal_colrm_byte(state, character);
+                        continue;
+                }
+
+                if (state->mode == TERMINAL_COLCRT)
+                {
+                        if (state->crt_discard)
+                        {
+                                if (character == '\n')
+                                {
+                                        state->crt_discard = false;
+                                        state->crt_column = 0;
+                                }
+                                continue;
+                        }
+
+                        if (state->crt_column >= 132)
+                        {
+                                terminal_crt_output(state, false);
+                                state->crt_discard = character != '\n';
+                                state->crt_column = 0;
+                                continue;
+                        }
+
+                        if (character == 033)
+                        {
+                                p8 command = at < blob->length
+                                                 ? blob->bytes[at++]
+                                                 : 0;
+
+                                if (command == '8')
+                                        terminal_crt_rub(state, 1);
+                                else if (command == '7')
+                                        terminal_crt_rub(state, 2);
+                                else
+                                        state->crt_column++;
+                                continue;
+                        }
+
+                        if (character == '\n')
+                        {
+                                terminal_crt_output(state, false);
+                                state->crt_column = 0;
+                                continue;
+                        }
+
+                        if (character == '\t')
+                        {
+                                positive next =
+                                    (state->crt_column + 7) & ~(positive)7;
+
+                                while (state->crt_column < next &&
+                                       state->crt_column < 132)
+                                        text_line[state->crt_column++] = ' ';
+                                continue;
+                        }
+
+                        if (character == '_')
+                        {
+                                text_line[state->crt_column] = ' ';
+                                if (!state->crt_no_underlining)
+                                {
+                                        state->crt_need_under = true;
+                                        text_record_hold[state->crt_column] = '-';
+                                }
+                                state->crt_column++;
+                                continue;
+                        }
+
+                        if (!byte_is_printable(character))
+                                continue;
+
+                        state->crt_print_newline = true;
+                        text_line[state->crt_column++] = character;
+                        continue;
+                }
+
+                /* col's cursor protocol is in half-line units. */
+                if (character == '\b')
+                {
+                        if (state->column)
+                        {
+                                if (state->have_event &&
+                                    state->recent_width == 255)
+                                        state->column++;
+                                else
+                                        state->column -=
+                                            state->have_event &&
+                                                    state->recent_width
+                                                ? state->recent_width
+                                                : 1;
+                        }
+                        continue;
+                }
+                if (character == '\r')
+                {
+                        state->column = 0;
+                        continue;
+                }
+                if (character == '\n')
+                {
+                        state->line += 2;
+                        if (state->line > state->maximum_line)
+                                state->maximum_line = state->line;
+                        state->column = 0;
+                        continue;
+                }
+                if (character == '\v')
+                {
+                        state->line -= 2;
+                        continue;
+                }
+                if (character == '\t')
+                {
+                        state->column =
+                            (state->column + 8) & ~(positive)7;
+                        continue;
+                }
+                if (character == ' ')
+                {
+                        state->column++;
+                        continue;
+                }
+                if (character == 016)
+                {
+                        state->character_set = 1;
+                        continue;
+                }
+                if (character == 017)
+                {
+                        state->character_set = 0;
+                        continue;
+                }
+                if (character == 033)
+                {
+                        p8 command = at < blob->length ? blob->bytes[at++] : 0;
+
+                        if (command == 007)
+                                state->line -= 2;
+                        else if (command == '\b')
+                                state->line--;
+                        else if (command == '\t')
+                        {
+                                state->line++;
+                                if (state->line > state->maximum_line)
+                                        state->maximum_line = state->line;
+                        }
+                        continue;
+                }
+
+                if (byte_is_graphic(character))
+                        terminal_col_event(state, character, 1, fill);
+                else if (state->pass)
+                        terminal_col_event(state, character, 255, fill);
+        }
+
+        if (state->mode == TERMINAL_UL && !state->ul_failed &&
+            state->ul_max_column)
+                terminal_ul_flush(state);
+}
+
+static fn terminal_half_gap(positive halves, bool fine)
+{
+        bool half = false;
+
+        if (halves & 1)
+        {
+                if (fine)
+                        half = true;
+                else
+                        halves++;
+        }
+
+        positive lines = halves / 2;
+        text_tab_repeat_character('\n', lines);
+
+        if (half)
+        {
+                text_put_character(033);
+                text_put_character('9');
+                if (!lines)
+                        text_put_character('\r');
+        }
+}
+
+static fn terminal_col_line(positive first, positive finish,
+                            terminal_state address_to state,
+                            p8 address_to last_set)
+{
+        positive last_column = 0;
+        positive at = first;
+
+        while (at < finish)
+        {
+                terminal_event address_to event = terminal_events +
+                    (terminal_order ? terminal_order[at] : at);
+                positive stop = at + 1;
+
+                while (stop < finish)
+                {
+                        terminal_event address_to next = terminal_events +
+                            (terminal_order ? terminal_order[stop] : stop);
+                        if (next->column != event->column)
+                                break;
+                        stop++;
+                }
+
+                positive chosen = state->no_backspaces ? stop - 1 : at;
+                terminal_event address_to shown = terminal_events +
+                    (terminal_order ? terminal_order[chosen] : chosen);
+
+                if (last_column < shown->column)
+                {
+                        positive spaces = shown->column - last_column;
+
+                        if (state->compress && spaces > 1)
+                        {
+                                positive tabs = shown->column / 8 -
+                                                last_column / 8;
+                                if (tabs)
+                                {
+                                        text_tab_repeat_character('\t', tabs);
+                                        spaces = shown->column & 7;
+                                }
+                        }
+
+                        text_tab_repeat_character(' ', spaces);
+                        last_column = shown->column;
+                }
+
+                for (positive one = chosen;
+                     one < (state->no_backspaces ? chosen + 1 : stop); one++)
+                {
+                        shown = terminal_events +
+                            (terminal_order ? terminal_order[one] : one);
+
+                        if (shown->set != address_to last_set)
+                        {
+                                text_put_character(shown->set ? 016 : 017);
+                                address_to last_set = shown->set;
+                        }
+
+                        text_put_character(shown->character);
+
+                        if (!state->no_backspaces && one + 1 < stop &&
+                            shown->width && shown->width != 255)
+                                text_tab_repeat_character('\b', shown->width);
+                }
+
+                if (shown->width == 255)
+                        last_column = shown->column
+                                          ? shown->column - 1
+                                          : positive_max;
+                else if (shown->width)
+                        last_column = shown->column + shown->width;
+
+                at = stop;
+        }
+}
+
+static fn terminal_col_output(terminal_state address_to state)
+{
+        /* Historical col discards even buffered glyphs when the cursor has
+           returned to the origin without ever moving below the first line. */
+        if (!state->maximum_line && !state->column)
+                return;
+
+        if (!state->events)
+        {
+                bipolar blank = state->maximum_line;
+
+                if (blank & 1)
+                        blank++;
+                else if (!blank)
+                        blank = 2;
+
+                if (blank > 0)
+                        terminal_half_gap((positive)blank, state->fine);
+                return;
+        }
+
+        terminal_order = null;
+
+        if (!state->ordered && state->events > 1)
+        {
+                terminal_order = (positive address_to)text_arena_take(
+                    state->events * sizeof(positive));
+                positive address_to spare =
+                    (positive address_to)text_arena_take(
+                        state->events * sizeof(positive));
+
+                if (!terminal_order || !spare)
+                        return;
+
+                for (positive one = 0; one < state->events; one++)
+                        terminal_order[one] = one;
+
+                terminal_order = array_merge_sort(
+                    terminal_order, spare, state->events,
+                    terminal_event_compare);
+        }
+
+        bipolar base = state->minimum_line < 0 ? state->minimum_line : 0;
+        bipolar previous = base;
+        positive at = 0;
+        p8 last_set = 0;
+
+        while (at < state->events)
+        {
+                terminal_event address_to first = terminal_events +
+                    (terminal_order ? terminal_order[at] : at);
+                positive finish = at + 1;
+
+                while (finish < state->events &&
+                       terminal_events[terminal_order
+                                           ? terminal_order[finish]
+                                           : finish].line == first->line)
+                        finish++;
+
+                if (first->line > previous)
+                        terminal_half_gap((positive)(first->line - previous),
+                                          state->fine);
+
+                terminal_col_line(at, finish, state, address_of last_set);
+                previous = first->line;
+                at = finish;
+        }
+
+        if (last_set)
+                text_put_character(017);
+
+        bipolar allocated = previous > 0 ? previous : 0;
+        bipolar tail = state->maximum_line - allocated;
+
+        if (state->maximum_line & 1)
+                tail++;
+        else if (!tail)
+                tail = 2;
+
+        if (tail > 0)
+                terminal_half_gap((positive)tail, state->fine);
+}
+
+static const file_long col_longs[] = {
+    {(string_address)"no-backspaces", 'b'},
+    {(string_address)"fine", 'f'},
+    {(string_address)"pass", 'p'},
+    {(string_address)"tabs", 'h'},
+    {(string_address)"spaces", 'x'},
+    {(string_address)"lines", 'l'},
+    {null, 0},
+};
+
+static b32 text_col()
+{
+        file_taking taking = {
+            .program = (string_address)"col",
+            .allowed = (string_address)"bfhlpx",
+            .valued = (string_address)"l",
+            .longs = col_longs,
+        };
+
+        text_begin("col");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (taking.first != (positive)program_argument_count())
+                return text_refuse(program_argument((b32)taking.first),
+                                   "bad usage", 1);
+
+        if ((taking.flags & FILE_FLAG('h')) &&
+            (taking.flags & FILE_FLAG('x')))
+                return text_refuse(null,
+                                   "--tabs and --spaces are mutually exclusive",
+                                   1);
+
+        if (taking.flags & FILE_FLAG('l'))
+        {
+                positive lines;
+                if (!text_unsigned_option(file_option_value(address_of taking,
+                                                            'l'),
+                                          false, address_of lines) ||
+                    lines > 0xffffffffU)
+                        return text_refuse(file_option_value(address_of taking,
+                                                            'l'),
+                                           "bad -l argument", 1);
+        }
+
+        text_blob input = {null, 0};
+        if (!text_blob_read(null, address_of input))
+                return text_done(1);
+
+        terminal_state state = {
+            .mode = TERMINAL_COL,
+            .fine = (taking.flags & FILE_FLAG('f')) != 0,
+            .pass = (taking.flags & FILE_FLAG('p')) != 0,
+            .no_backspaces = (taking.flags & FILE_FLAG('b')) != 0,
+            .compress = (taking.flags & FILE_FLAG('x')) == 0,
+            .ordered = true,
+        };
+
+        terminal_scan(address_of input, address_of state, false);
+        positive event_count = state.events;
+        terminal_events = (terminal_event address_to)text_arena_take(
+            event_count * sizeof(terminal_event));
+        if (event_count && !terminal_events)
+                return text_done(1);
+
+        state = (terminal_state){
+            .mode = TERMINAL_COL,
+            .fine = (taking.flags & FILE_FLAG('f')) != 0,
+            .pass = (taking.flags & FILE_FLAG('p')) != 0,
+            .no_backspaces = (taking.flags & FILE_FLAG('b')) != 0,
+            .compress = (taking.flags & FILE_FLAG('x')) == 0,
+            .ordered = true,
+            .event = terminal_events,
+        };
+        terminal_scan(address_of input, address_of state, true);
+        terminal_col_output(address_of state);
+        return text_done(text_status);
+}
+
+static bool terminal_colcrt_no_under;
+
+static fn terminal_colcrt_operand(b32 which)
+{
+        string_address word = program_argument(which);
+
+        if (word[0] == '-' && !word[1])
+                terminal_colcrt_no_under = true;
+        else
+                text_file_add(which);
+}
+
+static const file_long colcrt_longs[] = {
+    {(string_address)"no-underlining", 'q'},
+    {(string_address)"half-lines", '2'},
+    {null, 0},
+};
+
+static b32 text_colcrt()
+{
+        file_taking taking = {
+            .program = (string_address)"colcrt",
+            .allowed = (string_address)"2",
+            .longs = colcrt_longs,
+            .operand = terminal_colcrt_operand,
+        };
+
+        text_begin("colcrt");
+        terminal_colcrt_no_under = false;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        bool no_under = terminal_colcrt_no_under ||
+                        (taking.flags & FILE_FLAG('q'));
+        bool half = (taking.flags & FILE_FLAG('2')) != 0;
+        b32 inputs = text_input_count();
+
+        for (b32 file = 0; file < inputs; file++)
+        {
+                text_arena_used = 0;
+                text_blob input = {null, 0};
+
+                if (!text_blob_read(text_file_name(file), address_of input))
+                        return text_done(1);
+
+                terminal_state state = {
+                    .mode = TERMINAL_COLCRT,
+                    .crt_no_underlining = no_under,
+                    .crt_half_lines = half,
+                    .crt_print_newline = true,
+                };
+                terminal_crt_clear();
+
+                if (half)
+                        text_put_character('\n');
+
+                terminal_scan(address_of input, address_of state, true);
+                terminal_crt_output(address_of state, true);
+        }
+
+        return text_done(text_status);
+}
+
+static b32 text_colrm()
+{
+        text_begin("colrm");
+        text_arena_used = 0;
+
+        positive count = (positive)program_argument_count();
+        positive first = 0;
+        positive last = 0;
+
+        if (count > 1 &&
+            !text_unsigned_option(program_argument(1), false,
+                                  address_of first))
+                return text_refuse(program_argument(1),
+                                   "invalid first argument", 1);
+
+        if (count > 2 &&
+            !text_unsigned_option(program_argument(2), false,
+                                  address_of last))
+                return text_refuse(program_argument(2),
+                                   "invalid second argument", 1);
+
+        text_blob input = {null, 0};
+        if (!text_blob_read(null, address_of input))
+                return text_done(1);
+
+        terminal_state state = {
+            .mode = TERMINAL_COLRM,
+            .remove_first = first,
+            .remove_last = last,
+        };
+        terminal_scan(address_of input, address_of state, true);
+        return text_done(text_status);
+}
+
+static string_address terminal_ul_option;
+
+static bool terminal_ul_option_seen(p8 letter, string_address value)
+{
+        if (letter == 't' || letter == 'T')
+                terminal_ul_option = value;
+
+        return true;
+}
+
+static bool terminal_ul_prefix(string_address value, string_address prefix)
+{
+        if (!value)
+                return false;
+
+        while (prefix[0])
+        {
+                if (value[0] != prefix[0])
+                        return false;
+
+                value++;
+                prefix++;
+        }
+
+        return true;
+}
+
+static p8 terminal_ul_type(string_address name, bool explicit)
+{
+        if (!name)
+        {
+                text_error(null, "trouble reading terminfo");
+                return TERMINAL_UL_DUMB;
+        }
+
+        if (!string_compare(name, (string_address)"dumb"))
+                return TERMINAL_UL_DUMB;
+        if (!string_compare(name, (string_address)"ansi"))
+                return TERMINAL_UL_ANSI;
+        if (!string_compare(name, (string_address)"linux"))
+                return TERMINAL_UL_LINUX;
+        if (!string_compare(name, (string_address)"vt100"))
+                return TERMINAL_UL_VT100;
+        if (terminal_ul_prefix(name, (string_address)"xterm") ||
+            terminal_ul_prefix(name, (string_address)"screen") ||
+            terminal_ul_prefix(name, (string_address)"tmux") ||
+            terminal_ul_prefix(name, (string_address)"rxvt"))
+                return TERMINAL_UL_XTERM;
+
+        if (explicit)
+        {
+                text_flush();
+                text_error_raw("ul: terminal `");
+                text_error_raw(name);
+                text_error_raw("' is not known, defaulting to `dumb'\n");
+        }
+
+        return TERMINAL_UL_DUMB;
+}
+
+static const file_long ul_longs[] = {
+    {(string_address)"indicated", 'i'},
+    {(string_address)"terminal", 't'},
+    {null, 0},
+};
+
+static b32 text_ul()
+{
+        file_taking taking = {
+            .program = (string_address)"ul",
+            .allowed = (string_address)"itT",
+            .valued = (string_address)"tT",
+            .longs = ul_longs,
+            .operand = text_file_add,
+            .seen = terminal_ul_option_seen,
+        };
+
+        text_begin("ul");
+        terminal_ul_option = null;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        string_address terminal = terminal_ul_option
+                                      ? terminal_ul_option
+                                      : file_environment(
+                                            (string_address)"TERM");
+        terminal_state state = {
+            .mode = TERMINAL_UL,
+            .ul_terminal = terminal_ul_type(terminal,
+                                            terminal_ul_option != null),
+            .ul_indicated =
+                (taking.flags & FILE_FLAG('i')) != 0,
+        };
+        b32 inputs = text_input_count();
+
+        for (b32 file = 0; file < inputs && !state.ul_failed; file++)
+        {
+                text_arena_used = 0;
+                text_blob input = {null, 0};
+
+                if (!text_blob_read(text_file_name(file), address_of input))
+                        return text_done(1);
+
+                terminal_scan(address_of input, address_of state, true);
+        }
+
+        return text_done((text_status || state.ul_failed) ? 1 : 0);
+}
+
+/*
+        Sorted prefix lookup.
+
+        A named regular file is mapped read-only and narrowed to one line by
+        byte offsets before any output is touched. A dictionary with millions
+        of entries therefore costs logarithmically many page faults, not a
+        read of every entry before the one requested. Pipes and pseudo files
+        stay on text_line_next, so there is still only one refill path and
+        refill-crossing records use its existing spill.
+
+        Exhausting the key is equality: look asks for a prefix, not a complete
+        record. The unfiltered paths use the shared wide byte comparators.
+        Dictionary order alone needs a byte iterator to omit punctuation
+        without manufacturing a transformed copy of every line.
+*/
+static bool look_dictionary;
+static bool look_fold_case;
+static p8 address_to look_key;
+static positive look_key_length;
+
+static inline INLINE p8 look_case(p8 character)
+{
+        return look_fold_case && character >= 'A' && character <= 'Z'
+                   ? (p8)(character + ('a' - 'A'))
+                   : character;
+}
+
+static bipolar look_compare(p8 address_to line, positive length)
+{
+        if (!look_dictionary)
+        {
+                positive shared = min(length, look_key_length);
+                bipolar order = look_fold_case
+                                      ? memory_compare_ascii_case(
+                                            line, look_key, shared)
+                                      : memory_compare(line, look_key, shared);
+
+                if (order)
+                        return order < 0 ? -1 : 1;
+
+                return length < look_key_length ? -1 : 0;
+        }
+
+        positive at = 0;
+
+        for (positive key_at = 0; key_at < look_key_length; key_at++)
+        {
+                p8 character;
+
+                do
+                {
+                        if (at >= length)
+                                return -1;
+
+                        character = line[at++];
+                } while (!byte_is_alnum(character) && character != ' ' &&
+                         character != '\t');
+
+                character = look_case(character);
+
+                if (character != look_key[key_at])
+                        return character < look_key[key_at] ? -1 : 1;
+        }
+
+        return 0;
+}
+
+static positive look_after_line(p8 address_to bytes, positive length,
+                                positive at)
+{
+        p8 address_to newline =
+            memory_first_of(bytes + at, '\n', length - at);
+
+        return newline ? (positive)(newline - bytes) + 1 : length;
+}
+
+/* The BSD algorithm intentionally returns a line at or before the lower
+   bound. Starting there makes the final linear correction robust when a
+   very long line straddles every midpoint. */
+static positive look_lower_line(p8 address_to bytes, positive length)
+{
+        positive front = 0;
+        positive back = length;
+        positive probe = look_after_line(bytes, length,
+                                         front + (back - front) / 2);
+
+        while (probe < back && back > front)
+        {
+                positive finish = look_after_line(bytes, length, probe);
+                positive record = finish - probe -
+                                  (finish > probe && bytes[finish - 1] == '\n');
+
+                if (look_compare(bytes + probe, record) < 0)
+                        front = probe;
+                else
+                        back = probe;
+
+                probe = look_after_line(bytes, length,
+                                        front + (back - front) / 2);
+        }
+
+        return front;
+}
+
+static bool look_mapped(p8 address_to bytes, positive length)
+{
+        positive at = look_lower_line(bytes, length);
+
+        while (at < length)
+        {
+                positive after = look_after_line(bytes, length, at);
+                positive record = after - at -
+                                  (after > at && bytes[after - 1] == '\n');
+                bipolar order = look_compare(bytes + at, record);
+
+                if (order < 0)
+                {
+                        at = after;
+                        continue;
+                }
+                if (order > 0)
+                        return false;
+
+                positive first = at;
+
+                do
+                {
+                        at = after;
+
+                        if (at >= length)
+                                break;
+
+                        after = look_after_line(bytes, length, at);
+                        record = after - at -
+                                 (after > at && bytes[after - 1] == '\n');
+                } while (!look_compare(bytes + at, record));
+
+                text_put(bytes + first, at - first);
+                return true;
+        }
+
+        return false;
+}
+
+static bool look_streamed()
+{
+        bool found = false;
+
+        while (text_line_next())
+        {
+                bipolar order = look_compare(text_line, text_line_length);
+
+                if (order < 0)
+                        continue;
+                if (order > 0)
+                        break;
+
+                found = true;
+                text_put(text_line, text_line_length);
+
+                if (text_line_ended)
+                        text_put_character('\n');
+        }
+
+        return found;
+}
+
+static const file_long look_longs[] = {
+    {(string_address)"alternative", 'a'},
+    {(string_address)"binary", 'b'},
+    {(string_address)"alphanum", 'd'},
+    {(string_address)"ignore-case", 'f'},
+    {(string_address)"terminate", 't'},
+    {null, 0},
+};
+
+static b32 text_look()
+{
+        file_taking taking = {
+            .program = (string_address)"look",
+            .allowed = (string_address)"abdft",
+            .valued = (string_address)"t",
+            .longs = look_longs,
+        };
+
+        text_begin("look");
+        text_arena_used = 0;
+        text_delimiter = '\n';
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive operands = (positive)program_argument_count() - taking.first;
+
+        if (operands < 1 || operands > 2)
+                return text_refuse(null, "bad usage", 1);
+
+        bool supplied = operands == 2;
+        string_address key = program_argument((b32)taking.first);
+        positive key_length = string_length(key);
+        string_address terminate = file_option_value(address_of taking, 't');
+
+        if ((taking.flags & FILE_FLAG('t')) && terminate[0])
+        {
+                p8 address_to stop = memory_first_of(
+                    key, terminate[0], key_length);
+
+                if (stop)
+                        key_length = (positive)(stop - key) + 1;
+        }
+
+        /* As in util-linux, any implicit dictionary enables -d and -f;
+           explicitly naming even the standard dictionary does not. */
+        look_dictionary = !supplied ||
+                          (taking.flags & FILE_FLAG('d')) != 0;
+        look_fold_case = !supplied ||
+                         (taking.flags & FILE_FLAG('f')) != 0;
+        look_key = (p8 address_to)text_arena_take(key_length + 1);
+
+        if (!look_key)
+                return text_done(1);
+
+        look_key_length = 0;
+
+        for (positive i = 0; i < key_length; i++)
+        {
+                p8 character = key[i];
+
+                if (look_dictionary && !byte_is_alnum(character) &&
+                    character != ' ' && character != '\t')
+                        continue;
+
+                look_key[look_key_length++] = look_case(character);
+        }
+
+        look_key[look_key_length] = end;
+
+        string_address path = null;
+        bool already_open = false;
+
+        if (supplied)
+                path = program_argument((b32)taking.first + 1);
+        else
+        {
+                if (!(taking.flags & FILE_FLAG('a')))
+                {
+                        string_address wordlist =
+                            file_environment((string_address)"WORDLIST");
+
+                        if (wordlist && wordlist[0])
+                        {
+                                text_quiet_open = true;
+                                already_open = text_reader_open(
+                                    address_of text_input, wordlist);
+                                text_quiet_open = false;
+
+                                if (already_open)
+                                        path = wordlist;
+                        }
+                }
+
+                if (!path)
+                        path = (taking.flags & FILE_FLAG('a'))
+                                   ? (string_address)"/usr/share/dict/web2"
+                                   : (string_address)"/usr/share/dict/words";
+        }
+
+        if (!already_open && !text_open(path))
+                return text_done(1);
+
+        bool found = false;
+        positive size = 0;
+
+        if (text_input.opened && text_regular_size(text_input.handle,
+                                                  address_of size))
+        {
+                if (size)
+                {
+                        bipolar mapped = system_call_6(
+                            syscall(mmap), 0, size, FILE_PROTECT_READ,
+                            FILE_MAP_PRIVATE, text_input.handle, 0);
+
+                        if ((positive)mapped < (positive)-4095)
+                        {
+                                found = look_mapped((p8 address_to)mapped,
+                                                    size);
+                                memory_free((address_any)mapped, size);
+                                text_close();
+                                return text_done(found ? 0 : 1);
+                        }
+                }
+                else
+                {
+                        text_close();
+                        return text_done(1);
+                }
+        }
+
+        found = look_streamed();
+        text_close();
+        return text_done(text_status ? 1 : found ? 0 : 1);
+}
+
+/* line never needs to retain a record. Emitting each refill span directly
+   removes both the 1 MiB line ceiling and a copy while still sharing the
+   ordinary text_fill/text_put path. No byte after the first newline is
+   consumed. */
+static b32 text_line_command()
+{
+        file_taking taking = {
+            .program = (string_address)"line",
+            .allowed = (string_address)"",
+        };
+
+        text_begin("line");
+        text_delimiter = '\n';
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (taking.first != (positive)program_argument_count())
+                return text_refuse(program_argument((b32)taking.first),
+                                   "bad usage", 1);
+
+        if (!text_open(null))
+                return text_done(1);
+
+        /* On a seekable input, a wide refill is put back before returning.
+           A pipe cannot be put back, so match util-linux's unbuffered reader
+           there and request exactly one byte. */
+        bool seekable = system_seek(text_input.handle, 0, FILE_SEEK_CUR) >= 0;
+
+        while (text_fill_amount(seekable ? TEXT_READ_MAX : 1))
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+                p8 address_to newline = memory_first_of(at, '\n', left);
+                positive take = newline ? (positive)(newline - at) + 1 : left;
+
+                text_put(at, take);
+                text_input.position += take;
+
+                if (newline)
+                {
+                        positive unread = text_input.filled -
+                                          text_input.position;
+
+                        if (seekable && unread)
+                                system_seek(text_input.handle,
+                                            (positive)(-(bipolar)unread),
+                                            FILE_SEEK_CUR);
+
+                        text_close();
+                        return text_done(0);
+                }
+        }
+
+        text_put_character('\n');
+        text_close();
+        return text_done(1);
 }
 
 static b32 text_fold()
