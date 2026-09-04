@@ -131,11 +131,13 @@ static b32 screen_term()
         */
         timespec wait = {0, 20000000};
         b32 master = -1;
+        b32 slave = -1;
 
         for (int tries = 0; tries < 200 && master < 0; tries++)
         {
-                master = system_open_at(AT_FDCWD, "/dev/ptmx",
-                                       FILE_READ_WRITE | O_NONBLOCK);
+                if (process_pty_open(address_of master, address_of slave,
+                                     true) < 0)
+                        master = -1;
 
                 if (master < 0)
                         system_call_2(syscall(nanosleep), (positive)address_of wait, 0);
@@ -144,26 +146,7 @@ static b32 screen_term()
         if (master < 0)
         {
                 log_direct(str("term: no /dev/ptmx\n"));
-                return 1;
-        }
-
-        int unlock = 0;
-        unsigned int number = 0;
-
-        system_control(master, TIOCSPTLCK, address_of unlock);
-        system_control(master, TIOCGPTN, address_of number);
-
-        p8 name[32] = "/dev/pts/";
-        positive at = 9;
-
-        at += positive_into_string(name + at, number);
-
-        b32 slave = system_open_at(AT_FDCWD, name,
-                                  FILE_READ_WRITE);
-
-        if (slave < 0)
-        {
-                log_direct(str("term: no slave\n"));
+                window_close(window);
                 return 1;
         }
 
@@ -174,6 +157,16 @@ static b32 screen_term()
         system_control(master, TIOCSWINSZ, address_of size);
 
         bipolar child = system_fork();
+
+        if (child < 0)
+        {
+                system_close(slave);
+                system_close(master);
+                window_close(window);
+                string_format(file_fail, "term: cannot fork: %s\n",
+                              file_reason(child));
+                return 1;
+        }
 
         if (child == 0)
         {

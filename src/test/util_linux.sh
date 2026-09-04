@@ -21,10 +21,10 @@ trap 'rm -rf "$work"' EXIT INT TERM
 . "$root/src/test/tally.sh"
 
 mkdir "$work/bin"
-for name in addpart blockdev delpart resizepart setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for name in addpart bits blockdev delpart resizepart isosize wipefs coresched rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
         getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
-        last logger look line nologin pipesz ul utmpdump wall write; do
+        last logger look line nologin pipesz script scriptreplay ul utmpdump wall write; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -134,16 +134,52 @@ subject()
 section util-linux
 
 group reference
-for utility in addpart blockdev delpart resizepart setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for utility in addpart bits blockdev delpart resizepart isosize wipefs coresched rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
         getino fincore ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
-        last logger look pipesz ul utmpdump wall write; do
+        last logger look pipesz script scriptreplay ul utmpdump wall write; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
         *) lost "$utility" "need util-linux 2.42.2 reference, got [$version]" ;;
         esac
 done
+
+group bits
+compare 'list to plain mask' bits \
+        '"$TOOL" -m 4,5-8 16,30'
+compare 'mask to compressed list' bits \
+        '"$TOOL" -l 0xeec2'
+compare 'nibble-grouped binary' bits \
+        '"$TOOL" -b 4,5-8 16,30'
+compare '32-bit grouped mask' bits \
+        '"$TOOL" -g 2,22,74,79'
+compare 'grouped input mask' bits \
+        '"$TOOL" -l ,00300000,03000000,30000003'
+compare 'bitwise group operations' bits \
+        '"$TOOL" -l 0xff "~1-3" "^8-10" "&0-9"'
+compare 'stepped range compression' bits \
+        '"$TOOL" -l 0-30:3 40,42,44'
+compare 'width truncation' bits \
+        '"$TOOL" -w 64 -l 2,22,74,79'
+compare 'stdin groups combine' bits \
+        'printf "0-30:3\n2\n~1\n0-12:3\n" | "$TOOL" -l'
+compare 'last output mode wins' bits \
+        '"$TOOL" -m -l 0xf; "$TOOL" -l -m 0xf; "$TOOL" -g -b 32'
+compare 'empty masks in every output mode' bits \
+        'for mode in -m -g -b -l; do "$TOOL" "$mode" 0x0 || exit; done'
+compare 'empty stdin list emits zero bytes' bits \
+        'printf "" | "$TOOL" -l'
+compare 'generated masks lists widths and modes' bits \
+        'for mode in -m -g -b -l; do for width in 1 2 31 32 33 64 65 127 128 129 8192; do for input in 0 1 2 31 32 63 64 74 127 128 1024 1,2 1,2,3 0-10:2 0-10:3 2,22,74,79 0xeec2 0x00000000ffffffff ,00300000,03000000,30000003; do "$TOOL" "$mode" -w "$width" "$input" || exit; done; done; done'
+compare 'maximum bounded width' bits \
+        '"$TOOL" -w 131072 -l 0,65535,131071,131072'
+subject 'zero and oversized widths reject' bits \
+        '! "$TOOL" -w 0 1 >/dev/null 2>&1 && ! "$TOOL" -w 131073 1 >/dev/null 2>&1 && ! "$TOOL" -w 18446744073709551616 1 >/dev/null 2>&1'
+# util-linux 2.42.2 silently turns several malformed lists into an empty or
+# partial mask.  Moonwater deliberately rejects those inputs instead.
+subject 'overflow and malformed groups reject' bits \
+        '! "$TOOL" -l 18446744073709551616 >/dev/null 2>&1 && ! "$TOOL" -l none >/dev/null 2>&1 && ! "$TOOL" -l abc >/dev/null 2>&1 && ! "$TOOL" -l 3-1 >/dev/null 2>&1 && ! "$TOOL" -l 1-3:0 >/dev/null 2>&1 && ! "$TOOL" -l 1,,2 >/dev/null 2>&1 && ! "$TOOL" -m 0x_1 >/dev/null 2>&1 && ! "$TOOL" -m ,1,,2 >/dev/null 2>&1'
 
 group block-ioctls
 blockdev_device=$(lsblk -dn -o PATH 2>/dev/null | sed -n '1p')
@@ -180,6 +216,110 @@ if sudo -n losetup --find >/dev/null 2>&1; then
                 'image="$1/blockdev-loop"; truncate -s 8M "$image" || exit; loop=$(sudo -n losetup --find --show "$image") || exit; old_ra=$(sudo -n blockdev --getra "$loop") || exit; old_fra=$(sudo -n blockdev --getfra "$loop") || exit; cleanup() { sudo -n blockdev --setrw "$loop" 2>/dev/null || :; sudo -n blockdev --setra "$old_ra" "$loop" 2>/dev/null || :; sudo -n blockdev --setfra "$old_fra" "$loop" 2>/dev/null || :; sudo -n losetup -d "$loop" 2>/dev/null || :; rm -f "$image"; }; trap cleanup EXIT INT TERM; sudo -n "$TOOL" --setro "$loop" && [ "$(sudo -n "$TOOL" --getro "$loop")" = 1 ] || exit; sudo -n "$TOOL" --setrw "$loop" && [ "$(sudo -n "$TOOL" --getro "$loop")" = 0 ] || exit; next=$((old_ra + 8)); sudo -n "$TOOL" --setra "$next" "$loop" && [ "$(sudo -n "$TOOL" --getra "$loop")" = "$next" ] || exit; next_fra=$((old_fra + 8)); sudo -n "$TOOL" --setfra "$next_fra" "$loop" && [ "$(sudo -n "$TOOL" --getfra "$loop")" = "$next_fra" ] || exit; sudo -n "$TOOL" --setbsz 4096 --flushbufs "$loop"' \
                 sh "$work"
 fi
+
+group storage-signatures
+iso_image="$work/volume.iso"
+python3 -c 'import struct,sys
+b=bytearray(80*2048); o=16*2048
+b[o]=1; b[o+1:o+6]=b"CD001"; b[o+6]=1
+b[o+40:o+72]=b"MOONWATER"+b" "*23
+b[o+80:o+84]=struct.pack("<I",64); b[o+84:o+88]=struct.pack(">I",64)
+b[o+128:o+130]=struct.pack("<H",2048); b[o+130:o+132]=struct.pack(">H",2048)
+open(sys.argv[1],"wb").write(b)' "$iso_image"
+compare 'ISO9660 byte size' isosize '"$TOOL" "$1"' sh "$iso_image"
+compare 'ISO9660 sector geometry' isosize '"$TOOL" -x "$1"' sh "$iso_image"
+compare 'ISO9660 divisor' isosize '"$TOOL" -d1024 "$1"' sh "$iso_image"
+compare 'ISO9660 multiple operands are named' isosize \
+        '"$TOOL" "$1" "$1"' sh "$iso_image"
+subject 'ISO9660 divisor overflow is rejected' isosize \
+        '! "$TOOL" -d 18446744073709551616 "$1"' sh "$iso_image"
+
+if command -v mkfs.ext4 >/dev/null 2>&1; then
+        ext_image="$work/wipefs-ext.img"
+        truncate -s 8M "$ext_image"
+        mkfs.ext4 -q -F -L 'hello world' "$ext_image"
+        compare 'filesystem signature table' wipefs \
+                '"$TOOL" "$1"' sh "$ext_image"
+        compare 'filesystem signature no headings' wipefs \
+                '"$TOOL" -i "$1"' sh "$ext_image"
+        compare 'filesystem signature parsable' wipefs \
+                '"$TOOL" -p "$1"' sh "$ext_image"
+        compare 'filesystem signature JSON' wipefs \
+                '"$TOOL" -J "$1"' sh "$ext_image"
+        compare 'filesystem signature selected columns' wipefs \
+                '"$TOOL" -O DEVICE,OFFSET,TYPE,UUID,LABEL,LENGTH,USAGE "$1"' \
+                sh "$ext_image"
+        compare 'filesystem signature type include' wipefs \
+                '"$TOOL" -t ext4 "$1"' sh "$ext_image"
+        compare 'filesystem signature type exclude' wipefs \
+                '"$TOOL" -t noext4 "$1"' sh "$ext_image"
+        compare 'filesystem signature no-act all' wipefs \
+                '"$TOOL" -n -a "$1"' sh "$ext_image"
+        compare 'filesystem signature no-act offset' wipefs \
+                '"$TOOL" -n -o 0x438 "$1"' sh "$ext_image"
+        subject 'no-act leaves filesystem magic unchanged' wipefs \
+                'before=$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null); "$TOOL" -n -a "$1" >/dev/null; after=$(dd if="$1" bs=1 skip=1080 count=2 2>/dev/null); [ "$before" = "$after" ]' \
+                sh "$ext_image"
+        subject 'actual signature erasure is rejected' wipefs \
+                '! "$TOOL" -a "$1" >/dev/null 2>&1' sh "$ext_image"
+
+        multi_image="$work/wipefs-multi.img"
+        cp "$ext_image" "$multi_image"
+        printf '\001\000\000\000' | dd of="$multi_image" bs=1 seek=1024 conv=notrunc status=none
+        printf SWAPSPACE2 | dd of="$multi_image" bs=1 seek=4086 conv=notrunc status=none
+        compare 'multiple signatures preserve probe order' wipefs \
+                '"$TOOL" "$1"' sh "$multi_image"
+fi
+
+if command -v mkswap >/dev/null 2>&1; then
+        swap_image="$work/wipefs-swap.img"
+        truncate -s 2M "$swap_image"
+        mkswap -q -L swaps "$swap_image"
+        compare 'swap signature table' wipefs \
+                '"$TOOL" "$1"' sh "$swap_image"
+        compare 'swap signature complete columns' wipefs \
+                '"$TOOL" -O DEVICE,OFFSET,TYPE,UUID,LABEL,LENGTH,USAGE "$1"' \
+                sh "$swap_image"
+fi
+truncate -s 64K "$work/no-signature"
+compare 'empty signature JSON' wipefs \
+        '"$TOOL" -J "$1"' sh "$work/no-signature"
+
+group coresched
+compare 'fixed process cookie query' coresched \
+        '"$TOOL" get -s "$1"' sh "$$"
+compare 'zero source rejected' coresched \
+        '"$TOOL" get -s 0'
+compare 'get rejects operands' coresched \
+        '"$TOOL" get unexpected'
+compare 'new cookie command handoff' coresched \
+        '"$TOOL" new -- true'
+subject 'owned process create and copy cycle' coresched \
+        'sleep 30 & one=$!; sleep 30 & two=$!; cleanup() { kill "$one" "$two" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; before=$("$TOOL" get -s "$one" | awk '\''{print $NF}'\'') || exit; "$TOOL" new -t pid -d "$one" || exit; made=$("$TOOL" get -s "$one" | awk '\''{print $NF}'\'') || exit; [ "$made" != 0x0 ] && [ "$made" != "$before" ] || exit 1; "$TOOL" copy -s "$one" -t pid -d "$two" || exit; copied=$("$TOOL" get -s "$two" | awk '\''{print $NF}'\'') || exit; [ "$copied" = "$made" ]'
+subject 'command exit status survives handoff' coresched \
+        '"$TOOL" new -- sh -c '\''exit 7'\''; [ "$?" -eq 7 ]'
+subject 'invalid destination type rejected' coresched \
+        '"$TOOL" new -t nope -d "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$$"
+
+group rename
+compare 'first all last and empty replacements' rename \
+        'rm -rf "$1"; mkdir -p "$1"; cd "$1" || exit; touch first-foofoo all-foofoo last-foofoo empty-abc; "$TOOL" foo X first-foofoo || exit; "$TOOL" -a foo X all-foofoo || exit; "$TOOL" -l foo X last-foofoo || exit; "$TOOL" -a "" X empty-abc || exit; find . -mindepth 1 -maxdepth 1 -printf "%P\n" | sort' \
+        sh "$work/rename-modes"
+compare 'no overwrite preserves destination' rename \
+        'rm -rf "$1"; mkdir -p "$1"; cd "$1" || exit; printf source > abc; printf destination > Xbc; "$TOOL" -o a X abc; answer=$?; printf "status=%s source=%s destination=%s\n" "$answer" "$(cat abc)" "$(cat Xbc)"' \
+        sh "$work/rename-no-overwrite"
+compare 'dry run verbose output and effect' rename \
+        'rm -rf "$1"; mkdir -p "$1"; cd "$1" || exit; touch foo; "$TOOL" -nv f X foo; answer=$?; [ -e foo ] || exit 1; exit "$answer"' \
+        sh "$work/rename-dry"
+compare 'missing substring status' rename \
+        'rm -rf "$1"; mkdir -p "$1"; cd "$1" || exit; touch abc; "$TOOL" z X abc' \
+        sh "$work/rename-missing"
+compare 'interactive overwrite accepted' rename \
+        'rm -rf "$1"; mkdir -p "$1"; cd "$1" || exit; printf source > abc; printf old > Xbc; printf y | "$TOOL" -i a X abc 2>/dev/null; answer=$?; printf "%s %s\n" "$answer" "$(cat Xbc)"' \
+        sh "$work/rename-interactive"
+subject 'symlink-target mode rejected explicitly' rename \
+        '"$TOOL" -s old new link >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
 group cal
 compare 'single Gregorian leap month' cal \
@@ -1546,6 +1686,65 @@ subject 'utmp follow policy rejected explicitly' utmpdump \
         '"$TOOL" -f "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
         sh "$work/login-dump"
 
+group terminal-recording
+script_work="$work/script"
+mkdir -p "$script_work"
+compare 'quiet command output' script \
+        'rm -f "$1/out"; LC_ALL=C TZ=UTC0 "$TOOL" -q -e -O "$1/out" -c "printf \"hello\\n\"" </dev/null' \
+        sh "$script_work"
+compare 'piped input and terminal echo' script \
+        'rm -f "$1/out"; printf "input\n" | LC_ALL=C TZ=UTC0 "$TOOL" -q -e -O "$1/out" -c "read x; printf \"OUT:%s\\n\" \"\$x\""' \
+        sh "$script_work"
+compare 'input echo disabled' script \
+        'rm -f "$1/out"; printf "input\n" | LC_ALL=C TZ=UTC0 "$TOOL" -q -e -E never -O "$1/out" -c "read x; printf \"OUT:%s\\n\" \"\$x\""' \
+        sh "$script_work"
+compare 'child status returned' script \
+        'rm -f "$1/out"; LC_ALL=C TZ=UTC0 "$TOOL" -q -e -O "$1/out" -c "printf x; exit 7" </dev/null' \
+        sh "$script_work"
+compare 'direct command vector' script \
+        'rm -f "$1/out"; LC_ALL=C TZ=UTC0 "$TOOL" -q -e -O "$1/out" -- /usr/bin/printf direct </dev/null' \
+        sh "$script_work"
+compare 'ordinary start and done notices' script \
+        'rm -f "$1/out"; LC_ALL=C TZ=UTC0 "$TOOL" -e -O "$1/out" -c "printf x" </dev/null' \
+        sh "$script_work"
+subject 'log aliases cannot interleave streams' script \
+        'rm -f "$1/alias"; ! "$TOOL" -q -O "$1/alias" -T "$1/./alias" -c true </dev/null >/dev/null 2>&1' \
+        sh "$script_work"
+subject 'log symlink is rejected without force' script \
+        'printf sentinel > "$1/target"; rm -f "$1/link"; ln -s target "$1/link"; ! "$TOOL" -q -O "$1/link" -c true </dev/null >/dev/null 2>&1 && [ "$(cat "$1/target")" = sentinel ]' \
+        sh "$script_work"
+
+printf 'Script started on fixture\nabcDEF\nScript done on fixture\n' > "$script_work/classic.log"
+printf '0.000000 3\n0.000000 3\n' > "$script_work/classic.time"
+compare 'classic zero-delay playback' scriptreplay \
+        'LC_ALL=C "$TOOL" -m0 "$1/classic.time" "$1/classic.log"' \
+        sh "$script_work"
+
+printf 'Script started on fixture\nOUT\r\n\nScript done on fixture\n' > "$script_work/advanced.out"
+printf 'Script started on fixture\nIN\n\nScript done on fixture\n' > "$script_work/advanced.in"
+printf 'H 0.000000 START_TIME fixture\nI 0.000000 3\nO 0.000000 5\nH 0.000000 EXIT_CODE 0\n' > "$script_work/advanced.time"
+compare 'advanced output stream playback' scriptreplay \
+        'LC_ALL=C "$TOOL" -m0 -t "$1/advanced.time" -I "$1/advanced.in" -O "$1/advanced.out" -x out' \
+        sh "$script_work"
+compare 'advanced input stream playback' scriptreplay \
+        'LC_ALL=C "$TOOL" -m0 -t "$1/advanced.time" -I "$1/advanced.in" -O "$1/advanced.out" -x in' \
+        sh "$script_work"
+compare 'always CR conversion' scriptreplay \
+        'LC_ALL=C "$TOOL" -m0 -c always -t "$1/advanced.time" -I "$1/advanced.in" -O "$1/advanced.out" -x out' \
+        sh "$script_work"
+subject 'script output-limit policy rejected explicitly' script \
+        '"$TOOL" -q -o 1K -c true "$1/out" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$script_work"
+subject 'scriptreplay summary policy rejected explicitly' scriptreplay \
+        '"$TOOL" --summary "$1/classic.time" "$1/classic.log" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$script_work"
+subject 'malformed timing fails without hanging' scriptreplay \
+        'printf "999999999999999999999 1\n" > "$1/bad.time"; timeout 2 "$TOOL" "$1/bad.time" "$1/classic.log" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$script_work"
+subject 'divisor scaling overflow fails without waiting' scriptreplay \
+        'printf "9999999999.5 0\n" > "$1/overflow.time"; timeout 2 "$TOOL" -d 10000000000 "$1/overflow.time" "$1/classic.log" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$script_work"
+
 group write-wall
 compare 'write requires a login' write '"$TOOL"'
 compare 'write rejects extra operands' write '"$TOOL" user pts/0 extra'
@@ -2060,7 +2259,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='addpart blkid blockdev cal choom chrt col colcrt colrm column copyfilerange delpart dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill last line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter pipesz prlimit renice resizepart rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare utmpdump uuidgen uuidparse waitpid wall whereis write'
+supported='addpart bits blkid blockdev cal choom chrt col colcrt colrm column copyfilerange coresched delpart dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs isosize kill last line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter pipesz prlimit rename renice resizepart rev script scriptreplay setarch setpgid setpriv setsid taskset uclampset ul umount unshare utmpdump uuidgen uuidparse waitpid wall whereis wipefs write'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

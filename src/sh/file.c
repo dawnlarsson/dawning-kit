@@ -19531,6 +19531,266 @@ static b32 file_kill()
         return answer;
 }
 
+// rename ----------------------------------------------------------
+
+static const file_long rename_longs[] = {
+    {(string_address)"verbose", 'v'},
+    {(string_address)"symlink", 's'},
+    {(string_address)"no-act", 'n'},
+    {(string_address)"all", 'a'},
+    {(string_address)"last", 'l'},
+    {(string_address)"no-overwrite", 'o'},
+    {(string_address)"interactive", 'i'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+/* Return zero for no occurrence, one for a complete new name and two when
+   that name cannot fit in the kernel pathname boundary. */
+static p8 rename_name(string_address source, string_address before,
+                      string_address after, bool every, bool last,
+                      p8 address_to into)
+{
+        string_address slash = string_last_of(source, '/');
+        positive prefix = slash ? (positive)(slash - source) + 1 : 0;
+        string_address name = source + prefix;
+        positive source_length = string_length(name);
+        positive before_length = string_length(before);
+        positive after_length = string_length(after);
+        positive matches = 0;
+        positive position = 0;
+
+        if (!before_length)
+        {
+                matches = every ? source_length + 1 : 1;
+                position = last ? source_length : 0;
+        }
+        else if (every)
+        {
+                positive at = 0;
+                while (at <= source_length - min(source_length, before_length))
+                {
+                        p8 address_to found = (p8 address_to)memory_search(
+                            (address_any)(name + at), source_length - at,
+                            (address_any)before, before_length);
+                        if (!found)
+                                break;
+                        matches++;
+                        at = (positive)(found - name) + before_length;
+                }
+        }
+        else
+        {
+                p8 address_to found = (p8 address_to)memory_search(
+                    (address_any)name, source_length, (address_any)before,
+                    before_length);
+                while (found)
+                {
+                        matches = 1;
+                        position = (positive)(found - name);
+                        if (!last || position + 1 >= source_length)
+                                break;
+                        p8 address_to later = (p8 address_to)memory_search(
+                            (address_any)(name + position + 1),
+                            source_length - position - 1,
+                            (address_any)before, before_length);
+                        if (!later)
+                                break;
+                        found = later;
+                }
+        }
+
+        if (!matches)
+                return 0;
+        if (matches > positive_max / max(after_length, (positive)1))
+                return 2;
+        positive removed = matches * before_length;
+        positive added = matches * after_length;
+        if (removed > source_length || added > positive_max - source_length + removed)
+                return 2;
+        positive length = prefix + source_length - removed + added;
+        if (length >= FILE_PATH_MAX)
+                return 2;
+
+        positive made = prefix;
+        memory_copy_apart(into, source, prefix);
+        if (!every)
+        {
+                memory_copy_apart(into + made, name, position);
+                made += position;
+                memory_copy_apart(into + made, after, after_length);
+                made += after_length;
+                positive tail = position + before_length;
+                memory_copy_apart(into + made, name + tail,
+                                  source_length - tail);
+                made += source_length - tail;
+        }
+        else if (!before_length)
+        {
+                for (positive at = 0; at <= source_length; at++)
+                {
+                        memory_copy_apart(into + made, after, after_length);
+                        made += after_length;
+                        if (at < source_length)
+                                into[made++] = name[at];
+                }
+        }
+        else
+        {
+                positive at = 0;
+                while (at < source_length)
+                {
+                        p8 address_to found = (p8 address_to)memory_search(
+                            (address_any)(name + at), source_length - at,
+                            (address_any)before, before_length);
+                        if (!found)
+                                break;
+                        positive place = (positive)(found - name);
+                        memory_copy_apart(into + made, name + at, place - at);
+                        made += place - at;
+                        memory_copy_apart(into + made, after, after_length);
+                        made += after_length;
+                        at = place + before_length;
+                }
+                memory_copy_apart(into + made, name + at,
+                                  source_length - at);
+                made += source_length - at;
+        }
+        into[made] = end;
+        return string_equals(source, into) ? 0 : 1;
+}
+
+static bool rename_ask(string_address destination)
+{
+        string_format(log, "rename: overwrite `%s'? ", destination);
+        log_flush();
+
+        p8 answer;
+        bipolar got = system_read_once(0, address_of answer, 1);
+        bool yes = got == 1 && (answer == 'y' || answer == 'Y');
+
+        while (got == 1 && answer != '\n')
+                got = system_read_once(0, address_of answer, 1);
+        return yes;
+}
+
+static b32 file_rename()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"rename",
+            .allowed = (string_address)"vsnaloihV",
+            .valued = (string_address)"",
+            .longs = rename_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log,
+                              "Usage: rename [options] SUBSTRING REPLACEMENT FILE...\n"
+                              "  -n no-act  -v verbose  -a all  -l last\n"
+                              "  -o no-overwrite  -i interactive\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "rename from dawning-kit\n");
+                return 0;
+        }
+        if (file_operand_count < 3)
+        {
+                file_fail("rename: not enough arguments\n", 0);
+                return 1;
+        }
+        if ((taking.flags & FILE_FLAG('a')) &&
+            (taking.flags & FILE_FLAG('l')))
+        {
+                file_fail("rename: options --all and --last cannot be combined\n",
+                          0);
+                return 1;
+        }
+        if (taking.flags & FILE_FLAG('s'))
+        {
+                file_fail("rename: symlink-target rewriting is not supported\n",
+                          0);
+                return 1;
+        }
+
+        string_address before = file_operand_at(0);
+        string_address after = file_operand_at(1);
+        bool no_act = (taking.flags & FILE_FLAG('n')) != 0;
+        bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        bool no_overwrite = (taking.flags & FILE_FLAG('o')) != 0;
+        bool interactive = !no_act && !no_overwrite &&
+                           (taking.flags & FILE_FLAG('i')) != 0;
+        positive renamed = 0;
+        bool failed = false;
+
+        for (positive at = 2; at < file_operand_count; at++)
+        {
+                string_address source = file_operand_at(at);
+                p8 destination[FILE_PATH_MAX];
+                p8 made = rename_name(
+                    source, before, after,
+                    (taking.flags & FILE_FLAG('a')) != 0,
+                    (taking.flags & FILE_FLAG('l')) != 0, destination);
+
+                if (!made)
+                        continue;
+                if (made == 2)
+                {
+                        string_format(file_fail,
+                                      "rename: new name for '%s' is too long\n",
+                                      source);
+                        failed = true;
+                        continue;
+                }
+
+                if (no_overwrite)
+                {
+                        file_facts facts;
+                        if (file_look_at(destination, address_of facts))
+                                continue;
+                }
+                else if (interactive)
+                {
+                        file_facts facts;
+                        if (file_look_at(destination, address_of facts) &&
+                            !rename_ask(destination))
+                                continue;
+                }
+
+                if (!no_act)
+                {
+                        bipolar answer = system_rename_at(
+                            AT_FDCWD, source, AT_FDCWD, destination,
+                            no_overwrite ? HARDLINK_RENAME_NOREPLACE : 0);
+                        if (answer < 0)
+                        {
+                                if (no_overwrite && answer == -ERROR_EXISTS)
+                                        continue;
+                                string_format(file_fail,
+                                              "rename: %s: rename to %s failed: %s\n",
+                                              source, destination,
+                                              file_reason(answer));
+                                failed = true;
+                                continue;
+                        }
+                }
+                if (verbose)
+                        string_format(log, "`%s' -> `%s'\n", source,
+                                      destination);
+                renamed++;
+        }
+
+        log_flush();
+        return failed ? 1 : (renamed ? 0 : 4);
+}
+
 // cal -------------------------------------------------------------
 /*
         Calendar arithmetic stays beside date's one civil-time engine.  The

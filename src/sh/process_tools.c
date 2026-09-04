@@ -985,6 +985,241 @@ static b32 process_pipesz()
         return 0;
 }
 
+// coresched -------------------------------------------------------
+/* Core scheduling is a kernel cookie, not a userspace scheduler.  The whole
+   implementation is one prctl command path plus the process handoff already
+   shared by the wrappers above. */
+#define PROCESS_SCHED_CORE 62
+#define PROCESS_SCHED_CORE_GET 0
+#define PROCESS_SCHED_CORE_CREATE 1
+#define PROCESS_SCHED_CORE_SHARE_TO 2
+#define PROCESS_SCHED_CORE_SHARE_FROM 3
+#define PROCESS_SCHED_CORE_THREAD 0
+#define PROCESS_SCHED_CORE_THREAD_GROUP 1
+#define PROCESS_SCHED_CORE_PROCESS_GROUP 2
+
+static const file_long process_coresched_longs[] = {
+    {(string_address)"source", 's'},
+    {(string_address)"dest", 'd'},
+    {(string_address)"dest-type", 't'},
+    {(string_address)"verbose", 'v'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bipolar process_coresched_call(positive operation, positive process,
+                                      positive scope,
+                                      p64 address_to cookie)
+{
+        return system_call_5(syscall(prctl), PROCESS_SCHED_CORE, operation,
+                             process, scope, (positive)cookie);
+}
+
+static bool process_coresched_pid(string_address text,
+                                  positive address_to process)
+{
+        return string_digits_exact(text, process) && address_to process &&
+               address_to process <= b32_max;
+}
+
+static bool process_coresched_scope(string_address text,
+                                    positive address_to scope)
+{
+        if (!text || string_equals(text, (string_address)"tgid"))
+                address_to scope = PROCESS_SCHED_CORE_THREAD_GROUP;
+        else if (string_equals(text, (string_address)"pid"))
+                address_to scope = PROCESS_SCHED_CORE_THREAD;
+        else if (string_equals(text, (string_address)"pgid"))
+                address_to scope = PROCESS_SCHED_CORE_PROCESS_GROUP;
+        else
+                return false;
+        return true;
+}
+
+static fn process_coresched_cookie(writer write, p64 cookie)
+{
+        p8 text[24] = "0x";
+        positive length = 2 + positive_into_base(text + 2, cookie, 16, false);
+        write(text, length);
+}
+
+static b32 process_coresched()
+{
+        enum { CORE_GET, CORE_NEW, CORE_COPY } operation = CORE_GET;
+        positive first = 1;
+        positive count = (positive)program_argument_count();
+
+        if (first < count)
+        {
+                string_address word = program_argument((b32)first);
+                if (string_equals(word, (string_address)"get"))
+                        first++;
+                else if (string_equals(word, (string_address)"new"))
+                {
+                        operation = CORE_NEW;
+                        first++;
+                }
+                else if (string_equals(word, (string_address)"copy"))
+                {
+                        operation = CORE_COPY;
+                        first++;
+                }
+        }
+
+        file_taking taking = {
+            .program = (string_address)"coresched",
+            .allowed = (string_address)"sdtvhV",
+            .valued = (string_address)"sdt",
+            .longs = process_coresched_longs,
+        };
+        if (!file_take_from(address_of taking, first))
+                return 1;
+
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log,
+                              "Usage: coresched [get] [--source PID]\n"
+                              "       coresched new [-t TYPE] --dest PID|-- COMMAND\n"
+                              "       coresched copy [--source PID] [-t TYPE] --dest PID|-- COMMAND\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "coresched from dawning-kit\n");
+                return 0;
+        }
+
+        positive self = (positive)system_call(syscall(getpid));
+        positive source = self;
+        positive destination = 0;
+        positive scope;
+
+        if ((taking.flags & FILE_FLAG('s')) &&
+            !process_coresched_pid(file_option_value(address_of taking, 's'),
+                                   address_of source))
+        {
+                string_format(file_fail, "coresched: invalid source PID: '%s'\n",
+                              file_option_value(address_of taking, 's'));
+                return 1;
+        }
+        if ((taking.flags & FILE_FLAG('d')) &&
+            !process_coresched_pid(file_option_value(address_of taking, 'd'),
+                                   address_of destination))
+        {
+                string_format(file_fail,
+                              "coresched: invalid destination PID: '%s'\n",
+                              file_option_value(address_of taking, 'd'));
+                return 1;
+        }
+        if (!process_coresched_scope(
+                file_option_value(address_of taking, 't'), address_of scope))
+        {
+                string_format(file_fail, "coresched: invalid destination type: '%s'\n",
+                              file_option_value(address_of taking, 't'));
+                return 1;
+        }
+
+        bool command = taking.first < count;
+        if (operation == CORE_GET)
+        {
+                if (command || destination ||
+                    (taking.flags & FILE_FLAG('t')))
+                {
+                        file_fail("coresched: bad usage of the get function\n", 0);
+                        return 1;
+                }
+
+                p64 cookie = 0;
+                bipolar answer = process_coresched_call(
+                    PROCESS_SCHED_CORE_GET, source, PROCESS_SCHED_CORE_THREAD,
+                    address_of cookie);
+                if (answer < 0)
+                {
+                        string_format(file_fail,
+                                      "coresched: cannot get cookie of PID %p: %s\n",
+                                      source, file_reason(answer));
+                        return 1;
+                }
+                string_format(log, "cookie of PID %p is ", source);
+                process_coresched_cookie(log, cookie);
+                log("\n", 1);
+                log_flush();
+                return 0;
+        }
+
+        if ((operation == CORE_NEW &&
+             (taking.flags & FILE_FLAG('s'))) ||
+            (destination && command) || (!destination && !command))
+        {
+                file_fail(operation == CORE_NEW
+                              ? (string_address)"coresched: new requires either a destination or a command\n"
+                              : (string_address)"coresched: copy requires either a destination or a command\n",
+                          0);
+                return 1;
+        }
+
+        bipolar changed;
+        if (operation == CORE_NEW)
+                changed = process_coresched_call(
+                    PROCESS_SCHED_CORE_CREATE, destination, scope, null);
+        else
+        {
+                changed = 0;
+                if (source != self)
+                        changed = process_coresched_call(
+                            PROCESS_SCHED_CORE_SHARE_FROM, source,
+                            PROCESS_SCHED_CORE_THREAD, null);
+                if (changed >= 0 && destination)
+                        changed = process_coresched_call(
+                            PROCESS_SCHED_CORE_SHARE_TO, destination, scope,
+                            null);
+        }
+
+        if (changed < 0)
+        {
+                string_format(file_fail, "coresched: cannot change cookie: %s\n",
+                              file_reason(changed));
+                return 1;
+        }
+
+        if (taking.flags & FILE_FLAG('v'))
+        {
+                positive shown = operation == CORE_COPY
+                                     ? source
+                                     : (destination ? destination : self);
+                p64 cookie = 0;
+
+                if (process_coresched_call(
+                        PROCESS_SCHED_CORE_GET, shown,
+                        PROCESS_SCHED_CORE_THREAD, address_of cookie) >= 0)
+                {
+                        if (operation == CORE_COPY && destination)
+                        {
+                                file_fail("coresched: copied cookie ", 0);
+                                process_coresched_cookie(file_fail, cookie);
+                                string_format(file_fail,
+                                              " from PID %p to PID %p\n",
+                                              source, destination);
+                        }
+                        else
+                        {
+                                string_format(file_fail,
+                                              "coresched: set cookie of PID %p to ",
+                                              shown);
+                                process_coresched_cookie(file_fail, cookie);
+                                file_fail("\n", 1);
+                        }
+                }
+        }
+
+        if (command)
+                return process_tool_exec(
+                    (string_address)"coresched",
+                    program_argument_list() + taking.first);
+        return 0;
+}
+
 // timeout ---------------------------------------------------------
 
 typedef struct
@@ -1432,4 +1667,1500 @@ static b32 process_timeout()
         if (preserve)
                 return wait_status_code(status);
         return 124;
+}
+
+// script ----------------------------------------------------------
+/*
+        The terminal recorder and the graphical terminal use the same PTY
+        floor.  Keep creation here, before screen.c is included, so both get
+        the same unlock/name/open cleanup and neither grows a libc openpty
+        dependency.
+*/
+#define PROCESS_TIOCSPTLCK 0x40045431u
+#define PROCESS_TIOCGPTN 0x80045430u
+#define PROCESS_TIOCSCTTY 0x540eu
+#define PROCESS_TCGETS 0x5401u
+#define PROCESS_TCSETS 0x5402u
+#define PROCESS_TIOCGWINSZ 0x5413u
+#define PROCESS_TIOCSWINSZ 0x5414u
+#define PROCESS_TERMINAL_ECHO 0x0008u
+#if ARM64 || RISCV64
+#define PROCESS_O_NOFOLLOW 0100000
+#else
+#define PROCESS_O_NOFOLLOW 0400000
+#endif
+#define PROCESS_POLL_IN 0x001
+#define PROCESS_POLL_OUT 0x004
+#define PROCESS_POLL_ERROR 0x008
+#define PROCESS_POLL_HUP 0x010
+
+typedef struct
+{
+        unsigned int arriving, leaving, hardware, behaviour;
+        p8 discipline;
+        p8 controls[19];
+} process_terminal_modes;
+
+typedef struct
+{
+        p16 rows, columns, x_pixels, y_pixels;
+} process_terminal_size;
+
+static bipolar process_pty_open(b32 address_to master_out,
+                                b32 address_to slave_out,
+                                bool nonblocking)
+{
+        positive flags = FILE_READ_WRITE | O_CLOEXEC;
+        if (nonblocking)
+                flags |= O_NONBLOCK;
+
+        bipolar master = system_open_at(AT_FDCWD, "/dev/ptmx", flags);
+        if (master < 0)
+                return master;
+
+        b32 unlock = 0;
+        p32 number = 0;
+        bipolar answer = system_control((b32)master, PROCESS_TIOCSPTLCK,
+                                        address_of unlock);
+        if (answer >= 0)
+                answer = system_control((b32)master, PROCESS_TIOCGPTN,
+                                        address_of number);
+        if (answer < 0)
+        {
+                system_close((positive)master);
+                return answer;
+        }
+
+        p8 path[32] = "/dev/pts/";
+        positive used = 9;
+        used += positive_into(path + used, number);
+        path[used] = end;
+
+        bipolar slave = system_open_at(AT_FDCWD, path,
+                                       FILE_READ_WRITE | O_CLOEXEC);
+        if (slave < 0)
+        {
+                system_close((positive)master);
+                return slave;
+        }
+
+        address_to master_out = (b32)master;
+        address_to slave_out = (b32)slave;
+        return 0;
+}
+
+typedef struct
+{
+        bipolar handle;
+        string_address path;
+        p64 bytes;
+        bool owned;
+        bool failed;
+} process_script_log;
+
+typedef struct
+{
+        process_script_log output;
+        process_script_log input;
+        process_script_log combined;
+        process_script_log timing;
+        process_script_log address_to out;
+        process_script_log address_to in;
+        bool append;
+        bool force;
+        bool flush;
+        bool quiet;
+        bool child_status;
+        bool advanced;
+        bool failed;
+        p8 echo;
+        positive last_event;
+        positive began;
+        p64 output_bytes;
+} process_script_state;
+
+static bool process_script_log_write(process_script_log address_to log_file,
+                                     address_any bytes, positive length)
+{
+        if (!log_file || !length)
+                return true;
+        if (log_file->failed)
+                return false;
+        if (system_write_all((positive)log_file->handle, bytes, length) !=
+            length)
+        {
+                log_file->failed = true;
+                return false;
+        }
+        log_file->bytes += length;
+        return true;
+}
+
+static bool process_script_log_text(process_script_log address_to log_file,
+                                    string_address text)
+{
+        return process_script_log_write(log_file, text, string_length(text));
+}
+
+/* Open without truncation, prove the descriptor is not an existing hard
+   link, and only then truncate it.  O_NOFOLLOW closes the pathname race for
+   symlinks; --force deliberately requests util-linux's less restrictive
+   policy. */
+static bipolar process_script_log_open(process_script_log address_to log_file,
+                                       string_address path, bool append,
+                                       bool force)
+{
+        positive flags = (append ? FILE_APPEND
+                                 : FILE_READ_WRITE | FILE_CREATE) |
+                         O_CLOEXEC | O_NONBLOCK;
+        if (!force)
+                flags |= PROCESS_O_NOFOLLOW;
+
+        bipolar handle = system_open_at_mode(AT_FDCWD, path, flags, 0666);
+        if (handle < 0)
+                return handle;
+
+        file_facts facts;
+        if (!file_look(handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts) ||
+            ((facts.mode & MODE_FORMAT) != MODE_FILE &&
+             (facts.mode & MODE_FORMAT) != MODE_CHARACTER) ||
+            (!force && (facts.mode & MODE_FORMAT) == MODE_FILE &&
+             facts.hard_links > 1))
+        {
+                system_close((positive)handle);
+                return -ERROR_ACCESS;
+        }
+        if (!append && (facts.mode & MODE_FORMAT) == MODE_FILE &&
+            system_call_2(syscall(ftruncate), (positive)handle, 0) < 0)
+        {
+                system_close((positive)handle);
+                return -ERROR_INPUT_OUTPUT;
+        }
+
+        log_file->handle = handle;
+        log_file->path = path;
+        log_file->bytes = 0;
+        log_file->owned = true;
+        log_file->failed = false;
+        return 0;
+}
+
+static fn process_script_log_close(process_script_log address_to log_file,
+                                   bool flush)
+{
+        if (!log_file || !log_file->owned)
+                return;
+        if (flush)
+                system_call_1(syscall(fsync), (positive)log_file->handle);
+        system_close((positive)log_file->handle);
+        log_file->owned = false;
+}
+
+/* Different path spellings can still name one inode.  Separate timing/input/
+   output streams must not interleave through two descriptors to that inode. */
+static bool process_script_log_same(process_script_log address_to one,
+                                    process_script_log address_to two)
+{
+        file_facts first, second;
+
+        if (!one || !two || one == two || !one->owned || !two->owned)
+                return false;
+        if (!file_look(one->handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of first) ||
+            !file_look(two->handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of second))
+                return true; /* The open descriptors were statable moments ago. */
+        return file_same_identity(address_of first, address_of second);
+}
+
+static positive process_script_stamp(p8 address_to into, positive room)
+{
+        positive made = login_iso_time(into, room, file_now(), false, 0);
+        if (made > 10)
+                into[10] = ' ';
+        return made;
+}
+
+static bool process_script_header_one(process_script_log address_to log_file,
+                                      string_address stamp,
+                                      string_address command,
+                                      bool terminal)
+{
+        if (!log_file)
+                return true;
+        return process_script_log_text(log_file, "Script started on ") &&
+               process_script_log_text(log_file, stamp) &&
+               process_script_log_text(log_file, " [COMMAND=\"") &&
+               process_script_log_text(log_file, command) &&
+               process_script_log_text(
+                   log_file, terminal
+                                 ? (string_address)"\"]\n"
+                                 : (string_address)"\" <not executed on terminal>]\n");
+}
+
+static bool process_script_footer_one(process_script_log address_to log_file,
+                                      string_address stamp, b32 status)
+{
+        if (!log_file)
+                return true;
+        p8 number[24];
+        positive length = positive_into(number, (positive)status);
+        return process_script_log_text(log_file, "\nScript done on ") &&
+               process_script_log_text(log_file, stamp) &&
+               process_script_log_text(log_file,
+                                       " [COMMAND_EXIT_CODE=\"") &&
+               process_script_log_write(log_file, number, length) &&
+               process_script_log_text(log_file, "\"]\n");
+}
+
+static bool process_script_timing_line(process_script_state address_to state,
+                                       p8 stream, positive length)
+{
+        process_script_log address_to timing = address_of state->timing;
+        if (timing->handle < 0)
+                return true;
+        if (!state->advanced && stream != 'O')
+                return true;
+
+        positive now = clock_monotonic_nanoseconds();
+        positive elapsed = now >= state->last_event
+                               ? now - state->last_event : 0;
+        state->last_event = now;
+        p8 line[96];
+        positive used = 0;
+        if (state->advanced)
+        {
+                line[used++] = stream;
+                line[used++] = ' ';
+        }
+        used += positive_into(line + used, elapsed / 1000000000);
+        line[used++] = '.';
+        used += positive_into_padded(line + used,
+                                     elapsed % 1000000000 / 1000, 6, '0');
+        line[used++] = ' ';
+        used += positive_into(line + used, length);
+        line[used++] = '\n';
+        return process_script_log_write(timing, line, used);
+}
+
+static bool process_script_timing_header(process_script_state address_to state,
+                                         string_address key,
+                                         string_address value)
+{
+        if (state->timing.handle < 0 || !state->advanced)
+                return true;
+        return process_script_log_text(address_of state->timing,
+                                       "H 0.000000 ") &&
+               process_script_log_text(address_of state->timing, key) &&
+               process_script_log_text(address_of state->timing, " ") &&
+               process_script_log_text(address_of state->timing, value) &&
+               process_script_log_text(address_of state->timing, "\n");
+}
+
+static bool process_script_command_text(p8 address_to into, positive room,
+                                        string_address command,
+                                        positive command_first)
+{
+        positive used = 0;
+        if (command)
+        {
+                positive length = string_length(command);
+                if (length >= room)
+                        return false;
+                memory_copy_end(into, command, length);
+                return true;
+        }
+
+        positive count = (positive)program_argument_count();
+        for (positive at = command_first; at < count; at++)
+        {
+                string_address word = program_argument((b32)at);
+                positive length = string_length(word);
+                if ((used && used == room - 1) || length >= room - used)
+                        return false;
+                if (used)
+                        into[used++] = ' ';
+                memory_copy(into + used, word, length);
+                used += length;
+        }
+        if (!used)
+        {
+                string_address shell = file_environment(
+                    (string_address)"SHELL");
+                if (!shell || !*shell)
+                        shell = (string_address)"/bin/sh";
+                positive length = string_length(shell);
+                if (length >= room)
+                        return false;
+                memory_copy(into, shell, length);
+                used = length;
+        }
+        into[used] = end;
+        return true;
+}
+
+static b32 process_script_child(string_address command,
+                                positive command_first, b32 master, b32 slave,
+                                bipolar signal_fd, bipolar pidfd,
+                                positive previous_mask)
+{
+        system_signal_mask(UL_SIGNAL_SET_MASK, address_of previous_mask, null,
+                           8);
+        system_call(syscall(setsid));
+        system_control(slave, PROCESS_TIOCSCTTY, 0);
+        system_duplicate(slave, 0, 0);
+        system_duplicate(slave, 1, 0);
+        system_duplicate(slave, 2, 0);
+        if (slave > 2)
+                system_close((positive)slave);
+        system_close((positive)master);
+        if (signal_fd >= 0)
+                system_close((positive)signal_fd);
+        if (pidfd >= 0)
+                system_close((positive)pidfd);
+
+        if (command)
+        {
+                string_address shell = file_environment(
+                    (string_address)"SHELL");
+                if (!shell || !*shell)
+                        shell = (string_address)"/bin/sh";
+                string_address words[] = {shell, (string_address)"-c",
+                                          command, null};
+                return process_tool_exec_environment(
+                    (string_address)"script", words, file_environment_all(),
+                    file_environment((string_address)"PATH"));
+        }
+        if (command_first < (positive)program_argument_count())
+                return process_tool_exec_environment(
+                    (string_address)"script",
+                    program_argument_list() + command_first,
+                    file_environment_all(),
+                    file_environment((string_address)"PATH"));
+
+        string_address shell = file_environment((string_address)"SHELL");
+        if (!shell || !*shell)
+                shell = (string_address)"/bin/sh";
+        string_address words[] = {shell, (string_address)"-i", null};
+        return process_tool_exec_environment(
+            (string_address)"script", words, file_environment_all(),
+            file_environment((string_address)"PATH"));
+}
+
+static bool process_script_payload(process_script_state address_to state,
+                                   p8 stream, p8 address_to bytes,
+                                   positive length)
+{
+        process_script_log address_to destination = stream == 'O'
+                                                        ? state->out
+                                                        : state->in;
+        if (stream == 'O')
+        {
+                if (system_write_all(1, bytes, length) != length)
+                        return false;
+                state->output_bytes += length;
+        }
+        if (!process_script_log_write(destination, bytes, length))
+                return false;
+        return process_script_timing_line(state, stream, length);
+}
+
+static b32 process_script_record(process_script_state address_to state,
+                                 string_address command,
+                                 positive command_first,
+                                 string_address command_text)
+{
+        b32 master = -1, slave = -1;
+        bipolar opened = process_pty_open(address_of master, address_of slave,
+                                          true);
+        if (opened < 0)
+        {
+                string_format(file_fail, "script: cannot open pseudo-terminal: %s\n",
+                              file_reason(opened));
+                return 1;
+        }
+
+        process_terminal_size size;
+        if (system_control(0, PROCESS_TIOCGWINSZ, address_of size) >= 0)
+                system_control(slave, PROCESS_TIOCSWINSZ, address_of size);
+
+        if (state->echo)
+        {
+                process_terminal_modes modes;
+                if (system_control(slave, PROCESS_TCGETS, address_of modes) >= 0)
+                {
+                        if (state->echo == 1)
+                                modes.behaviour |= PROCESS_TERMINAL_ECHO;
+                        else
+                                modes.behaviour &= ~PROCESS_TERMINAL_ECHO;
+                        system_control(slave, PROCESS_TCSETS, address_of modes);
+                }
+        }
+
+        positive blocked = PROCESS_TIMEOUT_SIGNALS;
+        positive previous_mask = 0;
+        if (system_signal_mask(UL_SIGNAL_BLOCK, address_of blocked,
+                               address_of previous_mask, 8) < 0)
+        {
+                system_close((positive)slave);
+                system_close((positive)master);
+                file_fail("script: cannot block relay signals\n", 0);
+                return 1;
+        }
+
+        bipolar signal_fd = system_call_4(
+            syscall(signalfd4), (positive)(bipolar)-1,
+            (positive)address_of blocked, 8, O_CLOEXEC | O_NONBLOCK);
+        if (signal_fd < 0)
+        {
+                system_signal_mask(UL_SIGNAL_SET_MASK,
+                                   address_of previous_mask, null, 8);
+                system_close((positive)slave);
+                system_close((positive)master);
+                string_format(file_fail,
+                              "script: cannot create signal descriptor: %s\n",
+                              file_reason(signal_fd));
+                return 1;
+        }
+        log_flush();
+        bipolar child = system_fork();
+        if (child < 0)
+        {
+                if (signal_fd >= 0)
+                        system_close((positive)signal_fd);
+                system_signal_mask(UL_SIGNAL_SET_MASK,
+                                   address_of previous_mask, null, 8);
+                system_close((positive)slave);
+                system_close((positive)master);
+                string_format(file_fail, "script: cannot fork: %s\n",
+                              file_reason(child));
+                return 1;
+        }
+        if (!child)
+                exit(process_script_child(command, command_first, master,
+                                          slave, signal_fd, -1,
+                                          previous_mask));
+
+        system_close((positive)slave);
+        bipolar pidfd = system_call_2(syscall(pidfd_open), (positive)child, 0);
+        if (signal_fd < 0)
+                system_signal_mask(UL_SIGNAL_SET_MASK,
+                                   address_of previous_mask, null, 8);
+
+        state->began = state->last_event = clock_monotonic_nanoseconds();
+        p8 input[4096], output[16384];
+        positive input_at = 0, input_length = 0;
+        bool input_end = false, eot = false, master_end = false;
+        bool child_done = false, failed = false;
+        positive status = 0;
+
+        while (!master_end)
+        {
+                process_timeout_poll waited[4];
+                positive count = 0;
+                positive master_index = count;
+                waited[count++] = (process_timeout_poll){
+                    master, (b16)(PROCESS_POLL_IN |
+                                   ((input_at < input_length || eot)
+                                        ? PROCESS_POLL_OUT : 0)), 0};
+                positive input_index = positive_max;
+                if (!input_end && input_at == input_length)
+                {
+                        input_index = count;
+                        waited[count++] = (process_timeout_poll){0,
+                                                               PROCESS_POLL_IN,
+                                                               0};
+                }
+                positive signal_index = positive_max;
+                if (signal_fd >= 0)
+                {
+                        signal_index = count;
+                        waited[count++] = (process_timeout_poll){
+                            (b32)signal_fd, PROCESS_POLL_IN, 0};
+                }
+                positive pid_index = positive_max;
+                if (pidfd >= 0 && !child_done)
+                {
+                        pid_index = count;
+                        waited[count++] = (process_timeout_poll){
+                            (b32)pidfd, PROCESS_POLL_IN, 0};
+                }
+
+                timespec drain = {1, 0};
+                timespec address_to timeout = child_done ? address_of drain
+                                                         : null;
+                bipolar ready = system_call_5(
+                    syscall(ppoll), (positive)waited, count,
+                    (positive)timeout, 0, 8);
+                if (ready < 0)
+                {
+                        if (ready == UL_ERROR_INTERRUPTED)
+                                continue;
+                        failed = true;
+                        break;
+                }
+                if (!ready)
+                {
+                        /* A descendant retaining the slave must not hold the
+                           recorder forever after the command is reaped. */
+                        process_timeout_signal((b32)child, SIGHUP, false,
+                                               false, command_text);
+                        master_end = true;
+                        break;
+                }
+
+                if (input_index != positive_max &&
+                    waited[input_index].returned)
+                {
+                        bipolar got = system_read_once(0, input, sizeof(input));
+                        if (got > 0)
+                        {
+                                input_at = 0;
+                                input_length = (positive)got;
+                        }
+                        else if (!got)
+                        {
+                                input_end = true;
+                                eot = true;
+                        }
+                        else if (got != -UL_ERROR_AGAIN &&
+                                 got != UL_ERROR_INTERRUPTED)
+                        {
+                                input_end = true;
+                                eot = true;
+                        }
+                }
+
+                if (waited[master_index].returned & PROCESS_POLL_OUT)
+                {
+                        if (input_at < input_length)
+                        {
+                                bipolar wrote = system_write_once(
+                                    (positive)master, input + input_at,
+                                    input_length - input_at);
+                                if (wrote > 0)
+                                {
+                                        if (!process_script_payload(
+                                                state, 'I', input + input_at,
+                                                (positive)wrote))
+                                        {
+                                                failed = true;
+                                                break;
+                                        }
+                                        input_at += (positive)wrote;
+                                }
+                                else if (wrote != -UL_ERROR_AGAIN &&
+                                         wrote != UL_ERROR_INTERRUPTED)
+                                        master_end = true;
+                        }
+                        else if (eot)
+                        {
+                                p8 control = 4;
+                                bipolar wrote = system_write_once(
+                                    (positive)master, address_of control, 1);
+                                if (wrote > 0)
+                                        eot = false;
+                                else if (wrote != -UL_ERROR_AGAIN &&
+                                         wrote != UL_ERROR_INTERRUPTED)
+                                        master_end = true;
+                        }
+                }
+
+                if (waited[master_index].returned &
+                    (PROCESS_POLL_IN | PROCESS_POLL_HUP |
+                     PROCESS_POLL_ERROR))
+                {
+                        for (;;)
+                        {
+                                bipolar got = system_read_once(
+                                    (positive)master, output, sizeof(output));
+                                if (got > 0)
+                                {
+                                        if (!process_script_payload(
+                                                state, 'O', output,
+                                                (positive)got))
+                                        {
+                                                failed = true;
+                                                break;
+                                        }
+                                        continue;
+                                }
+                                if (!got || (got != -UL_ERROR_AGAIN &&
+                                             got != UL_ERROR_INTERRUPTED))
+                                        master_end = true;
+                                break;
+                        }
+                        if (failed)
+                                break;
+                }
+
+                if (signal_index != positive_max &&
+                    waited[signal_index].returned)
+                {
+                        positive information[16];
+                        bipolar got = system_read_retry(
+                            (positive)signal_fd, information,
+                            sizeof(information));
+                        if (got >= (bipolar)sizeof(p32))
+                        {
+                                b32 number = (b32)(p32)information[0];
+                                if (number != SIGCHLD)
+                                        process_timeout_signal((b32)child,
+                                                               number, false,
+                                                               false,
+                                                               command_text);
+                        }
+                }
+
+                if (!child_done &&
+                    ((pid_index != positive_max && waited[pid_index].returned) ||
+                     (signal_index != positive_max &&
+                      waited[signal_index].returned)))
+                {
+                        bipolar reaped = system_wait4_retry(
+                            (b32)child, address_of status, 1, null);
+                        if (reaped == child)
+                                child_done = true;
+                }
+        }
+
+        system_close((positive)master);
+        if (failed && !child_done)
+                process_timeout_signal((b32)child, SIGKILL, false, false,
+                                       command_text);
+        if (!child_done)
+        {
+                positive deadline = clock_monotonic_nanoseconds() +
+                                    1000000000;
+                for (;;)
+                {
+                        bipolar reaped = system_wait4_retry(
+                            (b32)child, address_of status, 1, null);
+                        if (reaped == child)
+                        {
+                                child_done = true;
+                                break;
+                        }
+                        if (reaped < 0 || failed ||
+                            clock_monotonic_nanoseconds() >= deadline)
+                                break;
+                        timespec nap = {0, 10000000};
+                        system_call_2(syscall(nanosleep),
+                                      (positive)address_of nap, 0);
+                }
+                if (!child_done)
+                {
+                        process_timeout_signal((b32)child, SIGKILL, false,
+                                               false, command_text);
+                        if (system_wait4_retry((b32)child, address_of status,
+                                               0, null) < 0)
+                                failed = true;
+                        else
+                                child_done = true;
+                }
+        }
+        process_timeout_cleanup(pidfd, signal_fd, previous_mask);
+
+        if (state->flush)
+        {
+                if (state->out)
+                        system_call_1(syscall(fsync),
+                                      (positive)state->out->handle);
+                if (state->in && state->in != state->out)
+                        system_call_1(syscall(fsync),
+                                      (positive)state->in->handle);
+                if (state->timing.handle >= 0)
+                        system_call_1(syscall(fsync),
+                                      (positive)state->timing.handle);
+        }
+        state->failed = failed;
+        return failed ? 1 : wait_status_code(status);
+}
+
+static const file_long process_script_longs[] = {
+    {(string_address)"log-in", 'I'},
+    {(string_address)"log-out", 'O'},
+    {(string_address)"log-io", 'B'},
+    {(string_address)"log-timing", 'T'},
+    {(string_address)"timing", 't'},
+    {(string_address)"logging-format", 'm'},
+    {(string_address)"append", 'a'},
+    {(string_address)"command", 'c'},
+    {(string_address)"return", 'e'},
+    {(string_address)"flush", 'f'},
+    {(string_address)"force", 'X'},
+    {(string_address)"echo", 'E'},
+    {(string_address)"output-limit", 'o'},
+    {(string_address)"quiet", 'q'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 process_script()
+{
+        file_taking taking = {
+            .program = (string_address)"script",
+            .allowed = (string_address)"IOBTtmacefXEoqhV",
+            .valued = (string_address)"IOBTmcEo",
+            .optional = (string_address)"t",
+            .long_optional = (string_address)"t",
+            .sticky_optional = (string_address)"t",
+            .longs = process_script_longs,
+        };
+        positive count = (positive)program_argument_count();
+        if (!file_take(address_of taking))
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log,
+                    "Usage: script [options] [file] [-- command [argument...]]\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "script from dawning-kit\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('o'))
+                return ul_bad_usage("script",
+                                    "output limits are not supported");
+
+        positive separator = count;
+        for (positive at = 1; at < count; at++)
+                if (string_equals(program_argument((b32)at),
+                                  (string_address)"--"))
+                {
+                        separator = at;
+                        break;
+                }
+
+        string_address command = file_option_value(address_of taking, 'c');
+        positive command_first = count;
+        string_address positional = null;
+        if (command)
+        {
+                if (separator < count || count - taking.first > 1)
+                        return ul_bad_usage(
+                            "script", "--command cannot be combined with -- command");
+                if (taking.first < count)
+                        positional = program_argument((b32)taking.first);
+        }
+        else if (separator < count)
+        {
+                positive before = separator > taking.first
+                                      ? separator - taking.first : 0;
+                if (before > 1 || separator + 1 >= count)
+                        return ul_bad_usage("script", "invalid command operands");
+                if (before)
+                        positional = program_argument((b32)taking.first);
+                command_first = separator + 1;
+        }
+        else
+        {
+                if (count - taking.first > 1)
+                        return ul_bad_usage("script", "extra operand");
+                if (taking.first < count)
+                        positional = program_argument((b32)taking.first);
+        }
+
+        bool has_io = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
+                                       FILE_FLAG('B'))) != 0;
+        if (positional && has_io)
+                return ul_bad_usage("script",
+                                    "positional log conflicts with explicit log");
+        if ((taking.flags & FILE_FLAG('B')) &&
+            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O'))))
+                return ul_bad_usage("script",
+                                    "--log-io conflicts with separate logs");
+
+        process_script_state state;
+        memory_fill(address_of state, 0, sizeof(state));
+        state.output.handle = state.input.handle = state.combined.handle =
+            state.timing.handle = -1;
+        state.append = (taking.flags & FILE_FLAG('a')) != 0;
+        state.force = (taking.flags & FILE_FLAG('X')) != 0;
+        state.flush = (taking.flags & FILE_FLAG('f')) != 0;
+        state.quiet = (taking.flags & FILE_FLAG('q')) != 0;
+        state.child_status = (taking.flags & FILE_FLAG('e')) != 0;
+
+        string_address format = file_option_value(address_of taking, 'm');
+        state.advanced = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('B'))) != 0;
+        if (format)
+        {
+                if (string_equals(format, (string_address)"advanced"))
+                        state.advanced = true;
+                else if (string_equals(format, (string_address)"classic"))
+                {
+                        if (state.advanced)
+                                return ul_bad_usage(
+                                    "script", "classic timing cannot log input");
+                        state.advanced = false;
+                }
+                else
+                        return ul_bad_usage("script", "unknown logging format");
+        }
+
+        string_address echo = file_option_value(address_of taking, 'E');
+        if (echo)
+        {
+                if (string_equals(echo, (string_address)"always"))
+                        state.echo = 1;
+                else if (string_equals(echo, (string_address)"never"))
+                        state.echo = 2;
+                else if (!string_equals(echo, (string_address)"auto"))
+                        return ul_bad_usage("script", "unknown echo mode");
+        }
+
+        string_address output_path = null;
+        string_address input_path = null;
+        string_address combined_path = file_option_value(address_of taking, 'B');
+        if (combined_path)
+                output_path = input_path = combined_path;
+        else
+        {
+                output_path = file_option_value(address_of taking, 'O');
+                input_path = file_option_value(address_of taking, 'I');
+                if (!has_io)
+                        output_path = positional ? positional
+                                                 : (string_address)"typescript";
+        }
+        string_address timing_path = file_option_value(address_of taking, 'T');
+        string_address old_timing = file_option_value(address_of taking, 't');
+        if (!timing_path && old_timing)
+                timing_path = old_timing;
+        if ((!combined_path && output_path && input_path &&
+             string_equals(output_path, input_path)) ||
+            (timing_path &&
+             ((output_path && string_equals(timing_path, output_path)) ||
+              (input_path && string_equals(timing_path, input_path)))))
+                return ul_bad_usage(
+                    "script", "log and timing paths must be distinct");
+
+        bipolar opened;
+        if (combined_path)
+        {
+                opened = process_script_log_open(address_of state.combined,
+                                                  combined_path, state.append,
+                                                  state.force);
+                if (opened < 0)
+                {
+                        string_format(file_fail, "script: %s: %s\n",
+                                      combined_path, file_reason(opened));
+                        return 1;
+                }
+                state.out = state.in = address_of state.combined;
+        }
+        else
+        {
+                if (output_path)
+                {
+                        opened = process_script_log_open(address_of state.output,
+                                                          output_path,
+                                                          state.append,
+                                                          state.force);
+                        if (opened < 0)
+                        {
+                                string_format(file_fail, "script: %s: %s\n",
+                                              output_path, file_reason(opened));
+                                return 1;
+                        }
+                        state.out = address_of state.output;
+                }
+                if (input_path)
+                {
+                        opened = process_script_log_open(address_of state.input,
+                                                          input_path,
+                                                          state.append,
+                                                          state.force);
+                        if (opened < 0)
+                        {
+                                process_script_log_close(state.out, false);
+                                string_format(file_fail, "script: %s: %s\n",
+                                              input_path, file_reason(opened));
+                                return 1;
+                        }
+                        state.in = address_of state.input;
+                }
+        }
+
+        if (timing_path)
+        {
+                opened = process_script_log_open(address_of state.timing,
+                                                  timing_path, state.append,
+                                                  state.force);
+                if (opened < 0)
+                {
+                        process_script_log_close(state.out, false);
+                        if (state.in != state.out)
+                                process_script_log_close(state.in, false);
+                        string_format(file_fail, "script: %s: %s\n",
+                                      timing_path, file_reason(opened));
+                        return 1;
+                }
+        }
+        else if ((taking.flags & FILE_FLAG('t')) &&
+                 (taking.bare & FILE_FLAG('t')))
+        {
+                state.timing.handle = 2;
+                state.timing.path = (string_address)"/dev/stderr";
+        }
+
+        if (process_script_log_same(state.out, state.in) ||
+            process_script_log_same(state.out, address_of state.timing) ||
+            process_script_log_same(state.in, address_of state.timing))
+        {
+                process_script_log_close(state.out, false);
+                if (state.in != state.out)
+                        process_script_log_close(state.in, false);
+                process_script_log_close(address_of state.timing, false);
+                return ul_bad_usage(
+                    "script", "log files must name distinct objects");
+        }
+
+        p8 display[4096];
+        if (!process_script_command_text(display, sizeof(display), command,
+                                         command_first))
+        {
+                process_script_log_close(state.out, false);
+                if (state.in != state.out)
+                        process_script_log_close(state.in, false);
+                process_script_log_close(address_of state.timing, false);
+                return ul_bad_usage("script", "command is too long");
+        }
+
+        p8 stamp[64];
+        process_script_stamp(stamp, sizeof(stamp));
+        bool terminal = system_control(0, PROCESS_TIOCGWINSZ,
+                                       address_of (process_terminal_size){0}) >= 0;
+        bool good = process_script_header_one(state.out, stamp, display,
+                                              terminal);
+        if (state.in != state.out)
+                good &= process_script_header_one(state.in, stamp, display,
+                                                  terminal);
+        good &= process_script_timing_header(address_of state,
+                                             (string_address)"START_TIME",
+                                             stamp);
+        string_address shell = file_environment((string_address)"SHELL");
+        if (!shell || !*shell)
+                shell = (string_address)"/bin/sh";
+        good &= process_script_timing_header(address_of state,
+                                             (string_address)"SHELL", shell);
+        good &= process_script_timing_header(address_of state,
+                                             (string_address)"COMMAND", display);
+        if (state.timing.path)
+                good &= process_script_timing_header(
+                    address_of state, (string_address)"TIMING_LOG",
+                    state.timing.path);
+        if (output_path)
+                good &= process_script_timing_header(
+                    address_of state, (string_address)"OUTPUT_LOG", output_path);
+        if (input_path)
+                good &= process_script_timing_header(
+                    address_of state, (string_address)"INPUT_LOG", input_path);
+
+        if (!state.quiet)
+        {
+                string_format(log, "Script started");
+                if (output_path)
+                        string_format(log, ", output log file is '%s'",
+                                      output_path);
+                if (input_path)
+                        string_format(log, ", input log file is '%s'",
+                                      input_path);
+                if (state.timing.path)
+                        string_format(log, ", timing file is '%s'",
+                                      state.timing.path);
+                string_format(log, ".\n");
+                log_flush();
+        }
+
+        b32 status = good ? process_script_record(address_of state, command,
+                                                   command_first, display) : 1;
+        process_script_stamp(stamp, sizeof(stamp));
+        good &= process_script_footer_one(state.out, stamp, status);
+        if (state.in != state.out)
+                good &= process_script_footer_one(state.in, stamp, status);
+
+        if (state.timing.handle >= 0 && state.advanced)
+        {
+                positive now = clock_monotonic_nanoseconds();
+                positive elapsed = now >= state.began ? now - state.began : 0;
+                p8 value[48];
+                positive used = positive_into(value, elapsed / 1000000000);
+                value[used++] = '.';
+                used += positive_into_padded(value + used,
+                                             elapsed % 1000000000 / 1000,
+                                             6, '0');
+                value[used] = end;
+                good &= process_script_timing_header(
+                    address_of state, (string_address)"DURATION", value);
+                positive_into_string(value, (positive)status);
+                good &= process_script_timing_header(
+                    address_of state, (string_address)"EXIT_CODE", value);
+        }
+
+        if (!state.quiet)
+        {
+                string_format(log, "Script done.\n");
+                log_flush();
+        }
+        good &= !state.output.failed && !state.input.failed &&
+                !state.combined.failed && !state.timing.failed;
+        process_script_log_close(state.out, state.flush);
+        if (state.in != state.out)
+                process_script_log_close(state.in, state.flush);
+        process_script_log_close(address_of state.timing, state.flush);
+        if (!good)
+                return 1;
+        if (state.failed)
+                return 1;
+        return state.child_status ? status : 0;
+}
+
+// scriptreplay ----------------------------------------------------
+/* Two small buffered readers keep timing and payload progress independent.
+   A timing line has a hard ceiling; payload lengths remain streaming and are
+   never allocated from an untrusted count. */
+#define PROCESS_REPLAY_BLOCK 4096
+#define PROCESS_REPLAY_LINE 1024
+#define PROCESS_REPLAY_MAX_DELAY (3600ul * 1000000000ul)
+
+typedef struct
+{
+        bipolar handle;
+        positive at;
+        positive have;
+        bool failed;
+        p8 bytes[PROCESS_REPLAY_BLOCK];
+} process_replay_reader;
+
+static bipolar process_replay_open(process_replay_reader address_to reader,
+                                   string_address path)
+{
+        memory_fill(reader, 0, sizeof(*reader));
+        reader->handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        return reader->handle;
+}
+
+static bipolar process_replay_byte(process_replay_reader address_to reader,
+                                   p8 address_to byte)
+{
+        if (reader->at == reader->have)
+        {
+                bipolar got = system_read_retry((positive)reader->handle,
+                                                reader->bytes,
+                                                sizeof(reader->bytes));
+                if (got <= 0)
+                {
+                        if (got < 0)
+                                reader->failed = true;
+                        return got;
+                }
+                reader->at = 0;
+                reader->have = (positive)got;
+        }
+        address_to byte = reader->bytes[reader->at++];
+        return 1;
+}
+
+static bipolar process_replay_line(process_replay_reader address_to reader,
+                                   p8 address_to line, positive room)
+{
+        positive used = 0;
+        for (;;)
+        {
+                p8 byte;
+                bipolar got = process_replay_byte(reader, address_of byte);
+                if (got <= 0)
+                {
+                        if (!got && !used)
+                                return 0;
+                        if (got < 0)
+                                return -1;
+                        break;
+                }
+                if (byte == '\n')
+                        break;
+                if (used + 1 >= room)
+                {
+                        reader->failed = true;
+                        return -1;
+                }
+                line[used++] = byte;
+        }
+        if (used && line[used - 1] == '\r')
+                used--;
+        line[used] = end;
+        return (bipolar)used + 1;
+}
+
+static bool process_replay_skip_header(
+    process_replay_reader address_to reader)
+{
+        string_address prefix = (string_address)"Script started on ";
+        bool matches = true;
+        for (positive used = 0; used < 65536; used++)
+        {
+                p8 byte;
+                bipolar got = process_replay_byte(reader, address_of byte);
+                if (got <= 0)
+                        return false;
+                if (used < 18 && byte != prefix[used])
+                        matches = false;
+                if (byte == '\n')
+                        return matches && used >= 18;
+        }
+        reader->failed = true;
+        return false;
+}
+
+static bool process_replay_count(string_address text,
+                                 positive address_to count)
+{
+        string_address at = text;
+        positive value;
+        if (!string_digits_checked(address_of at, 10, address_of value) ||
+            string_get(at))
+                return false;
+        address_to count = value;
+        return true;
+}
+
+static bool process_replay_timing(string_address line, bool address_to advanced,
+                                  p8 address_to stream,
+                                  positive address_to delay,
+                                  positive address_to count)
+{
+        string_address at = line;
+        p8 kind = 0;
+        if (string_get(at + 1) == ' ' &&
+            (string_get(at) == 'I' || string_get(at) == 'O' ||
+             string_get(at) == 'S' || string_get(at) == 'H'))
+        {
+                address_to advanced = true;
+                kind = string_get(at);
+                at += 2;
+                if (kind == 'H')
+                {
+                        address_to stream = kind;
+                        address_to delay = 0;
+                        address_to count = 0;
+                        return true;
+                }
+        }
+
+        while (string_is(at, ' '))
+                at++;
+        string_address gap = string_first_of(at, ' ');
+        if (!gap)
+                return false;
+        address_to gap = end;
+        positive waited;
+        bool okay = ul_duration(at, address_of waited);
+        address_to gap = ' ';
+        if (!okay)
+                return false;
+        at = gap + 1;
+        while (string_is(at, ' '))
+                at++;
+
+        /* Signal rows carry a signal name/number rather than a byte count.
+           The out/in replay engine preserves their delay and consumes no
+           payload; selecting the signal stream itself is rejected below. */
+        positive bytes = 0;
+        if (kind != 'S' && !process_replay_count(at, address_of bytes))
+                return false;
+        address_to stream = kind ? kind : 'O';
+        address_to delay = waited;
+        address_to count = bytes;
+        return true;
+}
+
+static bool process_replay_sleep(positive delay, positive divisor,
+                                 bool limited, positive maximum)
+{
+        if (divisor != 1000000000)
+        {
+                positive whole = delay / divisor;
+                positive remainder = delay % divisor;
+                if (whole > positive_max / 1000000000)
+                        return false;
+                if (remainder > positive_max / 1000000000)
+                        return false;
+                delay = whole * 1000000000 +
+                        (positive)((p64)remainder * 1000000000 / divisor);
+        }
+        if (limited && delay > maximum)
+                delay = maximum;
+        if (delay > PROCESS_REPLAY_MAX_DELAY)
+                return false;
+        timespec span = {delay / 1000000000, delay % 1000000000};
+        while (span.tv_sec || span.tv_nsec)
+        {
+                timespec left = {0, 0};
+                bipolar answer = system_call_2(
+                    syscall(nanosleep), (positive)address_of span,
+                    (positive)address_of left);
+                if (answer >= 0)
+                        break;
+                if (answer != UL_ERROR_INTERRUPTED)
+                        return false;
+                span = left;
+        }
+        return true;
+}
+
+static bool process_replay_payload(process_replay_reader address_to reader,
+                                   positive length, bool emit, p8 cr_mode)
+{
+        while (length)
+        {
+                if (reader->at == reader->have)
+                {
+                        bipolar got = system_read_retry(
+                            (positive)reader->handle, reader->bytes,
+                            sizeof(reader->bytes));
+                        if (got <= 0)
+                        {
+                                reader->failed = true;
+                                return false;
+                        }
+                        reader->at = 0;
+                        reader->have = (positive)got;
+                }
+                positive chunk = min(length, reader->have - reader->at);
+                if (emit)
+                {
+                        if (cr_mode == 2)
+                                for (positive at = 0; at < chunk; at++)
+                                        if (reader->bytes[reader->at + at] == '\r')
+                                                reader->bytes[reader->at + at] = '\n';
+                        if (system_write_all(1, reader->bytes + reader->at,
+                                             chunk) != chunk)
+                                return false;
+                }
+                reader->at += chunk;
+                length -= chunk;
+        }
+        return true;
+}
+
+static const file_long process_scriptreplay_longs[] = {
+    {(string_address)"timing", 't'},
+    {(string_address)"log-timing", 'T'},
+    {(string_address)"log-in", 'I'},
+    {(string_address)"log-out", 'O'},
+    {(string_address)"log-io", 'B'},
+    {(string_address)"typescript", 's'},
+    {(string_address)"summary", 'S'},
+    {(string_address)"divisor", 'd'},
+    {(string_address)"maxdelay", 'm'},
+    {(string_address)"stream", 'x'},
+    {(string_address)"cr-mode", 'c'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 process_scriptreplay()
+{
+        file_taking taking = {
+            .program = (string_address)"scriptreplay",
+            .allowed = (string_address)"tTIOBsdmxcShV",
+            .valued = (string_address)"tTIOBsdmxc",
+            .longs = process_scriptreplay_longs,
+        };
+        positive argument_count = (positive)program_argument_count();
+        if (!file_take(address_of taking))
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log,
+                    "Usage: scriptreplay [options] timingfile [typescript [divisor]]\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "scriptreplay from dawning-kit\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('S'))
+                return ul_bad_usage("scriptreplay",
+                                    "summary mode is not supported");
+        if ((taking.flags & FILE_FLAG('B')) &&
+            (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
+                             FILE_FLAG('s'))))
+                return ul_bad_usage("scriptreplay",
+                                    "--log-io conflicts with separate logs");
+
+        string_address timing_path = file_option_value(address_of taking, 't');
+        if (!timing_path)
+                timing_path = file_option_value(address_of taking, 'T');
+        positive operand = taking.first;
+        if (!timing_path)
+        {
+                if (operand >= argument_count)
+                        return ul_bad_usage("scriptreplay",
+                                            "missing timing file");
+                timing_path = program_argument((b32)operand++);
+        }
+
+        string_address out_path = file_option_value(address_of taking, 'O');
+        if (!out_path)
+                out_path = file_option_value(address_of taking, 's');
+        string_address in_path = file_option_value(address_of taking, 'I');
+        string_address both_path = file_option_value(address_of taking, 'B');
+        if (both_path)
+                out_path = in_path = both_path;
+        if (!out_path && operand < argument_count)
+                out_path = program_argument((b32)operand++);
+        if (!out_path && !in_path)
+                out_path = (string_address)"typescript";
+
+        string_address divisor_text = file_option_value(address_of taking, 'd');
+        if (!divisor_text && operand < argument_count)
+                divisor_text = program_argument((b32)operand++);
+        if (operand < argument_count)
+                return ul_bad_usage("scriptreplay", "extra operand");
+        positive divisor = 1000000000;
+        if (divisor_text &&
+            (!ul_duration(divisor_text, address_of divisor) || !divisor))
+                return ul_bad_usage("scriptreplay", "invalid divisor");
+
+        bool limited = false;
+        positive maximum = 0;
+        string_address maximum_text = file_option_value(address_of taking, 'm');
+        if (maximum_text)
+        {
+                if (!ul_duration(maximum_text, address_of maximum))
+                        return ul_bad_usage("scriptreplay",
+                                            "invalid maximum delay");
+                limited = true;
+        }
+
+        p8 selected = 'O';
+        string_address stream = file_option_value(address_of taking, 'x');
+        if (stream)
+        {
+                if (string_equals(stream, (string_address)"out"))
+                        selected = 'O';
+                else if (string_equals(stream, (string_address)"in"))
+                        selected = 'I';
+                else
+                        return ul_bad_usage(
+                            "scriptreplay",
+                            "only out and in streams are supported");
+        }
+        else if (!out_path && in_path)
+                selected = 'I';
+        if ((selected == 'O' && !out_path) ||
+            (selected == 'I' && !in_path))
+                return ul_bad_usage("scriptreplay",
+                                    "selected stream has no log file");
+
+        p8 cr_mode = 0;
+        string_address cr = file_option_value(address_of taking, 'c');
+        if (cr)
+        {
+                if (string_equals(cr, (string_address)"never"))
+                        cr_mode = 1;
+                else if (string_equals(cr, (string_address)"always"))
+                        cr_mode = 2;
+                else if (!string_equals(cr, (string_address)"auto"))
+                        return ul_bad_usage("scriptreplay", "invalid CR mode");
+        }
+
+        process_replay_reader timing, output, input;
+        bipolar opened = process_replay_open(address_of timing, timing_path);
+        if (opened < 0)
+        {
+                string_format(file_fail, "scriptreplay: %s: %s\n",
+                              timing_path, file_reason(opened));
+                return 1;
+        }
+        output.handle = input.handle = -1;
+        if (out_path)
+        {
+                opened = process_replay_open(address_of output, out_path);
+                if (opened < 0 || !process_replay_skip_header(address_of output))
+                        goto replay_open_failed;
+        }
+        if (in_path && !both_path)
+        {
+                opened = process_replay_open(address_of input, in_path);
+                if (opened < 0 || !process_replay_skip_header(address_of input))
+                        goto replay_open_failed;
+        }
+        else if (both_path)
+                input = output;
+
+        bool advanced = false;
+        bool failed = false;
+        p8 line[PROCESS_REPLAY_LINE];
+        bipolar got;
+        while ((got = process_replay_line(address_of timing, line,
+                                          sizeof(line))) > 0)
+        {
+                p8 kind;
+                positive delay, length;
+                if (!process_replay_timing(line, address_of advanced,
+                                           address_of kind, address_of delay,
+                                           address_of length))
+                {
+                        failed = true;
+                        break;
+                }
+                if (kind == 'H')
+                        continue;
+                if (!process_replay_sleep(delay, divisor, limited, maximum))
+                {
+                        failed = true;
+                        break;
+                }
+                if (kind == 'S')
+                        continue;
+
+                process_replay_reader address_to source = kind == 'O'
+                                                              ? address_of output
+                                                              : address_of input;
+                if (source->handle < 0)
+                        continue;
+                if (!process_replay_payload(source, length, kind == selected,
+                                            cr_mode))
+                {
+                        failed = true;
+                        break;
+                }
+                if (both_path)
+                        output = input = *source;
+        }
+        if (got < 0 || timing.failed)
+                failed = true;
+        system_close((positive)timing.handle);
+        if (output.handle >= 0)
+                system_close((positive)output.handle);
+        if (input.handle >= 0 && input.handle != output.handle)
+                system_close((positive)input.handle);
+        if (failed)
+        {
+                file_fail("scriptreplay: malformed or truncated timing/log file\n",
+                          0);
+                return 1;
+        }
+        system_write_all(1, "\n", 1);
+        return 0;
+
+replay_open_failed:
+        string_format(file_fail, "scriptreplay: cannot read transcript: %s\n",
+                      opened < 0 ? file_reason(opened)
+                                 : (string_address)"invalid header");
+        system_close((positive)timing.handle);
+        if (output.handle >= 0)
+                system_close((positive)output.handle);
+        if (input.handle >= 0 && input.handle != output.handle)
+                system_close((positive)input.handle);
+        return 1;
 }

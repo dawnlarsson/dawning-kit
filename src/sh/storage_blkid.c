@@ -37,6 +37,26 @@ typedef struct
         positive partlabel_length;
 } storage_identity;
 
+/* A recogniser may expose its exact magic location without teaching the
+   presentation commands how to recognise a filesystem a second time. */
+typedef struct
+{
+        storage_identity identity;
+        p64 offset;
+        p8 length;
+        p8 magic[10];
+        string_address usage;
+} storage_signature;
+
+typedef bool (*storage_signature_visitor)(
+    storage_signature address_to signature, address_any context);
+
+typedef struct
+{
+        p32 sectors;
+        p16 sector_size;
+} storage_iso_volume;
+
 typedef struct
 {
         string_address tag;
@@ -1168,15 +1188,34 @@ static fn storage_probe_btrfs(bipolar handle,
                         bytes + 0x12b, 256, false);
 }
 
-static fn storage_probe_iso9660(bipolar handle,
-                                storage_identity address_to identity,
-                                p8 address_to bytes)
+static bool storage_iso_descriptor(bipolar handle, p8 address_to bytes,
+                                   storage_iso_volume address_to volume,
+                                   positive address_to read_bytes)
 {
         positive have = storage_read(handle, bytes, 2048, 0x8000);
+
+        if (read_bytes)
+                address_to read_bytes = have;
 
         if (have < 72 || bytes[0] != 1 || bytes[6] != 1 ||
             !storage_bytes(bytes, have, 1,
                            (p8 address_to)"CD001", 5))
+                return false;
+
+        if (volume)
+        {
+                volume->sectors = have >= 88 ? storage_le32(bytes + 80) : 0;
+                volume->sector_size =
+                    have >= 132 ? storage_le16(bytes + 128) : 0;
+        }
+        return true;
+}
+
+static fn storage_probe_iso9660(bipolar handle,
+                                storage_identity address_to identity,
+                                p8 address_to bytes)
+{
+        if (!storage_iso_descriptor(handle, bytes, null, null))
                 return;
 
         storage_set_type(identity, (string_address)"iso9660");
@@ -1184,8 +1223,9 @@ static fn storage_probe_iso9660(bipolar handle,
                         address_of identity->label_length,
                         bytes + 40, 32, true);
 
-        /* libblkid derives the ISO identity from its volume creation time. */
-        if (have >= 829)
+        /* libblkid derives the ISO identity from its volume creation time.
+           storage_read zeroes unread tail bytes, so a short descriptor cannot
+           accidentally satisfy the digit check. */
         {
                 bool digits = true;
 
@@ -1300,6 +1340,203 @@ static fn storage_probe_partition(string_address path,
                         line = newline ? newline + 1 : limit;
                 }
         }
+}
+
+static bool storage_signature_location(
+    bipolar handle, storage_identity address_to identity,
+    p64 address_to offset, p8 address_to length,
+    string_address address_to usage)
+{
+        string_address type = identity->type;
+
+        address_to usage = (string_address)"filesystem";
+        if (string_equals(type, "crypto_LUKS"))
+        {
+                address_to offset = 0;
+                address_to length = 6;
+                address_to usage = (string_address)"crypto";
+        }
+        else if (string_equals(type, "xfs") ||
+                 string_equals(type, "squashfs"))
+        {
+                address_to offset = 0;
+                address_to length = 4;
+        }
+        else if (string_equals(type, "f2fs") ||
+                 string_equals(type, "erofs"))
+        {
+                address_to offset = 0x400;
+                address_to length = 4;
+        }
+        else if (string_equals(type, "exfat") ||
+                 string_equals(type, "ntfs"))
+        {
+                address_to offset = 3;
+                address_to length = 8;
+        }
+        else if (string_equals(type, "vfat"))
+        {
+                p8 boot[90];
+
+                if (storage_read(handle, boot, sizeof(boot), 0) != sizeof(boot))
+                        return false;
+                address_to offset = storage_bytes(
+                    boot, sizeof(boot), 82, (p8 address_to)"FAT32", 5)
+                    ? 82 : 54;
+                address_to length = 5;
+        }
+        else if (string_equals(type, "ext2") ||
+                 string_equals(type, "ext3") ||
+                 string_equals(type, "ext4"))
+        {
+                address_to offset = 0x438;
+                address_to length = 2;
+        }
+        else if (string_equals(type, "swap"))
+        {
+                static const positive pages[] = {
+                    4096, 8192, 16384, 32768, 65536,
+                };
+                p8 magic[10];
+
+                for (positive at = 0; at < array_count(pages); at++)
+                {
+                        p64 where = pages[at] - sizeof(magic);
+
+                        if (storage_read(handle, magic, sizeof(magic), where) ==
+                                sizeof(magic) &&
+                            (!memory_compare(magic, "SWAPSPACE2", 10) ||
+                             !memory_compare(magic, "SWAP-SPACE", 10)))
+                        {
+                                address_to offset = where;
+                                address_to length = sizeof(magic);
+                                address_to usage = (string_address)"other";
+                                return true;
+                        }
+                }
+                return false;
+        }
+        else if (string_equals(type, "btrfs"))
+        {
+                address_to offset = 0x10040;
+                address_to length = 8;
+        }
+        else if (string_equals(type, "udf"))
+        {
+                p8 descriptor[2048];
+
+                for (positive sector = 16; sector < 32; sector++)
+                        if (storage_read(handle, descriptor,
+                                         sizeof(descriptor), sector * 2048) ==
+                                sizeof(descriptor) &&
+                            memory_is_5(descriptor + 1,
+                                        'B', 'E', 'A', '0', '1'))
+                        {
+                                address_to offset = sector * 2048 + 1;
+                                address_to length = 5;
+                                return true;
+                        }
+                return false;
+        }
+        else if (string_equals(type, "iso9660"))
+        {
+                address_to offset = 0x8001;
+                address_to length = 5;
+        }
+        else
+                return false;
+
+        return true;
+}
+
+static bool storage_signature_emit(
+    bipolar handle, storage_identity address_to identity,
+    storage_signature_visitor visitor, address_any context)
+{
+        storage_signature signature;
+
+        memory_zero(address_of signature, sizeof(signature));
+        signature.identity = address_to identity;
+        if (!storage_signature_location(
+                handle, address_of signature.identity,
+                address_of signature.offset, address_of signature.length,
+                address_of signature.usage) ||
+            signature.length > sizeof(signature.magic) ||
+            storage_read(handle, signature.magic, signature.length,
+                         signature.offset) != signature.length)
+                return true;
+
+        return visitor(address_of signature, context);
+}
+
+/* Enumerate every filesystem/container recogniser over one open descriptor.
+   The recognisers remain the sole source of validation and metadata; wipefs
+   merely receives their exact magic locations. */
+static bipolar storage_each_signature(
+    string_address path, storage_signature_visitor visitor,
+    address_any context)
+{
+        p8 bytes[STORAGE_PROBE_ROOM];
+        storage_identity identity;
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        positive have;
+        positive found = 0;
+
+        if (handle < 0)
+                return handle;
+        have = storage_read(handle, bytes, sizeof(bytes), 0);
+
+#define STORAGE_SIGNATURE_TRY(probe)                                      \
+        do                                                                 \
+        {                                                                  \
+                memory_zero(address_of identity, sizeof(identity));        \
+                identity.path = path;                                      \
+                probe;                                                     \
+                if (identity.type_length)                                  \
+                {                                                          \
+                        found++;                                           \
+                        if (!storage_signature_emit(                       \
+                                handle, address_of identity, visitor,       \
+                                context))                                  \
+                                goto done;                                 \
+                }                                                          \
+        } while (false)
+
+        STORAGE_SIGNATURE_TRY(storage_probe_luks(address_of identity,
+                                                  bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_xfs(address_of identity,
+                                                 bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_squashfs(address_of identity,
+                                                      bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_f2fs(address_of identity,
+                                                  bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_exfat(handle, address_of identity,
+                                                   bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_fat(address_of identity,
+                                                 bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_swap(handle, address_of identity,
+                                                  bytes, have));
+        STORAGE_SIGNATURE_TRY(
+            storage_probe_ntfs(address_of identity, bytes, have);
+            if (identity.type_length)
+                    storage_probe_ntfs_label(handle, address_of identity,
+                                             bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_ext(address_of identity,
+                                                 bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_erofs(address_of identity,
+                                                   bytes, have));
+        STORAGE_SIGNATURE_TRY(storage_probe_btrfs(handle, address_of identity,
+                                                   bytes));
+        STORAGE_SIGNATURE_TRY(storage_probe_udf(handle, address_of identity));
+        STORAGE_SIGNATURE_TRY(storage_probe_iso9660(handle,
+                                                     address_of identity,
+                                                     bytes));
+
+done:
+#undef STORAGE_SIGNATURE_TRY
+        system_close(handle);
+        return (bipolar)found;
 }
 
 /*

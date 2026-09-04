@@ -308,7 +308,8 @@ static bool ul_cpu_set(string_address text, bool list,
         return list ? ul_cpu_list(text, set) : ul_cpu_mask(text, set);
 }
 
-static fn ul_cpu_mask_say(positive address_to set, positive bytes)
+static fn ul_cpu_mask_write(writer write, positive address_to set,
+                            positive bytes, bool grouped)
 {
         static p8 digits[] = "0123456789abcdef";
         positive nibbles = bytes * 2;
@@ -329,10 +330,15 @@ static fn ul_cpu_mask_say(positive address_to set, positive bytes)
                 positive digit = set[at / (positive_bits / 4)] >>
                                  ((at % (positive_bits / 4)) * 4) & 15;
 
-                if (left != nibbles && !(left % 8))
-                        log(",", 1);
-                log(digits + digit, 1);
+                if (grouped && left != nibbles && !(left % 8))
+                        write((p8 address_to)",", 1);
+                write(digits + digit, 1);
         }
+}
+
+static fn ul_cpu_mask_say(positive address_to set, positive bytes)
+{
+        ul_cpu_mask_write(log, set, bytes, true);
 }
 
 static bool ul_cpu_has(positive address_to set, positive cpu)
@@ -341,7 +347,8 @@ static bool ul_cpu_has(positive address_to set, positive cpu)
                 ((positive)1 << (cpu % positive_bits))) != 0;
 }
 
-static fn ul_cpu_list_say(positive address_to set, positive bytes)
+static fn ul_cpu_list_write(writer write, positive address_to set,
+                            positive bytes)
 {
         bool comma = false;
         positive bits = bytes * 8;
@@ -380,23 +387,330 @@ static fn ul_cpu_list_say(positive address_to set, positive bytes)
                 }
 
                 if (comma)
-                        log(",", 1);
-                positive_to_string(log, first);
+                        write((p8 address_to)",", 1);
+                positive_to_string(write, first);
 
                 if (count > 1)
                 {
-                        log("-", 1);
-                        positive_to_string(log, last);
+                        write((p8 address_to)"-", 1);
+                        positive_to_string(write, last);
                         if (stride > 1)
                         {
-                                log(":", 1);
-                                positive_to_string(log, stride);
+                                write((p8 address_to)":", 1);
+                                positive_to_string(write, stride);
                         }
                 }
 
                 comma = true;
                 first = last;
         }
+}
+
+static fn ul_cpu_list_say(positive address_to set, positive bytes)
+{
+        ul_cpu_list_write(log, set, bytes);
+}
+
+// bits ------------------------------------------------------------
+
+#define UL_BITS_DEFAULT 8192
+#define UL_BITS_MAX (128 * 1024)
+
+enum
+{
+        UL_BITS_MASK = 'm',
+        UL_BITS_GROUPED = 'g',
+        UL_BITS_BINARY = 'b',
+        UL_BITS_LIST = 'l',
+};
+
+static const file_long ul_bits_longs[] = {
+    {(string_address)"width", 'w'},
+    {(string_address)"mask", 'm'},
+    {(string_address)"grouped-mask", 'g'},
+    {(string_address)"binary", 'b'},
+    {(string_address)"list", 'l'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static inline fn ul_bits_set(positive address_to set, positive bit)
+{
+        set[bit / positive_bits] |= (positive)1 << (bit % positive_bits);
+}
+
+/* A mask is read from its least-significant nibble, so an arbitrarily long
+   input can be validated and truncated without constructing a big integer. */
+static bool ul_bits_mask_read(string_address text,
+                              positive address_to set, positive width)
+{
+        string_address digits = text;
+        if (string_is(digits, ','))
+                digits++;
+        else if (string_is(digits, '0') && string_is(digits + 1, 'x'))
+                digits += 2;
+
+        bool in_group = false;
+        for (string_address at = digits; string_get(at); at++)
+        {
+                if (string_is(at, ','))
+                {
+                        if (!in_group || !string_get(at + 1))
+                                return false;
+                        in_group = false;
+                }
+                else if (ul_hex(string_get(at)) < 0)
+                        return false;
+                else
+                        in_group = true;
+        }
+
+        positive nibble = 0;
+        positive length = string_length(digits);
+        while (length)
+        {
+                p8 byte = digits[--length];
+                if (byte == ',')
+                        continue;
+                positive value = (positive)ul_hex(byte);
+                if (nibble < (width + 3) / 4)
+                {
+                        positive first = nibble * 4;
+                        for (positive bit = 0; bit < 4 && first + bit < width;
+                             bit++)
+                                if (value & ((positive)1 << bit))
+                                        ul_bits_set(set, first + bit);
+                }
+                nibble++;
+        }
+        return true;
+}
+
+/* cpulist's useful grammar is decimal IDs and FIRST-LAST[:STEP].  Values at
+   or above width are parsed but clipped, which is the documented bits(1)
+   behavior; clipping the endpoint before the loop also prevents a huge range
+   from becoming a huge amount of work. */
+static bool ul_bits_list_read(string_address text,
+                              positive address_to set, positive width)
+{
+        string_address at = text;
+        if (!string_get(at))
+                return true;
+
+        for (;;)
+        {
+                positive first;
+                positive last;
+                positive step = 1;
+
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of first))
+                        return false;
+                last = first;
+                if (string_is(at, '-'))
+                {
+                        at++;
+                        if (!string_digits_checked(address_of at, 10,
+                                                   address_of last) ||
+                            last < first)
+                                return false;
+                }
+                if (string_is(at, ':'))
+                {
+                        at++;
+                        if (!string_digits_checked(address_of at, 10,
+                                                   address_of step) ||
+                            !step)
+                                return false;
+                }
+
+                if (first < width)
+                {
+                        positive clipped = min(last, width - 1);
+                        for (positive bit = first;; bit += step)
+                        {
+                                ul_bits_set(set, bit);
+                                if (clipped - bit < step)
+                                        break;
+                        }
+                }
+
+                if (!string_get(at))
+                        return true;
+                if (byte_is_space(string_get(at)))
+                {
+                        while (byte_is_space(string_get(at)))
+                                at++;
+                        return !string_get(at);
+                }
+                if (!string_is(at, ','))
+                        return false;
+                at++;
+                if (!string_get(at))
+                        return false;
+        }
+}
+
+static bool ul_bits_group(string_address group,
+                          positive address_to result,
+                          positive address_to scratch,
+                          positive words, positive width)
+{
+        p8 operation = '|';
+        if (string_is(group, '&') || string_is(group, '^') ||
+            string_is(group, '~') || string_is(group, '|'))
+                operation = string_get(group++);
+
+        memory_fill(scratch, 0, words * sizeof(*scratch));
+        bool mask = string_is(group, ',') ||
+                    (string_is(group, '0') && string_is(group + 1, 'x'));
+        if (!(mask ? ul_bits_mask_read(group, scratch, width)
+                   : ul_bits_list_read(group, scratch, width)))
+        {
+                string_format(file_fail, "bits: invalid bit %s: %s\n",
+                              mask ? (string_address)"mask"
+                                   : (string_address)"list",
+                              group);
+                return false;
+        }
+
+        for (positive at = 0; at < words; at++)
+        {
+                if (operation == '&')
+                        result[at] &= scratch[at];
+                else if (operation == '^')
+                        result[at] ^= scratch[at];
+                else if (operation == '~')
+                        result[at] &= ~scratch[at];
+                else
+                        result[at] |= scratch[at];
+        }
+        return true;
+}
+
+static fn ul_bits_binary(positive address_to set, positive width)
+{
+        positive first = width;
+        while (first && !ul_cpu_has(set, first - 1))
+                first--;
+        if (!first)
+        {
+                text_put_string("0b0\n");
+                return;
+        }
+
+        text_put_string("0b");
+        for (positive left = first; left; left--)
+        {
+                positive bit = left - 1;
+                if (left != first && !(left % 4))
+                        text_put_character('_');
+                text_put_character(ul_cpu_has(set, bit) ? '1' : '0');
+        }
+        text_put_character('\n');
+}
+
+static b32 util_linux_bits()
+{
+        file_operands_begin();
+        p8 mode = UL_BITS_MASK;
+        const file_supersede supersedes[] = {
+            {(string_address)"mgbl", address_of mode}, {null, null},
+        };
+        file_taking taking = {
+            .program = (string_address)"bits",
+            .allowed = (string_address)"wmgblhV",
+            .valued = (string_address)"w",
+            .longs = ul_bits_longs,
+            .operand = file_operand,
+            .supersedes = supersedes,
+        };
+
+        text_begin("bits");
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                text_put_string("Usage: bits [-m|-g|-b|-l] [-w BITS] [MASK_OR_LIST ...]\n");
+                return text_done(0);
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                text_put_string("bits from dawning-kit\n");
+                return text_done(0);
+        }
+
+        positive width = UL_BITS_DEFAULT;
+        string_address width_text = file_option_value(address_of taking, 'w');
+        if (width_text &&
+            (!ul_unsigned(width_text, UL_BITS_MAX, address_of width) || !width))
+                return text_refuse(width_text, "invalid --width", 1);
+
+        positive words = width / positive_bits +
+                         (width % positive_bits != 0);
+        if (words > positive_max / (2 * sizeof(positive)))
+                return text_refuse(null, "mask is too large", 1);
+        text_arena_used = 0;
+        positive address_to result = (positive address_to)text_arena_take(
+            words * 2 * sizeof(positive));
+        if (!result)
+                return text_done(1);
+        positive address_to scratch = result + words;
+        memory_fill(result, 0, words * sizeof(*result));
+
+        if (file_operand_count)
+        {
+                for (positive at = 0; at < file_operand_count; at++)
+                        if (!ul_bits_group(file_operand_at(at), result, scratch,
+                                           words, width))
+                                return text_done(1);
+        }
+        else
+        {
+                text_delimiter = '\n';
+                if (!text_open(null))
+                        return text_done(1);
+                while (text_line_next())
+                {
+                        while (text_line_length &&
+                               byte_is_space(text_line[text_line_length - 1]))
+                                text_line_length--;
+                        text_line[text_line_length] = end;
+                        if (!ul_bits_group(text_line, result, scratch,
+                                           words, width))
+                        {
+                                text_close();
+                                return text_done(1);
+                        }
+                }
+                text_close();
+                if (text_status)
+                        return text_done(text_status);
+        }
+
+        positive bytes = width / 8 + (width % 8 != 0);
+        if (mode == UL_BITS_MASK || mode == UL_BITS_GROUPED)
+        {
+                text_put_string(mode == UL_BITS_MASK ? "0x" : "");
+                ul_cpu_mask_write(text_put, result, bytes,
+                                  mode == UL_BITS_GROUPED);
+                text_put_character('\n');
+        }
+        else if (mode == UL_BITS_BINARY)
+                ul_bits_binary(result, width);
+        else
+        {
+                bool any = false;
+                for (positive at = 0; at < words; at++)
+                        any |= result[at] != 0;
+                if (any)
+                {
+                        ul_cpu_list_write(text_put, result, bytes);
+                        text_put_character('\n');
+                }
+        }
+        return text_done(0);
 }
 
 /* The exact strtosize grammar shared by util-linux range options. */
@@ -8265,6 +8579,433 @@ static b32 util_linux_blockdev()
                         status = ul_blockdev_one(
                             program_argument((b32)taking.first++),
                             verbose, quiet);
+        log_flush();
+        return status;
+}
+
+// ISO9660 and signature inventory --------------------------------
+
+static const file_long ul_isosize_longs[] = {
+    {"divisor", 'd'}, {"sectors", 'x'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_isosize()
+{
+        file_taking taking = {
+            .program = "isosize", .allowed = "dxhV", .valued = "d",
+            .longs = ul_isosize_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] <iso9660_image_file> ...",
+                    address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        if (taking.first == count)
+                return ul_bad_usage("isosize", "no device specified");
+
+        positive divisor = 0;
+        string_address divisor_text = file_option_value(address_of taking, 'd');
+        if (divisor_text &&
+            !ul_unsigned(divisor_text, positive_max, address_of divisor))
+                return ul_bad_usage("isosize", "invalid divisor argument");
+
+        bool several = count - taking.first > 1;
+        b32 status = 0;
+        while (taking.first < count)
+        {
+                string_address path = program_argument((b32)taking.first++);
+                bipolar handle = system_open_at(AT_FDCWD, path,
+                                                FILE_READ | O_CLOEXEC);
+                if (handle < 0)
+                {
+                        string_format(file_fail,
+                                      "isosize: cannot open %s: %s\n",
+                                      path, file_reason(handle));
+                        status = 32;
+                        continue;
+                }
+
+                p8 descriptor[2048];
+                storage_iso_volume volume = {0};
+                positive read_bytes = 0;
+                bool recognised = storage_iso_descriptor(
+                    handle, descriptor, address_of volume,
+                    address_of read_bytes);
+                system_close(handle);
+
+                if (!recognised)
+                        string_format(file_fail,
+                                      "isosize: %s: might not be an ISO filesystem\n",
+                                      path);
+                if (read_bytes != sizeof(descriptor))
+                {
+                        string_format(file_fail,
+                                      "isosize: read error on %s\n", path);
+                        status = 32;
+                }
+
+                if (several)
+                        string_format(log, "%s: ", path);
+                if (taking.flags & FILE_FLAG('x'))
+                        string_format(log,
+                                      "sector count: %p, sector size: %p\n",
+                                      (positive)volume.sectors,
+                                      (positive)volume.sector_size);
+                else
+                {
+                        positive bytes = (positive)volume.sectors *
+                                         (positive)volume.sector_size;
+                        positive_to_string(log, divisor ? bytes / divisor : bytes);
+                        log("\n", 1);
+                }
+        }
+
+        log_flush();
+        return status;
+}
+
+enum
+{
+        UL_WIPEFS_DEVICE,
+        UL_WIPEFS_OFFSET,
+        UL_WIPEFS_TYPE,
+        UL_WIPEFS_UUID,
+        UL_WIPEFS_LABEL,
+        UL_WIPEFS_LENGTH,
+        UL_WIPEFS_USAGE,
+        UL_WIPEFS_COLUMNS,
+};
+
+typedef struct
+{
+        string_address device;
+        string_address path;
+        p8 type[STORAGE_TYPE_ROOM];
+        p8 uuid[STORAGE_UUID_ROOM];
+        p8 label[STORAGE_LABEL_ROOM];
+        p64 offset;
+        p8 length;
+        p8 magic[10];
+        string_address usage;
+} ul_wipefs_row;
+
+typedef struct
+{
+        ul_wipefs_row address_to rows;
+        positive count;
+        positive room;
+        string_address types;
+        bool failed;
+} ul_wipefs_work;
+
+static const ul_table_column ul_wipefs_columns[] = {
+    {"device", "DEVICE", 0, false, UL_TABLE_STRING},
+    {"offset", "OFFSET", 0, false, UL_TABLE_STRING},
+    {"type", "TYPE", 0, false, UL_TABLE_STRING},
+    {"uuid", "UUID", 0, false, UL_TABLE_NULL_STRING},
+    {"label", "LABEL", 0, false, UL_TABLE_NULL_STRING},
+    {"length", "LENGTH", 0, false, UL_TABLE_NUMBER},
+    {"usage", "USAGE", 0, false, UL_TABLE_STRING},
+};
+
+static bool ul_wipefs_type_match(string_address list, string_address type)
+{
+        bool included = false;
+        bool positive_seen = false;
+
+        if (!list)
+                return true;
+        while (string_get(list))
+        {
+                string_address comma = string_first_of(list, ',');
+                positive length = comma ? (positive)(comma - list)
+                                        : string_length(list);
+                bool negative = length > 2 && list[0] == 'n' && list[1] == 'o';
+                string_address name = list + (negative ? 2 : 0);
+                positive name_length = length - (negative ? 2 : 0);
+                bool same = file_same_word(name, name_length, type);
+
+                if (!negative)
+                {
+                        positive_seen = true;
+                        included |= same;
+                }
+                else if (same)
+                        return false;
+
+                if (!comma)
+                        break;
+                list = comma + 1;
+        }
+        return !positive_seen || included;
+}
+
+static bool ul_wipefs_collect(storage_signature address_to signature,
+                              address_any opaque)
+{
+        ul_wipefs_work address_to work = (ul_wipefs_work address_to)opaque;
+
+        if (!ul_wipefs_type_match(work->types, signature->identity.type))
+                return true;
+        if (work->count == work->room)
+        {
+                work->failed = true;
+                return false;
+        }
+
+        ul_wipefs_row address_to row = work->rows + work->count++;
+        memory_zero(row, sizeof(*row));
+        row->path = signature->identity.path;
+        string_address slash = string_last_of(row->path, '/');
+        row->device = slash ? slash + 1 : row->path;
+        memory_copy(row->type, signature->identity.type,
+                    sizeof(row->type));
+        memory_copy(row->uuid, signature->identity.uuid,
+                    sizeof(row->uuid));
+        memory_copy(row->label, signature->identity.label,
+                    sizeof(row->label));
+        row->offset = signature->offset;
+        row->length = signature->length;
+        memory_copy(row->magic, signature->magic, sizeof(row->magic));
+        row->usage = signature->usage;
+        return true;
+}
+
+static string_address ul_wipefs_field(address_any opaque, p8 column,
+                                      p8 address_to scratch)
+{
+        ul_wipefs_row address_to row = (ul_wipefs_row address_to)opaque;
+
+        switch (column)
+        {
+        case UL_WIPEFS_DEVICE:
+                return row->device;
+        case UL_WIPEFS_OFFSET:
+                scratch[0] = '0';
+                scratch[1] = 'x';
+                scratch[2 + positive_into_base(scratch + 2,
+                                                (positive)row->offset,
+                                                16, false)] = end;
+                return scratch;
+        case UL_WIPEFS_TYPE:
+                return row->type;
+        case UL_WIPEFS_UUID:
+                return row->uuid;
+        case UL_WIPEFS_LABEL:
+                return row->label;
+        case UL_WIPEFS_LENGTH:
+                positive_into_string(scratch, row->length);
+                return scratch;
+        default:
+                return row->usage;
+        }
+}
+
+static fn ul_wipefs_parsable(ul_wipefs_work address_to work,
+                             p8 address_to columns, positive column_count)
+{
+        for (positive row = 0; row < work->count; row++)
+        {
+                for (positive field = 0; field < column_count; field++)
+                {
+                        p8 scratch[96];
+                        string_address value = ul_wipefs_field(
+                            work->rows + row, columns[field], scratch);
+
+                        if (field)
+                                log(",", 1);
+                        ul_lsns_raw(value);
+                }
+                log("\n", 1);
+        }
+}
+
+static fn ul_wipefs_no_act(ul_wipefs_work address_to work,
+                           bool all, bool have_offset, p64 offset,
+                           bool quiet, positive first, positive count)
+{
+        for (positive operand = first; operand < count; operand++)
+        {
+                string_address path = program_argument((b32)operand);
+                bool found = false;
+
+                for (positive at = 0; at < work->count; at++)
+                {
+                        ul_wipefs_row address_to row = work->rows + at;
+
+                        if (!string_equals(row->path, path) ||
+                            (!all && (!have_offset || row->offset != offset)))
+                                continue;
+                        found = true;
+                        if (quiet)
+                                continue;
+
+                        p8 where[2 * sizeof(positive) + 1];
+                        positive digits = positive_into_base(
+                            where, (positive)row->offset, 16, false);
+                        storage_hex_padded(where, (positive)row->offset,
+                                           max(digits, (positive)8), false);
+                        string_format(
+                            log,
+                            "%s: %p bytes were erased at offset 0x%s (%s):",
+                            row->path, (positive)row->length, where,
+                            row->type);
+                        for (positive byte = 0; byte < row->length; byte++)
+                        {
+                                p8 pair[3] = {
+                                    storage_hex_digit(row->magic[byte] >> 4,
+                                                      false),
+                                    storage_hex_digit(row->magic[byte] & 15,
+                                                      false),
+                                    end,
+                                };
+                                string_format(log, " %s", pair);
+                        }
+                        log("\n", 1);
+                }
+
+                if (have_offset && !found)
+                {
+                        p8 where[2 * sizeof(positive) + 1];
+                        positive digits = positive_into_base(
+                            where, (positive)offset, 16, false);
+                        where[digits] = end;
+                        string_format(file_fail,
+                                      "wipefs: %s: offset 0x%s not found\n",
+                                      path, where);
+                }
+        }
+}
+
+static const file_long ul_wipefs_longs[] = {
+    {"all", 'a'}, {"backup", 'b'}, {"force", 'f'},
+    {"noheadings", 'i'}, {"json", 'J'}, {"no-act", 'n'},
+    {"offset", 'o'}, {"output", 'O'}, {"parsable", 'p'},
+    {"quiet", 'q'}, {"types", 't'}, {"lock", 'k'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_wipefs()
+{
+        file_taking taking = {
+            .program = "wipefs", .allowed = "abfiJnoOpqthV",
+            .valued = "oOt", .optional = "b",
+            .long_optional = "k", .longs = ul_wipefs_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] <device>",
+                    address_of answer))
+                return answer;
+        if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('f') |
+                            FILE_FLAG('k')))
+                return ul_bad_usage(
+                    "wipefs", "backup, force and lock modes are not supported");
+
+        bool all = (taking.flags & FILE_FLAG('a')) != 0;
+        bool no_act = (taking.flags & FILE_FLAG('n')) != 0;
+        string_address offset_text = file_option_value(address_of taking, 'o');
+        if ((all || offset_text) && !no_act)
+                return ul_bad_usage(
+                    "wipefs", "mutation is not supported; use --no-act");
+        if (all && offset_text)
+                return ul_bad_usage("wipefs", "--all and --offset conflict");
+
+        positive count = (positive)program_argument_count();
+        if (taking.first == count)
+                return ul_bad_usage("wipefs", "no device specified");
+        positive operands = count - taking.first;
+        if (operands > 256)
+                return ul_bad_usage("wipefs", "too many devices");
+
+        positive offset = 0;
+        if (offset_text && !ul_size(offset_text, address_of offset))
+                return ul_bad_usage("wipefs", "invalid offset");
+
+        text_arena_used = 0;
+        ul_wipefs_work work = {
+            .room = operands * 13,
+            .types = file_option_value(address_of taking, 't'),
+        };
+        work.rows = text_arena_take(work.room * sizeof(work.rows[0]));
+        if (!work.rows)
+                return 1;
+
+        b32 status = 0;
+        for (positive operand = taking.first; operand < count; operand++)
+        {
+                string_address path = program_argument((b32)operand);
+                bipolar got = storage_each_signature(
+                    path, ul_wipefs_collect, address_of work);
+                if (got < 0)
+                {
+                        string_format(file_fail,
+                                      "wipefs: cannot open %s: %s\n",
+                                      path, file_reason(got));
+                        status = 1;
+                        continue;
+                }
+                if (work.failed)
+                        return ul_bad_usage("wipefs", "too many signatures");
+        }
+
+        if (all || offset_text)
+                ul_wipefs_no_act(address_of work, all, !!offset_text,
+                                 offset,
+                                 (taking.flags & FILE_FLAG('q')) != 0,
+                                 taking.first, count);
+        else
+        {
+                static const p8 defaults[] = {
+                    UL_WIPEFS_DEVICE, UL_WIPEFS_OFFSET, UL_WIPEFS_TYPE,
+                    UL_WIPEFS_UUID, UL_WIPEFS_LABEL,
+                };
+                static const p8 parsable_defaults[] = {
+                    UL_WIPEFS_OFFSET, UL_WIPEFS_UUID,
+                    UL_WIPEFS_LABEL, UL_WIPEFS_TYPE,
+                };
+                bool parsable = (taking.flags & FILE_FLAG('p')) != 0;
+                const p8 address_to base = parsable
+                    ? parsable_defaults : defaults;
+                positive base_count = parsable
+                    ? array_count(parsable_defaults) : array_count(defaults);
+                p8 columns[UL_WIPEFS_COLUMNS];
+                positive column_count = 0;
+                string_address selected = file_option_value(address_of taking, 'O');
+
+                if (selected && !ul_table_column_list(
+                        selected, ul_wipefs_columns, UL_WIPEFS_COLUMNS,
+                        base, base_count, columns, address_of column_count))
+                        return ul_bad_usage(
+                            "wipefs", "unknown or unsupported output column");
+                if (!selected)
+                        for (positive at = 0; at < base_count; at++)
+                                columns[column_count++] = base[at];
+
+                if (parsable)
+                        ul_wipefs_parsable(address_of work, columns,
+                                          column_count);
+                else if (taking.flags & FILE_FLAG('J'))
+                        ul_table_json("signatures", work.rows,
+                                      sizeof(work.rows[0]), work.count,
+                                      ul_wipefs_columns, columns,
+                                      column_count, ul_wipefs_field);
+                else
+                        ul_table_out(work.rows, sizeof(work.rows[0]),
+                                     work.count, ul_wipefs_columns,
+                                     UL_WIPEFS_COLUMNS, columns,
+                                     column_count,
+                                     !(taking.flags & FILE_FLAG('i')),
+                                     false, ul_wipefs_field);
+        }
+
         log_flush();
         return status;
 }
