@@ -35,59 +35,108 @@ SPAWN_SHELL in src/core.c: user_mode_thread plus kernel_execve, no
 page-table copy), but a pipeline stage that runs a builtin or a tool in
 place still forks, and on a stock kernel everything forks.
 
-## What can safely move into the kernel
+## Where a spawn's time actually goes
 
-Ranked by what it saves and what it risks.
+The module has counted the phases of its own spawn since the spark loader
+was written and nothing read them until the `spawn` applet was added.
+Measured in the guest over three thousand spawns of the image itself
+(`while [ $i -lt 3000 ]; do /shell -c :; done`, two vCPUs, nokaslr):
 
-1. **A warm pool of parked shell instances, owned by the module** (the
-   "global kernel level shell instance"). At boot the module starts N
-   shells through the existing spawn path and parks each in an ioctl
-   wait. A SPAWN_TOOL / SPAWN_SHELL request then hands argv, environment
-   and the fds to a parked instance (the kernel installs the fds into that
-   task's table and writes the request into a shared page) and wakes it;
-   the instance runs the tool or script, resets, and parks again. Cost per
-   spawn: one wakeup and a context switch, tens of microseconds, against
-   the 180 microseconds of execve, page zeroing and teardown today, and
-   with no page-table copy ever. Every instance stays an ordinary
-   userspace process with its own address space; the kernel owns only the
-   queue. What makes it safe is the reset list, and it must be explicit:
-   variables and functions, aliases, the parse and expansion arenas, cwd,
-   umask, rlimits, signal dispositions, every fd above 2, traps, options,
-   the hash table, $SECONDS and $RANDOM state. Anything an instance cannot
-   prove it reset (a mapping it leaked, a changed personality) retires it
-   and the module spawns a fresh one. Pipelines become N handoffs instead
-   of N forks, which is the whole of the pipeline row's remaining gap.
+| phase | ns each | share |
+| --- | --- | --- |
+| task, user_mode_thread | 20 825 | 47.8% |
+| exec prologue | 13 336 | 30.6% |
+| loader, less its mapping | 5 903 | 13.5% |
+| mapping, three do_mmap | 3 537 | 8.1% |
+| **kernel side, total** | **43 602** | |
 
-2. **Fork-free children for what only execs.** A stage or command whose
-   child does nothing but redirect and exec must not copy the parent's page
-   tables: clone with CLONE_VM | CLONE_VFORK (the child touches no shell
-   memory before execve) or the spark spawn with the redirections passed
-   in. This is a shell-side change with no kernel work, and it removes
-   copy_page_range, do_wp_page and __zap_vma_range from the profile of
-   every pipeline with an external command. It does not help a stage that
-   runs a builtin in place; that is what the pool is for.
+Read that top down. Half the cost is creating the task, before a single
+byte of the new program is looked at. Another third is the generic
+prologue inside kernel_execve: allocating a bprm, walking the path to the
+image and opening it, building the stack that holds argv and then moving
+it. Our own loader, the part this repository wrote, is a fifth of the
+total, and the three mappings it exists to perform are a twelfth.
 
-3. **Shared, read-only data.** Text and rodata (784 KB) are already shared
-   through the page cache; the tool table, keyword table and builtin table
-   are rodata. Nothing to do.
+A kernel profile of the same loop agrees from the other side, and is
+worth reading for what is absent: copy_process, dup_fd, the fault
+handler, page clearing, the mapping and the teardown all appear, and
+copy_page_range does not appear at all. The spark path already never
+copies a page table. Nothing in the profile rises above three per cent,
+which is what a cost spread across the scheduler, the memory manager,
+the descriptor table and the allocator looks like: there is no hot
+function to fix, only a process to stop building so much of.
 
-4. **Pre-initialised data snapshots.** Not worth it: initialisation is
-   three syscalls and no computed tables. A template mm cloned per spawn
-   would reintroduce the page-table copy that item 2 removes.
+Three thousand forks through the same shell moved the spawn counters by
+three, which is the other half of the picture: a subshell, a command
+substitution and every stage of a pipeline fork, and the device never
+sees them. Only a plain external command spawns.
+
+## What can be made cheaper, and what it is worth
+
+Ranked by the measured share it attacks. Pooling parked instances is
+deliberately not on this list: it does not make a spawn cheap, it avoids
+performing one, and every program that is not spawned from the pool keeps
+paying full price.
+
+1. **The pipeline forks (a new ioctl).** A pipeline whose stages are all
+   external commands is N forks and N execs today, and each fork copies
+   the shell's page tables so the child can throw them away microseconds
+   later at execve. One ioctl that takes N commands, makes the N-1 pipes
+   in the kernel, and starts N tasks with their descriptors already
+   installed removes every one of those forks and the shell's own pipe
+   bookkeeping with them. A stage that is a builtin, a function or a
+   compound command still has to fork, because the child continues
+   interpreting the parent's state; the shell decides per stage and the
+   common `a | b | c` of external tools takes the fork-free path.
+
+2. **The path walk per spawn (prologue, 30.6%).** Every spawn resolves
+   the image's path and opens it again. The image is one file the module
+   already knows; holding the opened file and handing it to the bprm
+   directly removes a full path resolution, the permission checks and the
+   security hooks from every spawn. This is the largest single cut inside
+   the prologue and it changes no semantics, because the file is the same
+   file the walk would have found.
+
+3. **The argument stack's move (loader rest, 13.5%).** setup_arg_pages
+   builds the argument stack at the top of the address space and then
+   moves it down to the real stack address, which is a page-table move per
+   spawn. It is zero work when the two addresses agree, and they agree
+   when the stack is not randomized. That is a security property traded
+   for a measured cost, so it belongs behind the profile's own switch
+   rather than being taken silently.
+
+4. **What copy_process copies (task, 47.8%).** The biggest phase and the
+   hardest. The child is created from the shell making the ioctl, so it
+   inherits a duplicate of that shell's descriptor table, its filesystem
+   context and its signal handlers, and then execve throws nearly all of
+   it away. Everything the shell holds open costs every spawn it makes;
+   the cheap half of this is keeping the shell's own table small and
+   close-on-exec, and the expensive half is a spawn path that builds the
+   child's table from the request instead of copying the caller's.
+
+5. **One mapping instead of two hundred.** The image's text is 784 KB,
+   mapped a page at a time, faulted in a page at a time, reverse-mapped
+   and then torn down the same way. Every spark program maps the identical
+   file at the identical address, so a single large folio behind it would
+   turn that into one mapping, one fault and one teardown. The kernel is
+   built with transparent huge pages on madvise only and without the
+   read-only file path, and the image lives in an initramfs, so nothing
+   can give it one today; a tmpfs mounted for huge pages with the image on
+   it is the shape that could.
 
 ## What must not move
 
 - **The interpreter itself.** A shell running scripts in ring 0 makes every
   parser or expansion bug a kernel compromise; scripts, arguments and
   environment are attacker input (see the memory note on ring 0 being the
-  include graph, and printk content being attacker input). The pool keeps
-  the interpreter in userspace and moves only the dispatch.
+  include graph, and printk content being attacker input). Everything
+  above moves the dispatch and leaves the interpreting in userspace.
 - **Tools sharing one address space concurrently.** The tools keep static
   state (the arenas above); two stages of one pipeline running as threads
   in one process would race on it. Running stages in place sequentially
   with buffered pipes changes semantics for streaming producers
-  (`yes | head`) and is not bash's behaviour. Handoffs to pooled instances
-  keep one tool per address space.
+  (`yes | head`) and is not bash's behaviour. The pipeline ioctl starts a
+  process per stage for the same reason: one tool, one address space.
 
 ## What was already taken off the per-instance path
 
@@ -103,9 +152,16 @@ of dash to 55%.
 
 ## Order of work
 
-Item 2 is a day's work in src/sh/exec.c and shell.c and needs the
-job-control changes merged first, since both touch the stage spawn. Item 1
-is the module change: a request ring per pool entry, fd installation
-through receive_fd, a park ioctl, the reset list in the shell, and a
-retire path; measure it with kit/bench_shell's pipeline row and the
-kernel's stat_exec_ns.
+The ioctl in item 1 is the one with a shape of its own; the rest are cuts
+inside a path that already exists. Items 2 and 3 are small and measurable
+today with the `spawn` applet, which prints the phases above; take them
+first and watch the prologue and loader rows fall. Item 4 is a design
+question about who builds the child's descriptor table and should not be
+started before 1 and 2 have moved the numbers they claim. Item 5 needs a
+kernel configuration change and a decision about where the image lives,
+and it is the only one whose win is proportional to the image rather than
+fixed per spawn.
+
+Measure every step the same way: `spawn` before and after a loop of three
+thousand, in the guest, with the phases read off rather than inferred from
+wall clock.

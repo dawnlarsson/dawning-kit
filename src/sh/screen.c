@@ -601,6 +601,65 @@ static b32 screen_text()
         return 0;
 }
 
+// spawn -----------------------------------------------------------
+/*
+        What the kernel spends starting a program, per phase.
+
+        The module has kept these counters since the spark loader was
+        written and nothing has ever read them, so the cost of a spawn has
+        only ever been visible from outside as wall clock. The phases are
+        nested: task is user_mode_thread, exec is the whole of
+        kernel_execve, loader is our binary format handler inside it, and
+        map is the three region mappings inside that. What exec has that
+        loader does not is the generic prologue -- the bprm, the path walk
+        of the image, and the argument stack -- which is where the work
+        that is left to remove lives.
+*/
+static b32 screen_spawn()
+{
+        b32 device = system_open_at(AT_FDCWD, SPARK_DEVICE, FILE_READ_WRITE);
+        struct stats stats;
+        positive spawns;
+
+        if (device < 0)
+        {
+                string_format(log, "cannot open %s: %b\n", SPARK_DEVICE, device);
+                log_flush();
+                return 1;
+        }
+
+        if (system_control(device, SPARK_IOCTL_STATS, address_of stats) != 0)
+        {
+                string_format(log, "could not read spawn stats\n");
+                log_flush();
+                return 1;
+        }
+
+        spawns = stats.spawns ? stats.spawns : 1;
+
+        string_format(log, "spawns           %p\n", stats.spawns);
+        string_format(log, "loads            %p\n", stats.loads);
+        string_format(log, "  task           %p ns each\n", stats.task_ns / spawns);
+        string_format(log, "  exec           %p ns each\n", stats.exec_ns / spawns);
+        string_format(log, "    loader       %p ns each\n", stats.loader_ns / spawns);
+        string_format(log, "      mapping    %p ns each\n", stats.map_ns / spawns);
+
+        // What kernel_execve did around our handler: the bprm, opening the
+        // image, and the argument stack it builds and then moves.
+        if (stats.exec_ns > stats.loader_ns)
+                string_format(log, "    prologue     %p ns each\n",
+                              (stats.exec_ns - stats.loader_ns) / spawns);
+
+        if (stats.loader_ns > stats.map_ns)
+                string_format(log, "    loader rest  %p ns each\n",
+                              (stats.loader_ns - stats.map_ns) / spawns);
+
+        string_format(log, "totals           %p ns task, %p ns exec\n",
+                      stats.task_ns, stats.exec_ns);
+        log_flush();
+        return 0;
+}
+
 // pointer ---------------------------------------------------------
 // Reports how long the kernel takes from a pointer event arriving to the
 // cursor being on screen. Move the mouse, then run this.
