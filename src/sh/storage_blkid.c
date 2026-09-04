@@ -141,6 +141,27 @@ static positive storage_read(bipolar handle, p8 address_to bytes,
         return used;
 }
 
+static bipolar storage_write(bipolar handle, p8 address_to bytes,
+                             positive length, p64 offset)
+{
+        positive used = 0;
+
+        while (used < length)
+        {
+                bipolar wrote = system_call_4(
+                    syscall(pwrite64), (positive)handle,
+                    (positive)(bytes + used), length - used,
+                    (positive)(offset + used));
+
+                if (wrote == -4) /* EINTR */
+                        continue;
+                if (wrote <= 0)
+                        return wrote ? wrote : -5; /* EIO */
+                used += (positive)wrote;
+        }
+        return (bipolar)used;
+}
+
 static fn storage_text(p8 address_to into, positive room,
                        positive address_to length, string_address text)
 {
@@ -1098,14 +1119,14 @@ static fn storage_probe_luks(storage_identity address_to identity,
                                 bytes + 24, 48, false);
 }
 
-static fn storage_probe_swap(bipolar handle,
-                             storage_identity address_to identity,
-                             p8 address_to bytes, positive have)
+static bool storage_swap_magic(bipolar handle, p8 address_to bytes,
+                               positive have, p64 address_to offset,
+                               bool address_to modern)
 {
         p8 tail[10];
-        positive page_sizes[] = {4096, 8192, 16384, 32768, 65536};
-        bool modern = false;
-        bool recognised = false;
+        static const positive page_sizes[] = {
+            2048, 4096, 8192, 16384, 32768, 65536, 131072,
+        };
 
         for (positive at = 0;
              at < array_count(page_sizes); at++)
@@ -1113,19 +1134,23 @@ static fn storage_probe_swap(bipolar handle,
                 positive page = page_sizes[at];
                 p8 address_to signature;
 
-                if (page == 4096)
-                {
-                        if (have < page)
-                                continue;
+                if (bytes && have >= page)
                         signature = bytes + page - 10;
-                }
                 else
                 {
                         /* Modern swap carries version 1 in the fixed header.
                            Gate the extra page-size probes on it so every
                            ordinary unknown device does not pay four preads. */
                         if (have < 1068 || storage_le32(bytes + 1024) != 1)
-                                break;
+                        {
+                                p8 header[4];
+
+                                if (storage_read(handle, header,
+                                                 sizeof(header), 1024) !=
+                                        sizeof(header) ||
+                                    storage_le32(header) != 1)
+                                        break;
+                        }
                         if (storage_read(handle, tail, sizeof(tail), page - 10) !=
                             sizeof(tail))
                                 continue;
@@ -1134,26 +1159,38 @@ static fn storage_probe_swap(bipolar handle,
 
                 if (!memory_compare(signature, "SWAPSPACE2", 10))
                 {
-                        modern = true;
-                        recognised = true;
-                        break;
+                        address_to modern = true;
+                        address_to offset = page - 10;
+                        return true;
                 }
-                if (page == 4096 &&
-                    !memory_compare(signature, "SWAP-SPACE", 10))
+                if (!memory_compare(signature, "SWAP-SPACE", 10))
                 {
-                        recognised = true;
-                        break;
+                        address_to modern = false;
+                        address_to offset = page - 10;
+                        return true;
                 }
         }
 
-        if (!recognised)
+        return false;
+}
+
+static fn storage_probe_swap(bipolar handle,
+                             storage_identity address_to identity,
+                             p8 address_to bytes, positive have)
+{
+        p64 offset;
+        bool modern;
+
+        if (!storage_swap_magic(handle, bytes, have,
+                                address_of offset, address_of modern))
                 return;
 
         storage_set_type(identity, (string_address)"swap");
 
         if (modern && have >= 1068)
         {
-                storage_set_uuid(identity, bytes + 1036);
+                if (storage_uuid_present(bytes + 1036))
+                        storage_set_uuid(identity, bytes + 1036);
                 storage_trimmed(identity->label, sizeof(identity->label),
                                 address_of identity->label_length,
                                 bytes + 1052, 16, false);
@@ -1394,27 +1431,17 @@ static bool storage_signature_location(
         }
         else if (string_equals(type, "swap"))
         {
-                static const positive pages[] = {
-                    4096, 8192, 16384, 32768, 65536,
-                };
-                p8 magic[10];
+                p8 bytes[STORAGE_PROBE_ROOM];
+                bool modern;
+                positive have = storage_read(handle, bytes,
+                                             sizeof(bytes), 0);
 
-                for (positive at = 0; at < array_count(pages); at++)
-                {
-                        p64 where = pages[at] - sizeof(magic);
-
-                        if (storage_read(handle, magic, sizeof(magic), where) ==
-                                sizeof(magic) &&
-                            (!memory_compare(magic, "SWAPSPACE2", 10) ||
-                             !memory_compare(magic, "SWAP-SPACE", 10)))
-                        {
-                                address_to offset = where;
-                                address_to length = sizeof(magic);
-                                address_to usage = (string_address)"other";
-                                return true;
-                        }
-                }
-                return false;
+                if (!storage_swap_magic(handle, bytes, have, offset,
+                                        address_of modern))
+                        return false;
+                address_to length = 10;
+                address_to usage = (string_address)"other";
+                return true;
         }
         else if (string_equals(type, "btrfs"))
         {
@@ -1472,19 +1499,15 @@ static bool storage_signature_emit(
 /* Enumerate every filesystem/container recogniser over one open descriptor.
    The recognisers remain the sole source of validation and metadata; wipefs
    merely receives their exact magic locations. */
-static bipolar storage_each_signature(
-    string_address path, storage_signature_visitor visitor,
-    address_any context)
+static positive storage_each_signature_handle(
+    bipolar handle, string_address path,
+    storage_signature_visitor visitor, address_any context)
 {
         p8 bytes[STORAGE_PROBE_ROOM];
         storage_identity identity;
-        bipolar handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_CLOEXEC);
         positive have;
         positive found = 0;
 
-        if (handle < 0)
-                return handle;
         have = storage_read(handle, bytes, sizeof(bytes), 0);
 
 #define STORAGE_SIGNATURE_TRY(probe)                                      \
@@ -1535,6 +1558,20 @@ static bipolar storage_each_signature(
 
 done:
 #undef STORAGE_SIGNATURE_TRY
+        return found;
+}
+
+static bipolar storage_each_signature(
+    string_address path, storage_signature_visitor visitor,
+    address_any context)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return handle;
+        positive found = storage_each_signature_handle(
+            handle, path, visitor, context);
         system_close(handle);
         return (bipolar)found;
 }

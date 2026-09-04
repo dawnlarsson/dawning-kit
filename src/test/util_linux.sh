@@ -21,9 +21,9 @@ trap 'rm -rf "$work"' EXIT INT TERM
 . "$root/src/test/tally.sh"
 
 mkdir "$work/bin"
-for name in addpart bits blockdev delpart resizepart isosize wipefs coresched rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for name in addpart bits blockdev ctrlaltdel delpart resizepart isosize wipefs mkswap swaplabel coresched pivot_root rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
+        getino fincore hardlink ipcmk ipcrm ipcs lsblk lsclocks lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg rfkill uuidgen uuidparse cal col colcrt colrm column dmesg \
         last logger look line nologin pipesz script scriptreplay ul utmpdump wall write; do
         ln -s "$subject" "$work/bin/$name"
 done
@@ -134,9 +134,9 @@ subject()
 section util-linux
 
 group reference
-for utility in addpart bits blockdev delpart resizepart isosize wipefs coresched rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for utility in addpart bits blockdev ctrlaltdel delpart resizepart isosize wipefs mkswap swaplabel coresched pivot_root rename setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
+        getino fincore ipcmk ipcrm ipcs lsblk lsclocks lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg rfkill uuidgen uuidparse cal col colcrt colrm column dmesg \
         last logger look pipesz script scriptreplay ul utmpdump wall write; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
@@ -285,6 +285,55 @@ truncate -s 64K "$work/no-signature"
 compare 'empty signature JSON' wipefs \
         '"$TOOL" -J "$1"' sh "$work/no-signature"
 
+group swap-images
+compare 'fixed swap creation output' mkswap \
+        'p=$(mktemp "$1/mkswap-output.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; "$TOOL" -L bowl -U 00112233-4455-6677-8899-aabbccddeeff "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+compare 'fixed swap header bytes' mkswap \
+        'p=$(mktemp "$1/mkswap-header.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; "$TOOL" -q -L bowl -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; dd if="$p" bs=4096 count=1 status=none | sha256sum; rm -f "$p"' \
+        sh "$work"
+compare '8192-byte swap page header' mkswap \
+        'p=$(mktemp "$1/mkswap-page.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; "$TOOL" -q -p 8192 -L bowl -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; dd if="$p" bs=8192 count=1 status=none | sha256sum; rm -f "$p"' \
+        sh "$work"
+compare 'legacy KiB size bounds last page' mkswap \
+        'p=$(mktemp "$1/mkswap-size.XXXXXX"); truncate -s 3M "$p"; chmod 600 "$p"; "$TOOL" -q -U 00112233-4455-6677-8899-aabbccddeeff "$p" 1024 || exit; od -An -tu4 -j1024 -N12 "$p"; rm -f "$p"' \
+        sh "$work"
+compare 'quiet swap creation' mkswap \
+        'p=$(mktemp "$1/mkswap-quiet.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; "$TOOL" -q -U clear "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+subject 'random swap UUID has RFC version and variant' mkswap \
+        'p=$(mktemp "$1/mkswap-random.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; "$TOOL" -q "$p" || exit; uuid=$("$2/swaplabel" "$p" | awk '\''$1 == "UUID:" {print $2}'\''); rm -f "$p"; [ "${uuid#????????-????-4???}" != "$uuid" ] && case ${uuid#????????-????-????-} in [89abAB]*) :;; *) exit 1;; esac' \
+        sh "$work" "$work/bin"
+subject 'swap creation rejects non-regular targets' mkswap \
+        '! "$TOOL" -q /dev/null >/dev/null 2>&1'
+subject 'unsupported broad mutation modes reject' mkswap \
+        'p=$(mktemp "$1/mkswap-unsupported.XXXXXX"); truncate -s 2M "$p"; ! "$TOOL" -c "$p" >/dev/null 2>&1 && ! "$TOOL" -F "$p" >/dev/null 2>&1 && ! "$TOOL" -s 1M "$p" >/dev/null 2>&1; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+
+compare 'swap label and UUID display' swaplabel \
+        'p=$(mktemp "$1/swaplabel-show.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; mkswap -q -L bowl -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; "$TOOL" "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+compare 'swap label and UUID update' swaplabel \
+        'p=$(mktemp "$1/swaplabel-set.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; mkswap -q -L old -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; "$TOOL" -L new -U ffeeddcc-bbaa-9988-7766-554433221100 "$p" || exit; "$TOOL" "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+compare 'long swap label truncation' swaplabel \
+        'p=$(mktemp "$1/swaplabel-long.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; mkswap -q -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; "$TOOL" -L 0123456789abcdefXYZ "$p" 2>/dev/null || exit; "$TOOL" "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+compare 'cleared UUID is omitted' swaplabel \
+        'p=$(mktemp "$1/swaplabel-clear.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; mkswap -q -L bowl -U clear "$p" || exit; "$TOOL" "$p"; status=$?; rm -f "$p"; exit "$status"' \
+        sh "$work"
+subject 'invalid UUID leaves swap metadata unchanged' swaplabel \
+        'p=$(mktemp "$1/swaplabel-invalid.XXXXXX"); truncate -s 2M "$p"; chmod 600 "$p"; mkswap -q -L bowl -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; before=$(dd if="$p" bs=1 skip=1036 count=32 status=none | sha256sum); ! "$TOOL" -U invalid "$p" >/dev/null 2>&1 || exit; after=$(dd if="$p" bs=1 skip=1036 count=32 status=none | sha256sum); rm -f "$p"; [ "$before" = "$after" ]' \
+        sh "$work"
+subject 'swap relabel rejects non-regular mutation' swaplabel \
+        '! "$TOOL" -L unsafe /dev/null >/dev/null 2>&1'
+
+if command -v mkfs.ext4 >/dev/null 2>&1; then
+        subject 'existing filesystem requires explicit force' mkswap \
+                'p=$(mktemp "$1/mkswap-force.XXXXXX"); truncate -s 8M "$p"; chmod 600 "$p"; mkfs.ext4 -q -F "$p" || exit; before=$(sha256sum "$p"); ! "$TOOL" -q "$p" >/dev/null 2>&1 || exit; after=$(sha256sum "$p"); [ "$before" = "$after" ] || exit; "$TOOL" -q -f -U 00112233-4455-6677-8899-aabbccddeeff "$p" || exit; "$2/swaplabel" "$p" | grep -q 00112233-4455-6677-8899-aabbccddeeff; status=$?; rm -f "$p"; exit "$status"' \
+                sh "$work" "$work/bin"
+fi
+
 group coresched
 compare 'fixed process cookie query' coresched \
         '"$TOOL" get -s "$1"' sh "$$"
@@ -301,6 +350,17 @@ subject 'command exit status survives handoff' coresched \
 subject 'invalid destination type rejected' coresched \
         '"$TOOL" new -t nope -d "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
         sh "$$"
+
+group root-transition
+compare 'pivot root in isolated mount namespace' pivot_root \
+        'd=$(mktemp -d "$1/pivot.XXXXXX") || exit; unshare -Urnm sh -c '\''mount --make-rprivate / && mount -t tmpfs tmpfs "$1" && mkdir "$1/old" && cd "$1" && "$TOOL" . old'\'' sh "$d"; answer=$?; rmdir "$d"; exit "$answer"' \
+        sh "$work"
+compare 'pivot root requires exactly two paths' pivot_root \
+        '"$TOOL" only-one'
+compare 'ctrlaltdel rejects an unknown policy' ctrlaltdel \
+        '"$TOOL" neither'
+subject 'ctrlaltdel soft reaches the privileged syscall' ctrlaltdel \
+        'unshare -Ur "$TOOL" soft >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
 group rename
 compare 'first all last and empty replacements' rename \
@@ -456,6 +516,29 @@ if sudo -n unshare -m true >/dev/null 2>&1; then
                 'sudo -n unshare -m sh -c '\''mount --make-rprivate /; mkdir -p "$2/a" "$2/b"; mount --bind / "$2/a"; mount --bind / "$2/b"; LC_ALL=C "$1" -n -r -o KNAME,MOUNTPOINTS'\'' sh "$TOOL" "$0"' \
                 "$work"
 fi
+
+group lsclocks
+compare 'static clock metadata raw' lsclocks \
+        '"$TOOL" --no-discover-dynamic --no-discover-rtc -r -o ID,CLOCK,NAME,TYPE,RESOL,RESOL_RAW,NS_OFFSET'
+compare 'static clock metadata JSON' lsclocks \
+        '"$TOOL" --no-discover-dynamic --no-discover-rtc -J -o ID,CLOCK,NAME,TYPE,RESOL,RESOL_RAW,NS_OFFSET'
+compare 'static clock metadata without headings' lsclocks \
+        '"$TOOL" --no-discover-dynamic --no-discover-rtc -n -o ID,CLOCK,NAME,TYPE,RESOL,RESOL_RAW,NS_OFFSET'
+compare 'environment selects columns' lsclocks \
+        'LSCLOCKS_COLUMNS=ID,CLOCK,NAME,TYPE,RESOL,RESOL_RAW,NS_OFFSET "$TOOL" --no-discover-dynamic --no-discover-rtc -r'
+compare 'unknown clock rejects' lsclocks \
+        '"$TOOL" -t moonwater-not-a-clock'
+compare 'missing explicit dynamic clock rejects' lsclocks \
+        '"$TOOL" -d /dev/moonwater-not-a-clock'
+subject 'symbolic realtime emits seconds and nanoseconds' lsclocks \
+        '"$TOOL" -t realtime | grep -Eq "^[0-9]{10}\\.[0-9]{9}$"'
+subject 'all static JSON fields are typed' lsclocks \
+        '"$TOOL" --no-discover-dynamic --no-discover-rtc -J --output-all | python3 -c '\''import json,sys
+rows=json.load(sys.stdin)["clocks"]
+assert rows and {"type","id","clock","name","time","iso_time","resol","resol_raw","rel_time","ns_offset"} == set(rows[0])
+assert all(isinstance(r["id"],int) and isinstance(r["name"],str) for r in rows)'\'''
+subject 'CPU clock follows an extant process' lsclocks \
+        '"$TOOL" --no-discover-dynamic --no-discover-rtc -c $$ -n -r -o TYPE,NAME,TIME | grep -Eq "^cpu [0-9]+ [0-9]+\\.[0-9]{9}$"'
 
 group lscpu
 compare 'custom parsable topology' lscpu \
@@ -1463,6 +1546,54 @@ subject 'verbose non-tty diagnostic' mesg \
         '"$TOOL" -v > "$0/out" 2> "$0/error"; [ "$?" = 2 ] && [ ! -s "$0/out" ] && grep -qx "mesg: no tty" "$0/error"' \
         "$work"
 
+group rfkill
+rfkill_root="$work/rfkill-sys"
+mkdir -p "$rfkill_root/rfkill3" "$rfkill_root/rfkill7" \
+         "$rfkill_root/rfkill11"
+for record in '3 wifi-card wlan 0 0' '7 blue-chip bluetooth 1 0' \
+              '11 modem wwan 0 1'; do
+        set -- $record
+        printf '%s\n' "$2" > "$rfkill_root/rfkill$1/name"
+        printf '%s\n' "$3" > "$rfkill_root/rfkill$1/type"
+        printf '%s\n' "$4" > "$rfkill_root/rfkill$1/soft"
+        printf '%s\n' "$5" > "$rfkill_root/rfkill$1/hard"
+done
+: > "$work/rfkill-events"
+cat > "$work/rfkill-table" <<'EOF'
+ID TYPE      DEVICE         SOFT      HARD
+ 3 wlan      wifi-card unblocked unblocked
+ 7 bluetooth blue-chip   blocked unblocked
+11 wwan      modem     unblocked   blocked
+EOF
+cat > "$work/rfkill-legacy" <<'EOF'
+3: wifi-card: Wireless LAN
+	Soft blocked: no
+	Hard blocked: no
+EOF
+subject 'bounded sysfs snapshot table' rfkill \
+        'MOONWATER_RFKILL_ROOT="$1/rfkill-sys" "$TOOL" >"$1/got" && cmp -s "$1/rfkill-table" "$1/got"' \
+        sh "$work"
+subject 'raw selected columns and filter' rfkill \
+        'out=$(MOONWATER_RFKILL_ROOT="$1/rfkill-sys" "$TOOL" -r -o ID,DEVICE,SOFT bluetooth) && [ "$out" = "ID DEVICE SOFT
+7 blue-chip blocked" ]' sh "$work"
+subject 'legacy list compatibility' rfkill \
+        'MOONWATER_RFKILL_ROOT="$1/rfkill-sys" "$TOOL" list wlan >"$1/got" && cmp -s "$1/rfkill-legacy" "$1/got"' \
+        sh "$work"
+subject 'JSON typed ID and complete rows' rfkill \
+        'MOONWATER_RFKILL_ROOT="$1/rfkill-sys" "$TOOL" -J >"$1/got" && grep -q '"'"'"id": 3'"'"' "$1/got" && grep -q '"'"'"device": "blue-chip"'"'"' "$1/got" && grep -q '"'"'"hard": "blocked"'"'"' "$1/got" && [ "$(grep -c '"'"'"id":'"'"' "$1/got")" = 3 ]' \
+        sh "$work"
+subject 'block emits exact change-all and indexed ABI records' rfkill \
+        ': >"$1/rfkill-events"; MOONWATER_RFKILL_ROOT="$1/rfkill-sys" MOONWATER_RFKILL_DEVICE="$1/rfkill-events" "$TOOL" block wlan 7 || exit; bytes=$(od -An -tx1 -v "$1/rfkill-events" | tr -d " \n"); [ "$bytes" = "00000000010301000700000000020100" ]' \
+        sh "$work"
+subject 'toggle snapshots mixed state into bounded indexed changes' rfkill \
+        ': >"$1/rfkill-events"; MOONWATER_RFKILL_ROOT="$1/rfkill-sys" MOONWATER_RFKILL_DEVICE="$1/rfkill-events" "$TOOL" toggle all || exit; bytes=$(od -An -tx1 -v "$1/rfkill-events" | tr -d " \n"); [ "$bytes" = "030000000102010007000000020200000b00000005020100" ]' \
+        sh "$work"
+subject 'event monitor rejected without waiting' rfkill \
+        'MOONWATER_RFKILL_ROOT="$1/rfkill-sys" timeout 2 "$TOOL" event >/dev/null 2>&1; [ "$?" = 1 ]' \
+        sh "$work"
+compare 'unknown command rejected' rfkill '"$TOOL" unknown'
+compare 'JSON and raw conflict rejected' rfkill '"$TOOL" -J -r'
+
 group logger
 cat > "$work/logger-wire.py" <<'PY'
 import os
@@ -2259,7 +2390,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='addpart bits blkid blockdev cal choom chrt col colcrt colrm column copyfilerange coresched delpart dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs isosize kill last line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter pipesz prlimit rename renice resizepart rev script scriptreplay setarch setpgid setpriv setsid taskset uclampset ul umount unshare utmpdump uuidgen uuidparse waitpid wall whereis wipefs write'
+supported='addpart bits blkid blockdev cal choom chrt col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs isosize kill last line logger look lsblk lsclocks lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mkswap mount mountpoint namei nologin nsenter pipesz pivot_root prlimit rename renice resizepart rev rfkill script scriptreplay setarch setpgid setpriv setsid swaplabel taskset uclampset ul umount unshare utmpdump uuidgen uuidparse waitpid wall whereis wipefs write'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

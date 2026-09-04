@@ -3164,3 +3164,111 @@ replay_open_failed:
                 system_close((positive)input.handle);
         return 1;
 }
+
+// pivot_root ------------------------------------------------------
+
+/* Keep this applet as the syscall-shaped primitive it is.  Bowl setup can
+   construct the mount tree with the existing mount/unshare tools and then
+   cross the root boundary without launching a second utility runtime. */
+static const file_long process_pivot_root_longs[] = {
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 process_pivot_root()
+{
+        file_taking taking = {
+            .program = (string_address)"pivot_root",
+            .allowed = (string_address)"hV",
+            .longs = process_pivot_root_longs,
+        };
+        positive count = (positive)program_argument_count();
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+                return ul_usage((string_address)"pivot_root",
+                                (string_address)"[options] new_root put_old");
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "pivot_root from dawning-kit\n");
+                return 0;
+        }
+        if (taking.first + 2 != count)
+                return ul_bad_usage((string_address)"pivot_root",
+                                    (string_address)"expected new_root and put_old");
+
+        string_address new_root = program_argument((b32)taking.first);
+        string_address put_old = program_argument((b32)taking.first + 1);
+        bipolar changed = system_call_2(syscall(pivot_root),
+                                        (positive)new_root,
+                                        (positive)put_old);
+
+        if (changed < 0)
+        {
+                string_format(file_fail, "pivot_root: failed to change root from %s to %s: %s\n",
+                              new_root, put_old, file_reason(changed));
+                return 1;
+        }
+        return 0;
+}
+
+// ctrlaltdel ------------------------------------------------------
+
+#define PROCESS_REBOOT_MAGIC 0xfee1dead
+#define PROCESS_REBOOT_MAGIC_SECOND 672274793
+#define PROCESS_REBOOT_CAD_OFF 0
+#define PROCESS_REBOOT_CAD_ON 0x89abcdef
+
+static const file_long process_ctrlaltdel_longs[] = {
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 process_ctrlaltdel()
+{
+        file_taking taking = {
+            .program = (string_address)"ctrlaltdel",
+            .allowed = (string_address)"hV",
+            .longs = process_ctrlaltdel_longs,
+        };
+        positive count = (positive)program_argument_count();
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+                return ul_usage((string_address)"ctrlaltdel",
+                                (string_address)"hard|soft");
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "ctrlaltdel from dawning-kit\n");
+                return 0;
+        }
+        if (taking.first + 1 != count)
+                return ul_bad_usage((string_address)"ctrlaltdel",
+                                    (string_address)"expected hard or soft");
+
+        string_address mode = program_argument((b32)taking.first);
+        positive command;
+
+        if (string_equals(mode, (string_address)"hard"))
+                command = PROCESS_REBOOT_CAD_ON;
+        else if (string_equals(mode, (string_address)"soft"))
+                command = PROCESS_REBOOT_CAD_OFF;
+        else
+                return ul_bad_usage((string_address)"ctrlaltdel",
+                                    (string_address)"expected hard or soft");
+
+        bipolar changed = system_call_4(syscall(reboot), PROCESS_REBOOT_MAGIC,
+                                        PROCESS_REBOOT_MAGIC_SECOND, command,
+                                        0);
+        if (changed < 0)
+        {
+                string_format(file_fail, "ctrlaltdel: cannot set %s mode: %s\n",
+                              mode, file_reason(changed));
+                return 1;
+        }
+        return 0;
+}

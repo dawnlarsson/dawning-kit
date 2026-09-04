@@ -4105,6 +4105,534 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
         }
 }
 
+// lsclocks --------------------------------------------------------
+
+#define UL_LSCLOCK_ROWS 1024
+#define UL_RTC_READ_TIME 0x80247009u
+
+enum
+{
+        UL_LSCLOCK_TYPE,
+        UL_LSCLOCK_ID,
+        UL_LSCLOCK_CLOCK,
+        UL_LSCLOCK_NAME,
+        UL_LSCLOCK_TIME,
+        UL_LSCLOCK_ISO_TIME,
+        UL_LSCLOCK_RESOL,
+        UL_LSCLOCK_RESOL_RAW,
+        UL_LSCLOCK_REL_TIME,
+        UL_LSCLOCK_NS_OFFSET,
+        UL_LSCLOCK_COLUMNS,
+};
+
+enum
+{
+        UL_LSCLOCK_SYS,
+        UL_LSCLOCK_AUX,
+        UL_LSCLOCK_PTP,
+        UL_LSCLOCK_CPU,
+        UL_LSCLOCK_RTC,
+};
+
+typedef struct
+{
+        p8 type;
+        b32 id;
+        bool no_id;
+        string_address clock;
+        string_address name;
+        string_address offset_name;
+} ul_lsclock_definition;
+
+typedef struct
+{
+        ul_lsclock_definition definition;
+        timespec now;
+        timespec resolution;
+        bool have_now;
+        bool have_resolution;
+        string_address offset;
+} ul_lsclock_row;
+
+static const ul_lsclock_definition ul_lsclock_system[] = {
+    {UL_LSCLOCK_SYS, 0, false, "CLOCK_REALTIME", "realtime", null},
+    {UL_LSCLOCK_SYS, 1, false, "CLOCK_MONOTONIC", "monotonic", "monotonic"},
+    {UL_LSCLOCK_SYS, 4, false, "CLOCK_MONOTONIC_RAW", "monotonic-raw", null},
+    {UL_LSCLOCK_SYS, 5, false, "CLOCK_REALTIME_COARSE", "realtime-coarse", null},
+    {UL_LSCLOCK_SYS, 6, false, "CLOCK_MONOTONIC_COARSE", "monotonic-coarse", null},
+    {UL_LSCLOCK_SYS, 7, false, "CLOCK_BOOTTIME", "boottime", "boottime"},
+    {UL_LSCLOCK_SYS, 8, false, "CLOCK_REALTIME_ALARM", "realtime-alarm", null},
+    {UL_LSCLOCK_SYS, 9, false, "CLOCK_BOOTTIME_ALARM", "boottime-alarm", null},
+    {UL_LSCLOCK_SYS, 11, false, "CLOCK_TAI", "tai", null},
+    {UL_LSCLOCK_AUX, 16, false, "CLOCK_AUX0", "auxiliary-0", null},
+    {UL_LSCLOCK_AUX, 17, false, "CLOCK_AUX1", "auxiliary-1", null},
+    {UL_LSCLOCK_AUX, 18, false, "CLOCK_AUX2", "auxiliary-2", null},
+    {UL_LSCLOCK_AUX, 19, false, "CLOCK_AUX3", "auxiliary-3", null},
+    {UL_LSCLOCK_AUX, 20, false, "CLOCK_AUX4", "auxiliary-4", null},
+    {UL_LSCLOCK_AUX, 21, false, "CLOCK_AUX5", "auxiliary-5", null},
+    {UL_LSCLOCK_AUX, 22, false, "CLOCK_AUX6", "auxiliary-6", null},
+    {UL_LSCLOCK_AUX, 23, false, "CLOCK_AUX7", "auxiliary-7", null},
+};
+
+static const ul_table_column ul_lsclock_columns[] = {
+    {"type", "TYPE", 0, false, UL_TABLE_STRING},
+    {"id", "ID", 1, true, UL_TABLE_NULL_NUMBER},
+    {"clock", "CLOCK", 0, false, UL_TABLE_NULL_STRING},
+    {"name", "NAME", 0, false, UL_TABLE_STRING},
+    {"time", "TIME", 0, true, UL_TABLE_NULL_NUMBER},
+    {"iso_time", "ISO_TIME", 0, true, UL_TABLE_NULL_STRING},
+    {"resol", "RESOL", 0, true, UL_TABLE_NULL_STRING},
+    {"resol_raw", "RESOL_RAW", 0, true, UL_TABLE_NULL_NUMBER},
+    {"rel_time", "REL_TIME", 0, true, UL_TABLE_NULL_STRING},
+    {"ns_offset", "NS_OFFSET", 0, true, UL_TABLE_NULL_NUMBER},
+};
+
+static const file_long ul_lsclock_longs[] = {
+    {"json", 'J'}, {"noheadings", 'n'}, {"output", 'o'},
+    {"output-all", 'A'}, {"raw", 'r'}, {"time", 't'},
+    {"no-discover-dynamic", 'D'}, {"no-discover-rtc", 'R'},
+    {"dynamic-clock", 'd'}, {"cpu-clock", 'c'}, {"rtc", 'x'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static string_address ul_lsclock_type_name(p8 type)
+{
+        static const string_address names[] = {"sys", "aux", "ptp", "cpu", "rtc"};
+        return type < array_count(names) ? names[type] : (string_address)"";
+}
+
+static positive ul_lsclock_signed(p8 address_to into, b64 value)
+{
+        positive used = 0;
+        positive magnitude;
+        if (value < 0)
+        {
+                into[used++] = '-';
+                magnitude = (positive)(-(value + 1)) + 1;
+        }
+        else
+                magnitude = (positive)value;
+        used += positive_into(into + used, magnitude);
+        into[used] = end;
+        return used;
+}
+
+static positive ul_lsclock_timespec(p8 address_to into, timespec value)
+{
+        positive used = ul_lsclock_signed(into, value.tv_sec);
+        into[used++] = '.';
+        used += positive_into_padded(into + used, value.tv_nsec, 9, '0');
+        into[used] = end;
+        return used;
+}
+
+static positive ul_lsclock_relative(p8 address_to into, timespec value)
+{
+        static const struct { positive seconds; p8 width; p8 suffix; } units[] = {
+            {31557600, 4, 'y'}, {86400, 3, 'd'}, {3600, 2, 'h'},
+            {60, 2, 'm'}, {1, 2, 's'},
+        };
+        positive seconds = value.tv_sec < 0 ? 0 : (positive)value.tv_sec;
+        positive used = 0, parts = 0;
+        for (positive at = 0; at < array_count(units); at++)
+        {
+                if (seconds < units[at].seconds)
+                        continue;
+                positive number = seconds / units[at].seconds;
+                p8 digits[24];
+                positive length = positive_into(digits, number);
+                positive width = units[at].width;
+                if (parts)
+                        while (length < width)
+                        {
+                                into[used++] = ' ';
+                                width--;
+                        }
+                memory_copy(into + used, digits, length);
+                used += length;
+                into[used++] = units[at].suffix;
+                seconds %= units[at].seconds;
+                if (seconds)
+                        into[used++] = ' ';
+                parts++;
+        }
+        if (value.tv_nsec)
+        {
+                positive number = (positive)value.tv_nsec;
+                string_address suffix = "ns";
+                positive width = parts ? 10 : 0;
+                if (!(number % 1000000))
+                {
+                        number /= 1000000;
+                        suffix = "ms";
+                        width = parts ? 4 : 0;
+                }
+                p8 digits[24];
+                positive length = positive_into(digits, number);
+                while (length < width)
+                {
+                        into[used++] = ' ';
+                        width--;
+                }
+                memory_copy(into + used, digits, length);
+                used += length;
+                memory_copy(into + used, suffix, 2);
+                used += 2;
+        }
+        into[used] = end;
+        return used;
+}
+
+static positive ul_lsclock_iso(p8 address_to into, timespec value)
+{
+        time_t stamp = value.tv_sec;
+        tm broken;
+        if (!gmtime_r(address_of stamp, address_of broken))
+        {
+                into[0] = end;
+                return 0;
+        }
+        positive used = strftime(into, 48, "%Y-%m-%dT%H:%M:%S", address_of broken);
+        into[used++] = '.';
+        used += positive_into_padded(into + used, value.tv_nsec, 9, '0');
+        memory_copy_end(into + used, "+00:00", 6);
+        return used + 6;
+}
+
+static string_address ul_lsclock_field(address_any opaque, p8 column,
+                                       p8 address_to scratch)
+{
+        ul_lsclock_row address_to row = opaque;
+        switch (column)
+        {
+        case UL_LSCLOCK_TYPE:
+                return ul_lsclock_type_name(row->definition.type);
+        case UL_LSCLOCK_ID:
+                if (row->definition.no_id) break;
+                positive_into_string(scratch, (positive)(p32)row->definition.id);
+                return scratch;
+        case UL_LSCLOCK_CLOCK:
+                return row->definition.clock ? row->definition.clock : (string_address)"";
+        case UL_LSCLOCK_NAME:
+                return row->definition.name;
+        case UL_LSCLOCK_TIME:
+                if (row->have_now) { ul_lsclock_timespec(scratch, row->now); return scratch; }
+                break;
+        case UL_LSCLOCK_ISO_TIME:
+                if (row->have_now) { ul_lsclock_iso(scratch, row->now); return scratch; }
+                break;
+        case UL_LSCLOCK_RESOL:
+                if (row->have_resolution) { ul_lsclock_relative(scratch, row->resolution); return scratch; }
+                break;
+        case UL_LSCLOCK_RESOL_RAW:
+                if (row->have_resolution) { ul_lsclock_timespec(scratch, row->resolution); return scratch; }
+                break;
+        case UL_LSCLOCK_REL_TIME:
+                if (row->have_now) { ul_lsclock_relative(scratch, row->now); return scratch; }
+                break;
+        default:
+                if (row->offset) return row->offset;
+                break;
+        }
+        return (string_address)"";
+}
+
+static bool ul_lsclock_add_posix(ul_lsclock_row address_to rows,
+                                 positive address_to count,
+                                 ul_lsclock_definition definition)
+{
+        if (address_to count >= UL_LSCLOCK_ROWS)
+                return false;
+        ul_lsclock_row row;
+        memory_zero(address_of row, sizeof(row));
+        row.definition = definition;
+        bipolar got = system_call_2(syscall(clock_gettime),
+                                    (positive)(bipolar)definition.id,
+                                    (positive)address_of row.now);
+        if (got == -22 && definition.type == UL_LSCLOCK_AUX)
+                return true;
+        row.have_now = got >= 0;
+        row.have_resolution = system_call_2(
+            syscall(clock_getres), (positive)(bipolar)definition.id,
+            (positive)address_of row.resolution) >= 0;
+        rows[(address_to count)++] = row;
+        return true;
+}
+
+static bool ul_lsclock_parse(string_address text, b32 address_to id)
+{
+        positive numeric;
+        for (positive at = 0; at < array_count(ul_lsclock_system); at++)
+                if (string_equals(text, ul_lsclock_system[at].clock) ||
+                    string_equals(text, ul_lsclock_system[at].name) ||
+                    (ul_unsigned(text, b32_max, address_of numeric) &&
+                     numeric == (positive)ul_lsclock_system[at].id))
+                {
+                        address_to id = ul_lsclock_system[at].id;
+                        return true;
+                }
+        return false;
+}
+
+static bool ul_lsclock_offsets(p8 address_to monotonic,
+                               p8 address_to boottime)
+{
+        p8 data[512];
+        bipolar got = file_slurp("/proc/self/timens_offsets", data,
+                                 sizeof(data) - 1);
+        if (got < 0 || got == (bipolar)(sizeof(data) - 1))
+                return false;
+        data[got] = end;
+        monotonic[0] = boottime[0] = end;
+        string_address line = data;
+        while (string_get(line))
+        {
+                string_address next = string_first_of(line, '\n');
+                if (next) address_to next = end;
+                string_address space = string_first_of(line, ' ');
+                if (space)
+                {
+                        address_to space = end;
+                        string_address value = space + 1;
+                        while (byte_is_space(string_get(value))) value++;
+                        string_address end_at = value;
+                        if (string_is(end_at, '-') || string_is(end_at, '+')) end_at++;
+                        while (byte_is_digit(string_get(end_at))) end_at++;
+                        positive length = (positive)(end_at - value);
+                        if (length && length < 31)
+                        {
+                                p8 address_to destination = string_equals(line, "monotonic")
+                                    ? monotonic : string_equals(line, "boottime") ? boottime : null;
+                                if (destination) memory_copy_apart_end(destination, value, length);
+                        }
+                }
+                if (!next) break;
+                line = next + 1;
+        }
+        return string_get(monotonic) && string_get(boottime);
+}
+
+typedef struct { b32 second, minute, hour, day, month, year, weekday, yearday, daylight; } ul_rtc_time;
+
+static PURE bipolar ul_lsclock_path_order(string_address left,
+                                          string_address right)
+{
+        return string_compare(left, right);
+}
+
+static bool ul_lsclock_add_path(ul_lsclock_row address_to rows,
+                                positive address_to count,
+                                string_address path, bool rtc, bool explicit)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                if (explicit)
+                        string_format(file_fail, "lsclocks: cannot open %s: %s\n", path, file_reason(handle));
+                return !explicit;
+        }
+        bool okay = true;
+        if (rtc)
+        {
+                ul_rtc_time value;
+                bipolar got = system_control((b32)handle, UL_RTC_READ_TIME,
+                                              address_of value);
+                if (got < 0 || address_to count >= UL_LSCLOCK_ROWS)
+                        okay = false;
+                else
+                {
+                        ul_lsclock_row row;
+                        memory_zero(address_of row, sizeof(row));
+                        row.definition = (ul_lsclock_definition){UL_LSCLOCK_RTC, 0, true, path, path, null};
+                        row.have_now = value.month >= 0 && value.month < 12 &&
+                            value.day > 0 && value.day <= 31 &&
+                            value.hour >= 0 && value.hour < 24 &&
+                            value.minute >= 0 && value.minute < 60 &&
+                            value.second >= 0 && value.second <= 60;
+                        if (row.have_now)
+                                row.now.tv_sec = clock_days_from_civil(
+                                    (bipolar)value.year + 1900,
+                                    (bipolar)value.month + 1,
+                                    value.day) * 86400 +
+                                    (b64)value.hour * 3600 +
+                                    (b64)value.minute * 60 + value.second;
+                        rows[(address_to count)++] = row;
+                }
+        }
+        else
+        {
+                b32 id = (b32)(((p32)~(p32)handle << 3) | 3);
+                okay = ul_lsclock_add_posix(rows, count,
+                    (ul_lsclock_definition){UL_LSCLOCK_PTP, id, true, path, path, null});
+        }
+        system_close((positive)handle);
+        if (!okay && explicit)
+                string_format(file_fail, "lsclocks: cannot read clock %s\n", path);
+        return okay || !explicit;
+}
+
+static bool ul_lsclock_discover(ul_lsclock_row address_to rows,
+                                positive address_to count, bool dynamic,
+                                bool rtc)
+{
+        file_walk walk;
+        if (!file_walk_open(address_of walk, AT_FDCWD, "/dev"))
+                return true;
+        string_address paths[256], spare[256];
+        positive found = 0;
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                string_address name = (string_address)entry->d_name;
+                bool match = (dynamic && !string_compare_max(name, "ptp", 3)) ||
+                             (rtc && !string_compare_max(name, "rtc", 3));
+                if (!match) continue;
+                if (found >= array_count(paths))
+                {
+                        string_format(file_fail,
+                            "lsclocks: too many clock devices in /dev\n");
+                        file_walk_close(address_of walk);
+                        return false;
+                }
+                positive length = string_length(name);
+                p8 address_to path = text_arena_take(length + 6);
+                if (!path) { file_walk_close(address_of walk); return false; }
+                memory_copy(path, "/dev/", 5);
+                memory_copy_end(path + 5, name, length);
+                paths[found++] = path;
+        }
+        file_walk_close(address_of walk);
+        if (found)
+        {
+                string_address address_to sorted = array_merge_sort(
+                    paths, spare, found, ul_lsclock_path_order);
+                for (positive at = 0; at < found; at++)
+                        if (!ul_lsclock_add_path(rows, count, sorted[at],
+                            !string_compare_max(sorted[at] + 5, "rtc", 3), false))
+                                return false;
+        }
+        return true;
+}
+
+static b32 util_linux_lsclocks()
+{
+        file_taking taking = {
+            .program = "lsclocks", .allowed = "JnortdcxADRVh",
+            .valued = "otdcx", .longs = ul_lsclock_longs,
+        };
+        b32 answer;
+        text_begin("lsclocks");
+        if (!file_take(address_of taking)) return text_done(1);
+        if (ul_meta(address_of taking, "[options]", address_of answer)) return text_done(answer);
+        if (taking.first < (positive)program_argument_count())
+                return text_refuse(program_argument((b32)taking.first), "unexpected operand", 1);
+
+        string_address time_name = file_option_value(address_of taking, 't');
+        if (time_name)
+        {
+                b32 id;
+                timespec now;
+                if (!ul_lsclock_parse(time_name, address_of id))
+                        return text_refuse(time_name, "unknown clock", 1);
+                bipolar got = system_call_2(syscall(clock_gettime),
+                                             (positive)(bipolar)id,
+                                             (positive)address_of now);
+                if (got < 0) return text_refuse(time_name, file_reason(got), 1);
+                p8 value[48];
+                ul_lsclock_timespec(value, now);
+                text_put_string(value); text_put_character('\n');
+                return text_done(0);
+        }
+
+        static const p8 defaults[] = {UL_LSCLOCK_ID, UL_LSCLOCK_NAME,
+            UL_LSCLOCK_TYPE, UL_LSCLOCK_TIME, UL_LSCLOCK_RESOL,
+            UL_LSCLOCK_ISO_TIME};
+        p8 columns[UL_LSCLOCK_COLUMNS];
+        positive column_count = 0;
+        string_address selected = file_option_value(address_of taking, 'o');
+        if (!selected) selected = file_environment("LSCLOCKS_COLUMNS");
+        if (selected && !ul_table_column_list(selected, ul_lsclock_columns,
+                UL_LSCLOCK_COLUMNS, defaults, array_count(defaults), columns,
+                address_of column_count))
+                return text_refuse(selected, "unknown output column", 1);
+        if (!selected)
+        {
+                positive limit = taking.flags & FILE_FLAG('A')
+                    ? UL_LSCLOCK_COLUMNS : array_count(defaults);
+                for (positive at = 0; at < limit; at++)
+                        columns[column_count++] = taking.flags & FILE_FLAG('A')
+                            ? (p8)at : defaults[at];
+        }
+
+        p8 monotonic[32], boottime[32];
+        bool want_offset = false;
+        for (positive at = 0; at < column_count; at++)
+                want_offset |= columns[at] == UL_LSCLOCK_NS_OFFSET;
+        if (want_offset && !ul_lsclock_offsets(monotonic, boottime))
+                return text_refuse("/proc/self/timens_offsets", "cannot read", 1);
+
+        text_arena_used = 0;
+        ul_lsclock_row address_to rows = text_arena_take(
+            UL_LSCLOCK_ROWS * sizeof(*rows));
+        if (!rows) return text_done(1);
+        positive count = 0;
+        for (positive at = 0; at < array_count(ul_lsclock_system); at++)
+                if (!ul_lsclock_add_posix(rows, address_of count,
+                                          ul_lsclock_system[at]))
+                        return text_done(1);
+        if (!(taking.flags & FILE_FLAG('D')) &&
+            !ul_lsclock_discover(rows, address_of count, true, false))
+                return text_done(1);
+        string_address dynamic = file_option_value(address_of taking, 'd');
+        if (dynamic && !ul_lsclock_add_path(rows, address_of count,
+                                            dynamic, false, true))
+                return text_done(1);
+        if (!(taking.flags & FILE_FLAG('R')) &&
+            !ul_lsclock_discover(rows, address_of count, false, true))
+                return text_done(1);
+        string_address rtc = file_option_value(address_of taking, 'x');
+        if (rtc && !ul_lsclock_add_path(rows, address_of count, rtc, true, true))
+                return text_done(1);
+        string_address pid_text = file_option_value(address_of taking, 'c');
+        if (pid_text)
+        {
+                positive pid;
+                if (!ul_unsigned(pid_text, b32_max, address_of pid) || !pid)
+                        return text_refuse(pid_text, "invalid PID", 1);
+                p8 path[64]; file_facts facts;
+                system_process_path(path, (p32)pid, null, "");
+                if (!file_look_at(path, address_of facts))
+                        return text_refuse(pid_text, "process does not exist", 1);
+                b32 id = (b32)(((p32)~(p32)pid << 3) | 2);
+                if (!ul_lsclock_add_posix(rows, address_of count,
+                    (ul_lsclock_definition){UL_LSCLOCK_CPU, id, true,
+                                             "", pid_text, null}))
+                        return text_done(1);
+        }
+        if (want_offset)
+                for (positive at = 0; at < count; at++)
+                        if (rows[at].definition.offset_name)
+                                rows[at].offset = string_equals(
+                                    rows[at].definition.offset_name, "monotonic")
+                                    ? monotonic : boottime;
+
+        if ((taking.flags & FILE_FLAG('r')))
+                ul_table_out(rows, sizeof(*rows), count, ul_lsclock_columns,
+                             UL_LSCLOCK_COLUMNS, columns, column_count,
+                             !(taking.flags & FILE_FLAG('n')), true,
+                             ul_lsclock_field);
+        else if (taking.flags & FILE_FLAG('J'))
+                ul_table_json("clocks", rows, sizeof(*rows), count,
+                              ul_lsclock_columns, columns, column_count,
+                              ul_lsclock_field);
+        else
+                ul_table_out(rows, sizeof(*rows), count, ul_lsclock_columns,
+                             UL_LSCLOCK_COLUMNS, columns, column_count,
+                             !(taking.flags & FILE_FLAG('n')), false,
+                             ul_lsclock_field);
+        return text_done(0);
+}
+
 static b32 util_linux_lsns()
 {
         file_taking taking = {
@@ -9010,6 +9538,389 @@ static b32 util_linux_wipefs()
         return status;
 }
 
+// Linux swap header creation and labels ---------------------------
+
+typedef struct
+{
+        bool any;
+        bool other;
+        bool swap;
+        p64 swap_offset;
+} ul_swap_signatures;
+
+static bool ul_swap_signature(storage_signature address_to signature,
+                              address_any opaque)
+{
+        ul_swap_signatures address_to found =
+            (ul_swap_signatures address_to)opaque;
+
+        found->any = true;
+        if (string_equals(signature->identity.type, "swap"))
+        {
+                found->swap = true;
+                found->swap_offset = signature->offset;
+        }
+        else
+                found->other = true;
+        return true;
+}
+
+static fn ul_swap_store_32(p8 address_to into, p32 value)
+{
+        into[0] = (p8)value;
+        into[1] = (p8)(value >> 8);
+        into[2] = (p8)(value >> 16);
+        into[3] = (p8)(value >> 24);
+}
+
+static bool ul_swap_page(string_address text, positive address_to page)
+{
+        positive value;
+
+        if (!ul_size(text, address_of value) ||
+            !storage_power_of_two(value) || value < 2048 || value > 65536)
+                return false;
+        address_to page = value;
+        return true;
+}
+
+static bool ul_swap_identity_holds(bipolar handle, string_address path,
+                                   file_facts address_to original)
+{
+        file_facts opened;
+        file_facts named;
+
+        return file_look(handle, "", AT_EMPTY_PATH, address_of opened) &&
+               file_look_at(path, address_of named) &&
+               file_same_identity(original, address_of opened) &&
+               file_same_identity(original, address_of named) &&
+               original->size == opened.size && original->size == named.size &&
+               (opened.mode & MODE_FORMAT) == MODE_FILE &&
+               (named.mode & MODE_FORMAT) == MODE_FILE;
+}
+
+static bool ul_swap_uuid(string_address text, tools_uuid address_to uuid,
+                         bool random_default)
+{
+        if (text && string_equals(text, "clear"))
+        {
+                memory_zero(uuid, sizeof(*uuid));
+                return true;
+        }
+        if (text && !string_equals(text, "random"))
+                return tools_uuid_parse(text, uuid);
+        if (!text && !random_default)
+                return false;
+
+        file_random_state random;
+        if (!file_random_seed(address_of random))
+                return false;
+        tools_uuid_random_bytes(address_of random, uuid);
+        tools_uuid_version(uuid, 4);
+        return true;
+}
+
+static fn ul_swap_human(p8 address_to into, positive bytes)
+{
+        positive length = positive_into_human_nearest_string(into, bytes,
+                                                              true);
+
+        for (positive at = 0; at + 2 < length; at++)
+                if (into[at] == '.' && into[at + 1] == '0' &&
+                    into[at + 2] == ' ')
+                {
+                        memory_copy_apart(into + at, into + at + 2,
+                                          length - at - 1);
+                        break;
+                }
+}
+
+static const file_long ul_mkswap_longs[] = {
+    {"check", 'c'}, {"force", 'f'}, {"quiet", 'q'},
+    {"pagesize", 'p'}, {"label", 'L'}, {"swapversion", 'v'},
+    {"uuid", 'U'}, {"endianness", 'e'}, {"offset", 'o'},
+    {"size", 's'}, {"file", 'F'}, {"verbose", 'z'},
+    {"lock", 'k'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_mkswap()
+{
+        file_taking taking = {
+            .program = "mkswap", .allowed = "cfqpLvUeosFzhV",
+            .valued = "pLvUeos", .long_optional = "k",
+            .longs = ul_mkswap_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] device [size]",
+                    address_of answer))
+                return answer;
+        if (taking.flags & (FILE_FLAG('c') | FILE_FLAG('F') |
+                            FILE_FLAG('k')) ||
+            file_option_value(address_of taking, 'o') ||
+            file_option_value(address_of taking, 's'))
+                return ul_bad_usage(
+                    "mkswap", "bad-block, file, offset, size and lock modes are not supported");
+
+        string_address endian = file_option_value(address_of taking, 'e');
+        if (endian && !string_equals(endian, "native") &&
+            !string_equals(endian, "little"))
+                return ul_bad_usage("mkswap", "only little-endian swap is supported");
+        string_address version = file_option_value(address_of taking, 'v');
+        if (version && !string_equals(version, "1"))
+                return ul_bad_usage("mkswap", "only swap version 1 is supported");
+
+        positive count = (positive)program_argument_count();
+        if (taking.first >= count || count - taking.first > 2)
+                return ul_bad_usage("mkswap", "expected device and optional size");
+        string_address path = program_argument((b32)taking.first);
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ_WRITE | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "mkswap: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return 1;
+        }
+
+        file_facts facts;
+        if (!file_look(handle, "", AT_EMPTY_PATH, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                system_close(handle);
+                return ul_bad_usage(
+                    "mkswap", "only pre-existing regular-file images are supported");
+        }
+        if (system_call_2(syscall(flock), (positive)handle,
+                          UL_LOCK_EXCLUSIVE | UL_LOCK_NONBLOCK) < 0)
+        {
+                system_close(handle);
+                return ul_bad_usage("mkswap", "image is busy");
+        }
+
+        positive page = 4096;
+        string_address page_text = file_option_value(address_of taking, 'p');
+        if (page_text && !ul_swap_page(page_text, address_of page))
+        {
+                system_close(handle);
+                return ul_bad_usage("mkswap", "invalid page size");
+        }
+
+        p64 area = facts.size;
+        if (count - taking.first == 2)
+        {
+                positive kib;
+                if (!ul_unsigned(program_argument((b32)taking.first + 1),
+                                 positive_max / 1024, address_of kib))
+                {
+                        system_close(handle);
+                        return ul_bad_usage("mkswap", "invalid size");
+                }
+                area = (p64)kib * 1024;
+        }
+        if (area > facts.size)
+        {
+                system_close(handle);
+                return ul_bad_usage(
+                    "mkswap", "swap area cannot exceed the regular file");
+        }
+        p64 pages = area / page;
+        if (pages < 10 || pages - 1 > p32_max)
+        {
+                system_close(handle);
+                return ul_bad_usage("mkswap", "swap area size is out of range");
+        }
+
+        tools_uuid uuid;
+        string_address uuid_text = file_option_value(address_of taking, 'U');
+        if (!ul_swap_uuid(uuid_text, address_of uuid, true))
+        {
+                system_close(handle);
+                return ul_bad_usage("mkswap", "invalid UUID");
+        }
+
+        ul_swap_signatures signatures = {0};
+        (void)storage_each_signature_handle(
+            handle, path, ul_swap_signature, address_of signatures);
+        bool force = (taking.flags & FILE_FLAG('f')) != 0;
+        if ((signatures.other && !force) ||
+            (signatures.swap && signatures.swap_offset != page - 10))
+        {
+                system_close(handle);
+                return ul_bad_usage(
+                    "mkswap", signatures.other
+                        ? "existing signature requires --force"
+                        : "changing an existing swap page size is not supported");
+        }
+
+        text_arena_used = 0;
+        p8 address_to header = text_arena_take(page);
+        if (!header)
+        {
+                system_close(handle);
+                return 1;
+        }
+        memory_zero(header, page);
+        ul_swap_store_32(header + 1024, 1);
+        ul_swap_store_32(header + 1028, (p32)(pages - 1));
+        memory_copy(header + 1036, uuid.bytes, sizeof(uuid.bytes));
+        string_address label = file_option_value(address_of taking, 'L');
+        positive label_length = label ? string_length(label) : 0;
+        positive kept_label = min(label_length, (positive)15);
+        if (kept_label)
+                memory_copy(header + 1052, label, kept_label);
+        memory_copy(header + page - 10, "SWAPSPACE2", 10);
+
+        if (!ul_swap_identity_holds(handle, path, address_of facts) ||
+            storage_write(handle, header, page, 0) != (bipolar)page ||
+            system_call_1(syscall(fsync), (positive)handle) < 0)
+        {
+                system_close(handle);
+                return ul_bad_usage("mkswap", "image changed or write failed");
+        }
+        system_close(handle);
+
+        if (!(taking.flags & FILE_FLAG('q')))
+        {
+                positive usable = (positive)((pages - 1) * page);
+                p8 human[24];
+                p8 uuid_out[37];
+                ul_swap_human(human, usable);
+                storage_uuid_bytes(uuid_out, uuid.bytes);
+                string_format(log,
+                              "Setting up swapspace version 1, size = %s (%p bytes)\n",
+                              human, usable);
+                if (kept_label)
+                        string_format(log, "LABEL=%s, UUID=%s\n",
+                                      header + 1052, uuid_out);
+                else
+                        string_format(log, "no label, UUID=%s\n", uuid_out);
+                log_flush();
+        }
+        return 0;
+}
+
+static const file_long ul_swaplabel_longs[] = {
+    {"label", 'L'}, {"uuid", 'U'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_swaplabel()
+{
+        file_taking taking = {
+            .program = "swaplabel", .allowed = "LUhV",
+            .valued = "LU", .longs = ul_swaplabel_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] <device>",
+                    address_of answer))
+                return answer;
+        positive count = (positive)program_argument_count();
+        if (taking.first + 1 != count)
+                return ul_bad_usage("swaplabel", "expected exactly one device");
+
+        string_address path = program_argument((b32)taking.first);
+        bool changing = file_option_value(address_of taking, 'L') ||
+                        file_option_value(address_of taking, 'U');
+        bipolar handle = system_open_at(
+            AT_FDCWD, path,
+            (changing ? FILE_READ_WRITE : FILE_READ) | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "swaplabel: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return 1;
+        }
+
+        file_facts facts;
+        p8 bytes[STORAGE_PROBE_ROOM];
+        storage_identity identity;
+        positive have = storage_read(handle, bytes, sizeof(bytes), 0);
+        memory_zero(address_of identity, sizeof(identity));
+        identity.path = path;
+        storage_probe_swap(handle, address_of identity, bytes, have);
+        if (!identity.type_length ||
+            !file_look(handle, "", AT_EMPTY_PATH, address_of facts))
+        {
+                system_close(handle);
+                return ul_bad_usage("swaplabel", "not a valid swap area");
+        }
+
+        if (!changing)
+        {
+                system_close(handle);
+                if (identity.label_length)
+                        string_format(log, "LABEL: %s\n", identity.label);
+                if (identity.uuid_length)
+                        string_format(log, "UUID:  %s\n", identity.uuid);
+                log_flush();
+                return 0;
+        }
+        if ((facts.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                system_close(handle);
+                return ul_bad_usage(
+                    "swaplabel", "mutation is limited to regular-file images");
+        }
+        if (system_call_2(syscall(flock), (positive)handle,
+                          UL_LOCK_EXCLUSIVE | UL_LOCK_NONBLOCK) < 0)
+        {
+                system_close(handle);
+                return ul_bad_usage("swaplabel", "image is busy");
+        }
+
+        p8 metadata[32];
+        if (storage_read(handle, metadata, sizeof(metadata), 1036) !=
+                sizeof(metadata))
+        {
+                system_close(handle);
+                return ul_bad_usage("swaplabel", "cannot read swap metadata");
+        }
+        string_address uuid_text = file_option_value(address_of taking, 'U');
+        if (uuid_text)
+        {
+                tools_uuid uuid;
+                if (!tools_uuid_parse(uuid_text, address_of uuid))
+                {
+                        system_close(handle);
+                        return ul_bad_usage("swaplabel", "invalid UUID");
+                }
+                memory_copy(metadata, uuid.bytes, sizeof(uuid.bytes));
+        }
+        string_address label = file_option_value(address_of taking, 'L');
+        if (label)
+        {
+                positive length = string_length(label);
+                memory_zero(metadata + 16, 16);
+                memory_copy(metadata + 16, label, min(length, (positive)15));
+                if (length > 15)
+                        string_format(file_fail,
+                                      "swaplabel: label is too long; truncated to 15 bytes\n");
+        }
+
+        /* Re-probe the same descriptor immediately before its one bounded
+           metadata write, then prove the pathname still names this inode. */
+        have = storage_read(handle, bytes, sizeof(bytes), 0);
+        memory_zero(address_of identity, sizeof(identity));
+        storage_probe_swap(handle, address_of identity, bytes, have);
+        if (!identity.type_length ||
+            !ul_swap_identity_holds(handle, path, address_of facts) ||
+            storage_write(handle, metadata, sizeof(metadata), 1036) !=
+                sizeof(metadata) ||
+            system_call_1(syscall(fsync), (positive)handle) < 0)
+        {
+                system_close(handle);
+                return ul_bad_usage("swaplabel", "image changed or write failed");
+        }
+        system_close(handle);
+        return 0;
+}
+
 // lscpu ------------------------------------------------------------
 
 /* Linux has already normalized CPU topology into sysfs, and /proc/cpuinfo
@@ -13091,4 +14002,559 @@ static b32 util_linux_mesg()
 
         log_flush();
         return allowed ? 0 : 1;
+}
+
+// rfkill ----------------------------------------------------------
+
+/* Listing rfkill state does not need a long-lived /dev/rfkill reader.  The
+   kernel already publishes the complete current snapshot in sysfs; taking it
+   once is both cheaper and immune to an event producer that never reaches
+   EOF.  Only state changes open the character device, and then only for one
+   fixed-size ABI record per requested change. */
+#define UL_RFKILL_MAX 256
+#define UL_RFKILL_FILTER_MAX 16
+
+enum
+{
+        UL_RFKILL_DEVICE,
+        UL_RFKILL_ID,
+        UL_RFKILL_TYPE,
+        UL_RFKILL_DESC,
+        UL_RFKILL_SOFT,
+        UL_RFKILL_HARD,
+        UL_RFKILL_COLUMNS,
+};
+
+typedef struct
+{
+        positive id;
+        p8 type_id;
+        bool soft;
+        bool hard;
+        p8 device[128];
+        p8 type[32];
+} ul_rfkill_row;
+
+typedef struct
+{
+        ul_rfkill_row address_to row;
+} ul_rfkill_view;
+
+typedef struct
+{
+        p32 index;
+        p8 type;
+        p8 operation;
+        p8 soft;
+        p8 hard;
+} ul_rfkill_event;
+
+_Static_assert(sizeof(ul_rfkill_event) == 8, "rfkill event ABI changed");
+
+typedef struct
+{
+        string_address name;
+        string_address description;
+        p8 id;
+} ul_rfkill_type;
+
+static const ul_rfkill_type ul_rfkill_types[] = {
+    {"all", "", 0},
+    {"wlan", "Wireless LAN", 1},
+    {"wifi", "Wireless LAN", 1},
+    {"bluetooth", "Bluetooth", 2},
+    {"uwb", "Ultra-Wideband", 3},
+    {"ultrawideband", "Ultra-Wideband", 3},
+    {"wimax", "WiMAX", 4},
+    {"wwan", "Wireless WAN", 5},
+    {"gps", "GPS", 6},
+    {"fm", "FM", 7},
+    {"nfc", "NFC", 8},
+};
+
+static const ul_table_column ul_rfkill_columns[] = {
+    {"device", "DEVICE", 0, false, UL_TABLE_STRING},
+    {"id", "ID", 2, true, UL_TABLE_NUMBER},
+    {"type", "TYPE", 0, false, UL_TABLE_STRING},
+    {"type-desc", "TYPE-DESC", 0, false, UL_TABLE_STRING},
+    {"soft", "SOFT", 0, true, UL_TABLE_STRING},
+    {"hard", "HARD", 0, true, UL_TABLE_STRING},
+};
+
+static const file_long ul_rfkill_longs[] = {
+    {"json", 'J'},
+    {"noheadings", 'n'},
+    {"output", 'o'},
+    {"output-all", 'A'},
+    {"raw", 'r'},
+    {"help", 'h'},
+    {"version", 'V'},
+    {null, 0},
+};
+
+static ul_rfkill_row ul_rfkill_rows[UL_RFKILL_MAX];
+static ul_rfkill_row ul_rfkill_spare[UL_RFKILL_MAX];
+static ul_rfkill_view ul_rfkill_views[UL_RFKILL_MAX * UL_RFKILL_FILTER_MAX];
+
+/* Test-only path substitution follows the same trust rule as login-record
+   fixtures: never honor process-controlled paths across a uid/gid boundary. */
+static string_address ul_rfkill_override(string_address name,
+                                         string_address fallback)
+{
+        positive user = (positive)system_call(syscall(getuid));
+        positive effective_user = (positive)system_call(syscall(geteuid));
+        positive group = (positive)system_call(syscall(getgid));
+        positive effective_group = (positive)system_call(syscall(getegid));
+
+        if (user == effective_user && group == effective_group)
+        {
+                string_address value = file_environment(name);
+                if (value && string_get(value))
+                        return value;
+        }
+        return fallback;
+}
+
+static PURE bipolar ul_rfkill_order(ul_rfkill_row left,
+                                    ul_rfkill_row right)
+{
+        if (left.id == right.id)
+                return 0;
+        return left.id < right.id ? -1 : 1;
+}
+
+static bipolar ul_rfkill_type_index(string_address name)
+{
+        for (positive i = 0; i < array_count(ul_rfkill_types); i++)
+                if (string_equals(name, ul_rfkill_types[i].name))
+                        return (bipolar)i;
+        return -1;
+}
+
+static string_address ul_rfkill_description(p8 id)
+{
+        for (positive i = 0; i < array_count(ul_rfkill_types); i++)
+                if (ul_rfkill_types[i].id == id &&
+                    string_get(ul_rfkill_types[i].description))
+                        return ul_rfkill_types[i].description;
+        return (string_address)"";
+}
+
+static bool ul_rfkill_attribute(string_address directory,
+                                string_address attribute,
+                                p8 address_to text, positive room)
+{
+        p8 path[FILE_PATH_MAX];
+
+        return file_path_join(path, directory, attribute) &&
+               ul_slurp_word(path, text, room) > 0;
+}
+
+static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
+                           positive address_to count)
+{
+        string_address root = ul_rfkill_override(
+            (string_address)"MOONWATER_RFKILL_ROOT",
+            (string_address)"/sys/class/rfkill");
+        file_walk walk;
+
+        address_to count = 0;
+        if (!file_walk_open(address_of walk, AT_FDCWD, root))
+        {
+                string_format(file_fail, "rfkill: cannot open %s: %s\n",
+                              root, file_reason(walk.error));
+                return false;
+        }
+
+        struct linux_dirent64 address_to entry;
+        bool failed = false;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                string_address name = (string_address)entry->d_name;
+                positive id;
+
+                if (string_compare_max(name, "rfkill", 6) ||
+                    !ul_unsigned(name + 6, p32_max, address_of id))
+                        continue;
+                if (address_to count == UL_RFKILL_MAX)
+                {
+                        file_fail("rfkill: too many devices\n", 0);
+                        failed = true;
+                        break;
+                }
+
+                p8 directory[FILE_PATH_MAX];
+                if (!file_path_join(directory, root, name))
+                {
+                        file_fail("rfkill: sysfs path is too long\n", 0);
+                        failed = true;
+                        break;
+                }
+
+                ul_rfkill_row address_to row =
+                    ul_rfkill_rows + address_to count;
+                memory_fill(row, 0, sizeof(*row));
+                p8 soft[8];
+                p8 hard[8];
+                positive soft_value;
+                positive hard_value;
+
+                if (!ul_rfkill_attribute(directory, "name", row->device,
+                                          sizeof(row->device)) ||
+                    !ul_rfkill_attribute(directory, "type", row->type,
+                                          sizeof(row->type)) ||
+                    !ul_rfkill_attribute(directory, "soft", soft,
+                                          sizeof(soft)) ||
+                    !ul_rfkill_attribute(directory, "hard", hard,
+                                          sizeof(hard)) ||
+                    !ul_unsigned(soft, 1, address_of soft_value) ||
+                    !ul_unsigned(hard, 1, address_of hard_value))
+                        continue;
+
+                bipolar type = ul_rfkill_type_index(row->type);
+                row->id = id;
+                row->type_id = type < 0 ? 255 : ul_rfkill_types[type].id;
+                row->soft = !!soft_value;
+                row->hard = !!hard_value;
+                (address_to count)++;
+        }
+
+        if (walk.error)
+        {
+                string_format(file_fail, "rfkill: cannot read %s: %s\n",
+                              root, file_reason(walk.error));
+                failed = true;
+        }
+        file_walk_close(address_of walk);
+
+        address_to rows = ul_rfkill_rows;
+        if (!failed && address_to count > 1)
+                address_to rows = array_merge_sort(
+                    ul_rfkill_rows, ul_rfkill_spare, address_to count,
+                    ul_rfkill_order);
+        return !failed;
+}
+
+static string_address ul_rfkill_field(address_any item, p8 column,
+                                      p8 address_to scratch)
+{
+        ul_rfkill_row address_to row =
+            ((ul_rfkill_view address_to)item)->row;
+
+        switch (column)
+        {
+        case UL_RFKILL_DEVICE:
+                return (string_address)row->device;
+        case UL_RFKILL_ID:
+                positive_into_string(scratch, row->id);
+                return scratch;
+        case UL_RFKILL_TYPE:
+                return (string_address)row->type;
+        case UL_RFKILL_DESC:
+                return ul_rfkill_description(row->type_id);
+        case UL_RFKILL_SOFT:
+                return row->soft ? (string_address)"blocked"
+                                 : (string_address)"unblocked";
+        default:
+                return row->hard ? (string_address)"blocked"
+                                 : (string_address)"unblocked";
+        }
+}
+
+enum
+{
+        UL_RFKILL_MATCH_INVALID,
+        UL_RFKILL_MATCH_ALL,
+        UL_RFKILL_MATCH_TYPE,
+        UL_RFKILL_MATCH_ID,
+};
+
+static p8 ul_rfkill_match_kind(string_address text,
+                               ul_rfkill_row address_to rows,
+                               positive count, positive address_to value)
+{
+        positive id;
+        if (ul_unsigned(text, p32_max, address_of id))
+        {
+                for (positive i = 0; i < count; i++)
+                        if (rows[i].id == id)
+                        {
+                                address_to value = id;
+                                return UL_RFKILL_MATCH_ID;
+                        }
+                return UL_RFKILL_MATCH_INVALID;
+        }
+
+        bipolar type = ul_rfkill_type_index(text);
+        if (type < 0)
+                return UL_RFKILL_MATCH_INVALID;
+        address_to value = ul_rfkill_types[type].id;
+        return string_equals(text, "all") ? UL_RFKILL_MATCH_ALL
+                                           : UL_RFKILL_MATCH_TYPE;
+}
+
+static PURE bool ul_rfkill_matches(ul_rfkill_row address_to row,
+                                   p8 kind, positive value)
+{
+        return kind == UL_RFKILL_MATCH_ALL ||
+               (kind == UL_RFKILL_MATCH_TYPE && row->type_id == value) ||
+               (kind == UL_RFKILL_MATCH_ID && row->id == value);
+}
+
+static fn ul_rfkill_legacy(ul_rfkill_row address_to rows, positive count,
+                           p8 kind, positive value)
+{
+        for (positive i = 0; i < count; i++)
+                if (ul_rfkill_matches(rows + i, kind, value))
+                {
+                        string_address description =
+                            ul_rfkill_description(rows[i].type_id);
+                        string_format(log, "%p: %s: %s\n",
+                                      rows[i].id, rows[i].device,
+                                      string_get(description)
+                                          ? description
+                                          : (string_address)rows[i].type);
+                        string_format(log, "\tSoft blocked: %s\n",
+                                      rows[i].soft ? (string_address)"yes"
+                                                   : (string_address)"no");
+                        string_format(log, "\tHard blocked: %s\n",
+                                      rows[i].hard ? (string_address)"yes"
+                                                   : (string_address)"no");
+                }
+}
+
+static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
+                            string_address action, positive first,
+                            positive arguments)
+{
+        if (first == arguments)
+                return ul_bad_usage("rfkill", "no identifier specified");
+        if (arguments - first > UL_RFKILL_FILTER_MAX)
+                return ul_bad_usage("rfkill", "too many identifiers");
+
+        string_address device = ul_rfkill_override(
+            (string_address)"MOONWATER_RFKILL_DEVICE",
+            (string_address)"/dev/rfkill");
+        bipolar handle = system_open_at(AT_FDCWD, device,
+                                        01 | O_CLOEXEC | O_NONBLOCK);
+        if (handle < 0)
+        {
+                string_format(file_fail, "rfkill: cannot open %s: %s\n",
+                              device, file_reason(handle));
+                return 1;
+        }
+
+        bool toggle = string_equals(action, "toggle");
+        bool block = string_equals(action, "block");
+        b32 status = 0;
+
+        for (positive argument = first; argument < arguments; argument++)
+        {
+                string_address identifier = program_argument((b32)argument);
+                positive value;
+                p8 kind = ul_rfkill_match_kind(identifier, rows, count,
+                                               address_of value);
+                if (kind == UL_RFKILL_MATCH_INVALID)
+                {
+                        string_format(file_fail,
+                                      "rfkill: invalid identifier: %s\n",
+                                      identifier);
+                        status = 1;
+                        continue;
+                }
+
+                if (!toggle)
+                {
+                        ul_rfkill_event event = {
+                            .index = kind == UL_RFKILL_MATCH_ID
+                                         ? (p32)value : 0,
+                            .type = kind == UL_RFKILL_MATCH_TYPE
+                                        ? (p8)value : 0,
+                            .operation = kind == UL_RFKILL_MATCH_ID ? 2 : 3,
+                            .soft = block,
+                        };
+                        if (system_write_all((positive)handle,
+                                             address_of event,
+                                             sizeof(event)) != sizeof(event))
+                                status = 1;
+                        continue;
+                }
+
+                /* Toggle is inherently state-dependent.  A fresh sysfs
+                   snapshot makes each matching radio an explicit CHANGE,
+                   avoiding CHANGE_ALL's ambiguous result for mixed state. */
+                for (positive i = 0; i < count; i++)
+                        if (ul_rfkill_matches(rows + i, kind, value))
+                        {
+                                ul_rfkill_event event = {
+                                    .index = (p32)rows[i].id,
+                                    .type = rows[i].type_id,
+                                    .operation = 2,
+                                    .soft = !rows[i].soft,
+                                };
+                                if (system_write_all((positive)handle,
+                                                     address_of event,
+                                                     sizeof(event)) !=
+                                    sizeof(event))
+                                        status = 1;
+                        }
+        }
+
+        if (status)
+                string_format(file_fail, "rfkill: write failed: %s\n",
+                              device);
+        system_close(handle);
+        return status;
+}
+
+static b32 util_linux_rfkill()
+{
+        file_taking taking = {
+            .program = "rfkill", .allowed = "JnroVh", .valued = "o",
+            .longs = ul_rfkill_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] command [identifier ...]",
+                    address_of answer))
+                return answer;
+        if ((taking.flags & FILE_FLAG('J')) &&
+            (taking.flags & FILE_FLAG('r')))
+                return ul_bad_usage(
+                    "rfkill", "--json and --raw are mutually exclusive");
+
+        positive arguments = (positive)program_argument_count();
+        string_address action = taking.first < arguments
+            ? program_argument((b32)taking.first++)
+            : (string_address)"list-table";
+        bool table = string_equals(action, "list-table");
+        bool explicit_list = string_equals(action, "list");
+
+        if (string_equals(action, "help"))
+                return ul_usage("rfkill",
+                                "[options] command [identifier ...]");
+        if (string_equals(action, "event"))
+                return ul_bad_usage(
+                    "rfkill", "unbounded event monitoring is not supported");
+        if (!table && !explicit_list &&
+            !string_equals(action, "block") &&
+            !string_equals(action, "unblock") &&
+            !string_equals(action, "toggle"))
+        {
+                /* Treat a bare identifier as the default list action.  This
+                   keeps the fast table form composable with output options
+                   without forcing an otherwise redundant command word. */
+                taking.first--;
+                action = (string_address)"list-table";
+                table = true;
+        }
+        if (arguments - taking.first > UL_RFKILL_FILTER_MAX)
+                return ul_bad_usage("rfkill", "too many identifiers");
+
+        ul_rfkill_row address_to rows;
+        positive count;
+        if (!ul_rfkill_take(address_of rows, address_of count))
+                return 1;
+
+        if (!table && !explicit_list)
+                return ul_rfkill_change(rows, count, action, taking.first,
+                                        arguments);
+
+        string_address selected = file_option_value(address_of taking, 'o');
+        bool legacy = explicit_list && !selected &&
+                      !(taking.flags & FILE_FLAG('J'));
+        if (legacy)
+        {
+                if (taking.first == arguments)
+                        ul_rfkill_legacy(rows, count, UL_RFKILL_MATCH_ALL, 0);
+                else
+                        for (positive argument = taking.first;
+                             argument < arguments; argument++)
+                        {
+                                positive value;
+                                p8 kind = ul_rfkill_match_kind(
+                                    program_argument((b32)argument), rows,
+                                    count, address_of value);
+                                if (kind == UL_RFKILL_MATCH_INVALID)
+                                {
+                                        string_format(
+                                            file_fail,
+                                            "rfkill: invalid identifier: %s\n",
+                                            program_argument((b32)argument));
+                                        return 1;
+                                }
+                                ul_rfkill_legacy(rows, count, kind, value);
+                        }
+                log_flush();
+                return 0;
+        }
+
+        positive view_count = 0;
+        if (taking.first == arguments)
+                for (positive i = 0; i < count; i++)
+                        ul_rfkill_views[view_count++].row = rows + i;
+        else
+                for (positive argument = taking.first;
+                     argument < arguments; argument++)
+                {
+                        positive value;
+                        p8 kind = ul_rfkill_match_kind(
+                            program_argument((b32)argument), rows, count,
+                            address_of value);
+                        if (kind == UL_RFKILL_MATCH_INVALID)
+                        {
+                                string_format(
+                                    file_fail,
+                                    "rfkill: invalid identifier: %s\n",
+                                    program_argument((b32)argument));
+                                return 1;
+                        }
+                        for (positive i = 0; i < count; i++)
+                                if (ul_rfkill_matches(rows + i, kind, value))
+                                        ul_rfkill_views[view_count++].row =
+                                            rows + i;
+                }
+
+        static const p8 defaults[] = {
+            UL_RFKILL_ID, UL_RFKILL_TYPE, UL_RFKILL_DEVICE,
+            UL_RFKILL_SOFT, UL_RFKILL_HARD,
+        };
+        static const p8 all_columns[] = {
+            UL_RFKILL_ID, UL_RFKILL_TYPE, UL_RFKILL_DEVICE,
+            UL_RFKILL_DESC, UL_RFKILL_SOFT, UL_RFKILL_HARD,
+        };
+        const p8 address_to base = taking.flags & FILE_FLAG('A')
+            ? all_columns : defaults;
+        positive base_count = taking.flags & FILE_FLAG('A')
+            ? array_count(all_columns) : array_count(defaults);
+        p8 columns[UL_RFKILL_COLUMNS];
+        positive column_count = 0;
+
+        if (selected && !ul_table_column_list(
+                selected, ul_rfkill_columns, UL_RFKILL_COLUMNS,
+                base, base_count, columns, address_of column_count))
+                return ul_bad_usage(
+                    "rfkill", "unknown or unsupported output column");
+        if (!selected)
+                for (positive i = 0; i < base_count; i++)
+                        columns[column_count++] = base[i];
+
+        if (taking.flags & FILE_FLAG('J'))
+                ul_table_json("rfkilldevices", ul_rfkill_views,
+                              sizeof(ul_rfkill_views[0]), view_count,
+                              ul_rfkill_columns, columns, column_count,
+                              ul_rfkill_field);
+        else
+                ul_table_out(ul_rfkill_views,
+                             sizeof(ul_rfkill_views[0]), view_count,
+                             ul_rfkill_columns, UL_RFKILL_COLUMNS,
+                             columns, column_count,
+                             !(taking.flags & FILE_FLAG('n')),
+                             (taking.flags & FILE_FLAG('r')) != 0,
+                             ul_rfkill_field);
+        log_flush();
+        return 0;
 }
