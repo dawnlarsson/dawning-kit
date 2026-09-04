@@ -2957,13 +2957,10 @@ PURE bool shell_option_on(positive index)
         return (shell_options_named & ((positive)1 << index)) != 0;
 }
 
+fn job_monitor_told(bool on);
+
 fn shell_option_told(positive index, bool on)
 {
-        // A monitor bit without process groups and terminal ownership would
-        // advertise job control the executor does not have.
-        if (index == SHELL_OPTION_MONITOR && on)
-                return;
-
         if (shell_option_names[index].value >= 'a' &&
             shell_option_names[index].value <= 'z')
         {
@@ -2971,6 +2968,11 @@ fn shell_option_told(positive index, bool on)
                         shell_options |= SHELL_FLAG(shell_option_names[index].value);
                 else
                         shell_options &= ~SHELL_FLAG(shell_option_names[index].value);
+
+                // The bit is what the executor reads, so it is set before the
+                // process groups and the terminal are arranged around it.
+                if (index == SHELL_OPTION_MONITOR)
+                        job_monitor_told(on);
 
                 return;
         }
@@ -3021,7 +3023,13 @@ fn shell_options_started(bool interactive)
                 shell_options |= SHELL_FLAG('s');
 
         if (interactive)
+        {
                 shell_options |= SHELL_FLAG('i');
+
+                // Somebody is watching, so job control is on: that is what
+                // makes control-Z a job rather than a stopped shell.
+                shell_option_told(SHELL_OPTION_MONITOR, true);
+        }
 }
 
 /*
@@ -7595,7 +7603,7 @@ static shell_tool shell_tools[] = {
 };
 
 #define SHELL_TOOLS (array_count(shell_tools) - 1)
-#define SHELL_TOOL_INDEX_ROOM 128
+#define SHELL_TOOL_INDEX_ROOM 256
 
 static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
 static bool shell_tool_index_ready;
@@ -7699,6 +7707,9 @@ fn shell_tool_list(writer write)
                               shell_tools[i].name);
 }
 
+static PURE bool job_monitor();
+fn job_execute_tool(positive which);
+
 static bool shell_tool_run_hashed(string_address name, positive2 named)
 {
         positive which = shell_tool_find_hashed(name, named);
@@ -7712,6 +7723,14 @@ static bool shell_tool_run_hashed(string_address name, positive2 named)
         {
                 program_arguments_use(shell_argv, (b32)shell_argc);
                 shell_answer(shell_tool_call(which));
+                return true;
+        }
+
+        // Under job control this utility is a job, which needs a process
+        // group the spawn device has no way to put it in.
+        if (job_monitor())
+        {
+                job_execute_tool(which);
                 return true;
         }
 
@@ -7797,11 +7816,18 @@ fn trap_entered(bool inside)
         change it: POSIX says the exit status is the one that was already
         decided unless the trap itself calls exit.
 */
+fn history_leaving();
+
 fn shell_trap_exit()
 {
         positive action_room = 0;
         string_address action = trap_detach(0, address_of action_room);
         b32 leaving = shell_status;
+
+        // Every way out of an interactive shell comes through here, which is
+        // the only place a history file can be written once rather than at
+        // each of them.
+        history_leaving();
 
         if (!action || !string_get(action))
         {
@@ -8318,6 +8344,15 @@ fn shell_wait(writer write, string_address input)
         shell_answer(answer);
 }
 
+fn shell_jobs(writer write, string_address input);
+fn shell_history(writer write, string_address input);
+fn shell_fc(writer write, string_address input);
+fn shell_fg(writer write, string_address input);
+fn shell_bg(writer write, string_address input);
+fn shell_disown(writer write, string_address input);
+fn shell_suspend(writer write, string_address input);
+fn shell_kill(writer write, string_address input);
+fn job_wait(writer write, string_address input);
 fn shell_help(writer write, string_address input);
 fn shell_which(writer write, string_address input);
 fn shell_type(writer write, string_address input);
@@ -8364,20 +8399,27 @@ shell_command shell_commands[] = {
     {".", shell_dot},
     {"[", shell_test},
     {"alias", shell_alias},
+    {"bg", shell_bg},
     {"blkid", shell_blkid},
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
     {"declare", shell_declare},
+    {"disown", shell_disown},
     {"echo", shell_echo},
     {"eval", shell_eval},
     {"exec", shell_exec},
     {"exit", shell_exit},
     {"false", shell_false},
+    {"fc", shell_fc},
+    {"fg", shell_fg},
     {"findfs", shell_findfs},
     {"findmnt", shell_findmnt},
     {"getopts", shell_getopts},
     {"hash", shell_hash},
+    {"history", shell_history},
+    {"jobs", shell_jobs},
+    {"kill", shell_kill},
     {"let", shell_let},
     {"mount", shell_mount},
     {"mountpoint", shell_mountpoint},
@@ -8393,6 +8435,7 @@ shell_command shell_commands[] = {
     {"set", shell_set},
     {"shift", shell_shift},
     {"source", shell_dot},
+    {"suspend", shell_suspend},
     {"test", shell_test},
     {"times", shell_times},
     {"trap", shell_trap},
@@ -8404,7 +8447,7 @@ shell_command shell_commands[] = {
     {"umount", shell_umount},
     {"unalias", shell_unalias},
     {"unset", shell_unset},
-    {"wait", shell_wait},
+    {"wait", job_wait},
     {"which", shell_which},
     {"help", shell_help},
     {"local", shell_local},

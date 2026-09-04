@@ -118,6 +118,12 @@ static positive shell_run_complete_lines(p8 address_to text, positive length)
                         break;
 
                 address_to newline = end;
+
+                // What a person typed, and only that: an eval or a sourced
+                // file is a line this shell wrote for itself.
+                if (shell_is_interactive)
+                        history_remember(text + at);
+
                 run_line(text + at);
                 at = (positive)(newline - text) + 1;
         }
@@ -268,6 +274,7 @@ b32 main()
 
         interactive = shell_is_interactive = !script_file && shell_interactive();
         shell_options_started(interactive);
+        history_start();
 
         /*
                 Whatever arrived, split into lines, with the last one held back
@@ -376,6 +383,10 @@ b32 main()
         if (held)
         {
                 shell_buffer[held] = end;
+
+                if (shell_is_interactive)
+                        history_remember(shell_buffer);
+
                 run_line(shell_buffer);
         }
 

@@ -438,8 +438,11 @@ fn storage_mount_table_release(storage_mount_table address_to table);
 #include "storage_discovery.c"
 #include "storage_mount.c"
 #include "text.c"
+#include "checksum.c"
+#include "cksum.c"
 #include "awk.c"
 #include "tools.c"
+#include "process_tools.c"
 #include "monitor.c"
 #include "net.c"
 #include "expand.c"
@@ -1043,6 +1046,10 @@ static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
         b32 root;
+
+        // What a job made of a loop or a group is listed under: the words are
+        // in the parse tree, but only the reader still has the line.
+        exec_current_line = line;
 
         // A nested eval or sourced file can hand over more physical lines
         // after one of them failed expansion. They belong to the same outer

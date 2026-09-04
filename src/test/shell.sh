@@ -295,6 +295,207 @@ PY
         lost "$name" "interactive failure did not abort and recover"
 }
 
+#       The history at a terminal.
+#
+#       A script has no history: nothing it runs was typed, and Bash records
+#       nothing either. So everything below the surface -- the numbering, both
+#       listing formats, re-running with a substitution, HISTCONTROL and the
+#       file that carries a history between two sessions -- can only be asked
+#       of a shell with somebody in front of it.
+#
+#       Two sessions, because that is what HISTFILE is for: the first writes
+#       one on the way out and the second has to find it there.
+history_terminal_run()
+{
+        into=$1
+        shift
+
+        timeout 30 python3 - "$subject" "$into" "$work/histfile" "$@" <<'PY'
+import fcntl
+import os
+import pty
+import re
+import select
+import subprocess
+import sys
+import termios
+import time
+
+subject, into, histfile = sys.argv[1:4]
+typed = sys.argv[4:]
+master, slave = pty.openpty()
+settings = termios.tcgetattr(slave)
+settings[3] &= ~termios.ECHO
+termios.tcsetattr(slave, termios.TCSANOW, settings)
+
+
+def session():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+process = subprocess.Popen(
+    [subject], stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    preexec_fn=session,
+    env=dict(os.environ, HISTFILE=histfile,
+             HISTCONTROL="ignorespace:ignoredups", HISTIGNORE="pwd:l*"),
+)
+os.close(slave)
+seen = bytearray()
+
+
+def settle(seconds):
+    stop = time.monotonic() + seconds
+    while time.monotonic() < stop:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            seen.extend(os.read(master, 65536))
+        except OSError:
+            return
+
+
+for key in typed:
+    try:
+        os.write(master, key.encode().decode("unicode_escape").encode("latin-1"))
+    except OSError:
+        break
+    settle(0.25)
+
+if process.poll() is None:
+    process.kill()
+
+process.wait()
+os.close(master)
+
+plain = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", bytes(seen))
+# A tab is what `fc -l` puts between the number and the command, and a tab is
+# not something a case below can carry in its own text.
+open(into, "wb").write(
+    plain.replace(b"\r", b"").replace(b"\t", b"<TAB>")
+)
+PY
+}
+
+#       Some of these are about a line being there and some about how often:
+#       ignoredups is the whole difference between two entries and one. Both
+#       bounds are given, and the upper one defaults to whatever was seen.
+history_terminal_case()
+{
+        seen=$(grep -Fc -- "$3" "$2" 2>/dev/null || true)
+        seen=${seen:-0}
+        least=${4:-1}
+        most=${5:-$seen}
+
+        if [ "$seen" -ge "$least" ] && [ "$seen" -le "$most" ]; then
+                won
+                return 0
+        fi
+
+        lost "$1" "seen $seen times, wanted $least to $most"
+}
+
+#       Job control at a terminal.
+#
+#       Control-Z is not a key the shell reads: the line discipline turns it
+#       into SIGTSTP for whatever process group the terminal has in front,
+#       which means none of it can be exercised through a pipe. So the subject
+#       gets a real pseudo-terminal, in a session of its own so that it can
+#       own one, and what it wrote is kept for the cases below to read.
+#
+#       Every wait is bounded and the shell is killed if it outlives them: a
+#       suite that hangs says nothing about which case did it.
+job_terminal_transcript()
+{
+        timeout 30 python3 - "$subject" "$work/terminal" <<'PY'
+import fcntl
+import os
+import pty
+import re
+import select
+import subprocess
+import sys
+import termios
+import time
+
+subject, into = sys.argv[1:]
+master, slave = pty.openpty()
+settings = termios.tcgetattr(slave)
+settings[3] &= ~termios.ECHO
+termios.tcsetattr(slave, termios.TCSANOW, settings)
+
+
+def session():
+    os.setsid()
+    fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+
+process = subprocess.Popen(
+    [subject], stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    preexec_fn=session,
+)
+os.close(slave)
+seen = bytearray()
+
+
+def settle(seconds):
+    stop = time.monotonic() + seconds
+    while time.monotonic() < stop:
+        ready, _, _ = select.select([master], [], [], 0.05)
+        if not ready:
+            continue
+        try:
+            seen.extend(os.read(master, 65536))
+        except OSError:
+            return
+
+
+for typed, pause in (
+    (b"sleep 5\n", 0.4),
+    (b"\x1a", 0.6),
+    (b"jobs\n", 0.4),
+    (b"bg\n", 0.4),
+    (b"jobs\n", 0.4),
+    (b"fg\n", 0.4),
+    (b"\x1a", 0.6),
+    (b"kill %1\n", 0.3),
+    (b"kill -CONT %1\n", 0.5),
+    (b"jobs\n", 0.4),
+    (b"exit\n", 0.5),
+):
+    try:
+        os.write(master, typed)
+    except OSError:
+        break
+    settle(pause)
+
+if process.poll() is None:
+    process.kill()
+
+process.wait()
+os.close(master)
+
+plain = re.sub(rb"\x1b\[[0-9;?]*[ -/]*[@-~]", b"", bytes(seen))
+open(into, "wb").write(plain.replace(b"\r", b""))
+PY
+}
+
+# What the terminal saw, and how many times. A listing repeated is the point
+# of some of these: control-Z printing the notice and `jobs` printing it again
+# are the same bytes and two different claims.
+job_terminal_case()
+{
+        seen=$(grep -Fc -- "$2" "$work/terminal" 2>/dev/null || echo 0)
+
+        if [ "$seen" -ge "${3:-1}" ]; then
+                won
+                return 0
+        fi
+
+        lost "$1" "saw it $seen times, wanted ${3:-1}"
+}
+
 # A signal caught during the expansion that fails belongs after that aborted
 # line and before the next command. It must not be lost, run as the failed
 # command's tail, or wait until after the recovery command.
@@ -2055,8 +2256,10 @@ echo wait:$?
 wait "$sender"
 wait "$target"
 echo rewait:$?'
-expected 'monitor stays off without job control' 'off|' 0 \
+answer 'monitor follows the option' \
         'set -m 2>/dev/null; case $- in *m*) echo on;; *) echo off;; esac'
+answer 'monitor is off again' \
+        'set -m; set +m; case $- in *m*) echo on;; *) echo off;; esac'
 
 # set -x, whose output is on standard error and so has to be caught in a file
 # to be compared at all. What is traced is what runs: the words after they are
@@ -2565,13 +2768,174 @@ expected 'Issue8 1.7 supported intrinsic utilities' '' 0 \
 expected 'Issue8 regular false pwd true utilities' '' 0 \
         'PATH=; for name in false pwd true; do command -v "$name" >/dev/null || echo "missing:$name"; done'
 
-group remaining
-posix_remaining 'Issue8 2.11 process-group job control' 'off|' 0 \
+#
+#       Job control, which POSIX asks for in 2.11 and names four intrinsics
+#       for. dash and Bash agree that `set -m` is on afterwards, that a bare
+#       `jobs` prints nothing and succeeds, and on the whole of what `fg`
+#       resuming a background job prints -- so those are compared. They
+#       disagree about the status of a refusal, dash answering 2 and Bash 1,
+#       and the listing itself is Bash's format down to the column. Those are
+#       recorded against Bash, whose spelling a person reads these beside.
+#
+
+group job-control
+answer 'Issue8 2.11 process-group job control' \
         'set -m 2>/dev/null; case $- in *m*) echo on;; *) echo off;; esac'
-posix_remaining 'Issue8 intrinsic bg' '' 127 'bg'
-posix_remaining 'Issue8 intrinsic fg' '' 127 'fg'
-posix_remaining 'Issue8 intrinsic jobs' '' 127 'jobs'
-posix_remaining 'Issue8 intrinsic fc history editing' '' 127 'fc -l'
+answer 'Issue8 intrinsic jobs' 'jobs'
+answer 'Issue8 intrinsic fg' 'set -m; sleep 0.2 & fg'
+expected 'Issue8 intrinsic bg' '' 1 'bg'
+expected 'fg refuses without job control' '' 1 'fg'
+expected 'jobs lists a background command' 'yes|' 0 \
+        'sleep 0.2 & case "$(jobs)" in "[1]+  Running                    sleep 0.2 &") echo yes;; *) echo "no:$(jobs)";; esac; wait'
+expected 'jobs marks current and previous' 'yes|' 0 \
+        'sleep 0.3 & sleep 0.4 & case "$(jobs | tr "\n" "|")" in "[1]-  Running                    sleep 0.3 &|[2]+  Running                    sleep 0.4 &|") echo yes;; *) echo no;; esac; wait'
+expected 'jobs reports a finished job' 'yes|' 0 \
+        'sleep 0.05 & sleep 0.2; case "$(jobs)" in "[1]+  Done                       sleep 0.05") echo yes;; *) echo no;; esac'
+expected 'a finished job is reported once' 'end|' 0 \
+        'sleep 0.05 & sleep 0.2; jobs > /dev/null; jobs; echo end'
+expected 'a waited job is forgotten' 'end|' 0 \
+        'sleep 0.05 & wait; jobs; echo end'
+expected 'jobs -p is identifiers only' 'yes|' 0 \
+        'sleep 0.2 & p=$!; case "$(jobs -p)" in "$p") echo yes;; *) echo no;; esac; wait'
+expected 'jobs -l names the process' 'yes|' 0 \
+        'sleep 0.2 & p=$!; case "$(jobs -l)" in "[1]+ $p Running                    sleep 0.2 &") echo yes;; *) echo no;; esac; wait'
+expected 'jobs -r and -s select by state' 'yes|' 0 \
+        'set -m; sleep 5 & kill -STOP %1; sleep 0.1; sleep 5 & case "$(jobs -r | tr "\n" "|")$(jobs -s | tr "\n" "|")" in "[2]-  Running                    sleep 5 &|[1]+  Stopped                    sleep 5|") echo yes;; *) echo no;; esac; kill %1 %2; kill -CONT %1; wait 2>/dev/null'
+expected 'jobs -n is what changed' 'yes|' 0 \
+        'set -m; sleep 5 & kill -STOP %1; sleep 0.2; case "$(jobs -n)" in "[1]+  Stopped                    sleep 5") echo yes;; *) echo no;; esac; kill -CONT %1; kill %1; wait 2>/dev/null'
+expected 'jobs -n says nothing twice' 'end|' 0 \
+        'set -m; sleep 5 & kill -STOP %1; sleep 0.2; jobs -n > /dev/null; jobs -n; echo end; kill -CONT %1; kill %1; wait 2>/dev/null'
+expected 'a pipeline is one job' 'yes|' 0 \
+        'set -m; sleep 0.2 | cat & case "$(jobs)" in "[1]+  Running                    sleep 0.2 | cat &") echo yes;; *) echo no;; esac; wait'
+expected 'a stopped job is listed' 'yes|' 0 \
+        'set -m; sleep 5 & kill -STOP %1; sleep 0.1; case "$(jobs)" in "[1]+  Stopped                    sleep 5") echo yes;; *) echo no;; esac; kill -CONT %1; kill %1; wait 2>/dev/null'
+expected 'a signalled job says which' 'yes|' 0 \
+        'set -m; f=/tmp/mw-job.$$; sleep 5 & kill -KILL %1; sleep 0.2; jobs > "$f"; IFS= read -r line < "$f"; rm -f "$f"; case $line in "[1]+  Killed                     sleep 5") echo yes;; *) echo no;; esac'
+expected 'a failed job says its status' 'yes|' 0 \
+        'set -m; (exit 7) & sleep 0.2; case "$(jobs)" in "[1]+  Exit 7                     ( exit 7 )") echo yes;; *) echo no;; esac'
+expected 'bg resumes and announces' 'yes|' 0 \
+        'set -m; f=/tmp/mw-job.$$; sleep 5 & kill -STOP %1; sleep 0.1; bg > "$f"; IFS= read -r line < "$f"; rm -f "$f"; case $line in "[1]+ sleep 5 &") echo yes;; *) echo no;; esac; sleep 0.1; kill %1; wait 2>/dev/null'
+expected 'a resumed job is running again' 'yes|' 0 \
+        'set -m; sleep 5 & kill -STOP %1; sleep 0.1; bg >/dev/null; sleep 0.1; case "$(jobs)" in "[1]+  Running                    sleep 5 &") echo yes;; *) echo no;; esac; kill %1; wait 2>/dev/null'
+expected 'fg takes a job specification' 'sleep 0.2|st=0|' 0 \
+        'set -m; sleep 0.2 & fg %1; echo st=$?'
+expected 'fg by command prefix' 'sleep 0.2|' 0 \
+        'set -m; sleep 0.2 & fg %sleep'
+expected 'fg by substring' 'sleep 0.2|' 0 \
+        'set -m; sleep 0.2 & fg "%?eep"'
+expected 'fg by previous' 'sleep 0.3|' 0 \
+        'set -m; sleep 0.3 & sleep 0.4 & fg %-; kill %1 2>/dev/null; wait 2>/dev/null'
+expected 'an ambiguous specification is refused' 'refused|' 0 \
+        'set -m; sleep 0.5 & sleep 0.6 & jobs %sl >/dev/null 2>&1 || echo refused; kill %1 %2 2>/dev/null; wait 2>/dev/null'
+expected 'disown forgets a job' 'st=0|' 0 \
+        'sleep 0.1 & disown; jobs; echo st=$?'
+expected 'disown -h keeps it listed' 'yes|' 0 \
+        'sleep 0.2 & disown -h %1; case "$(jobs)" in "[1]+  Running                    sleep 0.2 &") echo yes;; *) echo no;; esac; wait'
+expected 'disown -a forgets every job' '' 0 \
+        'sleep 0.1 & sleep 0.1 & disown -a; jobs'
+expected 'kill names a job' 'done|' 0 \
+        'set -m; sleep 5 & kill %1; wait 2>/dev/null; echo done'
+expected 'kill -s names a job' 'done|' 0 \
+        'set -m; sleep 5 & kill -s TERM %1; wait 2>/dev/null; echo done'
+expected 'kill reaches the whole pipeline' 'done|' 0 \
+        'set -m; sleep 5 | cat & sleep 0.1; kill %1; wait 2>/dev/null; echo done'
+expected 'wait answers for a stopped job' '148|' 0 \
+        'set -m; sleep 0.3 & kill -TSTP %1; sleep 0.1; wait %1 2>/dev/null; echo $?; kill -CONT %1; wait'
+expected 'wait -f waits past a stop' '0|' 0 \
+        'set -m; sleep 0.2 & p=$!; kill -STOP "$p"; sleep 0.05; { sleep 0.1; kill -CONT "$p"; } & wait -f "$p"; echo $?'
+expected 'wait rejects an unknown job' '' 127 'wait %9'
+expected 'wait -n takes whoever ends first' '0|' 0 \
+        'set -m; sleep 0.05 & sleep 5 & wait -n; echo $?; kill %2 2>/dev/null; wait 2>/dev/null'
+expected 'wait -p publishes the identifier' 'yes|' 0 \
+        'sleep 0.05 & p=$!; wait -n -p named; case $named in "$p") echo yes;; *) echo no;; esac'
+expected 'suspend refuses without job control' '' 1 'suspend'
+expected 'a monitored pipeline still reports every stage' '1 0|' 0 \
+        'set -m; false | true; echo "${PIPESTATUS[0]} ${PIPESTATUS[1]}"'
+expected 'a monitored pipeline still runs' 'hi|' 0 'set -m; echo hi | cat'
+expected 'a subshell has no jobs of its own' 'inner|' 0 \
+        'sleep 0.2 & (jobs); (sleep 0.05 & case "$(jobs)" in "[1]+  Running"*) echo inner;; *) echo no;; esac); wait'
+
+group job-terminal
+if command -v python3 >/dev/null 2>&1 && [ "$(uname -s)" = Linux ] &&
+        job_terminal_transcript
+then
+        job_terminal_case 'control-Z stops the foreground job' \
+                '[1]+  Stopped                    sleep 5'
+        job_terminal_case 'jobs lists the stopped job' \
+                '[1]+  Stopped                    sleep 5' 2
+        job_terminal_case 'bg announces the job it resumed' '[1]+ sleep 5 &'
+        job_terminal_case 'jobs sees it running again' \
+                '[1]+  Running                    sleep 5 &'
+        job_terminal_case 'fg names the job it brought forward' '$ sleep 5'
+        job_terminal_case 'control-Z stops it a second time' \
+                '[1]+  Stopped                    sleep 5' 3
+        job_terminal_case 'a killed job is reported as such' \
+                '[1]+  Terminated                 sleep 5'
+else
+        lost 'terminal job control' 'no python3, or the shell would not run under a pseudo-terminal'
+fi
+
+#
+#       fc and history.
+#
+#       A script records nothing, which is what dash and Bash both do and the
+#       one part of the family a pipe can see. dash refuses `fc -l` outright
+#       and Bash answers with an empty history and a zero status; the shell
+#       this is beside has Bash's extensions, so it answers as Bash does and
+#       the row records that rather than comparing.
+#
+
+group history
+expected 'Issue8 intrinsic fc history editing' '' 0 'fc -l'
+expected 'fc -l says nothing in a script' 'end|' 0 'fc -l; echo end'
+expected 'history says nothing in a script' 'end|' 0 'history; echo end'
+expected 'history -c is content in a script' '0|' 0 'history -c; echo $?'
+expected 'fc with no history refuses' '' 1 'fc'
+expected 'fc -s with no history refuses' '' 1 'fc -s'
+expected 'fc rejects an unknown option' '' 2 'fc -Z'
+expected 'history rejects an unknown option' '' 2 'history -Z'
+expected 'history -s remembers without running' 'echo one|' 0 \
+        'history -s echo one; history -s echo two; history | head -1 | sed "s/^ *1  //"; :'
+
+group history-terminal
+if command -v python3 >/dev/null 2>&1 && [ "$(uname -s)" = Linux ] &&
+        rm -f "$work/histfile" &&
+        history_terminal_run "$work/history-one" \
+                'echo alpha\n' 'echo beta\n' 'history\n' 'fc -l\n' \
+                'fc -ln\n' 'fc -s alpha=gamma 1\n' ' echo spaced\n' \
+                'echo same\n' 'echo same\n' 'pwd\n' 'history\n' 'exit\n' &&
+        history_terminal_run "$work/history-two" 'history\n' 'exit\n'
+then
+        history_terminal_case 'history numbers what was typed' \
+                "$work/history-one" '    1  echo alpha'
+        history_terminal_case 'history keeps the order' \
+                "$work/history-one" '    2  echo beta'
+        history_terminal_case 'fc -l is number, tab, command' \
+                "$work/history-one" '1<TAB> echo alpha'
+        history_terminal_case 'fc -ln drops the number' \
+                "$work/history-one" '<TAB> echo alpha' 2
+        history_terminal_case 'fc -s substitutes and runs it' \
+                "$work/history-one" 'echo gamma'
+        history_terminal_case 'HISTCONTROL ignorespace hides a line' \
+                "$work/history-one" 'echo spaced' 0 0
+        history_terminal_case 'HISTCONTROL ignoredups keeps one' \
+                "$work/history-one" '  echo same' 1 1
+        history_terminal_case 'HISTIGNORE drops what it names' \
+                "$work/history-one" '  pwd' 0 0
+        history_terminal_case 'HISTFILE is written on the way out' \
+                "$work/histfile" 'echo alpha'
+        history_terminal_case 'HISTFILE is read at the next start' \
+                "$work/history-two" '    1  echo alpha'
+else
+        lost 'terminal history' 'no python3, or the shell would not run under a pseudo-terminal'
+fi
+
+#
+#       The POSIX Issue 8 remaining ledger is empty. Every family it named --
+#       process-group job control, bg, fg, jobs, and fc history editing -- is
+#       in the supported surface above. posix_remaining is left defined, and
+#       is where the next gap that turns up gets written down.
+#
 
 #
 #       Bash parity ledger.
@@ -2662,15 +3026,17 @@ bash_shopt_inventory()
 
 group builtin-index
 bash_builtin_inventory supported \
-        . : '[' alias break cd command continue declare echo eval exec exit \
-        export false getopts hash help kill let local printf pwd read readonly \
-        mapfile readarray \
-        return set shift source test times trap true type typeset ulimit umask \
+        . : '[' alias bg break cd command continue declare disown echo eval \
+        exec exit \
+        export false fc fg getopts hash help history jobs kill let local \
+        printf pwd read \
+        readonly mapfile readarray \
+        return set shift source suspend test times trap true type typeset \
+        ulimit umask \
         unalias unset wait
 bash_builtin_inventory remaining \
-        bg bind builtin caller compgen complete compopt dirs disown \
-        enable fc fg history jobs logout popd pushd shopt \
-        suspend
+        bind builtin caller compgen complete compopt dirs \
+        enable logout popd pushd shopt
 
 group keyword-index
 bash_keyword_inventory '! false' '!'
@@ -2691,11 +3057,11 @@ bash_remaining 'ledger keyword time' '' 127 'PATH=; time :'
 
 group set-option-index
 bash_set_option_inventory supported \
-        allexport emacs errexit ignoreeof noclobber noglob nolog notify \
-        nounset pipefail verbose vi xtrace
+        allexport emacs errexit ignoreeof monitor noclobber noglob nolog \
+        notify nounset pipefail verbose vi xtrace
 bash_set_option_inventory remaining \
         braceexpand errtrace functrace hashall histexpand history \
-        interactive-comments keyword monitor noexec onecmd physical posix \
+        interactive-comments keyword noexec onecmd physical posix \
         privileged
 
 group shopt-option-index

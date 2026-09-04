@@ -46,6 +46,9 @@ static bool exec_asynchronous;
 
 fn shell_trap_exit();
 fn exec_traps();
+fn job_forget();
+static b32 exec_child_status(bipolar child);
+static b32 job_wait_foreground(positive number);
 
 fn exec_child_began()
 {
@@ -135,6 +138,2982 @@ static p8 exec_nothing[1];
 
 // A diagnostic bypasses the buffered output writer and goes to stderr.
 #define exec_error log_error
+
+/*
+        Job control.
+
+        A job is what one line started: a single command, or a whole pipeline,
+        remembered under the number a person sees in brackets. What each of its
+        children answered with is already kept in the wait table beside `wait`,
+        so a row here holds only what that table has no opinion about -- the
+        number, the process group, whether it is stopped, and the text to print
+        back.
+
+        A background job gets a row whether or not `set -m` is on, because
+        `jobs` and `$!` are answers every shell gives. What the monitor option
+        adds is a process group per job and, at a terminal, handing that group
+        the terminal and taking it back afterwards.
+*/
+#define JOB_SIGNAL_CONTINUE 18
+#define JOB_SIGNAL_STOP 19
+#define JOB_SIGNAL_STOP_KEY 20
+#define JOB_SIGNAL_TTY_INPUT 21
+#define JOB_SIGNAL_TTY_OUTPUT 22
+
+#define JOB_NO_HANG 1
+#define JOB_UNTRACED 2
+#define JOB_CONTINUED 8
+
+// The two terminal ioctls are the whole of a shell's claim on a terminal.
+// x86 and asm-generic agree on both numbers, which is why they are spelled
+// here rather than asked of a header this tree does not have -- the same
+// reason TCGETS is spelled beside the prompt.
+#define JOB_TERMINAL_GET_GROUP 0x540Fu
+#define JOB_TERMINAL_SET_GROUP 0x5410u
+
+#define JOB_RUNNING 0
+#define JOB_STOPPED 1
+#define JOB_FINISHED 2
+
+// Where the status word sits in a listing, which is bash's column and not a
+// number of this shell's choosing: a person reads the two side by side.
+#define JOB_STATUS_WIDTH 27
+
+typedef struct
+{
+        positive number;
+        // The last child, which is what $! publishes and what the wait table
+        // files every stage of the job under.
+        bipolar last;
+        bipolar group;
+        positive state;
+        // The raw wait status of the last stage, kept for the notice that
+        // says how the job ended.
+        positive status;
+        positive stopped_by;
+        bool reported;
+        bool background;
+        bool nohup;
+        p8 address_to text;
+        positive text_room;
+} job_entry;
+
+static job_entry address_to job_table;
+static positive job_room;
+static positive job_count;
+static positive job_numbered;
+static positive job_current;
+static positive job_previous;
+
+// The line the executor is running, for the jobs a rendering of the words
+// cannot describe. Set by the reader, because that is the only place the
+// bytes a person actually typed are still together.
+string_address exec_current_line;
+
+// The descriptor the terminal is reached through, and whether this shell may
+// hand it over. A script has process groups without a terminal, so the two
+// are separate questions.
+static b32 job_terminal = -1;
+static bipolar job_shell_group;
+static bool job_terminal_owned;
+static bool job_monitor_ready;
+
+// Set by the handler and read by the executor. A signal may arrive between
+// any two instructions, so the compiler is told the value can change under it.
+#define SIGNAL_CHILD 17
+static volatile bool job_child_news;
+static bool job_child_watching;
+
+static fn job_child_watch();
+
+/*
+        Whether this process is the shell that owns the jobs.
+
+        A subshell is inside somebody else's job already. Giving its commands
+        groups of their own would split that job in two, and handing one of
+        them the terminal would take it from the job the person is looking at
+        -- so a fork answers no, and its pipelines go back to being spawned
+        rather than forked.
+*/
+static PURE bool job_monitor()
+{
+        return !exec_forked && shell_option_on(SHELL_OPTION_MONITOR);
+}
+
+static bipolar job_group_of(bipolar process)
+{
+        return system_call_1(syscall(getpgid), (positive)process);
+}
+
+static bipolar job_group_set(bipolar process, bipolar group)
+{
+        return system_call_2(syscall(setpgid), (positive)process,
+                             (positive)group);
+}
+
+static bipolar job_signal(bipolar target, positive number)
+{
+        return system_call_2(syscall(kill), (positive)target, number);
+}
+
+static bipolar job_terminal_group()
+{
+        b32 group = 0;
+
+        if (job_terminal < 0 ||
+            system_control(job_terminal, JOB_TERMINAL_GET_GROUP,
+                           address_of group) < 0)
+                return -1;
+
+        return group;
+}
+
+/*
+        Handing the terminal over, and taking it back.
+
+        tcsetpgrp from a process outside the terminal's foreground group is
+        itself a SIGTTOU, which would stop the shell in the middle of starting
+        the job it is handing over to. Ignoring that signal for as long as the
+        monitor is on is why the call needs no guard.
+*/
+static fn job_terminal_give(bipolar group)
+{
+        b32 wanted = (b32)group;
+
+        if (!job_terminal_owned || job_terminal < 0 || group <= 0)
+                return;
+
+        system_control(job_terminal, JOB_TERMINAL_SET_GROUP,
+                       address_of wanted);
+}
+
+/*
+        The monitor, turned on.
+
+        Job control asks three things of the shell itself: a process group of
+        its own, so that a job's group is never also the shell's; the
+        terminal; and deafness to the three signals that would otherwise stop
+        it while it arranges either. A script gets the first and neither of
+        the other two, which is the whole of what `set -m` means with nobody
+        watching.
+*/
+static fn job_monitor_start()
+{
+        bipolar own;
+
+        if (job_monitor_ready)
+                return;
+
+        job_monitor_ready = true;
+        job_shell_group = job_group_of(0);
+
+        if (!shell_is_interactive)
+                return;
+
+        shell_ignore(JOB_SIGNAL_TTY_OUTPUT);
+        shell_ignore(JOB_SIGNAL_TTY_INPUT);
+        shell_ignore(JOB_SIGNAL_STOP_KEY);
+
+        job_terminal = 0;
+        own = system_call_1(syscall(getpid), 0);
+
+        /* A shell sharing a group takes one of its own. Failing is not fatal:
+           it keeps working and simply never arbitrates the terminal, which is
+           what a shell started without one already does. */
+        if (job_shell_group != own && job_group_set(0, own) == 0)
+                job_shell_group = own;
+
+        job_terminal_owned = job_terminal_group() >= 0;
+        job_terminal_give(job_shell_group);
+}
+
+// `set +m`: the next job is started the POSIX way, and the shell stops
+// answering for a terminal it no longer arbitrates.
+static fn job_monitor_stop()
+{
+        job_monitor_ready = false;
+        job_terminal_owned = false;
+        job_terminal = -1;
+}
+
+fn job_monitor_told(bool on)
+{
+        if (on)
+                job_monitor_start();
+        else
+                job_monitor_stop();
+}
+
+static positive job_find_number(positive number)
+{
+        for (positive at = 0; at < job_count; at++)
+                if (job_table[at].number == number)
+                        return at;
+
+        return job_count;
+}
+
+static positive job_find_last(bipolar last)
+{
+        for (positive at = 0; at < job_count; at++)
+                if (job_table[at].last == last)
+                        return at;
+
+        return job_count;
+}
+
+/*
+        Which job `%+` and `%-` mean.
+
+        The most recently started or stopped job is current and the one before
+        it is previous. When a job leaves, the previous one takes its place and
+        the highest-numbered job that is neither becomes previous -- which is
+        the order the marks are printed in and the order `fg` with no operand
+        follows.
+*/
+static fn job_mark(positive number)
+{
+        if (job_current == number)
+                return;
+
+        job_previous = job_current;
+        job_current = number;
+}
+
+static fn job_marks_settle()
+{
+        if (job_current && job_find_number(job_current) == job_count)
+        {
+                job_current = job_previous;
+                job_previous = 0;
+        }
+
+        if (!job_current || job_find_number(job_current) == job_count)
+        {
+                job_current = 0;
+
+                for (positive at = 0; at < job_count; at++)
+                        if (job_table[at].number > job_current)
+                                job_current = job_table[at].number;
+        }
+
+        if (job_previous == job_current ||
+            (job_previous && job_find_number(job_previous) == job_count))
+                job_previous = 0;
+
+        if (!job_previous)
+                for (positive at = 0; at < job_count; at++)
+                {
+                        positive number = job_table[at].number;
+
+                        if (number != job_current && number > job_previous)
+                                job_previous = number;
+                }
+}
+
+static fn job_drop_at(positive at)
+{
+        if (at >= job_count)
+                return;
+
+        if (job_table[at].text)
+                memory_free(job_table[at].text, job_table[at].text_room);
+
+        job_count--;
+
+        for (positive step = at; step < job_count; step++)
+                job_table[step] = job_table[step + 1];
+
+        job_marks_settle();
+
+        // A shell with no jobs left starts numbering again, which is what
+        // makes the first job of the next command [1] rather than [57].
+        if (!job_count)
+        {
+                job_numbered = 0;
+                job_current = 0;
+                job_previous = 0;
+        }
+}
+
+// A subshell inherits $! but not the right to wait for anybody, so it must
+// not inherit a table whose numbers name processes that are not its children.
+fn job_forget()
+{
+        while (job_count)
+                job_drop_at(job_count - 1);
+
+        job_numbered = 0;
+        job_current = 0;
+        job_previous = 0;
+}
+
+/*
+        The text a job is listed under.
+
+        The parser keeps words, not the line they came from, so the line is
+        written again out of them: a simple command is its own words, and a
+        pipeline is its stages with a bar between. Anything else -- a loop, a
+        subshell, a group -- has no word list of its own, and the source line
+        it came from is closer to what a person typed than any rendering this
+        could invent for it.
+*/
+static positive job_text_add(p8 address_to address_to into,
+                             positive address_to room, positive used,
+                             string_address text, positive length)
+{
+        if (!text || !shell_room((address_any address_to)into, room,
+                                 used + length + 1, 1))
+                return used;
+
+        memory_copy_apart(address_to into + used, text, length);
+        used += length;
+        (address_to into)[used] = end;
+
+        return used;
+}
+
+static positive job_text_line(p8 address_to address_to into,
+                              positive address_to room, positive used)
+{
+        positive length;
+
+        if (!exec_current_line)
+                return used;
+
+        length = string_length(exec_current_line);
+
+        // The ampersand that made this a job is not part of the command, and
+        // a listing puts its own back when the job is still running.
+        while (length && (exec_current_line[length - 1] == ' ' ||
+                          exec_current_line[length - 1] == '\t' ||
+                          exec_current_line[length - 1] == '&'))
+                length--;
+
+        return job_text_add(into, room, used, exec_current_line, length);
+}
+
+static positive job_text_node(p8 address_to address_to into,
+                              positive address_to room, positive used,
+                              b32 node, b32 depth)
+{
+        b32 kind = parse_nodes[node].kind;
+        b32 child;
+
+        if (kind == NODE_SIMPLE)
+        {
+                for (b32 at = 0; at < parse_nodes[node].word_count; at++)
+                {
+                        b32 word = parse_nodes[node].word + at;
+
+                        if (at)
+                                used = job_text_add(into, room, used,
+                                                    (string_address) " ", 1);
+
+                        used = job_text_add(into, room, used,
+                                            parse_words[word],
+                                            parse_word_lengths[word]);
+                }
+
+                return used;
+        }
+
+        if (kind == NODE_PIPELINE)
+        {
+                if (parse_nodes[node].flags)
+                        used = job_text_add(into, room, used,
+                                            (string_address) "! ", 2);
+
+                for (child = parse_nodes[node].left; child;
+                     child = parse_nodes[child].next)
+                {
+                        used = job_text_node(into, room, used, child,
+                                             depth + 1);
+
+                        if (parse_nodes[child].next)
+                                used = job_text_add(into, room, used,
+                                                    (string_address) " | ", 3);
+                }
+
+                return used;
+        }
+
+        if (kind == NODE_SUBSHELL || kind == NODE_GROUP)
+        {
+                bool braces = kind == NODE_GROUP;
+
+                used = job_text_add(into, room, used,
+                                    braces ? (string_address) "{ "
+                                           : (string_address) "( ",
+                                    2);
+
+                for (child = parse_nodes[node].left; child;
+                     child = parse_nodes[child].next)
+                {
+                        used = job_text_node(into, room, used, child,
+                                             depth + 1);
+
+                        if (parse_nodes[child].next)
+                                used = job_text_add(into, room, used,
+                                                    (string_address) "; ", 2);
+                }
+
+                return job_text_add(into, room, used,
+                                    braces ? (string_address) "; }"
+                                           : (string_address) " )",
+                                    3 - (braces ? 0 : 1));
+        }
+
+        if (kind == NODE_LIST || kind == NODE_ANDOR)
+        {
+                for (child = parse_nodes[node].left; child;
+                     child = parse_nodes[child].next)
+                {
+                        b32 op = parse_nodes[child].op;
+
+                        if (child != parse_nodes[node].left)
+                                used = job_text_add(
+                                    into, room, used,
+                                    op == OP_AND_IF
+                                        ? (string_address) " && "
+                                        : op == OP_OR_IF
+                                              ? (string_address) " || "
+                                              : (string_address) "; ",
+                                    op == OP_AND_IF || op == OP_OR_IF ? 4 : 2);
+
+                        used = job_text_node(into, room, used, child,
+                                             depth + 1);
+                }
+
+                return used;
+        }
+
+        /* A loop, a case or an if has no rendering here worth inventing. The
+           line it came from is what a person typed, and it is only the whole
+           truth when the job is the whole line. */
+        return depth ? used : job_text_line(into, room, used);
+}
+
+/*
+        A job, remembered.
+
+        Its children are already in the wait table under the last of them, so
+        this adds only the row that names them collectively. Whether the job is
+        in the background is the caller's to say, because a stopped foreground
+        job is a job too and must not be listed with an ampersand it never had.
+*/
+static positive job_started(bipolar address_to children, positive count,
+                            bipolar group, b32 node, bool chain,
+                            bool background)
+{
+        job_entry address_to entry;
+        positive at;
+
+        if (!count || children[count - 1] <= 0)
+                return 0;
+
+        /* A process identifier is reusable once the kernel has reaped its
+           last owner. The new job owns the name; a stale row still carrying
+           it does not. */
+        at = job_find_last(children[count - 1]);
+
+        if (at < job_count)
+                job_drop_at(at);
+
+        if (!shell_array_room(job_table, job_room, job_count + 1))
+                return 0;
+
+        entry = job_table + job_count++;
+
+        entry->number = ++job_numbered;
+        entry->last = children[count - 1];
+        entry->group = group;
+        entry->state = JOB_RUNNING;
+        entry->status = 0;
+        entry->stopped_by = 0;
+        entry->reported = true;
+        entry->background = background;
+        entry->nohup = false;
+        entry->text = null;
+        entry->text_room = 0;
+
+        job_child_watch();
+
+        if (node < 0)
+        {
+                positive used = 0;
+
+                /* A command already expanded into argv has no node to walk,
+                   and the words it is about to run describe it better than
+                   the ones it was written with. */
+                for (positive word = 0; word < shell_argc; word++)
+                {
+                        if (word)
+                                used = job_text_add(address_of entry->text,
+                                                    address_of entry->text_room,
+                                                    used,
+                                                    (string_address) " ", 1);
+
+                        used = job_text_add(address_of entry->text,
+                                            address_of entry->text_room, used,
+                                            shell_argv[word],
+                                            string_length(shell_argv[word]));
+                }
+        }
+        else if (node && !chain)
+                job_text_node(address_of entry->text,
+                              address_of entry->text_room, 0, node, 0);
+        else if (node)
+        {
+                positive used = 0;
+                b32 stage = node;
+
+                /* A pipeline reaches this as its list of stages rather than
+                   as the node above them, because that is what the executor
+                   was handed and what its children were made from. */
+                while (stage)
+                {
+                        used = job_text_node(address_of entry->text,
+                                             address_of entry->text_room,
+                                             used, stage,
+                                             parse_nodes[node].next ? 1 : 0);
+                        stage = parse_nodes[stage].next;
+
+                        if (stage)
+                                used = job_text_add(address_of entry->text,
+                                                    address_of entry->text_room,
+                                                    used,
+                                                    (string_address) " | ", 3);
+                }
+        }
+
+        job_mark(entry->number);
+
+        return entry->number;
+}
+
+/*
+        Retaining a job's children without publishing $!.
+
+        A background job is what `$!` names; a foreground one that stopped is
+        not, and bash agrees -- control-Z does not change the value a script
+        reads back. The wait table is the same table either way, so the value
+        is put back rather than the retention being written twice.
+*/
+static bool job_retain(bipolar address_to children, positive count,
+                       bool pipefail, bool invert, bool publish)
+{
+        bipolar kept = shell_background_last;
+        bool held = shell_background_started(children, count, pipefail,
+                                             invert);
+
+        if (!publish)
+                shell_background_last = kept;
+
+        return held;
+}
+
+// Whether the wait table still owes an answer for this job at all, and how
+// many of its children the kernel has yet to speak about.
+static positive job_rows(bipolar last)
+{
+        positive rows = 0;
+
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job == last)
+                        rows++;
+
+        return rows;
+}
+
+static positive job_running_children(bipolar last)
+{
+        positive left = 0;
+
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job == last &&
+                    !(shell_wait_table[at].flags & SHELL_WAIT_DONE))
+                        left++;
+
+        return left;
+}
+
+/*
+        The identifiers of a foreground pipeline, kept while its answers are
+        being written over them.
+
+        PIPESTATUS is published out of the vector the children were started
+        in, so by the time a stop is noticed the identifiers are gone -- and a
+        pipeline that stopped is a job, which is named by its children and not
+        by what they answered.
+*/
+static bipolar address_to job_held;
+static positive job_held_room;
+
+static bool job_hold(bipolar address_to children, positive count)
+{
+        if (!count || !shell_array_room(job_held, job_held_room, count))
+                return false;
+
+        memory_copy_apart(job_held, children, count * sizeof(children[0]));
+
+        return true;
+}
+
+static bipolar job_first_child(job_entry address_to entry)
+{
+        for (positive at = 0; at < shell_wait_count; at++)
+                if (shell_wait_table[at].job == entry->last)
+                        return shell_wait_table[at].pid;
+
+        return entry->group > 0 ? entry->group : entry->last;
+}
+
+/*
+        One child changed, and what that means for the job holding it.
+
+        A stop is not a death. Filing it in the wait table would let `wait`
+        answer for a process that is still there and would take the job off
+        the screen while it is stopped on it, so only an exit or a signal is
+        handed on.
+*/
+static fn job_child_changed(bipolar pid, positive status)
+{
+        bool stopped = (status & 0xff) == 0x7f;
+        bool continued = (status & 0xffff) == 0xffff;
+        positive at;
+
+        for (at = 0; at < job_count; at++)
+                if (job_table[at].last == pid ||
+                    (job_table[at].group > 0 &&
+                     job_group_of(pid) == job_table[at].group))
+                        break;
+
+        if (stopped)
+        {
+                if (at < job_count && job_table[at].state != JOB_STOPPED)
+                {
+                        job_table[at].state = JOB_STOPPED;
+                        job_table[at].stopped_by = (status >> 8) & 0xff;
+                        job_table[at].reported = false;
+                        job_mark(job_table[at].number);
+                }
+
+                return;
+        }
+
+        if (continued)
+        {
+                if (at < job_count && job_table[at].state == JOB_STOPPED)
+                        job_table[at].state = JOB_RUNNING;
+
+                return;
+        }
+
+        shell_background_reaped(pid, status);
+
+        // A here-document writer is a child too, and belongs to no job.
+        at = job_find_last(pid);
+
+        if (at < job_count)
+                job_table[at].status = status;
+
+        for (at = 0; at < job_count; at++)
+        {
+                job_entry address_to entry = job_table + at;
+
+                if (entry->state == JOB_FINISHED || !job_rows(entry->last) ||
+                    job_running_children(entry->last))
+                        continue;
+
+                entry->state = JOB_FINISHED;
+                entry->reported = false;
+        }
+}
+
+/*
+        Everything the kernel has to say, taken without waiting.
+
+        WUNTRACED and WCONTINUED are what make a stopped job visible to a
+        shell that is not waiting for it: without them a control-Z in a
+        pipeline stage looks like nothing at all until somebody asks.
+*/
+fn job_reap()
+{
+        positive status;
+        bipolar pid;
+
+        job_child_news = false;
+
+        while ((pid = system_call_4(syscall(wait4), (positive)-1,
+                                    (positive)address_of status,
+                                    JOB_NO_HANG | JOB_UNTRACED |
+                                        JOB_CONTINUED,
+                                    0)) > 0)
+                job_child_changed(pid, status);
+}
+
+/*
+        Sweeping only when there is something to sweep.
+
+        A shell that asks the kernel between commands learns late: a
+        substitution reads the table in a fork of this process and can only
+        know what the fork already knew, so `$(jobs)` reported a job that had
+        finished two commands ago as running. Asking before every command
+        instead is a system call per command for as long as anything is in the
+        background, which a loop beside a background job pays for every turn.
+
+        SIGCHLD is the answer to both. The handler does nothing but say that
+        there is news, so the sweep itself stays where it can safely walk the
+        tables, and a shell with nothing to hear makes no call at all.
+*/
+static fn job_child_arrived(b32 number)
+{
+        (void)number;
+
+        job_child_news = true;
+}
+
+static fn job_child_watch()
+{
+        if (job_child_watching)
+                return;
+
+        job_child_watching = true;
+        system_signal_install(SIGNAL_CHILD, (positive)job_child_arrived,
+                              SIGNAL_CATCH_FLAGS, SIGNAL_CATCH_RESTORER,
+                              null);
+}
+
+fn job_notice()
+{
+        if (!job_child_news || !job_count)
+                return;
+
+        job_reap();
+}
+
+/*
+        What a signal is called when a job ends by one.
+
+        These are the descriptions a person reads next to the job number, and
+        they are the C library's rather than the shell's own short names, which
+        is why "TERM" appears in `kill -l` and "Terminated" appears here.
+*/
+static string_address job_signal_words[] = {
+    null,          "Hangup",
+    "Interrupt",   "Quit",
+    "Illegal instruction",
+    "Trace/breakpoint trap",
+    "Aborted",     "Bus error",
+    "Floating point exception",
+    "Killed",      "User defined signal 1",
+    "Segmentation fault",
+    "User defined signal 2",
+    "Broken pipe", "Alarm clock",
+    "Terminated",  null,
+    "Child exited", "Continued",
+    "Stopped (signal)",
+    "Stopped",     "Stopped (tty input)",
+    "Stopped (tty output)",
+    "Urgent I/O condition",
+    "CPU time limit exceeded",
+    "File size limit exceeded",
+    "Virtual timer expired",
+    "Profiling timer expired",
+    "Window changed",
+    "I/O possible",
+    "Power failure",
+    "Bad system call",
+};
+
+#define JOB_SIGNAL_WORDS (array_count(job_signal_words))
+
+static positive job_signal_named(positive number, p8 address_to into)
+{
+        if (number < JOB_SIGNAL_WORDS && job_signal_words[number])
+        {
+                string_copy(into, job_signal_words[number]);
+                return string_length(job_signal_words[number]);
+        }
+
+        string_copy(into, "Signal ");
+        positive_into_string(into + 7, number);
+
+        return string_length(into);
+}
+
+/*
+        The status column of a listing.
+
+        A stopped job is spelled twice over: the job's own summary says
+        "Stopped", and the per-process detail `jobs -l` prints says which
+        signal stopped it. Both are kept because both are what a person sees
+        when the two commands are put side by side.
+*/
+static fn job_status_text(job_entry address_to entry, bool detailed,
+                          p8 address_to into)
+{
+        positive code;
+
+        if (entry->state == JOB_RUNNING)
+        {
+                string_copy(into, "Running");
+                return;
+        }
+
+        if (entry->state == JOB_STOPPED)
+        {
+                positive by = entry->stopped_by;
+
+                if (detailed && by && by != JOB_SIGNAL_STOP_KEY)
+                {
+                        job_signal_named(by, into);
+                        return;
+                }
+
+                string_copy(into, "Stopped");
+                return;
+        }
+
+        if ((entry->status & 0x7f) && (entry->status & 0xff) != 0x7f)
+        {
+                positive length = job_signal_named(entry->status & 0x7f, into);
+
+                if (entry->status & 0x80)
+                        string_copy(into + length, " (core dumped)");
+
+                return;
+        }
+
+        code = (entry->status >> 8) & 0xff;
+
+        if (!code)
+        {
+                string_copy(into, "Done");
+                return;
+        }
+
+        string_copy(into, "Exit ");
+        positive_into_string(into + 5, code);
+}
+
+static string_address job_mark_of(job_entry address_to entry)
+{
+        if (entry->number == job_current)
+                return (string_address) "+";
+
+        if (entry->number == job_previous)
+                return (string_address) "-";
+
+        return (string_address) " ";
+}
+
+// One letter, as a string, because the format writer knows s, p, b and f and
+// nothing else -- and a diagnostic that drops the letter it is complaining
+// about is worse than no diagnostic.
+static string_address job_letter(p8 letter)
+{
+        static p8 held[2];
+
+        held[0] = letter;
+        held[1] = end;
+
+        return held;
+}
+
+/*
+        One job, on one line.
+
+        An ampersand is not part of what was typed: it is how a listing says
+        the job is still in the background, so it belongs to jobs that are
+        running there and to no others.
+*/
+static fn job_line(writer write, job_entry address_to entry, bool detailed)
+{
+        p8 status[64];
+
+        string_format(write, "[%p]%s", entry->number, job_mark_of(entry));
+
+        if (detailed)
+                string_format(write, " %b ", job_first_child(entry));
+        else
+                string_format(write, "  ");
+
+        job_status_text(entry, detailed, status);
+        string_to_field(write, status, JOB_STATUS_WIDTH, ' ', true);
+
+        string_format(write, "%s", entry->text ? (string_address)entry->text
+                                               : (string_address) "");
+
+        if (entry->state == JOB_RUNNING && entry->background)
+                string_format(write, " &");
+
+        string_format(write, "\n");
+}
+
+/*
+        What has changed since anybody last looked.
+
+        A terminal is told as soon as the shell is between commands; a script
+        is told nothing, because its output is somebody else's input and a
+        line about job 1 in the middle of it is a bug. What a script gets
+        instead is the same notice when it asks, through `jobs`.
+*/
+fn job_report()
+{
+        positive at = 0;
+
+        if (!shell_is_interactive)
+                return;
+
+        while (at < job_count)
+        {
+                job_entry address_to entry = job_table + at;
+
+                if (entry->reported)
+                {
+                        at++;
+                        continue;
+                }
+
+                job_line(log, entry, false);
+                entry->reported = true;
+
+                if (entry->state != JOB_FINISHED)
+                {
+                        at++;
+                        continue;
+                }
+
+                shell_wait_drop(entry->last);
+                job_drop_at(at);
+        }
+
+        log_flush();
+}
+
+/*
+        The job an operand names.
+
+        Bash accepts six spellings and so does this: a number, the current job
+        as `%%` or `%+`, the previous one as `%-`, a command prefix, and a
+        substring after `%?`. A prefix or substring matching two jobs is
+        ambiguous rather than one of them, because guessing which of two
+        running commands to kill is not a service.
+*/
+#define JOB_SPEC_NONE 0
+#define JOB_SPEC_FOUND 1
+#define JOB_SPEC_UNKNOWN 2
+#define JOB_SPEC_AMBIGUOUS 3
+
+static positive job_specified(string_address word, positive address_to found)
+{
+        string_address text = word;
+        positive matches = 0;
+        positive number = 0;
+        bool substring = false;
+
+        address_to found = job_count;
+
+        if (!word || !string_get(word))
+        {
+                address_to found = job_find_number(job_current);
+                return job_current && address_to found < job_count
+                           ? JOB_SPEC_FOUND
+                           : JOB_SPEC_UNKNOWN;
+        }
+
+        if (string_get(text) == '%')
+                text++;
+
+        if (!string_get(text) || string_get(text) == '%' ||
+            string_get(text) == '+')
+        {
+                address_to found = job_find_number(job_current);
+                return job_current && address_to found < job_count
+                           ? JOB_SPEC_FOUND
+                           : JOB_SPEC_UNKNOWN;
+        }
+
+        if (string_get(text) == '-' && !string_get(text + 1))
+        {
+                address_to found = job_find_number(job_previous);
+                return job_previous && address_to found < job_count
+                           ? JOB_SPEC_FOUND
+                           : JOB_SPEC_UNKNOWN;
+        }
+
+        if (string_digits_exact(text, address_of number))
+        {
+                address_to found = job_find_number(number);
+                return address_to found < job_count ? JOB_SPEC_FOUND
+                                                    : JOB_SPEC_UNKNOWN;
+        }
+
+        if (string_get(text) == '?')
+        {
+                substring = true;
+                text++;
+        }
+
+        for (positive at = 0; at < job_count; at++)
+        {
+                string_address have = job_table[at].text
+                                          ? (string_address)job_table[at].text
+                                          : (string_address) "";
+                bool hit =
+                    substring
+                        ? string_find(have, text) != null
+                        : !string_compare_max(have, text,
+                                              string_length(text));
+
+                if (!hit)
+                        continue;
+
+                matches++;
+                address_to found = at;
+        }
+
+        if (matches == 1)
+                return JOB_SPEC_FOUND;
+
+        address_to found = job_count;
+
+        return matches ? JOB_SPEC_AMBIGUOUS : JOB_SPEC_UNKNOWN;
+}
+
+static b32 job_specified_complaint(string_address command,
+                                   string_address word, positive answer)
+{
+        if (answer == JOB_SPEC_AMBIGUOUS)
+        {
+                string_format(shell_diagnostic, "%s: %s: ambiguous job spec\n",
+                              command, word);
+                return 1;
+        }
+
+        string_format(shell_diagnostic, "%s: %s: no such job\n", command,
+                      word ? word : (string_address) "current");
+
+        return 1;
+}
+
+// Job control that was never turned on has no job to name, and saying so is
+// more use than a listing that is empty for a different reason.
+static bool job_control_missing(writer write, string_address command)
+{
+        (void)write;
+
+        if (job_monitor())
+                return false;
+
+        string_format(shell_diagnostic, "%s: no job control\n", command);
+        shell_answer(1);
+
+        return true;
+}
+
+fn shell_jobs(writer write, string_address input)
+{
+        shell_option_walk walk = {1};
+        bool detailed = false;
+        bool identifiers = false;
+        bool running_only = false;
+        bool stopped_only = false;
+        bool changed_only = false;
+        p8 letter;
+
+        (void)input;
+
+        while (shell_option_letter(address_of walk, address_of letter))
+                switch (letter)
+                {
+                case 'l':
+                        detailed = true;
+                        break;
+                case 'p':
+                        identifiers = true;
+                        break;
+                case 'r':
+                        running_only = true;
+                        break;
+                case 's':
+                        stopped_only = true;
+                        break;
+                case 'n':
+                        changed_only = true;
+                        break;
+                default:
+                        string_format(shell_diagnostic,
+                                      "jobs: -%s: invalid option\n",
+                                      job_letter(letter));
+                        return shell_answer(2);
+                }
+
+        job_reap();
+
+        if (walk.index < shell_argc)
+        {
+                b32 answer = 0;
+
+                for (positive at = walk.index; at < shell_argc; at++)
+                {
+                        positive found;
+                        positive told = job_specified(shell_argv[at],
+                                                      address_of found);
+
+                        if (told != JOB_SPEC_FOUND)
+                        {
+                                answer = job_specified_complaint(
+                                    (string_address) "jobs", shell_argv[at],
+                                    told);
+                                continue;
+                        }
+
+                        if (identifiers)
+                                string_format(write, "%b\n",
+                                              job_first_child(job_table +
+                                                              found));
+                        else
+                                job_line(write, job_table + found, detailed);
+
+                        job_table[found].reported = true;
+                }
+
+                return shell_answer(answer);
+        }
+
+        for (positive at = 0; at < job_count;)
+        {
+                job_entry address_to entry = job_table + at;
+                bool show = true;
+
+                if (running_only && entry->state != JOB_RUNNING)
+                        show = false;
+                if (stopped_only && entry->state != JOB_STOPPED)
+                        show = false;
+                if (changed_only && entry->reported)
+                        show = false;
+
+                if (show && identifiers)
+                        string_format(write, "%b\n", job_first_child(entry));
+                else if (show)
+                        job_line(write, entry, detailed);
+
+                if (show)
+                        entry->reported = true;
+
+                /* A finished job is news exactly once. Reporting it is also
+                   forgetting it, which is why `jobs` twice over shows it and
+                   then does not. */
+                if (show && entry->state == JOB_FINISHED)
+                {
+                        shell_wait_drop(entry->last);
+                        job_drop_at(at);
+                        continue;
+                }
+
+                at++;
+        }
+
+        shell_answer(0);
+}
+
+fn shell_fg(writer write, string_address input)
+{
+        positive found;
+        positive told;
+        job_entry address_to entry;
+
+        (void)input;
+
+        if (job_control_missing(write, (string_address) "fg"))
+                return;
+
+        job_reap();
+
+        told = job_specified(shell_argc > 1 ? shell_argv[1] : null,
+                             address_of found);
+
+        if (told != JOB_SPEC_FOUND)
+                return shell_answer(job_specified_complaint(
+                    (string_address) "fg",
+                    shell_argc > 1 ? shell_argv[1] : null, told));
+
+        entry = job_table + found;
+        entry->background = false;
+        job_mark(entry->number);
+
+        string_format(write, "%s\n",
+                      entry->text ? (string_address)entry->text
+                                  : (string_address) "");
+        log_flush();
+
+        if (entry->state == JOB_STOPPED)
+        {
+                entry->state = JOB_RUNNING;
+                job_signal(entry->group > 0 ? -entry->group : entry->last,
+                           JOB_SIGNAL_CONTINUE);
+        }
+
+        shell_answer(job_wait_foreground(entry->number));
+}
+
+fn shell_bg(writer write, string_address input)
+{
+        b32 answer = 0;
+        positive at = 1;
+
+        (void)input;
+
+        if (job_control_missing(write, (string_address) "bg"))
+                return;
+
+        job_reap();
+
+        do
+        {
+                string_address word = at < shell_argc ? shell_argv[at] : null;
+                positive found;
+                positive told = job_specified(word, address_of found);
+                job_entry address_to entry;
+
+                if (told != JOB_SPEC_FOUND)
+                {
+                        answer = job_specified_complaint(
+                            (string_address) "bg", word, told);
+                        continue;
+                }
+
+                entry = job_table + found;
+
+                if (entry->state == JOB_RUNNING && entry->background)
+                {
+                        string_format(shell_diagnostic,
+                                      "bg: job %p already in background\n",
+                                      entry->number);
+                        answer = 1;
+                        continue;
+                }
+
+                entry->state = JOB_RUNNING;
+                entry->background = true;
+                job_mark(entry->number);
+                job_signal(entry->group > 0 ? -entry->group : entry->last,
+                           JOB_SIGNAL_CONTINUE);
+
+                string_format(write, "[%p]%s %s &\n", entry->number,
+                              job_mark_of(entry),
+                              entry->text ? (string_address)entry->text
+                                          : (string_address) "");
+        } while (++at < shell_argc);
+
+        shell_answer(answer);
+}
+
+/*
+        A job the shell stops keeping.
+
+        Forgetting is the whole of it: the row goes, the wait table's rows go
+        with it, and the process carries on with nobody left to report for it.
+        `-h` is the exception and keeps the row, because what it asks for is
+        not forgetting but an exemption from the hangup a leaving shell sends.
+*/
+fn shell_disown(writer write, string_address input)
+{
+        shell_option_walk walk = {1};
+        bool all = false;
+        bool running_only = false;
+        bool keep = false;
+        b32 answer = 0;
+        p8 letter;
+
+        (void)write;
+        (void)input;
+
+        while (shell_option_letter(address_of walk, address_of letter))
+                switch (letter)
+                {
+                case 'a':
+                        all = true;
+                        break;
+                case 'r':
+                        running_only = true;
+                        break;
+                case 'h':
+                        keep = true;
+                        break;
+                default:
+                        string_format(shell_diagnostic,
+                                      "disown: -%s: invalid option\n",
+                                      job_letter(letter));
+                        return shell_answer(2);
+                }
+
+        job_reap();
+
+        if (all || running_only || walk.index >= shell_argc)
+        {
+                for (positive at = 0; at < job_count;)
+                {
+                        if (running_only &&
+                            job_table[at].state != JOB_RUNNING)
+                        {
+                                at++;
+                                continue;
+                        }
+
+                        if (!all && !running_only &&
+                            job_table[at].number != job_current)
+                        {
+                                at++;
+                                continue;
+                        }
+
+                        if (keep)
+                        {
+                                job_table[at].nohup = true;
+                                at++;
+                                continue;
+                        }
+
+                        shell_wait_drop(job_table[at].last);
+                        job_drop_at(at);
+                }
+
+                return shell_answer(0);
+        }
+
+        for (positive at = walk.index; at < shell_argc; at++)
+        {
+                positive found;
+                positive told = job_specified(shell_argv[at],
+                                              address_of found);
+
+                if (told != JOB_SPEC_FOUND)
+                {
+                        answer = job_specified_complaint(
+                            (string_address) "disown", shell_argv[at], told);
+                        continue;
+                }
+
+                if (keep)
+                {
+                        job_table[found].nohup = true;
+                        continue;
+                }
+
+                shell_wait_drop(job_table[found].last);
+                job_drop_at(found);
+        }
+
+        shell_answer(answer);
+}
+
+/*
+        The shell, stopped by its own hand.
+
+        Only a shell that has job control has anywhere to be stopped back to:
+        without it there is no other foreground group to hand the terminal to
+        and nobody who would ever continue this one.
+*/
+fn shell_suspend(writer write, string_address input)
+{
+        (void)write;
+        (void)input;
+
+        if (!job_monitor() || !shell_is_interactive)
+        {
+                string_format(shell_diagnostic,
+                              "suspend: cannot suspend: no job control\n");
+                return shell_answer(1);
+        }
+
+        log_flush();
+        job_signal(-job_shell_group, JOB_SIGNAL_STOP);
+
+        shell_answer(0);
+}
+
+/*
+        A foreground job, waited for.
+
+        The wait is the one every foreground command gets, except that a stop
+        is an answer too: the job stays in the table, the shell takes the
+        terminal back, and the number the caller reads is the one POSIX gives
+        a command that stopped.
+*/
+static b32 job_wait_foreground(positive number)
+{
+        positive at = job_find_number(number);
+        b32 status = shell_status;
+        bipolar last;
+
+        if (at >= job_count)
+                return status;
+
+        last = job_table[at].last;
+        job_terminal_give(job_table[at].group);
+
+        while (true)
+        {
+                positive raw = 0;
+                bipolar got;
+
+                at = job_find_number(number);
+
+                if (at >= job_count || job_table[at].state != JOB_RUNNING ||
+                    !job_running_children(last))
+                        break;
+
+                trap_wait_restarting(false);
+                got = system_call_4(syscall(wait4), (positive)-1,
+                                    (positive)address_of raw, JOB_UNTRACED, 0);
+                trap_wait_restarting(true);
+
+                if (got == -4)
+                {
+                        if (trap_waiting())
+                                break;
+
+                        continue;
+                }
+
+                if (got <= 0)
+                        break;
+
+                job_child_changed(got, raw);
+        }
+
+        job_terminal_give(job_shell_group);
+
+        at = job_find_number(number);
+
+        if (at >= job_count)
+                return status;
+
+        if (job_table[at].state == JOB_STOPPED)
+        {
+                job_table[at].reported = true;
+                job_line(log, job_table + at, false);
+                log_flush();
+
+                return 128 + (b32)job_table[at].stopped_by;
+        }
+
+        {
+                bool interrupted;
+
+                status = shell_wait_one(last, address_of interrupted);
+                at = job_find_number(number);
+
+                if (at < job_count)
+                        job_drop_at(at);
+        }
+
+        return status;
+}
+
+/*
+        A foreground child under the monitor, waited for.
+
+        No job is made unless one is needed. A command that runs to the end
+        was never a job: it took no number, `jobs` never mentioned it, and the
+        next background command is still [1]. The number is taken at the
+        moment it stops, which is also the moment it becomes something `fg`
+        can name.
+*/
+static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
+{
+        positive raw = 0;
+        positive stopped_by;
+        positive number;
+        b32 answer;
+
+        job_terminal_give(group);
+
+        while (true)
+        {
+                bipolar got;
+
+                trap_wait_restarting(false);
+                got = system_call_4(syscall(wait4), (positive)child,
+                                    (positive)address_of raw, JOB_UNTRACED, 0);
+                trap_wait_restarting(true);
+
+                if (got == -4)
+                {
+                        bipolar signal;
+
+                        if (!trap_waiting())
+                                continue;
+
+                        signal = trap_pending_number();
+                        job_terminal_give(job_shell_group);
+
+                        return signal > 0 ? 128 + (b32)signal : 129;
+                }
+
+                if (got < 0)
+                {
+                        job_terminal_give(job_shell_group);
+
+                        return 1;
+                }
+
+                break;
+        }
+
+        job_terminal_give(job_shell_group);
+
+        if ((raw & 0xff) != 0x7f)
+                return wait_status_code(raw);
+
+        stopped_by = (raw >> 8) & 0xff;
+        answer = 128 + (b32)stopped_by;
+
+        if (!job_retain(address_of child, 1, false, false, false))
+                return answer;
+
+        number = job_started(address_of child, 1, group, node, false, false);
+
+        if (!number)
+                return answer;
+
+        {
+                positive at = job_find_number(number);
+
+                job_table[at].state = JOB_STOPPED;
+                job_table[at].stopped_by = stopped_by;
+                job_table[at].reported = true;
+                job_line(log, job_table + at, false);
+                log_flush();
+        }
+
+        return answer;
+}
+
+/*
+        One foreground child under the monitor.
+
+        The spawn device would be quicker and cannot be used here. A spawned
+        stage never runs a line of this shell's code, so the only side that
+        could put it in a process group of its own is this one -- and by the
+        time the request has returned the child may already have exec'd, at
+        which point setpgid is refused. Both sides racing to the same answer is
+        what makes the group certain, and only a fork has two sides.
+*/
+static fn job_execute_foreground()
+{
+        bipolar child;
+
+        log_flush();
+        child = shell_clone();
+
+        if (child == 0)
+        {
+                job_group_set(0, 0);
+                shell_default(JOB_SIGNAL_STOP_KEY);
+                shell_default(JOB_SIGNAL_TTY_INPUT);
+                shell_default(JOB_SIGNAL_TTY_OUTPUT);
+                shell_thread_instance();
+        }
+
+        if (child < 0)
+        {
+                shell_execute_command();
+                return;
+        }
+
+        job_group_set(child, child);
+
+        shell_status = job_foreground_wait(child, child, -1);
+}
+
+/*
+        A utility of this image, under the monitor.
+
+        The argument is the foreground command's above: the group has to be
+        raced from both sides and only a fork has two, so the spawn device is
+        not used here. The image is already resident, so the child calls the
+        utility rather than loading one, and what the fork costs over the
+        spawn buys a `sleep` that control-Z can stop.
+*/
+fn job_execute_tool(positive which)
+{
+        bipolar child;
+
+        log_flush();
+        child = shell_clone();
+
+        if (child == 0)
+        {
+                job_group_set(0, 0);
+                trap_default_all();
+                shell_default(SIGNAL_INTERRUPT);
+                shell_default(SIGNAL_QUIT);
+                shell_default(JOB_SIGNAL_STOP_KEY);
+                shell_default(JOB_SIGNAL_TTY_INPUT);
+                shell_default(JOB_SIGNAL_TTY_OUTPUT);
+                exec_child_began();
+                program_arguments_use(shell_argv, (b32)shell_argc);
+                exit(shell_tool_call(which));
+        }
+
+        if (child < 0)
+                return shell_answer(1);
+
+        job_group_set(child, child);
+
+        shell_answer(job_foreground_wait(child, child, -1));
+}
+
+/*
+        kill, once an operand names a job.
+
+        Everything else stays with the utility: the recorded answers about
+        signal names, numbers and refusals are its, and a second parser beside
+        it would be a second set of them. What the shell adds is the one thing
+        a utility in another process cannot know -- what `%1` means, and that
+        under job control it means a process group rather than one process.
+*/
+static bool job_kill_specified()
+{
+        for (positive at = 1; at < shell_argc; at++)
+                if (string_get(shell_argv[at]) == '%')
+                        return true;
+
+        return false;
+}
+
+fn shell_kill(writer write, string_address input)
+{
+        bipolar number = 15;
+        positive at = 1;
+        b32 answer = 0;
+
+        (void)write;
+        (void)input;
+
+        if (!job_kill_specified())
+        {
+                positive2 named = string_hash_33_length(shell_argv[0]);
+
+                if (!shell_tool_run_hashed(shell_argv[0], named))
+                        shell_answer(127);
+
+                return;
+        }
+
+        while (at < shell_argc)
+        {
+                string_address word = shell_argv[at];
+
+                if (string_get(word) != '-' || !string_get(word + 1))
+                        break;
+
+                if (string_get(word + 1) == '-' && !string_get(word + 2))
+                {
+                        at++;
+                        break;
+                }
+
+                if (string_get(word + 1) == 's' && !string_get(word + 2))
+                {
+                        if (++at >= shell_argc)
+                        {
+                                string_format(shell_diagnostic,
+                                              "kill: -s needs a signal\n");
+                                return shell_answer(2);
+                        }
+
+                        number = kill_number(shell_argv[at]);
+                }
+                else
+                        number = kill_number(word + 1);
+
+                if (number < 0)
+                {
+                        string_format(shell_diagnostic,
+                                      "kill: invalid signal\n");
+                        return shell_answer(2);
+                }
+
+                at++;
+        }
+
+        if (at >= shell_argc)
+        {
+                string_format(shell_diagnostic, "kill: no process named\n");
+                return shell_answer(2);
+        }
+
+        job_reap();
+
+        for (; at < shell_argc; at++)
+        {
+                string_address word = shell_argv[at];
+                bipolar target;
+                positive found;
+                positive told;
+
+                if (string_get(word) != '%')
+                {
+                        if (job_signal(string_to_bipolar(word),
+                                       (positive)number) < 0)
+                        {
+                                string_format(shell_diagnostic,
+                                              "kill: %s: no such process\n",
+                                              word);
+                                answer = 1;
+                        }
+
+                        continue;
+                }
+
+                told = job_specified(word, address_of found);
+
+                if (told != JOB_SPEC_FOUND)
+                {
+                        answer = job_specified_complaint(
+                            (string_address) "kill", word, told);
+                        continue;
+                }
+
+                target = job_table[found].group > 0
+                             ? -job_table[found].group
+                             : job_table[found].last;
+
+                if (job_signal(target, (positive)number) < 0)
+                {
+                        string_format(shell_diagnostic,
+                                      "kill: %s: no such job\n", word);
+                        answer = 1;
+                }
+        }
+
+        shell_answer(answer);
+}
+
+// A job whose children the wait table no longer owes an answer for is not a
+// job any more: somebody waited for it and POSIX says a successful wait
+// forgets what it waited for.
+static fn job_prune()
+{
+        for (positive at = 0; at < job_count;)
+                if (!job_rows(job_table[at].last))
+                        job_drop_at(at);
+                else
+                        at++;
+}
+
+/*
+        wait, once there are jobs to name.
+
+        The plain forms are the ones already written beside the wait table and
+        stay there. What a job table adds is a `%1` operand, the answer POSIX
+        gives for a job that stopped rather than finished, and `-n` -- which is
+        not a wait for anybody in particular but for whoever ends first.
+*/
+static b32 job_wait_job(positive found, string_address into,
+                        bool address_to interrupted)
+{
+        bipolar last = job_table[found].last;
+        b32 answer;
+
+        if (into)
+                env_set_number(into, (positive)last);
+
+        answer = shell_wait_one(last, interrupted);
+        found = job_find_last(last);
+
+        if (found < job_count)
+                job_drop_at(found);
+
+        return answer;
+}
+
+/*
+        The next job to end, whichever it turns out to be.
+
+        Nothing is named, so the wait is for any child at all and the table is
+        asked afterwards which job that was. A job that merely stopped has not
+        ended, so the wait goes round again -- unless the caller said -f, which
+        is the option for wanting the end rather than the next change.
+*/
+static b32 job_wait_next(bool force, string_address into)
+{
+        while (true)
+        {
+                positive raw = 0;
+                bipolar got;
+                bool interrupted;
+
+                for (positive at = 0; at < job_count; at++)
+                        if (job_table[at].state == JOB_FINISHED)
+                                return job_wait_job(at, into,
+                                                    address_of interrupted);
+
+                if (!force)
+                        for (positive at = 0; at < job_count; at++)
+                                if (job_table[at].state == JOB_STOPPED &&
+                                    !job_table[at].reported)
+                                {
+                                        job_table[at].reported = true;
+
+                                        return 128 +
+                                               (b32)job_table[at].stopped_by;
+                                }
+
+                if (!shell_wait_count)
+                        return 127;
+
+                trap_wait_restarting(false);
+                got = system_call_4(syscall(wait4), (positive)-1,
+                                    (positive)address_of raw,
+                                    force ? 0 : JOB_UNTRACED, 0);
+                trap_wait_restarting(true);
+
+                if (got == -4)
+                {
+                        bipolar signal;
+
+                        if (!trap_waiting())
+                                continue;
+
+                        signal = trap_pending_number();
+
+                        return signal > 0 ? 128 + (b32)signal : 129;
+                }
+
+                if (got <= 0)
+                        return 127;
+
+                job_child_changed(got, raw);
+        }
+}
+
+fn job_wait(writer write, string_address input)
+{
+        bool next = false;
+        bool force = false;
+        string_address into = null;
+        positive first = 1;
+        b32 answer = 0;
+        bool interrupted = false;
+
+        while (first < shell_argc)
+        {
+                string_address word = shell_argv[first];
+                positive at;
+
+                if (string_get(word) != '-' || !string_get(word + 1))
+                        break;
+
+                if (string_get(word + 1) == '-' && !string_get(word + 2))
+                {
+                        first++;
+                        break;
+                }
+
+                for (at = 1; string_get(word + at); at++)
+                {
+                        p8 letter = string_get(word + at);
+
+                        if (letter == 'n')
+                                continue;
+
+                        if (letter == 'f')
+                                continue;
+
+                        if (letter == 'p')
+                                break;
+
+                        string_format(shell_diagnostic,
+                                      "wait: -%s: invalid option\n",
+                                      job_letter(letter));
+
+                        return shell_answer(2);
+                }
+
+                for (at = 1; string_get(word + at); at++)
+                {
+                        p8 letter = string_get(word + at);
+
+                        if (letter == 'n')
+                        {
+                                next = true;
+                                continue;
+                        }
+
+                        if (letter == 'f')
+                        {
+                                force = true;
+                                continue;
+                        }
+
+                        if (string_get(word + at + 1))
+                        {
+                                into = word + at + 1;
+                                break;
+                        }
+
+                        if (first + 1 >= shell_argc)
+                        {
+                                string_format(shell_diagnostic,
+                                              "wait: -p wants a name\n");
+
+                                return shell_answer(2);
+                        }
+
+                        into = shell_argv[++first];
+                        break;
+                }
+
+                first++;
+        }
+
+        job_reap();
+
+        if (next)
+                return shell_answer(job_wait_next(force, into));
+
+        if (first >= shell_argc)
+        {
+                while (true)
+                {
+                        positive at;
+
+                        for (at = 0; at < job_count; at++)
+                                if (job_table[at].state != JOB_STOPPED ||
+                                    force)
+                                        break;
+
+                        if (at >= job_count)
+                                break;
+
+                        answer = job_wait_job(at, into,
+                                              address_of interrupted);
+
+                        if (interrupted)
+                                return shell_answer(answer);
+                }
+
+                /* A retained child that never became a job -- one started
+                   before the table could hold it -- is still owed an answer,
+                   and the plain wait beside the table is the one that gives
+                   it. Only when nothing is stopped: waiting for a stopped
+                   process is waiting forever. */
+                if (shell_wait_count && !job_count)
+                {
+                        shell_wait(write, input);
+                        return;
+                }
+
+                job_prune();
+
+                return shell_answer(0);
+        }
+
+        for (positive at = first; at < shell_argc; at++)
+        {
+                string_address word = shell_argv[at];
+                positive found;
+                positive pid;
+
+                if (string_get(word) == '%')
+                {
+                        if (job_specified(word, address_of found) !=
+                            JOB_SPEC_FOUND)
+                        {
+                                string_format(shell_diagnostic,
+                                              "wait: %s: no such job\n", word);
+
+                                return shell_answer(127);
+                        }
+                }
+                else
+                {
+                        if (!string_digits_exact(word, address_of pid) ||
+                            pid > (positive)bipolar_max)
+                        {
+                                string_format(shell_diagnostic,
+                                              "wait: Illegal number: %s\n",
+                                              word);
+
+                                return shell_answer(2);
+                        }
+
+                        found = job_find_last((bipolar)pid);
+
+                        if (found >= job_count)
+                        {
+                                if (into)
+                                        env_set_number(into, pid);
+
+                                answer = shell_wait_one((bipolar)pid,
+                                                        address_of interrupted);
+                                job_prune();
+
+                                if (interrupted)
+                                        break;
+
+                                continue;
+                        }
+                }
+
+                if (!force && job_table[found].state == JOB_STOPPED)
+                {
+                        string_format(shell_diagnostic,
+                                      "wait: job %p is stopped\n",
+                                      job_table[found].number);
+                        answer = 128 + (b32)job_table[found].stopped_by;
+                        continue;
+                }
+
+                answer = job_wait_job(found, into, address_of interrupted);
+
+                if (interrupted)
+                        break;
+        }
+
+        shell_answer(answer);
+}
+
+/*
+        A forked foreground child under the monitor.
+
+        A subshell is a job like any other while it is in front: it has its own
+        process group, so it has to be given the terminal, and it can stop,
+        so the shell has to be able to say so and get its prompt back.
+*/
+static b32 job_foreground_child(bipolar child, b32 node)
+{
+        if (child < 0)
+                return 1;
+
+        return job_foreground_wait(child, child, node);
+}
+
+/*
+        The history, and the one store there is of it.
+
+        Two stores would have been the obvious shape, because two things want
+        one: the line editor for its arrow keys, and `fc` for something to
+        edit. They are not two stores here, and the reason is that they were
+        never even two halves of one process. The editor's ring is in the
+        terminal emulator -- src/sh/term.c, which draws the screen and
+        assembles the line -- and it reaches this shell down a pseudo-terminal
+        as finished lines. Nothing in this address space can see it.
+
+        So the store is here, where the shell reads its lines; `history` and
+        `fc` are both written against it; and HISTFILE is the only place the
+        two ends can ever meet, which is exactly what it is for.
+*/
+#define HISTORY_DEFAULT 500
+#define HISTORY_SLURP 65536
+
+static p8 address_to address_to history_text;
+static positive history_text_room;
+
+// How much was taken for each line, because the store gives them back one at
+// a time and a mapping has to be returned with the size it was asked for.
+static positive address_to history_bytes;
+static positive history_bytes_room;
+
+static positive history_used;
+
+// What the oldest line held is numbered. Trimming takes from the front, so
+// the numbers go on rising while the store stays the size it was told to be.
+static positive history_first = 1;
+
+// How much of the store has already been given to the file, so that -a
+// appends what is new rather than everything again.
+static positive history_saved;
+
+static PURE positive history_number(string_address name, positive fallback)
+{
+        string_address value = env_get(name);
+        positive number;
+
+        if (!value || !string_get(value) ||
+            !string_digits_exact(value, address_of number))
+                return fallback;
+
+        return number;
+}
+
+static PURE string_address history_file()
+{
+        string_address path = env_get((const_string) "HISTFILE");
+
+        return path && string_get(path) ? path : null;
+}
+
+static fn history_drop_at(positive at)
+{
+        if (at >= history_used)
+                return;
+
+        if (history_text[at])
+                memory_free(history_text[at], history_bytes[at]);
+
+        history_used--;
+
+        for (positive step = at; step < history_used; step++)
+        {
+                history_text[step] = history_text[step + 1];
+                history_bytes[step] = history_bytes[step + 1];
+        }
+
+        if (!at)
+                history_first++;
+
+        if (history_saved > at)
+                history_saved--;
+}
+
+static fn history_trim()
+{
+        positive limit = history_number((string_address) "HISTSIZE",
+                                        HISTORY_DEFAULT);
+
+        while (history_used > limit)
+                history_drop_at(0);
+}
+
+static bool history_hold(string_address text, positive length)
+{
+        p8 address_to copy;
+
+        if (!shell_array_room(history_text, history_text_room,
+                              history_used + 1) ||
+            !shell_array_room(history_bytes, history_bytes_room,
+                              history_used + 1))
+                return false;
+
+        copy = (p8 address_to)shell_map(length + 1);
+
+        if (!copy)
+                return false;
+
+        memory_copy_apart(copy, text, length);
+        copy[length] = end;
+
+        history_text[history_used] = copy;
+        history_bytes[history_used] = length + 1;
+        history_used++;
+
+        return true;
+}
+
+/*
+        Whether a line is worth remembering, which is not the shell's opinion.
+
+        HISTCONTROL and HISTIGNORE are how a person says what their own
+        history is for: a password typed after a space, a loop of the same
+        command, a `ls` they will never want back. All three are checked
+        before the copy is taken, because the point of them is that the line
+        never enters the store at all.
+*/
+static bool history_wanted(string_address text, positive length)
+{
+        string_address control = env_get((const_string) "HISTCONTROL");
+        string_address ignore = env_get((const_string) "HISTIGNORE");
+        bool space = false;
+        bool dedupe = false;
+        bool erase = false;
+
+        if (!length)
+                return false;
+
+        for (string_address at = control; at && string_get(at);)
+        {
+                string_address stop = string_first_of_or_end(at, ':');
+                positive span = (positive)(stop - at);
+
+                if (span == 11 && !memory_compare(at, "ignorespace", 11))
+                        space = true;
+                else if (span == 10 && !memory_compare(at, "ignoredups", 10))
+                        dedupe = true;
+                else if (span == 9 && !memory_compare(at, "erasedups", 9))
+                        erase = true;
+                else if (span == 10 && !memory_compare(at, "ignoreboth", 10))
+                {
+                        space = true;
+                        dedupe = true;
+                }
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        if (space && (string_get(text) == ' ' || string_get(text) == '\t'))
+                return false;
+
+        if (dedupe && history_used &&
+            !string_compare(history_text[history_used - 1], text))
+                return false;
+
+        for (string_address at = ignore; at && string_get(at);)
+        {
+                static p8 address_to pattern;
+                static positive pattern_room;
+                string_address stop = string_first_of_or_end(at, ':');
+                positive span = (positive)(stop - at);
+
+                if (!shell_room((address_any address_to)address_of pattern,
+                                address_of pattern_room, span + 1, 1))
+                        break;
+
+                memory_copy_apart(pattern, at, span);
+                pattern[span] = end;
+
+                if (span && shell_match(pattern, text))
+                        return false;
+
+                at = string_get(stop) ? stop + 1 : stop;
+        }
+
+        if (erase)
+                for (positive at = 0; at < history_used;)
+                        if (!string_compare(history_text[at], text))
+                                history_drop_at(at);
+                        else
+                                at++;
+
+        return true;
+}
+
+/*
+        One line, as it was typed.
+
+        The reader calls this and nothing else does: an eval, a sourced file
+        and a trap action are lines this shell wrote for itself, and a history
+        of them is a history of the shell rather than of the person.
+*/
+fn history_remember(string_address line)
+{
+        positive length;
+
+        if (!line)
+                return;
+
+        length = string_length(line);
+
+        while (length && (line[length - 1] == '\n' || line[length - 1] == '\r'))
+                length--;
+
+        {
+                positive at = 0;
+
+                while (at < length && (line[at] == ' ' || line[at] == '\t'))
+                        at++;
+
+                if (at == length)
+                        return;
+        }
+
+        {
+                static p8 address_to held;
+                static positive held_room;
+
+                if (!shell_room((address_any address_to)address_of held,
+                                address_of held_room, length + 1, 1))
+                        return;
+
+                memory_copy_apart(held, line, length);
+                held[length] = end;
+
+                if (!history_wanted(held, length))
+                        return;
+
+                history_hold(held, length);
+        }
+
+        history_trim();
+}
+
+// The whole of a file, however long it is. A history file is lines, and a
+// reader that stopped at a fixed size would silently lose the oldest of them.
+static p8 address_to history_slurp(string_address path,
+                                   positive address_to length)
+{
+        static p8 address_to held;
+        static positive held_room;
+        positive used = 0;
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ);
+
+        if (handle < 0)
+                return null;
+
+        for (;;)
+        {
+                bipolar got;
+
+                if (!shell_room((address_any address_to)address_of held,
+                                address_of held_room,
+                                used + HISTORY_SLURP + 1, 1))
+                        break;
+
+                got = system_read_retry(handle, held + used, HISTORY_SLURP);
+
+                if (got <= 0)
+                        break;
+
+                used += (positive)got;
+        }
+
+        system_close(handle);
+
+        if (!held)
+                return null;
+
+        held[used] = end;
+        address_to length = used;
+
+        return held;
+}
+
+static positive history_read(string_address path, positive skip)
+{
+        positive length = 0;
+        p8 address_to text = history_slurp(path, address_of length);
+        positive at = 0;
+        positive seen = 0;
+
+        if (!text)
+                return 0;
+
+        while (at < length)
+        {
+                positive stop = at;
+
+                while (stop < length && text[stop] != '\n')
+                        stop++;
+
+                if (stop > at && seen++ >= skip)
+                        history_hold(text + at, stop - at);
+
+                at = stop + 1;
+        }
+
+        history_trim();
+
+        return seen;
+}
+
+static bool history_write(string_address path, positive from, bool append)
+{
+        bipolar handle = system_open_at_mode(
+            AT_FDCWD, path, append ? FILE_APPEND : FILE_WRITE, 0600);
+
+        if (handle < 0)
+        {
+                string_format(shell_diagnostic, "history: %s: cannot write\n",
+                              path);
+                return false;
+        }
+
+        for (positive at = from; at < history_used; at++)
+        {
+                system_write_all((positive)handle, history_text[at],
+                                 string_length(history_text[at]));
+                system_write_all((positive)handle, "\n", 1);
+        }
+
+        system_close(handle);
+        history_saved = history_used;
+
+        return true;
+}
+
+// What was there before this session, at a terminal and nowhere else: a
+// script's history is a history nobody will ever read back.
+fn history_start()
+{
+        string_address path;
+
+        if (!shell_is_interactive)
+                return;
+
+        path = history_file();
+
+        if (path)
+                history_read(path, 0);
+
+        history_saved = history_used;
+}
+
+fn history_leaving()
+{
+        string_address path;
+        positive limit;
+
+        /* A subshell of an interactive shell is still interactive, and it did
+           not read any of these lines: letting it write the file would have a
+           `( exit )` decide what the session remembers. */
+        if (!shell_is_interactive || exec_forked)
+                return;
+
+        path = history_file();
+
+        if (!path)
+                return;
+
+        limit = history_number((string_address) "HISTFILESIZE",
+                               HISTORY_DEFAULT);
+
+        while (history_used > limit)
+                history_drop_at(0);
+
+        history_write(path, 0, false);
+}
+
+/*
+        A line of a listing, in whichever of the two shapes was asked for.
+
+        `history` right-justifies the number in five columns and follows it
+        with two spaces; `fc -l` writes the number, a tab and a space, and
+        `fc -ln` writes the tab and space with no number in front. They are
+        not the same layout and never were, so both are here rather than one
+        of them being made to stand for the other.
+*/
+static fn history_listed(writer write, positive at)
+{
+        p8 shown[24];
+
+        positive_into_string(shown, history_first + at);
+        writer_field(write, shown, string_length(shown), 5, ' ', false);
+        string_format(write, "  %s\n", history_text[at]);
+}
+
+static fn history_listed_fc(writer write, positive at, bool numbered)
+{
+        if (numbered)
+                string_format(write, "%p", history_first + at);
+
+        string_format(write, "\t %s\n", history_text[at]);
+}
+
+fn shell_history(writer write, string_address input)
+{
+        positive show = history_used;
+        positive at = 1;
+        string_address path = history_file();
+
+        (void)input;
+
+        while (at < shell_argc && string_get(shell_argv[at]) == '-' &&
+               string_get(shell_argv[at] + 1))
+        {
+                p8 letter = string_get(shell_argv[at] + 1);
+                string_address named = at + 1 < shell_argc ? shell_argv[at + 1]
+                                                           : null;
+
+                switch (letter)
+                {
+                case 'c':
+                        while (history_used)
+                                history_drop_at(history_used - 1);
+
+                        history_first = 1;
+                        history_saved = 0;
+                        at++;
+                        continue;
+
+                case 'd':
+                {
+                        bipolar offset;
+
+                        if (!named)
+                        {
+                                string_format(shell_diagnostic,
+                                              "history: -d wants an offset\n");
+                                return shell_answer(2);
+                        }
+
+                        offset = string_to_bipolar(named);
+
+                        if (offset < 0)
+                                offset += (bipolar)(history_first +
+                                                    history_used);
+                        offset -= (bipolar)history_first;
+
+                        if (offset < 0 || (positive)offset >= history_used)
+                        {
+                                string_format(shell_diagnostic,
+                                              "history: %s: not in the"
+                                              " history\n",
+                                              named);
+                                return shell_answer(1);
+                        }
+
+                        history_drop_at((positive)offset);
+
+                        return shell_answer(0);
+                }
+
+                case 'a':
+                case 'n':
+                case 'r':
+                case 'w':
+                {
+                        string_address where = named ? named : path;
+
+                        if (!where)
+                        {
+                                string_format(shell_diagnostic,
+                                              "history: no history file\n");
+                                return shell_answer(1);
+                        }
+
+                        if (letter == 'a')
+                                return shell_answer(
+                                    history_write(where, history_saved, true)
+                                        ? 0
+                                        : 1);
+
+                        if (letter == 'w')
+                                return shell_answer(
+                                    history_write(where, 0, false) ? 0 : 1);
+
+                        if (letter == 'r')
+                        {
+                                history_read(where, 0);
+                                return shell_answer(0);
+                        }
+
+                        history_read(where, history_saved);
+
+                        return shell_answer(0);
+                }
+
+                case 's':
+                {
+                        positive used = 0;
+                        static p8 address_to joined;
+                        static positive joined_room;
+
+                        for (positive word = at + 1; word < shell_argc; word++)
+                        {
+                                positive length =
+                                    string_length(shell_argv[word]);
+
+                                if (!shell_room(
+                                        (address_any address_to)address_of joined,
+                                        address_of joined_room,
+                                        used + length + 2, 1))
+                                        return shell_answer(1);
+
+                                if (used)
+                                        joined[used++] = ' ';
+
+                                memory_copy_apart(joined + used,
+                                                  shell_argv[word], length);
+                                used += length;
+                                joined[used] = end;
+                        }
+
+                        if (used)
+                                history_hold(joined, used);
+
+                        return shell_answer(0);
+                }
+
+                default:
+                        string_format(shell_diagnostic,
+                                      "history: -%s: invalid option\n",
+                                      job_letter(letter));
+                        return shell_answer(2);
+                }
+        }
+
+        if (at < shell_argc)
+        {
+                positive wanted;
+
+                if (!string_digits_exact(shell_argv[at], address_of wanted))
+                {
+                        string_format(shell_diagnostic,
+                                      "history: %s: numeric argument"
+                                      " required\n",
+                                      shell_argv[at]);
+                        return shell_answer(1);
+                }
+
+                if (wanted < show)
+                        show = wanted;
+        }
+
+        for (positive line = history_used - show; line < history_used; line++)
+                history_listed(write, line);
+
+        shell_answer(0);
+}
+
+/*
+        fc, which is the history with an editor attached.
+
+        The command being run is not part of what it operates on: `fc -l` is
+        entered before it runs, like every other line, and a person asking for
+        the last sixteen commands does not mean this one. Bash draws the same
+        line, which is why the count below stops one short.
+*/
+static PURE positive history_range_count()
+{
+        return history_used ? history_used - 1 : 0;
+}
+
+static bool history_locate(string_address word, positive fallback,
+                           positive address_to found)
+{
+        positive count = history_range_count();
+        positive digits;
+        bipolar offset;
+
+        address_to found = fallback;
+
+        if (!word)
+                return true;
+
+        if (string_get(word) == '-' ||
+            string_digits_exact(word, address_of digits))
+        {
+                offset = string_to_bipolar(word);
+
+                if (offset < 0)
+                        offset += (bipolar)count;
+                else
+                        offset -= (bipolar)history_first;
+
+                if (offset < 0)
+                        offset = 0;
+
+                if ((positive)offset >= count)
+                        offset = count ? (bipolar)count - 1 : 0;
+
+                address_to found = (positive)offset;
+
+                return count != 0;
+        }
+
+        for (positive at = count; at;)
+        {
+                at--;
+
+                if (!string_compare_max(history_text[at], word,
+                                        string_length(word)))
+                {
+                        address_to found = at;
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+/*
+        A remembered line, run again.
+
+        Nested the way eval nests: the parser is standing in the middle of the
+        `fc` that asked for this, and a line fed to it without its own lexer
+        storage and parser marks is a second sentence written over the first.
+*/
+static fn history_run_text(writer write, string_address text)
+{
+        lex_frame frame;
+
+        string_format(write, "%s\n", text);
+        log_flush();
+
+        lex_nest_enter(address_of frame);
+        run_lines(text);
+        shell_input_end();
+        lex_nest_leave(address_of frame);
+}
+
+static b32 history_edit(writer write, string_address editor, positive first,
+                        positive last)
+{
+        static p8 path[64];
+        static p8 address_to command;
+        static positive command_room;
+        positive length;
+        bipolar handle;
+
+        string_copy(path, "/tmp/mw-fc.");
+        positive_into_string(path + 11,
+                             (positive)system_call_1(syscall(getpid), 0));
+
+        handle = system_open_at_mode(AT_FDCWD, path, FILE_WRITE, 0600);
+
+        if (handle < 0)
+        {
+                string_format(shell_diagnostic, "fc: cannot open %s\n", path);
+                return 1;
+        }
+
+        for (positive at = first; at <= last && at < history_used; at++)
+        {
+                system_write_all((positive)handle, history_text[at],
+                                 string_length(history_text[at]));
+                system_write_all((positive)handle, "\n", 1);
+        }
+
+        system_close(handle);
+
+        length = string_length(editor) + string_length(path) + 2;
+
+        if (!shell_room((address_any address_to)address_of command,
+                        address_of command_room, length, 1))
+                return 1;
+
+        string_copy(command, editor);
+        string_copy(command + string_length(editor), " ");
+        string_copy(command + string_length(editor) + 1, path);
+
+        {
+                lex_frame frame;
+
+                lex_nest_enter(address_of frame);
+                run_lines(command);
+                shell_input_end();
+                lex_nest_leave(address_of frame);
+        }
+
+        {
+                positive text_length = 0;
+                p8 address_to text = history_slurp(path, address_of text_length);
+                positive at = 0;
+
+                system_call_3(syscall(unlinkat), (positive)(bipolar)AT_FDCWD,
+                              (positive)path, 0);
+
+                if (!text)
+                        return 1;
+
+                while (at < text_length)
+                {
+                        positive stop = at;
+
+                        while (stop < text_length && text[stop] != '\n')
+                                stop++;
+
+                        text[stop] = end;
+
+                        if (stop > at)
+                                history_run_text(write, text + at);
+
+                        at = stop + 1;
+                }
+        }
+
+        return shell_status;
+}
+
+fn shell_fc(writer write, string_address input)
+{
+        positive count = history_range_count();
+        positive at = 1;
+        bool listing = false;
+        bool numbered = true;
+        bool reversed = false;
+        bool again = false;
+        string_address editor = null;
+        string_address replace = null;
+        positive first;
+        positive last;
+
+        (void)input;
+
+        while (at < shell_argc && string_get(shell_argv[at]) == '-' &&
+               string_get(shell_argv[at] + 1))
+        {
+                p8 letter = string_get(shell_argv[at] + 1);
+
+                if (letter == '-' && !string_get(shell_argv[at] + 2))
+                {
+                        at++;
+                        break;
+                }
+
+                if (letter == 'e')
+                {
+                        if (at + 1 >= shell_argc)
+                        {
+                                string_format(shell_diagnostic,
+                                              "fc: -e wants an editor\n");
+                                return shell_answer(2);
+                        }
+
+                        editor = shell_argv[++at];
+
+                        // `fc -e -` is how the option spelling asks for the
+                        // re-execution `fc -s` asks for by name.
+                        if (!string_compare(editor, (string_address) "-"))
+                        {
+                                again = true;
+                                editor = null;
+                        }
+
+                        at++;
+                        continue;
+                }
+
+                for (positive step = 1; string_get(shell_argv[at] + step);
+                     step++)
+                        switch (string_get(shell_argv[at] + step))
+                        {
+                        case 'l':
+                                listing = true;
+                                break;
+                        case 'n':
+                                numbered = false;
+                                break;
+                        case 'r':
+                                reversed = true;
+                                break;
+                        case 's':
+                                again = true;
+                                break;
+                        default:
+                                string_format(shell_diagnostic,
+                                              "fc: -%s: invalid option\n",
+                                              job_letter(string_get(
+                                                  shell_argv[at] + step)));
+                                return shell_answer(2);
+                        }
+
+                at++;
+        }
+
+        if (again && at < shell_argc && string_first_of(shell_argv[at], '='))
+                replace = shell_argv[at++];
+
+        if (!count)
+        {
+                // Nothing to work on is not a failure when nothing was asked
+                // for either: a shell with no history lists none and says so
+                // by saying nothing.
+                if (listing && at >= shell_argc)
+                        return shell_answer(0);
+
+                string_format(shell_diagnostic, "fc: no command found\n");
+
+                return shell_answer(1);
+        }
+
+        if (!history_locate(at < shell_argc ? shell_argv[at] : null,
+                            again ? count - 1
+                                  : listing ? (count > 16 ? count - 16 : 0)
+                                            : count - 1,
+                            address_of first))
+        {
+                string_format(shell_diagnostic, "fc: %s: no such command\n",
+                              shell_argv[at]);
+                return shell_answer(1);
+        }
+
+        if (at < shell_argc)
+                at++;
+
+        if (!history_locate(at < shell_argc ? shell_argv[at] : null,
+                            again ? first : listing ? count - 1 : first,
+                            address_of last))
+        {
+                string_format(shell_diagnostic, "fc: %s: no such command\n",
+                              shell_argv[at]);
+                return shell_answer(1);
+        }
+
+        if (last < first)
+        {
+                positive held = first;
+
+                first = last;
+                last = held;
+                reversed = !reversed;
+        }
+
+        if (listing)
+        {
+                if (reversed)
+                        for (positive line = last + 1; line > first;)
+                                history_listed_fc(write, --line, numbered);
+                else
+                        for (positive line = first; line <= last; line++)
+                                history_listed_fc(write, line, numbered);
+
+                return shell_answer(0);
+        }
+
+        if (again)
+        {
+                static p8 address_to built;
+                static positive built_room;
+                string_address text = history_text[first];
+
+                if (!replace)
+                {
+                        history_run_text(write, text);
+                        return;
+                }
+
+                {
+                        string_address split = string_first_of(replace, '=');
+                        positive old_length = (positive)(split - replace);
+                        string_address new_text = split + 1;
+                        string_address where;
+                        positive prefix;
+
+                        /* What is being replaced is the front of the operand,
+                           which is not a string of its own -- its equals sign
+                           is still attached. Comparing that many bytes at
+                           each position finds it without the operand having
+                           to be cut up first. */
+                        for (where = text; string_get(where); where++)
+                                if (!string_compare_max(where, replace,
+                                                        old_length))
+                                        break;
+
+                        if (!old_length || !string_get(where))
+                        {
+                                history_run_text(write, text);
+                                return;
+                        }
+
+                        prefix = (positive)(where - text);
+
+                        if (!shell_room(
+                                (address_any address_to)address_of built,
+                                address_of built_room,
+                                string_length(text) + string_length(new_text) +
+                                    1,
+                                1))
+                                return shell_answer(1);
+
+                        memory_copy_apart(built, text, prefix);
+                        string_copy(built + prefix, new_text);
+                        string_copy(built + prefix + string_length(new_text),
+                                    where + old_length);
+                        history_run_text(write, built);
+                }
+
+                return;
+        }
+
+        if (!editor)
+                editor = env_get((const_string) "FCEDIT");
+
+        if (!editor || !string_get(editor))
+                editor = env_get((const_string) "EDITOR");
+
+        if (!editor || !string_get(editor))
+                editor = (string_address) "ed";
+
+        shell_answer(history_edit(write, editor, first, last));
+}
 
 static string_address exec_arena_copy(string_address text)
 {
@@ -2128,6 +5107,8 @@ static b32 exec_dispatch(b32 command_word)
                         shell_argv[0] = found;
                         if (shell_tail_command)
                                 shell_thread_instance_mode(exec_asynchronous);
+                        else if (job_monitor())
+                                job_execute_foreground();
                         else
                                 shell_execute_command();
                         shell_argv[0] = name;
@@ -3623,6 +6604,7 @@ static fn exec_child_signals(bool background, bool null_input)
 static bipolar exec_spawn_node(b32 index, bool background)
 {
         bipolar child;
+        bool monitor = job_monitor();
 
         log_flush();
         child = shell_clone();
@@ -3634,7 +6616,24 @@ static bipolar exec_spawn_node(b32 index, bool background)
                 exec_asynchronous = background;
                 trap_default_all();
                 exec_child_signals(background, background);
+
+                /* Raced from both sides, because either side alone loses:
+                   the parent may reach setpgid after the child has exec'd,
+                   and the child may be signalled before it has run at all. */
+                if (monitor)
+                {
+                        job_group_set(0, 0);
+                        shell_default(JOB_SIGNAL_STOP_KEY);
+                        shell_default(JOB_SIGNAL_TTY_INPUT);
+                        shell_default(JOB_SIGNAL_TTY_OUTPUT);
+                }
                 exec_child_began();
+
+                /* A subshell is not the shell whose jobs those are, and its
+                   own numbering starts at one again. A command substitution
+                   is the exception and keeps them, because `$(jobs -p)` is
+                   how a script asks this shell what it is running. */
+                job_forget();
 
                 /* The async environment is already a subshell. Turning an
                    explicit (...) node into its equivalent group avoids a
@@ -3649,6 +6648,9 @@ static bipolar exec_spawn_node(b32 index, bool background)
                 log_flush();
                 exit(status);
         }
+
+        if (monitor && child > 0)
+                job_group_set(child, child);
 
         return child;
 }
@@ -3752,6 +6754,8 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         b32 status = 0;
         positive at;
         bool spawn_failed = false;
+        bool monitor = job_monitor();
+        bipolar group = 0;
 
         if (count > positive_max / sizeof(children[0]) ||
             !shell_array_room(children, children_room, count))
@@ -3781,7 +6785,16 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 }
 
                 log_flush();
-                made = exec_stage_spawn(child, upstream, last ? -1 : ends[1]);
+
+                /* A spawned stage never runs a line of this shell, so only
+                   the parent could put it in the job's group -- and by the
+                   time the request has returned it may already have exec'd,
+                   at which point setpgid is refused. Under the monitor the
+                   stage is forked, which is slower and has two sides. */
+                made = monitor
+                           ? -1
+                           : exec_stage_spawn(child, upstream,
+                                              last ? -1 : ends[1]);
 
                 if (made < 0)
                         made = shell_clone();
@@ -3789,6 +6802,15 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 if (made == 0)
                 {
                         trap_default_all();
+
+                        if (monitor)
+                        {
+                                job_group_set(0, group);
+                                shell_default(JOB_SIGNAL_STOP_KEY);
+                                shell_default(JOB_SIGNAL_TTY_INPUT);
+                                shell_default(JOB_SIGNAL_TTY_OUTPUT);
+                        }
+
                         if (!trap_ignored(SIGNAL_PIPE))
                                 shell_default(SIGNAL_PIPE);
                         exec_asynchronous = background;
@@ -3845,6 +6867,14 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         upstream = ends[0];
                 }
 
+                if (monitor)
+                {
+                        if (!group)
+                                group = made;
+
+                        job_group_set(made, group);
+                }
+
                 children[started++] = made;
                 child = parse_nodes[child].next;
         }
@@ -3861,6 +6891,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                                       "No room to retain background pipeline\n");
                         status = 2;
                 }
+                else
+                        job_started(children, started, group, first, true,
+                                    true);
 
                 memory_free(children,
                             children_room * sizeof(children[0]));
@@ -3877,10 +6910,37 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         //      seen is the rightmost one, so one variable holds it.
         //
         b32 rightmost_failure = 0;
+        bool stopped = false;
+        positive stopped_by = 0;
+
+        if (monitor)
+        {
+                job_hold(children, started);
+                job_terminal_give(group);
+        }
 
         for (at = 0; at < started; at++)
         {
-                b32 got = exec_child_status(children[at]);
+                b32 got;
+
+                if (monitor)
+                {
+                        positive raw = 0;
+
+                        if (system_wait4_retry(children[at], address_of raw,
+                                               JOB_UNTRACED, null) < 0)
+                                got = 1;
+                        else if ((raw & 0xff) == 0x7f)
+                        {
+                                stopped = true;
+                                stopped_by = (raw >> 8) & 0xff;
+                                got = 128 + (b32)stopped_by;
+                        }
+                        else
+                                got = wait_status_code(raw);
+                }
+                else
+                        got = exec_child_status(children[at]);
 
                 if (got)
                         rightmost_failure = got;
@@ -3893,6 +6953,35 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 // the last of them has been waited for, so the answers go
                 // back into the vector that held them.
                 children[at] = got;
+        }
+
+        if (monitor)
+                job_terminal_give(job_shell_group);
+
+        /* A pipeline stopped in front is a job from that moment on: it is
+           listed, it is what `fg` means, and the number it answers with is the
+           one POSIX gives a command that stopped rather than ended. */
+        if (stopped && job_hold(job_held, started))
+        {
+                positive number =
+                    job_retain(job_held, started, pipefail, invert, false)
+                        ? job_started(job_held, started, group, first, true,
+                                      false)
+                        : 0;
+                positive slot = number ? job_find_number(number) : job_count;
+
+                memory_free(children, children_room * sizeof(children[0]));
+
+                if (slot >= job_count)
+                        return 128 + (b32)stopped_by;
+
+                job_table[slot].state = JOB_STOPPED;
+                job_table[slot].stopped_by = stopped_by;
+                job_table[slot].reported = true;
+                job_line(log, job_table + slot, false);
+                log_flush();
+
+                return 128 + (b32)stopped_by;
         }
 
         shell_array_numbers("PIPESTATUS", 10, children, started);
@@ -4040,6 +7129,9 @@ static b32 exec_background(b32 index)
                 return 2;
         }
 
+        job_started(address_of child, 1, job_monitor() ? child : 0, index,
+                    false, true);
+
         return 0;
 }
 
@@ -4092,6 +7184,12 @@ static b32 exec_node(b32 index)
 
 static b32 exec_node_kind(b32 index)
 {
+        /* The count is read first and it is an ordinary word: a shell with
+           nothing in the background never touches the volatile flag beside
+           it, so the notice costs one load and a branch not taken. */
+        if (job_count && job_child_news)
+                job_notice();
+
         parse_node address_to node;
         shell_mark expanded;
         b32 mark;
@@ -4159,8 +7257,12 @@ static b32 exec_node_kind(b32 index)
         else if (node->kind == NODE_CASE)
                 status = exec_case(index);
         else if (node->kind == NODE_SUBSHELL)
-                status = exec_child_status(
-                    exec_spawn_node(parse_nodes[index].left, false));
+        {
+                bipolar made = exec_spawn_node(parse_nodes[index].left, false);
+
+                status = job_monitor() ? job_foreground_child(made, index)
+                                       : exec_child_status(made);
+        }
         else
                 status = exec_node(node->left);
 
@@ -4203,8 +7305,11 @@ fn exec_program(b32 root)
         // Only when something was started in the background. This runs at the
         // top of every complete command, so a script that never forked one
         // was paying a wait4 per line to be told it has no children.
-        if (!exec_depth && shell_wait_count)
-                shell_background_reap();
+        if (!exec_depth && (shell_wait_count || job_count))
+        {
+                job_reap();
+                job_report();
+        }
 
         exec_depth++;
 
