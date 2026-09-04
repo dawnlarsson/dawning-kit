@@ -431,6 +431,130 @@ bool storage_mount_table_load(storage_mount_table address_to table,
                               writer diagnostic);
 fn storage_mount_table_release(storage_mount_table address_to table);
 
+/*
+        shopt: the option namespace set does not carry.
+
+        A script that opens with `shopt -s nullglob` must not die on the name,
+        so every option Bash 5.3 has is stored whether or not anything reads
+        it -- a stored no-op keeps the script running, which is the whole
+        point of the builtin for the fifty-odd names nothing here acts on.
+
+        One bit each in a single word, because the readers are the ones that
+        cannot afford a lookup: pathname expansion asks about four of these
+        for every pattern it walks, and the matcher asks about a fifth for
+        every case arm. A bit test against a global is what that costs.
+
+        The table is here rather than beside the builtin because the readers
+        are spread across the expander, the matcher and the executor, and all
+        three are included before builtin.c is.
+*/
+static string_address shell_shopt_names[] = {
+    "array_expand_once", "assoc_expand_once", "autocd",
+    "bash_source_fullpath", "cdable_vars", "cdspell", "checkhash",
+    "checkjobs", "checkwinsize", "cmdhist", "compat31", "compat32",
+    "compat40", "compat41", "compat42", "compat43", "compat44",
+    "complete_fullquote", "direxpand", "dirspell", "dotglob", "execfail",
+    "expand_aliases", "extdebug", "extglob", "extquote", "failglob",
+    "force_fignore", "globasciiranges", "globskipdots", "globstar",
+    "gnu_errfmt", "histappend", "histreedit", "histverify", "hostcomplete",
+    "huponexit", "inherit_errexit", "interactive_comments", "lastpipe",
+    "lithist", "localvar_inherit", "localvar_unset", "login_shell",
+    "mailwarn", "no_empty_cmd_completion", "nocaseglob", "nocasematch",
+    "noexpand_translation", "nullglob", "patsub_replacement", "progcomp",
+    "progcomp_alias", "promptvars", "restricted_shell", "shift_verbose",
+    "sourcepath", "varredir_close", "xpg_echo", null,
+};
+
+#define SHELL_SHOPT_NAMES (array_count(shell_shopt_names) - 1)
+
+//      The position of a name in the table above is its bit. Only the names
+//      something reads are spelled out; the rest are reached by lookup.
+#define SHELL_SHOPT_CHECKWINSIZE 8
+#define SHELL_SHOPT_CMDHIST 9
+#define SHELL_SHOPT_COMPLETE_FULLQUOTE 17
+#define SHELL_SHOPT_DOTGLOB 20
+#define SHELL_SHOPT_EXECFAIL 21
+#define SHELL_SHOPT_EXPAND_ALIASES 22
+#define SHELL_SHOPT_EXTGLOB 24
+#define SHELL_SHOPT_EXTQUOTE 25
+#define SHELL_SHOPT_FAILGLOB 26
+#define SHELL_SHOPT_FORCE_FIGNORE 27
+#define SHELL_SHOPT_GLOBASCIIRANGES 28
+#define SHELL_SHOPT_GLOBSKIPDOTS 29
+#define SHELL_SHOPT_GLOBSTAR 30
+#define SHELL_SHOPT_HOSTCOMPLETE 35
+#define SHELL_SHOPT_INHERIT_ERREXIT 37
+#define SHELL_SHOPT_INTERACTIVE_COMMENTS 38
+#define SHELL_SHOPT_LASTPIPE 39
+#define SHELL_SHOPT_LOGIN_SHELL 43
+#define SHELL_SHOPT_NOCASEGLOB 46
+#define SHELL_SHOPT_NOCASEMATCH 47
+#define SHELL_SHOPT_NULLGLOB 49
+#define SHELL_SHOPT_PATSUB_REPLACEMENT 50
+#define SHELL_SHOPT_PROGCOMP 51
+#define SHELL_SHOPT_PROMPTVARS 53
+#define SHELL_SHOPT_SOURCEPATH 56
+#define SHELL_SHOPT_XPG_ECHO 58
+
+#define SHELL_SHOPT(which) ((positive)1 << SHELL_SHOPT_##which)
+
+//      What Bash reports for a shell that was started to read a script. Every
+//      other name begins off, which is why the word and not the table is the
+//      one place the state lives.
+#define SHELL_SHOPT_STARTED                                                  \
+        (SHELL_SHOPT(CHECKWINSIZE) | SHELL_SHOPT(CMDHIST) |                  \
+         SHELL_SHOPT(COMPLETE_FULLQUOTE) | SHELL_SHOPT(EXTQUOTE) |           \
+         SHELL_SHOPT(FORCE_FIGNORE) | SHELL_SHOPT(GLOBASCIIRANGES) |         \
+         SHELL_SHOPT(GLOBSKIPDOTS) | SHELL_SHOPT(HOSTCOMPLETE) |             \
+         SHELL_SHOPT(INTERACTIVE_COMMENTS) |                                 \
+         SHELL_SHOPT(PATSUB_REPLACEMENT) | SHELL_SHOPT(PROGCOMP) |           \
+         SHELL_SHOPT(PROMPTVARS) | SHELL_SHOPT(SOURCEPATH))
+
+positive shell_shopt_state = SHELL_SHOPT_STARTED;
+
+#define shell_shopt_on(which)                                                \
+        ((shell_shopt_state & SHELL_SHOPT(which)) != 0)
+
+/*
+        The names that answer without being stored.
+
+        Declared here because the expander is included first and is where the
+        miss that reaches them happens; what they answer with is beside the
+        environment table in builtin.c, which is the only place that knows how
+        a name is looked up in the first place.
+*/
+#if defined(__aarch64__) || defined(_M_ARM64)
+#define MOONWATER_HOSTTYPE "aarch64"
+#define MOONWATER_MACHTYPE "aarch64-unknown-linux-gnu"
+#elif defined(__riscv)
+#define MOONWATER_HOSTTYPE "riscv64"
+#define MOONWATER_MACHTYPE "riscv64-unknown-linux-gnu"
+#else
+#define MOONWATER_HOSTTYPE "x86_64"
+#define MOONWATER_MACHTYPE "x86_64-pc-linux-gnu"
+#endif
+
+COLD string_address shell_dynamic_value(const_string name, positive length,
+                                        positive hash,
+                                        positive address_to value_length);
+COLD bool shell_dynamic_assign(const_string name, positive length,
+                               const_string value);
+COLD bool shell_dynamic_wanted(const_string name, positive length);
+
+//      What $LINENO answers with. The lexer publishes the line it is reading
+//      into this; nothing else writes it.
+extern positive shell_line_number;
+
+//      How many subshells deep this process is, which is what $BASH_SUBSHELL
+//      is and the only thing a fork has to remember to say it.
+extern positive shell_subshell_depth;
+
+fn shell_last_argument_set(string_address word);
+
+//      One function's name out of the executor's table, for compgen. The
+//      table is in exec.c, which is included last.
+bool exec_function_named(positive slot, p8 address_to into, positive room);
+
 #include "lex.c"
 #include "file.c"
 #include "snapshot.c"
@@ -449,9 +573,9 @@ fn storage_mount_table_release(storage_mount_table address_to table);
 #include "edit.c"
 #include "system.c"
 #include "../bowl/runtime.c"
-#include "builtin.c"
-
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
+
+#include "builtin.c"
 
 /*
         The line being read, which grows to hold whatever arrives.
@@ -1038,6 +1162,13 @@ bool shell_builtin(string_address arguments, positive2 named)
         that a body is not source and is taken verbatim until its delimiter.
 */
 static bool shell_more;
+
+//      Whether the parser is in the middle of a construct, which is the one
+//      thing the reader needs to know to choose between PS1 and PS2.
+bool shell_reading_more()
+{
+        return shell_more;
+}
 
 static fn run_line_inner(string_address line)
 {

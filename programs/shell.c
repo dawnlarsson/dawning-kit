@@ -162,6 +162,17 @@ b32 main()
         process_arguments = (positive)program_argument_count();
         arguments = program_argument_list();
 
+        /*
+                A login shell is one whose zeroth argument begins with a dash.
+
+                That is the whole of the mark, it has been since the seventh
+                edition, and `shopt -q login_shell` is the only thing here
+                that asks: nothing behaves differently, because the profile
+                files a login shell would read are not this shell's yet.
+        */
+        if (process_arguments && arguments[0] && arguments[0][0] == '-')
+                shell_shopt_state |= SHELL_SHOPT(LOGIN_SHELL);
+
         /* Find the -c command without publishing any shell state yet. */
         if (process_arguments > 1)
         {
@@ -348,7 +359,11 @@ b32 main()
                 positive total, at;
 
                 if (interactive)
-                        log_direct(str(TERM_MAIN_BUFFER TERM_RESET TERM_SHOW_CURSOR PROMPT));
+                {
+                        log_direct(str(TERM_MAIN_BUFFER TERM_RESET
+                                           TERM_SHOW_CURSOR));
+                        shell_prompt_write(log_direct, shell_reading_more());
+                }
 
                 //      Room for another read on top of whatever is being
                 //      held back, so a line has no length it cannot reach.

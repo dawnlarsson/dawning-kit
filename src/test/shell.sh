@@ -3005,6 +3005,11 @@ bash_set_option_inventory()
                         case $item in
                         monitor) recorded='off|'; status=0 ;;
                         noexec)  recorded='on|'; status=0 ;;
+                        #       Taken and stored, and deliberately absent
+                        #       from the listing: `set -o` here is compared
+                        #       byte for byte against dash's, which has no
+                        #       name for any of the three.
+                        errtrace|functrace|history) status=0 ;;
                         esac
                         bash_remaining "ledger set option $item" \
                                 "$recorded" "$status" "$probe"
@@ -3012,15 +3017,24 @@ bash_set_option_inventory()
         done
 }
 
-# No shopt name exists yet. Enumerating every 5.3.15 option keeps adding the
-# builtin from hiding fifty-nine independent option-family gaps behind one
-# successful command name.
+# Enumerating every 5.3.15 option keeps the builtin from hiding fifty-nine
+# independent option families behind one successful command name: -q answers
+# with the state, so a name stored with the wrong default fails here.
 bash_shopt_inventory()
 {
+        state=$1
+        shift
+
         for item
         do
-                bash_remaining "ledger shopt option $item" '127|' 0 \
-                        "PATH=; shopt -q '$item'; echo \$?"
+                probe="PATH=; shopt -q '$item'; echo \$?"
+
+                if [ "$state" = supported ]; then
+                        bash_answer "ledger shopt option $item" "$probe"
+                else
+                        bash_remaining "ledger shopt option $item" '127|' 0 \
+                                "$probe"
+                fi
         done
 }
 
@@ -3034,9 +3048,10 @@ bash_builtin_inventory supported \
         return set shift source suspend test times trap true type typeset \
         ulimit umask \
         unalias unset wait
+bash_builtin_inventory supported \
+        bind builtin compgen complete compopt dirs enable popd pushd shopt
 bash_builtin_inventory remaining \
-        bind builtin caller compgen complete compopt dirs \
-        enable logout popd pushd shopt
+        caller logout
 
 group keyword-index
 bash_keyword_inventory '! false' '!'
@@ -3065,7 +3080,7 @@ bash_set_option_inventory remaining \
         privileged
 
 group shopt-option-index
-bash_shopt_inventory \
+bash_shopt_inventory supported \
         array_expand_once assoc_expand_once autocd bash_source_fullpath \
         cdable_vars cdspell checkhash checkjobs checkwinsize cmdhist compat31 \
         compat32 compat40 compat41 compat42 compat43 compat44 \
@@ -3127,6 +3142,10 @@ bash_answer 'declare global print sees live local' \
         'x=G; f() { local x=L; declare -gp x; }; f'
 bash_answer 'declare cannot shadow global readonly' \
         'readonly x=G; f() { declare x=L; printf "%s:%s|" "$?" "$x"; }; f; echo "$x"'
+bash_answer 'ledger declare plus listing' \
+        'a=one; export b=two; declare +x | while read line; do case $line in a=*|b=*) echo "$line";; esac; done'
+bash_answer 'declare with no operands lists as assignments' \
+        'zz1="a=b"; zz2="a b"; zz3=; zz5=plain; declare | grep "^zz"'
 bash_answer 'declare unset print' 'declare x; declare -p x'
 bash_answer 'declare attributes print' \
         'declare -rx x=one; declare -p x'
@@ -3153,6 +3172,217 @@ bash_answer 'ledger declare nameref attribute' \
         'target=value; declare -n ref=target; s=$?; printf "%s:<%s>\n" "$s" "$ref"'
 bash_answer 'ledger mapfile semantics' 'printf "a\n" | mapfile a'
 bash_answer 'ledger readarray semantics' 'printf "a\n" | readarray a'
+
+group shopt
+bash_answer 'ledger globstar' \
+        'p=/tmp/bash-globstar.$$; mkdir -p "$p/one/two"; : > "$p/a.txt"; : > "$p/one/b.txt"; : > "$p/one/two/c.txt"; cd "$p"; shopt -s globstar; echo **/*.txt; echo **; rm -rf "$p"'
+bash_answer 'shopt query and set' \
+        'shopt -q nullglob; echo $?; shopt -s nullglob; shopt -q nullglob; echo $?; shopt -u nullglob; shopt -q nullglob; echo $?'
+bash_answer 'shopt prints one name' 'shopt nullglob; echo $?; shopt cmdhist; echo $?'
+bash_answer 'shopt -p one name' 'shopt -p dotglob; shopt -s dotglob; shopt -p dotglob'
+bash_answer 'shopt bare listing' 'shopt | wc -l; shopt | head -1'
+bash_answer 'shopt -s bare lists what is on' 'shopt -s | wc -l'
+bash_answer 'shopt -o over set options' \
+        'shopt -qo pipefail; echo $?; shopt -so pipefail; shopt -qo pipefail; echo $?'
+bash_answer 'shopt -q with no names' 'shopt -q; echo $?'
+bash_answer 'shopt bad name' 'shopt -s nonsense; echo $?'
+bash_answer 'shopt bad name query' 'shopt -q nonsense; echo $?'
+bash_answer 'shopt set and unset at once' 'shopt -su nullglob; echo $?'
+bash_answer 'shopt nullglob' \
+        'shopt -s nullglob; echo /nonexistent/*x; echo end'
+bash_answer 'shopt failglob' \
+        'shopt -s failglob; echo /nonexistent/*x; echo "$?"; echo end'
+bash_answer 'shopt dotglob' \
+        'p=/tmp/bash-dotglob.$$; mkdir -p "$p"; : > "$p/.hidden"; : > "$p/plain"; cd "$p"; echo *; shopt -s dotglob; echo *; rm -rf "$p"'
+bash_answer 'shopt nocaseglob' \
+        'p=/tmp/bash-nocaseglob.$$; mkdir -p "$p"; : > "$p/UPPER.txt"; cd "$p"; echo upper*; shopt -s nocaseglob; echo upper*; rm -rf "$p"'
+bash_answer 'shopt nocasematch case' \
+        'case ABC in abc) echo one;; *) echo other;; esac; shopt -s nocasematch; case ABC in abc) echo two;; *) echo other;; esac'
+bash_answer 'shopt nocasematch double brackets' \
+        'shopt -s nocasematch; [[ ABC == abc ]] && echo yes; [[ ABC != abc ]] || echo no'
+bash_answer 'shopt nocasematch leaves trimming alone' \
+        'shopt -s nocasematch; v=ABC; echo "${v#a}${v%C}"'
+bash_answer 'shopt inherit_errexit stored' \
+        'shopt -s inherit_errexit; shopt -q inherit_errexit; echo $?'
+bash_answer 'shopt expand_aliases' \
+        'shopt -q expand_aliases; echo $?; shopt -s expand_aliases; alias zz=echo; type -t zz'
+bash_answer 'shopt xpg_echo' 'shopt -s xpg_echo; echo "a\tb"'
+bash_answer 'shopt login_shell query' 'shopt -q login_shell; echo $?'
+bash_answer 'shopt checkwinsize sourcepath on' \
+        'shopt -q checkwinsize; echo $?; shopt -q sourcepath; echo $?'
+bash_answer 'shopt lastpipe stored' \
+        'shopt -s lastpipe; shopt -q lastpipe; echo $?; shopt -u lastpipe; shopt -q lastpipe; echo $?'
+bash_answer 'shopt execfail stored' \
+        'shopt -s execfail; shopt -p execfail'
+
+group naming
+bash_answer 'type -t every kind' \
+        'f() { :; }; type -t f; type -t cd; type -t if; type -t nosuchname; echo $?'
+bash_answer 'type -t nonsense' 'type -t nonsense; echo $?'
+bash_answer 'type -t alias needs expansion on' \
+        'alias zz=echo; type -t zz; echo $?; shopt -s expand_aliases; type -t zz'
+bash_answer 'type -p and -P' \
+        'type -p cd; echo $?; type -P /bin/sh; type -p /bin/sh'
+bash_answer 'type -f looks past a function' \
+        'cd() { :; }; type -t cd; type -f -t cd'
+bash_answer 'type -a names every place' 'type -a cd'
+bash_answer 'command -V a keyword' 'command -V if; command -V cd'
+bash_answer 'command -v a keyword' 'command -v if; command -v cd'
+bash_answer 'hash -l and -t' \
+        'hash -r; hash -p /bin/sh zzsh; hash -t zzsh; hash -l'
+bash_answer 'hash -d forgets one' \
+        'hash -r; hash -p /bin/sh zzsh; hash -d zzsh; echo $?; hash -d zzsh; echo $?'
+bash_answer 'hash -t names more than one' \
+        'hash -r; hash -p /bin/sh zza; hash -p /bin/cat zzb; hash -t zza zzb; hash -t zza'
+bash_answer 'hash bad option' 'hash -Z; echo $?'
+
+group builtins
+bash_answer 'echo -e reads the escapes' 'echo -e "a\tb"'
+bash_answer 'echo -E leaves them alone' 'echo -E "a\tb"'
+bash_answer 'echo -n and -ne' 'echo -n x; echo .; echo -ne "a\nb"; echo .'
+bash_answer 'echo -en and -nE' 'echo -en "a\tb"; echo .; echo -nE "a\tb"; echo .'
+bash_answer 'echo escapes under -e' \
+        'echo -e "a\\\\b|\0101|\e|\v|\r" | od -An -c | head -2'
+bash_answer 'echo a word that is not an option' 'echo -q x; echo -- y'
+bash_answer 'exec -a names the program' \
+        'exec -a chosen /bin/sh -c "echo \$0"'
+bash_answer 'exec -c clears the environment' \
+        'zz=here; export zz; exec -c /bin/sh -c "echo [\$zz]"'
+bash_answer 'exec -l puts a dash in front' \
+        'exec -l /bin/sh -c "echo \$0"'
+bash_answer 'exec with no command after -a' 'exec -a; echo $?'
+bash_answer 'printf -v fills a variable' \
+        'printf -v v "%03d:%s" 7 x; echo "$v"; printf -v v "%s" ""; echo "[$v]"'
+bash_answer 'printf -v keeps what a wide %b came after' \
+        'printf -v v "x%5b" ab; echo "[$v]"'
+bash_answer 'printf %q' \
+        'printf "%q\n" "a b" plain "" "a'"'"'b" "a*b" "#lead"'
+bash_answer 'printf %q on control bytes' \
+        'printf "%q\n" "$(printf "a\tb")"'
+bash_answer 'printf time' \
+        'export TZ=UTC0; printf "%(%Y-%m-%d %H:%M:%S)T\n" 0; printf "%(%F %T)T\n" 3661'
+bash_answer 'printf time more of the set' \
+        'export TZ=UTC0; printf "%(%j|%a|%b|%e|%s|%R|%D|%y|%A|%B|%p|%u|%w)T\n" 86399'
+bash_answer 'printf time literal escapes' \
+        'export TZ=UTC0; printf "%(a%%b%nc%td)T\n" 0 | od -An -c | head -2'
+bash_answer 'printf unknown time directive' 'printf "%(%Q)T\n" 0; echo $?'
+bash_answer 'read -n stops at a count' \
+        'printf abcdef | { read -n 2 x; echo "$x"; }'
+bash_answer 'read -N takes bytes and not fields' \
+        'printf "ab cd" | { read -N 4 x; echo "[$x]"; }'
+bash_answer 'read -s' 'echo hi | { read -s v; echo "$v"; }'
+bash_answer 'read -p writes the prompt away from stdout' \
+        'echo hi | { read -p "ask: " v; echo "$v"; }'
+bash_answer 'read -d takes a delimiter' \
+        'printf "a:b" | { read -d : v; echo "[$v]"; }'
+bash_answer 'read -t 0 asks and does not read' \
+        'echo x | { read -t 0 v; echo "$?[$v]"; }'
+bash_answer 'read -u names a descriptor' \
+        'p=/tmp/bash-readu.$$; echo fromfile > "$p"; exec 3< "$p"; read -u 3 v; exec 3<&-; echo "$v"; rm "$p"'
+bash_answer 'read -e and -i are taken' \
+        'echo x | { read -e -i pre v; echo "[$v]"; }'
+bash_answer 'read -n 0' 'echo x | { read -n 0 v; echo "$?:[$v]"; }'
+bash_answer 'read -t negative' 'echo x | { read -t -1 v; echo $?; }'
+bash_answer 'pushd popd dirs' \
+        'cd /; pushd /tmp; dirs; dirs -v; dirs -p; dirs +0; dirs +1; dirs -1; popd; pwd'
+bash_answer 'pushd rotates' \
+        'cd /; pushd /tmp > /dev/null; pushd /usr > /dev/null; dirs; pushd +1; dirs'
+bash_answer 'popd takes one out from under the top' \
+        'cd /; pushd /tmp > /dev/null; pushd /usr > /dev/null; popd +1; dirs; pwd'
+bash_answer 'pushd with no operand swaps' \
+        'cd /; pushd /tmp > /dev/null; pushd; pwd'
+bash_answer 'dirs -c clears' \
+        'cd /; pushd /tmp > /dev/null; dirs -c; dirs'
+bash_answer 'dirs writes home as a tilde' \
+        'export HOME=/tmp; cd /; pushd /tmp > /dev/null; dirs; dirs -l'
+bash_answer 'DIRSTACK is an array' \
+        'cd /; pushd /tmp > /dev/null; echo "${DIRSTACK[@]}" ${#DIRSTACK[@]} "${DIRSTACK[1]}"'
+bash_answer 'cd moves the top of the stack' \
+        'cd /; pushd /tmp > /dev/null; cd -; dirs'
+bash_answer 'popd on an empty stack' 'popd; echo $?'
+bash_answer 'dirs past the end' 'dirs +9; echo $?'
+bash_answer 'pushd with nothing to swap' 'cd /; pushd; echo $?'
+bash_answer 'builtin runs the builtin' \
+        'echo() { printf "wrapped\n"; }; builtin echo plain; echo x'
+bash_answer 'builtin on a name that is not one' 'builtin nosuchname; echo $?'
+bash_answer 'enable takes a builtin away and back' \
+        'enable -n echo; echo $?; enable echo; echo $?; enable nosuchname; echo $?'
+bash_answer 'compgen -A function' 'aa() { :; }; ab() { :; }; compgen -A function'
+bash_answer 'compgen -W filters on the prefix' 'compgen -W "aa ab bb" a'
+bash_answer 'compgen -A variable' 'compgen -A variable | grep -c "^PATH$"'
+bash_answer 'compgen with nothing to offer' 'compgen -A function; echo $?'
+bash_answer 'complete and compopt are taken' \
+        'complete -F nosuchfunction zz; echo $?; compopt -o nospace; echo $?'
+bash_answer 'bind outside a terminal' 'bind; echo $?'
+bash_answer 'help answers' 'help > /dev/null; echo $?'
+bash_answer 'source takes arguments' \
+        'p=/tmp/bash-srcargs.$$; printf "echo \$1 \$#\n" > "$p"; set -- outer; source "$p" inner; echo "$1 $#"; rm "$p"'
+bash_answer 'source of a file that is not there' \
+        'source /nonexistent/zz arg; echo $?'
+bash_answer 'getopts silent mode' 'getopts ":a:" o -a; echo "$o $OPTARG"'
+bash_answer 'getopts with OPTERR off' 'OPTERR=0; getopts a o -z; echo "$?:$o"'
+bash_answer 'getopts OPTERR silences the complaint' \
+        'x=$(getopts a o -z 2>&1); OPTERR=0; OPTIND=1; y=$(getopts a o -z 2>&1); [ -n "$x" ] && echo said; [ -z "$y" ] && echo quiet'
+bash_answer 'ulimit takes bash letters' \
+        'ulimit -u > /dev/null; echo $?; ulimit -e > /dev/null; echo $?; ulimit -x > /dev/null; echo $?; ulimit -i > /dev/null; echo $?'
+bash_answer 'test has ==' '[ a == a ] && echo yes; [ a == b ] || echo no'
+bash_answer 'double brackets compare strings' \
+        '[[ a < b ]] && echo yes; [[ b < a ]] || echo no'
+
+group dynamic
+bash_answer 'RANDOM is reseeded reproducibly' \
+        'RANDOM=42; a="$RANDOM $RANDOM"; RANDOM=42; b="$RANDOM $RANDOM"; [ "$a" = "$b" ] && echo same; echo "$a"'
+bash_answer 'RANDOM stays inside sixteen bits' \
+        'RANDOM=7; for i in 1 2 3 4 5; do v=$RANDOM; [ "$v" -ge 0 ] && [ "$v" -lt 32768 ] || echo bad; done; echo done'
+bash_answer 'SECONDS is assignable' 'SECONDS=5; echo $SECONDS'
+bash_answer 'SECONDS starts at zero' 'echo $SECONDS'
+bash_answer 'SRANDOM answers' '[ -n "$SRANDOM" ] && echo yes'
+bash_answer 'EPOCHSECONDS and EPOCHREALTIME' \
+        '[ "$EPOCHSECONDS" -gt 1700000000 ] && echo yes; case $EPOCHREALTIME in *.??????) echo six;; esac'
+bash_answer 'BASH_VERSION and BASH_VERSINFO' \
+        'echo "$BASH_VERSION"; echo "${BASH_VERSINFO[@]}" ${#BASH_VERSINFO[@]}; echo "${BASH_VERSINFO[0]}.${BASH_VERSINFO[1]}"'
+bash_answer 'HOSTTYPE OSTYPE MACHTYPE' 'echo "$HOSTTYPE|$OSTYPE|$MACHTYPE"'
+bash_answer 'UID EUID PPID' \
+        '[ "$UID" = "$EUID" ] && echo same; [ "$PPID" -gt 0 ] && echo parent'
+bash_answer 'GROUPS is an array' '[ ${#GROUPS[@]} -ge 1 ] && echo yes'
+bash_answer 'BASHPID differs in a subshell' \
+        'echo $(( BASHPID == $$ )); ( echo $(( BASHPID == $$ )) )'
+bash_answer 'BASH_SUBSHELL counts the forks' \
+        'echo $BASH_SUBSHELL; ( echo $BASH_SUBSHELL; ( echo $BASH_SUBSHELL ) )'
+bash_answer 'SHLVL is set and exported' \
+        '[ "$SHLVL" -ge 1 ] && echo yes; case $(export -p 2>/dev/null || env) in *SHLVL*) echo exported;; esac'
+bash_answer 'the last argument of the command before' \
+        'echo a b; echo "$_"; : x y; echo "$_"'
+bash_answer 'LINENO answers a number' \
+        'case $LINENO in "" ) echo empty;; *) echo number;; esac'
+bash_answer 'a dynamic name is not in the table' \
+        'echo "${RANDOM+set}" "${SECONDS+set}" "${#EPOCHSECONDS}" | wc -w'
+
+group traps
+bash_answer 'ERR trap runs where errexit would leave' \
+        'trap "echo err" ERR; false; echo after'
+bash_answer 'ERR trap and errexit together' \
+        'trap "echo err" ERR; set -e; ( false ); echo after'
+bash_answer 'ERR trap reaches a function under -E' \
+        'set -E; trap "echo err" ERR; f() { false; }; f; echo after'
+bash_answer 'ERR trap stays out of a function without -E' \
+        'trap "echo err" ERR; f() { false; }; f; echo after'
+bash_answer 'RETURN trap under -T' \
+        'set -T; trap "echo ret" RETURN; f() { :; }; f; echo after'
+bash_answer 'RETURN trap stays out without -T' \
+        'trap "echo ret" RETURN; f() { :; }; f; echo after'
+bash_answer 'DEBUG trap runs before each command' \
+        'trap "echo dbg" DEBUG; :; echo after'
+bash_answer 'trap -l names every signal' 'trap -l | wc -l; trap -l | head -1'
+bash_answer 'trap -p names a condition' \
+        'trap "echo e" ERR; trap "echo d" DEBUG; trap -p ERR; trap -p DEBUG'
+bash_answer 'a condition is taken away like a signal' \
+        'trap "echo e" ERR; trap - ERR; trap -p ERR; echo end'
+bash_answer 'set -o accepts the tracing names' \
+        'set -o errtrace; echo $?; set -o functrace; echo $?; set -o history; echo $?; set +o errtrace; echo $?'
+bash_answer 'set -E and -T by letter' 'set -E; echo $?; set -T; echo $?; set +E +T; echo $?'
+bash_answer 'set -o accepts emacs and vi' \
+        'set -o emacs; echo $?; set -o vi; echo $?'
 
 group arrays
 bash_answer 'array literal reads back' \
@@ -3305,11 +3535,8 @@ bash_remaining 'ledger unquoted subscript with a blank' '[]|' 0 \
         'declare -A m; m[a b]=1; echo "[${m[a b]}]"'
 bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
-bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
 bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \
         'x=outer; f() { declare -r x=local; printf "%s:<%s>|" "$?" "$x"; }; f; echo "$x"'
-bash_remaining 'ledger declare plus listing' '' 0 \
-        'a=one; export b=two; declare +x | while read line; do case $line in a=*|b=*) echo "$line";; esac; done'
 bash_remaining 'ledger readonly dynamic local status' '' 2 \
         'readonly x=G; f() { local x=L; x=M; echo "$?:$x"; }; f; echo "$x"'
 bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'

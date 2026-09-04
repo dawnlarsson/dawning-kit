@@ -53,6 +53,9 @@ static b32 job_wait_foreground(positive number);
 fn exec_child_began()
 {
         exec_forked = true;
+        // One more shell between this process and the one the script began
+        // in, which is the whole of what $BASH_SUBSHELL counts.
+        shell_subshell_depth++;
         shell_background_child();
 }
 
@@ -113,10 +116,72 @@ static bool exec_source_stop()
         return true;
 }
 
+/*
+        One of the three conditions the executor raises itself.
+
+        Run the way a caught signal's action is run and with the same care:
+        the status the condition was raised on is what the action reads and
+        what the shell goes back to afterwards, and a condition raised inside
+        an action is not raised again -- a DEBUG trap whose action is a
+        command would otherwise never stop.
+*/
+static bool exec_condition_inside;
+
+static COLD fn exec_trap_condition(positive number)
+{
+        string_address action = trap_action(number);
+        b32 kept_status = shell_status;
+        b32 kept_signal = exec_signal;
+        b32 kept_level = exec_signal_level;
+        bool kept_tested = exec_tested;
+
+        if (!action || !string_get(action) || exec_condition_inside ||
+            exec_line_aborted())
+                return;
+
+        exec_condition_inside = true;
+        exec_signal = EXEC_SIGNAL_NONE;
+        exec_tested = false;
+        parse_nest_enter();
+        run_lines(action);
+        shell_input_end();
+        parse_nest_leave();
+        exec_condition_inside = false;
+
+        shell_status = kept_status;
+        exec_signal = kept_signal;
+        exec_signal_level = kept_level;
+        exec_tested = kept_tested;
+}
+
+/*
+        Whether a condition reaches inside a function.
+
+        Bash keeps DEBUG and RETURN out of functions unless functrace is set
+        and ERR out of them unless errtrace is, so that a trap written for the
+        script does not fire once per line of every library it sources. A
+        subshell is the same question asked of a fork: without errtrace the
+        ERR trap belongs to the shell that set it, so "( false )" raises it
+        once in the parent and not again in the child.
+*/
+static PURE bool exec_condition_reaches(positive option)
+{
+        return (!exec_function_depth && !exec_forked) ||
+               shell_extra_on(option);
+}
+
 static fn exec_errexit(b32 status)
 {
-        if (exec_line_aborted() || !status || exec_tested ||
-            !(shell_options & SHELL_ERREXIT))
+        if (exec_line_aborted() || !status || exec_tested)
+                return;
+
+        // Where errexit would leave is where the ERR trap runs, whether or
+        // not errexit is on: the two ask the same question of the same
+        // command.
+        if (trap_err_here && exec_condition_reaches(SHELL_EXTRA_ERRTRACE))
+                exec_trap_condition(TRAP_ERR);
+
+        if (!(shell_options & SHELL_ERREXIT))
                 return;
 
         shell_status = status;
@@ -3799,8 +3864,30 @@ typedef struct
 } exec_function;
 
 static exec_function address_to exec_functions;
+
+/*
+        The name of the function in one slot, for compgen.
+
+        By index and into the caller's buffer, because the table lives here
+        and the only thing that walks it lives in builtin.c, which is included
+        before this file is.
+*/
+bool exec_function_named(positive slot, p8 address_to into, positive room);
 static positive exec_function_room;
 static positive exec_function_count;
+
+bool exec_function_named(positive slot, p8 address_to into, positive room)
+{
+        if (slot >= exec_function_count || !exec_functions[slot].name ||
+            exec_functions[slot].name_length >= room)
+                return false;
+
+        memory_copy_apart(into, exec_functions[slot].name,
+                          exec_functions[slot].name_length);
+        into[exec_functions[slot].name_length] = end;
+
+        return true;
+}
 static positive exec_function_recent = positive_max;
 
 // Whether a name is a function, which direct command substitution asks.
@@ -4141,6 +4228,14 @@ static b32 exec_call(positive slot)
         }
 
         status = exec_node(body);
+
+        // The function is still standing while its RETURN trap runs, which is
+        // what lets the action read FUNCNAME and the status it is returning.
+        if (trap_return_here && shell_extra_on(SHELL_EXTRA_FUNCTRACE))
+        {
+                shell_status = status;
+                exec_trap_condition(TRAP_RETURN);
+        }
 
         if (exec_frame_count)
         {
@@ -5479,6 +5574,11 @@ static b32 exec_simple(b32 index)
 
         shell_argc = count - first;
 
+        // $_ is the last argument of the command before this one, which is
+        // what taking it here and not after the run means: this command's
+        // words are already expanded and have already read the old value.
+        shell_last_argument_set(shell_argv[shell_argc - 1]);
+
         // exec with nothing to run is there for its redirections, and those
         // belong to the shell from here on. Decided before anything runs: a
         // function body or a sourced file run by this command leaves its own
@@ -6388,7 +6488,11 @@ static bool conditional_primary()
 
                         if (pattern)
                         {
-                                value = shell_match(right, left);
+                                // nocasematch is a property of [[ ]] and of
+                                // case, and of nothing else that matches.
+                                value = shell_match_folded(
+                                    right, left,
+                                    shell_shopt_on(NOCASEMATCH));
                                 return word_is(op, "!=") ? !value : value;
                         }
 
@@ -6514,7 +6618,8 @@ static b32 exec_case(b32 index)
                         if (exec_line_aborted())
                                 return exec_aborted(mark);
 
-                        if (!shell_match(pattern, subject))
+                        if (!shell_match_folded(pattern, subject,
+                                                shell_shopt_on(NOCASEMATCH)))
                                 continue;
 
                         // A matched item with nothing in it ran nothing and
@@ -7202,6 +7307,12 @@ static b32 exec_node_kind(b32 index)
 
         if (node->kind == NODE_SIMPLE)
         {
+                // Before the words are expanded, which is where Bash runs it
+                // and the only place the action can use argv of its own.
+                if (trap_debug_here &&
+                    exec_condition_reaches(SHELL_EXTRA_FUNCTRACE))
+                        exec_trap_condition(TRAP_DEBUG);
+
                 expanded = shell_store_mark(address_of expand_store);
 
                 status = exec_simple(index);

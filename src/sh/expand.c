@@ -601,8 +601,13 @@ static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
         This is the matcher for case, for the four trimming forms, and for every
         component of a path -- one pattern language, matched one way, so that a
         case arm and a glob cannot disagree about what a star is.
+
+        Folding is a parameter and not a second matcher: nocasematch is what
+        case and [[ ]] ask for and nocaseglob is what pathname expansion asks
+        for, and they are separately settable options over the same rules.
 */
-PURE bool shell_match(string_address pattern, string_address text)
+static inline INLINE bool shell_match_core(string_address pattern,
+                                          string_address text, bool fold)
 {
         string_address star = null;
         string_address back = null;
@@ -622,9 +627,10 @@ PURE bool shell_match(string_address pattern, string_address text)
                                 A plain byte behind the star is the only place
                                 what follows can begin, so a backtrack goes
                                 there rather than trying every position on the
-                                way.
+                                way. Folded, that byte stands for two, and the
+                                skip is given up rather than made wrong.
                         */
-                        behind = string_get(pattern);
+                        behind = fold ? 0 : string_get(pattern);
 
                         if (behind == '*' || behind == '?' || behind == '[' ||
                             behind == '\\')
@@ -638,7 +644,15 @@ PURE bool shell_match(string_address pattern, string_address text)
 
                 if (stop)
                 {
-                        if (expand_in_set(pattern, stop, string_get(text)))
+                        p8 value = string_get(text);
+
+                        if (expand_in_set(pattern, stop, value) ||
+                            (fold && byte_to_lower(value) != value &&
+                             expand_in_set(pattern, stop,
+                                           byte_to_lower(value))) ||
+                            (fold && byte_to_upper(value) != value &&
+                             expand_in_set(pattern, stop,
+                                           byte_to_upper(value))))
                         {
                                 pattern = stop + 1;
                                 text++;
@@ -657,7 +671,10 @@ PURE bool shell_match(string_address pattern, string_address text)
                         }
 
                         if (want && ((!escaped && want == '?') ||
-                                     want == string_get(text)))
+                                     want == string_get(text) ||
+                                     (fold && byte_to_lower(want) ==
+                                                  byte_to_lower(
+                                                      string_get(text)))))
                         {
                                 pattern++;
                                 text++;
@@ -693,6 +710,26 @@ PURE bool shell_match(string_address pattern, string_address text)
                 pattern++;
 
         return string_get(pattern) == end;
+}
+
+/*
+        Two entries into one body, and the fold decided at each of them.
+
+        The parameter is what keeps the rules in one place, and inlining is
+        what keeps that from costing anything: every caller reaches the body
+        with fold already a constant, so the ordinary match compiles to
+        exactly what it was before folding existed.
+*/
+PURE bool shell_match(string_address pattern, string_address text)
+{
+        return shell_match_core(pattern, text, false);
+}
+
+PURE bool shell_match_folded(string_address pattern, string_address text,
+                             bool fold)
+{
+        return fold ? shell_match_core(pattern, text, true)
+                    : shell_match_core(pattern, text, false);
 }
 
 //      set -- takes as many words as it is given, which after a glob may be
@@ -1022,6 +1059,7 @@ static COLD string_address expand_absent_value(string_address name,
                                  address_of key, address_of key_length))
         {
                 shell_frames_wanted(name, base_length);
+                shell_dynamic_wanted(name, base_length);
 
                 return shell_array_get(name, base_length, key, key_length,
                                        value_length);
@@ -1035,7 +1073,11 @@ static COLD string_address expand_absent_value(string_address name,
             SHELL_ARRAY_ASSOCIATIVE)
                 return shell_array_get(name, answer.y, "0", 1, value_length);
 
-        return null;
+        if (shell_dynamic_wanted(name, answer.y))
+                return env_get_hashed_span(name, answer.y, answer.x,
+                                           value_length);
+
+        return shell_dynamic_value(name, answer.y, answer.x, value_length);
 }
 
 static string_address expand_value_of(string_address name, p8 address_to scratch,
@@ -1304,6 +1346,15 @@ static fn expand_push_named_trim_one(string_address name, positive name_length,
         string_address value = env_get_hashed_span(
             name, name_length, memory_hash_33(name, name_length),
             address_of value_length);
+
+        if (!value)
+        {
+                // ${RANDOM#?} trims a name with no record, so the miss asks
+                // the dynamic family before it decides there is nothing here.
+                value = shell_dynamic_value(name, name_length,
+                                            memory_hash_33(name, name_length),
+                                            address_of value_length);
+        }
 
         if (!value)
         {
@@ -3987,8 +4038,14 @@ static COLD fn expand_array_form(string_address name, positive length,
                                  bool quoted, b32 parameter_mode, p8 mark)
 {
         bool keys = (parameter_mode & EXPAND_PARAMETER_INDIRECT) != 0;
-        positive held = shell_array_length(name, length);
+        positive held;
         p8 written[32];
+
+        // GROUPS, DIRSTACK and BASH_VERSINFO are made where they are first
+        // named, the same as the three the call stack publishes.
+        shell_dynamic_wanted(name, length);
+
+        held = shell_array_length(name, length);
 
         if (want_length)
         {
@@ -5116,6 +5173,9 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
         p8 component[GLOB_PATH];
         positive length = 0;
         string_address rest;
+        string_address whole;
+        bool dotted = shell_shopt_on(DOTGLOB);
+        bool folded = shell_shopt_on(NOCASEGLOB);
 
         if (depth >= GLOB_DEPTH)
         {
@@ -5147,6 +5207,8 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
                 return;
         }
 
+        whole = pattern;
+
         while (string_get(pattern) && string_not(pattern, '/'))
         {
                 if (length + 2 >= GLOB_PATH)
@@ -5163,6 +5225,100 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
         component[length] = end;
         rest = pattern;
+
+        /*
+                ** stands for however many directories there are, including
+                none, which is the whole of what globstar adds.
+
+                Written as its own walk rather than as a star that may cross a
+                slash: the matcher works on one component at a time and the
+                recursion is what descends, so the pattern after the ** is
+                matched once at every depth and nowhere twice.
+        */
+        if (length == 2 && component[0] == '*' && component[1] == '*' &&
+            shell_shopt_on(GLOBSTAR))
+        {
+                p8 block[2048];
+                bipolar directory;
+
+                // No directories at all: what follows the ** is matched right
+                // where the ** stands.
+                if (string_get(rest))
+                        glob_walk(prefix, used, rest + 1, depth + 1);
+
+                prefix[used] = end;
+
+                directory = system_open_at(AT_FDCWD,
+                                          (used ? prefix : (string_address) "."),
+                                          FILE_READ | O_DIRECTORY);
+
+                if (directory < 0)
+                        return;
+
+                while (!glob_failed)
+                {
+                        bipolar got = system_read_directory(
+                            directory, block, sizeof(block));
+                        p8 address_to step = block;
+
+                        if (got < 0)
+                                glob_failed = true;
+
+                        if (got <= 0)
+                                break;
+
+                        while (step < block + got)
+                        {
+                                struct linux_dirent64 address_to entry =
+                                    (struct linux_dirent64 address_to)step;
+                                string_address named = (string_address)entry->d_name;
+                                positive out = used;
+                                positive run;
+
+                                step += entry->d_reclen;
+
+                                if (named[0] == '.' &&
+                                    (!dotted || named[1] == end ||
+                                     (named[1] == '.' && named[2] == end)))
+                                        continue;
+
+                                run = string_length_max(named, GLOB_PATH - out);
+
+                                if (out + run + 1 >= GLOB_PATH)
+                                {
+                                        glob_failed = true;
+                                        break;
+                                }
+
+                                memory_copy_apart(prefix + out, named, run);
+                                out += run;
+
+                                // A ** with nothing after it is every name
+                                // under here and not only the directories.
+                                if (!string_get(rest))
+                                {
+                                        prefix[out] = end;
+                                        glob_add(prefix);
+                                }
+
+                                // Unknown is worth trying: the open fails on
+                                // anything that is not a directory anyway.
+                                if (entry->d_type == 4 || entry->d_type == 0)
+                                {
+                                        prefix[out] = '/';
+                                        glob_walk(prefix, out + 1, whole,
+                                                  depth + 1);
+                                }
+
+                                if (glob_failed)
+                                        break;
+                        }
+                }
+
+                system_close(directory);
+
+                return;
+        }
 
         if (!glob_magic(component))
         {
@@ -5231,11 +5387,22 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
 
                                 // A leading dot is only ever matched on
                                 // purpose, and an escaped one is on purpose.
+                                // dotglob makes it accidental too, except for
+                                // the two names every directory has.
                                 if (named[0] == '.' &&
                                     component[component[0] == '\\'] != '.')
-                                        continue;
+                                {
+                                        if (!dotted)
+                                                continue;
 
-                                if (!shell_match(component, named))
+                                        if (named[1] == end ||
+                                            (named[1] == '.' &&
+                                             named[2] == end))
+                                                continue;
+                                }
+
+                                if (!shell_match_folded(component, named,
+                                                        folded))
                                         continue;
 
                                 positive run = string_length_max(
@@ -5463,6 +5630,23 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
                         return true;
                 }
+
+                /*
+                        A pattern that matched nothing is the pattern itself,
+                        unless the script has said otherwise: nullglob makes
+                        it no word at all and failglob makes it an error that
+                        the command never runs after.
+                */
+                if (shell_shopt_on(FAILGLOB))
+                {
+                        string_format(expand_complain, "no match: %s\n",
+                                      pattern);
+                        expand_fatal_status(1);
+                        return false;
+                }
+
+                if (shell_shopt_on(NULLGLOB))
+                        return true;
         }
 
         {
