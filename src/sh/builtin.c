@@ -378,8 +378,18 @@ static fn name_index_put(name_index_slot address_to table, positive slots,
 {
         positive at = hash & (slots - 1);
         positive tombstone = slots;
+        positive probes;
 
-        while (table[at].index_plus_one)
+        /*
+                Bounded, because an open table with no free slot has no
+                stopping condition and this walked forever. The assertions
+                beside the tables below are what keep it from happening at
+                all; this is here because of how the failure looked when it
+                did. A shell that had one name too many spun at full speed
+                on its first lookup, printing nothing and making no system
+                call, so a trace showed a process that had simply stopped.
+        */
+        for (probes = 0; probes < slots && table[at].index_plus_one; probes++)
         {
                 if (table[at].index_plus_one == positive_max &&
                     tombstone == slots)
@@ -387,6 +397,9 @@ static fn name_index_put(name_index_slot address_to table, positive slots,
 
                 at = (at + 1) & (slots - 1);
         }
+
+        if (probes == slots && tombstone == slots)
+                return;
 
         if (tombstone != slots)
         {
@@ -9522,9 +9535,18 @@ static shell_tool shell_tools[] = {
 };
 
 #define SHELL_TOOLS (array_count(shell_tools) - 1)
-#define SHELL_TOOL_INDEX_ROOM 128
+/*
+        Room for every name with slots to spare, because the index is open:
+        a full one has nowhere to put the next name and nowhere to stop
+        looking. The assertion under the table is what makes outgrowing it a
+        build that stops rather than a shell that hangs, which is how this
+        was found -- one tool too many and every lookup spun.
+*/
+#define SHELL_TOOL_INDEX_ROOM 256
 
 static shell_name_slot shell_tool_index[SHELL_TOOL_INDEX_ROOM];
+_Static_assert(SHELL_TOOLS < SHELL_TOOL_INDEX_ROOM,
+               "the tool index needs a free slot for every tool");
 static bool shell_tool_index_ready;
 
 static positive shell_tool_find_hashed(string_address name, positive2 named)
@@ -10444,6 +10466,8 @@ shell_command shell_commands[] = {
 #define SHELL_COMMAND_INDEX_ROOM 128
 
 static shell_name_slot shell_command_index[SHELL_COMMAND_INDEX_ROOM];
+_Static_assert(SHELL_COMMAND_COUNT < SHELL_COMMAND_INDEX_ROOM,
+               "the command index needs a free slot for every builtin");
 static bool shell_command_index_ready;
 
 /*
