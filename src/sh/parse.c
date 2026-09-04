@@ -147,6 +147,9 @@ static parse_redirect parse_redirects[PARSE_REDIRECTS];
 #define PARSE_WORD_LITERAL 1
 #define PARSE_WORD_ASSIGNMENT 2
 #define PARSE_WORD_APPEND 4
+// NAME=( ... ): the value is a list of elements and not one string, so it is
+// neither expanded nor assigned the way every other assignment word is.
+#define PARSE_WORD_COMPOUND 8
 
 static b32 parse_node_used;
 static b32 parse_node_top;
@@ -835,6 +838,9 @@ static b32 parse_word_new(string_address text, positive length)
 
                 if (assignment == 2)
                         flags |= PARSE_WORD_APPEND;
+
+                if (string_is(text + name_length + assignment, '('))
+                        flags |= PARSE_WORD_COMPOUND;
 
                 parse_word_name_hashes[parse_word_used] =
                     memory_hash_33(text, name_length);

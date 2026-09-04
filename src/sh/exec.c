@@ -1016,6 +1016,104 @@ static b32 exec_define(b32 index)
         return 0;
 }
 
+/*
+        FUNCNAME, BASH_SOURCE and BASH_LINENO.
+
+        Three arrays that describe the call stack, innermost first. What a
+        call costs is a name pushed on a stack; the arrays themselves are
+        built the first time something asks for one, because writing three
+        arrays on the way into every function cost more than the call did
+        and a script that never mentions them should not pay for them.
+
+        This shell reads a script a line at a time and keeps no line number
+        as it goes, so BASH_SOURCE names the script and BASH_LINENO answers
+        zero for every frame. That is the honest answer rather than an
+        invented one, and it is the shape a script indexes either way.
+*/
+static string_address address_to exec_frame_name;
+static positive exec_frame_room;
+static positive exec_frame_count;
+static bool exec_frames_published;
+static bool exec_frames_standing;
+
+static COLD fn exec_frames_forget()
+{
+        env_unset("FUNCNAME");
+        env_unset("BASH_SOURCE");
+        env_unset("BASH_LINENO");
+        exec_frames_standing = false;
+}
+
+static COLD fn exec_frames_publish()
+{
+        shell_mark held = shell_store_mark(address_of exec_store);
+        string_address address_to walked;
+        bipolar address_to lines;
+
+        exec_frames_published = true;
+
+        if (!exec_frame_count)
+        {
+                exec_frames_forget();
+                return;
+        }
+
+        exec_frames_standing = true;
+
+        walked = (string_address address_to)shell_store_take(
+            address_of exec_store,
+            exec_frame_count * sizeof(walked[0]));
+        lines = (bipolar address_to)shell_store_take(
+            address_of exec_store, exec_frame_count * sizeof(lines[0]));
+
+        if (!walked || !lines)
+        {
+                shell_store_rewind(address_of exec_store, held);
+                return;
+        }
+
+        // Innermost first, which is the opposite of the order they were
+        // pushed in and the order every script that reads them expects.
+        for (positive at = 0; at < exec_frame_count; at++)
+        {
+                walked[at] = exec_frame_name[exec_frame_count - at - 1];
+                lines[at] = 0;
+        }
+
+        shell_array_words("FUNCNAME", 8, walked, exec_frame_count);
+        shell_array_numbers("BASH_LINENO", 11, lines, exec_frame_count);
+
+        for (positive at = 0; at < exec_frame_count; at++)
+                walked[at] = shell_script_name;
+
+        shell_array_words("BASH_SOURCE", 11, walked, exec_frame_count);
+        shell_store_rewind(address_of exec_store, held);
+}
+
+/*
+        Something has asked for one of the three, so now they are made.
+
+        Only a lookup that has already missed reaches this, which is where
+        the three of them always miss until a function is running. A name
+        that is not one of them costs two length tests, and the caller is
+        told whether looking again is worth anything.
+*/
+COLD bool shell_frames_wanted(const_string name, positive length)
+{
+        if (exec_frames_published || !exec_frame_count)
+                return false;
+
+        if ((length != 8 || memory_compare((address_any)name, "FUNCNAME", 8)) &&
+            (length != 11 ||
+             (memory_compare((address_any)name, "BASH_SOURCE", 11) &&
+              memory_compare((address_any)name, "BASH_LINENO", 11))))
+                return false;
+
+        exec_frames_publish();
+
+        return true;
+}
+
 static b32 exec_call(positive slot)
 {
         b32 body = exec_functions[slot].body;
@@ -1054,7 +1152,28 @@ static b32 exec_call(positive slot)
         // grow the table, and the table may move when it does.
         exec_function_depth++;
         exec_functions[slot].active++;
+
+        if (shell_array_room(exec_frame_name, exec_frame_room,
+                             exec_frame_count + 1))
+        {
+                exec_frame_name[exec_frame_count++] =
+                    exec_functions[slot].name;
+                exec_frames_published = false;
+        }
+
         status = exec_node(body);
+
+        if (exec_frame_count)
+        {
+                exec_frame_count--;
+                exec_frames_published = false;
+
+                // The three only exist while a function does, and they were
+                // only ever made if something read them.
+                if (!exec_frame_count && exec_frames_standing)
+                        exec_frames_forget();
+        }
+
         exec_functions[slot].active--;
         shell_local_leave();
         exec_function_depth--;
@@ -1111,12 +1230,221 @@ static fn exec_trace(b32 count)
         exec_error((string_address) "\n", 1);
 }
 
+/*
+        Where one word of a compound assignment ends.
+
+        a=(x "y z" $v) reaches the executor as a single word, because the
+        lexer had to keep the parentheses with the name to know that they
+        were not a subshell. Cutting it up again needs only the boundaries --
+        a blank that is not inside quoting or a substitution -- since
+        everything else about each piece is the ordinary word expansion that
+        every other word gets.
+*/
+static COLD PURE string_address exec_compound_end(string_address at)
+{
+        while (string_get(at))
+        {
+                p8 value = string_get(at);
+                string_address stop;
+
+                if (value == ' ' || value == '\t' || value == '\n')
+                        break;
+
+                if (value == '\\' && string_get(at + 1))
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (value == '$' && string_is(at + 1, '\''))
+                {
+                        at = expand_dollar_quoted_run(at);
+                        continue;
+                }
+
+                if (value == '\'' || value == '"')
+                {
+                        at = expand_quoted_run(at, value);
+                        continue;
+                }
+
+                if (value == '`')
+                {
+                        stop = string_first_of(at + 1, '`');
+                        at = stop ? stop + 1 : at + 1;
+                        continue;
+                }
+
+                if (value == '$' &&
+                    (string_is(at + 1, '(') || string_is(at + 1, '{')))
+                {
+                        stop = string_is(at + 1, '(')
+                                   ? expand_paren_end(at + 2)
+                                   : expand_brace_end(at + 2);
+                        at = stop ? stop + 1 : at + 2;
+                        continue;
+                }
+
+                at++;
+        }
+
+        return at;
+}
+
+static string_address address_to exec_compound_word;
+static positive exec_compound_room;
+
+/*
+        NAME=(...) and NAME+=(...).
+
+        Bash replaces an array rather than merging into one, so a plain
+        assignment empties it first; an append carries on past the largest
+        subscript in use. A piece spelled [key]=value places itself and moves
+        the running subscript to just after where it landed, which is what
+        makes a=(x [5]=w y) put y at six.
+*/
+COLD bool shell_compound_assign(string_address name, positive name_length,
+                           string_address body, positive body_length,
+                           bool append)
+{
+        shell_mark held = shell_store_mark(address_of exec_store);
+        bool keyed = (shell_variable_attributes(name, name_length) &
+                      SHELL_ARRAY_ASSOCIATIVE) != 0;
+        string_address at = body;
+        string_address stop = body + body_length;
+        positive next = 0;
+        bool answer = true;
+
+        if (!shell_variable_attribute_set(
+                name, name_length,
+                (p8)((keyed ? SHELL_ARRAY_ASSOCIATIVE : SHELL_ARRAY_INDEXED) |
+                     SHELL_ARRAY_ASSIGNED),
+                0) ||
+            (!append && !shell_array_clear(name, name_length)))
+        {
+                shell_store_rewind(address_of exec_store, held);
+                return false;
+        }
+
+        if (append && shell_array_length(name, name_length))
+                next = shell_array_highest(name, name_length) + 1;
+
+        while (at < stop && answer)
+        {
+                string_address finish;
+                string_address piece;
+                string_address value;
+                string_address shut = null;
+                positive length;
+                positive key_length = 0;
+                p8 written[32];
+
+                while (at < stop && (string_is(at, ' ') || string_is(at, '\t') ||
+                                     string_is(at, '\n')))
+                        at++;
+
+                if (at >= stop)
+                        break;
+
+                finish = exec_compound_end(at);
+
+                if (finish > stop)
+                        finish = stop;
+
+                length = (positive)(finish - at);
+                piece = shell_store_take(address_of exec_store, length + 1);
+
+                if (!piece)
+                {
+                        answer = false;
+                        break;
+                }
+
+                memory_copy_end(piece, at, length);
+                at = finish;
+
+                if (string_is(piece, '['))
+                        shut = expand_bracket_end(piece + 1, '[', ']');
+
+                if (shut && string_is(shut + 1, '='))
+                {
+                        string_address key;
+                        positive value_at =
+                            (positive)(shut - piece) + 2;
+
+                        // The subscript is resolved against the array it is
+                        // being written into, so a keyed one stays bytes and
+                        // an indexed one is arithmetic, exactly as it would
+                        // be written on its own line.
+                        key = shell_expand_subscript(name, name_length,
+                                                     piece + 1,
+                                                     (positive)(shut - piece) - 1,
+                                                     address_of key_length);
+
+                        if (!key)
+                        {
+                                answer = false;
+                                break;
+                        }
+
+                        value = shell_expand_assignment(piece, value_at);
+                        answer = shell_array_set(name, name_length, key,
+                                                 key_length, value + value_at,
+                                                 false);
+
+                        if (!keyed)
+                                next = array_index_of(key, key_length) + 1;
+
+                        continue;
+                }
+
+                if (keyed)
+                {
+                        string_format(exec_error,
+                                      "%s: must use subscript when assigning "
+                                      "associative array\n",
+                                      name);
+                        answer = false;
+                        break;
+                }
+
+                /* A bare piece is an ordinary word: $v with a space in it
+                   becomes two elements, which is what field splitting is. */
+                {
+                        shell_words fields;
+                        positive count;
+
+                        shell_words_bind(address_of fields,
+                                         address_of exec_compound_word,
+                                         address_of exec_compound_room);
+                        count = shell_expand_fields(piece, address_of fields);
+
+                        for (positive one = 0; one < count && answer; one++)
+                        {
+                                key_length = positive_into_string(written,
+                                                                  next++);
+                                answer = shell_array_set(name, name_length,
+                                                         written, key_length,
+                                                         exec_compound_word[one],
+                                                         false);
+                        }
+                }
+        }
+
+        shell_store_rewind(address_of exec_store, held);
+
+        return answer;
+}
+
 static bool exec_assign(string_address address_to word_at,
-                        positive name_length, positive name_hash, bool append)
+                        positive name_length, positive name_hash, bool append,
+                        bool compound)
 {
         string_address word = address_to word_at;
         string_address name_end = word + name_length;
         string_address mark = name_end + append;
+        string_address subscript;
+        positive base_length;
         string_address old;
         string_address made = word;
         bool answer;
@@ -1126,12 +1454,73 @@ static bool exec_assign(string_address address_to word_at,
 
         address_to name_end = end;
 
+        /*
+                A compound value is a list and not a string, so it never went
+                through assignment expansion on the way here: each element is
+                expanded as the word it is, at the point it is placed.
+        */
+        if (compound)
+        {
+                positive length = string_length(mark + 1);
+
+                if (env_readonly(word))
+                {
+                        string_format(exec_error, "%s: is read only\n", word);
+                        address_to name_end = append ? '+' : '=';
+                        expand_fatal();
+                        return false;
+                }
+
+                answer = shell_compound_assign(word, name_length, mark + 2,
+                                              length > 2 ? length - 2 : 0,
+                                              append);
+                address_to name_end = append ? '+' : '=';
+
+                return answer;
+        }
+
+        /*
+                An element assignment names its array in front of the
+                bracket. That is the name readonly speaks about, and the name
+                whose kind decides whether the subscript is arithmetic or
+                bytes, so the bracket is closed off while either is asked.
+        */
+        subscript = string_first_of(word, '[');
+        base_length = subscript ? (positive)(subscript - word) : name_length;
+
+        if (subscript)
+                address_to subscript = end;
+
         if (env_readonly(word))
         {
                 string_format(exec_error, "%s: is read only\n", word);
+
+                if (subscript)
+                        address_to subscript = '[';
+
                 address_to name_end = append ? '+' : '=';
                 expand_fatal();
                 return false;
+        }
+
+        if (subscript)
+        {
+                positive key_length;
+                string_address key;
+
+                address_to subscript = '[';
+                key = shell_expand_subscript(word, base_length, subscript + 1,
+                                             name_length - base_length - 2,
+                                             address_of key_length);
+                answer = key && shell_array_set(word, base_length, key,
+                                                key_length, mark + 1, append);
+
+                if (key && !answer)
+                        string_format(exec_error, "%s: cannot assign\n", word);
+
+                address_to name_end = append ? '+' : '=';
+
+                return answer;
         }
 
         old = append ? env_get(word) : null;
@@ -1206,21 +1595,159 @@ static bool exec_special_builtin(string_address name)
         a pointer into whatever moved there after it. A name that was not set
         is remembered as no value at all, which is what has to be put back.
 */
+/*
+        One saved element: the key, a nul, then the value.
+
+        Both halves are terminated because putting the array back sets each
+        element by name, and both halves have to outlive the clear that
+        precedes that -- the live element cells are gone by then.
+*/
+typedef struct
+{
+        string_address text;
+        positive key_length;
+} exec_kept_element;
+
 typedef struct
 {
         string_address name;
         positive name_length;
+        // How much of the name is the array, when the name is an element.
+        positive base_length;
         string_address value;
         bool exported;
+        /*
+                A whole array, saved when the assignment in front of a
+                command replaces one. A compound assignment does not add to
+                what was there, so putting a scalar value back would leave
+                every element it wrote behind it.
+        */
+        p8 attributes;
+        bool compound;
+        exec_kept_element address_to elements;
+        positive element_count;
 } exec_kept_value;
+
+static COLD bool exec_keep_array(exec_kept_value address_to kept)
+{
+        positive count = shell_array_length(kept->name, kept->name_length);
+        shell_array_item address_to items;
+        shell_mark held = shell_store_mark(address_of exec_store);
+        p8 written[32];
+
+        kept->elements = null;
+        kept->element_count = 0;
+
+        if (!count)
+                return true;
+
+        items = (shell_array_item address_to)shell_store_take(
+            address_of exec_store, count * sizeof(items[0]));
+        kept->elements = (exec_kept_element address_to)shell_store_take(
+            address_of exec_store, count * sizeof(kept->elements[0]));
+
+        if (!items || !kept->elements)
+        {
+                shell_store_rewind(address_of exec_store, held);
+                return false;
+        }
+
+        shell_array_items(kept->name, kept->name_length, items, count);
+
+        for (positive at = 0; at < count; at++)
+        {
+                string_address key = items[at].key;
+                positive key_length = items[at].key_length;
+                p8 address_to into;
+
+                if (!key)
+                {
+                        key_length = bipolar_into_string(
+                            written, (bipolar)items[at].index);
+                        key = written;
+                }
+
+                into = shell_store_take(address_of exec_store,
+                                        key_length + items[at].value_length + 2);
+
+                if (!into)
+                        return false;
+
+                memory_copy_end(into, key, key_length);
+                memory_copy_end(into + key_length + 1, items[at].value,
+                                items[at].value_length);
+                kept->elements[at].text = into;
+                kept->elements[at].key_length = key_length;
+        }
+
+        kept->element_count = count;
+
+        return true;
+}
 
 static bool exec_keep_value(exec_kept_value address_to kept, string_address word)
 {
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
+        string_address bracket;
         string_address value;
 
         if (length && word[length - 1] == '+')
                 length--;
+
+        bracket = string_first_of(word, '[');
+
+        if (bracket && (positive)(bracket - word) >= length)
+                bracket = null;
+
+        /*
+                An element is remembered by the name its subscript resolves
+                to, because that is what putting it back has to name. The
+                subscript is read here and again when the assignment is
+                really made; a=(...) values and plain subscripts do not care,
+                and Bash's own one-evaluation rule only shows in a subscript
+                that assigns, which no script should be writing.
+        */
+        if (bracket)
+        {
+                positive base = (positive)(bracket - word);
+                positive key_length;
+                string_address key = shell_expand_subscript(
+                    word, base, bracket + 1, length - base - 2,
+                    address_of key_length);
+
+                if (!key)
+                        return false;
+
+                kept->name = shell_store_take(address_of exec_store,
+                                              base + key_length + 3);
+
+                if (!kept->name)
+                        return false;
+
+                memory_copy(kept->name, word, base);
+                kept->name[base] = '[';
+                memory_copy(kept->name + base + 1, key, key_length);
+                kept->name[base + 1 + key_length] = ']';
+                kept->name[base + 2 + key_length] = end;
+                kept->name_length = base + key_length + 2;
+                kept->base_length = base;
+                kept->exported = false;
+                kept->value = null;
+                kept->attributes = 0;
+                kept->compound = false;
+                kept->elements = null;
+                kept->element_count = 0;
+
+                value = shell_array_get(kept->name, base, key, key_length,
+                                        null);
+
+                if (!value)
+                        return true;
+
+                kept->value = exec_arena_copy(value);
+
+                return kept->value != exec_nothing;
+        }
 
         kept->name = shell_store_take(address_of exec_store, length + 1);
 
@@ -1229,10 +1756,22 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
         string_copy_max_end(kept->name, word, length);
         kept->name_length = length;
+        kept->base_length = 0;
+        kept->elements = null;
+        kept->element_count = 0;
+        // Whether the value about to be written is a list. Nothing else says
+        // that a scalar restore would leave elements standing behind it.
+        kept->compound = string_is(word + length + (word[length] == '+'), '=') &&
+                         string_is(word + length + (word[length] == '+') + 1,
+                                   '(');
 
-        value = env_get_span(kept->name, length);
+        value = env_saved_state(kept->name, length, address_of kept->exported,
+                                address_of kept->attributes);
         kept->value = null;
-        kept->exported = env_export_active_span(kept->name, length);
+
+        if ((kept->attributes & SHELL_ARRAY_EITHER) &&
+            !exec_keep_array(kept))
+                return false;
 
         if (!value)
                 return true;
@@ -1246,11 +1785,83 @@ static fn exec_put_back(exec_kept_value address_to kept, b32 count)
 {
         while (count--)
         {
+                if (kept[count].base_length)
+                {
+                        positive base = kept[count].base_length;
+                        string_address key = kept[count].name + base + 1;
+                        positive key_length =
+                            kept[count].name_length - base - 2;
+
+                        if (kept[count].value)
+                                shell_array_set(kept[count].name, base, key,
+                                                key_length, kept[count].value,
+                                                false);
+                        else
+                                shell_array_forget(kept[count].name, base, key,
+                                                   key_length);
+
+                        continue;
+                }
+
+                /*
+                        A name that was not an array cannot be left as one:
+                        a compound assignment in front of a command wrote
+                        elements that putting a scalar value back would not
+                        reach. A name that was one is put back element by
+                        element, because the clear that precedes it is what
+                        makes replacing an array a replacement.
+                */
+                if ((kept[count].attributes & SHELL_ARRAY_EITHER) ||
+                    (kept[count].compound &&
+                     (shell_variable_attributes(kept[count].name,
+                                                kept[count].name_length) &
+                      SHELL_ARRAY_EITHER)))
+                {
+                        shell_array_clear(kept[count].name,
+                                          kept[count].name_length);
+
+                        if (!(kept[count].attributes & SHELL_ARRAY_EITHER))
+                                shell_variable_attribute_set(
+                                    kept[count].name, kept[count].name_length,
+                                    0, SHELL_ARRAY_EITHER);
+                }
+
+                // A name that was an array is left as one, empty or not.
+                // Unsetting it here would take its kind with it and the next
+                // assignment would read its subscripts the other way.
+                if (kept[count].attributes & SHELL_ARRAY_EITHER)
+                {
+                        for (positive at = 0; at < kept[count].element_count;
+                             at++)
+                        {
+                                exec_kept_element address_to one =
+                                    kept[count].elements + at;
+
+                                shell_array_set(kept[count].name,
+                                                kept[count].name_length,
+                                                one->text, one->key_length,
+                                                one->text + one->key_length + 1,
+                                                false);
+                        }
+
+                        env_export_restore(kept[count].name,
+                                           kept[count].exported);
+                        continue;
+                }
+
                 if (kept[count].value)
                         env_set(kept[count].name, kept[count].value);
                 else
                         env_unset_span(kept[count].name,
                                        kept[count].name_length);
+
+                // An attribute outlives the value it shaped: a name declared
+                // integer is still integer once the assignment in front of a
+                // command has been taken back off it.
+                if (kept[count].attributes)
+                        shell_variable_attribute_set(kept[count].name,
+                                                     kept[count].name_length,
+                                                     kept[count].attributes, 0);
 
                 env_export_restore(kept[count].name, kept[count].exported);
         }
@@ -1673,10 +2284,13 @@ static b32 exec_simple(b32 index)
                             parse_word_name_lengths[word_index] + 1 +
                             ((word_flags & PARSE_WORD_APPEND) != 0);
 
-                        if (!shell_words_add(address_of arguments,
-                                             literal ? word
-                                                     : shell_expand_assignment(
-                                                           word, value_at)))
+                        if (!shell_words_add(
+                                address_of arguments,
+                                (literal ||
+                                 (word_flags & PARSE_WORD_COMPOUND))
+                                    ? word
+                                    : shell_expand_assignment(word,
+                                                              value_at)))
                                 break;
 
                         count = (b32)arguments.count;
@@ -1695,7 +2309,9 @@ static b32 exec_simple(b32 index)
                                         address_of trial,
                                         parse_word_name_lengths[word_index],
                                         parse_word_name_hashes[word_index],
-                                        (word_flags & PARSE_WORD_APPEND) != 0))
+                                        (word_flags & PARSE_WORD_APPEND) != 0,
+                                        (word_flags & PARSE_WORD_COMPOUND) !=
+                                            0))
                                 {
                                         status = 2;
                                         goto fail;
@@ -1811,7 +2427,9 @@ static b32 exec_simple(b32 index)
                                  parse_word_name_lengths[node->word + at],
                                  parse_word_name_hashes[node->word + at],
                                  (parse_word_flags[node->word + at] &
-                                  PARSE_WORD_APPEND) != 0))
+                                  PARSE_WORD_APPEND) != 0,
+                                 (parse_word_flags[node->word + at] &
+                                  PARSE_WORD_COMPOUND) != 0))
                 {
                         status = 2;
                         goto fail;
@@ -2539,6 +3157,55 @@ static COLD fn conditional_nounset_fatal()
         watermark afterward so repeated conditions cannot consume or retarget
         another builtin's cached programs.
 */
+/*
+        BASH_REMATCH: what matched, then one element per capture group.
+
+        The engine's slot pairs are byte offsets into the text it was handed,
+        so the substrings are cut while that text and those slots are still
+        the ones this match left behind -- the caller puts the whole engine
+        state back immediately afterwards. A group that took no part has no
+        offsets, and Bash gives it an empty element rather than a hole.
+*/
+static COLD fn conditional_regex_captures(string_address text)
+{
+        shell_mark held = shell_store_mark(address_of expand_store);
+        positive count = (positive)regex_group_count + 1;
+        string_address address_to words =
+            (string_address address_to)shell_store_take(
+                address_of expand_store, count * sizeof(words[0]));
+
+        if (!words)
+                return;
+
+        for (positive at = 0; at < count; at++)
+        {
+                positive from = regex_slots[at * 2];
+                positive to = regex_slots[at * 2 + 1];
+                p8 address_to made;
+
+                if (from == positive_max || to == positive_max || from > to)
+                {
+                        words[at] = (string_address) "";
+                        continue;
+                }
+
+                made = shell_store_take(address_of expand_store,
+                                        to - from + 1);
+
+                if (!made)
+                {
+                        shell_store_rewind(address_of expand_store, held);
+                        return;
+                }
+
+                memory_copy_end(made, text + from, to - from);
+                words[at] = made;
+        }
+
+        shell_array_words("BASH_REMATCH", 12, words, count);
+        shell_store_rewind(address_of expand_store, held);
+}
+
 static bool conditional_regex_match(string_address text, string_address pattern,
                                     bool address_to valid)
 {
@@ -2571,7 +3238,12 @@ static bool conditional_regex_match(string_address text, string_address pattern,
                                          REGEX_POLICY_DEFAULT);
 
         if (address_to valid)
+        {
                 matched = regex_search(text, string_length(text), 0);
+
+                if (matched)
+                        conditional_regex_captures(text);
+        }
 
         regex_pool_used = code_mark;
         regex_pool_sets = set_mark;
@@ -3215,7 +3887,15 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
                 if (at + 1 == started)
                         status = got;
+
+                // Every stage's answer, in the order they were written
+                // in. The child ids are not wanted for anything else once
+                // the last of them has been waited for, so the answers go
+                // back into the vector that held them.
+                children[at] = got;
         }
+
+        shell_array_numbers("PIPESTATUS", 10, children, started);
 
         if (rightmost_failure && pipefail)
                 status = rightmost_failure;

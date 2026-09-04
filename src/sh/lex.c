@@ -757,6 +757,37 @@ b32 lex_unfinished(string_address line)
         partner, a backslash swallows the byte after it, and both stay in the
         text for the expander to deal with in its own order.
 */
+/*
+        Whether what has been read so far is the left of an assignment.
+
+        This is the only question that makes a=(x y z) one word rather than a
+        name followed by a subshell, and it is asked at one byte -- directly
+        after the equals -- so that a command's own parentheses, a function
+        definition and a case pattern are all untouched by it.
+*/
+static PURE bool lex_assignment_head(string_address text, positive length)
+{
+        positive at = 0;
+
+        if (length && text[length - 1] == '+')
+                length--;
+
+        if (!length || (text[0] >= '0' && text[0] <= '9'))
+                return false;
+
+        while (at < length && (byte_is_alnum(text[at]) || text[at] == '_'))
+                at++;
+
+        if (!at)
+                return false;
+
+        if (at == length)
+                return true;
+
+        // A subscript holds anything, but it has to be closed at the end.
+        return text[at] == '[' && text[length - 1] == ']' && length - at > 2;
+}
+
 static b32 lex_word(string_address address_to at)
 {
         string_address step = address_to at;
@@ -778,6 +809,27 @@ static b32 lex_word(string_address address_to at)
                 }
 
                 p8 c = string_get(step);
+
+                if (c == '(' && lex_used > start &&
+                    lex_text[lex_used - 1] == '=' &&
+                    lex_assignment_head(lex_text + start,
+                                        lex_used - start - 1))
+                {
+                        string_address stop = lex_nesting(step);
+
+                        if (stop > step)
+                        {
+                                run = (positive)(stop - step);
+
+                                if (!lex_room(lex_used + run + 2))
+                                        return false;
+
+                                memory_copy(lex_text + lex_used, step, run);
+                                lex_used += run;
+                                step = stop;
+                                continue;
+                        }
+                }
 
                 if (!c || lex_blank[c] || lex_operator[c] || c == '\n')
                         break;

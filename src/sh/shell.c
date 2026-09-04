@@ -531,11 +531,55 @@ static p8 shell_assignment_kind(string_address word,
         while (expand_name_character(string_get(word + length)))
                 length++;
 
+        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
+        {
+                if (name_length)
+                        address_to name_length = length;
+
+                return 0;
+        }
+
+        /* A subscript is part of the name being assigned to. a[i+1]=v and
+           m[a key]=v each name one element, and what follows the closing
+           bracket is what says whether this is an assignment at all. */
+        if (string_get(word + length) == '[')
+        {
+                positive depth = 1;
+                positive at = length + 1;
+
+                while (string_get(word + at) && depth)
+                {
+                        p8 value = string_get(word + at);
+
+                        // A bracket inside quoting closes nothing: m["a]b"]
+                        // is one subscript and not a broken one.
+                        if (value == '\\' && string_get(word + at + 1))
+                                at++;
+                        else if (value == '\'' || value == '"')
+                        {
+                                at++;
+
+                                while (string_get(word + at) &&
+                                       string_get(word + at) != value)
+                                        at++;
+
+                                if (!string_get(word + at))
+                                        break;
+                        }
+                        else if (value == '[')
+                                depth++;
+                        else if (value == ']')
+                                depth--;
+
+                        at++;
+                }
+
+                if (!depth && at > length + 2)
+                        length = at;
+        }
+
         if (name_length)
                 address_to name_length = length;
-
-        if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
-                return 0;
 
         if (string_get(word + length) == '=')
                 return 1;

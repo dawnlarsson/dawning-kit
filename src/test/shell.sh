@@ -2664,11 +2664,12 @@ group builtin-index
 bash_builtin_inventory supported \
         . : '[' alias break cd command continue declare echo eval exec exit \
         export false getopts hash help kill let local printf pwd read readonly \
+        mapfile readarray \
         return set shift source test times trap true type typeset ulimit umask \
         unalias unset wait
 bash_builtin_inventory remaining \
         bg bind builtin caller compgen complete compopt dirs disown \
-        enable fc fg history jobs logout mapfile popd pushd readarray shopt \
+        enable fc fg history jobs logout popd pushd shopt \
         suspend
 
 group keyword-index
@@ -2775,28 +2776,176 @@ bash_answer 'declare print quoting' \
         'x=$'\''a b"c\\d$e'\''; declare -p x'
 bash_answer 'declare print control bytes' \
         'x=$'\''line1\nline2\tend\001'\''; declare -p x'
+bash_answer 'ledger regex captures' '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
+bash_answer 'ledger indexed arrays' 'a=(one two); echo "${a[1]}"'
+bash_answer 'ledger associative arrays' 'declare -A a; a[k]=v; echo "${a[k]}"'
+bash_answer 'ledger declare integer attribute' \
+        'declare -i x=1+2; s=$?; printf "%s:<%s>\n" "$s" "$x"'
+bash_answer 'ledger declare case attribute' \
+        'declare -l x=ABC; s=$?; printf "%s:<%s>\n" "$s" "$x"'
+bash_answer 'ledger declare nameref attribute' \
+        'target=value; declare -n ref=target; s=$?; printf "%s:<%s>\n" "$s" "$ref"'
+bash_answer 'ledger mapfile semantics' 'printf "a\n" | mapfile a'
+bash_answer 'ledger readarray semantics' 'printf "a\n" | readarray a'
+
+group arrays
+bash_answer 'array literal reads back' \
+        'a=(x y z); printf "[%s]" "${a[0]}" "${a[1]}" "${a[2]}"; echo'
+bash_answer 'array subscript assignment' \
+        'a=(x); a[5]=w; printf "%s\n" "${a[5]}" "${#a[@]}"'
+bash_answer 'array append' \
+        'a=(x y z); a+=(p q); echo "${a[@]}" ${#a[@]}'
+bash_answer 'array quoted at keeps fields' \
+        'a=(x "y z"); for e in "${a[@]}"; do printf "<%s>" "$e"; done; echo'
+bash_answer 'array unquoted at splits' \
+        'a=(x "y z"); for e in ${a[@]}; do printf "<%s>" "$e"; done; echo'
+bash_answer 'array star joins first IFS' \
+        'a=(x y); IFS=-; echo "${a[*]}"'
+bash_answer 'array unquoted star splits again' \
+        'a=(x y); IFS=-; printf "[%s]" ${a[*]}; echo'
+bash_answer 'array count and element lengths' \
+        'a=(one two three); echo ${#a[@]} ${#a[0]} ${#a[1]}'
+bash_answer 'array indices' 'a=(x); a[7]=y; echo "${!a[@]}"'
+bash_answer 'array slice' \
+        'a=(1 2 3 4); echo "${a[@]:1:2}" "${a[@]: -2}"'
+bash_answer 'array subscript from the end' \
+        'a=(1 2 3); echo ${a[-1]} ${a[-3]}'
+bash_answer 'array arithmetic subscript' \
+        'i=1; a=(p q r); echo ${a[i+1]} ${a[2*1]}'
+bash_answer 'array unset element leaves a hole' \
+        'a=(x y z); unset a[1]; echo "${a[@]}" "${!a[@]}" ${#a[@]}'
+bash_answer 'array unset -v element' \
+        'a=(x y z); unset -v a[1]; echo "${!a[@]}"'
+bash_answer 'array unset whole' \
+        'a=(x y z); unset a; echo ${#a[@]} "[${a[@]}]"'
+bash_answer 'array plain name is element zero' \
+        'a=(x y); echo "$a" "${a}"'
+bash_answer 'array empty is unset' \
+        'a=(); echo ${a-unset} ${#a[@]}'
+bash_answer 'array assignment replaces' \
+        'a=(1 2 3); a=(9); echo "${a[@]}" ${#a[@]}'
+bash_answer 'array element trim' \
+        'a=(ab cd); echo "${a[@]#a}" "${a[1]%d}"'
+bash_answer 'array element replace' \
+        'a=(aXb cXd); echo "${a[@]/X/-}"'
+bash_answer 'array literal places a subscript' \
+        'a=(x [5]=w y); echo "${!a[@]}" "${a[@]}"'
+bash_answer 'array element append' \
+        'a=(x); a[0]+=Q; a[1]=y; a[1]+=Z; echo "${a[@]}"'
+bash_answer 'array inside double brackets' \
+        'a=(abc); [[ ${a[0]} == a* ]] && echo yes'
+bash_answer 'array in command substitution' \
+        'x=$(a=(1 2 3); echo "${a[@]}"); echo "$x"'
+bash_answer 'array in a function' \
+        'f(){ a=(p q); echo "${a[@]}"; }; f; echo "${a[@]}"'
+bash_answer 'local array leaves scope' \
+        'a=(g1 g2); f(){ local a=(l1); echo "${a[@]}"; }; f; echo "${a[@]}"'
+bash_answer 'local declared array leaves scope' \
+        'f(){ local -a a; a=(1 2); echo "${a[@]}"; }; a=(9); f; echo "${a[@]}"'
+bash_answer 'array unset under nounset is empty' \
+        'set -u; a=(x); echo "[${a[@]}]"; echo "[${b[@]}]"; echo done'
+bash_answer 'array element under nounset is fatal' \
+        'set -u; a=(x); ( echo "${a[9]}"; echo reached ) 2>/dev/null; echo after'
+bash_answer 'array bad subscript is fatal' \
+        'a=(x); ( echo "${a[1+]}"; echo reached ) 2>/dev/null; echo after'
+bash_answer 'readonly array refuses an element' \
+        'a=(x); readonly a; ( a[0]=q; echo assigned ) 2>/dev/null; echo "${a[0]}"'
+bash_answer 'readonly array still reads' \
+        'a=(x y); readonly a; echo "${a[@]}" ${#a[@]}'
+bash_answer 'length of positional parameters' \
+        'set -- a b c; echo ${#*} ${#@}'
+bash_answer 'associative element' \
+        'declare -A m; m[k]=v; echo "${m[k]}" ${#m[@]}'
+bash_answer 'associative literal' \
+        'declare -A m; m=([k]=v); echo "${m[k]}" ${#m[@]}'
+bash_answer 'associative key with a space' \
+        'declare -A m; m["a b"]=1; echo "${m["a b"]}" ${#m[@]}'
+bash_answer 'associative key with a bracket' \
+        'declare -A m; m["a]b"]=2; echo "${m["a]b"]}"'
+bash_answer 'associative unset key' \
+        'declare -A m; m[k]=v; m[j]=w; unset m[k]; echo ${#m[@]} "${m[j]}"'
+bash_answer 'associative keys and values' \
+        'declare -A m; m[only]=1; echo "${!m[@]}" "${m[@]}"'
+bash_answer 'associative zero key is the plain name' \
+        'declare -A m; m[0]=z; echo "$m"'
+bash_answer 'associative scalar assignment is key zero' \
+        'declare -A m; m=x; echo "${m[0]}"; declare -p m'
+bash_answer 'associative in a function' \
+        'declare -A m; m[k]=v; f(){ echo "${m[k]}"; }; f'
+bash_answer 'associative in command substitution' \
+        'declare -A m; m[k]=v; x=$(echo "${m[k]}"); echo "$x"'
+bash_answer 'declare -A over an indexed array refuses' \
+        'declare -a a; declare -A a; echo "$?"'
+bash_answer 'declare -a over an associative array refuses' \
+        'declare -A m; declare -a m; echo "$?"'
+bash_answer 'declare print indexed array' 'a=(x y); declare -p a'
+bash_answer 'declare print empty array' 'a=(); declare -p a'
+bash_answer 'declare print array attribute only' \
+        'declare -a a; declare -p a'
+bash_answer 'declare print associative attribute only' \
+        'declare -A m; declare -p m'
+bash_answer 'declare print associative array' \
+        'declare -A m; m[k]=v; declare -p m'
+bash_answer 'declare print array quoting' \
+        'a=($'\''a\tb'\'' "c d"); declare -p a'
+bash_answer 'declare print integer' \
+        'declare -i n=5; declare -p n'
+bash_answer 'declare print attribute letter order' \
+        'declare -irx n=5; declare -p n; declare -aux v=(q); declare -p v'
+bash_answer 'declare case attributes' \
+        'declare -l l=ABC; declare -u u=abc; echo "$l" "$u"; declare -p l u'
+bash_answer 'declare nameref writes through' \
+        'target=value; declare -n ref=target; ref=changed; echo "$target"'
+bash_answer 'local nameref writes through' \
+        'f(){ local -n r=$1; r=changed; }; v=orig; f v; echo "$v"'
+bash_answer 'declare readonly refuses an assignment' \
+        'declare -r r=1; ( r=2; echo assigned ) 2>/dev/null; echo "$r"'
+bash_answer 'PIPESTATUS after a pipeline' \
+        'false | true; echo "${PIPESTATUS[@]}" ${#PIPESTATUS[@]}'
+bash_answer 'PIPESTATUS three stages' \
+        'true | false | true; echo "${PIPESTATUS[@]}"'
+bash_answer 'regex captures optional group' \
+        '[[ ab =~ (a)(x)?(b) ]]; printf "[%s]" "${BASH_REMATCH[@]}"; echo'
+bash_answer 'FUNCNAME' \
+        'f(){ echo "$FUNCNAME"; }; f; echo "[$FUNCNAME]"'
+bash_answer 'FUNCNAME nested' \
+        'f(){ g; }; g(){ echo "${FUNCNAME[@]}" ${#FUNCNAME[@]}; }; f'
+bash_answer 'BASH_SOURCE and BASH_LINENO depth' \
+        'f(){ echo ${#BASH_SOURCE[@]} ${#BASH_LINENO[@]}; }; f'
+bash_answer 'read -a' \
+        'printf "a b c\n" | { read -a arr; echo ${#arr[@]} "${arr[1]}"; }'
+bash_answer 'mapfile trimmed' \
+        'p=/tmp/bash-map.$$; printf "a\nb\nc\n" > "$p"; mapfile -t l < "$p"; echo ${#l[@]} "${l[1]}"; rm "$p"'
+bash_answer 'readarray keeps the delimiter' \
+        'p=/tmp/bash-map2.$$; printf "a\nb\nc\n" > "$p"; readarray l < "$p"; printf "<%s>" "${l[@]}"; echo; rm "$p"'
+bash_answer 'mapfile count' \
+        'p=/tmp/bash-map3.$$; printf "a\nb\nc\n" > "$p"; mapfile -t -n 2 l < "$p"; echo ${#l[@]} "${l[@]}"; rm "$p"'
+bash_answer 'mapfile skip' \
+        'p=/tmp/bash-map4.$$; printf "a\nb\nc\n" > "$p"; mapfile -t -s 1 l < "$p"; echo ${#l[@]} "${l[@]}"; rm "$p"'
+bash_answer 'mapfile origin' \
+        'p=/tmp/bash-map5.$$; printf "a\nb\nc\n" > "$p"; mapfile -t -O 5 l < "$p"; echo "${!l[@]}"; rm "$p"'
+bash_answer 'mapfile delimiter' \
+        'p=/tmp/bash-map6.$$; printf "a:b:c" > "$p"; mapfile -t -d : l < "$p"; echo ${#l[@]} "${l[@]}"; rm "$p"'
+bash_answer 'mapfile descriptor' \
+        'p=/tmp/bash-map7.$$; printf "a\nb\n" > "$p"; exec 3< "$p"; mapfile -t -u 3 l; exec 3<&-; echo ${#l[@]} "${l[@]}"; rm "$p"'
+bash_answer 'mapfile print' \
+        'p=/tmp/bash-map8.$$; printf "a\n" > "$p"; mapfile -t l < "$p"; declare -p l; rm "$p"'
 
 group remaining
-bash_remaining 'ledger regex captures' '' 2 '[[ abc =~ ^(a)(b) ]]; echo "${BASH_REMATCH[0]}:${BASH_REMATCH[1]}:${BASH_REMATCH[2]}"'
-bash_remaining 'ledger indexed arrays' '' 2 'a=(one two); echo "${a[1]}"'
-bash_remaining 'ledger associative arrays' '' 2 'declare -A a; a[k]=v; echo "${a[k]}"'
+# A subscript with a blank in it has to be quoted here: the lexer keeps a
+# word together by quoting and nesting, and a bare blank ends the word before
+# anything has seen that it is inside brackets.
+bash_remaining 'ledger unquoted subscript with a blank' '[]|' 0 \
+        'declare -A m; m[a b]=1; echo "[${m[a b]}]"'
 bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
 bash_remaining 'ledger globstar' '' 127 'shopt -s globstar'
-bash_remaining 'ledger declare integer attribute' '2:<>|' 0 \
-        'declare -i x=1+2; s=$?; printf "%s:<%s>\n" "$s" "$x"'
-bash_remaining 'ledger declare case attribute' '2:<>|' 0 \
-        'declare -l x=ABC; s=$?; printf "%s:<%s>\n" "$s" "$x"'
-bash_remaining 'ledger declare nameref attribute' '2:<>|' 0 \
-        'target=value; declare -n ref=target; s=$?; printf "%s:<%s>\n" "$s" "$ref"'
 bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \
         'x=outer; f() { declare -r x=local; printf "%s:<%s>|" "$?" "$x"; }; f; echo "$x"'
 bash_remaining 'ledger declare plus listing' '' 0 \
         'a=one; export b=two; declare +x | while read line; do case $line in a=*|b=*) echo "$line";; esac; done'
 bash_remaining 'ledger readonly dynamic local status' '' 2 \
         'readonly x=G; f() { local x=L; x=M; echo "$?:$x"; }; f; echo "$x"'
-bash_remaining 'ledger mapfile semantics' '' 127 'printf "a\n" | mapfile a'
-bash_remaining 'ledger readarray semantics' '' 127 'printf "a\n" | readarray a'
 bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
 
 #

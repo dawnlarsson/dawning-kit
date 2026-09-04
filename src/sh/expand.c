@@ -29,7 +29,70 @@ string_address env_get_hashed_span(const_string name, positive length,
 positive env_names_prefix(string_address prefix, positive length,
                           string_address address_to names, positive room);
 PURE bool env_readonly(const_string name);
+string_address env_saved_state(const_string name, positive length,
+                               bool address_to exported, p8 address_to kind);
 bool env_assign(const_string name, const_string value);
+
+/*
+        The Bash variable attributes, and the array surface built on them.
+
+        Arrays are stored beside the environment table in builtin.c, which is
+        compiled after this file, so what the expander needs of them is named
+        here the way every other cross-file name in this block is. An item is
+        the one shape both kinds hand back: an indexed element is named by
+        its subscript and a keyed one by its bytes, and ${a[@]}, ${!a[@]} and
+        declare -p walk either with one loop.
+*/
+#define SHELL_ARRAY_INDEXED 1
+#define SHELL_ARRAY_ASSOCIATIVE 2
+#define SHELL_ARRAY_EITHER 3
+#define SHELL_ARRAY_INTEGER 4
+#define SHELL_ARRAY_LOWER 8
+#define SHELL_ARRAY_UPPER 16
+#define SHELL_ARRAY_NAMEREF 32
+// Whether the array has been given a value at all. `declare -A m` prints no
+// element list and `m=()` prints an empty one, and nothing else tells them
+// apart once both hold nothing.
+#define SHELL_ARRAY_ASSIGNED 64
+
+typedef struct
+{
+        positive index;
+        // The key bytes of an associative element, and null for a subscript.
+        string_address key;
+        positive key_length;
+        string_address value;
+        positive value_length;
+} shell_array_item;
+
+PURE p8 shell_variable_attributes(const_string name, positive length);
+bool shell_variable_attribute_set(const_string name, positive length,
+                                  p8 set, p8 clear);
+positive shell_array_length(const_string name, positive length);
+PURE positive shell_array_highest(const_string name, positive length);
+positive shell_array_items(const_string name, positive length,
+                           shell_array_item address_to items, positive room);
+string_address shell_array_get(const_string name, positive length,
+                               const_string key, positive key_length,
+                               positive address_to value_length);
+bool shell_array_set(const_string name, positive length, const_string key,
+                     positive key_length, const_string value, bool append);
+bool shell_array_forget(const_string name, positive length,
+                        const_string key, positive key_length);
+bool shell_array_clear(const_string name, positive length);
+bool shell_frames_wanted(const_string name, positive length);
+bool shell_array_words(const_string name, positive length,
+                       string_address address_to words, positive count);
+bool shell_array_numbers(const_string name, positive length,
+                         bipolar address_to values, positive count);
+bool shell_compound_assign(string_address name, positive length,
+                           string_address body, positive body_length,
+                           bool append);
+string_address shell_expand_subscript(string_address name, positive length,
+                                      string_address subscript,
+                                      positive subscript_length,
+                                      positive address_to key_length);
+positive shell_expand_fields(string_address word, shell_words address_to out);
 fn run_line(string_address line);
 fn parse_reset_all();
 fn shell_trap_exit();
@@ -904,6 +967,77 @@ static PURE bool expand_ifs_blank(p8 value)
         stable store, sized from the parameters rather than from a fixed
         expansion buffer.
 */
+/*
+        A name with a subscript, taken apart again.
+
+        expand_braced resolves a subscript where the word was read and writes
+        the answer back into the name it hands on -- a[i+1] becomes a[2] and
+        m[$k] becomes m[key]. Every operator below therefore reads one name
+        and needs no second channel for the element it stands for, and the
+        arithmetic or the key's own expansion happens once however many times
+        the operator asks for the value.
+*/
+static COLD PURE bool expand_named_element(string_address name,
+                                      positive address_to base_length,
+                                      string_address address_to key,
+                                      positive address_to key_length)
+{
+        string_address open = string_first_of(name, '[');
+        positive length;
+
+        if (!open || open == name)
+                return false;
+
+        length = string_length(name);
+
+        if (name[length - 1] != ']')
+                return false;
+
+        address_to base_length = (positive)(open - name);
+        address_to key = open + 1;
+        address_to key_length = length - address_to base_length - 2;
+
+        return true;
+}
+
+/*
+        What a name that is not simply a variable stands for.
+
+        Three things reach here and every one of them is cold: an element,
+        which a name stops being a variable name the moment it names, so no
+        scalar lookup pays for the possibility of one; an associative array,
+        which keeps no value of its own and whose bare $m Bash reads as the
+        element named "0"; and the three names the call stack publishes,
+        which are only built once something has asked for them.
+*/
+static COLD string_address expand_absent_value(string_address name,
+                                               positive2 answer,
+                                               positive address_to value_length)
+{
+        positive base_length;
+        string_address key;
+        positive key_length;
+
+        if (expand_named_element(name, address_of base_length,
+                                 address_of key, address_of key_length))
+        {
+                shell_frames_wanted(name, base_length);
+
+                return shell_array_get(name, base_length, key, key_length,
+                                       value_length);
+        }
+
+        if (shell_frames_wanted(name, answer.y))
+                return env_get_hashed_span(name, answer.y, answer.x,
+                                           value_length);
+
+        if (shell_variable_attributes(name, answer.y) &
+            SHELL_ARRAY_ASSOCIATIVE)
+                return shell_array_get(name, answer.y, "0", 1, value_length);
+
+        return null;
+}
+
 static string_address expand_value_of(string_address name, p8 address_to scratch,
                                       bool address_to present,
                                       positive address_to value_length)
@@ -1056,6 +1190,11 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
                 positive2 answer = string_hash_33_length(name);
                 string_address value = env_get_hashed_span(
                     name, answer.y, answer.x, value_length);
+
+                if (value)
+                        return value;
+
+                value = expand_absent_value(name, answer, value_length);
 
                 if (!value)
                 {
@@ -3351,6 +3490,542 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
         as unset, then the operator, then the word -- and the word is a word, so
         it is expanded the same way as any other and can hold another of these.
 */
+/*
+        The name a subscript resolves to.
+
+        An indexed subscript is arithmetic: a[i+1] and a[-1] are both
+        ordinary expressions, the second counting back from the largest
+        subscript in use rather than from how many elements there are, which
+        is what Bash does and is why a hole does not move it. An associative
+        subscript is bytes, so it is expanded as a word and then kept exactly
+        as it stands -- spaces, brackets and all.
+
+        Either answer is spelled back into a name, so one lookup path serves
+        every operator and the subscript is evaluated once however many times
+        the value behind it is asked for.
+*/
+static COLD string_address expand_subscript_key(string_address base,
+                                           positive base_length,
+                                           string_address subscript,
+                                           positive subscript_length,
+                                           p8 address_to written,
+                                           positive address_to key_length)
+{
+        p8 text_local[EXPAND_LOCAL_TEXT];
+        string_address text = expand_hold(subscript, subscript_length,
+                                          text_local, sizeof(text_local));
+        string_address key;
+
+        if (!text)
+                return null;
+
+        key = expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+
+        if (expand_failed || !key)
+                return null;
+
+        if (shell_variable_attributes(base, base_length) &
+            SHELL_ARRAY_ASSOCIATIVE)
+        {
+                address_to key_length = string_length(key);
+                return key;
+        }
+
+        {
+                bipolar index = arith_evaluate(key);
+
+                if (!arith_bad && index < 0)
+                        index += (bipolar)shell_array_highest(base,
+                                                              base_length) + 1;
+
+                if (arith_bad || index < 0)
+                {
+                        string_format(expand_complain,
+                                      "%s: bad array subscript\n", base);
+                        expand_fatal();
+                        return null;
+                }
+
+                address_to key_length = bipolar_into_string(written, index);
+        }
+
+        return written;
+}
+
+/*
+        The same resolution, for the left hand side of an assignment.
+
+        a[i+1]=v and m[$k]=v name an element exactly the way ${a[i+1]} reads
+        one, so they resolve their subscript through one routine. The answer
+        is copied into the expansion arena because the caller is about to
+        assign with it and the numeric spelling lived on this frame.
+*/
+COLD string_address shell_expand_subscript(string_address name, positive length,
+                                      string_address subscript,
+                                      positive subscript_length,
+                                      positive address_to key_length)
+{
+        p8 written[32];
+        string_address key = expand_subscript_key(name, length, subscript,
+                                                  subscript_length, written,
+                                                  key_length);
+        p8 address_to kept;
+
+        if (!key)
+                return null;
+
+        kept = shell_store_take(address_of expand_store,
+                                address_to key_length + 1);
+
+        if (!kept)
+                return null;
+
+        memory_copy_end(kept, key, address_to key_length);
+
+        return kept;
+}
+
+static COLD string_address expand_subscript_name(string_address base,
+                                            positive base_length,
+                                            string_address subscript,
+                                            positive subscript_length)
+{
+        p8 written[32];
+        string_address key;
+        positive key_length;
+        p8 address_to made;
+
+        key = expand_subscript_key(base, base_length, subscript,
+                                   subscript_length, written,
+                                   address_of key_length);
+
+        if (!key)
+                return null;
+
+        made = shell_store_take(address_of expand_store,
+                                base_length + key_length + 3);
+
+        if (!made)
+        {
+                expand_fail_state();
+                return null;
+        }
+
+        memory_copy(made, base, base_length);
+        made[base_length] = '[';
+        memory_copy(made + base_length + 1, key, key_length);
+        made[base_length + 1 + key_length] = ']';
+        made[base_length + 2 + key_length] = end;
+
+        return made;
+}
+
+// ${a[1]:=v} writes an element, and ${x:=v} a variable. The name has
+// already been resolved, so which of the two it is is a question about the
+// name alone.
+static COLD bool expand_assign_named(string_address name, string_address value)
+{
+        positive base_length;
+        string_address key;
+        positive key_length;
+
+        if (!expand_named_element(name, address_of base_length,
+                                  address_of key, address_of key_length))
+                return env_assign(name, value);
+
+        return shell_array_set(name, base_length, key, key_length, value,
+                               false);
+}
+
+/*
+        Every element of an array, as fields or as one joined field.
+
+        This is the rule "$@" and $* already answer to, because Bash gives
+        arrays exactly that rule: [@] inside double quotes makes its own
+        field boundaries so an element with a space in it stays whole, and
+        every other spelling joins on the first byte of IFS and lets field
+        splitting take the join apart again.
+
+        The elements are pushed straight out of the table they are held in.
+        Nothing is gathered into a joined string first and split out of it
+        after, so a value is written into the word once and not twice.
+*/
+static COLD bool expand_push_array(string_address name, positive length, p8 form,
+                              bool quoted, bool keys)
+{
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 written[32];
+        shell_mark held = shell_store_mark(address_of expand_store);
+        shell_array_item address_to items;
+        positive count = shell_array_length(name, length);
+        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
+        p8 between = string_get(expand_ifs());
+
+        if (!count)
+        {
+                // "${a[@]}" of an empty array is no field at all, the way
+                // "$@" with no parameters is no field: the quotes are not
+                // what makes an argument here.
+                if (form == '@')
+                        expand_name_at_empty = true;
+
+                return false;
+        }
+
+        items = (shell_array_item address_to)shell_store_take(
+            address_of expand_store, count * sizeof(items[0]));
+
+        if (!items)
+        {
+                expand_fail_state();
+                return false;
+        }
+
+        shell_array_items(name, length, items, count);
+
+        for (positive at = 0; at < count; at++)
+        {
+                if (at)
+                {
+                        if (fields)
+                                expand_push(' ', MARK_BREAK);
+                        else if (between)
+                                expand_push(between, mark);
+                }
+
+                if (!keys)
+                        expand_push_run(items[at].value, items[at].value_length,
+                                        mark);
+                else if (items[at].key)
+                        expand_push_run(items[at].key, items[at].key_length,
+                                        mark);
+                else
+                        expand_push_run(written,
+                                        bipolar_into_string(
+                                            written, (bipolar)items[at].index),
+                                        mark);
+        }
+
+        shell_store_rewind(address_of expand_store, held);
+
+        return true;
+}
+
+/*
+        ${a[@]:offset:count} selects elements and not bytes.
+
+        The two numbers are read the same way the string form reads them,
+        because they are the same arithmetic; what differs is only what they
+        count. A negative offset counts back from the end of the element
+        list, which is what makes ${a[@]: -2} the last two whatever the
+        subscripts are.
+*/
+static COLD fn expand_array_slice(string_address name, positive length, p8 form,
+                             string_address expression, bool quoted)
+{
+        string_address separator = expand_substring_separator(expression);
+        string_address length_text = null;
+        string_address ready;
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        shell_mark held = shell_store_mark(address_of expand_store);
+        shell_array_item address_to items;
+        positive count = shell_array_length(name, length);
+        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
+        p8 between = string_get(expand_ifs());
+        bipolar offset = 0;
+        bipolar wanted = 0;
+        bool has_length = separator != null;
+        positive begin;
+        positive finish;
+
+        if (separator)
+        {
+                separator[0] = end;
+                length_text = separator + 1;
+        }
+
+        if (string_get(expression))
+        {
+                ready = expand_capture(expression, true, EXPAND_CAPTURE_TEXT);
+
+                if (expand_failed)
+                        return;
+
+                offset = arith_evaluate(ready);
+
+                if (arith_bad)
+                {
+                        string_format(expand_complain, "arithmetic: %s\n",
+                                      ready);
+                        expand_fatal();
+                        return;
+                }
+        }
+        else if (!has_length)
+        {
+                string_format(expand_complain, "%s: bad substitution\n", name);
+                expand_fatal();
+                return;
+        }
+
+        if (has_length)
+        {
+                ready = expand_capture(length_text, true, EXPAND_CAPTURE_TEXT);
+
+                if (expand_failed)
+                        return;
+
+                wanted = arith_evaluate(ready);
+
+                if (arith_bad)
+                {
+                        string_format(expand_complain, "arithmetic: %s\n",
+                                      ready);
+                        expand_fatal();
+                        return;
+                }
+        }
+
+        if (offset < 0)
+                begin = offset < -(bipolar)count
+                            ? count
+                            : (positive)((bipolar)count + offset);
+        else
+                begin = (positive)offset < count ? (positive)offset : count;
+
+        finish = count;
+
+        if (has_length)
+        {
+                if (wanted < 0)
+                {
+                        string_format(expand_complain,
+                                      "%s: substring expression < 0\n", name);
+                        expand_fatal();
+                        return;
+                }
+
+                if ((positive)wanted < count - begin)
+                        finish = begin + (positive)wanted;
+        }
+
+        if (!count || begin >= finish)
+                return;
+
+        items = (shell_array_item address_to)shell_store_take(
+            address_of expand_store, count * sizeof(items[0]));
+
+        if (!items)
+        {
+                expand_fail_state();
+                return;
+        }
+
+        shell_array_items(name, length, items, count);
+
+        for (positive at = begin; at < finish; at++)
+        {
+                if (at > begin)
+                {
+                        if (fields)
+                                expand_push(' ', MARK_BREAK);
+                        else if (between)
+                                expand_push(between, mark);
+                }
+
+                expand_push_run(items[at].value, items[at].value_length, mark);
+        }
+
+        shell_store_rewind(address_of expand_store, held);
+}
+
+/*
+        One element name per element, so that the byte operators need no
+        array form of their own.
+
+        ${a[@]#pat}, ${a[@]/x/y} and ${a[@]^^} all mean "that operator, on
+        each element". Naming each element and handing the existing operator
+        the name it already understands keeps one implementation of each
+        instead of an array-shaped copy of five of them.
+*/
+static COLD fn expand_array_each(string_address name, positive length, p8 form,
+                            p8 operation, bool doubled, string_address word,
+                            bool quoted)
+{
+        p8 element_local[EXPAND_LOCAL_NAME];
+        p8 written[32];
+        shell_mark held = shell_store_mark(address_of expand_store);
+        shell_array_item address_to items;
+        positive count = shell_array_length(name, length);
+        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
+        p8 between = string_get(expand_ifs());
+
+        if (!count)
+                return;
+
+        items = (shell_array_item address_to)shell_store_take(
+            address_of expand_store, count * sizeof(items[0]));
+
+        if (!items)
+        {
+                expand_fail_state();
+                return;
+        }
+
+        shell_array_items(name, length, items, count);
+
+        for (positive at = 0; at < count; at++)
+        {
+                string_address key = items[at].key;
+                positive key_length = items[at].key_length;
+                string_address element;
+                positive start;
+
+                if (!key)
+                {
+                        key_length = bipolar_into_string(
+                            written, (bipolar)items[at].index);
+                        key = written;
+                }
+
+                if (at)
+                {
+                        if (fields)
+                                expand_push(' ', MARK_BREAK);
+                        else if (between)
+                                expand_push(between,
+                                            quoted ? MARK_QUOTED : MARK_FIELD);
+                }
+
+                {
+                        positive needed = length + key_length + 3;
+                        p8 address_to made =
+                            needed <= sizeof(element_local)
+                                ? element_local
+                                : shell_store_take(address_of expand_store,
+                                                   needed);
+
+                        if (!made)
+                        {
+                                expand_fail_state();
+                                return;
+                        }
+
+                        memory_copy(made, name, length);
+                        made[length] = '[';
+                        memory_copy(made + length + 1, key, key_length);
+                        made[length + 1 + key_length] = ']';
+                        made[length + 2 + key_length] = end;
+                        element = made;
+                }
+
+                start = expand_length;
+
+                if (operation == '/')
+                {
+                        string_address separator =
+                            expand_replace_separator(word);
+                        string_address replacement = (string_address) "";
+                        p8 held_byte = 0;
+
+                        if (separator)
+                        {
+                                held_byte = separator[0];
+                                separator[0] = end;
+                                replacement = separator + 1;
+                        }
+
+                        expand_replace(element, word, replacement, quoted,
+                                       doubled, 0);
+
+                        // The word is walked again for the next element, so
+                        // the separator it was cut at has to be put back.
+                        if (separator)
+                                separator[0] = held_byte;
+                }
+                else if (operation == '^' || operation == ',')
+                        expand_case_change(element, word, quoted,
+                                           operation == '^', doubled, 0);
+                else
+                {
+                        string_address pattern;
+
+                        expand_push_parameter_as(element, quoted, 0);
+                        pattern = expand_capture(word, false,
+                                                 EXPAND_CAPTURE_PATTERN);
+
+                        if (expand_failed)
+                                return;
+
+                        expand_trim(start, pattern, operation == '#', doubled);
+                }
+
+                if (expand_failed)
+                        return;
+        }
+
+        shell_store_rewind(address_of expand_store, held);
+}
+
+/*
+        What the whole array answers to.
+
+        ${#a[@]} is a count and not a length, ${!a[@]} is the subscripts,
+        ${a[@]:1:2} selects elements, and every byte operator is that
+        operator applied to each element in turn. What is left -- no operator,
+        or one of the four that ask whether a parameter is set -- reads an
+        array as set when it has any element at all, which is how a=() comes
+        out unset.
+
+        Kept out of the reader that dispatches to it: none of this is on the
+        path a scalar takes, and the buffer it needs was in that reader's
+        frame for every ${x} in every script that has no array in it.
+*/
+static COLD fn expand_array_form(string_address name, positive length,
+                                 p8 form, bool want_length, p8 operation,
+                                 bool doubled, string_address word,
+                                 bool quoted, b32 parameter_mode, p8 mark)
+{
+        bool keys = (parameter_mode & EXPAND_PARAMETER_INDIRECT) != 0;
+        positive held = shell_array_length(name, length);
+        p8 written[32];
+
+        if (want_length)
+        {
+                expand_push_run(written,
+                                bipolar_into_string(written, (bipolar)held),
+                                mark);
+
+                return;
+        }
+
+        if (operation == ':')
+                expand_array_slice(name, length, form, word, quoted);
+        else if (operation == '#' || operation == '%' || operation == '/' ||
+                 operation == '^' || operation == ',')
+                expand_array_each(name, length, form, operation, doubled,
+                                  word, quoted);
+        else if (operation == '-' && !held)
+                expand_word_into(word, quoted);
+        else if (operation == '+' && held)
+                expand_word_into(word, quoted);
+        else if (operation == '?' && !held)
+        {
+                string_address said =
+                    expand_capture(word, quoted, EXPAND_CAPTURE_WORD);
+
+                if (expand_failed)
+                        return;
+
+                string_format(expand_complain, "%s: %s\n", name,
+                              said[0] ? said
+                                      : (string_address) "parameter not set");
+                expand_fatal_mode(parameter_mode);
+        }
+        else if (operation != '+')
+                expand_push_array(name, length, form, quoted, keys);
+}
+
 static string_address expand_braced(string_address step, bool quoted)
 {
         string_address name_start;
@@ -3359,6 +4034,11 @@ static string_address expand_braced(string_address step, bool quoted)
         p8 indirect_scratch[32];
         string_address name;
         string_address word;
+        // The name without its subscript, kept for the forms that mean the
+        // whole array rather than one element of it.
+        string_address plain_name = null;
+        positive plain_length = 0;
+        p8 array_form = 0;
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         positive length = 0;
         bool want_length = false;
@@ -3434,7 +4114,49 @@ static string_address expand_braced(string_address step, bool quoted)
 
         seen = string_get(step);
 
-        if ((parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
+        /*
+                A subscript belongs to the name and not to the operators
+                after it, so it is read and resolved right here. Every
+                operator below then sees one already-resolved name, and [@]
+                and [*] -- which mean the whole array and not an element of
+                it -- are recognised before anything tries to read a value.
+        */
+        if (seen == '[' && expand_assignable_name(name))
+        {
+                string_address shut = expand_bracket_end(step + 1, '[', ']');
+                positive inner;
+
+                if (!shut || shut >= close)
+                {
+                        string_format(expand_complain,
+                                      "%s: bad substitution\n", name);
+                        expand_fatal_mode(parameter_mode);
+                        return close + 1;
+                }
+
+                inner = (positive)(shut - step - 1);
+                plain_name = name;
+                plain_length = length;
+
+                if (inner == 1 &&
+                    (string_is(step + 1, '@') || string_is(step + 1, '*')))
+                        array_form = string_get(step + 1);
+                else
+                {
+                        name = expand_subscript_name(name, length, step + 1,
+                                                     inner);
+
+                        if (!name)
+                                return close + 1;
+
+                        length = string_length(name);
+                }
+
+                step = shut + 1;
+                seen = string_get(step);
+        }
+
+        if (!array_form && (parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
             expand_assignable_name(name) && step + 1 == close &&
             (seen == '@' || seen == '*'))
         {
@@ -3531,6 +4253,25 @@ static string_address expand_braced(string_address step, bool quoted)
                         return close + 1;
         }
 
+        /*
+                What the whole array answers to.
+
+                ${#a[@]} is a count and not a length, ${!a[@]} is the
+                subscripts, ${a[@]:1:2} selects elements, and every byte
+                operator is that operator applied to each element in turn.
+                What is left -- no operator, or one of the four that ask
+                whether a parameter is set -- reads an array as set when it
+                has any element at all, which is how `a=()` comes out unset.
+        */
+        if (array_form)
+        {
+                expand_array_form(plain_name, plain_length, array_form,
+                                  want_length, operation, doubled, word,
+                                  quoted, parameter_mode, mark);
+
+                return close + 1;
+        }
+
         if (name_list)
         {
                 expand_push_names(name, length, name_list, quoted);
@@ -3601,10 +4342,17 @@ static string_address expand_braced(string_address step, bool quoted)
         {
                 p8 written[32];
                 p8 scratch[32];
-                bool present;
+                bool present = true;
                 positive count = 0;
-                expand_value_of(name, scratch, address_of present,
-                                address_of count);
+
+                // ${#*} and ${#@} are how many parameters there are and not
+                // how long the one string they join into would be.
+                if (length == 1 &&
+                    (string_is(name, '@') || string_is(name, '*')))
+                        count = shell_parameter_count;
+                else
+                        expand_value_of(name, scratch, address_of present,
+                                        address_of count);
 
                 if (!present)
                 {
@@ -3741,7 +4489,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
-                                if (!env_assign(name, made))
+                                if (!expand_assign_named(name, made))
                                 {
                                         string_format(
                                             expand_complain,
