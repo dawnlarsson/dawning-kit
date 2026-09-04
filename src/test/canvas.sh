@@ -495,6 +495,38 @@ if len(runs) >= 2:
     # Let all sixteen updates complete before looking for the fault report.
     time.sleep(5)
 
+    #       The same tool with no frame count, which runs until something
+    #       stops it, and then control-C to stop it. A full-screen tool that
+    #       keeps redrawing is the one shape that can leave a terminal with
+    #       no reader and no way back, and the terminal is then frozen for
+    #       good: the shell is alive but nothing it prints arrives. Both
+    #       halves are asserted here -- that the tool is still redrawing
+    #       while it runs, and that the shell answers afterwards.
+    type_text("monitor 0.3\n")
+    time.sleep(3)
+    shot("unbounded-first")
+    u1_w, u1_h, unbounded_first = load("unbounded-first")
+    time.sleep(2)
+    shot("unbounded-second")
+    u2_w, u2_h, unbounded_second = load("unbounded-second")
+    out.append(("unbounded monitor redraws",
+                "yes" if changed(unbounded_first, unbounded_second) > 32
+                else "%d pixels" % changed(unbounded_first, unbounded_second),
+                "yes"))
+
+    chord("ctrl", "c")
+    time.sleep(1.5)
+    shot("after-interrupt")
+    ai_w, ai_h, after_interrupt = load("after-interrupt")
+    type_text("echo backagain\n")
+    time.sleep(2)
+    shot("after-interrupt-command")
+    ac_w, ac_h, after_command = load("after-interrupt-command")
+    out.append(("shell answers after the tool",
+                "yes" if changed(after_interrupt, after_command) > 32
+                else "%d pixels" % changed(after_interrupt, after_command),
+                "yes"))
+
     # A framed pixel window cannot grow beyond the mapping its client owns.
     # This used to maximize to desktop dimensions anyway, then compose read
     # those invented pixels past the end of the mapping. The window demo's
