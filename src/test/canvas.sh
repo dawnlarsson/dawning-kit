@@ -58,7 +58,7 @@ MOONWATER_CANVAS_WORK=$work
 export MOONWATER_CANVAS_WORK
 
 python3 - "$image" > "$work/answers" 2>"$work/why" <<'PY'
-import json, os, socket, subprocess, sys, time
+import json, os, re, socket, subprocess, sys, time
 
 image = sys.argv[1]
 work = os.environ["MOONWATER_CANVAS_WORK"]
@@ -678,6 +678,20 @@ if len(runs) >= 1:
 
 # The kernel names them "QEMU QEMU USB Mouse"; the serial log is lower case.
 out.append(("pointer lists the mice", str(serial.count(b"usb mouse: ")), "2"))
+
+#       A terminal's line ring is cut once and never grows, so the size it is
+#       cut for decides the largest that window can ever become. Cutting it
+#       for the desktop of the moment froze that at whatever the screen was
+#       when the terminal opened, and the screen is not a constant: it is the
+#       sum of the outputs, recomputed whenever a connector is probed or a
+#       monitor arrives, which on real hardware happens after the first
+#       terminal exists. This display is 2560 wide, so a ring cut for it holds
+#       about 319 columns; one cut for the ceiling holds far more. Anything in
+#       between means the ring followed the mode again.
+ring = re.findall(rb"ring holds (\d+)x(\d+)", serial)
+out.append(("terminal ring is cut for the ceiling",
+            "yes" if ring and min(int(w) for w, _ in ring) >= 400
+            else str([(int(w), int(h)) for w, h in ring]), "yes"))
 
 for name, marker in (("no protection fault", b"general protection fault"),
                      ("no oops", b"oops:"),

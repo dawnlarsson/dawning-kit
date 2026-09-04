@@ -158,6 +158,47 @@ static void desktop_grid(unsigned int *columns, unsigned int *rows)
 }
 
 /*
+        The grid a window is BUILT for, which is not the grid the desktop
+        happens to have when it is built.
+
+        A window of cells keeps its lines in a ring whose stride is fixed for
+        the window's life, because a program cannot be handed a larger
+        mapping than the one it already mapped. Sizing that ring from the
+        desktop of the moment therefore freezes the window's largest possible
+        size at whatever the screen was when it opened -- and the screen is
+        not a constant. desktop.width is the sum of the outputs, recomputed
+        every time a connector is probed, a mode is chosen, or a monitor
+        arrives, and on real hardware those happen after the first terminal
+        already exists. The terminal that opened first then refuses to grow
+        past a screen nobody has any more, which is a bug that comes and goes
+        with the boot's timing and never appears under an emulator whose
+        display is ready before anything asks.
+
+        So the ring is built for a ceiling instead: a size no ordinary display
+        exceeds, taken as the larger of that and the desktop as it stands, so
+        a screen bigger than the ceiling is still served. The window's visible
+        size is clamped to the output it sits on, exactly as before -- this
+        changes only what it is ALLOWED to become, never what it is.
+
+        The cost is the difference between a ring cut for the screen and one
+        cut for the ceiling. At the eight by sixteen cell that is about two
+        megabytes for a terminal against one, inside a budget that is a
+        quarter of memory.
+*/
+#define PANE_CEILING_W 3840
+#define PANE_CEILING_H 2160
+
+static void desktop_grid_ceiling(unsigned int *columns, unsigned int *rows)
+{
+        int width = max(desktop.width, PANE_CEILING_W) - canvas_border * 2;
+        int height = max(desktop.height, PANE_CEILING_H) -
+                     (canvas_title + canvas_border * 3);
+
+        *columns = (unsigned int)(max(width, 0) / canvas_cell_w);
+        *rows = (unsigned int)(max(height, 0) / canvas_cell_h);
+}
+
+/*
         How long a ring is, and how far apart its lines are.
 
         A line is as wide as the desktop could ever make this window, so the
@@ -394,15 +435,20 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                                      _Bool owned)
 {
         unsigned int max_columns, max_rows;
+        unsigned int fit_columns, fit_rows;
         unsigned int stride = 0, history = 0;
         unsigned long ring_bytes = 0;
         struct window *page;
         struct pane *pane;
         unsigned long bytes;
 
-        desktop_grid(&max_columns, &max_rows);
+        // What it may be built for, and what there is room to show right now.
+        desktop_grid_ceiling(&max_columns, &max_rows);
+        desktop_grid(&fit_columns, &fit_rows);
 
-        if (columns && (!max_columns || !max_rows))
+        // A screen with no room for one cell has no room for a window of
+        // cells, whatever the ring could hold.
+        if (columns && (!fit_columns || !fit_rows))
                 return NULL;
 
         /*
@@ -415,8 +461,10 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         if (columns)
         {
                 pane_ring(max_columns, max_rows, &stride, &history, &ring_bytes);
-                columns = min(columns, max_columns);
-                rows = min(rows, max_rows);
+
+                // The ring is cut for the ceiling; what opens is what fits.
+                columns = min(columns, fit_columns);
+                rows = min(rows, fit_rows);
                 width = columns * (unsigned int)canvas_cell_w;
                 height = rows * (unsigned int)canvas_cell_h;
         }
@@ -479,6 +527,8 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->max_height = max_rows * (unsigned int)canvas_cell_h;
                 pane->grid_columns = columns;
                 pane->grid_rows = rows;
+                log_canvas("window grid %ux%u, ring holds %ux%u\n",
+                           columns, rows, max_columns, max_rows);
 
                 page->max_columns = max_columns;
                 page->max_rows = max_rows;
