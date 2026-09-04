@@ -3432,7 +3432,11 @@ fn exec_program(b32 root)
         exec_signal_level = 0;
 
         // Reap without forgetting: wait still owes the status to the script.
-        if (!exec_depth)
+        //
+        // Only when something was started in the background. This runs at the
+        // top of every complete command, so a script that never forked one
+        // was paying a wait4 per line to be told it has no children.
+        if (!exec_depth && shell_wait_count)
                 shell_background_reap();
 
         exec_depth++;

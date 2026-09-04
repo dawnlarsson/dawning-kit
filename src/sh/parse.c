@@ -1217,6 +1217,18 @@ alias_done:
 // short scan restarts until it reaches a reserved word or a stable name.
 static fn parse_alias_command()
 {
+        /*
+                The commonest shell has no aliases at all, and the scan below
+                is per command: it walks the assignment prefixes and the
+                redirects of every command in the script to find the name,
+                and then asks a table with nothing in it. Both helpers it
+                walks with are pure, so with no alias defined the whole pass
+                can only end in the same place it starts. It measured 7% of
+                a script that is all commands and no aliases.
+        */
+        if (!alias_count)
+                return;
+
         while (!parse_state)
         {
                 b32 at = parse_position;

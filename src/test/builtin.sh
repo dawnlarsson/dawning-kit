@@ -217,6 +217,34 @@ answer 'precision zero escapes' "printf '[%5.0b]' 'a\\tb'; echo"
 answer 'precision zero held' "printf '[%.4b][%.0b]' WXYZ q; echo"
 answer 'long measured escapes' 'v=$(awk '\''BEGIN { for (i = 0; i < 5000; i++) printf "x" }'\''); printf "%.6000b" "$v" | wc -c'
 
+#       The floating conversions, through the same field writer awk prints
+#       its numbers with. The reference reads them with strtod, so a leading
+#       0x is sixteen and "inf" is itself, and the exact digits and the
+#       half-to-even rounding are the formatter's rather than a second
+#       spelling of them here. Not %a: the field writer has no hexadecimal
+#       float, so that directive is still refused rather than answered with
+#       a decimal.
+group floating
+answer 'fixed'           "printf '%f|' 1.5; echo"
+answer 'fixed precision' "printf '%.2f|%.0f|' 3.14159 2.5; echo"
+answer 'fixed rounding'  "printf '%.0f %.0f %.1f\\n' 2.5 3.5 0.05"
+answer 'fixed width'     "printf '[%10.3f][%-10.2f][%010.2f]' 2.5 1.5 1.5; echo"
+answer 'signs'           "printf '[%+f][% f][%+.1f]' 1.5 1.5 -1.5; echo"
+answer 'scientific'      "printf '%e %E\\n' 1234.5 0.00025"
+answer 'general'         "printf '%g %G %g\\n' 0.0001 1e20 100000"
+answer 'alternate keeps' "printf '[%#.0f][%#g]' 2 1.0; echo"
+answer 'not finite'      "printf '%f %f %f\\n' inf -inf nan"
+answer 'hexadecimal in'  "printf '%f\\n' 0x10"
+answer 'exponent in'     "printf '%f %f\\n' 1e3 1.5e-3"
+answer 'empty is zero'   "printf '%f|' ''; echo"
+answer 'missing is zero' "printf '%f %f|' 1.5; echo"
+answer 'quote is a byte' "printf '%f\\n' \"'a\""
+answer 'blanks in front' "printf '%f\\n' ' 1.5'; echo \$?"
+answer 'not a number'    "printf '%f\\n' nope 2>/dev/null; echo \$?"
+answer 'not completely'  "printf '%f\\n' 1.5x 2>/dev/null; echo \$?"
+answer 'wide precision'  "printf '%.40f\\n' 0.1"
+answer 'zero and sign'   "printf '%f %f\\n' 0 -0.0"
+
 #       The grammar an integer conversion reads: strtoimax's, with a quote
 #       meaning the byte after it. Nothing is zero and no complaint; a tail
 #       the digits did not use is a complaint after the number, and no digits

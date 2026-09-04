@@ -3921,6 +3921,53 @@ static bipolar printf_integer(string_address word)
         return bipolar_from_magnitude(magnitude, negative);
 }
 
+/*
+        The number a floating conversion reads out of its argument.
+
+        strtod's grammar rather than strtoimax's, which is the whole of the
+        difference from the reader above: the reference shell reads %f, %e,
+        %g and %a with it, so "0x10" is sixteen, "1e3" is a thousand, and
+        "inf" and "nan" are themselves. The quote that means the byte after
+        it is read here too, because a format is free to spell the same
+        argument either way. Empty or missing is zero and no complaint;
+        digits that were never there, and digits with something left after
+        them, complain in the two spellings the integer reader uses.
+*/
+static decimal printf_decimal(string_address word)
+{
+        string_address at = word;
+        string_address stopped = null;
+        decimal value;
+
+        if (!word)
+                return 0.0;
+
+        at += string_span(at, string_set_blanks);
+
+        if (!string_get(at))
+                return 0.0;
+
+        if (string_is(at, '\'') || string_is(at, '"'))
+                return (decimal)(positive)string_get(at + 1);
+
+        value = string_to_decimal(at, address_of stopped);
+
+        if (stopped == at)
+        {
+                printf_not_a_number(word);
+                return 0.0;
+        }
+
+        if (string_get(stopped))
+        {
+                string_format(shell_diagnostic,
+                              "printf: %s: not completely converted\n", word);
+                printf_status = 1;
+        }
+
+        return value;
+}
+
 fn printf_one(writer write, string_address format)
 {
         string_address step = format;
@@ -4113,6 +4160,50 @@ fn printf_one(writer write, string_address format)
 
                         printf_number(write, (positive)value, 0, base, conversion == 'X',
                                       width, precision, left, zero, alternate);
+                        continue;
+                }
+
+                /*
+                        Not %a and %A. The standard layer's field writer has
+                        no hexadecimal float in it, and it answers one of
+                        these with the decimal spelling instead -- a wrong
+                        number, where refusing the directive is merely a
+                        missing one. They stay refused until it grows the
+                        path, which is the same place awk would read it from.
+                */
+                if (conversion == 'f' || conversion == 'F' ||
+                    conversion == 'e' || conversion == 'E' ||
+                    conversion == 'g' || conversion == 'G')
+                {
+                        /*
+                                Through the standard layer's own field
+                                writer, which awk already prints its numbers
+                                with: the exact digits, the rounding and the
+                                padding are one implementation and not two.
+
+                                A sink pointed at the writer rather than at a
+                                buffer, so a width or a precision the caller
+                                asked for has no size to overrun -- "%.2000f"
+                                is a legal thing to write and a buffer here
+                                would have to guess how much of it to keep.
+                        */
+                        format_sink sink = {0};
+                        format_spec spec = {0};
+
+                        sink.downstream = write;
+
+                        spec.flags = (left ? FORMAT_FLAG_LEFT : 0) |
+                                     (plus ? FORMAT_FLAG_PLUS : 0) |
+                                     (space ? FORMAT_FLAG_SPACE : 0) |
+                                     (alternate ? FORMAT_FLAG_ALTERNATE : 0) |
+                                     (zero ? FORMAT_FLAG_ZERO : 0);
+                        spec.width = width;
+                        spec.precision = precision;
+                        spec.conversion = conversion;
+
+                        format_decimal_field(address_of sink,
+                                             printf_decimal(printf_next()),
+                                             address_of spec);
                         continue;
                 }
 
