@@ -136,7 +136,8 @@ running and reaping a task that lives for microseconds is another ten.
 Both are outside the number, and both are reachable only from inside the
 kernel.
 
-**A. The text as one mapping instead of two hundred.** SPARK_BASE is
+**A. The text as one mapping instead of two hundred.** Tested and much
+smaller than it looks; read the note below before building it. SPARK_BASE is
 0x400000, already on a two megabyte boundary, and the text is 766 KB, so
 it sits inside a single PMD's span today. What stops that span being one
 mapping is that the writable data segment starts immediately after the
@@ -147,6 +148,30 @@ mappings, their faults, their reverse mappings, their teardown and their
 TLB entries into one of each. That is a link script line and a decision
 about where the image lives, not a kernel patch, and it is the cheapest
 large win on this page.
+
+> Measured 2026-09-04, and the result is why A is no longer first.
+> Raising Linux's fault-around window to the PMD's worth was tried as the
+> cheapest possible version of A: one constant in mm/memory.c, applied
+> through kernel/patch. It works exactly as intended -- a spawned shell's
+> minor faults fall from 51 to 44 and its resident pages rise from 197 to
+> 229, so the handler is mapping more per pass -- and it buys no
+> measurable time at all. A spawn is 105.6 microseconds before and after.
+>
+> The premise was wrong. A guest page fault on a page the cache already
+> holds does not leave the guest: hardware nested paging resolves it
+> without an exit to the hypervisor, so a minor fault here costs well
+> under a microsecond rather than the several a VM exit would. Seven
+> fewer faults bought back roughly what thirty-two more mapped pages
+> cost, and the change was reverted for adding resident memory and
+> teardown work in exchange for nothing.
+>
+> What that implies for A and B: their win is the page table entries
+> themselves -- installing, reverse-mapping and zapping a hundred and
+> eighty-five of them -- and this experiment says those are cheap too,
+> because thirty-two of them weighed about the same as seven faults.
+> Neither is worthless, but neither is the ten to twenty per cent the
+> ranking above assumed, and both should be sized by experiment before
+> either is built.
 
 **B. One page table for every spark process.** The ceiling version of A.
 Every spark program maps the identical text at the identical address, so
@@ -199,6 +224,24 @@ for the whole pipeline rather than once per stage. With C the stages
 land on the CPU that already holds the shell's cache. The per-spawn
 savings are multiplied by the stage count, and a four-stage pipeline of
 tools is the shape a shell actually runs.
+
+## Where the time really is, after all of this
+
+A spawn is 105.6 microseconds end to end in the guest, measured from the
+host across two thousand of them. The kernel's construction, which is
+everything the phase table at the top counts, is 43.6 of those. The
+remaining sixty are the program running and the process being taken
+down, and the fault experiment above says the mapping is a small part of
+that.
+
+So the next thing to measure is not in this document. It is the sixty
+microseconds a spark program spends being itself: its own startup, the
+work it was asked to do, and the teardown of an address space with
+twelve megabytes of bss described in it. A spawn is already cheaper than
+the fork it replaced -- 105.6 against 120.6 for a forked subshell doing
+the same nothing -- and the kernel side of it is close enough to the
+floor that the next honest win is more likely to be in what the program
+does than in how the kernel starts it.
 
 ## The one that is not on the list
 
