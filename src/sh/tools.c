@@ -983,6 +983,1994 @@ static b32 tools_pinky()
         return text_done(0);
 }
 
+// tsort -----------------------------------------------------
+
+/* A node is named by a token kept in the input buffer.  Edges and all graph
+   links are indexes, so a large relation set stays dense and carries no
+   allocator metadata or pointer chasing beyond the successor walk itself. */
+typedef struct
+{
+        string_address name;
+        positive hash;
+        positive predecessors;
+        b32 top;
+        b32 queue;
+        bool printed;
+} tsort_node;
+
+typedef struct
+{
+        b32 successor;
+        b32 next;
+} tsort_edge;
+
+static tsort_node address_to tsort_nodes;
+static tsort_edge address_to tsort_edges;
+static b32 address_to tsort_buckets;
+static positive tsort_bucket_count;
+static positive tsort_node_count;
+
+#define TSORT_ERROR_INTERRUPTED (-4)
+
+static PURE bipolar tsort_node_order(b32 left, b32 right)
+{
+        return string_compare(tsort_nodes[left].name, tsort_nodes[right].name);
+}
+
+/* The input was split in place, so the resident hash-and-length primitive can
+   index each name in one pass.  A load factor below one half bounds misses
+   without introducing a second tree solely for name lookup. */
+static b32 tsort_node_for(string_address name)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = named.x & (tsort_bucket_count - 1);
+
+        while (tsort_buckets[slot] >= 0)
+        {
+                b32 have = tsort_buckets[slot];
+
+                if (tsort_nodes[have].hash == named.x &&
+                    !string_compare(tsort_nodes[have].name, name))
+                        return have;
+
+                slot = (slot + 1) & (tsort_bucket_count - 1);
+        }
+
+        b32 made = (b32)tsort_node_count++;
+        tsort_nodes[made] = (tsort_node){
+            .name = name,
+            .hash = named.x,
+            .predecessors = 0,
+            .top = -1,
+            .queue = -1,
+            .printed = false,
+        };
+        tsort_buckets[slot] = made;
+        return made;
+}
+
+static fn tsort_queue_add(b32 node, b32 address_to head, b32 address_to tail)
+{
+        if (address_to head < 0)
+                address_to head = node;
+        else
+                tsort_nodes[address_to tail].queue = node;
+
+        address_to tail = node;
+}
+
+/* GNU's loop walk is deliberately deterministic rather than canonical: it
+   visits names lexically but each name's successors in reverse input order.
+   Reusing queue as the backwards trail reproduces that choice, including the
+   diagnostic, while removing one relation lets the ordinary sort continue. */
+static bool tsort_break_cycle(b32 address_to order, b32 address_to loop)
+{
+        for (positive at = 0; at < tsort_node_count; at++)
+        {
+                b32 node = order[at];
+
+                if (!tsort_nodes[node].predecessors)
+                        continue;
+
+                if (address_to loop < 0)
+                {
+                        address_to loop = node;
+                        continue;
+                }
+
+                b32 address_to link = address_of tsort_nodes[node].top;
+
+                while (address_to link >= 0)
+                {
+                        tsort_edge address_to edge = tsort_edges + address_to link;
+
+                        if (edge->successor != address_to loop)
+                        {
+                                link = address_of edge->next;
+                                continue;
+                        }
+
+                        if (tsort_nodes[node].queue < 0)
+                        {
+                                tsort_nodes[node].queue = address_to loop;
+                                address_to loop = node;
+                                break;
+                        }
+
+                        while (address_to loop >= 0)
+                        {
+                                b32 here = address_to loop;
+                                b32 next = tsort_nodes[here].queue;
+
+                                text_error(null, tsort_nodes[here].name);
+
+                                if (here == node)
+                                {
+                                        tsort_nodes[edge->successor].predecessors--;
+                                        address_to link = edge->next;
+                                        break;
+                                }
+
+                                tsort_nodes[here].queue = -1;
+                                address_to loop = next;
+                        }
+
+                        while (address_to loop >= 0)
+                        {
+                                b32 next = tsort_nodes[address_to loop].queue;
+                                tsort_nodes[address_to loop].queue = -1;
+                                address_to loop = next;
+                        }
+
+                        return true;
+                }
+        }
+
+        return false;
+}
+
+static b32 tools_tsort()
+{
+        file_taking taking = {
+            .program = (string_address) "tsort",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+        };
+
+        text_begin("tsort");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        positive arguments = (positive)program_argument_count() - taking.first;
+
+        if (arguments > 1)
+                return text_refuse(program_argument((b32)taking.first + 1),
+                                   "extra operand", 1);
+
+        string_address path = arguments
+                                  ? program_argument((b32)taking.first)
+                                  : (string_address) "-";
+        bipolar input = 0;
+        bool close_input = false;
+
+        if (!string_equals(path, "-"))
+        {
+                do
+                        input = system_open_at(AT_FDCWD, path,
+                                               FILE_READ | O_CLOEXEC);
+                while (input == TSORT_ERROR_INTERRUPTED);
+
+                if (input < 0)
+                        return text_refuse(path, file_reason(input), 1);
+
+                close_input = true;
+        }
+
+        positive length;
+        bool read_failed;
+        p8 address_to bytes = text_arena_read_all(
+            (positive)input, TEXT_READ_MAX, address_of length,
+            address_of read_failed);
+
+        if (close_input)
+                system_close(input);
+
+        if (!bytes)
+        {
+                if (read_failed)
+                        text_error(path, "Read error");
+                return text_done(1);
+        }
+
+        positive tokens = 0;
+        bool inside = false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 value = bytes[at];
+
+                if (!value)
+                        return text_refuse(path, "input contains a NUL byte", 1);
+
+                if (value == ' ' || value == '\t' || value == '\n')
+                {
+                        bytes[at] = end;
+                        inside = false;
+                }
+                else if (!inside)
+                {
+                        tokens++;
+                        inside = true;
+                }
+        }
+
+        if (tokens & 1)
+                return text_refuse(path,
+                                   "input contains an odd number of tokens", 1);
+        if (!tokens)
+                return text_done(0);
+
+        /* Every relation can introduce two nodes.  These checks make every
+           subsequent product and signed graph index representable before an
+           arena request has a chance to wrap it. */
+        if (tokens > b32_max ||
+            tokens > positive_max / sizeof(tsort_node) ||
+            tokens / 2 > positive_max / sizeof(tsort_edge))
+                return text_refuse(path, "input too large", 1);
+
+        tsort_bucket_count = 8;
+
+        while (tsort_bucket_count < tokens * 2)
+        {
+                if (tsort_bucket_count > positive_max / 2)
+                        return text_refuse(path, "input too large", 1);
+                tsort_bucket_count <<= 1;
+        }
+
+        if (tsort_bucket_count > positive_max / sizeof(b32))
+                return text_refuse(path, "input too large", 1);
+
+        positive node_bytes = tokens * sizeof(tsort_node);
+        positive edge_bytes = (tokens / 2) * sizeof(tsort_edge);
+        positive bucket_bytes = tsort_bucket_count * sizeof(b32);
+
+        if (node_bytes > positive_max - edge_bytes ||
+            node_bytes + edge_bytes > positive_max - bucket_bytes)
+                return text_refuse(path, "input too large", 1);
+
+        p8 address_to graph = (p8 address_to)text_arena_take(
+            node_bytes + edge_bytes + bucket_bytes);
+
+        if (!graph)
+                return text_done(1);
+
+        tsort_nodes = (tsort_node address_to)graph;
+        tsort_edges = (tsort_edge address_to)(graph + node_bytes);
+        tsort_buckets = (b32 address_to)(graph + node_bytes + edge_bytes);
+
+        memory_fill(tsort_buckets, (b8)-1,
+                    tsort_bucket_count * sizeof(b32));
+        tsort_node_count = 0;
+
+        positive relation = 0;
+        b32 before = -1;
+        positive at = 0;
+
+        while (at < length)
+        {
+                while (at < length && !bytes[at])
+                        at++;
+
+                if (at == length)
+                        break;
+
+                string_address name = bytes + at;
+                b32 node = tsort_node_for(name);
+                at += string_length(name);
+
+                if (before < 0)
+                {
+                        before = node;
+                        continue;
+                }
+
+                if (before != node)
+                {
+                        tsort_edges[relation] = (tsort_edge){
+                            .successor = node,
+                            .next = tsort_nodes[before].top,
+                        };
+                        tsort_nodes[before].top = (b32)relation++;
+                        tsort_nodes[node].predecessors++;
+                }
+
+                before = -1;
+        }
+
+        if (tsort_node_count > positive_max / (2 * sizeof(b32)))
+                return text_refuse(path, "input too large", 1);
+
+        b32 address_to order = (b32 address_to)text_arena_take(
+            tsort_node_count * 2 * sizeof(b32));
+        b32 address_to spare = order
+                                   ? order + tsort_node_count
+                                   : null;
+
+        if (!order)
+                return text_done(1);
+
+        for (positive i = 0; i < tsort_node_count; i++)
+                order[i] = (b32)i;
+
+        order = array_merge_sort(order, spare, tsort_node_count,
+                                 tsort_node_order);
+
+        positive left = tsort_node_count;
+        b32 head = -1;
+        b32 tail = -1;
+        bool acyclic = true;
+
+        while (left)
+        {
+                for (positive i = 0; i < tsort_node_count; i++)
+                {
+                        b32 node = order[i];
+
+                        if (!tsort_nodes[node].predecessors &&
+                            !tsort_nodes[node].printed)
+                                tsort_queue_add(node, address_of head,
+                                                address_of tail);
+                }
+
+                while (head >= 0)
+                {
+                        b32 node = head;
+                        tsort_node address_to here = tsort_nodes + node;
+
+                        text_put_string(here->name);
+                        text_put_character('\n');
+                        here->printed = true;
+                        left--;
+
+                        for (b32 edge = here->top; edge >= 0;
+                             edge = tsort_edges[edge].next)
+                        {
+                                b32 successor = tsort_edges[edge].successor;
+
+                                tsort_nodes[successor].predecessors--;
+
+                                if (!tsort_nodes[successor].predecessors)
+                                        tsort_queue_add(successor,
+                                                        address_of head,
+                                                        address_of tail);
+                        }
+
+                        head = here->queue;
+                }
+
+                if (left)
+                {
+                        text_error(path, "input contains a loop:");
+                        acyclic = false;
+                        b32 loop = -1;
+
+                        do
+                        {
+                                tsort_break_cycle(order, address_of loop);
+                        } while (loop >= 0);
+                }
+        }
+
+        return text_done(acyclic ? 0 : 1);
+}
+
+// numfmt ----------------------------------------------------
+
+/*
+        Decimal input stays decimal here too.  numfmt needs multiplication
+        and division by user units in addition to seq's power-of-ten scale,
+        so the one extra representation is a reduced unsigned rational.  Its
+        numerator and denominator are each one native word; inputs whose
+        exact reduced form exceeds that bound are rejected instead of being
+        rounded through binary floating point.  The source coefficient is
+        consequently bounded by signed 64-bit and at most eighteen decimal
+        places, the same checked floor seq already owns.
+*/
+enum
+{
+        NUMFMT_SCALE_NONE,
+        NUMFMT_SCALE_AUTO,
+        NUMFMT_SCALE_SI,
+        NUMFMT_SCALE_IEC,
+        NUMFMT_SCALE_IEC_I,
+};
+
+enum
+{
+        NUMFMT_ROUND_FROM_ZERO,
+        NUMFMT_ROUND_UP,
+        NUMFMT_ROUND_DOWN,
+        NUMFMT_ROUND_TO_ZERO,
+        NUMFMT_ROUND_NEAREST,
+};
+
+enum
+{
+        NUMFMT_INVALID_ABORT,
+        NUMFMT_INVALID_FAIL,
+        NUMFMT_INVALID_WARN,
+        NUMFMT_INVALID_IGNORE,
+};
+
+typedef struct
+{
+        string_address text;
+        positive directive;
+        positive after;
+        positive width;
+        positive precision;
+        bool has_precision;
+        bool left;
+        bool zero;
+        bool grouping;
+} numfmt_format;
+
+typedef struct
+{
+        p8 from;
+        p8 to;
+        p8 rounding;
+        p8 invalid;
+        positive from_unit;
+        positive to_unit;
+        bipolar padding;
+        positive header;
+        p8 field_delimiter;
+        bool delimiter_given;
+        bool grouping;
+        bool debug;
+        string_address suffix;
+        string_address unit_separator;
+        numfmt_format format;
+        bool have_format;
+        bool failed;
+        bool stop;
+} numfmt_options;
+
+static numfmt_options numfmt;
+
+static const file_long numfmt_longs[] = {
+    {(string_address) "debug", 'D'},
+    {(string_address) "delimiter", 'd'},
+    {(string_address) "field", 'f'},
+    {(string_address) "format", 'm'},
+    {(string_address) "from", 'r'},
+    {(string_address) "from-unit", 'R'},
+    {(string_address) "grouping", 'g'},
+    {(string_address) "header", 'h'},
+    {(string_address) "invalid", 'i'},
+    {(string_address) "padding", 'p'},
+    {(string_address) "round", 'u'},
+    {(string_address) "suffix", 's'},
+    {(string_address) "unit-separator", 'S'},
+    {(string_address) "to", 't'},
+    {(string_address) "to-unit", 'T'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
+};
+
+static positive numfmt_gcd(positive left, positive right)
+{
+        while (right)
+        {
+                positive next = left % right;
+                left = right;
+                right = next;
+        }
+
+        return left;
+}
+
+static bool numfmt_scale_name(string_address name, bool input, p8 address_to scale)
+{
+        if (string_equals(name, "none"))
+                address_to scale = NUMFMT_SCALE_NONE;
+        else if (input && string_equals(name, "auto"))
+                address_to scale = NUMFMT_SCALE_AUTO;
+        else if (string_equals(name, "si"))
+                address_to scale = NUMFMT_SCALE_SI;
+        else if (string_equals(name, "iec"))
+                address_to scale = NUMFMT_SCALE_IEC;
+        else if (string_equals(name, "iec-i"))
+                address_to scale = NUMFMT_SCALE_IEC_I;
+        else
+                return false;
+
+        return true;
+}
+
+static bool numfmt_power_letter(p8 letter, positive address_to power)
+{
+        static const p8 names[] = "kMGTPEZYRQ";
+
+        if (letter == 'K')
+                letter = 'k';
+
+        for (positive at = 0; names[at]; at++)
+                if (names[at] == letter)
+                {
+                        address_to power = at + 1;
+                        return true;
+                }
+
+        return false;
+}
+
+/* K and Ki are accepted in unit options without a leading one.  Repeating
+   the base keeps overflow checked at the place it occurs and avoids a second
+   scaled-number parser. */
+static bool numfmt_unit(string_address text, positive address_to unit)
+{
+        positive length = string_length(text);
+        positive power = 0;
+        positive base = 1000;
+        positive digits = length;
+
+        if (length >= 2 && text[length - 1] == 'i' &&
+            numfmt_power_letter(text[length - 2], address_of power))
+        {
+                base = 1024;
+                digits -= 2;
+        }
+        else if (length &&
+                 numfmt_power_letter(text[length - 1], address_of power))
+                digits--;
+
+        positive value = 1;
+
+        if (digits)
+        {
+                value = 0;
+
+                for (positive at = 0; at < digits; at++)
+                {
+                        if (!byte_is_digit(text[at]))
+                                return false;
+
+                        positive digit = (positive)(text[at] - '0');
+
+                        if (value > (positive_max - digit) / 10)
+                                return false;
+
+                        value = value * 10 + digit;
+                }
+        }
+        else if (!power)
+                return false;
+
+        if (!value)
+                return false;
+
+        while (power--)
+        {
+                if (value > positive_max / base)
+                        return false;
+
+                value *= base;
+        }
+
+        address_to unit = value;
+        return true;
+}
+
+static bool numfmt_signed_option(string_address text, bipolar address_to value)
+{
+        positive at = 0;
+        bool minus = false;
+
+        if (text[at] == '-' || text[at] == '+')
+        {
+                minus = text[at] == '-';
+                at++;
+        }
+
+        if (!text[at])
+                return false;
+
+        positive magnitude = 0;
+        positive limit = minus ? (positive)bipolar_max + 1
+                               : (positive)bipolar_max;
+
+        for (; text[at]; at++)
+        {
+                if (!byte_is_digit(text[at]))
+                        return false;
+
+                positive digit = (positive)(text[at] - '0');
+
+                if (magnitude > (limit - digit) / 10)
+                        return false;
+
+                magnitude = magnitude * 10 + digit;
+        }
+
+        address_to value = bipolar_from_magnitude(magnitude, minus);
+        return true;
+}
+
+/* numfmt's format deliberately has a narrower grammar than printf: one %f,
+   optional zero/group/left flags, width and an optional decimal precision.
+   No precision means the ordinary human-format precision, not printf's six. */
+static bool numfmt_format_read(string_address text,
+                               numfmt_format address_to format)
+{
+        bool found = false;
+        memory_fill(format, 0, sizeof(*format));
+        format->text = text;
+
+        for (positive at = 0; text[at]; at++)
+        {
+                if (text[at] != '%')
+                        continue;
+
+                if (text[at + 1] == '%')
+                        /* GNU numfmt copies %% literally and can discard the
+                           byte after it while finding the directive.  That
+                           is not printf semantics, so refuse this uncommon
+                           spelling instead of reproducing the corruption. */
+                        return false;
+
+                if (found)
+                        return false;
+
+                found = true;
+                format->directive = at++;
+
+                while (text[at] == '0' || text[at] == '\'' ||
+                       text[at] == '-')
+                {
+                        if (text[at] == '0')
+                                format->zero = true;
+                        else if (text[at] == '\'')
+                                format->grouping = true;
+                        else
+                                format->left = true;
+                        at++;
+                }
+
+                while (byte_is_digit(text[at]))
+                {
+                        positive digit = (positive)(text[at++] - '0');
+
+                        if (format->width > (TEXT_LINE_MAX - digit) / 10)
+                                return false;
+
+                        format->width = format->width * 10 + digit;
+                }
+
+                if (text[at] == '.')
+                {
+                        format->has_precision = true;
+                        at++;
+
+                        if (!byte_is_digit(text[at]))
+                                return false;
+
+                        while (byte_is_digit(text[at]))
+                        {
+                                positive digit = (positive)(text[at++] - '0');
+
+                                if (format->precision > 18)
+                                        return false;
+
+                                format->precision = format->precision * 10 + digit;
+                        }
+
+                        if (format->precision > 18)
+                                return false;
+                }
+
+                if (text[at] != 'f')
+                        return false;
+
+                format->after = at + 1;
+        }
+
+        return found;
+}
+
+static bool numfmt_span_ends(p8 address_to bytes, positive length,
+                             string_address suffix)
+{
+        positive suffix_length = suffix ? string_length(suffix) : 0;
+
+        return suffix_length && length >= suffix_length &&
+               !memory_compare(bytes + length - suffix_length, suffix,
+                               suffix_length);
+}
+
+/* Normalize only enough to let seq's checked parser own the value.  Leading
+   integral zeroes do not consume its coefficient budget, while the original
+   fractional width remains visible in `shown`. */
+static bool numfmt_decimal(p8 address_to bytes, positive length,
+                           seq_decimal address_to number)
+{
+        positive at = 0;
+        bool minus = false;
+
+        if (at < length && bytes[at] == '-')
+        {
+                minus = true;
+                at++;
+        }
+        else if (at < length && bytes[at] == '+')
+                return false;
+
+        positive point = positive_max;
+        positive digits = 0;
+        positive fractional = 0;
+
+        for (positive scan = at; scan < length; scan++)
+                if (bytes[scan] == '.')
+                {
+                        if (point != positive_max)
+                                return false;
+                        point = scan;
+                }
+                else if (byte_is_digit(bytes[scan]))
+                {
+                        digits++;
+                        if (point != positive_max)
+                                fractional++;
+                }
+                else
+                        return false;
+
+        if (!digits || (point != positive_max &&
+                        (point + 1 == length || fractional > 18)))
+                return false;
+
+        positive integral_end = point == positive_max ? length : point;
+        positive zeros = 0;
+
+        while (at + zeros < integral_end && bytes[at + zeros] == '0')
+                zeros++;
+
+        positive integral = integral_end - at - zeros;
+        p8 normalized[48];
+        positive made = 0;
+
+        if (minus)
+                normalized[made++] = '-';
+
+        if (!integral)
+                normalized[made++] = '0';
+        else
+        {
+                if (integral > 20)
+                        return false;
+                memory_copy(normalized + made, bytes + at + zeros, integral);
+                made += integral;
+        }
+
+        if (point != positive_max)
+        {
+                normalized[made++] = '.';
+                memory_copy(normalized + made, bytes + point + 1, fractional);
+                made += fractional;
+        }
+
+        normalized[made] = end;
+        return seq_decimal_number(normalized, number);
+}
+
+static bool numfmt_ratio(seq_decimal address_to number, positive base,
+                         positive power, positive address_to numerator,
+                         positive address_to denominator)
+{
+        positive top[13];
+        positive bottom[2];
+        positive tops = 0;
+        positive bottoms = 0;
+        positive magnitude = (positive)number->coefficient;
+
+        if (number->coefficient < 0)
+                magnitude = (positive)0 - magnitude;
+
+        if (!magnitude)
+        {
+                address_to numerator = 0;
+                address_to denominator = 1;
+                return true;
+        }
+
+        top[tops++] = magnitude;
+        top[tops++] = numfmt.from_unit;
+
+        while (power--)
+                top[tops++] = base;
+
+        if (number->scale)
+                bottom[bottoms++] = seq_power_ten(number->scale);
+        bottom[bottoms++] = numfmt.to_unit;
+
+        for (positive b = 0; b < bottoms; b++)
+                for (positive t = 0; t < tops; t++)
+                {
+                        positive common = numfmt_gcd(top[t], bottom[b]);
+                        top[t] /= common;
+                        bottom[b] /= common;
+                }
+
+        positive n = 1;
+        positive d = 1;
+
+        for (positive at = 0; at < tops; at++)
+        {
+                if (n > positive_max / top[at])
+                        return false;
+                n *= top[at];
+        }
+
+        for (positive at = 0; at < bottoms; at++)
+        {
+                if (d > positive_max / bottom[at])
+                        return false;
+                d *= bottom[at];
+        }
+
+        address_to numerator = n;
+        address_to denominator = d;
+        return true;
+}
+
+/* floor(10 * remainder / divisor), without overflowing a native word.  The
+   threshold is k*d/10 rounded up; the new remainder uses the already
+   available double-width multiply but never requests double-width division. */
+static positive numfmt_decimal_digit(positive remainder, positive divisor,
+                                     positive address_to next)
+{
+        positive quotient = divisor / 10;
+        positive tail = divisor % 10;
+        positive low = 0;
+        positive high = 10;
+
+        while (low + 1 < high)
+        {
+                positive middle = (low + high) / 2;
+                positive threshold = middle * quotient +
+                                     (middle * tail + 9) / 10;
+
+                if (remainder >= threshold)
+                        low = middle;
+                else
+                        high = middle;
+        }
+
+        p128 changed = (p128)remainder * 10 - (p128)low * divisor;
+        address_to next = (positive)changed;
+        return low;
+}
+
+static bool numfmt_round(positive numerator, positive denominator,
+                         positive digits, bool negative,
+                         positive address_to whole,
+                         positive address_to fraction)
+{
+        positive integer = numerator / denominator;
+        positive remainder = numerator % denominator;
+        positive decimals = 0;
+
+        for (positive at = 0; at < digits; at++)
+        {
+                positive digit = numfmt_decimal_digit(remainder, denominator,
+                                                       address_of remainder);
+                decimals = decimals * 10 + digit;
+        }
+
+        bool increase = false;
+
+        if (remainder)
+                switch (numfmt.rounding)
+                {
+                case NUMFMT_ROUND_FROM_ZERO: increase = true; break;
+                case NUMFMT_ROUND_UP: increase = !negative; break;
+                case NUMFMT_ROUND_DOWN: increase = negative; break;
+                case NUMFMT_ROUND_TO_ZERO: break;
+                case NUMFMT_ROUND_NEAREST:
+                        increase = remainder >= denominator / 2 +
+                                                   (denominator & 1);
+                        break;
+                }
+
+        if (increase)
+        {
+                positive scale = seq_power_ten(digits);
+                decimals++;
+
+                if (decimals == scale)
+                {
+                        decimals = 0;
+                        if (integer == positive_max)
+                                return false;
+                        integer++;
+                }
+        }
+
+        address_to whole = integer;
+        address_to fraction = decimals;
+        return true;
+}
+
+static fn numfmt_put_number(positive whole, positive fraction,
+                            positive stored_precision,
+                            positive shown_precision, bool negative,
+                            p8 address_to bytes, positive address_to length)
+{
+        positive used = 0;
+
+        if (negative)
+                bytes[used++] = '-';
+
+        used += positive_into_string(bytes + used, whole);
+
+        if (shown_precision)
+        {
+                bytes[used++] = '.';
+
+                if (stored_precision)
+                {
+                        positive missing = stored_precision -
+                                           positive_digits(fraction);
+                        if (!fraction)
+                                missing = stored_precision - 1;
+                        memory_fill(bytes + used, '0', missing);
+                        used += missing;
+                        used += positive_into_string(bytes + used, fraction);
+                }
+
+                if (shown_precision > stored_precision)
+                {
+                        memory_fill(bytes + used, '0',
+                                    shown_precision - stored_precision);
+                        used += shown_precision - stored_precision;
+                }
+        }
+
+        address_to length = used;
+}
+
+static fn numfmt_body_out(p8 address_to number, positive number_length,
+                          p8 address_to unit, positive unit_length,
+                          positive automatic_width)
+{
+        positive separator_length = unit_length && numfmt.unit_separator
+                                        ? string_length(numfmt.unit_separator)
+                                        : 0;
+        positive suffix_length = numfmt.suffix
+                                     ? string_length(numfmt.suffix) : 0;
+        positive body = number_length + separator_length + unit_length +
+                        suffix_length;
+        positive width = 0;
+        bool left = false;
+        positive zero_padding = 0;
+
+        if (numfmt.have_format)
+        {
+                seq_format_literal(text_put, numfmt.format.text,
+                                   numfmt.format.directive);
+
+                if (numfmt.format.zero && !numfmt.format.left)
+                {
+                        if (numfmt.format.width > number_length)
+                                zero_padding = numfmt.format.width -
+                                               number_length;
+
+                        /* Zero width belongs to the number conversion and
+                           can coexist with an outer --padding. */
+                        if (numfmt.padding)
+                        {
+                                left = numfmt.padding < 0;
+                                width = left
+                                            ? (positive)0 -
+                                                  (positive)numfmt.padding
+                                            : (positive)numfmt.padding;
+                        }
+                }
+                else if (numfmt.format.width)
+                {
+                        width = numfmt.format.width;
+                        left = numfmt.format.left;
+                }
+                else if (numfmt.padding)
+                {
+                        left = numfmt.padding < 0;
+                        width = left ? (positive)0 - (positive)numfmt.padding
+                                     : (positive)numfmt.padding;
+                }
+        }
+        else if (numfmt.padding)
+        {
+                left = numfmt.padding < 0;
+                width = left ? (positive)0 - (positive)numfmt.padding
+                             : (positive)numfmt.padding;
+        }
+        else
+                width = automatic_width;
+
+        body += zero_padding;
+        positive padding = width > body ? width - body : 0;
+
+        if (!left)
+                writer_fill(text_put, padding, ' ');
+
+        if (zero_padding && number_length && number[0] == '-')
+        {
+                text_put(number, 1);
+                writer_fill(text_put, zero_padding, '0');
+                text_put(number + 1, number_length - 1);
+        }
+        else
+        {
+                if (zero_padding)
+                        writer_fill(text_put, zero_padding, '0');
+                text_put(number, number_length);
+        }
+
+        if (separator_length)
+                text_put_string(numfmt.unit_separator);
+        if (unit_length)
+                text_put(unit, unit_length);
+        if (suffix_length)
+                text_put_string(numfmt.suffix);
+        if (left)
+                writer_fill(text_put, padding, ' ');
+
+        if (numfmt.have_format)
+        {
+                string_address after = numfmt.format.text + numfmt.format.after;
+                seq_format_literal(text_put, after, string_length(after));
+        }
+}
+
+static fn numfmt_invalid_value(p8 address_to bytes, positive length)
+{
+        if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
+            numfmt.invalid == NUMFMT_INVALID_FAIL ||
+            numfmt.invalid == NUMFMT_INVALID_WARN)
+        {
+                p8 shown[128];
+                positive take = min(length, sizeof(shown) - 1);
+                memory_copy(shown, bytes, take);
+                shown[take] = end;
+                text_error(shown, "invalid number");
+        }
+
+        if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
+            numfmt.invalid == NUMFMT_INVALID_FAIL)
+                numfmt.failed = true;
+        if (numfmt.invalid == NUMFMT_INVALID_ABORT)
+                numfmt.stop = true;
+}
+
+static bool numfmt_convert(p8 address_to bytes, positive length,
+                           positive automatic_width)
+{
+        positive numeric_length = length;
+
+        if (numfmt_span_ends(bytes, numeric_length, numfmt.suffix))
+                numeric_length -= string_length(numfmt.suffix);
+
+        positive power = 0;
+        positive base = 1;
+        positive suffix_bytes = 0;
+
+        if (numfmt.from != NUMFMT_SCALE_NONE && numeric_length)
+        {
+                bool has_i = numeric_length >= 2 &&
+                             bytes[numeric_length - 1] == 'i';
+                positive candidate = 0;
+
+                if (has_i &&
+                    numfmt_power_letter(bytes[numeric_length - 2],
+                                        address_of candidate) &&
+                    (numfmt.from == NUMFMT_SCALE_AUTO ||
+                     numfmt.from == NUMFMT_SCALE_IEC_I))
+                {
+                        power = candidate;
+                        base = 1024;
+                        suffix_bytes = 2;
+                }
+                else if (!has_i &&
+                         numfmt_power_letter(bytes[numeric_length - 1],
+                                             address_of candidate) &&
+                         numfmt.from != NUMFMT_SCALE_IEC_I)
+                {
+                        power = candidate;
+                        base = numfmt.from == NUMFMT_SCALE_IEC ? 1024 : 1000;
+                        suffix_bytes = 1;
+                }
+        }
+
+        numeric_length -= suffix_bytes;
+
+        if (numfmt_span_ends(bytes, numeric_length, numfmt.unit_separator))
+                numeric_length -= string_length(numfmt.unit_separator);
+
+        seq_decimal number;
+        positive numerator;
+        positive denominator;
+
+        if (!numfmt_decimal(bytes, numeric_length, address_of number) ||
+            !numfmt_ratio(address_of number, base, power,
+                          address_of numerator, address_of denominator))
+        {
+                numfmt_invalid_value(bytes, length);
+                if (!numfmt.stop)
+                        text_put(bytes, length);
+                return false;
+        }
+
+        if (suffix_bytes)
+                number.shown = 0;
+
+        bool negative = number.coefficient < 0 && numerator;
+        positive output_power = 0;
+        positive output_base = numfmt.to == NUMFMT_SCALE_SI ? 1000 : 1024;
+
+        if (numfmt.to != NUMFMT_SCALE_NONE)
+                while (output_power < 10 &&
+                       numerator / output_base >= denominator)
+                {
+                        denominator *= output_base;
+                        output_power++;
+                }
+
+        positive print_precision;
+
+        if (numfmt.have_format && numfmt.format.has_precision)
+                print_precision = numfmt.format.precision;
+        else if (numfmt.to == NUMFMT_SCALE_NONE)
+                print_precision = number.shown;
+        else
+                print_precision = output_power &&
+                                          numerator / denominator < 10
+                                      ? 1 : 0;
+
+        positive round_precision = print_precision;
+
+        if (numfmt.to != NUMFMT_SCALE_NONE)
+        {
+                if (numfmt.have_format && numfmt.format.has_precision)
+                        round_precision = min(round_precision,
+                                              output_power * 3);
+                else
+                        /* GNU carries one guard decimal below ten even when
+                           no suffix is needed.  The final integer rendering
+                           then uses nearest-even, which is why 0.5 is 0 but
+                           1.5 is 2. */
+                        round_precision = numerator / denominator < 10 ? 1 : 0;
+        }
+
+        positive whole;
+        positive fraction;
+
+        if (!numfmt_round(numerator, denominator, round_precision, negative,
+                          address_of whole, address_of fraction))
+        {
+                numfmt_invalid_value(bytes, length);
+                if (!numfmt.stop)
+                        text_put(bytes, length);
+                return false;
+        }
+
+        if (numfmt.to != NUMFMT_SCALE_NONE && whole == output_base &&
+            !fraction && output_power < 10)
+        {
+                whole = 1;
+                output_power++;
+        }
+
+        /* Automatic precision is chosen again after rounding.  9999 SI is
+           rounded with one decimal digit while it is 9.999k, but is printed
+           as 10k; 1000 remains 1.0k. */
+        if (numfmt.to != NUMFMT_SCALE_NONE &&
+            !(numfmt.have_format && numfmt.format.has_precision))
+                print_precision = output_power && whole < 10 ? 1 : 0;
+
+        /* snprintf supplies a final nearest-even rounding when the automatic
+           display has fewer places than the guarded value above.  Do that
+           directly in decimal so libc and binary floating point stay out. */
+        if (print_precision < round_precision)
+        {
+                positive divisor = seq_power_ten(round_precision -
+                                                 print_precision);
+                positive kept = fraction / divisor;
+                positive dropped = fraction % divisor;
+                positive half = divisor / 2;
+
+                positive last = print_precision ? kept : whole;
+
+                if (dropped > half || (dropped == half && (last & 1)))
+                        kept++;
+
+                positive display_scale = seq_power_ten(print_precision);
+                if (kept == display_scale)
+                {
+                        kept = 0;
+                        whole++;
+                }
+
+                fraction = kept;
+                round_precision = print_precision;
+        }
+
+        /* Match the exact decimal floor GNU promises for unscaled output:
+           a base-10 exponent plus requested precision above LDBL_DIG cannot
+           be printed reliably there.  Our parser is exact, but accepting a
+           wider surface would make portable scripts disagree on failure. */
+        if (numfmt.to == NUMFMT_SCALE_NONE &&
+            positive_digits(whole) + print_precision > 19)
+        {
+                numfmt_invalid_value(bytes, length);
+                if (!numfmt.stop)
+                        text_put(bytes, length);
+                return false;
+        }
+
+        p8 number_text[64];
+        positive number_length;
+        numfmt_put_number(whole, fraction, round_precision, print_precision,
+                          negative, number_text, address_of number_length);
+
+        p8 unit[2];
+        positive unit_length = 0;
+
+        if (output_power)
+        {
+                static const p8 powers[] = "kMGTPEZYRQ";
+                unit[unit_length++] = powers[output_power - 1];
+
+                if (output_power == 1)
+                        unit[0] = numfmt.to == NUMFMT_SCALE_SI ? 'k' : 'K';
+                if (numfmt.to == NUMFMT_SCALE_IEC_I)
+                        unit[unit_length++] = 'i';
+        }
+
+        numfmt_body_out(number_text, number_length, unit, unit_length,
+                        automatic_width);
+        return true;
+}
+
+static fn numfmt_record(p8 address_to bytes, positive length)
+{
+        if (numfmt.delimiter_given)
+        {
+                positive start = 0;
+                positive field = 1;
+
+                for (positive at = 0; at <= length; at++)
+                        if (at == length || bytes[at] == numfmt.field_delimiter)
+                        {
+                                positive size = at - start;
+
+                                if (text_list_has(field))
+                                        numfmt_convert(bytes + start, size, 0);
+                                else
+                                        text_put(bytes + start, size);
+
+                                if (numfmt.stop)
+                                        return;
+
+                                if (at < length)
+                                        text_put_character(numfmt.field_delimiter);
+                                start = at + 1;
+                                field++;
+                        }
+
+                return;
+        }
+
+        positive at = 0;
+        positive field = 0;
+
+        while (at < length)
+        {
+                if (bytes[at] == ' ' || bytes[at] == '\t')
+                {
+                        text_put_character(' ');
+                        at++;
+                        continue;
+                }
+
+                positive start = at;
+
+                while (at < length && bytes[at] != ' ' && bytes[at] != '\t')
+                        at++;
+
+                positive size = at - start;
+                field++;
+
+                if (text_list_has(field))
+                        numfmt_convert(bytes + start, size,
+                                       !numfmt.padding && !numfmt.have_format
+                                           ? size : 0);
+                else
+                        text_put(bytes + start, size);
+
+                if (numfmt.stop)
+                        return;
+        }
+}
+
+static b32 tools_numfmt()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "numfmt",
+            .allowed = (string_address) "dz",
+            .valued = (string_address) "dfmpriRsStuT",
+            .long_optional = (string_address) "h",
+            .longs = numfmt_longs,
+            .operand = file_operand,
+        };
+
+        text_begin("numfmt");
+        numfmt = (numfmt_options){
+            .from = NUMFMT_SCALE_NONE,
+            .to = NUMFMT_SCALE_NONE,
+            .rounding = NUMFMT_ROUND_FROM_ZERO,
+            .invalid = NUMFMT_INVALID_ABORT,
+            .from_unit = 1,
+            .to_unit = 1,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+
+        positive flags = taking.flags;
+        numfmt.debug = (flags & FILE_FLAG('D')) != 0;
+        numfmt.grouping = (flags & FILE_FLAG('g')) != 0;
+        numfmt.suffix = file_option_value(address_of taking, 's');
+        numfmt.unit_separator = file_option_value(address_of taking, 'S');
+
+        string_address value = file_option_value(address_of taking, 'r');
+        if (value && !numfmt_scale_name(value, true, address_of numfmt.from))
+                return text_refuse(value, "invalid --from value", 1);
+
+        value = file_option_value(address_of taking, 't');
+        if (value && !numfmt_scale_name(value, false, address_of numfmt.to))
+                return text_refuse(value, "invalid --to value", 1);
+
+        value = file_option_value(address_of taking, 'R');
+        if (value && !numfmt_unit(value, address_of numfmt.from_unit))
+                return text_refuse(value, "invalid unit size", 1);
+
+        value = file_option_value(address_of taking, 'T');
+        if (value && !numfmt_unit(value, address_of numfmt.to_unit))
+                return text_refuse(value, "invalid unit size", 1);
+
+        value = file_option_value(address_of taking, 'p');
+        if (value && (!numfmt_signed_option(value, address_of numfmt.padding) ||
+                      !numfmt.padding))
+                return text_refuse(value, "invalid padding value", 1);
+
+        value = file_option_value(address_of taking, 'u');
+        if (value)
+        {
+                if (string_equals(value, "up"))
+                        numfmt.rounding = NUMFMT_ROUND_UP;
+                else if (string_equals(value, "down"))
+                        numfmt.rounding = NUMFMT_ROUND_DOWN;
+                else if (string_equals(value, "from-zero"))
+                        numfmt.rounding = NUMFMT_ROUND_FROM_ZERO;
+                else if (string_equals(value, "towards-zero"))
+                        numfmt.rounding = NUMFMT_ROUND_TO_ZERO;
+                else if (string_equals(value, "nearest"))
+                        numfmt.rounding = NUMFMT_ROUND_NEAREST;
+                else
+                        return text_refuse(value, "invalid rounding method", 1);
+        }
+
+        value = file_option_value(address_of taking, 'i');
+        if (value)
+        {
+                if (string_equals(value, "abort"))
+                        numfmt.invalid = NUMFMT_INVALID_ABORT;
+                else if (string_equals(value, "fail"))
+                        numfmt.invalid = NUMFMT_INVALID_FAIL;
+                else if (string_equals(value, "warn"))
+                        numfmt.invalid = NUMFMT_INVALID_WARN;
+                else if (string_equals(value, "ignore"))
+                        numfmt.invalid = NUMFMT_INVALID_IGNORE;
+                else
+                        return text_refuse(value, "invalid invalid-mode", 1);
+        }
+
+        value = file_option_value(address_of taking, 'm');
+        if (value)
+        {
+                if (!numfmt_format_read(value, address_of numfmt.format))
+                        return text_refuse(value,
+                                           "format needs exactly one %f conversion",
+                                           1);
+                numfmt.have_format = true;
+        }
+
+        if (numfmt.grouping && numfmt.have_format)
+                return text_refuse(null,
+                                   "--grouping cannot be combined with --format",
+                                   1);
+        if (numfmt.grouping && numfmt.to != NUMFMT_SCALE_NONE)
+                return text_refuse(null,
+                                   "--grouping cannot be combined with --to",
+                                   1);
+
+        value = file_option_value(address_of taking, 'd');
+        if (flags & FILE_FLAG('d'))
+        {
+                positive length = string_length(value);
+
+                if (length > 1)
+                        return text_refuse(value,
+                                           "delimiter must be one byte", 1);
+                numfmt.delimiter_given = true;
+                numfmt.field_delimiter = length ? value[0] : '\0';
+        }
+
+        memory_fill(text_list, 0, sizeof(text_list));
+        memory_fill(text_list_begins, 0, sizeof(text_list_begins));
+        text_list_open = 0;
+        value = file_option_value(address_of taking, 'f');
+        if (!value)
+                value = (string_address) "1";
+        if (!text_list_parse(value))
+                return text_refuse(value, "invalid field specification", 1);
+
+        if (flags & FILE_FLAG('h'))
+        {
+                value = file_option_value(address_of taking, 'h');
+                numfmt.header = 1;
+
+                if (value && (!string_digits_exact(value, address_of numfmt.header) ||
+                              !numfmt.header))
+                        return text_refuse(value, "invalid header value", 1);
+        }
+
+        text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
+
+        if (file_operand_count)
+        {
+                for (positive at = 0; at < file_operand_count && !numfmt.stop; at++)
+                {
+                        string_address word = file_operand_at(at);
+                        numfmt_convert(word, string_length(word), 0);
+                        if (!numfmt.stop)
+                                text_put_character(text_delimiter);
+                }
+        }
+        else if (text_open(null))
+        {
+                positive records = 0;
+
+                while (!numfmt.stop && text_line_next())
+                {
+                        if (records++ < numfmt.header)
+                                text_put(text_line, text_line_length);
+                        else
+                                numfmt_record(text_line, text_line_length);
+
+                        if (!numfmt.stop)
+                                text_put_character(text_delimiter);
+                }
+
+                text_close();
+        }
+
+        return text_done(numfmt.failed ? 2 : text_status);
+}
+
+// factor ----------------------------------------------------
+
+/*
+        This is deliberately a native-word factorizer, not a miniature
+        bignum package.  The shared checked decimal floor accepts 0 through
+        18446744073709551615 on the 64-bit targets; a longer value is an
+        error, never a truncated factorization.  All visible numbers go back
+        through the resident positive_to_string writer.
+
+        Odd modular arithmetic uses Montgomery form.  Its reduction needs a
+        64x64->128 multiply and shifts, but no double-width division (and
+        therefore no compiler runtime hiding in the freestanding binary).
+        Deterministic Miller-Rabin bases cover the complete 64-bit interval;
+        Brent's Pollard rho uses a deterministic polynomial schedule so it
+        does not grow a second RNG beside file_random_state.
+*/
+typedef struct
+{
+        positive modulus;
+        positive inverse;
+        positive one;
+        positive square;
+} factor_modulus;
+
+static positive factor_add_mod(positive left, positive right,
+                               positive modulus)
+{
+        return left >= modulus - right
+                   ? left - (modulus - right)
+                   : left + right;
+}
+
+static fn factor_modulus_begin(factor_modulus address_to context,
+                               positive modulus)
+{
+        positive inverse = 1;
+
+        /* Newton doubles the correct inverse bits at each step. */
+        for (positive at = 0; at < 6; at++)
+                inverse *= 2 - modulus * inverse;
+
+        context->modulus = modulus;
+        context->inverse = (positive)0 - inverse;
+
+        positive one = 1;
+        for (positive at = 0; at < positive_bits; at++)
+                one = factor_add_mod(one, one, modulus);
+        context->one = one;
+
+        positive square = one;
+        for (positive at = 0; at < positive_bits; at++)
+                square = factor_add_mod(square, square, modulus);
+        context->square = square;
+}
+
+static positive factor_multiply(factor_modulus address_to context,
+                                positive left, positive right)
+{
+        p128 product = (p128)left * right;
+        positive correction = (positive)product * context->inverse;
+        p128 adjusted = (p128)correction * context->modulus;
+        p128 reduced = product + adjusted;
+        positive answer = (positive)(reduced >> positive_bits);
+
+        /* The mathematical sum can carry out of the 128-bit object.  In
+           that case its high word is R+answer and the mandatory subtraction
+           of modulus is represented by the same native wrap. */
+        if (reduced < product)
+                return answer - context->modulus;
+
+        return answer >= context->modulus
+                   ? answer - context->modulus : answer;
+}
+
+static positive factor_into_montgomery(factor_modulus address_to context,
+                                       positive value)
+{
+        return factor_multiply(context, value % context->modulus,
+                               context->square);
+}
+
+static positive factor_power(factor_modulus address_to context,
+                             positive base, positive exponent)
+{
+        positive answer = context->one;
+        positive value = factor_into_montgomery(context, base);
+
+        while (exponent)
+        {
+                if (exponent & 1)
+                        answer = factor_multiply(context, answer, value);
+                exponent >>= 1;
+
+                if (exponent)
+                        value = factor_multiply(context, value, value);
+        }
+
+        return answer;
+}
+
+static positive factor_gcd(positive left, positive right)
+{
+        while (right)
+        {
+                positive next = left % right;
+                left = right;
+                right = next;
+        }
+
+        return left;
+}
+
+static bool factor_is_prime(positive number)
+{
+        static const positive bases[] = {
+            2, 325, 9375, 28178, 450775, 9780504, 1795265022,
+        };
+
+        if (number < 4)
+                return number == 2 || number == 3;
+        if (!(number & 1))
+                return false;
+
+        positive odd = number - 1;
+        positive shifts = 0;
+
+        while (!(odd & 1))
+        {
+                odd >>= 1;
+                shifts++;
+        }
+
+        factor_modulus context;
+        factor_modulus_begin(address_of context, number);
+        positive negative_one = number - context.one;
+
+        for (positive at = 0; at < array_count(bases); at++)
+        {
+                positive base = bases[at] % number;
+
+                if (!base)
+                        continue;
+
+                positive witness = factor_power(address_of context, base, odd);
+
+                if (witness == context.one || witness == negative_one)
+                        continue;
+
+                bool passed = false;
+
+                for (positive square = 1; square < shifts; square++)
+                {
+                        witness = factor_multiply(address_of context,
+                                                  witness, witness);
+
+                        if (witness == negative_one)
+                        {
+                                passed = true;
+                                break;
+                        }
+
+                        if (witness == context.one)
+                                return false;
+                }
+
+                if (!passed)
+                        return false;
+        }
+
+        return true;
+}
+
+static positive factor_polynomial(factor_modulus address_to context,
+                                  positive value, positive constant)
+{
+        return factor_add_mod(factor_multiply(context, value, value),
+                              constant, context->modulus);
+}
+
+static positive factor_rho(positive number)
+{
+        factor_modulus context;
+        factor_modulus_begin(address_of context, number);
+
+        /* Different constants and starts are independent deterministic rho
+           walks.  A per-walk budget bounds every failure before the next
+           polynomial is tried. */
+        for (positive attempt = 0; attempt < 32; attempt++)
+        {
+                positive constant = factor_into_montgomery(
+                    address_of context, 1 + attempt * 2);
+                positive y = factor_into_montgomery(
+                    address_of context, 2 + attempt * 3);
+                positive x = 0;
+                positive saved = 0;
+                positive product = context.one;
+                positive divisor = 1;
+                positive run = 1;
+                positive budget = 1u << 23;
+
+                while (divisor == 1 && budget)
+                {
+                        x = y;
+
+                        for (positive at = 0; at < run && budget; at++)
+                        {
+                                y = factor_polynomial(address_of context, y,
+                                                      constant);
+                                budget--;
+                        }
+
+                        positive done = 0;
+
+                        while (done < run && divisor == 1 && budget)
+                        {
+                                saved = y;
+                                positive block = min((positive)128, run - done);
+                                product = context.one;
+
+                                for (positive at = 0; at < block && budget; at++)
+                                {
+                                        y = factor_polynomial(address_of context,
+                                                              y, constant);
+                                        positive difference = x > y ? x - y
+                                                                    : y - x;
+                                        product = factor_multiply(
+                                            address_of context, product,
+                                            difference);
+                                        budget--;
+                                }
+
+                                divisor = factor_gcd(product, number);
+                                done += block;
+                        }
+
+                        if (run > ((positive)1 << 22))
+                                break;
+                        run <<= 1;
+                }
+
+                if (divisor > 1 && divisor < number)
+                        return divisor;
+
+                if (divisor == number)
+                {
+                        divisor = 1;
+                        while (divisor == 1)
+                        {
+                                if (!budget)
+                                        break;
+                                saved = factor_polynomial(address_of context,
+                                                          saved, constant);
+                                positive difference = x > saved ? x - saved
+                                                                : saved - x;
+                                divisor = factor_gcd(difference, number);
+                                budget--;
+                        }
+                }
+
+                if (divisor > 1 && divisor < number)
+                        return divisor;
+        }
+
+        return 0;
+}
+
+static bool factor_collect(positive number, positive address_to factors,
+                           positive address_to count)
+{
+        if (number == 1)
+                return true;
+
+        if (factor_is_prime(number))
+        {
+                if (address_to count == positive_bits)
+                        return false;
+                factors[(address_to count)++] = number;
+                return true;
+        }
+
+        positive divisor = factor_rho(number);
+
+        return divisor && factor_collect(divisor, factors, count) &&
+               factor_collect(number / divisor, factors, count);
+}
+
+static bool factor_number(p8 address_to bytes, positive length,
+                          bool exponents)
+{
+        p8 decimal[32];
+        positive start = length && bytes[0] == '+' ? 1 : 0;
+        positive value;
+
+        if (start == length || length - start >= sizeof(decimal))
+                goto invalid;
+
+        memory_copy(decimal, bytes + start, length - start);
+        decimal[length - start] = end;
+
+        /* The checked digit floor is shared with shred's native sizes.  Keep
+           its cursor so an overflow, sign, point or trailing byte cannot be
+           mistaken for a numeric prefix (string_digits_exact intentionally
+           has wrapping arithmetic for older callers). */
+        string_address after = decimal;
+        if (!string_digits_checked(address_of after, 10, address_of value) ||
+            string_get(after))
+                goto invalid;
+
+        positive_to_string(text_put, value);
+        text_put_character(':');
+
+        if (value > 1)
+        {
+                static const p8 small_primes[] = {
+                    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41,
+                    43, 47, 53, 59, 61, 67, 71, 73, 79, 83, 89, 97,
+                };
+                positive factors[positive_bits];
+                positive count = 0;
+                positive remaining = value;
+
+                for (positive at = 0; at < array_count(small_primes); at++)
+                {
+                        positive prime = small_primes[at];
+
+                        while (!(remaining % prime))
+                        {
+                                factors[count++] = prime;
+                                remaining /= prime;
+                        }
+                }
+
+                /* A short scalar walk beats setting up seven Montgomery
+                   witnesses for the tiny values that dominate shell loops.
+                   Bound it at one million: at most 450 odd remainders are
+                   tried, while real 32/64-bit work still goes directly to
+                   Miller-Rabin and rho. */
+                if (remaining < 1000000)
+                {
+                        for (positive trial = 101;
+                             trial <= remaining / trial; trial += 2)
+                                while (!(remaining % trial))
+                                {
+                                        factors[count++] = trial;
+                                        remaining /= trial;
+                                }
+
+                        if (remaining > 1)
+                                factors[count++] = remaining;
+                        remaining = 1;
+                }
+
+                if (remaining > 1 &&
+                    !factor_collect(remaining, factors, address_of count))
+                {
+                        text_error(decimal, "factorization did not converge");
+                        text_put_character('\n');
+                        return false;
+                }
+
+                for (positive at = 1; at < count; at++)
+                {
+                        positive held = factors[at];
+                        positive before = at;
+
+                        while (before && factors[before - 1] > held)
+                        {
+                                factors[before] = factors[before - 1];
+                                before--;
+                        }
+
+                        factors[before] = held;
+                }
+
+                for (positive at = 0; at < count;)
+                {
+                        positive after = at + 1;
+
+                        while (after < count && factors[after] == factors[at])
+                                after++;
+
+                        text_put_character(' ');
+                        positive_to_string(text_put, factors[at]);
+
+                        if (exponents && after - at > 1)
+                        {
+                                text_put_character('^');
+                                positive_to_string(text_put, after - at);
+                        }
+
+                        at = exponents ? after : at + 1;
+                }
+        }
+
+        text_put_character('\n');
+        return true;
+
+invalid:
+        {
+                p8 shown[64];
+                positive take = min(length, sizeof(shown) - 1);
+                memory_copy(shown, bytes, take);
+                shown[take] = end;
+                text_error(shown,
+                           "not a valid positive native-word integer");
+        }
+        return false;
+}
+
+static const file_long factor_longs[] = {
+    {(string_address) "exponents", 'h'},
+    {null, 0},
+};
+
+static b32 tools_factor()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "factor",
+            .allowed = (string_address) "h",
+            .valued = (string_address) "",
+            .longs = factor_longs,
+            .operand = file_operand,
+        };
+
+        text_begin("factor");
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+
+        bool exponents = (taking.flags & FILE_FLAG('h')) != 0;
+        bool failed = false;
+
+        if (file_operand_count)
+        {
+                for (positive at = 0; at < file_operand_count; at++)
+                {
+                        string_address word = file_operand_at(at);
+                        if (!factor_number(word, string_length(word), exponents))
+                                failed = true;
+                }
+        }
+        else
+        {
+                text_reader input;
+
+                if (!text_reader_open(address_of input, null))
+                        return text_done(1);
+
+                p8 token[32];
+                positive length = 0;
+                bool excess = false;
+
+                while (text_reader_fill(address_of input))
+                {
+                        p8 byte = input.buffer[input.position++];
+
+                        if (byte_is_space(byte))
+                        {
+                                if (length || excess)
+                                {
+                                        if (excess ||
+                                            !factor_number(token, length,
+                                                           exponents))
+                                        {
+                                                if (excess)
+                                                        text_error(null,
+                                                                   "integer exceeds native-word ceiling");
+                                                failed = true;
+                                        }
+                                        length = 0;
+                                        excess = false;
+                                }
+                        }
+                        else if (length < sizeof(token) - 1)
+                                token[length++] = byte;
+                        else
+                                excess = true;
+                }
+
+                if (length || excess)
+                {
+                        if (excess || !factor_number(token, length, exponents))
+                        {
+                                if (excess)
+                                        text_error(null,
+                                                   "integer exceeds native-word ceiling");
+                                failed = true;
+                        }
+                }
+
+                if (input.failed)
+                        failed = true;
+                text_close_handle(address_of input.opened, input.handle);
+        }
+
+        return text_done(failed ? 1 : 0);
+}
+
 // dd --------------------------------------------------------
 
 #define DD_NOTRUNC 0x001

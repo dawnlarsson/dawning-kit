@@ -3254,6 +3254,607 @@ static bool ul_namespace_same(bipolar handle,
         return same;
 }
 
+// lsns ------------------------------------------------------------
+
+enum
+{
+        UL_LSNS_NS,
+        UL_LSNS_TYPE,
+        UL_LSNS_PATH,
+        UL_LSNS_NPROCS,
+        UL_LSNS_PID,
+        UL_LSNS_PPID,
+        UL_LSNS_COMMAND,
+        UL_LSNS_UID,
+        UL_LSNS_USER,
+        UL_LSNS_COLUMNS,
+};
+
+typedef struct
+{
+        string_address name;
+        string_address heading;
+        positive width;
+        bool number;
+} ul_lsns_column;
+
+static const ul_lsns_column ul_lsns_columns[] = {
+    {(string_address)"ns", (string_address)"NS", 10, true},
+    {(string_address)"type", (string_address)"TYPE", 0, false},
+    {(string_address)"path", (string_address)"PATH", 0, false},
+    {(string_address)"nprocs", (string_address)"NPROCS", 5, true},
+    {(string_address)"pid", (string_address)"PID", 5, true},
+    {(string_address)"ppid", (string_address)"PPID", 4, true},
+    {(string_address)"command", (string_address)"COMMAND", 0, false},
+    {(string_address)"uid", (string_address)"UID", 3, true},
+    {(string_address)"user", (string_address)"USER", 0, false},
+};
+
+typedef struct
+{
+        p64 inode;
+        struct snapshot_process address_to process;
+        string_address command;
+        string_address user;
+        p32 processes;
+        p8 type;
+} ul_lsns_entry;
+
+static system_snapshot ul_lsns_snapshot;
+
+static const file_long ul_lsns_longs[] = {
+    {(string_address)"json", 'J'},
+    {(string_address)"list", 'l'},
+    {(string_address)"noheadings", 'n'},
+    {(string_address)"output", 'o'},
+    {(string_address)"output-all", 'A'},
+    {(string_address)"persistent", 'P'},
+    {(string_address)"task", 'p'},
+    {(string_address)"raw", 'r'},
+    {(string_address)"notruncate", 'u'},
+    {(string_address)"nowrap", 'W'},
+    {(string_address)"type", 't'},
+    {(string_address)"tree", 'T'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static PURE bipolar ul_lsns_order(ul_lsns_entry left, ul_lsns_entry right)
+{
+        if (left.inode != right.inode)
+                return left.inode < right.inode ? -1 : 1;
+        if (left.type != right.type)
+                return left.type < right.type ? -1 : 1;
+        if (left.process->pid != right.process->pid)
+                return left.process->pid < right.process->pid ? -1 : 1;
+        return 0;
+}
+
+static b32 ul_lsns_type(string_address name)
+{
+        for (positive i = 0; i < UL_NS_COUNT; i++)
+                if (string_equals(name, ul_namespaces[i].name))
+                        return (b32)i;
+
+        return -1;
+}
+
+static bool ul_lsns_column_add(p8 address_to columns, positive address_to count,
+                               p8 column)
+{
+        for (positive i = 0; i < address_to count; i++)
+                if (columns[i] == column)
+                        return true;
+
+        if (address_to count == UL_LSNS_COLUMNS)
+                return false;
+
+        columns[(address_to count)++] = column;
+        return true;
+}
+
+static bool ul_lsns_column_list(string_address text, p8 address_to columns,
+                                positive address_to count)
+{
+        static const p8 defaults[] = {
+            UL_LSNS_NS, UL_LSNS_TYPE, UL_LSNS_NPROCS,
+            UL_LSNS_PID, UL_LSNS_USER, UL_LSNS_COMMAND,
+        };
+        bool append = string_is(text, '+');
+
+        address_to count = 0;
+        if (append)
+        {
+                text++;
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[(address_to count)++] = defaults[i];
+        }
+
+        while (string_get(text))
+        {
+                string_address comma = string_first_of(text, ',');
+                positive length = comma ? (positive)(comma - text)
+                                        : string_length(text);
+                positive found = UL_LSNS_COLUMNS;
+
+                for (positive i = 0; i < UL_LSNS_COLUMNS; i++)
+                        if (file_same_word(text, length,
+                                           ul_lsns_columns[i].name))
+                        {
+                                found = i;
+                                break;
+                        }
+
+                if (found == UL_LSNS_COLUMNS ||
+                    !ul_lsns_column_add(columns, count, (p8)found))
+                        return false;
+
+                text += length;
+                if (!string_get(text))
+                        break;
+                text++;
+        }
+
+        return address_to count != 0;
+}
+
+static string_address ul_lsns_field(ul_lsns_entry address_to entry,
+                                    p8 column, p8 address_to scratch)
+{
+        struct snapshot_process address_to process = entry->process;
+
+        switch (column)
+        {
+        case UL_LSNS_NS:
+                positive_into_string(scratch, (positive)entry->inode);
+                return scratch;
+        case UL_LSNS_TYPE:
+                return ul_namespaces[entry->type].name;
+        case UL_LSNS_PATH:
+                system_process_path(scratch, process->pid, "ns",
+                                    ul_namespaces[entry->type].name);
+                return scratch;
+        case UL_LSNS_NPROCS:
+                positive_into_string(scratch, entry->processes);
+                return scratch;
+        case UL_LSNS_PID:
+                positive_into_string(scratch, process->pid);
+                return scratch;
+        case UL_LSNS_PPID:
+                positive_into_string(scratch, process->ppid);
+                return scratch;
+        case UL_LSNS_COMMAND:
+                return entry->command;
+        case UL_LSNS_UID:
+                positive_into_string(scratch, process->uid);
+                return scratch;
+        default:
+                return entry->user;
+        }
+}
+
+/* libsmartcols' raw mode protects field separators.  Process arguments may
+   also contain literal controls or backslashes, so keep every record on one
+   unambiguous physical line instead of escaping spaces alone. */
+static fn ul_lsns_raw(string_address text)
+{
+        static const p8 hex[] = "0123456789abcdef";
+
+        while (string_get(text))
+        {
+                p8 byte = string_get(text++);
+
+                if (byte > ' ' && byte < 0x7f && byte != '\\')
+                        log(text - 1, 1);
+                else
+                {
+                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
+                                         hex[byte & 15]};
+                        log(escaped, sizeof(escaped));
+                }
+        }
+}
+
+/* Normal smartcols output leaves separators readable but still quotes bytes
+   that could manufacture a second physical row. */
+static PURE positive ul_lsns_safe_length(string_address text)
+{
+        positive length = 0;
+
+        while (string_get(text))
+        {
+                p8 byte = string_get(text++);
+                length += byte < ' ' || byte == 0x7f ? 4 : 1;
+        }
+        return length;
+}
+
+static fn ul_lsns_safe(string_address text)
+{
+        static const p8 hex[] = "0123456789abcdef";
+
+        while (string_get(text))
+        {
+                p8 byte = string_get(text++);
+
+                if (byte >= ' ' && byte != 0x7f)
+                        log(text - 1, 1);
+                else
+                {
+                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
+                                         hex[byte & 15]};
+                        log(escaped, sizeof(escaped));
+                }
+        }
+}
+
+static fn ul_lsns_safe_field(string_address text, positive width, bool left)
+{
+        positive length = ul_lsns_safe_length(text);
+        positive padding = width > length ? width - length : 0;
+
+        if (!left)
+                writer_fill(log, padding, ' ');
+        ul_lsns_safe(text);
+        if (left)
+                writer_fill(log, padding, ' ');
+}
+
+static fn ul_lsns_json_string(string_address text)
+{
+        static const p8 hex[] = "0123456789abcdef";
+
+        log("\"", 1);
+        while (string_get(text))
+        {
+                p8 byte = string_get(text++);
+
+                if (byte == '"' || byte == '\\')
+                {
+                        p8 escaped[2] = {'\\', byte};
+                        log(escaped, sizeof(escaped));
+                }
+                else if (byte < ' ')
+                {
+                        p8 escaped[6] = {'\\', 'u', '0', '0',
+                                         hex[byte >> 4], hex[byte & 15]};
+                        log(escaped, sizeof(escaped));
+                }
+                else
+                        log(text - 1, 1);
+        }
+        log("\"", 1);
+}
+
+static fn ul_lsns_json(ul_lsns_entry address_to entries, positive count,
+                       p8 address_to columns, positive column_count)
+{
+        log("{\n   \"namespaces\": [", 20);
+
+        for (positive row = 0; row < count; row++)
+        {
+                log(row ? ",{\n" : "\n      {\n", row ? 3 : 9);
+
+                for (positive field = 0; field < column_count; field++)
+                {
+                        p8 column = columns[field];
+                        p8 scratch[96];
+                        string_address value = ul_lsns_field(
+                            entries + row, column, scratch);
+
+                        if (field)
+                                log(",\n", 2);
+                        string_format(log, "         \"%s\": ",
+                                      ul_lsns_columns[column].name);
+                        if (ul_lsns_columns[column].number)
+                                log(value, string_length(value));
+                        else
+                                ul_lsns_json_string(value);
+                }
+                log("\n      }", 8);
+        }
+
+        if (!count)
+                log("\n", 1);
+        log("\n   ]\n}\n", 8);
+}
+
+static fn ul_lsns_table(ul_lsns_entry address_to entries, positive count,
+                        p8 address_to columns, positive column_count,
+                        bool headings, bool raw)
+{
+        positive widths[UL_LSNS_COLUMNS] = {0};
+
+        if (!count)
+                return;
+
+        for (positive i = 0; i < column_count; i++)
+        {
+                p8 column = columns[i];
+                widths[column] = ul_lsns_columns[column].width;
+        }
+
+        if (headings)
+                for (positive i = 0; i < column_count; i++)
+                {
+                        p8 column = columns[i];
+                        positive heading = string_length(
+                            ul_lsns_columns[column].heading);
+
+                        if (heading > widths[column])
+                                widths[column] = heading;
+                }
+
+        if (!raw)
+                for (positive row = 0; row < count; row++)
+                        for (positive field = 0; field < column_count; field++)
+                        {
+                                p8 column = columns[field];
+                                p8 scratch[96];
+                                positive length = ul_lsns_safe_length(
+                                    ul_lsns_field(entries + row, column,
+                                                  scratch));
+
+                                if (length > widths[column])
+                                        widths[column] = length;
+                        }
+
+        for (positive row = 0; row < count + (headings ? 1 : 0); row++)
+        {
+                bool heading = headings && !row;
+                ul_lsns_entry address_to entry = entries +
+                    (heading ? 0 : row - (headings ? 1 : 0));
+
+                for (positive field = 0; field < column_count; field++)
+                {
+                        p8 column = columns[field];
+                        p8 scratch[96];
+                        string_address value = heading
+                            ? ul_lsns_columns[column].heading
+                            : ul_lsns_field(entry, column, scratch);
+
+                        if (field)
+                                log(" ", 1);
+                        if (raw)
+                                ul_lsns_raw(value);
+                        else
+                        {
+                                bool number = ul_lsns_columns[column].number;
+                                bool last_text = field + 1 == column_count &&
+                                                 !number;
+
+                                ul_lsns_safe_field(
+                                    value, last_text ? 0 : widths[column],
+                                    !number);
+                        }
+                }
+                log("\n", 1);
+        }
+}
+
+static b32 util_linux_lsns()
+{
+        file_taking taking = {
+            .program = (string_address)"lsns",
+            .allowed = (string_address)"JlnoprutPWVh",
+            .valued = (string_address)"optT",
+            .longs = ul_lsns_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] [namespace]",
+                    address_of answer))
+                return answer;
+
+        if (taking.flags & FILE_FLAG('T'))
+                return ul_bad_usage("lsns", "tree output is not supported");
+        if (taking.flags & FILE_FLAG('P'))
+                return ul_bad_usage("lsns",
+                                    "persistent namespace discovery is not supported");
+        if (taking.flags & FILE_FLAG('A'))
+                return ul_bad_usage("lsns", "--output-all is not supported");
+        if ((taking.flags & FILE_FLAG('J')) &&
+            (taking.flags & FILE_FLAG('r')))
+                return ul_bad_usage("lsns", "--json and --raw are mutually exclusive");
+
+        positive argument_count = (positive)program_argument_count();
+        positive operands = argument_count - taking.first;
+
+        if (operands > 1)
+                return ul_bad_usage("lsns", "too many namespace operands");
+        if (operands && file_option_value(address_of taking, 'p'))
+                return ul_bad_usage("lsns",
+                                    "--task and a namespace operand are mutually exclusive");
+
+        b32 type = -1;
+        string_address type_name = file_option_value(address_of taking, 't');
+
+        if (type_name && (type = ul_lsns_type(type_name)) < 0)
+        {
+                string_format(file_fail, "lsns: unknown namespace type: %s\n",
+                              type_name);
+                return 1;
+        }
+
+        b32 task = 0;
+        bool task_selected = file_option_value(address_of taking, 'p') != null;
+        if (task_selected &&
+            !ul_pid(file_option_value(address_of taking, 'p'), "lsns", "PID",
+                    address_of task))
+                return 1;
+
+        positive wanted_inode = 0;
+        bool inode_selected = operands != 0;
+        if (inode_selected &&
+            !ul_unsigned(program_argument((b32)taking.first), positive_max,
+                         address_of wanted_inode))
+                return ul_bad_usage("lsns", "invalid namespace inode");
+
+        static const p8 defaults[] = {
+            UL_LSNS_NS, UL_LSNS_TYPE, UL_LSNS_NPROCS,
+            UL_LSNS_PID, UL_LSNS_USER, UL_LSNS_COMMAND,
+        };
+        p8 columns[UL_LSNS_COLUMNS];
+        positive column_count = 0;
+        string_address output = file_option_value(address_of taking, 'o');
+
+        if (output)
+        {
+                if (!ul_lsns_column_list(output, columns,
+                                         address_of column_count))
+                        return ul_bad_usage("lsns", "unknown output column");
+        }
+        else if (inode_selected)
+        {
+                columns[column_count++] = UL_LSNS_PID;
+                columns[column_count++] = UL_LSNS_PPID;
+                columns[column_count++] = UL_LSNS_USER;
+                columns[column_count++] = UL_LSNS_COMMAND;
+        }
+        else
+                for (positive i = 0; i < array_count(defaults); i++)
+                        columns[column_count++] = defaults[i];
+
+        text_begin("lsns");
+        text_arena_used = 0;
+
+        if (!system_snapshot_take(address_of ul_lsns_snapshot,
+                                  SPARK_SNAPSHOT_PROCESS, true))
+                return text_refuse("/proc", "cannot read", 1);
+
+        positive process_count = ul_lsns_snapshot.header.process_count;
+        positive type_count = type < 0 ? UL_NS_COUNT : 1;
+
+        if (process_count > positive_max / type_count ||
+            process_count * type_count >
+                TEXT_ARENA_BYTES / sizeof(ul_lsns_entry))
+                return text_refuse(null, "too many processes", 1);
+
+        positive capacity = process_count * type_count;
+        ul_lsns_entry address_to entries =
+            (ul_lsns_entry address_to)text_arena_take(
+                capacity * sizeof(ul_lsns_entry));
+
+        if (!entries)
+                return text_done(1);
+
+        positive used = 0;
+        p64 task_inodes[UL_NS_COUNT] = {0};
+
+        for (positive p = 0; p < process_count; p++)
+        {
+                struct snapshot_process address_to process =
+                    ul_lsns_snapshot.processes + p;
+                positive first_type = type < 0 ? 0 : (positive)type;
+                positive stop_type = type < 0 ? UL_NS_COUNT : first_type + 1;
+
+                for (positive kind = first_type; kind < stop_type; kind++)
+                {
+                        p8 path[64];
+                        file_facts facts;
+
+                        system_process_path(path, process->pid, "ns",
+                                            ul_namespaces[kind].name);
+                        if (!file_look_at(path, address_of facts))
+                                continue;
+
+                        entries[used++] = (ul_lsns_entry){
+                            .inode = facts.inode,
+                            .process = process,
+                            .processes = 1,
+                            .type = (p8)kind,
+                        };
+                        if (task_selected && process->pid == (p32)task)
+                                task_inodes[kind] = facts.inode;
+                }
+        }
+
+        if (used)
+        {
+                ul_lsns_entry address_to spare =
+                    (ul_lsns_entry address_to)text_arena_take(
+                        used * sizeof(ul_lsns_entry));
+
+                if (!spare)
+                        return text_done(1);
+                entries = array_merge_sort(entries, spare, used,
+                                           ul_lsns_order);
+        }
+
+        positive groups = 0;
+        bool inode_found = false;
+
+        for (positive i = 0; i < used;)
+        {
+                positive next = i + 1;
+
+                while (next < used && entries[next].inode == entries[i].inode &&
+                       entries[next].type == entries[i].type)
+                        next++;
+
+                bool keep = (!task_selected ||
+                             task_inodes[entries[i].type] == entries[i].inode) &&
+                            (!inode_selected ||
+                             wanted_inode == entries[i].inode);
+
+                if (keep && inode_selected)
+                {
+                        for (positive member = i; member < next; member++)
+                        {
+                                entries[groups] = entries[member];
+                                entries[groups].processes = (p32)(next - i);
+                                entries[groups].command =
+                                    ps_arguments(entries[groups].process);
+                                entries[groups].user =
+                                    ps_name_of(entries[groups].process->uid);
+
+                                if (!entries[groups].command ||
+                                    !entries[groups].user)
+                                        return text_done(1);
+                                groups++;
+                        }
+                        inode_found = true;
+                }
+                else if (keep)
+                {
+                        entries[groups] = entries[i];
+                        entries[groups].processes = (p32)(next - i);
+                        entries[groups].command =
+                            ps_arguments(entries[groups].process);
+                        entries[groups].user =
+                            ps_name_of(entries[groups].process->uid);
+
+                        if (!entries[groups].command || !entries[groups].user)
+                                return text_done(1);
+
+                        groups++;
+                        inode_found = true;
+                }
+
+                i = next;
+        }
+
+        if (inode_selected && !inode_found)
+        {
+                string_format(file_fail, "lsns: not found namespace: %p\n",
+                              wanted_inode);
+                return 1;
+        }
+
+        if (taking.flags & FILE_FLAG('J'))
+                ul_lsns_json(entries, groups, columns, column_count);
+        else
+                ul_lsns_table(entries, groups, columns, column_count,
+                              !(taking.flags & FILE_FLAG('n')),
+                              (taking.flags & FILE_FLAG('r')) != 0);
+
+        log_flush();
+        return 0;
+}
+
 static bipolar ul_directory_open_at(string_address program, bipolar base,
                                     string_address path)
 {

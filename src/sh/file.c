@@ -11288,12 +11288,12 @@ static bool shred_size(string_address text, positive address_to size)
 typedef struct
 {
         p64 words[4];
-} shred_random_state;
+} file_random_state;
 
 typedef p64 shred_random_word_type
     __attribute__((aligned(1), may_alias));
 
-static bool shred_random_seed(shred_random_state address_to state)
+static bool file_random_seed(file_random_state address_to state)
 {
         positive filled = 0;
 
@@ -11316,7 +11316,7 @@ static bool shred_random_seed(shred_random_state address_to state)
                state->words[3];
 }
 
-static inline INLINE p64 shred_rotate(p64 value, positive shift)
+static inline INLINE p64 file_random_rotate(p64 value, positive shift)
 {
         return (value << shift) | (value >> (64 - shift));
 }
@@ -11324,9 +11324,9 @@ static inline INLINE p64 shred_rotate(p64 value, positive shift)
 /* xoshiro256** expands one kernel seed at register speed.  Erasure needs an
    unpredictable starting stream, not one entropy syscall per output block;
    the latter measured five times slower than GNU on the 64 MiB hot path. */
-static inline INLINE p64 shred_random_word(shred_random_state address_to state)
+static inline INLINE p64 file_random_word(file_random_state address_to state)
 {
-        p64 result = shred_rotate(state->words[1] * 5, 7) * 9;
+        p64 result = file_random_rotate(state->words[1] * 5, 7) * 9;
         p64 shifted = state->words[1] << 17;
 
         state->words[2] ^= state->words[0];
@@ -11334,11 +11334,11 @@ static inline INLINE p64 shred_random_word(shred_random_state address_to state)
         state->words[1] ^= state->words[2];
         state->words[0] ^= state->words[3];
         state->words[2] ^= shifted;
-        state->words[3] = shred_rotate(state->words[3], 45);
+        state->words[3] = file_random_rotate(state->words[3], 45);
         return result;
 }
 
-static fn shred_random_fill(shred_random_state address_to state,
+static fn shred_random_fill(file_random_state address_to state,
                             p8 address_to bytes, positive length)
 {
         positive words = length / sizeof(p64);
@@ -11346,13 +11346,13 @@ static fn shred_random_fill(shred_random_state address_to state,
             (shred_random_word_type address_to)bytes;
 
         for (positive i = 0; i < words; i++)
-                output[i] = shred_random_word(state);
+                output[i] = file_random_word(state);
 
         positive filled = words * sizeof(p64);
 
         if (filled < length)
         {
-                p64 final = shred_random_word(state);
+                p64 final = file_random_word(state);
 
                 for (positive i = 0; filled + i < length; i++)
                         bytes[filled + i] = (p8)(final >> (i * 8));
@@ -11377,7 +11377,7 @@ static bool shred_sync(bipolar handle, string_address path, bool data)
 }
 
 static bool shred_pass(bipolar handle, string_address path, positive length,
-                       bool zero, shred_random_state address_to random)
+                       bool zero, file_random_state address_to random)
 {
         if (system_seek(handle, 0, FILE_SEEK_SET) < 0)
         {
@@ -11495,9 +11495,9 @@ static bool shred_one(string_address path, positive iterations,
                               "shred: '%s': caution: storage layers may retain old copies\n",
                               path);
 
-        shred_random_state random;
+        file_random_state random;
 
-        if (iterations && good && !shred_random_seed(address_of random))
+        if (iterations && good && !file_random_seed(address_of random))
         {
                 string_format(file_fail,
                               "shred: '%s': kernel randomness unavailable\n", path);
@@ -11651,6 +11651,1069 @@ static b32 file_shred()
 
         log_flush();
         return status;
+}
+
+// shuf -------------------------------------------------------------
+/* One arena load, one compact record table, and a partial Fisher-Yates walk.
+   -n therefore pays for only the selections it emits.  Every bounded choice
+   uses rejection sampling: modulo bias is small enough to hide in ordinary
+   tests and still wrong enough not to put in a sampling utility. */
+typedef struct
+{
+        string_address text;
+        positive length;
+} shuf_record;
+
+typedef struct
+{
+        bipolar handle;
+        positive used;
+        string_address name;
+        bool opened;
+} shuf_output;
+
+static const file_long shuf_longs[] = {
+    {(string_address) "echo", 'e'},
+    {(string_address) "head-count", 'n'},
+    {(string_address) "input-range", 'i'},
+    {(string_address) "output", 'o'},
+    {(string_address) "random-source", 'R'},
+    {(string_address) "repeat", 'r'},
+    {(string_address) "zero-terminated", 'z'},
+    {null, 0},
+};
+
+static bool shuf_range(string_address text, positive address_to low,
+                       positive address_to high)
+{
+        string_address at = text;
+        positive first;
+        positive last;
+
+        if (!string_digits_checked(address_of at, 10, address_of first) ||
+            !string_is(at, '-'))
+                return false;
+
+        at++;
+
+        if (!string_digits_checked(address_of at, 10, address_of last) ||
+            string_get(at) || last < first)
+                return false;
+
+        address_to low = first;
+        address_to high = last;
+        return true;
+}
+
+static positive shuf_uniform(file_random_state address_to random,
+                             positive bound)
+{
+        if (bound < 2)
+                return 0;
+
+        p64 width = (p64)bound;
+        p64 threshold = (0 - width) % width;
+        p64 value;
+
+        do
+                value = file_random_word(random);
+        while (value < threshold);
+
+        return (positive)(value % width);
+}
+
+static bool shuf_output_flush(shuf_output address_to output)
+{
+        if (!output->used)
+                return true;
+
+        if (system_write_all((positive)output->handle, file_transfer,
+                             output->used) != output->used)
+        {
+                string_format(file_fail, "shuf: write error%s%s\n",
+                              output->name ? (string_address) " on "
+                                           : (string_address) "",
+                              output->name ? output->name
+                                           : (string_address) "");
+                return false;
+        }
+
+        output->used = 0;
+        return true;
+}
+
+static bool shuf_output_send(shuf_output address_to output,
+                             string_address bytes, positive length)
+{
+        while (length)
+        {
+                if (!output->used && length >= sizeof(file_transfer))
+                {
+                        if (system_write_all((positive)output->handle, bytes,
+                                             length) != length)
+                        {
+                                string_format(file_fail,
+                                              "shuf: write error%s%s\n",
+                                              output->name
+                                                  ? (string_address) " on "
+                                                  : (string_address) "",
+                                              output->name
+                                                  ? output->name
+                                                  : (string_address) "");
+                                return false;
+                        }
+
+                        return true;
+                }
+
+                positive room = sizeof(file_transfer) - output->used;
+                positive copied = length < room ? length : room;
+
+                memory_copy_apart(file_transfer + output->used, bytes, copied);
+                output->used += copied;
+                bytes += copied;
+                length -= copied;
+
+                if (output->used == sizeof(file_transfer) &&
+                    !shuf_output_flush(output))
+                        return false;
+        }
+
+        return true;
+}
+
+static bool shuf_output_record(shuf_output address_to output,
+                               shuf_record address_to record, p8 delimiter)
+{
+        return shuf_output_send(output, record->text, record->length) &&
+               shuf_output_send(output, address_of delimiter, 1);
+}
+
+static bool shuf_output_number(shuf_output address_to output, positive number,
+                               p8 delimiter)
+{
+        p8 text[32];
+        positive length = positive_into_base(text, number, 10, false);
+
+        return shuf_output_send(output, text, length) &&
+               shuf_output_send(output, address_of delimiter, 1);
+}
+
+static shuf_record address_to shuf_file_records(string_address name,
+                                                p8 delimiter,
+                                                positive address_to count)
+{
+        bipolar handle = !name || (string_is(name, '-') && !string_get(name + 1))
+                             ? 0
+                             : system_open_at(AT_FDCWD, name, FILE_READ);
+
+        if (handle < 0)
+        {
+                string_format(file_fail, "shuf: cannot open '%s': %s\n", name,
+                              file_reason(handle));
+                return null;
+        }
+
+        positive length;
+        bool read_failed;
+        p8 address_to input = text_arena_read_all(
+            (positive)handle, FILE_TRANSFER_SIZE, address_of length,
+            address_of read_failed);
+
+        if (handle != 0)
+                system_close(handle);
+
+        if (!input)
+        {
+                file_fail(read_failed ? (string_address) "shuf: read error\n"
+                                      : (string_address) "shuf: input too large\n",
+                          0);
+                return null;
+        }
+
+        positive records = memory_count(input, length, delimiter) +
+                           (positive)(length && input[length - 1] != delimiter);
+        shuf_record address_to table = records
+            ? (shuf_record address_to)text_arena_take(records * sizeof(*table))
+            : (shuf_record address_to)input;
+
+        if (!table)
+                return null;
+
+        positive at = 0;
+
+        for (positive i = 0; i < records; i++)
+        {
+                p8 address_to found = memory_first_of(input + at, delimiter,
+                                                      length - at);
+                positive stop = found ? (positive)(found - input) : length;
+
+                table[i].text = input + at;
+                table[i].length = stop - at;
+                at = found ? stop + 1 : stop;
+        }
+
+        address_to count = records;
+        return table;
+}
+
+static shuf_record address_to shuf_echo_records(positive address_to count)
+{
+        positive records = file_operand_count;
+        shuf_record address_to table = records
+            ? (shuf_record address_to)text_arena_take(records * sizeof(*table))
+            : (shuf_record address_to)(positive)1;
+
+        if (!table)
+                return null;
+
+        for (positive i = 0; i < records; i++)
+        {
+                table[i].text = file_operand_at(i);
+                table[i].length = string_length(table[i].text);
+        }
+
+        address_to count = records;
+        return table;
+}
+
+static bool shuf_emit_records(shuf_output address_to output,
+                              shuf_record address_to records, positive count,
+                              positive wanted, bool limited, bool repeat,
+                              p8 delimiter, file_random_state address_to random)
+{
+        if (repeat)
+        {
+                positive made = 0;
+
+                while (!limited || made < wanted)
+                {
+                        positive chosen = shuf_uniform(random, count);
+
+                        if (!shuf_output_record(output, records + chosen,
+                                                delimiter))
+                                return false;
+                        made++;
+                }
+
+                return true;
+        }
+
+        positive take = limited && wanted < count ? wanted : count;
+
+        for (positive made = 0; made < take; made++)
+        {
+                positive chosen = made + shuf_uniform(random, count - made);
+                shuf_record held = records[made];
+
+                records[made] = records[chosen];
+                records[chosen] = held;
+
+                if (!shuf_output_record(output, records + made, delimiter))
+                        return false;
+        }
+
+        return true;
+}
+
+static bool shuf_set_add(positive address_to set, positive mask,
+                         positive value)
+{
+        positive stored = value + 1;
+        positive slot = (value * 11400714819323198485u) & mask;
+
+        while (set[slot])
+        {
+                if (set[slot] == stored)
+                        return false;
+                slot = (slot + 1) & mask;
+        }
+
+        set[slot] = stored;
+        return true;
+}
+
+/* Floyd's selection avoids constructing a billion-element range to answer
+   `-i 1-1000000000 -n 5`.  Its set is uniformly sampled; the final small
+   Fisher-Yates pass makes the order uniform too. */
+static bool shuf_emit_sparse_range(shuf_output address_to output, positive low,
+                                   positive count, positive take, p8 delimiter,
+                                   file_random_state address_to random)
+{
+        if (take > positive_max / 2 ||
+            take > positive_max / sizeof(positive))
+                return false;
+
+        positive wanted = take * 2;
+        positive capacity = 1;
+
+        while (capacity < wanted)
+        {
+                if (capacity > positive_max / 2)
+                        return false;
+                capacity *= 2;
+        }
+
+        if (capacity > positive_max / sizeof(positive))
+                return false;
+
+        positive address_to selected =
+            (positive address_to)text_arena_take(take * sizeof(positive));
+        positive address_to set = (positive address_to)text_arena_take(
+            capacity * sizeof(positive));
+
+        if (!selected || !set)
+                return false;
+
+        memory_fill(set, 0, capacity * sizeof(positive));
+
+        positive first = count - take;
+
+        for (positive made = 0; made < take; made++)
+        {
+                positive last = first + made;
+                positive chosen = shuf_uniform(random, last + 1);
+
+                if (!shuf_set_add(set, capacity - 1, chosen))
+                {
+                        chosen = last;
+                        shuf_set_add(set, capacity - 1, chosen);
+                }
+
+                selected[made] = chosen;
+        }
+
+        for (positive left = take; left > 1; left--)
+        {
+                positive chosen = shuf_uniform(random, left);
+                positive held = selected[left - 1];
+
+                selected[left - 1] = selected[chosen];
+                selected[chosen] = held;
+        }
+
+        for (positive made = 0; made < take; made++)
+                if (!shuf_output_number(output, low + selected[made],
+                                        delimiter))
+                        return false;
+
+        return true;
+}
+
+static bool shuf_emit_range(shuf_output address_to output, positive low,
+                            positive count, positive wanted, bool limited,
+                            bool repeat, p8 delimiter,
+                            file_random_state address_to random)
+{
+        if (repeat)
+        {
+                positive made = 0;
+
+                while (!limited || made < wanted)
+                {
+                        positive chosen = shuf_uniform(random, count);
+
+                        if (!shuf_output_number(output, low + chosen, delimiter))
+                                return false;
+                        made++;
+                }
+
+                return true;
+        }
+
+        positive take = limited && wanted < count ? wanted : count;
+
+        if (!take)
+                return true;
+        if (take <= count / 4)
+                return shuf_emit_sparse_range(output, low, count, take,
+                                              delimiter, random);
+        if (count > positive_max / sizeof(positive))
+                return false;
+
+        positive address_to numbers =
+            (positive address_to)text_arena_take(count * sizeof(positive));
+
+        if (!numbers)
+                return false;
+
+        for (positive i = 0; i < count; i++)
+                numbers[i] = low + i;
+
+        for (positive made = 0; made < take; made++)
+        {
+                positive chosen = made + shuf_uniform(random, count - made);
+                positive held = numbers[made];
+
+                numbers[made] = numbers[chosen];
+                numbers[chosen] = held;
+
+                if (!shuf_output_number(output, numbers[made], delimiter))
+                        return false;
+        }
+
+        return true;
+}
+
+static b32 file_shuf()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "shuf",
+            .allowed = (string_address) "einorz",
+            .valued = (string_address) "inoR",
+            .longs = shuf_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (file_option_value(address_of taking, 'R'))
+        {
+                file_fail("shuf: --random-source is unsupported; kernel-seeded randomness is mandatory\n",
+                          0);
+                return 1;
+        }
+
+        positive flags = taking.flags;
+        bool echo = (flags & FILE_FLAG('e')) != 0;
+        bool repeat = (flags & FILE_FLAG('r')) != 0;
+        string_address range_text = file_option_value(address_of taking, 'i');
+
+        if (echo && range_text)
+        {
+                file_fail("shuf: cannot combine --echo and --input-range\n", 0);
+                return 1;
+        }
+        if (range_text && file_operand_count)
+        {
+                file_fail("shuf: extra operand with --input-range\n", 0);
+                return 1;
+        }
+        if (!echo && !range_text && file_operand_count > 1)
+        {
+                file_fail("shuf: extra operand\n", 0);
+                return 1;
+        }
+
+        positive wanted = 0;
+        string_address count_text = file_option_value(address_of taking, 'n');
+        bool limited = count_text != null;
+
+        if (limited && !shred_number(count_text, address_of wanted))
+        {
+                string_format(file_fail, "shuf: invalid line count: '%s'\n",
+                              count_text);
+                return 1;
+        }
+
+        positive low = 0;
+        positive high = 0;
+        positive count = 0;
+        shuf_record address_to records = null;
+
+        text_arena_used = 0;
+
+        if (range_text)
+        {
+                if (!shuf_range(range_text, address_of low, address_of high) ||
+                    high - low == positive_max)
+                {
+                        string_format(file_fail, "shuf: invalid input range: '%s'\n",
+                                      range_text);
+                        text_arena_used = 0;
+                        return 1;
+                }
+
+                count = high - low + 1;
+        }
+        else if (echo)
+                records = shuf_echo_records(address_of count);
+        else
+                records = shuf_file_records(file_operand_count
+                                                 ? file_operand_at(0)
+                                                 : null,
+                                             (flags & FILE_FLAG('z')) ? '\0'
+                                                                      : '\n',
+                                             address_of count);
+
+        if (!range_text && !records)
+        {
+                text_arena_used = 0;
+                return 1;
+        }
+
+        if (repeat && !count && (!limited || wanted))
+        {
+                file_fail("shuf: no lines to repeat\n", 0);
+                text_arena_used = 0;
+                return 1;
+        }
+
+        bool need_random = count > 1 && (!limited || wanted);
+        file_random_state random;
+
+        if (need_random && !file_random_seed(address_of random))
+        {
+                file_fail("shuf: kernel randomness unavailable\n", 0);
+                text_arena_used = 0;
+                return 1;
+        }
+
+        string_address output_name = file_option_value(address_of taking, 'o');
+        shuf_output output = {.handle = 1, .name = output_name};
+
+        if (output_name)
+        {
+                output.handle = system_open_at_mode(AT_FDCWD, output_name,
+                                                    FILE_WRITE, 0666);
+                output.opened = output.handle >= 0;
+
+                if (!output.opened)
+                {
+                        string_format(file_fail, "shuf: cannot open '%s': %s\n",
+                                      output_name, file_reason(output.handle));
+                        text_arena_used = 0;
+                        return 1;
+                }
+        }
+
+        p8 delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
+        bool good = range_text
+                        ? shuf_emit_range(address_of output, low, count, wanted,
+                                          limited, repeat, delimiter,
+                                          address_of random)
+                        : shuf_emit_records(address_of output, records, count,
+                                            wanted, limited, repeat, delimiter,
+                                            address_of random);
+
+        if (good)
+                good = shuf_output_flush(address_of output);
+
+        if (output.opened && system_close(output.handle) < 0)
+        {
+                string_format(file_fail, "shuf: close failed on '%s'\n",
+                              output_name);
+                good = false;
+        }
+
+        log_flush();
+        text_arena_used = 0;
+        return good ? 0 : 1;
+}
+
+// dircolors -------------------------------------------------------
+/*
+        The database is intentionally a compact useful default, not a frozen
+        copy of GNU's distribution list.  FILE parsing below is the compatible
+        surface: all of the core kind/mode keywords and arbitrary suffix rows
+        are translated into the same LS_COLORS colon table that ls parses.
+        Keeping the policy data small saves every installed shell a few KiB;
+        sites wanting the exhaustive extension list can pass their ordinary
+        dircolors file unchanged.
+*/
+static const string_address dircolors_database =
+    "# Moonwater compact dircolors database.\n"
+    "# The parser accepts GNU core keywords and arbitrary suffix rules.\n"
+    "TERM ansi\n"
+    "TERM *color*\n"
+    "TERM con[0-9]*x[0-9]*\n"
+    "TERM console\n"
+    "TERM cygwin\n"
+    "TERM gnome*\n"
+    "TERM hurd\n"
+    "TERM konsole*\n"
+    "TERM linux\n"
+    "TERM putty\n"
+    "TERM rxvt*\n"
+    "TERM screen*\n"
+    "TERM st*\n"
+    "TERM tmux*\n"
+    "TERM vt100\n"
+    "TERM xterm*\n"
+    "COLORTERM ?*\n"
+    "RESET 0\n"
+    "DIR 01;34\n"
+    "LINK 01;36\n"
+    "MULTIHARDLINK 00\n"
+    "FIFO 40;33\n"
+    "SOCK 01;35\n"
+    "DOOR 01;35\n"
+    "BLK 40;33;01\n"
+    "CHR 40;33;01\n"
+    "ORPHAN 40;31;01\n"
+    "MISSING 00\n"
+    "SETUID 37;41\n"
+    "SETGID 30;43\n"
+    "CAPABILITY 00\n"
+    "STICKY_OTHER_WRITABLE 30;42\n"
+    "OTHER_WRITABLE 34;42\n"
+    "STICKY 37;44\n"
+    "EXEC 01;32\n"
+    ".tar 01;31\n"
+    ".tgz 01;31\n"
+    ".gz 01;31\n"
+    ".bz2 01;31\n"
+    ".xz 01;31\n"
+    ".zst 01;31\n"
+    ".zip 01;31\n"
+    ".7z 01;31\n"
+    ".rar 01;31\n"
+    ".deb 01;31\n"
+    ".rpm 01;31\n"
+    ".jpg 01;35\n"
+    ".jpeg 01;35\n"
+    ".gif 01;35\n"
+    ".png 01;35\n"
+    ".svg 01;35\n"
+    ".webp 01;35\n"
+    ".mp4 01;35\n"
+    ".mkv 01;35\n"
+    ".mp3 00;36\n"
+    ".flac 00;36\n"
+    ".ogg 00;36\n"
+    ".wav 00;36\n"
+    "*~ 00;90\n"
+    ".bak 00;90\n"
+    ".old 00;90\n"
+    ".orig 00;90\n"
+    ".rej 00;90\n"
+    ".swp 00;90\n"
+    ".tmp 00;90\n";
+
+typedef struct
+{
+        string_address name;
+        string_address key;
+} dircolors_keyword;
+
+static const dircolors_keyword dircolors_keywords[] = {
+    {(string_address) "RESET", (string_address) "rs"},
+    {(string_address) "NORMAL", (string_address) "no"},
+    {(string_address) "FILE", (string_address) "fi"},
+    {(string_address) "DIR", (string_address) "di"},
+    {(string_address) "LINK", (string_address) "ln"},
+    {(string_address) "MULTIHARDLINK", (string_address) "mh"},
+    {(string_address) "FIFO", (string_address) "pi"},
+    {(string_address) "SOCK", (string_address) "so"},
+    {(string_address) "DOOR", (string_address) "do"},
+    {(string_address) "BLK", (string_address) "bd"},
+    {(string_address) "CHR", (string_address) "cd"},
+    {(string_address) "ORPHAN", (string_address) "or"},
+    {(string_address) "MISSING", (string_address) "mi"},
+    {(string_address) "SETUID", (string_address) "su"},
+    {(string_address) "SETGID", (string_address) "sg"},
+    {(string_address) "CAPABILITY", (string_address) "ca"},
+    {(string_address) "STICKY_OTHER_WRITABLE", (string_address) "tw"},
+    {(string_address) "OTHER_WRITABLE", (string_address) "ow"},
+    {(string_address) "STICKY", (string_address) "st"},
+    {(string_address) "EXEC", (string_address) "ex"},
+    {(string_address) "LEFTCODE", (string_address) "lc"},
+    {(string_address) "RIGHTCODE", (string_address) "rc"},
+    {(string_address) "ENDCODE", (string_address) "ec"},
+    {null, null},
+};
+
+static const file_long dircolors_longs[] = {
+    {(string_address) "bourne-shell", 'b'},
+    {(string_address) "sh", 'b'},
+    {(string_address) "c-shell", 'c'},
+    {(string_address) "csh", 'c'},
+    {(string_address) "print-database", 'p'},
+    {(string_address) "print-ls-colors", 'L'},
+    {null, 0},
+};
+
+static p8 dircolors_shell_option;
+static const file_supersede dircolors_supersedes[] = {
+    {(string_address) "bc", address_of dircolors_shell_option},
+    {null, null},
+};
+
+typedef struct
+{
+        p8 address_to text;
+        positive used;
+        positive room;
+} dircolors_builder;
+
+static bool dircolors_word_is(string_address text, positive length,
+                              string_address word)
+{
+        if (length != string_length(word))
+                return false;
+
+        for (positive i = 0; i < length; i++)
+                if (byte_to_upper(string_get(text + i)) != string_get(word + i))
+                        return false;
+
+        return true;
+}
+
+static string_address dircolors_key(string_address word, positive length)
+{
+        for (positive i = 0; dircolors_keywords[i].name; i++)
+                if (dircolors_word_is(word, length,
+                                      dircolors_keywords[i].name))
+                        return dircolors_keywords[i].key;
+
+        return null;
+}
+
+static bool dircolors_add(dircolors_builder address_to builder,
+                          string_address text, positive length)
+{
+        /* One byte always remains for the table terminator. */
+        if (builder->used >= builder->room ||
+            length >= builder->room - builder->used)
+                return false;
+
+        memory_copy_apart(builder->text + builder->used, text, length);
+        builder->used += length;
+        return true;
+}
+
+static bool dircolors_add_entry(dircolors_builder address_to builder,
+                                string_address key, positive key_length,
+                                bool extension, string_address value,
+                                positive value_length)
+{
+        if ((memory_first_of(key, ':', key_length) ||
+             memory_first_of(value, ':', value_length)))
+        {
+                file_fail("dircolors: ':' in keys or values is unsupported by the shared LS_COLORS grammar\n",
+                          0);
+                return false;
+        }
+
+        positive prefix = extension && string_is(key, '.') ? 1 : 0;
+
+        if (key_length > positive_max - value_length - 2 - prefix ||
+            builder->used >= builder->room ||
+            key_length + value_length + 2 + prefix >=
+                builder->room - builder->used)
+        {
+                file_fail("dircolors: translated table is too large\n", 0);
+                return false;
+        }
+
+        return (!extension || !string_is(key, '.') ||
+                dircolors_add(builder, (string_address) "*", 1)) &&
+               dircolors_add(builder, key, key_length) &&
+               dircolors_add(builder, (string_address) "=", 1) &&
+               dircolors_add(builder, value, value_length) &&
+               dircolors_add(builder, (string_address) ":", 1);
+}
+
+/* Translate once, then immediately pass the result through file_color_next
+   and ls_color_parse.  This is only the line-oriented front end to the one
+   colour-table engine, not a parallel lookup structure. */
+static string_address dircolors_parse(string_address input, positive length,
+                                      string_address name)
+{
+        if (memory_first_of(input, 0, length))
+        {
+                string_format(file_fail, "dircolors: %s: embedded NUL byte\n",
+                              name);
+                return null;
+        }
+
+        positive room = length <= (positive_max - 64) / 2
+                            ? length + length / 2 + 64 : 0;
+        dircolors_builder builder = {
+            .text = room ? (p8 address_to)text_arena_take(room) : null,
+            .room = room,
+        };
+
+        if (!builder.text)
+        {
+                file_fail("dircolors: configuration is too large\n", 0);
+                return null;
+        }
+
+        string_address term = file_environment((string_address) "TERM");
+        string_address colorterm = file_environment((string_address) "COLORTERM");
+        bool gated = false;
+        bool gate_matches = false;
+        positive line_number = 0;
+
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at;
+
+                while (stop < length && !string_is(input + stop, '\n'))
+                        stop++;
+
+                line_number++;
+                positive first = at;
+
+                while (first < stop && byte_is_space(string_get(input + first)))
+                        first++;
+
+                positive finish = stop;
+
+                while (finish > first &&
+                       byte_is_space(string_get(input + finish - 1)))
+                        finish--;
+
+                at = stop < length ? stop + 1 : stop;
+
+                if (first == finish || string_is(input + first, '#'))
+                        continue;
+
+                positive key_end = first;
+
+                while (key_end < finish &&
+                       !byte_is_space(string_get(input + key_end)))
+                        key_end++;
+
+                positive value = key_end;
+
+                while (value < finish &&
+                       byte_is_space(string_get(input + value)))
+                        value++;
+
+                for (positive i = value; i < finish; i++)
+                        if (string_is(input + i, '#') &&
+                            (i == value ||
+                             byte_is_space(string_get(input + i - 1))))
+                        {
+                                finish = i;
+
+                                while (finish > value &&
+                                       byte_is_space(
+                                           string_get(input + finish - 1)))
+                                        finish--;
+                                break;
+                        }
+
+                if (value == finish)
+                {
+                        string_format(file_fail,
+                                      "dircolors: %s:%u: missing second token\n",
+                                      name, line_number);
+                        return null;
+                }
+
+                positive key_length = key_end - first;
+                positive value_length = finish - value;
+                bool term_gate = dircolors_word_is(input + first, key_length,
+                                                   (string_address) "TERM");
+                bool color_gate = dircolors_word_is(
+                    input + first, key_length, (string_address) "COLORTERM");
+
+                if (term_gate || color_gate)
+                {
+                        if (value_length >= FILE_PATH_MAX)
+                        {
+                                string_format(file_fail,
+                                              "dircolors: %s:%u: terminal pattern is too long\n",
+                                              name, line_number);
+                                return null;
+                        }
+
+                        p8 pattern[FILE_PATH_MAX];
+                        memory_copy_apart(pattern, input + value, value_length);
+                        pattern[value_length] = end;
+                        string_address against = term_gate ? term : colorterm;
+
+                        gated = true;
+                        gate_matches = gate_matches ||
+                                       (against && shell_match(pattern, against));
+                        continue;
+                }
+
+                string_address short_key =
+                    dircolors_key(input + first, key_length);
+                bool extension = string_is(input + first, '.') ||
+                                 string_is(input + first, '*');
+
+                /* GNU ignores unknown historical directives.  Keeping that
+                   behavior lets one shared file serve old and new systems;
+                   recognized rows are never accepted partially. */
+                if (!short_key && !extension)
+                        continue;
+
+                string_address output_key = short_key ? short_key : input + first;
+                positive output_key_length = short_key ? 2 : key_length;
+
+                if (!dircolors_add_entry(address_of builder, output_key,
+                                         output_key_length, extension,
+                                         input + value, value_length))
+                        return null;
+        }
+
+        if (gated && !gate_matches)
+                builder.used = 0;
+
+        builder.text[builder.used] = end;
+
+        if (!file_color_table_valid(builder.text, false))
+        {
+                file_fail("dircolors: configuration cannot be represented by LS_COLORS\n",
+                          0);
+                return null;
+        }
+
+        ls_colors = builder.text;
+        ls_color_parse();
+        return builder.text;
+}
+
+static fn dircolors_shell_quote(string_address table, bool csh)
+{
+        log(csh ? (string_address) "setenv LS_COLORS '"
+                : (string_address) "LS_COLORS='",
+            0);
+
+        for (positive i = 0; string_get(table + i); i++)
+        {
+                p8 character = string_get(table + i);
+
+                if (character == '\'')
+                        log("'\\''", 4);
+                else
+                        log(address_of character, 1);
+        }
+
+        log(csh ? (string_address) "'\n"
+                : (string_address) "';\nexport LS_COLORS\n",
+            0);
+}
+
+static fn dircolors_print_table(string_address table)
+{
+        file_color_entry entry;
+
+        while (file_color_next(address_of table, address_of entry))
+        {
+                if (!entry.assigned || !entry.key.length)
+                        continue;
+
+                file_color_sgr(log, entry.value);
+                log(entry.key.text, entry.key.length);
+                log("\t", 1);
+                log(entry.value.text, entry.value.length);
+                log("\033[0m\n", 5);
+        }
+}
+
+static b32 file_dircolors()
+{
+        file_operands_begin();
+        dircolors_shell_option = 0;
+        file_taking taking = {
+            .program = (string_address) "dircolors",
+            .allowed = (string_address) "bcp",
+            .valued = (string_address) "",
+            .longs = dircolors_longs,
+            .operand = file_operand,
+            .supersedes = dircolors_supersedes,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (file_operand_count > 1)
+        {
+                file_fail("dircolors: extra operand\n", 0);
+                return 1;
+        }
+
+        positive flags = taking.flags;
+        bool print_database = (flags & FILE_FLAG('p')) != 0;
+        bool print_table = (flags & FILE_FLAG('L')) != 0;
+
+        if (print_database && (file_operand_count || dircolors_shell_option ||
+                               print_table))
+        {
+                file_fail("dircolors: --print-database cannot be combined with a file or another output mode\n",
+                          0);
+                return 1;
+        }
+        if (print_table && dircolors_shell_option)
+        {
+                file_fail("dircolors: --print-ls-colors cannot select a shell syntax\n",
+                          0);
+                return 1;
+        }
+        if (print_database)
+        {
+                log(dircolors_database, 0);
+                log_flush();
+                return 0;
+        }
+
+        text_arena_used = 0;
+        string_address input = dircolors_database;
+        positive length = string_length(dircolors_database);
+        string_address name = (string_address) "built-in database";
+        bipolar handle = -1;
+
+        if (file_operand_count)
+        {
+                name = file_operand_at(0);
+                handle = string_is(name, '-') && !string_get(name + 1)
+                             ? 0 : system_open_at(AT_FDCWD, name, FILE_READ);
+
+                if (handle < 0)
+                {
+                        string_format(file_fail, "dircolors: '%s': %s\n", name,
+                                      file_reason(handle));
+                        return 1;
+                }
+
+                bool read_failed;
+                input = text_arena_read_all((positive)handle,
+                                            FILE_TRANSFER_SIZE,
+                                            address_of length,
+                                            address_of read_failed);
+
+                if (handle != 0)
+                        system_close(handle);
+
+                if (!input)
+                {
+                        string_format(file_fail,
+                                      read_failed
+                                          ? (string_address) "dircolors: cannot read '%s'\n"
+                                          : (string_address) "dircolors: '%s' is too large\n",
+                                      name);
+                        text_arena_used = 0;
+                        return 1;
+                }
+        }
+
+        string_address table = dircolors_parse(input, length, name);
+
+        if (!table)
+        {
+                text_arena_used = 0;
+                return 1;
+        }
+
+        if (print_table)
+                dircolors_print_table(table);
+        else
+        {
+                bool csh = dircolors_shell_option == 'c';
+
+                if (!dircolors_shell_option)
+                {
+                        string_address shell =
+                            file_environment((string_address) "SHELL");
+                        positive shell_length = shell ? string_length(shell) : 0;
+
+                        csh = shell_length >= 3 &&
+                              !string_compare_max(shell + shell_length - 3,
+                                                  (string_address) "csh", 3);
+                }
+
+                dircolors_shell_quote(table, csh);
+        }
+
+        log_flush();
+        text_arena_used = 0;
+        return 0;
 }
 
 // rmdir ------------------------------------------------------------

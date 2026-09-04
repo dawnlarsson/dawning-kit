@@ -10,16 +10,543 @@
 
 // Common command handoff ------------------------------------------
 
-static b32 process_tool_exec(string_address program,
-                             string_address address_to words)
+static b32 process_tool_exec_environment(
+    string_address program, string_address address_to words,
+    string_address address_to environment, string_address path)
 {
         log_flush();
 
-        bipolar answer = file_exec_path_try(words);
+        bipolar answer = file_exec_path_try_in(words[0], words, environment,
+                                               path);
 
         string_format(file_fail, "%s: failed to run command '%s': %s\n",
                       program, words[0], file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
+}
+
+static b32 process_tool_exec(string_address program,
+                             string_address address_to words)
+{
+        return process_tool_exec_environment(
+            program, words, file_environment_all(),
+            file_environment((string_address) "PATH"));
+}
+
+// stdbuf ----------------------------------------------------------
+/* The PATH query itself is shared with command/type.  Supplying the current
+   process PATH explicitly is important here: a farm-linked utility dispatches
+   before the resident shell has initialized its variable table. */
+static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
+                                   positive room, positive access,
+                                   bool use_hash, string_address value);
+
+#define STDBUF_ELF_DYNAMIC 1
+#define STDBUF_ELF_STATIC 2
+
+static const file_long process_stdbuf_longs[] = {
+    {(string_address) "input", 'i'},
+    {(string_address) "output", 'o'},
+    {(string_address) "error", 'e'},
+    {null, 0},
+};
+
+static p8 stdbuf_input_assignment[48];
+static p8 stdbuf_output_assignment[48];
+static p8 stdbuf_error_assignment[48];
+static p8 address_to stdbuf_preload_assignment;
+static positive stdbuf_preload_room;
+static p8 stdbuf_library[FILE_PATH_MAX];
+
+static PURE positive stdbuf_u16(p8 address_to bytes)
+{
+        return (positive)bytes[0] | (positive)bytes[1] << 8;
+}
+
+static PURE positive stdbuf_u32(p8 address_to bytes)
+{
+        return (positive)bytes[0] | (positive)bytes[1] << 8 |
+               (positive)bytes[2] << 16 | (positive)bytes[3] << 24;
+}
+
+static PURE p64 stdbuf_u64(p8 address_to bytes)
+{
+        return (p64)stdbuf_u32(bytes) | (p64)stdbuf_u32(bytes + 4) << 32;
+}
+
+static PURE positive stdbuf_elf_machine()
+{
+#if X64
+        return 62;
+#elif ARM64
+        return 183;
+#else
+        return 243;
+#endif
+}
+
+static PURE bool stdbuf_elf_native(p8 address_to bytes, positive length,
+                                   bool shared)
+{
+        return length >= 64 && bytes[0] == 0x7f && bytes[1] == 'E' &&
+               bytes[2] == 'L' && bytes[3] == 'F' && bytes[4] == 2 &&
+               bytes[5] == 1 && stdbuf_u16(bytes + 18) == stdbuf_elf_machine() &&
+               (!shared || stdbuf_u16(bytes + 16) == 3);
+}
+
+/* A candidate must be a native ELF shared object and must carry the three
+   variables libstdbuf consumes.  This rejects a same-architecture executable
+   renamed to libstdbuf.so instead of letting the loader complain and continue
+   without applying the requested policy. */
+static bool stdbuf_library_usable(string_address path)
+{
+        if (string_first_of(path, ':') || string_first_of(path, ' ') ||
+            string_first_of(path, '\t'))
+                return false;
+
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return false;
+
+        positive used = 0;
+
+        while (used < sizeof(file_transfer))
+        {
+                bipolar got = system_read_retry(
+                    (positive)handle, file_transfer + used,
+                    sizeof(file_transfer) - used);
+
+                if (got < 0)
+                {
+                        used = 0;
+                        break;
+                }
+                if (!got)
+                        break;
+
+                used += (positive)got;
+        }
+
+        system_close(handle);
+
+        if (!stdbuf_elf_native(file_transfer, used, true) ||
+            !memory_search(file_transfer, used,
+                           (address_any) "_STDBUF_I", 9) ||
+            !memory_search(file_transfer, used,
+                           (address_any) "_STDBUF_O", 9) ||
+            !memory_search(file_transfer, used,
+                           (address_any) "_STDBUF_E", 9))
+                return false;
+
+        positive length = string_length(path);
+
+        if (length >= sizeof(stdbuf_library))
+                return false;
+
+        memory_copy_end(stdbuf_library, path, length);
+        return true;
+}
+
+/* Search one filesystem root.  Debian installs in libexec, Arch and newer
+   coreutils builds commonly use lib/coreutils, and multiarch Debian roots use
+   the architecture component. */
+static bool stdbuf_library_under(string_address root)
+{
+        static const string_address common[] = {
+            "/usr/libexec/coreutils/libstdbuf.so",
+            "/usr/lib/coreutils/libstdbuf.so",
+            "/usr/lib64/coreutils/libstdbuf.so",
+#if X64
+            "/usr/lib/x86_64-linux-gnu/coreutils/libstdbuf.so",
+#elif ARM64
+            "/usr/lib/aarch64-linux-gnu/coreutils/libstdbuf.so",
+#else
+            "/usr/lib/riscv64-linux-gnu/coreutils/libstdbuf.so",
+#endif
+            null,
+        };
+
+        for (positive i = 0; common[i]; i++)
+        {
+                p8 path[FILE_PATH_MAX];
+                string_address candidate = common[i];
+
+                if (root)
+                {
+                        if (!file_path_join(path, root, candidate + 1))
+                                continue;
+                        candidate = path;
+                }
+
+                if (stdbuf_library_usable(candidate))
+                        return true;
+        }
+
+        return false;
+}
+
+static bool stdbuf_bowl_root_from_text(string_address text, positive length,
+                                       p8 address_to root)
+{
+        string_address prefix = (string_address) "/bowls/";
+        p8 address_to found = (p8 address_to)memory_search(
+            (address_any)text, length, (address_any)prefix, 7);
+
+        if (!found)
+                return false;
+
+        positive used = 7;
+        positive remaining = length - (positive)(found - text);
+
+        while (used < remaining && found[used] && found[used] != '/' &&
+               found[used] != '\n' && !byte_is_space(found[used]))
+                used++;
+
+        if (used == 7 || used >= FILE_PATH_MAX)
+                return false;
+
+        memory_copy_end(root, found, used);
+        return true;
+}
+
+/* An exposed Bowl command is a #!/bowl launcher containing its real root.
+   A directly named /bowls/NAME program already carries the same answer in
+   its path. */
+static bool stdbuf_bowl_root(string_address target, p8 address_to root)
+{
+        if (stdbuf_bowl_root_from_text(target, string_length(target), root) &&
+            string_compare(root, (string_address) "/bowls/bin"))
+                return true;
+
+        bipolar handle = system_open_at(AT_FDCWD, target,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return false;
+
+        bipolar got = system_read_retry((positive)handle, file_transfer, 256);
+        system_close(handle);
+
+        return got > 0 && stdbuf_bowl_root_from_text(
+                              file_transfer, (positive)got, root) &&
+               string_compare(root, (string_address) "/bowls/bin");
+}
+
+static bool stdbuf_find_library(string_address preferred_root)
+{
+        string_address forced =
+            file_environment((string_address) "MOONWATER_STDBUF_LIBRARY");
+
+        if (forced)
+                return stdbuf_library_usable(forced);
+
+        if (preferred_root && stdbuf_library_under(preferred_root))
+                return true;
+        if (stdbuf_library_under(null))
+                return true;
+
+        file_walk walk;
+
+        if (!file_walk_open(address_of walk, AT_FDCWD,
+                            (string_address) "/bowls"))
+                return false;
+
+        struct linux_dirent64 address_to entry;
+        bool found = false;
+
+        while (!found && (entry = file_walk_next(address_of walk)))
+        {
+                if (file_is_dot(entry->d_name) ||
+                    !string_compare(entry->d_name, (string_address) "bin"))
+                        continue;
+
+                p8 root[FILE_PATH_MAX];
+
+                if (file_path_join(root, (string_address) "/bowls",
+                                   entry->d_name))
+                        found = stdbuf_library_under(root);
+        }
+
+        file_walk_close(address_of walk);
+        return found;
+}
+
+/* A native ELF without PT_INTERP is statically linked, so LD_PRELOAD cannot
+   possibly apply the requested buffering.  Scripts are left to the kernel;
+   their interpreter receives the preload in the ordinary way. */
+static b32 stdbuf_target_kind(string_address path)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle < 0)
+                return 0;
+
+        bipolar got = system_read_retry((positive)handle, file_transfer,
+                                        FILE_BLOCK);
+
+        if (got < 64 || !stdbuf_elf_native(file_transfer, (positive)got,
+                                           false))
+        {
+                system_close(handle);
+                return 0;
+        }
+
+        p64 phoff = stdbuf_u64(file_transfer + 32);
+        positive entry_size = stdbuf_u16(file_transfer + 54);
+        positive entries = stdbuf_u16(file_transfer + 56);
+
+        if (entry_size < 4 || !entries ||
+            entries > FILE_BLOCK / entry_size ||
+            phoff > positive_max - entry_size * entries)
+        {
+                system_close(handle);
+                return STDBUF_ELF_STATIC;
+        }
+
+        positive bytes = entry_size * entries;
+        p8 address_to table = file_transfer;
+
+        if (phoff + bytes > (positive)got)
+        {
+                bipolar read = system_call_4(
+                    syscall(pread64), (positive)handle,
+                    (positive)file_transfer, bytes, (positive)phoff);
+
+                if (read != (bipolar)bytes)
+                {
+                        system_close(handle);
+                        return STDBUF_ELF_STATIC;
+                }
+        }
+        else
+                table += (positive)phoff;
+
+        b32 answer = STDBUF_ELF_STATIC;
+
+        for (positive i = 0; i < entries; i++)
+                if (stdbuf_u32(table + i * entry_size) == 3)
+                {
+                        answer = STDBUF_ELF_DYNAMIC;
+                        break;
+                }
+
+        system_close(handle);
+        return answer;
+}
+
+static bool stdbuf_mode(string_address text, bool input,
+                        p8 letter, p8 address_to assignment)
+{
+        memory_copy_apart(assignment, (address_any) "_STDBUF_I=", 10);
+        assignment[8] = letter;
+
+        if (string_is(text, 'L') && !string_get(text + 1))
+        {
+                if (input)
+                {
+                        file_fail("stdbuf: line buffering stdin is meaningless\n",
+                                  0);
+                        return false;
+                }
+
+                assignment[10] = 'L';
+                assignment[11] = end;
+                return true;
+        }
+
+        string_address at = text;
+
+        if (string_is(at, '+'))
+                at++;
+
+        positive value;
+
+        if (!string_digits_checked(address_of at, 10, address_of value))
+                goto invalid;
+
+        positive power = 0;
+        positive base = 1024;
+        p8 suffix = string_get(at);
+
+        if (suffix)
+        {
+                power = suffix == 'k' ? 1
+                                      : file_size_power(suffix, false);
+
+                if (!power || (suffix >= 'a' && suffix != 'k'))
+                        goto invalid;
+
+                at++;
+
+                if (string_is(at, 'B') && !string_get(at + 1))
+                {
+                        base = 1000;
+                        at++;
+                }
+                else if (string_is(at, 'i') && string_is(at + 1, 'B') &&
+                         !string_get(at + 2))
+                        at += 2;
+                else if (string_get(at))
+                        goto invalid;
+        }
+
+        if (string_get(at))
+                goto invalid;
+
+        if (value)
+                while (power--)
+                {
+                        if (value > positive_max / base)
+                                goto invalid;
+                        value *= base;
+                }
+
+        positive_into_string(assignment + 10, value);
+        return true;
+
+invalid:
+        string_format(file_fail, "stdbuf: invalid mode '%s'\n", text);
+        return false;
+}
+
+static bool stdbuf_preload(string_address library)
+{
+        string_address before =
+            file_environment((string_address) "LD_PRELOAD");
+        positive old_length = before ? string_length(before) : 0;
+        positive library_length = string_length(library);
+        positive wanted = 11 + old_length + (before ? 1 : 0) +
+                          library_length + 1;
+
+        if (!shell_room((address_any address_to)address_of stdbuf_preload_assignment,
+                        address_of stdbuf_preload_room, wanted, 1))
+                return false;
+
+        memory_copy_apart(stdbuf_preload_assignment,
+                          (address_any) "LD_PRELOAD=", 11);
+        positive used = 11;
+
+        if (before)
+        {
+                memory_copy_apart(stdbuf_preload_assignment + used, before,
+                                  old_length);
+                used += old_length;
+                stdbuf_preload_assignment[used++] = ':';
+        }
+
+        memory_copy_end(stdbuf_preload_assignment + used, library,
+                        library_length);
+        return true;
+}
+
+static b32 process_stdbuf()
+{
+        file_taking taking = {
+            .program = (string_address) "stdbuf",
+            .allowed = (string_address) "ioe",
+            .valued = (string_address) "ioe",
+            .longs = process_stdbuf_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 125;
+
+        positive modes = taking.flags &
+                         (FILE_FLAG('i') | FILE_FLAG('o') | FILE_FLAG('e'));
+        positive count = (positive)program_argument_count();
+
+        if (!modes)
+        {
+                file_fail("stdbuf: you must specify a buffering mode option\n",
+                          0);
+                return 125;
+        }
+        if (taking.first >= count)
+        {
+                file_fail("stdbuf: missing operand\n", 0);
+                return 125;
+        }
+
+        bool input = (modes & FILE_FLAG('i')) == 0 ||
+                     stdbuf_mode(file_option_value(address_of taking, 'i'),
+                                 true, 'I', stdbuf_input_assignment);
+        bool output = (modes & FILE_FLAG('o')) == 0 ||
+                      stdbuf_mode(file_option_value(address_of taking, 'o'),
+                                  false, 'O', stdbuf_output_assignment);
+        bool error = (modes & FILE_FLAG('e')) == 0 ||
+                     stdbuf_mode(file_option_value(address_of taking, 'e'),
+                                 false, 'E', stdbuf_error_assignment);
+
+        if (!input || !output || !error)
+                return 125;
+
+        string_address address_to words =
+            program_argument_list() + taking.first;
+        p8 target[FILE_PATH_MAX];
+        p8 bowl_root[FILE_PATH_MAX];
+        string_address path = file_environment((string_address) "PATH");
+
+        if (!path)
+                path = (string_address) "/bin:/usr/bin:/bowls/bin:/";
+
+        bool target_found = shell_find_in_path_mode(
+            words[0], target, sizeof(target), 1, false, path);
+        bool has_bowl_root = target_found &&
+                             stdbuf_bowl_root(target, bowl_root);
+        string_address forced = file_environment(
+            (string_address) "MOONWATER_STDBUF_LIBRARY");
+
+        if (!stdbuf_find_library(has_bowl_root ? bowl_root : null))
+        {
+                if (forced)
+                        string_format(file_fail,
+                                      "stdbuf: '%s' is not a compatible libstdbuf.so\n",
+                                      forced);
+                else
+                        file_fail("stdbuf: no compatible libstdbuf.so found in the native or Bowl roots\n",
+                                  0);
+                return 125;
+        }
+
+        if (target_found && stdbuf_target_kind(target) == STDBUF_ELF_STATIC)
+        {
+                string_format(file_fail,
+                              "stdbuf: '%s' is statically linked; preload buffering cannot apply\n",
+                              words[0]);
+                return 125;
+        }
+
+        if (!stdbuf_preload(stdbuf_library))
+        {
+                file_fail("stdbuf: environment is too large\n", 0);
+                return 125;
+        }
+
+        env_have = 0;
+        string_address address_to inherited = file_environment_all();
+
+        for (positive i = 0; inherited && inherited[i]; i++)
+                if (!env_put(inherited[i]))
+                        return 125;
+
+        env_drop((string_address) "MOONWATER_STDBUF_LIBRARY");
+
+        if (((modes & FILE_FLAG('i')) &&
+             !env_put(stdbuf_input_assignment)) ||
+            ((modes & FILE_FLAG('o')) &&
+             !env_put(stdbuf_output_assignment)) ||
+            ((modes & FILE_FLAG('e')) &&
+             !env_put(stdbuf_error_assignment)) ||
+            !env_put(stdbuf_preload_assignment))
+                return 125;
+
+        env_list[env_have] = null;
+        path = string_get_environment(env_list, (string_address) "PATH");
+
+        return process_tool_exec_environment((string_address) "stdbuf", words,
+                                             env_list, path);
 }
 
 // chroot ----------------------------------------------------------

@@ -245,6 +245,41 @@ compare_diff_full()
         check "$name" "$want_status" "$got_status"
 }
 
+#       tsort: ordering, cycle diagnostics and status are all deterministic.
+#       Standard input always comes from tsort-feed; arguments distinguish the
+#       stdin, named-file and refusal paths without duplicating the runner.
+compare_tsort()
+{
+        name=$1
+        shift
+
+        tsort "$@" < "$work/tsort-feed" > "$work/want" 2> "$work/want_err"
+        want_status=$?
+        "$bin/tsort" "$@" < "$work/tsort-feed" > "$work/got" 2> "$work/got_err"
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/want_err" "$work/got_err" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")/$(show "$work/want_err")[$want_status] got $(show "$work/got")/$(show "$work/got_err")[$got_status]"
+}
+
+compare_tsort_reject()
+{
+        name=$1
+        shift
+
+        tsort "$@" < "$work/tsort-feed" > /dev/null 2>&1
+        want_status=$?
+        "$bin/tsort" "$@" < "$work/tsort-feed" > /dev/null 2>&1
+        got_status=$?
+        check "$name" "$want_status" "$got_status"
+}
+
 compare_diff_many_switches()
 {
         set --
@@ -384,6 +419,128 @@ elif grep -q 'not supported' "$work/pinky-long-error"; then
 else
         report 'pinky long refused' 'failure did not explain unsupported mode'
 fi
+
+#
+#       tsort
+#
+
+case_start tsort
+
+: > "$work/tsort-feed"
+compare_tsort 'empty stdin'
+
+printf 'c d\na b\na c\n' > "$work/tsort-feed"
+compare_tsort 'stdin ordering'
+cp "$work/tsort-feed" "$work/tsort-file"
+compare_tsort 'named file' "$work/tsort-file"
+compare_tsort 'option terminator' -- "$work/tsort-file"
+
+# Duplicates count as duplicate relations in GNU, while self relations only
+# introduce their node. Both choices affect the release order around b/c.
+printf 'z z\na b\na b\nb c\na c\nd d\n' > "$work/tsort-feed"
+compare_tsort 'duplicates self disconnected'
+
+printf 'a b\nb c\nc a\na d\n' > "$work/tsort-feed"
+compare_tsort 'one cycle'
+
+printf 'a b\nb a\nc d\nd c\ne f\n' > "$work/tsort-feed"
+compare_tsort 'two cycles disconnected'
+
+printf 'one two three\n' > "$work/tsort-feed"
+compare_tsort 'odd token'
+
+: > "$work/tsort-feed"
+compare_tsort 'missing file' "$work/tsort-missing"
+compare_tsort_reject 'extra operand' "$work/tsort-file" "$work/tsort-file"
+compare_tsort_reject 'unknown option' -q
+
+#
+#       factor
+#
+
+case_start factor
+
+compare 'zero one' factor 0 1
+compare 'small operands' factor 2 3 4 12 97 65537 99991
+compare 'canonical decimal' factor +000 0001 00012
+compare 'exponents short' factor -h 12 360 65536
+compare 'exponents long' factor --exponents 999950000 18446744073709551615
+compare 'signed ceiling' factor 9223372036854775807
+compare 'unsigned ceiling' factor 18446744073709551615
+compare 'hard semiprimes' factor 1000000016000000063 \
+        18446743979220271189 18446744030759878681
+compare 'large primes' factor 2305843009213693951 18446744073709551557
+compare 'invalid continues' factor -- 12 bad -2 13
+
+printf '12 13\n15\t17 18446744073709551615\n' > "$work/factor-feed"
+compare_in 'stdin words' factor "$work/factor-feed"
+
+# GNU has a bignum fallback. Moonwater's intentionally smaller boundary is a
+# complete native unsigned word: on 64-bit builds UINT64_MAX succeeds and the
+# next integer must fail loudly, with no plausible truncated output.
+"$bin/factor" 18446744073709551616 > "$work/factor-overflow" \
+        2> "$work/factor-overflow-error"
+factor_overflow_status=$?
+if [ "$factor_overflow_status" != 0 ] &&
+        [ ! -s "$work/factor-overflow" ] &&
+        grep -q 'native-word' "$work/factor-overflow-error"; then
+        pass=$((pass + 1))
+else
+        report 'native ceiling' \
+                "status $factor_overflow_status, out $(show "$work/factor-overflow"), error $(show "$work/factor-overflow-error")"
+fi
+
+#
+#       numfmt
+#
+
+case_start numfmt
+
+compare 'plain decimals' numfmt -- 0 -0 1 -1 1.2300 9223372036854775807
+compare 'to si' numfmt --to=si -- \
+        999 1000000 1001000 9999000 999499000 -1001000
+compare 'to iec' numfmt --to=iec -- 1023 1024 1025 9999 -1025
+compare 'to iec-i' numfmt --to=iec-i 1024 1048576
+compare 'from auto' numfmt --from=auto 1K 1Ki 2.5M 2.5Mi
+compare 'from si' numfmt --from=si 1K 2.5M
+compare 'from iec' numfmt --from=iec 1K 2.5M
+compare 'from iec-i' numfmt --from=iec-i 1Ki 2.5Mi
+compare 'unit ratio' numfmt --from-unit=3 --to-unit=2 -- 1.50 -2.00
+compare 'suffix separator' numfmt --from=auto --to=iec-i \
+        --suffix=B --unit-separator=_ 1_KB 2_MiB
+compare 'round directions' numfmt --to=si --round=down -- \
+        9990000 10010000 -9990000 -10010000 999950000
+compare 'round nearest' numfmt --to=si --round=nearest -- \
+        .5 -.5 1.5 -1.5 999949000 999950000
+compare 'right padding' numfmt --to=si --padding=10 1000000
+compare 'left padding' numfmt --to=si --padding=-10 1000000
+compare 'format space' numfmt --to=si '--format=[%8.1f]' 1000000
+compare 'format zero' numfmt --to=iec-i '--format=[%08.3f]' 1048576
+compare 'format left' numfmt --to=si '--format=[%-8.1f]' 1000000
+compare 'format literals' numfmt --to=si '--format=[value=%f]' 1000000
+
+printf 'heading\nsecond\n1000 foo  2000\n1\t2\t3000\n' > "$work/numfmt-feed"
+compare_in 'stdin fields' numfmt "$work/numfmt-feed" --header=2 \
+        --field=1,3 --to=iec
+
+printf 'a:1000:c\n::bad\n' > "$work/numfmt-feed"
+compare_in 'explicit delimiter abort' numfmt "$work/numfmt-feed" \
+        --delimiter=: --field=2 --to=iec
+
+printf '1\nbad\n2000\n' > "$work/numfmt-feed"
+compare_in 'invalid fail' numfmt "$work/numfmt-feed" --invalid=fail --to=iec
+compare_in 'invalid warn' numfmt "$work/numfmt-feed" --invalid=warn --to=iec
+compare_in 'invalid ignore' numfmt "$work/numfmt-feed" --invalid=ignore --to=iec
+
+printf '1000\0002000\000bad\000' > "$work/numfmt-zero"
+compare_in 'zero records' numfmt "$work/numfmt-zero" -z --invalid=ignore --to=iec
+
+# One selected token crosses the shared reader's 64 KiB refill. Ignore keeps
+# the invalid value byte-for-byte, so this checks both the long-record path
+# and that a failed conversion cannot truncate its input.
+head -c 70000 /dev/zero | tr '\000' x > "$work/numfmt-long"
+printf '\n' >> "$work/numfmt-long"
+compare_in 'refill boundary' numfmt "$work/numfmt-long" --invalid=ignore
 
 #
 #       dd
@@ -1373,6 +1530,100 @@ bad = 0
 left = os.path.join(work, "gen_a")
 right = os.path.join(work, "gen_b")
 
+# One stdin batch makes every native value through 10000 exhaustive without
+# paying process startup per integer. The second mixes arbitrary words,
+# products, squares and hard semiprimes near UINT64_MAX; GNU supplies both
+# primality and the ordered factor list independently.
+def factor_both(label, values):
+    global total, bad
+
+    data = (" ".join(str(value) for value in values) + "\n").encode()
+    want = subprocess.run(["factor"], input=data, capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/factor"], input=data,
+                         capture_output=True, env=environment)
+    total += 1
+
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        return
+
+    bad += 1
+    if bad <= 6:
+        print("  factor %-12s want %r[%d] got %r[%d]"
+              % (label, want.stdout[:100], want.returncode,
+                 got.stdout[:100], got.returncode))
+
+
+factor_both("exhaustive", range(10001))
+
+factor_values = [1000000016000000063, 18446743979220271189,
+                 18446744030759878681, 2305843009213693951,
+                 18446744073709551557]
+for _ in range(max(300, rounds * 4)):
+    kind = random.randrange(4)
+    if kind == 0:
+        factor_values.append(random.getrandbits(64))
+    elif kind == 1:
+        factor_values.append(random.randrange(2, 1 << 32)
+                             * random.randrange(2, 1 << 32))
+    elif kind == 2:
+        factor_values.append(random.randrange(2, 1 << 21)
+                             * random.randrange(2, 1 << 21)
+                             * random.randrange(2, 1 << 21))
+    else:
+        factor_values.append((random.getrandbits(32) | 1) ** 2)
+
+factor_both("random-64", factor_values)
+
+# numfmt stays inside the exact signed-64/18-decimal contract here. Mixing
+# human bases, signs, decimal widths, all rounding choices and restricted %f
+# formats reaches the rational and both rounding stages without asking the
+# reference's long-double parser to decide an intentionally lossy value.
+def numfmt_both(args, values):
+    global total, bad
+
+    command = args + ["--"] + values
+    want = subprocess.run(["numfmt"] + command, capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/numfmt"] + command,
+                         capture_output=True, env=environment)
+    total += 1
+
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        return
+
+    bad += 1
+    if bad <= 6:
+        print("  numfmt %-18s want %r[%d] got %r[%d]"
+              % (" ".join(args), want.stdout[:100], want.returncode,
+                 got.stdout[:100], got.returncode))
+        print("      values=%r" % values[:12])
+
+
+for _ in range(max(30, rounds // 3)):
+    # GNU 9.4 used upper-case K for SI while 9.11 uses lower-case k.  SI is
+    # covered by stable M/G cases above; generated cross-version cases use
+    # spellings whose output did not change.
+    args = ["--to=" + random.choice(("none", "iec", "iec-i")),
+            "--round=" + random.choice(("from-zero", "up", "down",
+                                         "towards-zero", "nearest"))]
+
+    if random.random() < 0.45:
+        args.append("--format=" + random.choice(
+            ("%f", "%.0f", "%.1f", "%.2f", "[%08.3f]", "[%-9.2f]")))
+
+    values = []
+    for _ in range(random.randint(4, 20)):
+        whole = random.randrange(1000000000)
+        sign = "-" if random.randrange(2) else ""
+        # Binary-exact fractions keep this a compatibility test rather than
+        # a catalog of the reference's long-double representation errors.
+        tail = random.choice(("", ".0", ".00", ".5", ".50", ".25",
+                              ".75", ".125", ".625"))
+        values.append("%s%d%s" % (sign, whole, tail))
+
+    numfmt_both(args, values)
+
 
 def both(flags, a, b):
     global total, bad
@@ -1406,6 +1657,81 @@ def lines(alphabet, count):
 
 
 random.seed(20260828)
+
+#       tsort's answer is deterministic but not simply lexical: initial zero
+#       nodes are lexical, then newly released nodes follow reverse relation
+#       arrival order. Compare output, cycle diagnostics and status together.
+tsort_input = os.path.join(work, "gen_tsort")
+
+
+def tsort_both(tokens, label):
+    global total, bad
+
+    separators = (" ", "\t", "\n", " \n")
+    data = "".join(token + separators[i % len(separators)]
+                   for i, token in enumerate(tokens)).encode()
+    open(tsort_input, "wb").write(data)
+
+    want = subprocess.run(["tsort", tsort_input], capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/tsort", tsort_input],
+                         capture_output=True, env=environment)
+    total += 1
+
+    if (want.stdout == got.stdout and want.stderr == got.stderr
+            and want.returncode == got.returncode):
+        return
+
+    bad += 1
+
+    if bad <= 6:
+        print("  tsort %-12s want %r/%r[%d] got %r/%r[%d]"
+              % (label, want.stdout[:70], want.stderr[:100], want.returncode,
+                 got.stdout[:70], got.stderr[:100], got.returncode))
+        print("      tokens=%r" % tokens[:40])
+
+
+for case in range(max(20, rounds // 2)):
+    count = random.randint(1, 28)
+    names = ["n%02d" % i for i in range(count)]
+    random.shuffle(names)
+    pairs = []
+
+    # Self pairs make isolated nodes; forward-index edges keep this half a
+    # DAG even though the token names and insertion order are shuffled.
+    for name in names:
+        if random.random() < 0.35:
+            pairs.append((name, name))
+
+    for _ in range(random.randint(0, count * 3)):
+        one = random.randrange(count)
+        two = random.randrange(one, count)
+        pair = (names[one], names[two])
+        pairs.append(pair)
+        if random.random() < 0.25:
+            pairs.append(pair)
+
+    if case & 1 and count >= 2:
+        ring = random.sample(names, random.randint(2, min(7, count)))
+        pairs.extend(zip(ring, ring[1:] + ring[:1]))
+
+    random.shuffle(pairs)
+    if not pairs:
+        pairs.append((names[0], names[0]))
+
+    tsort_both([word for pair in pairs for word in pair], "random")
+
+# Cross the shared 64 KiB refill with both one token and many relations. The
+# latter also makes quadratic zero rescans or per-edge allocation visible.
+long_name = "x" * 70000
+tsort_both([long_name, "tail"], "long-token")
+
+long_pairs = []
+for i in range(12000):
+    long_pairs.extend(("v%05d" % i, "v%05d" % (i + 1)))
+    if i % 31 == 0:
+        long_pairs.extend(("side%05d" % i, "side%05d" % i))
+tsort_both(long_pairs, "long-graph")
 
 for _ in range(rounds):
     for alphabet in ("ab", "abcde", "abcdefghij"):

@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-#       chroot, nohup and timeout against GNU coreutils.
+#       chroot, nohup, stdbuf and timeout against GNU coreutils.
 #
 #       These are process wrappers, so their visible contract is a command's
 #       output and wait status rather than a transformed file.  Timing cases
@@ -69,12 +69,86 @@ compare_status()
         report "$name" "want status $want_status, got $got_status"
 }
 
-for needed in timeout nohup chroot; do
+# stdbuf's contract includes four environment records, while every other
+# inherited record is incidental to the runner.  Compare exactly the records
+# that its preload consumes and the loader follows.
+compare_stdbuf_environment()
+{
+        name=$1
+        shift
+
+        stdbuf "$@" /usr/bin/env > "$work/want_raw" 2> "$work/want_err"
+        want_status=$?
+        "$bin/stdbuf" "$@" /usr/bin/env > "$work/got_raw" 2> "$work/got_err"
+        got_status=$?
+
+        grep -E '^(_STDBUF_[IOE]|LD_PRELOAD)=' "$work/want_raw" |
+                sort > "$work/want"
+        grep -E '^(_STDBUF_[IOE]|LD_PRELOAD)=' "$work/got_raw" |
+                sort > "$work/got"
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return
+        fi
+
+        report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+}
+
+for needed in timeout nohup chroot stdbuf; do
         if ! command -v "$needed" > /dev/null 2>&1; then
                 echo "  process      NOT RUN -- no coreutils $needed reference"
                 exit 2
         fi
 done
+
+compare_stdbuf_environment 'stdbuf line mode' -oL
+compare_stdbuf_environment 'stdbuf numeric modes' -i0 -o4KB -e4KiB
+compare_stdbuf_environment 'stdbuf long mode' --output=004K
+compare_stdbuf_environment 'stdbuf plus mode' -o+1
+compare_stdbuf_environment 'stdbuf zero huge suffix' -o0Q
+compare_status 'stdbuf no mode' stdbuf /bin/true
+compare_status 'stdbuf invalid mode' stdbuf -ol /bin/true
+compare_status 'stdbuf line input' stdbuf -iL /bin/true
+compare_status 'stdbuf missing command' stdbuf -o0 no-such-moonwater-command
+
+if command -v cc > /dev/null 2>&1 &&
+        cc -O2 -o "$work/stdio-buffer" src/test/stdio_buffer.c \
+                > "$work/cc.out" 2>&1; then
+        compare 'stdbuf changes streams' stdbuf -i0 -oL -e4K \
+                "$work/stdio-buffer"
+
+        # GNU executes a static target even though its preload cannot affect
+        # it. Moonwater fails closed: claiming the mode was applied would be
+        # a silent no-op, the exact behavior this shim exists to avoid.
+        if cc -O2 -static -o "$work/stdio-buffer-static" \
+                src/test/stdio_buffer.c > "$work/cc-static.out" 2>&1; then
+                "$bin/stdbuf" -o0 "$work/stdio-buffer-static" \
+                        > "$work/got" 2> "$work/got_err"
+                static_status=$?
+
+                if [ "$static_status" = 125 ] && [ ! -s "$work/got" ] &&
+                        grep -q 'statically linked' "$work/got_err"; then
+                        pass=$((pass + 1))
+                else
+                        report 'stdbuf static target' \
+                                "status $static_status / $(show "$work/got_err")"
+                fi
+        fi
+fi
+
+MOONWATER_STDBUF_LIBRARY="$work/no-libstdbuf.so" \
+        "$bin/stdbuf" -o0 /bin/true > "$work/got" 2> "$work/got_err"
+missing_library_status=$?
+
+if [ "$missing_library_status" = 125 ] && [ ! -s "$work/got" ] &&
+        grep -q 'not a compatible libstdbuf.so' "$work/got_err"; then
+        pass=$((pass + 1))
+else
+        report 'stdbuf missing library' \
+                "status $missing_library_status / $(show "$work/got_err")"
+fi
 
 compare 'exit and streams' timeout 1 /bin/sh -c \
         'printf output; printf error >&2; exit 7'

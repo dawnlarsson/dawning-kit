@@ -7,6 +7,9 @@
     "git_commit": "c01fd163a47468a8296fb369f5233853bb551bb6",
     "policy": "default__progs plus build_if_possible__progs; ginstall is install; libstdbuf.so, no_install__progs, and build_if_appropriate__progs are not installed applets"
   },
+  "boundaries": {
+    "factor": "native unsigned word: 0..18446744073709551615 on 64-bit builds; larger GNU bignum inputs are rejected without truncation"
+  },
   "commands": [
     "[",
     "b2sum",
@@ -111,15 +114,5 @@
     "whoami",
     "yes"
   ],
-  "absent": [
-    "dircolors",
-    "factor",
-    "fmt",
-    "numfmt",
-    "pr",
-    "ptx",
-    "shuf",
-    "stdbuf",
-    "tsort"
-  ]
+  "absent": []
 }

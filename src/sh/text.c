@@ -1,5 +1,13 @@
 #include "../compiler_memory.c"
 
+/* sort has its command entry point later in the file.  ptx consumes its same
+   byte comparator without moving or cloning the ordering engine. */
+static PURE bipolar sort_compare_bytes(p8 address_to one,
+                                       positive one_length,
+                                       p8 address_to two,
+                                       positive two_length,
+                                       positive how);
+
 /*
         The text utilities, as one body of code.
 
@@ -353,6 +361,10 @@ typedef struct
 } text_reader;
 
 static text_reader text_input;
+/* pr -r is the one line tool which deliberately suppresses an open
+   diagnostic.  Keep that policy at the shared reader boundary so its merge
+   cursors do not grow a second open path. */
+static bool text_quiet_open;
 /* One sentinel slot is used while a sed script file is turned into text. */
 static p8 text_line[TEXT_LINE_MAX + 1];
 static positive text_line_length;
@@ -397,7 +409,8 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
 
         if (handle < 0)
         {
-                text_error(path, "No such file or directory");
+                if (!text_quiet_open)
+                        text_error(path, "No such file or directory");
                 reader->failed = true;
                 return false;
         }
@@ -725,6 +738,7 @@ static fn text_begin(string_address name)
         text_argument_count = program_argument_count();
         text_files_count = 0;
         text_files_failed = false;
+        text_quiet_open = false;
 }
 
 /*
@@ -7291,6 +7305,2821 @@ static b32 text_unexpand()
                               text_tab_option_seen);
 
         text_tab_transform(true, !all);
+        return text_done(text_status);
+}
+
+/*
+        Paragraph filling.
+
+        fmt is not a greedy fold: it assigns a cost to every legal break and
+        chooses the least-ragged set for the whole paragraph.  The descriptors
+        below retain that small dynamic-programming graph, while word bytes
+        use relation_spill (already the shared one-record spill area) and input
+        lines use text_record_hold.  It therefore adds neither another reader
+        nor another line/output buffer.
+*/
+#define FMT_WIDTH_DEFAULT 75
+/* Word separators are represented in descriptors rather than copied into the
+   spill, so a one-byte word on each physical line is the true upper bound. */
+#define FMT_WORD_MAX TEXT_LINE_MAX
+#define FMT_COST_MAX ((bipolar)(positive_max >> 1))
+
+typedef struct
+{
+        p8 address_to text;
+        positive length;
+        positive space;
+        positive line_length;
+        positive next_break;
+        bipolar best_cost;
+        bool paren;
+        bool period;
+        bool punct;
+        bool final;
+} fmt_word;
+
+typedef struct
+{
+        p8 address_to at;
+        positive length;
+        bool ended;
+        bool suitable;
+        positive prefix_indent;
+        positive indent;
+        positive content;
+} fmt_line;
+
+static fmt_word address_to fmt_words;
+static positive fmt_word_count;
+static positive fmt_character_count;
+static positive fmt_max_width;
+static positive fmt_goal_width;
+static string_address fmt_prefix;
+static positive fmt_prefix_leading;
+static positive fmt_prefix_length;
+static positive fmt_prefix_full_length;
+static positive fmt_prefix_indent;
+static positive fmt_first_indent;
+static positive fmt_other_indent;
+static positive fmt_last_line_length;
+static positive fmt_out_column;
+static bool fmt_tabs;
+static bool fmt_crown;
+static bool fmt_tagged;
+static bool fmt_split;
+static bool fmt_uniform;
+static bool fmt_failed;
+static b8 fmt_word_bytes[STRING_SET_BYTES];
+
+static fn fmt_put_space(positive count)
+{
+        positive target = fmt_out_column > positive_max - count
+                              ? positive_max
+                              : fmt_out_column + count;
+
+        if (fmt_tabs)
+        {
+                positive tab_target = target / 8 * 8;
+
+                if (fmt_out_column + (fmt_out_column != positive_max) <
+                    tab_target)
+                {
+                        positive first = (fmt_out_column / 8 + 1) * 8;
+                        positive tabs = 1 + (tab_target - first) / 8;
+
+                        text_tab_repeat_character('\t', tabs);
+                        fmt_out_column = tab_target;
+                }
+        }
+
+        text_tab_repeat_character(' ', target - fmt_out_column);
+        fmt_out_column = target;
+}
+
+static bool fmt_open_character(p8 value)
+{
+        return value == '(' || value == '[' || value == '\'' || value == '`' ||
+               value == '"';
+}
+
+static bool fmt_close_character(p8 value)
+{
+        return value == ')' || value == ']' || value == '\'' || value == '"';
+}
+
+static bool fmt_period_character(p8 value)
+{
+        return value == '.' || value == '?' || value == '!';
+}
+
+static fn fmt_check_punctuation(fmt_word address_to word)
+{
+        p8 address_to start = word->text;
+        positive finish = word->length - 1;
+
+        word->paren = fmt_open_character(start[0]);
+        word->punct = byte_is_punctuation(start[finish]);
+
+        while (finish && fmt_close_character(start[finish]))
+                finish--;
+
+        word->period = fmt_period_character(start[finish]);
+}
+
+static positive fmt_blanks(p8 address_to line, positive length,
+                           positive address_to at, positive column)
+{
+        while (address_to at < length)
+        {
+                p8 character = line[address_to at];
+
+                if (character == ' ')
+                        column++;
+                else if (character == '\t')
+                {
+                        fmt_tabs = true;
+                        column = (column / 8 + 1) * 8;
+                }
+                else
+                        break;
+
+                address_to at = address_to at + 1;
+        }
+
+        return column;
+}
+
+static fn fmt_analyze_line(fmt_line address_to line)
+{
+        positive at = 0;
+        positive column = fmt_blanks(line->at, line->length, address_of at, 0);
+
+        if (!fmt_prefix_length)
+                line->prefix_indent = column < fmt_prefix_leading
+                                          ? column
+                                          : fmt_prefix_leading;
+        else
+        {
+                line->prefix_indent = column;
+
+                positive matched = 0;
+
+                while (matched < fmt_prefix_length && at < line->length &&
+                       line->at[at] == fmt_prefix[matched])
+                {
+                        matched++;
+                        at++;
+                        column++;
+                }
+
+                if (matched != fmt_prefix_length)
+                {
+                        line->indent = column;
+                        line->content = at;
+                        line->suitable = false;
+                        return;
+                }
+
+                column = fmt_blanks(line->at, line->length, address_of at,
+                                    column);
+        }
+
+        line->indent = column;
+        line->content = at;
+        line->suitable = at < line->length &&
+                         line->prefix_indent >= fmt_prefix_leading &&
+                         column >= line->prefix_indent + fmt_prefix_full_length;
+}
+
+static bool fmt_read_line(fmt_line address_to line)
+{
+        if (!text_line_next())
+                return false;
+
+        memory_copy_apart(text_record_hold, text_line, text_line_length);
+        line->at = text_record_hold;
+        line->length = text_line_length;
+        line->ended = text_line_ended;
+        line->suitable = false;
+        line->prefix_indent = 0;
+        line->indent = 0;
+        line->content = 0;
+        fmt_analyze_line(line);
+        return true;
+}
+
+static bool fmt_add_word(p8 address_to at, positive length, positive space,
+                         bool end_line)
+{
+        if (fmt_word_count == FMT_WORD_MAX ||
+            length > TEXT_LINE_MAX - fmt_character_count)
+        {
+                text_error(null, "paragraph is too large");
+                fmt_failed = true;
+                return false;
+        }
+
+        fmt_word address_to word = fmt_words + fmt_word_count++;
+
+        word->text = relation_spill + fmt_character_count;
+        memory_copy_apart(word->text, at, length);
+        fmt_character_count += length;
+        word->length = length;
+        word->space = space;
+        word->line_length = 0;
+        word->next_break = fmt_word_count;
+        word->best_cost = 0;
+        word->paren = false;
+        word->period = false;
+        word->punct = false;
+        word->final = false;
+        fmt_check_punctuation(word);
+        word->final = word->period && (end_line || space > 1);
+
+        if (end_line || fmt_uniform)
+                word->space = word->final ? 2 : 1;
+
+        return true;
+}
+
+static bool fmt_add_line(fmt_line address_to line)
+{
+        positive at = line->content;
+        positive column = line->indent;
+
+        while (at < line->length)
+        {
+                positive begin = at;
+
+                at += string_span_max(line->at + at, line->length - at,
+                                      fmt_word_bytes);
+
+                /* A non-space separator outside the ordinary blank pair is
+                   retained with the following word, matching fmt's byte-C
+                   behavior instead of silently deleting input controls. */
+                if (begin == at)
+                        at++;
+
+                positive length = at - begin;
+                column += length;
+                positive before = column;
+
+                column = fmt_blanks(line->at, line->length, address_of at,
+                                    column);
+                positive space = column - before;
+                bool end_line = at == line->length;
+
+                if (!fmt_add_word(line->at + begin, length, space, end_line))
+                        return false;
+        }
+
+        return true;
+}
+
+static bipolar fmt_square_cost(bipolar difference)
+{
+        bipolar amount = difference * 10;
+
+        return amount * amount;
+}
+
+static bipolar fmt_base_cost(positive index)
+{
+        fmt_word address_to word = fmt_words + index;
+        bipolar cost = 4900;
+
+        if (index)
+        {
+                fmt_word address_to before = word - 1;
+
+                if (before->period)
+                        cost += before->final ? -2500 : 360000;
+                else if (before->punct)
+                        cost -= 1600;
+                else if (index > 1 && (word - 2)->final)
+                        cost += 40000 / (bipolar)(before->length + 2);
+        }
+
+        if (word->paren)
+                cost -= 1600;
+        else if (word->final)
+                cost += 22500 / (bipolar)(word->length + 2);
+
+        return cost;
+}
+
+static bipolar fmt_line_cost(positive next, positive length)
+{
+        if (next == fmt_word_count)
+                return 0;
+
+        bipolar cost = fmt_square_cost((bipolar)fmt_goal_width -
+                                       (bipolar)length);
+
+        if (fmt_words[next].next_break != fmt_word_count)
+        {
+                bipolar difference = (bipolar)length -
+                                     (bipolar)fmt_words[next].line_length;
+
+                cost += fmt_square_cost(difference) / 2;
+        }
+
+        return cost;
+}
+
+static fn fmt_choose_breaks()
+{
+        fmt_words[fmt_word_count].best_cost = 0;
+        fmt_words[fmt_word_count].length = fmt_max_width;
+        fmt_words[fmt_word_count].next_break = fmt_word_count;
+
+        for (positive start = fmt_word_count; start;)
+        {
+                start--;
+                bipolar best = FMT_COST_MAX;
+                positive length = start ? fmt_other_indent : fmt_first_indent;
+                positive next = start;
+
+                length += fmt_words[next].length;
+
+                do
+                {
+                        next++;
+                        bipolar cost = fmt_line_cost(next, length) +
+                                       fmt_words[next].best_cost;
+
+                        if (!start && fmt_last_line_length)
+                        {
+                                bipolar difference = (bipolar)length -
+                                                     (bipolar)fmt_last_line_length;
+
+                                cost += fmt_square_cost(difference) / 2;
+                        }
+
+                        if (cost < best)
+                        {
+                                best = cost;
+                                fmt_words[start].next_break = next;
+                                fmt_words[start].line_length = length;
+                        }
+
+                        if (next == fmt_word_count)
+                                break;
+
+                        length += fmt_words[next - 1].space +
+                                  fmt_words[next].length;
+                }
+                while (length <= fmt_max_width);
+
+                fmt_words[start].best_cost = best + fmt_base_cost(start);
+        }
+}
+
+static fn fmt_put_line(positive begin, positive indent)
+{
+        positive finish = fmt_words[begin].next_break;
+
+        fmt_out_column = 0;
+        fmt_put_space(fmt_prefix_indent);
+        text_put(fmt_prefix, fmt_prefix_length);
+        fmt_out_column += fmt_prefix_length;
+        fmt_put_space(indent - fmt_out_column);
+
+        for (positive at = begin; at < finish; at++)
+        {
+                text_put(fmt_words[at].text, fmt_words[at].length);
+                fmt_out_column += fmt_words[at].length;
+
+                if (at + 1 < finish)
+                        fmt_put_space(fmt_words[at].space);
+        }
+
+        fmt_last_line_length = fmt_out_column;
+        text_put_character('\n');
+}
+
+static fn fmt_put_paragraph()
+{
+        positive at = 0;
+
+        fmt_put_line(at, fmt_first_indent);
+        at = fmt_words[at].next_break;
+
+        while (at < fmt_word_count)
+        {
+                fmt_put_line(at, fmt_other_indent);
+                at = fmt_words[at].next_break;
+        }
+}
+
+static fn fmt_other(bool same, positive next_indent)
+{
+        if (fmt_split)
+                fmt_other_indent = fmt_first_indent;
+        else if (fmt_crown)
+                fmt_other_indent = same ? next_indent : fmt_first_indent;
+        else if (fmt_tagged)
+        {
+                if (same && next_indent != fmt_first_indent)
+                        fmt_other_indent = next_indent;
+                else if (fmt_other_indent == fmt_first_indent)
+                        fmt_other_indent = fmt_first_indent ? 0 : 3;
+        }
+        else
+                fmt_other_indent = fmt_first_indent;
+}
+
+static bool fmt_same(fmt_line address_to line)
+{
+        return line->suitable && line->prefix_indent == fmt_prefix_indent;
+}
+
+static fn fmt_copy_line(fmt_line address_to line)
+{
+        fmt_out_column = 0;
+
+        if (line->indent > line->prefix_indent ||
+            line->content < line->length)
+        {
+                fmt_put_space(line->prefix_indent);
+
+                positive prefix = 0;
+
+                while (fmt_out_column != line->indent &&
+                       prefix < fmt_prefix_length)
+                {
+                        text_put_character(fmt_prefix[prefix++]);
+                        fmt_out_column++;
+                }
+
+                if (line->content < line->length)
+                        fmt_put_space(line->indent - fmt_out_column);
+                else if (!line->ended &&
+                         line->indent >= line->prefix_indent +
+                                             fmt_prefix_length)
+                        text_put_character('\n');
+        }
+
+        text_put(line->at + line->content, line->length - line->content);
+
+        if (line->ended)
+                text_put_character('\n');
+}
+
+static fn fmt_file()
+{
+        fmt_line line;
+
+        fmt_tabs = false;
+        fmt_other_indent = 0;
+        bool have = fmt_read_line(address_of line);
+
+        while (have && !fmt_failed)
+        {
+                if (!line.suitable)
+                {
+                        fmt_copy_line(address_of line);
+                        have = fmt_read_line(address_of line);
+                        continue;
+                }
+
+                fmt_word_count = 0;
+                fmt_character_count = 0;
+                fmt_last_line_length = 0;
+                fmt_prefix_indent = line.prefix_indent;
+                fmt_first_indent = line.indent;
+
+                if (!fmt_add_line(address_of line))
+                        break;
+
+                have = fmt_read_line(address_of line);
+                bool same = have && fmt_same(address_of line);
+
+                fmt_other(same, same ? line.indent : fmt_first_indent);
+
+                if (!fmt_split)
+                {
+                        if (fmt_crown && same)
+                        {
+                                do
+                                {
+                                        if (!fmt_add_line(address_of line))
+                                                break;
+
+                                        have = fmt_read_line(address_of line);
+                                }
+                                while (have && fmt_same(address_of line) &&
+                                       line.indent == fmt_other_indent);
+                        }
+                        else if (fmt_tagged && same &&
+                                 line.indent != fmt_first_indent)
+                        {
+                                do
+                                {
+                                        if (!fmt_add_line(address_of line))
+                                                break;
+
+                                        have = fmt_read_line(address_of line);
+                                }
+                                while (have && fmt_same(address_of line) &&
+                                       line.indent == fmt_other_indent);
+                        }
+                        else if (!fmt_crown && !fmt_tagged)
+                        {
+                                while (same && line.indent == fmt_other_indent)
+                                {
+                                        if (!fmt_add_line(address_of line))
+                                                break;
+
+                                        have = fmt_read_line(address_of line);
+                                        same = have && fmt_same(address_of line);
+                                }
+                        }
+                }
+
+                if (fmt_failed)
+                        break;
+
+                fmt_words[fmt_word_count - 1].period = true;
+                fmt_words[fmt_word_count - 1].final = true;
+                fmt_choose_breaks();
+                fmt_put_paragraph();
+        }
+}
+
+static const file_long fmt_longs[] = {
+    {(string_address) "crown-margin", 'c'},
+    {(string_address) "goal", 'g'},
+    {(string_address) "prefix", 'p'},
+    {(string_address) "split-only", 's'},
+    {(string_address) "tagged-paragraph", 't'},
+    {(string_address) "uniform-spacing", 'u'},
+    {(string_address) "width", 'w'},
+    {null, 0},
+};
+
+static b32 text_fmt()
+{
+        file_taking taking = {
+            .program = (string_address) "fmt",
+            .allowed = (string_address) "cgpstuw",
+            .valued = (string_address) "gpw",
+            .longs = fmt_longs,
+            .operand = text_file_add,
+            .digits = 'W',
+        };
+
+        text_begin("fmt");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        if (taking.flags & FILE_FLAG('W'))
+        {
+                string_address first = program_argument_count() > 1
+                                           ? program_argument(1)
+                                           : null;
+
+                if (!first || first[0] != '-' || !byte_is_digit(first[1]))
+                        return text_refuse(null,
+                                           "-WIDTH is only accepted first", 1);
+        }
+
+        positive width = FMT_WIDTH_DEFAULT;
+        string_address width_value = (taking.flags & FILE_FLAG('w'))
+                                         ? file_option_value(address_of taking, 'w')
+                                         : (taking.flags & FILE_FLAG('W'))
+                                               ? file_option_value(address_of taking, 'W')
+                                               : null;
+
+        if (width_value &&
+            (!text_unsigned_option(width_value, false, address_of width) ||
+             width > 2500))
+                return text_refuse(width_value, "invalid width", 1);
+
+        positive goal;
+
+        if (taking.flags & FILE_FLAG('g'))
+        {
+                string_address value = file_option_value(address_of taking, 'g');
+                positive ceiling = width_value ? width : FMT_WIDTH_DEFAULT;
+
+                if (!text_unsigned_option(value, false, address_of goal) ||
+                    goal > ceiling)
+                        return text_refuse(value, "invalid width", 1);
+
+                if (!width_value)
+                        width = goal + 10;
+        }
+        else
+                goal = width * 187 / 200;
+
+        string_address prefix_value = (taking.flags & FILE_FLAG('p'))
+                                          ? file_option_value(address_of taking, 'p')
+                                          : (string_address) "";
+        positive prefix_total = string_length(prefix_value);
+        positive leading = 0;
+        positive trailing = prefix_total;
+
+        while (leading < prefix_total && prefix_value[leading] == ' ')
+                leading++;
+
+        while (trailing > leading && prefix_value[trailing - 1] == ' ')
+                trailing--;
+
+        fmt_prefix = prefix_value + leading;
+        fmt_prefix_leading = leading;
+        fmt_prefix_length = trailing - leading;
+        fmt_prefix_full_length = prefix_total - leading;
+        fmt_max_width = width;
+        fmt_goal_width = goal;
+        fmt_crown = (taking.flags & FILE_FLAG('c')) != 0;
+        fmt_tagged = (taking.flags & FILE_FLAG('t')) != 0;
+        fmt_split = (taking.flags & FILE_FLAG('s')) != 0;
+        fmt_uniform = (taking.flags & FILE_FLAG('u')) != 0;
+        fmt_failed = false;
+
+        {
+                memory_fill(fmt_word_bytes, 1, sizeof(fmt_word_bytes));
+                fmt_word_bytes[' '] = 0;
+                fmt_word_bytes['\t'] = 0;
+                fmt_word_bytes['\n'] = 0;
+                fmt_word_bytes['\v'] = 0;
+                fmt_word_bytes['\f'] = 0;
+                fmt_word_bytes['\r'] = 0;
+        }
+
+        fmt_words = (fmt_word address_to)text_arena_take(
+            (FMT_WORD_MAX + 1) * sizeof(fmt_word));
+
+        if (!fmt_words)
+                return text_done(1);
+
+        b32 inputs = text_input_count();
+
+        for (b32 i = 0; i < inputs && !fmt_failed; i++)
+        {
+                if (!text_open(text_file_name(i)))
+                        continue;
+
+                fmt_file();
+                text_close();
+        }
+
+        return text_done((text_status || fmt_failed) ? 1 : 0);
+}
+
+/*
+        Page layout.
+
+        pr is another view of the record stream, not another input system.
+        One page of small descriptors points into relation_spill; records are
+        still obtained by text_line_next, or by the same text_record_cursor
+        used by paste when --merge keeps several files live.  This also makes
+        the down-column order a permutation of descriptors rather than a
+        second collection of lines.
+*/
+#define PR_LENGTH_DEFAULT 66
+#define PR_WIDTH_DEFAULT 72
+#define PR_HEADER_LINES 5
+#define PR_FOOTER_LINES 5
+
+typedef struct
+{
+        positive offset;
+        positive length;
+        bipolar number;
+        bool present;
+} pr_record;
+
+static pr_record address_to pr_records;
+static positive pr_record_room;
+static positive pr_spill_used;
+static positive pr_columns;
+static positive pr_body_lines;
+static positive pr_page_length;
+static positive pr_page_width;
+static positive pr_margin;
+static positive pr_first_page;
+static positive pr_last_page;
+static positive pr_separator_length;
+static positive pr_number_digits;
+static positive pr_number_width;
+static positive pr_input_tab_width;
+static positive pr_output_tab_width;
+static bipolar pr_line_number;
+static bipolar pr_start_line_number;
+static string_address pr_separator;
+static p8 pr_number_separator;
+static string_address pr_header;
+static string_address pr_date_format;
+static p8 pr_input_tab;
+static p8 pr_output_tab;
+static bool pr_across;
+static bool pr_merge;
+static bool pr_double;
+static bool pr_form_feed;
+static bool pr_join;
+static bool pr_number;
+static bool pr_number_reset;
+static bool pr_omit_header;
+static bool pr_omit_pagination;
+static bool pr_truncate;
+static bool pr_expand_input;
+static bool pr_tabify_output;
+static bool pr_page_option_failed;
+static bool pr_pending;
+static positive pr_pending_length;
+static bool pr_failed;
+static positive pr_output_column;
+static b64 pr_now;
+
+static bool pr_parse_positive(string_address value, positive address_to into)
+{
+        return text_unsigned_option(value, false, into) && address_to into;
+}
+
+static bool pr_pages(string_address value)
+{
+        positive first = 0;
+        positive last = positive_max;
+        positive used = 0;
+
+        if (!value)
+                return false;
+
+        while (byte_is_digit(value[used]))
+                used++;
+
+        if (!used)
+                return false;
+
+        p8 saved = value[used];
+        ((p8 address_to)value)[used] = '\0';
+        bool okay = pr_parse_positive(value, address_of first);
+        ((p8 address_to)value)[used] = saved;
+
+        if (!okay || !first)
+                return false;
+
+        if (saved)
+        {
+                if (saved != ':' || !value[used + 1] ||
+                    !pr_parse_positive(value + used + 1, address_of last) ||
+                    last < first)
+                        return false;
+        }
+
+        pr_first_page = first;
+        pr_last_page = last;
+        return true;
+}
+
+static bool pr_option_seen(p8 letter, string_address value)
+{
+        if (letter != 'P')
+                return true;
+
+        if (pr_pages(value))
+                return true;
+
+        text_error(value, "invalid page range");
+        pr_page_option_failed = true;
+        return false;
+}
+
+static fn pr_operand_add(b32 which)
+{
+        string_address value = program_argument(which);
+
+        if (value[0] == '+' && byte_is_digit(value[1]))
+        {
+                if (!pr_pages(value + 1))
+                {
+                        text_error(value, "invalid page range");
+                        pr_page_option_failed = true;
+                }
+
+                return;
+        }
+
+        text_file_add(which);
+}
+
+static bool pr_tab_option(string_address value, p8 address_to character,
+                          positive address_to width)
+{
+        address_to character = '\t';
+        address_to width = 8;
+
+        if (!value)
+                return true;
+
+        positive at = 0;
+
+        if (value[at] && !byte_is_digit(value[at]))
+                address_to character = value[at++];
+
+        if (!value[at])
+                return true;
+
+        return pr_parse_positive(value + at, width);
+}
+
+static bool pr_signed(string_address value, bipolar address_to into)
+{
+        positive used = 0;
+        bipolar made = string_bipolar(value, address_of used);
+
+        if (!value || !used || value[used])
+                return false;
+
+        address_to into = made;
+        return true;
+}
+
+static bool pr_number_option(string_address value)
+{
+        pr_number_digits = 5;
+        pr_number_separator = '\t';
+
+        if (!value)
+                return true;
+
+        positive at = 0;
+
+        if (value[at] && !byte_is_digit(value[at]))
+                pr_number_separator = value[at++];
+
+        if (value[at] && !pr_parse_positive(value + at,
+                                            address_of pr_number_digits))
+                return false;
+
+        return pr_number_digits != 0;
+}
+
+static fn pr_pad(positive target)
+{
+        if (target <= pr_output_column)
+                return;
+
+        if (pr_tabify_output && pr_output_tab_width)
+        {
+                for (;;)
+                {
+                        positive stop =
+                            (pr_output_column / pr_output_tab_width + 1) *
+                            pr_output_tab_width;
+
+                        if (stop > target || target - pr_output_column < 2)
+                                break;
+
+                        text_put_character(pr_output_tab);
+                        pr_output_column = stop;
+                }
+        }
+
+        text_tab_repeat_character(' ', target - pr_output_column);
+        pr_output_column = target;
+}
+
+static fn pr_put_margin()
+{
+        pr_output_column = 0;
+        text_tab_repeat_character(' ', pr_margin);
+        pr_output_column = pr_margin;
+}
+
+static fn pr_put_number(bipolar number, positive field_start)
+{
+        p8 digits[64];
+        positive length = bipolar_into_string(digits, number);
+        positive blanks = length < pr_number_digits
+                              ? pr_number_digits - length
+                              : 0;
+
+        if (pr_columns > 1)
+                pr_pad(pr_output_column + blanks);
+        else
+                text_tab_repeat_character(' ', blanks);
+        text_put(digits, length);
+        pr_output_column += length + (pr_columns > 1 ? 0 : blanks);
+
+        if (pr_columns > 1 && pr_number_separator == '\t')
+                /* Multi-column pr treats the default number tab as the
+                   remaining field width, then lets ordinary output
+                   tabification encode those blanks. */
+                pr_pad(field_start + pr_number_width);
+        else
+        {
+                text_put_character(pr_number_separator);
+
+                if (pr_number_separator == '\t')
+                        pr_output_column =
+                            (pr_output_column / 8 + 1) * 8;
+                else
+                        pr_output_column++;
+        }
+}
+
+static fn pr_put_record(pr_record address_to record, positive width)
+{
+        if (!record->present)
+                return;
+
+        p8 address_to bytes = relation_spill + record->offset;
+        positive record_column = 0;
+
+        for (positive at = 0; at < record->length; at++)
+        {
+                p8 character = bytes[at];
+
+                if (pr_expand_input && character == pr_input_tab)
+                {
+                        positive stop =
+                            (record_column / pr_input_tab_width + 1) *
+                            pr_input_tab_width;
+                        positive count = stop - record_column;
+
+                        if (pr_truncate && stop > width)
+                                count = record_column < width
+                                            ? width - record_column
+                                            : 0;
+
+                        pr_pad(pr_output_column + count);
+                        record_column += count;
+                        continue;
+                }
+
+                if (character == '\b')
+                {
+                        if (!pr_truncate || record_column)
+                        {
+                                text_put_character(character);
+                                record_column = record_column
+                                                    ? record_column - 1
+                                                    : 0;
+                                pr_output_column = pr_output_column
+                                                       ? pr_output_column - 1
+                                                       : 0;
+                        }
+                        continue;
+                }
+
+                if (character == '\r')
+                {
+                        text_put_character(character);
+                        record_column = 0;
+                        pr_output_column = 0;
+                        continue;
+                }
+
+                positive after = character == '\t'
+                                     ? (record_column / 8 + 1) * 8
+                                     : record_column + 1;
+
+                if (pr_truncate && after > width)
+                        continue;
+
+                text_put_character(character);
+                record_column = after;
+
+                if (character == '\t')
+                        pr_output_column =
+                            (pr_output_column / 8 + 1) * 8;
+                else
+                        pr_output_column++;
+        }
+}
+
+static bool pr_store(p8 address_to bytes, positive length, bipolar number,
+                     pr_record address_to record)
+{
+        positive kept = 0;
+
+        if (length > TEXT_LINE_MAX - pr_spill_used)
+        {
+                text_error(null, "page is too large");
+                pr_failed = true;
+                return false;
+        }
+
+        record->offset = pr_spill_used;
+        record->number = number;
+        record->present = true;
+
+        for (positive at = 0; at < length; at++)
+                relation_spill[pr_spill_used + kept++] = bytes[at];
+
+        record->length = kept;
+        pr_spill_used += kept;
+        return true;
+}
+
+/* 0: EOF, 1: record, 2: page break, 3: record then page break. */
+static b32 pr_source_record(pr_record address_to record)
+{
+        p8 address_to bytes;
+        positive length;
+
+        if (pr_pending)
+        {
+                bytes = text_record_hold;
+                length = pr_pending_length;
+                pr_pending = false;
+        }
+        else
+        {
+                if (!text_line_next())
+                        return 0;
+
+                memory_copy_apart(text_record_hold, text_line,
+                                  text_line_length);
+                bytes = text_record_hold;
+                length = text_line_length;
+        }
+
+        /* A form feed terminates the current logical page in every paging
+           mode.  With -T the header/trailer goes away, but the separator
+           remains observable between the two records. */
+        {
+                p8 address_to page = memory_first_of(bytes, '\f', length);
+
+                if (page)
+                {
+                        positive prefix = (positive)(page - bytes);
+                        positive suffix = length - prefix - 1;
+
+                        if (!prefix)
+                        {
+                                if (suffix)
+                                {
+                                        memory_copy_apart(text_record_hold,
+                                                          page + 1, suffix);
+                                        pr_pending_length = suffix;
+                                        pr_pending = true;
+                                }
+
+                                return 2;
+                        }
+
+                        if (!pr_store(bytes, prefix, pr_line_number++, record))
+                                return 0;
+
+                        if (suffix)
+                        {
+                                memory_copy_apart(text_record_hold, page + 1,
+                                                  suffix);
+                                pr_pending_length = suffix;
+                                pr_pending = true;
+                        }
+
+                        return 3;
+                }
+        }
+
+        if (!pr_store(bytes, length, pr_line_number++, record))
+                return 0;
+
+        return 1;
+}
+
+static positive pr_load_page(bool address_to forced)
+{
+        positive count = 0;
+        pr_spill_used = 0;
+        address_to forced = false;
+
+        while (count < pr_record_room)
+        {
+                b32 answer = pr_source_record(pr_records + count);
+
+                if (!answer)
+                        break;
+
+                if (answer == 1)
+                        count++;
+                else
+                {
+                        if (answer == 3)
+                                count++;
+                        address_to forced = true;
+                        break;
+                }
+        }
+
+        return count;
+}
+
+static positive pr_load_merge(text_record_cursor address_to cursors,
+                              positive inputs)
+{
+        positive rows = 0;
+        pr_spill_used = 0;
+
+        while (rows < pr_body_lines)
+        {
+                bool any = false;
+
+                for (positive column = 0; column < inputs; column++)
+                {
+                        pr_record address_to record =
+                            pr_records + rows * inputs + column;
+
+                        record->present = false;
+                        record->length = 0;
+                        record->number = pr_line_number;
+
+                        if (cursors[column].reader.failed ||
+                            cursors[column].reader.finished)
+                                continue;
+
+                        if (text_record_next(cursors + column, '\n', null, 0,
+                                             null))
+                        {
+                                if (memory_first_of(cursors[column].record,
+                                                    '\f',
+                                                    cursors[column].length))
+                                {
+                                        text_error(null,
+                                                   "form feed with --merge is unsupported");
+                                        pr_failed = true;
+                                        return rows;
+                                }
+
+                                any = true;
+
+                                if (!pr_store(cursors[column].record,
+                                              cursors[column].length,
+                                              pr_line_number, record))
+                                        return rows;
+                        }
+                        else if (cursors[column].reader.failed)
+                                text_status = 1;
+                }
+
+                if (!any)
+                        break;
+
+                rows++;
+                pr_line_number++;
+        }
+
+        return rows;
+}
+
+static bool pr_date(p8 address_to into, positive room, b64 stamp,
+                    positive address_to length)
+{
+        time_t time = (time_t)stamp;
+        tm broken;
+
+        if (!gmtime_r(address_of time, address_of broken))
+                return false;
+
+        address_to length = clock_format_extended(into, room, pr_date_format,
+                                                   address_of broken);
+        return address_to length || !pr_date_format[0];
+}
+
+static fn pr_put_header(string_address name, b64 stamp, positive page)
+{
+        p8 date[512];
+        p8 page_text[80];
+        positive date_length = 0;
+        positive page_digits = positive_into(page_text + 5, page);
+
+        memory_copy(page_text, "Page ", 5);
+
+        if (!pr_date(date, sizeof(date), stamp, address_of date_length))
+        {
+                text_error(pr_date_format, "date format is too long");
+                pr_failed = true;
+                return;
+        }
+
+        positive name_length = string_length(name);
+        positive page_length = page_digits + 5;
+        positive occupied = date_length + name_length + page_length;
+        positive available = occupied < pr_page_width
+                                 ? pr_page_width - occupied
+                                 : 0;
+        positive left = available / 2;
+        positive right = available - left;
+
+        if (!left)
+                left = 1;
+        if (!right)
+                right = 1;
+
+        pr_put_margin();
+        text_put_string("\n\n");
+        pr_put_margin();
+        text_put(date, date_length);
+        text_tab_repeat_character(' ', left);
+        text_put_string(name);
+        text_tab_repeat_character(' ', right);
+        text_put(page_text, page_length);
+        text_put_string("\n\n\n");
+}
+
+static fn pr_put_separator()
+{
+        text_put(pr_separator, pr_separator_length);
+        pr_output_column += pr_separator_length;
+}
+
+static fn pr_put_page(positive count, positive rows, positive page,
+                      string_address name, b64 stamp, bool forced)
+{
+        bool shown_header = !pr_omit_header;
+
+        if (shown_header)
+                pr_put_header(name, stamp, page);
+
+        positive number_fields = pr_number && pr_merge ? 1 : 0;
+        positive fixed = pr_margin +
+                         (pr_columns - 1) * pr_separator_length +
+                         number_fields * pr_number_width;
+        positive useful = pr_page_width > fixed
+                              ? pr_page_width - fixed
+                              : 0;
+        positive column_width = useful / pr_columns;
+        positive record_width = pr_number && !pr_merge
+                                    ? column_width - pr_number_width
+                                    : column_width;
+
+        for (positive row = 0; row < rows; row++)
+        {
+                pr_put_margin();
+
+                for (positive column = 0; column < pr_columns; column++)
+                {
+                        positive index;
+
+                        if (pr_merge || pr_across)
+                                index = row * pr_columns + column;
+                        else
+                                index = column * rows + row;
+
+                        if (index >= count)
+                                break;
+
+                        pr_record address_to record = pr_records + index;
+                        positive field_start = pr_output_column;
+
+                        if (pr_number && (!pr_merge || !column))
+                                pr_put_number(record->number, field_start);
+
+                        positive data_start = pr_output_column;
+                        pr_put_record(record, record_width);
+
+                        bool later = column + 1 < pr_columns &&
+                                     (pr_merge || index + rows < count ||
+                                      (pr_across && index + 1 < count));
+
+                        if (later)
+                        {
+                                bool blank_separator =
+                                    pr_separator_length == 1 &&
+                                    pr_separator[0] == ' ';
+
+                                if (!pr_join)
+                                        pr_pad(data_start + record_width +
+                                               blank_separator);
+
+                                if (!blank_separator)
+                                        pr_put_separator();
+                        }
+                }
+
+                text_put_character('\n');
+
+                if (pr_double)
+                        text_put_character('\n');
+        }
+
+        if (shown_header)
+        {
+                if (pr_form_feed)
+                        text_put_character('\f');
+                else
+                {
+                        positive used = PR_HEADER_LINES +
+                                        rows * (pr_double ? 2 : 1);
+
+                        if (used < pr_page_length)
+                                text_tab_repeat_character('\n',
+                                                          pr_page_length - used);
+                }
+        }
+        else if (forced)
+                text_put_character('\f');
+}
+
+static b64 pr_stamp(positive handle)
+{
+        file_facts facts;
+
+        if (text_handle_facts(handle, address_of facts))
+                return (b64)facts.modified.seconds;
+
+        return pr_now;
+}
+
+static fn pr_single_file(string_address path)
+{
+        if (!text_open(path))
+                return;
+
+        b64 stamp = pr_stamp(text_input.handle);
+        string_address heading = pr_header ? pr_header
+                                           : (path ? path
+                                                   : (string_address)"");
+        positive page = 1;
+
+        pr_pending = false;
+        pr_pending_length = 0;
+        pr_line_number = pr_number_reset ? pr_start_line_number : 1;
+
+        while (!pr_failed)
+        {
+                if (pr_number_reset && page == pr_first_page)
+                        pr_line_number = pr_start_line_number;
+
+                bool forced;
+                positive count = pr_load_page(address_of forced);
+
+                if (!count && !forced)
+                        break;
+
+                positive rows = pr_columns == 1
+                                    ? count
+                                    : (count + pr_columns - 1) / pr_columns;
+
+                if (page >= pr_first_page && page <= pr_last_page)
+                        pr_put_page(count, rows, page, heading, stamp, forced);
+
+                if (page >= pr_last_page)
+                        break;
+
+                page++;
+        }
+
+        text_close();
+}
+
+static fn pr_merge_files()
+{
+        positive inputs = text_files_count;
+        text_record_cursor address_to cursors =
+            (text_record_cursor address_to)text_arena_take(
+                inputs * sizeof(text_record_cursor));
+
+        if (!cursors)
+        {
+                pr_failed = true;
+                return;
+        }
+
+        for (positive input = 0; input < inputs; input++)
+        {
+                string_address path = text_file_name(input);
+
+                if (!text_record_open(cursors + input, path,
+                                      text_record_hold))
+                        text_status = 1;
+        }
+
+        positive page = 1;
+        pr_line_number = pr_number_reset ? pr_start_line_number : 1;
+
+        while (!pr_failed)
+        {
+                if (pr_number_reset && page == pr_first_page)
+                        pr_line_number = pr_start_line_number;
+
+                positive rows = pr_load_merge(cursors, inputs);
+
+                if (!rows)
+                        break;
+
+                if (page >= pr_first_page && page <= pr_last_page)
+                        pr_put_page(rows * inputs, rows, page,
+                                    pr_header ? pr_header
+                                              : (string_address)"",
+                                    pr_now, false);
+
+                if (page >= pr_last_page)
+                        break;
+
+                page++;
+        }
+
+        for (positive input = 0; input < inputs; input++)
+                text_record_close(cursors + input);
+}
+
+static const file_long pr_longs[] = {
+    {(string_address)"pages", 'P'},
+    {(string_address)"columns", 'C'},
+    {(string_address)"across", 'a'},
+    {(string_address)"show-control-chars", 'c'},
+    {(string_address)"double-space", 'd'},
+    {(string_address)"date-format", 'D'},
+    {(string_address)"expand-tabs", 'e'},
+    {(string_address)"form-feed", 'F'},
+    {(string_address)"header", 'h'},
+    {(string_address)"output-tabs", 'i'},
+    {(string_address)"join-lines", 'J'},
+    {(string_address)"length", 'l'},
+    {(string_address)"merge", 'm'},
+    {(string_address)"number-lines", 'n'},
+    {(string_address)"first-line-number", 'N'},
+    {(string_address)"indent", 'o'},
+    {(string_address)"no-file-warnings", 'r'},
+    {(string_address)"separator", 's'},
+    {(string_address)"sep-string", 'S'},
+    {(string_address)"omit-header", 't'},
+    {(string_address)"omit-pagination", 'T'},
+    {(string_address)"show-nonprinting", 'v'},
+    {(string_address)"width", 'w'},
+    {(string_address)"page-width", 'W'},
+    {null, 0},
+};
+
+static b32 text_pr()
+{
+        file_taking taking = {
+            .program = (string_address)"pr",
+            .allowed = (string_address)"acDdeFfhJilmnNorsStTvwW",
+            .valued = (string_address)"PCDhlNoWw",
+            .optional = (string_address)"einsS",
+            .sticky_optional = (string_address)"einsS",
+            .longs = pr_longs,
+            .operand = pr_operand_add,
+            .seen = pr_option_seen,
+            .digits = 'C',
+        };
+
+        text_begin("pr");
+        text_arena_used = 0;
+        pr_page_option_failed = false;
+        pr_first_page = 1;
+        pr_last_page = positive_max;
+
+        if (!file_take(address_of taking) || pr_page_option_failed ||
+            !text_files_ready())
+                return text_done(1);
+
+        if ((taking.flags & FILE_FLAG('c')) ||
+            (taking.flags & FILE_FLAG('v')))
+                return text_refuse(null,
+                                   "control-character display is unsupported",
+                                   1);
+
+        pr_merge = (taking.flags & FILE_FLAG('m')) != 0;
+        pr_across = (taking.flags & FILE_FLAG('a')) != 0;
+
+        if (pr_merge && (pr_across || (taking.flags & FILE_FLAG('C'))))
+                return text_refuse(null,
+                                   "cannot combine --merge and --columns",
+                                   1);
+
+        if (pr_merge && !text_files_count)
+                pr_merge = false;
+
+        pr_columns = pr_merge ? text_files_count : 1;
+
+        if (!pr_merge && (taking.flags & FILE_FLAG('C')) &&
+            (!pr_parse_positive(file_option_value(address_of taking, 'C'),
+                                address_of pr_columns) ||
+             pr_columns > TEXT_LINE_MAX))
+                return text_refuse(file_option_value(address_of taking, 'C'),
+                                   "invalid number of columns", 1);
+
+        pr_page_length = PR_LENGTH_DEFAULT;
+        pr_page_width = PR_WIDTH_DEFAULT;
+        pr_margin = 0;
+
+        if ((taking.flags & FILE_FLAG('l')) &&
+            !pr_parse_positive(file_option_value(address_of taking, 'l'),
+                               address_of pr_page_length))
+                return text_refuse(file_option_value(address_of taking, 'l'),
+                                   "invalid page length", 1);
+
+        p8 width_letter = (taking.flags & FILE_FLAG('W')) ? 'W' : 'w';
+
+        if ((taking.flags & (FILE_FLAG('W') | FILE_FLAG('w'))) &&
+            !pr_parse_positive(file_option_value(address_of taking,
+                                                  width_letter),
+                               address_of pr_page_width))
+                return text_refuse(file_option_value(address_of taking,
+                                                      width_letter),
+                                   "invalid page width", 1);
+
+        if ((taking.flags & FILE_FLAG('o')) &&
+            !text_unsigned_option(file_option_value(address_of taking, 'o'),
+                                  false, address_of pr_margin))
+                return text_refuse(file_option_value(address_of taking, 'o'),
+                                   "invalid indentation", 1);
+
+        pr_omit_pagination = (taking.flags & FILE_FLAG('T')) != 0;
+        pr_omit_header = pr_omit_pagination ||
+                         (taking.flags & FILE_FLAG('t')) ||
+                         pr_page_length <= PR_HEADER_LINES + PR_FOOTER_LINES;
+        pr_double = (taking.flags & FILE_FLAG('d')) != 0;
+        pr_form_feed = (taking.flags & (FILE_FLAG('F') | FILE_FLAG('f'))) != 0;
+        pr_join = (taking.flags & FILE_FLAG('J')) != 0;
+        pr_header = (taking.flags & FILE_FLAG('h'))
+                        ? file_option_value(address_of taking, 'h')
+                        : null;
+        pr_date_format = (taking.flags & FILE_FLAG('D'))
+                             ? file_option_value(address_of taking, 'D')
+                             : (string_address)"%Y-%m-%d %H:%M";
+
+        if (pr_header && pr_omit_header)
+                return text_refuse(null,
+                                   "header conflicts with omitted pagination",
+                                   1);
+
+        positive printable = pr_omit_header
+                                 ? pr_page_length
+                                 : pr_page_length - PR_HEADER_LINES -
+                                       PR_FOOTER_LINES;
+        pr_body_lines = pr_double ? (printable > 1 ? printable / 2 : 1)
+                                  : printable;
+
+        if (!pr_body_lines)
+                return text_refuse(null, "page length leaves no body", 1);
+
+        pr_separator = pr_join ? (string_address)"\t"
+                               : (string_address)" ";
+
+        if (taking.flags & FILE_FLAG('S'))
+                pr_separator = file_option_value(address_of taking, 'S')
+                                   ? file_option_value(address_of taking, 'S')
+                                   : (string_address)"";
+        else if (taking.flags & FILE_FLAG('s'))
+                pr_separator = file_option_value(address_of taking, 's')
+                                   ? file_option_value(address_of taking, 's')
+                                   : (string_address)"\t";
+
+        pr_separator_length = string_length(pr_separator);
+        pr_number = (taking.flags & FILE_FLAG('n')) != 0;
+        pr_start_line_number = 1;
+        pr_number_reset = (taking.flags & FILE_FLAG('N')) != 0;
+
+        if (pr_number &&
+            !pr_number_option(file_option_value(address_of taking, 'n')))
+                return text_refuse(file_option_value(address_of taking, 'n'),
+                                   "invalid line-number format", 1);
+
+        if (pr_number_reset &&
+            !pr_signed(file_option_value(address_of taking, 'N'),
+                       address_of pr_start_line_number))
+                return text_refuse(file_option_value(address_of taking, 'N'),
+                                   "invalid first line number", 1);
+
+        pr_number_width = pr_number
+                              ? (pr_number_separator == '\t'
+                                     ? ((pr_number_digits / 8) + 1) * 8
+                                     : pr_number_digits + 1)
+                              : 0;
+
+        pr_input_tab = '\t';
+        pr_input_tab_width = 8;
+        pr_output_tab = '\t';
+        pr_output_tab_width = 8;
+
+        if ((taking.flags & FILE_FLAG('e')) &&
+            !pr_tab_option(file_option_value(address_of taking, 'e'),
+                           address_of pr_input_tab,
+                           address_of pr_input_tab_width))
+                return text_refuse(file_option_value(address_of taking, 'e'),
+                                   "invalid tab width", 1);
+
+        if ((taking.flags & FILE_FLAG('i')) &&
+            !pr_tab_option(file_option_value(address_of taking, 'i'),
+                           address_of pr_output_tab,
+                           address_of pr_output_tab_width))
+                return text_refuse(file_option_value(address_of taking, 'i'),
+                                   "invalid tab width", 1);
+
+        pr_expand_input = (taking.flags & FILE_FLAG('e')) || pr_columns > 1;
+        pr_tabify_output = (taking.flags & FILE_FLAG('i')) || pr_columns > 1;
+        pr_truncate = !pr_join &&
+                      (pr_columns > 1 ||
+                       (taking.flags & FILE_FLAG('W')) != 0);
+        text_quiet_open = (taking.flags & FILE_FLAG('r')) != 0;
+
+        positive number_fields = pr_number && pr_merge ? 1 : 0;
+        positive fixed = pr_margin +
+                         (pr_columns - 1) * pr_separator_length +
+                         number_fields * pr_number_width;
+
+        if (fixed >= pr_page_width ||
+            (pr_page_width - fixed) / pr_columns <=
+                (pr_number && !pr_merge ? pr_number_width : 0))
+                return text_refuse(null, "page width is too narrow", 1);
+
+        if (pr_body_lines > positive_max / pr_columns ||
+            pr_body_lines * pr_columns > TEXT_LINE_MAX)
+                return text_refuse(null, "page has too many records", 1);
+
+        pr_record_room = pr_body_lines * pr_columns;
+        pr_records = (pr_record address_to)text_arena_take(
+            pr_record_room * sizeof(pr_record));
+
+        if (!pr_records)
+                return text_done(1);
+
+        pr_now = file_now();
+        pr_failed = false;
+
+        if (pr_merge)
+                pr_merge_files();
+        else
+        {
+                b32 inputs = text_input_count();
+
+                for (b32 input = 0; input < inputs && !pr_failed; input++)
+                        pr_single_file(text_file_name(input));
+        }
+
+        return text_done((text_status || pr_failed) ? 1 : 0);
+}
+
+/*
+        Permuted index.
+
+        Source bytes live in text_arena and arrive through text_reader.  The
+        occurrence table contains only offsets into those bytes, and its
+        order is produced by the same stable merge sorter and byte comparator
+        as sort.  ptx therefore adds a context planner, not another reader,
+        tokenizer, sorting engine or output buffer.
+*/
+typedef struct
+{
+        p8 address_to bytes;
+        positive length;
+} ptx_blob;
+
+typedef struct
+{
+        ptx_blob text;
+        string_address name;
+        positive lines;
+} ptx_file;
+
+typedef struct
+{
+        positive file;
+        positive start;
+        positive finish;
+        positive content;
+        positive reference;
+        positive reference_length;
+        positive line;
+} ptx_context;
+
+typedef struct
+{
+        positive file;
+        positive key;
+        positive key_length;
+        positive left;
+        positive right;
+        positive reference;
+        positive reference_length;
+        positive line;
+        positive order;
+} ptx_occurrence;
+
+typedef struct
+{
+        positive start;
+        positive finish;
+        bool have;
+} ptx_span;
+
+static ptx_file address_to ptx_files;
+static positive ptx_file_count;
+static ptx_context address_to ptx_contexts;
+static positive ptx_context_count;
+static ptx_occurrence address_to ptx_occurrences;
+static positive ptx_occurrence_count;
+static positive address_to ptx_order;
+static ptx_blob ptx_ignore;
+static ptx_blob ptx_only;
+static string_address ptx_sentence_pattern;
+static string_address ptx_word_pattern;
+static string_address ptx_truncation;
+static positive ptx_truncation_length;
+static positive ptx_width;
+static positive ptx_gap;
+static positive ptx_reference_width;
+static positive ptx_half_width;
+static positive ptx_before_width;
+static positive ptx_keyafter_width;
+static positive ptx_maximum_word;
+static bool ptx_fold;
+static bool ptx_auto_reference;
+static bool ptx_input_reference;
+static bool ptx_right_reference;
+static bool ptx_custom_sentence;
+static bool ptx_custom_word;
+static bool ptx_lower_word;
+static bool ptx_alpha_word;
+static bool ptx_failed;
+
+static bool ptx_read_blob(string_address path, ptx_blob address_to blob)
+{
+        if (path && !path[0])
+                path = null;
+
+        if (!text_open(path))
+                return false;
+
+        if (!text_arena_take(0))
+        {
+                text_close();
+                return false;
+        }
+
+        blob->bytes = text_arena + text_arena_used;
+        blob->length = 0;
+
+        while (text_fill())
+        {
+                positive left = text_input.filled - text_input.position;
+
+                if (text_arena_used > TEXT_ARENA_BYTES ||
+                    left > TEXT_ARENA_BYTES - text_arena_used)
+                {
+                        text_error(null, "input too large");
+                        ptx_failed = true;
+                        break;
+                }
+
+                memory_copy_apart(text_arena + text_arena_used,
+                                  text_input.buffer + text_input.position,
+                                  left);
+                text_arena_used += left;
+                blob->length += left;
+                text_input.position = text_input.filled;
+        }
+
+        text_close();
+
+        if (text_arena_used > positive_max - 15 ||
+            ((text_arena_used + 15) & ~(positive)15) > TEXT_ARENA_BYTES)
+        {
+                text_error(null, "input too large");
+                ptx_failed = true;
+                return false;
+        }
+
+        text_arena_used = (text_arena_used + 15) & ~(positive)15;
+        return !ptx_failed;
+}
+
+static positive ptx_count_lines(ptx_blob address_to text)
+{
+        positive lines = text->length ? 1 : 0;
+
+        for (positive at = 0; at < text->length; at++)
+                if (text->bytes[at] == '\n')
+                        lines++;
+
+        return lines;
+}
+
+static positive ptx_skip_white(ptx_file address_to file, positive at,
+                               positive limit)
+{
+        while (at < limit && byte_is_space(file->text.bytes[at]))
+                at++;
+
+        return at;
+}
+
+static positive ptx_trim_white(ptx_file address_to file, positive at,
+                               positive floor)
+{
+        while (at > floor && byte_is_space(file->text.bytes[at - 1]))
+                at--;
+
+        return at;
+}
+
+static positive ptx_default_sentence(ptx_file address_to file, positive from,
+                                     positive address_to match)
+{
+        p8 address_to bytes = file->text.bytes;
+        positive length = file->text.length;
+
+        for (positive at = from; at < length; at++)
+        {
+                if (bytes[at] != '.' && bytes[at] != '?' && bytes[at] != '!')
+                        continue;
+
+                positive after = at + 1;
+
+                while (after < length &&
+                       (bytes[after] == ']' || bytes[after] == '"' ||
+                        bytes[after] == '\'' || bytes[after] == ')' ||
+                        bytes[after] == '}'))
+                        after++;
+
+                bool boundary = after == length || bytes[after] == '\n' ||
+                                bytes[after] == '\t' ||
+                                (bytes[after] == ' ' && after + 1 < length &&
+                                 bytes[after + 1] == ' ');
+
+                if (!boundary)
+                        continue;
+
+                address_to match = at;
+
+                while (after < length &&
+                       (bytes[after] == ' ' || bytes[after] == '\t' ||
+                        bytes[after] == '\n'))
+                        after++;
+
+                return after;
+        }
+
+        address_to match = length;
+        return length;
+}
+
+static positive ptx_context_next(ptx_file address_to file, positive from,
+                                 positive address_to visible)
+{
+        positive after;
+
+        if (ptx_input_reference && !ptx_custom_sentence)
+        {
+                p8 address_to newline = memory_first_of(
+                    file->text.bytes + from, '\n', file->text.length - from);
+                after = newline ? (positive)(newline - file->text.bytes) + 1
+                                : file->text.length;
+        }
+        else if (!ptx_custom_sentence)
+        {
+                positive match;
+                after = ptx_default_sentence(file, from, address_of match);
+
+                if (match == from)
+                {
+                        text_error(null,
+                                   "sentence expression matches empty text");
+                        ptx_failed = true;
+                        return file->text.length;
+                }
+        }
+        else if (!ptx_sentence_pattern[0])
+                after = file->text.length;
+        else if (regex_search_longest(file->text.bytes + from,
+                                      file->text.length - from, 0))
+        {
+                positive begin = from + regex_slots[0];
+                after = from + regex_slots[1];
+
+                if (begin == from || after == begin)
+                {
+                        text_error(ptx_sentence_pattern,
+                                   "sentence expression matches empty text");
+                        ptx_failed = true;
+                        return file->text.length;
+                }
+        }
+        else
+                after = file->text.length;
+
+        address_to visible = ptx_trim_white(file, after, from);
+        return after;
+}
+
+static positive ptx_plan_contexts(bool fill)
+{
+        positive made = 0;
+
+        for (positive file_index = 0; file_index < ptx_file_count; file_index++)
+        {
+                ptx_file address_to file = ptx_files + file_index;
+                positive cursor = 0;
+                positive line = 1;
+
+                while (cursor < file->text.length && !ptx_failed)
+                {
+                        positive visible;
+                        positive after = ptx_context_next(file, cursor,
+                                                          address_of visible);
+
+                        if (fill)
+                        {
+                                ptx_context address_to context =
+                                    ptx_contexts + made;
+                                context->file = file_index;
+                                context->start = cursor;
+                                context->finish = visible;
+                                context->content = cursor;
+                                context->reference = cursor;
+                                context->reference_length = 0;
+                                context->line = line;
+
+                                if (ptx_input_reference)
+                                {
+                                        positive scan = cursor;
+
+                                        while (scan < visible &&
+                                               !byte_is_space(
+                                                   file->text.bytes[scan]))
+                                                scan++;
+
+                                        context->reference_length = scan - cursor;
+                                        context->content = ptx_skip_white(
+                                            file, scan, visible);
+
+                                        if (context->reference_length >
+                                            ptx_reference_width)
+                                                ptx_reference_width =
+                                                    context->reference_length;
+                                }
+                        }
+
+                        for (positive at = cursor; at < after; at++)
+                                if (file->text.bytes[at] == '\n')
+                                        line++;
+
+                        made++;
+
+                        if (after <= cursor)
+                                break;
+
+                        cursor = after;
+                }
+        }
+
+        return made;
+}
+
+static bool ptx_word_equal(p8 address_to one, positive one_length,
+                           p8 address_to two, positive two_length)
+{
+        return !sort_compare_bytes(one, one_length, two, two_length,
+                                   ptx_fold ? 1 : 0);
+}
+
+static bool ptx_list_has(ptx_blob address_to list, p8 address_to word,
+                         positive length)
+{
+        positive at = 0;
+
+        while (at < list->length)
+        {
+                positive from = at;
+
+                while (at < list->length && list->bytes[at] != '\n')
+                        at++;
+
+                if (at > from &&
+                    ptx_word_equal(word, length, list->bytes + from,
+                                   at - from))
+                        return true;
+
+                if (at < list->length)
+                        at++;
+        }
+
+        return false;
+}
+
+static bool ptx_selected(p8 address_to word, positive length)
+{
+        if (ptx_ignore.length && ptx_list_has(address_of ptx_ignore,
+                                              word, length))
+                return false;
+
+        return !ptx_only.length ||
+               ptx_list_has(address_of ptx_only, word, length);
+}
+
+static bool ptx_next_word(ptx_context address_to context,
+                          positive address_to cursor,
+                          positive address_to start,
+                          positive address_to finish)
+{
+        ptx_file address_to file = ptx_files + context->file;
+        p8 address_to bytes = file->text.bytes;
+        positive at = address_to cursor;
+
+        if (ptx_custom_word)
+        {
+                if (!regex_search_longest(bytes + at,
+                                          context->finish - at, 0))
+                        return false;
+
+                address_to start = at + regex_slots[0];
+                address_to finish = at + regex_slots[1];
+                address_to cursor = address_to finish > at
+                                        ? address_to finish
+                                        : at + 1;
+                return true;
+        }
+
+        while (at < context->finish && !fmt_word_bytes[bytes[at]])
+                at++;
+
+        if (at == context->finish)
+                return false;
+
+        address_to start = at;
+
+        while (at < context->finish && fmt_word_bytes[bytes[at]])
+                at++;
+
+        address_to finish = at;
+        address_to cursor = at;
+        return true;
+}
+
+static positive ptx_word_line(ptx_context address_to context, positive word)
+{
+        ptx_file address_to file = ptx_files + context->file;
+        positive line = context->line;
+
+        for (positive at = context->start; at < word; at++)
+                if (file->text.bytes[at] == '\n')
+                        line++;
+
+        return line;
+}
+
+static positive ptx_scan_occurrences(bool fill)
+{
+        positive made = 0;
+
+        for (positive context_index = 0;
+             context_index < ptx_context_count; context_index++)
+        {
+                ptx_context address_to context = ptx_contexts + context_index;
+                ptx_file address_to file = ptx_files + context->file;
+                positive cursor = context->content;
+                positive start;
+                positive finish;
+
+                while (cursor < context->finish &&
+                       ptx_next_word(context, address_of cursor,
+                                     address_of start, address_of finish))
+                {
+                        positive length = finish - start;
+
+                        if (!length)
+                                continue;
+
+                        if (length > ptx_maximum_word)
+                                ptx_maximum_word = length;
+
+                        if (!ptx_selected(file->text.bytes + start, length))
+                                continue;
+
+                        if (fill)
+                        {
+                                ptx_occurrence address_to occurrence =
+                                    ptx_occurrences + made;
+                                occurrence->file = context->file;
+                                occurrence->key = start;
+                                occurrence->key_length = length;
+                                occurrence->left = context->content;
+                                occurrence->right = context->finish;
+                                occurrence->reference = context->reference;
+                                occurrence->reference_length =
+                                    context->reference_length;
+                                occurrence->line = ptx_word_line(context,
+                                                                 start);
+                                occurrence->order = made;
+                        }
+
+                        made++;
+                }
+        }
+
+        return made;
+}
+
+static PURE HOT bipolar ptx_compare(positive left, positive right)
+{
+        ptx_occurrence address_to one = ptx_occurrences + left;
+        ptx_occurrence address_to two = ptx_occurrences + right;
+        ptx_file address_to one_file = ptx_files + one->file;
+        ptx_file address_to two_file = ptx_files + two->file;
+        bipolar answer = sort_compare_bytes(
+            one_file->text.bytes + one->key, one->key_length,
+            two_file->text.bytes + two->key, two->key_length,
+            ptx_fold ? 1 : 0);
+
+        if (answer)
+                return answer;
+
+        return one->order < two->order ? -1 : one->order != two->order;
+}
+
+static positive ptx_skip_something(ptx_file address_to file, positive at,
+                                   positive limit)
+{
+        if (at >= limit)
+                return at;
+
+        if (ptx_custom_word)
+        {
+                if (regex_match_longest(file->text.bytes + at,
+                                        limit - at, 0) && regex_slots[1])
+                        return at + regex_slots[1];
+
+                return at + 1;
+        }
+
+        if (fmt_word_bytes[file->text.bytes[at]])
+                while (at < limit && fmt_word_bytes[file->text.bytes[at]])
+                        at++;
+        else
+                at++;
+
+        return at;
+}
+
+static fn ptx_put_spaces(positive count)
+{
+        text_tab_repeat_character(' ', count);
+}
+
+static positive ptx_field_padding(positive field, bipolar used)
+{
+        if (used < 0)
+        {
+                positive extra = (positive)(-used);
+                return extra <= positive_max - field ? field + extra
+                                                     : positive_max;
+        }
+
+        return (positive)used < field ? field - (positive)used : 0;
+}
+
+static fn ptx_put_span(ptx_file address_to file, ptx_span span)
+{
+        if (!span.have)
+                return;
+
+        positive from = span.start;
+
+        while (from < span.finish)
+        {
+                positive at = from;
+
+                while (at < span.finish &&
+                       !byte_is_space(file->text.bytes[at]))
+                        at++;
+
+                text_put(file->text.bytes + from, at - from);
+
+                if (at < span.finish)
+                {
+                        text_put_character(' ');
+                        at++;
+                }
+
+                from = at;
+        }
+}
+
+static positive ptx_decimal_length(positive number)
+{
+        p8 digits[64];
+        return positive_into(digits, number);
+}
+
+static positive ptx_reference_length(ptx_occurrence address_to occurrence)
+{
+        if (ptx_auto_reference)
+        {
+                string_address name = ptx_files[occurrence->file].name;
+                return (name ? string_length(name) : 0) + 1 +
+                       ptx_decimal_length(occurrence->line);
+        }
+
+        return occurrence->reference_length;
+}
+
+static fn ptx_put_reference(ptx_occurrence address_to occurrence)
+{
+        ptx_file address_to file = ptx_files + occurrence->file;
+
+        if (ptx_auto_reference)
+        {
+                if (file->name)
+                        text_put_string(file->name);
+
+                text_put_character(':');
+                p8 digits[64];
+                positive length = positive_into(digits, occurrence->line);
+                text_put(digits, length);
+        }
+        else if (ptx_input_reference)
+                ptx_put_span(file, (ptx_span){occurrence->reference,
+                                              occurrence->reference +
+                                                  occurrence->reference_length,
+                                              true});
+}
+
+static fn ptx_output_one(ptx_occurrence address_to occurrence)
+{
+        ptx_file address_to file = ptx_files + occurrence->file;
+        positive key_start = occurrence->key;
+        positive key_finish = key_start + occurrence->key_length;
+        positive left_context = occurrence->left;
+        positive right_context = occurrence->right;
+        positive keyafter_finish = key_finish;
+        positive cursor = key_finish;
+
+        while (cursor < right_context &&
+               cursor <= key_start + ptx_keyafter_width)
+        {
+                keyafter_finish = cursor;
+                cursor = ptx_skip_something(file, cursor, right_context);
+        }
+
+        if (cursor <= key_start + ptx_keyafter_width)
+                keyafter_finish = cursor;
+
+        bool keyafter_truncated = ptx_truncation_length &&
+                                  keyafter_finish < right_context;
+        keyafter_finish = ptx_trim_white(file, keyafter_finish, key_start);
+
+        positive left_field_start;
+
+        if (key_start - left_context > ptx_half_width + ptx_maximum_word)
+        {
+                left_field_start =
+                    key_start - (ptx_half_width + ptx_maximum_word);
+                left_field_start = ptx_skip_something(file,
+                                                       left_field_start,
+                                                       key_start);
+        }
+        else
+                left_field_start = left_context;
+        positive before_start = left_field_start;
+        positive before_finish = ptx_trim_white(file, key_start, before_start);
+
+        while (before_start < before_finish &&
+               before_finish - before_start > ptx_before_width)
+                before_start = ptx_skip_something(file, before_start,
+                                                  before_finish);
+
+        positive before_probe = ptx_trim_white(file, before_start, 0);
+        bool before_truncated = ptx_truncation_length &&
+                                before_probe > left_context;
+        before_start = ptx_skip_white(file, before_start, file->text.length);
+
+        ptx_span tail = {0, 0, false};
+        bool tail_truncated = false;
+        bipolar tail_room = (bipolar)ptx_before_width -
+                            (bipolar)(before_finish - before_start) -
+                            (bipolar)ptx_gap;
+
+        if (tail_room > 0)
+        {
+                tail.start = ptx_skip_white(file, keyafter_finish,
+                                            file->text.length);
+                tail.finish = tail.start;
+                cursor = tail.start;
+
+                while (cursor < right_context &&
+                       cursor - tail.start < (positive)tail_room)
+                {
+                        tail.finish = cursor;
+                        cursor = ptx_skip_something(file, cursor,
+                                                    right_context);
+                }
+
+                if (cursor - tail.start < (positive)tail_room)
+                        tail.finish = cursor;
+
+                if (tail.finish > tail.start)
+                {
+                        tail.have = true;
+                        keyafter_truncated = false;
+                        tail_truncated = ptx_truncation_length &&
+                                         tail.finish < right_context;
+                        tail.finish = ptx_trim_white(file, tail.finish,
+                                                     tail.start);
+                }
+        }
+
+        ptx_span head = {0, 0, false};
+        bool head_truncated = false;
+        bipolar head_room = (bipolar)ptx_keyafter_width -
+                            (bipolar)(keyafter_finish - key_start) -
+                            (bipolar)ptx_gap;
+
+        if (head_room > 0)
+        {
+                head.finish = ptx_trim_white(file, before_start, 0);
+                head.start = left_field_start;
+
+                while (head.start < head.finish &&
+                       head.finish - head.start > (positive)head_room)
+                        head.start = ptx_skip_something(file, head.start,
+                                                       head.finish);
+
+                if (head.finish > head.start)
+                {
+                        head.have = true;
+                        before_truncated = false;
+                        head_truncated = ptx_truncation_length &&
+                                         head.start > left_context;
+                        head.start = ptx_skip_white(file, head.start,
+                                                   head.finish);
+                }
+        }
+
+        positive reference_length = ptx_reference_length(occurrence);
+
+        if (!ptx_right_reference)
+        {
+                if (ptx_auto_reference)
+                {
+                        ptx_put_reference(occurrence);
+                        text_put_character(':');
+                        positive used = reference_length + 1;
+                        positive field = ptx_reference_width + ptx_gap;
+                        ptx_put_spaces(field > used ? field - used : 0);
+                }
+                else
+                {
+                        if (ptx_input_reference)
+                                ptx_put_reference(occurrence);
+
+                        positive field = ptx_reference_width + ptx_gap;
+                        ptx_put_spaces(field > reference_length
+                                           ? field - reference_length
+                                           : 0);
+                }
+        }
+
+        bipolar before_length = (bipolar)before_finish -
+                                  (bipolar)before_start;
+
+        if (tail.have)
+        {
+                ptx_put_span(file, tail);
+
+                if (tail_truncated)
+                        text_put(ptx_truncation, ptx_truncation_length);
+
+                bipolar used = before_length +
+                               (bipolar)(tail.finish - tail.start) +
+                               (before_truncated
+                                    ? (bipolar)ptx_truncation_length
+                                    : 0) +
+                               (tail_truncated
+                                    ? (bipolar)ptx_truncation_length
+                                    : 0);
+                positive field = ptx_half_width > ptx_gap
+                                     ? ptx_half_width - ptx_gap
+                                     : 0;
+                ptx_put_spaces(ptx_field_padding(field, used));
+        }
+        else
+        {
+                bipolar used = before_length +
+                               (before_truncated
+                                    ? (bipolar)ptx_truncation_length
+                                    : 0);
+                positive field = ptx_half_width > ptx_gap
+                                     ? ptx_half_width - ptx_gap
+                                     : 0;
+                ptx_put_spaces(ptx_field_padding(field, used));
+        }
+
+        if (before_truncated)
+                text_put(ptx_truncation, ptx_truncation_length);
+
+        ptx_put_span(file, (ptx_span){before_start, before_finish, true});
+        ptx_put_spaces(ptx_gap);
+        ptx_put_span(file, (ptx_span){key_start, keyafter_finish, true});
+
+        if (keyafter_truncated)
+                text_put(ptx_truncation, ptx_truncation_length);
+
+        if (head.have)
+        {
+                positive used = keyafter_finish - key_start +
+                                head.finish - head.start +
+                                (keyafter_truncated ? ptx_truncation_length : 0) +
+                                (head_truncated ? ptx_truncation_length : 0);
+                ptx_put_spaces(ptx_half_width > used
+                                   ? ptx_half_width - used
+                                   : 0);
+
+                if (head_truncated)
+                        text_put(ptx_truncation, ptx_truncation_length);
+
+                ptx_put_span(file, head);
+        }
+        else if ((ptx_auto_reference || ptx_input_reference) &&
+                 ptx_right_reference)
+        {
+                positive used = keyafter_finish - key_start +
+                                (keyafter_truncated ? ptx_truncation_length : 0);
+                ptx_put_spaces(ptx_half_width > used
+                                   ? ptx_half_width - used
+                                   : 0);
+        }
+
+        if ((ptx_auto_reference || ptx_input_reference) &&
+            ptx_right_reference)
+        {
+                ptx_put_spaces(ptx_gap);
+                ptx_put_reference(occurrence);
+        }
+
+        text_put_character('\n');
+}
+
+static const file_long ptx_longs[] = {
+    {(string_address)"auto-reference", 'A'},
+    {(string_address)"traditional", 'G'},
+    {(string_address)"flag-truncation", 'F'},
+    {(string_address)"macro-name", 'M'},
+    {(string_address)"format", 'Q'},
+    {(string_address)"right-side-refs", 'R'},
+    {(string_address)"sentence-regexp", 'S'},
+    {(string_address)"word-regexp", 'W'},
+    {(string_address)"break-file", 'b'},
+    {(string_address)"ignore-case", 'f'},
+    {(string_address)"gap-size", 'g'},
+    {(string_address)"ignore-file", 'i'},
+    {(string_address)"only-file", 'o'},
+    {(string_address)"references", 'r'},
+    {(string_address)"typeset-mode", 't'},
+    {(string_address)"width", 'w'},
+    {null, 0},
+};
+
+static positive ptx_unescape(p8 address_to text)
+{
+        positive from = 0;
+        positive into = 0;
+
+        while (text[from])
+        {
+                if (text[from] != '\\')
+                {
+                        text[into++] = text[from++];
+                        continue;
+                }
+
+                from++;
+                p8 escaped = text[from];
+
+                if (!escaped)
+                        break;
+
+                if (escaped == 'x')
+                {
+                        positive value = 0;
+                        positive digits = 0;
+                        from++;
+
+                        while (digits < 3 && byte_is_hexadecimal(text[from]))
+                        {
+                                p8 digit = text[from++];
+                                value = value * 16 +
+                                        (digit <= '9'
+                                             ? digit - '0'
+                                             : (digit | 32) - 'a' + 10);
+                                digits++;
+                        }
+
+                        if (digits)
+                                text[into++] = (p8)value;
+                        else
+                        {
+                                text[into++] = '\\';
+                                text[into++] = 'x';
+                        }
+
+                        continue;
+                }
+
+                if (escaped == '0')
+                {
+                        positive value = 0;
+                        positive digits = 0;
+                        from++;
+
+                        while (digits < 3 && text[from] >= '0' &&
+                               text[from] <= '7')
+                        {
+                                value = value * 8 + text[from++] - '0';
+                                digits++;
+                        }
+
+                        text[into++] = (p8)value;
+                        continue;
+                }
+
+                from++;
+
+                if (escaped == 'a')
+                        text[into++] = '\a';
+                else if (escaped == 'b')
+                        text[into++] = '\b';
+                else if (escaped == 'c')
+                {
+                        while (text[from])
+                                from++;
+                }
+                else if (escaped == 'f')
+                        text[into++] = '\f';
+                else if (escaped == 'n')
+                        text[into++] = '\n';
+                else if (escaped == 'r')
+                        text[into++] = '\r';
+                else if (escaped == 't')
+                        text[into++] = '\t';
+                else if (escaped == 'v')
+                        text[into++] = '\v';
+                else
+                {
+                        text[into++] = '\\';
+                        text[into++] = escaped;
+                }
+        }
+
+        text[into] = '\0';
+        return into;
+}
+
+static b32 text_ptx()
+{
+        file_taking taking = {
+            .program = (string_address)"ptx",
+            .allowed = (string_address)"AFGMORSTWbfgiortw",
+            .valued = (string_address)"FMSWbgiowQ",
+            .longs = ptx_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("ptx");
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        positive flags = taking.flags;
+
+        if (flags & (FILE_FLAG('G') | FILE_FLAG('O') | FILE_FLAG('T') |
+                     FILE_FLAG('Q')))
+                return text_refuse(null,
+                                   "traditional and typesetter formats are unsupported",
+                                   1);
+
+        ptx_fold = (flags & FILE_FLAG('f')) != 0;
+        ptx_auto_reference = (flags & FILE_FLAG('A')) != 0;
+        ptx_input_reference = (flags & FILE_FLAG('r')) != 0;
+        ptx_right_reference = (flags & FILE_FLAG('R')) != 0;
+        ptx_sentence_pattern = (flags & FILE_FLAG('S'))
+                                   ? file_option_value(address_of taking, 'S')
+                                   : null;
+        ptx_word_pattern = (flags & FILE_FLAG('W'))
+                               ? file_option_value(address_of taking, 'W')
+                               : null;
+        ptx_custom_sentence = ptx_sentence_pattern != null;
+        ptx_custom_word = ptx_word_pattern && ptx_word_pattern[0];
+        ptx_lower_word = false;
+        ptx_alpha_word = false;
+        ptx_truncation = (flags & FILE_FLAG('F'))
+                             ? file_option_value(address_of taking, 'F')
+                             : (string_address)"/";
+        ptx_width = (flags & FILE_FLAG('t')) ? 100 : 72;
+        ptx_gap = 3;
+        ptx_failed = false;
+        ptx_ignore = (ptx_blob){null, 0};
+        ptx_only = (ptx_blob){null, 0};
+        ptx_reference_width = 0;
+        ptx_maximum_word = 0;
+
+        if ((flags & FILE_FLAG('w')) &&
+            !pr_parse_positive(file_option_value(address_of taking, 'w'),
+                               address_of ptx_width))
+                return text_refuse(file_option_value(address_of taking, 'w'),
+                                   "invalid line width", 1);
+
+        if ((flags & FILE_FLAG('g')) &&
+            !pr_parse_positive(file_option_value(address_of taking, 'g'),
+                               address_of ptx_gap))
+                return text_refuse(file_option_value(address_of taking, 'g'),
+                                   "invalid gap width", 1);
+
+        if (ptx_input_reference && ptx_custom_sentence)
+                return text_refuse(null,
+                                   "--references with --sentence-regexp is unsupported",
+                                   1);
+
+        if (flags & FILE_FLAG('F'))
+                ptx_unescape((p8 address_to)ptx_truncation);
+
+        if (ptx_custom_sentence)
+                ptx_unescape((p8 address_to)ptx_sentence_pattern);
+
+        if (ptx_word_pattern)
+                ptx_unescape((p8 address_to)ptx_word_pattern);
+
+        /* The overwhelmingly common explicit byte-C word expressions are
+           character-set runs.  Lower them to the existing tokenizer map;
+           sending every byte through the general backtracking matcher was
+           more than twice GNU's cost on both target machines. */
+        if (ptx_custom_word &&
+            string_equals(ptx_word_pattern, "[a-z][a-z]*"))
+        {
+                ptx_custom_word = false;
+                ptx_lower_word = true;
+        }
+        else if (ptx_custom_word &&
+                 string_equals(ptx_word_pattern,
+                               "[A-Za-z][A-Za-z]*"))
+        {
+                ptx_custom_word = false;
+                ptx_alpha_word = true;
+        }
+
+        if ((flags & FILE_FLAG('i')) &&
+            !ptx_read_blob(file_option_value(address_of taking, 'i'),
+                           address_of ptx_ignore))
+                return text_done(1);
+
+        if ((flags & FILE_FLAG('o')) &&
+            !ptx_read_blob(file_option_value(address_of taking, 'o'),
+                           address_of ptx_only))
+                return text_done(1);
+
+        if (ptx_custom_word)
+        {
+                if (!regex_compile(ptx_word_pattern, false, ptx_fold, false,
+                                   REGEX_POLICY_DEFAULT))
+                        return text_refuse(ptx_word_pattern,
+                                           "unsupported word expression", 1);
+        }
+        else if (ptx_lower_word || ptx_alpha_word)
+        {
+                for (positive character = 0; character < 256; character++)
+                        fmt_word_bytes[character] =
+                            ptx_alpha_word || ptx_fold
+                                ? byte_is_alpha((p8)character)
+                                : character >= 'a' && character <= 'z';
+        }
+        else if (flags & FILE_FLAG('b'))
+        {
+                ptx_blob breaks;
+
+                if (!ptx_read_blob(file_option_value(address_of taking, 'b'),
+                                   address_of breaks))
+                        return text_done(1);
+
+                memory_fill(fmt_word_bytes, 1, sizeof(fmt_word_bytes));
+
+                for (positive at = 0; at < breaks.length; at++)
+                        fmt_word_bytes[breaks.bytes[at]] = 0;
+        }
+        else
+                for (positive character = 0; character < 256; character++)
+                        fmt_word_bytes[character] =
+                            byte_is_alpha((p8)character);
+
+        ptx_file_count = text_input_count();
+        ptx_files = (ptx_file address_to)text_arena_take(
+            ptx_file_count * sizeof(ptx_file));
+
+        if (!ptx_files)
+                return text_done(1);
+
+        for (positive input = 0; input < ptx_file_count; input++)
+        {
+                string_address name = text_file_name(input);
+
+                if (name && !name[0])
+                        name = null;
+
+                ptx_files[input].name = name;
+
+                if (!ptx_read_blob(name,
+                                   address_of ptx_files[input].text))
+                        return text_done(1);
+
+                ptx_files[input].lines =
+                    ptx_count_lines(address_of ptx_files[input].text);
+        }
+
+        if (ptx_custom_sentence && ptx_sentence_pattern[0] &&
+            !regex_compile(ptx_sentence_pattern, false, ptx_fold, false,
+                           REGEX_POLICY_DEFAULT))
+                return text_refuse(ptx_sentence_pattern,
+                                   "unsupported sentence expression", 1);
+
+        ptx_context_count = ptx_plan_contexts(false);
+
+        if (ptx_failed)
+                return text_done(1);
+
+        ptx_contexts = (ptx_context address_to)text_arena_take(
+            ptx_context_count * sizeof(ptx_context));
+
+        if (ptx_context_count && !ptx_contexts)
+                return text_done(1);
+
+        ptx_plan_contexts(true);
+
+        if (ptx_custom_word &&
+            !regex_compile(ptx_word_pattern, false, ptx_fold, false,
+                           REGEX_POLICY_DEFAULT))
+                return text_refuse(ptx_word_pattern,
+                                   "unsupported word expression", 1);
+
+        ptx_occurrence_count = ptx_scan_occurrences(false);
+        ptx_occurrences = (ptx_occurrence address_to)text_arena_take(
+            ptx_occurrence_count * sizeof(ptx_occurrence));
+        ptx_order = (positive address_to)text_arena_take(
+            ptx_occurrence_count * sizeof(positive));
+        positive address_to spare = (positive address_to)text_arena_take(
+            ptx_occurrence_count * sizeof(positive));
+
+        if (ptx_occurrence_count &&
+            (!ptx_occurrences || !ptx_order || !spare))
+                return text_done(1);
+
+        ptx_maximum_word = 0;
+        ptx_scan_occurrences(true);
+
+        for (positive at = 0; at < ptx_occurrence_count; at++)
+                ptx_order[at] = at;
+
+        if (ptx_occurrence_count > 1)
+                ptx_order = array_merge_sort(ptx_order, spare,
+                                             ptx_occurrence_count,
+                                             ptx_compare);
+
+        ptx_truncation_length = string_length(ptx_truncation);
+
+        if (ptx_auto_reference)
+        {
+                for (positive file_index = 0; file_index < ptx_file_count;
+                     file_index++)
+                {
+                        positive width =
+                            (ptx_files[file_index].name
+                                 ? string_length(ptx_files[file_index].name)
+                                 : 0) +
+                            1 + ptx_decimal_length(
+                                    ptx_files[file_index].lines + 1);
+
+                        if (width > ptx_reference_width)
+                                ptx_reference_width = width;
+                }
+        }
+
+        positive context_width = ptx_width;
+
+        if ((ptx_auto_reference || ptx_input_reference) &&
+            !ptx_right_reference)
+        {
+                positive used = ptx_reference_width + ptx_gap;
+                context_width = used < context_width
+                                    ? context_width - used
+                                    : 0;
+        }
+
+        ptx_half_width = context_width / 2;
+        ptx_before_width = ptx_half_width > ptx_gap
+                               ? ptx_half_width - ptx_gap
+                               : 0;
+        ptx_keyafter_width = ptx_half_width;
+
+        positive reserve = ptx_truncation_length * 2;
+        ptx_before_width = reserve < ptx_before_width
+                               ? ptx_before_width - reserve
+                               : 0;
+        ptx_keyafter_width = reserve < ptx_keyafter_width
+                                 ? ptx_keyafter_width - reserve
+                                 : 0;
+
+        for (positive at = 0; at < ptx_occurrence_count; at++)
+                ptx_output_one(ptx_occurrences + ptx_order[at]);
+
         return text_done(text_status);
 }
 

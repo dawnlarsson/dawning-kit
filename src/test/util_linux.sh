@@ -23,7 +23,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino; do
+        getino lsns; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -135,7 +135,7 @@ section util-linux
 group reference
 for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino; do
+        getino lsns; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
@@ -656,11 +656,38 @@ if [ "$(id -u)" = 0 ]; then
                 "$work"
 fi
 
+group lsns
+compare 'task namespaces raw' lsns \
+        'target=$$; "$TOOL" -p "$target" -n -r -o NS,TYPE'
+compare 'type filter and identity columns' lsns \
+        'target=$$; "$TOOL" -t mnt -p "$target" -n -r -o NS,TYPE,PID,PPID,UID,USER'
+compare 'path and reordered columns' lsns \
+        'target=$$; "$TOOL" -p "$target" -n -r -o TYPE,PATH'
+compare 'json projection' lsns \
+        'target=$$; "$TOOL" -p "$target" -J -o NS,TYPE'
+compare 'namespace inode operand' lsns \
+        'inode=$(stat -Lc %i /proc/$$/ns/mnt); "$TOOL" -l -n -r -o NS,TYPE "$inode"'
+compare 'unknown namespace type' lsns '"$TOOL" -t impossible'
+compare 'unknown output column' lsns '"$TOOL" -o IMPOSSIBLE'
+subject 'default rows unique and aggregated' lsns \
+        '"$TOOL" -n -r -o NS,TYPE,NPROCS,PID,UID,USER | awk '\''NF < 6 || $3 < 1 || $4 < 1 { bad=1 } { key=$1 SUBSEP $2; if (seen[key]++) bad=1; rows++ } END { exit bad || !rows }'\'''
+subject 'tree mode rejected' lsns \
+        '"$TOOL" -T parent >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'persistent mode rejected' lsns \
+        '"$TOOL" -P >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+if unshare -Urn /bin/true >/dev/null 2>&1; then
+        compare 'isolated user and net namespace' lsns \
+                'unshare -Urn /bin/sh -c '\''"$1" -p $$ -n -r -o TYPE'\'' sh "$TOOL"'
+        subject 'isolated namespace inode is distinct' lsns \
+                'parent=$(stat -Lc %i /proc/$$/ns/net); export TOOL parent; unshare -Urn /bin/sh -c '\''now=$(stat -Lc %i /proc/$$/ns/net); [ "$now" != "$parent" ] && "$TOOL" -t net -p $$ -n -r -o NS,TYPE | grep -q "^$now net$"'\'''
+fi
+
 # Exact upstream executable denominator. The supported list is intentionally
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt copyfilerange exch fadvise fallocate findfs findmnt flock getino getopt hexdump ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
+supported='blkid choom chrt copyfilerange exch fadvise fallocate findfs findmnt flock getino getopt hexdump ionice kill lsns mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

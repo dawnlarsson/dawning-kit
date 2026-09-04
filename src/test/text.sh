@@ -168,6 +168,48 @@ printf '\tX\n        Y\n' > "$work/tabs_part_two"
         printf '\tX\b\tY\n'
 } > "$work/tabs_wide"
 
+# fmt's paragraph reader must retain words while text_line is reused for the
+# next physical line.  The wide word crosses a refill without introducing a
+# second line buffer, and the other samples expose margins, prefixes, tabs,
+# sentence spacing and an unterminated final paragraph.
+printf 'The quick brown fox jumps over the lazy dog while another sentence follows behind.\nThis continuation has enough words to require a thoughtful set of line breaks.\n\nShort final paragraph.\n' > "$work/fmt_plain"
+printf '  First indented line carries enough words to wrap across the requested width.\n    Second indented line has a distinct margin and several more useful words.\n    Third indented line continues that secondary margin.\n' > "$work/fmt_indent"
+printf '  >  Alpha beta gamma delta epsilon zeta eta theta.\n  >  Iota kappa lambda mu nu xi omicron.\nplain material must pass through unchanged\n' > "$work/fmt_prefix"
+printf '\talpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n\tsecond line stays in the same tabbed paragraph for filling\n' > "$work/fmt_tabs"
+printf 'final line without a newline and several words' > "$work/fmt_nonewline"
+printf 'first file has words but no terminator' > "$work/fmt_part_one"
+printf 'second file begins a separate paragraph\n' > "$work/fmt_part_two"
+{
+        head -c 65540 /dev/zero | tr '\0' x
+        printf ' tail words here\n'
+} > "$work/fmt_wide"
+
+# pr lays out one page of record descriptors over the shared line spill.  A
+# refill-crossing record and an input form feed exercise the two cases which
+# cannot be represented by a short, newline-only sample.
+seq 1 120 > "$work/pr_many"
+printf 'left\nlonger-left\nlast\n' > "$work/pr_left"
+printf 'right\nr2\n' > "$work/pr_right"
+printf 'before\fafter\ntail\n' > "$work/pr_formfeed"
+{
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\ntail\n'
+} > "$work/pr_wide"
+
+# ptx keeps source text in the shared arena and sorts offset-only keyword
+# occurrences.  Sentence punctuation, input/automatic references, selection
+# lists and a refill-crossing context expose each retained offset.
+printf 'one two?  three four!\nfive six\nAlpha beta alpha.\n' > "$work/ptx_source"
+printf 'REF1 red green\nREF2 blue red\n' > "$work/ptx_references"
+printf 'one\nAlpha\n' > "$work/ptx_ignore"
+printf 'two\nred\nAlpha\n' > "$work/ptx_only"
+printf ' ,.!?\t\n' > "$work/ptx_breaks"
+{
+        printf 'first '
+        head -c 65540 /dev/zero | tr '\0' x
+        printf ' middle sentence.  final words\n'
+} > "$work/ptx_wide"
+
 case_start()
 {
         group=$1
@@ -675,6 +717,27 @@ refuses_sort_mode()
 
         if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
            grep -q '^sort:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_ptx_format()
+{
+        name=$1
+        shift
+
+        "$bin/ptx" "$@" < "$work/ptx_source" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^ptx:' "$work/err"
         then
                 pass=$((pass + 1))
                 return 0
@@ -1233,6 +1296,77 @@ compare 'characters keep tab columns' fold g -c -w 3
 compare 'width plus'     fold a  -w +8
 compare 'width zero'     fold a  -w 0
 compare 'width malformed' fold a -w nope
+
+case_start fmt
+compare 'paragraphs'      fmt fmt_plain
+compare 'width'           fmt fmt_plain -w 37
+compare 'joined width'    fmt fmt_plain -w37
+compare 'goal'            fmt fmt_plain -w39 -g31
+compare 'crown margin'    fmt fmt_indent -c -w35
+compare 'tagged paragraph' fmt fmt_indent -t -w35
+compare 'split only'      fmt fmt_plain -s -w37
+compare 'uniform spacing' fmt fmt_plain -u -w37
+compare 'prefix'          fmt fmt_prefix -p '  >  ' -w37
+compare 'long prefix'     fmt fmt_prefix --prefix='  >  ' --width=37
+compare 'tab indentation' fmt fmt_tabs -w37
+compare 'old width'       fmt fmt_plain -37
+compare 'no newline'      fmt fmt_nonewline
+compare 'separate files'  fmt - "$work/fmt_part_one" "$work/fmt_part_two"
+compare 'refill crossing' fmt fmt_wide
+compare 'bad width'       fmt fmt_plain -w 2501
+compare 'bad goal'        fmt fmt_plain -w 20 -g 21
+compare 'unknown mode'    fmt fmt_plain --not-a-mode
+
+case_start pr
+compare 'plain body'      pr pr_many -t
+compare 'page range'      pr pr_many -t -l 7 +3:4
+compare 'long page range' pr pr_many -t -l 7 --pages=3:4
+compare 'header pages'    pr pr_many -l 12 -D '%Y-%m-%d' -h HEAD
+compare 'form feed pages' pr pr_formfeed -l 12 -D '%Y' -F
+compare 'input form feed' pr pr_formfeed -t -l 2
+compare 'omit pagination' pr pr_formfeed -T -l 2
+compare 'double space'    pr pr_many -t -d -l 8
+compare 'columns down'    pr pr_many -t -3 -w 31
+compare 'columns across'  pr pr_many -t -3 -a -w 31
+compare 'column separator' pr pr_many -t -2 -w 20 -s:
+compare 'separator string' pr pr_many -t -2 -w 22 -S '::'
+compare 'joined columns'  pr pr_many -t -2 -J -w 20
+compare 'numbered'        pr pr_many -t -n:4
+compare 'numbered range reset' pr pr_many -t -l 7 -n -N 5 +2
+compare 'numbered columns' pr pr_many -t -2 -n -w 30
+compare 'margin width'    pr pr_many -l 12 -D '%Y' -o 4 -w 40
+compare 'page truncate'   pr pr_many -t -W 1
+compare 'input tab width' pr g -t -e4
+compare 'output tab width' pr pr_many -t -2 -i4 -w 20
+compare 'merge files'     pr - -m -t -w 30 "$work/pr_left" "$work/pr_right"
+compare 'merge numbered'  pr - -m -t -n -w 36 "$work/pr_left" "$work/pr_right"
+compare 'refill crossing' pr pr_wide -t
+
+case_start ptx
+compare 'default index'    ptx ptx_source
+compare 'ignore case'      ptx ptx_source -f
+compare 'narrow width'     ptx ptx_source -w 40
+compare 'gap width'        ptx ptx_source -g 5 -w 50
+compare 'truncation flag'  ptx ptx_source -F '++' -w 32
+[ "$(ptx --version 2>/dev/null | head -1)" != 'ptx (GNU coreutils) 9.11' ] || \
+        compare 'typeset width' ptx ptx_source -t
+compare 'automatic refs'   ptx ptx_source -A
+compare 'right refs'       ptx ptx_source -A -R
+compare 'input refs'       ptx ptx_references -r
+compare 'input right refs' ptx ptx_references -r -R
+compare 'ignore words'     ptx ptx_source -i "$work/ptx_ignore"
+compare 'folded ignores'   ptx ptx_source -f -i "$work/ptx_ignore"
+compare 'only words'       ptx ptx_source -o "$work/ptx_only"
+compare 'both word lists'  ptx ptx_source -i "$work/ptx_ignore" -o "$work/ptx_only"
+compare 'sentence regexp'  ptx ptx_source -S '\n'
+compare 'word regexp'      ptx ptx_source -W '[a-z][a-z]*'
+compare 'folded word regexp' ptx ptx_source -f -W '[a-z][a-z]*'
+compare 'break characters' ptx ptx_source -b "$work/ptx_breaks"
+compare 'multiple files'   ptx - -A "$work/ptx_source" "$work/ptx_references"
+compare 'refill crossing'  ptx ptx_wide
+refuses_ptx_format 'traditional format' -G
+refuses_ptx_format 'roff format' -O
+refuses_ptx_format 'tex format' -T
 
 case_start tabs
 compare 'expand default'        expand tabs
@@ -2578,6 +2712,72 @@ for _ in range(rounds // 2):
     both("tr", ["a-c", "x-z"], data)
     both("tr", ["-d", "ab"], data)
     both("tr", ["-s", "abc"], data)
+
+#       Paragraph boundaries, sentence spacing and prefix filtering are
+#       generated independently of fmt's historical exact-width tie change,
+#       so the same cases remain differential on older host coreutils too.
+
+fmt_words = ["alpha", "beta", "gamma", "word.", "why?", "(open", "close)"]
+
+for _ in range(max(rounds // 4, 1)):
+    rows = []
+    for row in range(random.randint(1, 2)):
+        pieces = [random.choice(fmt_words)
+                  for _ in range(random.randint(1, 4))]
+        rows.append(("  " if random.random() < 0.3 else "")
+                    + ("  " if random.random() < 0.3 else " ").join(pieces))
+    data = "\n".join(rows) + "\n"
+
+    both("fmt", [], data)
+    both("fmt", ["-u"], data)
+    both("fmt", ["-s"], data)
+
+    prefixed = "".join("> " + row + "\n" for row in rows) + "plain\n"
+    both("fmt", ["-p", "> "], prefixed)
+
+#       pr's final page is where down-columns balance differently from
+#       across-columns.  Vary both the incomplete page and its geometry;
+#       -t keeps wall-clock header text out of a generated differential.
+
+for _ in range(max(rounds // 4, 1)):
+    count = random.randint(0, 25)
+    data = "".join("r%02d-%s\n" %
+                   (row, "x" * random.randint(0, 8))
+                   for row in range(count))
+    columns = random.randint(1, 4)
+    width = random.randint(columns * 7 + columns - 1, 48)
+    length = random.randint(2, 9)
+    base = ["-t", "-%d" % columns, "-w", str(width),
+            "-l", str(length)]
+
+    both("pr", base, data)
+    both("pr", base + ["-a"], data)
+    both("pr", base + ["-n:3"], data)
+    both("pr", base + ["-s:"], data)
+
+#       Clean sentence-shaped inputs make ptx's context wrap and stable
+#       keyword ordering independently variable without depending on GNU's
+#       historical diagnostic when a sentence regexp starts at byte zero.
+
+ptx_words = ["alpha", "Beta", "gamma", "delta", "epsilon", "zeta"]
+
+for _ in range(max(rounds // 4, 1)):
+    sentences = []
+    for sentence in range(random.randint(1, 4)):
+        words = [random.choice(ptx_words)
+                 for _ in range(random.randint(1, 7))]
+        sentences.append(("\t" if random.random() < 0.2 else "")
+                         + " ".join(words)
+                         + random.choice([".  ", "?\n", "!\t"]))
+    data = "".join(sentences)
+
+    both("ptx", [], data)
+    both("ptx", ["-f"], data)
+    both("ptx", ["-w", str(random.randint(24, 80)),
+                 "-g", str(random.randint(1, 5))], data)
+    both("ptx", ["-A"], data)
+    both("ptx", ["-S", "\\n"], data)
+    both("ptx", ["-W", "[a-z][a-z]*"], data)
 
 #       A count taken off the end, against one taken off the front of the
 #       same input read backwards. The unterminated last line is the one

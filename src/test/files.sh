@@ -1422,6 +1422,64 @@ same 'escaped controls'  dir "$quoted_names"
 same 'escaped operand'   dir -d "$quoted_names/$control_name"
 answered 'missing path'  dir "$fixture/nothing"
 
+#       dircolors' installed database is deliberately shorter than GNU's;
+#       parser semantics are differential below, while the database subset
+#       has its own Moonwater invariant.  This keeps a policy-size choice from
+#       weakening the compatibility checks for user configuration files.
+colors=$work/dircolors.conf
+printf '%s\n' \
+        'TERM xterm*' 'COLORTERM true*' \
+        'RESET 1' 'NORMAL 2' 'FILE 3' 'DIR 4' 'LINK target' \
+        'MULTIHARDLINK 5' 'FIFO 6' 'SOCK 7' 'DOOR 8' 'BLK 9' \
+        'CHR 10' 'ORPHAN 11' 'MISSING 12' 'SETUID 13' 'SETGID 14' \
+        'CAPABILITY 15' 'STICKY_OTHER_WRITABLE 16' \
+        'OTHER_WRITABLE 17' 'STICKY 18' 'EXEC 19' \
+        'LEFTCODE \e[' 'RIGHTCODE m' 'ENDCODE \e[0m' \
+        '.tar 20' '*.wow 21' > "$colors"
+quote_colors=$work/dircolors-quote.conf
+printf "dir a'b!c\n.foo z'q\n" > "$quote_colors"
+colon_colors=$work/dircolors-colon.conf
+printf 'DIR 31:44\n' > "$colon_colors"
+
+dircolors_had_term=${TERM+x}
+dircolors_old_term=${TERM-}
+dircolors_had_colorterm=${COLORTERM+x}
+dircolors_old_colorterm=${COLORTERM-}
+dircolors_had_shell=${SHELL+x}
+dircolors_old_shell=${SHELL-}
+
+TERM=xterm-256color
+COLORTERM=no
+SHELL=/bin/sh
+export TERM COLORTERM SHELL
+
+group dircolors
+same 'bourne config'      dircolors -b "$colors"
+same 'c shell config'     dircolors -c "$colors"
+same 'last shell wins'    dircolors -b -c "$colors"
+same 'quoted values'      dircolors -b "$quote_colors"
+same 'print colors'       dircolors --print-ls-colors "$colors"
+
+TERM=no
+COLORTERM=truecolor
+same 'colorterm gate'     dircolors -b "$colors"
+TERM=no
+COLORTERM=no
+same 'unmatched gates'    dircolors -b "$colors"
+TERM=xterm
+SHELL=/bin/tcsh
+same 'shell environment'  dircolors "$colors"
+
+answered 'missing config' dircolors -b "$fixture/nothing"
+answered 'extra config'   dircolors -b "$colors" "$quote_colors"
+answered 'database with file' dircolors -p "$colors"
+moon_effect 'compact database' dircolors '"$TOOL" -p > database; grep -q "^DIR 01;34$" database; grep -q "^.tar 01;31$" database; test "$(wc -l < database)" -lt 100'
+rejected 'colon grammar refused' dircolors -b "$colon_colors"
+
+if [ "$dircolors_had_term" ]; then TERM=$dircolors_old_term; export TERM; else unset TERM; fi
+if [ "$dircolors_had_colorterm" ]; then COLORTERM=$dircolors_old_colorterm; export COLORTERM; else unset COLORTERM; fi
+if [ "$dircolors_had_shell" ]; then SHELL=$dircolors_old_shell; export SHELL; else unset SHELL; fi
+
 #       A file with two names in the tree is one file. Nothing above has one,
 #       so a tree with a pair of them is built for the tools that have to
 #       count it once, and a second pair on a directory of its own for -S and
@@ -1864,6 +1922,37 @@ moon_effect 'random source refused' shred '! "$TOOL" -n0 --random-source=plain p
 answered 'missing file' shred -n0
 answered 'invalid passes' shred -n nope "$fixture/alpha"
 answered 'invalid size' shred -s nope "$fixture/alpha"
+
+group shuf
+effect 'lines'              shuf 'printf "c\na\nb\n" > input; "$TOOL" input | sort > said'
+effect 'unterminated line'  shuf 'printf "c\na\nb" > input; "$TOOL" input | sort > said'
+effect 'blank lines'        shuf 'printf "b\n\na\n\n" > input; "$TOOL" input | sort > said'
+effect 'standard input'     shuf 'printf "c\na\nb\n" | "$TOOL" | sort > said'
+effect 'echo'               shuf '"$TOOL" -e c a b | sort > said'
+effect 'echo dash operands' shuf '"$TOOL" -e -- -c -a -b | sort > said'
+effect 'empty echo'         shuf '"$TOOL" -e > said'
+effect 'input range'        shuf '"$TOOL" -i 3-9 | sort -n > said'
+effect 'single range'       shuf '"$TOOL" -i 7-7 > said'
+effect 'head count'         shuf 'seq 1 100 > input; "$TOOL" -n17 input | wc -l > said'
+effect 'head clamps'        shuf 'seq 1 8 > input; "$TOOL" -n99 input | sort -n > said'
+effect 'repeat one'         shuf '"$TOOL" -r -n20 -e only > said'
+effect 'repeat count'       shuf '"$TOOL" -r -n200 -e a b c | wc -l > said'
+effect 'zero terminated'    shuf 'printf "c\0a\0b" > input; "$TOOL" -z input | sort -z > said'
+effect 'output file'        shuf 'printf "c\na\nb\n" > input; "$TOOL" -o mixed input; sort mixed > said; rm mixed'
+effect 'same input output'  shuf 'printf "c\na\nb\n" > input; "$TOOL" -o input input; sort input > normalized; mv normalized input; cp input said'
+effect 'option after input' shuf 'printf "c\na\nb\n" > input; "$TOOL" input -n2 | wc -l > said'
+effect 'empty input'        shuf ': > input; "$TOOL" input > said'
+effect 'empty repeat zero'  shuf ': > input; "$TOOL" -r -n0 input > said'
+moon_effect 'head unique' shuf '"$TOOL" -n50 -i1-100 | sort -n > result; test "$(wc -l < result)" = 50; test "$(uniq result | wc -l)" = 50'
+moon_effect 'sparse huge range' shuf '"$TOOL" -n5 -i1000000000-2000000000 | sort -n > result; test "$(wc -l < result)" = 5; test "$(uniq result | wc -l)" = 5; test "$(head -1 result)" -ge 1000000000; test "$(tail -1 result)" -le 2000000000'
+moon_effect 'repeat distribution' shuf 'got=$("$TOOL" -r -n12000 -e a b c); a=$(printf "%s\n" "$got" | grep -cx a); b=$(printf "%s\n" "$got" | grep -cx b); c=$(printf "%s\n" "$got" | grep -cx c); test "$a" -ge 3600 -a "$a" -le 4400; test "$b" -ge 3600 -a "$b" -le 4400; test "$c" -ge 3600 -a "$c" -le 4400'
+moon_effect 'random source refused' shuf '! "$TOOL" --random-source=plain -e a >/dev/null 2>&1'
+answered 'empty repeat fails' shuf -r -n1 /dev/null
+answered 'invalid range' shuf -i 9-3
+answered 'range with file' shuf -i 1-3 "$fixture/alpha"
+answered 'echo with range' shuf -e -i 1-3 a
+answered 'extra file' shuf "$fixture/alpha" "$fixture/beta.txt"
+answered 'invalid count' shuf -n nope "$fixture/alpha"
 
 group split
 effect 'default lines' split 'seq 1 2005 > input; "$TOOL" input'
