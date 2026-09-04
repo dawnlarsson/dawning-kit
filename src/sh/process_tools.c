@@ -776,6 +776,215 @@ static b32 process_nohup()
             program_argument_list() + taking.first);
 }
 
+// pipesz ----------------------------------------------------------
+/* Linux exposes pipe capacity through fcntl and the unread byte count through
+   FIONREAD.  Keeping this wrapper in the process-policy unit lets its optional
+   command use the same PATH/environment handoff as stdbuf, env and nohup. */
+#define PIPESZ_SET 1031
+#define PIPESZ_GET 1032
+#define PIPESZ_UNREAD 0x541b
+
+static const file_long process_pipesz_longs[] = {
+    {(string_address)"get", 'g'},
+    {(string_address)"set", 's'},
+    {(string_address)"file", 'f'},
+    {(string_address)"fd", 'n'},
+    {(string_address)"stdin", 'i'},
+    {(string_address)"stdout", 'o'},
+    {(string_address)"stderr", 'e'},
+    {(string_address)"check", 'c'},
+    {(string_address)"quiet", 'q'},
+    {(string_address)"verbose", 'v'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+typedef struct
+{
+        bipolar descriptor;
+        string_address label;
+        bool close;
+} process_pipe_target;
+
+static b32 process_pipesz()
+{
+        file_taking taking = {
+            .program = (string_address)"pipesz",
+            .allowed = (string_address)"gsfnioecqvhV",
+            .valued = (string_address)"sfn",
+            .longs = process_pipesz_longs,
+        };
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                string_format(log,
+                              "Usage: pipesz [options] [--] [command]\n"
+                              "  -g, --get       examine pipe buffers\n"
+                              "  -s, --set SIZE  set pipe buffer size\n"
+                              "  -f FILE  -n FD  -i stdin  -o stdout  -e stderr\n"
+                              "  -c check  -q quiet  -v verbose\n");
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                string_format(log, "pipesz from dawning-kit\n");
+                return 0;
+        }
+
+        bool getting = (taking.flags & FILE_FLAG('g')) != 0;
+        if (getting && (taking.flags & FILE_FLAG('s')))
+        {
+                file_fail("pipesz: options --get and --set cannot be combined\n",
+                          0);
+                return 1;
+        }
+        positive count = (positive)program_argument_count();
+
+        if (getting && taking.first < count)
+        {
+                file_fail("pipesz: cannot specify a command with --get\n", 0);
+                return 1;
+        }
+
+        positive requested = 1024 * 1024;
+        if (taking.flags & FILE_FLAG('s'))
+        {
+                b64 parsed;
+                p8 relation;
+                string_address value = file_option_value(address_of taking, 's');
+
+                if (!truncate_size(value, address_of parsed,
+                                   address_of relation) ||
+                    relation != TRUNCATE_ABSOLUTE || parsed < 0 ||
+                    (p64)parsed > positive_max)
+                {
+                        string_format(file_fail,
+                                      "pipesz: invalid size: '%s'\n", value);
+                        return 1;
+                }
+                requested = (positive)parsed;
+        }
+
+        process_pipe_target targets[5];
+        positive used = 0;
+        bool chosen = (taking.flags &
+                       (FILE_FLAG('f') | FILE_FLAG('n') | FILE_FLAG('i') |
+                        FILE_FLAG('o') | FILE_FLAG('e'))) != 0;
+
+        if (taking.flags & FILE_FLAG('f'))
+        {
+                string_address path = file_option_value(address_of taking, 'f');
+                bipolar descriptor = system_open_at(
+                    AT_FDCWD, path, FILE_READ_WRITE | O_NONBLOCK | O_CLOEXEC);
+
+                if (descriptor < 0)
+                {
+                        if (!(taking.flags & FILE_FLAG('q')))
+                                string_format(file_fail,
+                                              "pipesz: cannot open '%s': %s\n",
+                                              path, file_reason(descriptor));
+                        if (taking.flags & FILE_FLAG('c'))
+                                return 1;
+                }
+                else
+                        targets[used++] = (process_pipe_target){
+                            descriptor, path, true};
+        }
+
+        p8 fd_label[32];
+        if (taking.flags & FILE_FLAG('n'))
+        {
+                positive descriptor;
+                string_address value = file_option_value(address_of taking, 'n');
+
+                if (!string_digits_exact(value, address_of descriptor) ||
+                    descriptor > b32_max)
+                {
+                        for (positive at = 0; at < used; at++)
+                                if (targets[at].close)
+                                        system_close(targets[at].descriptor);
+                        string_format(file_fail,
+                                      "pipesz: invalid file descriptor: '%s'\n",
+                                      value);
+                        return 1;
+                }
+
+                positive at = (positive)(memory_copy_end(
+                    fd_label, (address_any)"fd ", 3) - fd_label);
+                positive_into_string(fd_label + at, descriptor);
+                targets[used++] = (process_pipe_target){
+                    (bipolar)descriptor, (string_address)fd_label, false};
+        }
+        if (taking.flags & FILE_FLAG('i'))
+                targets[used++] = (process_pipe_target){0, (string_address)"fd 0", false};
+        if (taking.flags & FILE_FLAG('o'))
+                targets[used++] = (process_pipe_target){1, (string_address)"fd 1", false};
+        if (taking.flags & FILE_FLAG('e'))
+                targets[used++] = (process_pipe_target){2, (string_address)"fd 2", false};
+        if (!chosen)
+                targets[used++] = (process_pipe_target){
+                    getting ? 0 : 1,
+                    getting ? (string_address)"fd 0" : (string_address)"fd 1",
+                    false};
+
+        bool failed = false;
+        if (getting && (taking.flags & FILE_FLAG('v')))
+                log("pipe\tsize\tunread\n", 17);
+
+        for (positive i = 0; i < used; i++)
+        {
+                process_pipe_target address_to target = targets + i;
+                bipolar answer = system_call_3(
+                    syscall(fcntl), (positive)target->descriptor,
+                    getting ? PIPESZ_GET : PIPESZ_SET,
+                    getting ? 0 : requested);
+
+                if (answer < 0)
+                {
+                        failed = true;
+                        if (!(taking.flags & FILE_FLAG('q')))
+                                string_format(
+                                    file_fail,
+                                    "pipesz: cannot %s pipe buffer size of %s: %s\n",
+                                    getting ? (string_address)"get"
+                                            : (string_address)"set",
+                                    target->label, file_reason(answer));
+                }
+                else if (getting)
+                {
+                        b32 unread = 0;
+                        bipolar counted = system_control(
+                            target->descriptor, PIPESZ_UNREAD, address_of unread);
+
+                        string_format(log, "%s\t%p\t%p\n", target->label,
+                                      (positive)answer,
+                                      counted < 0 ? 0 : (positive)unread);
+                }
+                else if (taking.flags & FILE_FLAG('v'))
+                        string_format(file_fail,
+                                      "pipesz: %s pipe buffer size set to %p\n",
+                                      target->label, (positive)answer);
+
+                if (target->close)
+                        system_close(target->descriptor);
+                if (failed && (taking.flags & FILE_FLAG('c')))
+                        break;
+        }
+
+        log_flush();
+        if (failed && (taking.flags & FILE_FLAG('c')))
+                return 1;
+        if (taking.first < count)
+                return process_tool_exec(
+                    (string_address)"pipesz",
+                    program_argument_list() + taking.first);
+        return 0;
+}
+
 // timeout ---------------------------------------------------------
 
 typedef struct

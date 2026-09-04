@@ -1025,17 +1025,23 @@ static b32 tools_logger()
 
 // Login records: who, users and pinky -----------------------
 
-/* The common fields have one Linux layout through offset 336. x86 keeps the
-   historic 32-bit session/time ABI and a 384-byte record; ARM64 and RISC-V
-   use native 64-bit fields and a 400-byte record. Decode those few offsets
-   explicitly rather than pretending the compiler's struct utmp is portable. */
-#if X64 || X86
+/* The common fields have one Linux layout through offset 336. All 32-bit
+   targets, plus x86-64 for compatibility, keep 32-bit session/time fields and
+   a 384-byte record; other 64-bit targets use native fields and 400 bytes.
+   Decode the varying offsets rather than trusting a libc struct definition. */
+#if BITS == 32 || X64 || X86
 #define LOGIN_UTMP_SIZE 384
+#define LOGIN_UTMP_SESSION 336
 #define LOGIN_UTMP_SECONDS 340
+#define LOGIN_UTMP_MICROSECONDS 344
+#define LOGIN_UTMP_ADDRESS 348
 #define LOGIN_UTMP_TIME_32 1
 #else
 #define LOGIN_UTMP_SIZE 400
+#define LOGIN_UTMP_SESSION 336
 #define LOGIN_UTMP_SECONDS 344
+#define LOGIN_UTMP_MICROSECONDS 352
+#define LOGIN_UTMP_ADDRESS 360
 #define LOGIN_UTMP_TIME_32 0
 #endif
 
@@ -1049,7 +1055,10 @@ typedef struct
         p8 host[256];
         b16 termination;
         b16 exit;
+        b64 session;
         b64 seconds;
+        b64 microseconds;
+        p8 address[16];
 } login_record;
 
 #define LOGIN_UTMP_PATH "/var/run/utmp"
@@ -1064,25 +1073,65 @@ typedef struct
 
 typedef bool(address_to login_record_visit)(login_record address_to record);
 
+/* Decode once for the forward utmp visitors, utmpdump, and last's reverse
+   wtmp walk.  The fields before the timeval have a common Linux layout; only
+   the three native-long offsets differ between the two current ABIs. */
+static fn login_record_decode(p8 address_to bytes,
+                              login_record address_to record)
+{
+        memory_fill(record, 0, sizeof(*record));
+        record->type = memory_load_unaligned(p16, bytes);
+        record->process = memory_load_unaligned(p32, bytes + 4);
+        record->termination = memory_load_unaligned(b16, bytes + 332);
+        record->exit = memory_load_unaligned(b16, bytes + 334);
+        record->session = LOGIN_UTMP_TIME_32
+                              ? (b64)memory_load_unaligned(
+                                    b32, bytes + LOGIN_UTMP_SESSION)
+                              : memory_load_unaligned(
+                                    b64, bytes + LOGIN_UTMP_SESSION);
+        record->seconds = LOGIN_UTMP_TIME_32
+                              ? (b64)memory_load_unaligned(
+                                    b32, bytes + LOGIN_UTMP_SECONDS)
+                              : memory_load_unaligned(
+                                    b64, bytes + LOGIN_UTMP_SECONDS);
+        record->microseconds = LOGIN_UTMP_TIME_32
+                                   ? (b64)memory_load_unaligned(
+                                         b32, bytes + LOGIN_UTMP_MICROSECONDS)
+                                   : memory_load_unaligned(
+                                         b64, bytes + LOGIN_UTMP_MICROSECONDS);
+        memory_copy_apart(record->line, bytes + 8, sizeof(record->line));
+        memory_copy_apart(record->identity, bytes + 40,
+                          sizeof(record->identity));
+        memory_copy_apart(record->user, bytes + 44, sizeof(record->user));
+        memory_copy_apart(record->host, bytes + 76, sizeof(record->host));
+        memory_copy_apart(record->address, bytes + LOGIN_UTMP_ADDRESS,
+                          sizeof(record->address));
+}
+
 /* One reader for all three applets.  It uses the already resident transfer
    block, preserves a record split across reads and copies into an aligned
    object before interpreting it.  A truncated last record is ignored, as the
    system readers do while a writer is extending utmp. */
 static bool login_records(string_address path, bool check_processes,
-                          login_record_visit visit)
+                          bool missing_ok, login_record_visit visit)
 {
         bipolar input;
 
-        do
-                input = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
-        while (input == LOGIN_ERROR_INTERRUPTED);
+        if (!path)
+                input = 0;
+        else
+                do
+                        input = system_open_at(AT_FDCWD, path,
+                                               FILE_READ | O_CLOEXEC);
+                while (input == LOGIN_ERROR_INTERRUPTED);
 
         if (input < 0)
         {
-                if (input == -ERROR_NO_ENTRY)
+                if (missing_ok && input == -ERROR_NO_ENTRY)
                         return true;
 
-                text_error(path, file_reason(input));
+                text_error(path ? path : (string_address)"standard input",
+                           file_reason(input));
                 return false;
         }
 
@@ -1097,7 +1146,8 @@ static bool login_records(string_address path, bool check_processes,
 
                 if (got < 0)
                 {
-                        text_error(path, file_reason(got));
+                        text_error(path ? path : (string_address)"standard input",
+                                   file_reason(got));
                         answer = false;
                         break;
                 }
@@ -1111,25 +1161,8 @@ static bool login_records(string_address path, bool check_processes,
                 while (have - at >= LOGIN_UTMP_SIZE)
                 {
                         p8 address_to bytes = file_transfer + at;
-                        login_record record = {
-                            .type = memory_load_unaligned(p16, bytes),
-                            .process = memory_load_unaligned(p32, bytes + 4),
-                            .termination = memory_load_unaligned(b16, bytes + 332),
-                            .exit = memory_load_unaligned(b16, bytes + 334),
-                            .seconds = LOGIN_UTMP_TIME_32
-                                           ? (b64)memory_load_unaligned(b32,
-                                                                        bytes + LOGIN_UTMP_SECONDS)
-                                           : memory_load_unaligned(b64,
-                                                                   bytes + LOGIN_UTMP_SECONDS),
-                        };
-                        memory_copy_apart(record.line, bytes + 8,
-                                          sizeof(record.line));
-                        memory_copy_apart(record.identity, bytes + 40,
-                                          sizeof(record.identity));
-                        memory_copy_apart(record.user, bytes + 44,
-                                          sizeof(record.user));
-                        memory_copy_apart(record.host, bytes + 76,
-                                          sizeof(record.host));
+                        login_record record;
+                        login_record_decode(bytes, address_of record);
                         at += LOGIN_UTMP_SIZE;
 
                         if (check_processes && record.type == LOGIN_USER_PROCESS &&
@@ -1155,7 +1188,8 @@ static bool login_records(string_address path, bool check_processes,
         }
 
 done:
-        system_close((positive)input);
+        if (path)
+                system_close((positive)input);
         return answer;
 }
 
@@ -1845,7 +1879,7 @@ static b32 tools_write()
                     program_argument((b32)taking.first + 1));
         }
 
-        bool read = login_records(login_message_utmp(), false,
+        bool read = login_records(login_message_utmp(), false, true,
                                   login_message_visit);
         if (!read || login_message_select.failed)
         {
@@ -2132,7 +2166,8 @@ static b32 tools_wall()
                 return text_done(1);
         }
 
-        if (!login_records(login_message_utmp(), false, login_message_visit) ||
+        if (!login_records(login_message_utmp(), false, true,
+                           login_message_visit) ||
             login_message_select.failed)
         {
                 if (login_message_select.failed)
@@ -2239,6 +2274,879 @@ static bool login_ends_with(string_address text, string_address suffix)
 
         return tail <= length && !memory_compare(text + length - tail,
                                                   suffix, tail);
+}
+
+/* utmpdump and last --------------------------------------- */
+
+static positive login_address_text(p8 address_to into,
+                                   p8 address_to address)
+{
+        bool ipv4 = true;
+        for (positive at = 4; at < 16; at++)
+                ipv4 &= address[at] == 0;
+
+        positive made = 0;
+        if (ipv4)
+        {
+                for (positive at = 0; at < 4; at++)
+                {
+                        if (at)
+                                into[made++] = '.';
+                        made += positive_into(into + made, address[at]);
+                }
+                into[made] = end;
+                return made;
+        }
+
+        p16 words[8];
+        positive best = 8, best_count = 0;
+        for (positive at = 0; at < 8; at++)
+                words[at] = ((p16)address[at * 2] << 8) |
+                            address[at * 2 + 1];
+        for (positive at = 0; at < 8;)
+        {
+                if (words[at])
+                {
+                        at++;
+                        continue;
+                }
+                positive first = at;
+                while (at < 8 && !words[at])
+                        at++;
+                if (at - first >= 2 && at - first > best_count)
+                {
+                        best = first;
+                        best_count = at - first;
+                }
+        }
+
+        for (positive at = 0; at < 8;)
+        {
+                if (at == best)
+                {
+                        into[made++] = ':';
+                        into[made++] = ':';
+                        at += best_count;
+                        continue;
+                }
+                if (made && into[made - 1] != ':')
+                        into[made++] = ':';
+                made += positive_into_base(into + made, words[at++], 16,
+                                           false);
+        }
+        into[made] = end;
+        return made;
+}
+
+static positive login_iso_time(p8 address_to into, positive room,
+                               b64 seconds, bool microseconds,
+                               b64 fraction)
+{
+        if (room < 40)
+                return 0;
+        time_t value = (time_t)seconds;
+        tm broken;
+        tm address_to parts = localtime_r(address_of value,
+                                           address_of broken);
+        if (!parts)
+                return 0;
+
+        positive made = strftime(into, room, "%Y-%m-%dT%H:%M:%S", parts);
+        if (!made)
+                return 0;
+        if (microseconds)
+        {
+                into[made++] = ',';
+                positive usec = fraction < 0 ? 0 : (positive)fraction;
+                made += positive_into_padded(into + made, usec % 1000000,
+                                             6, '0');
+        }
+
+        p8 zone[16];
+        positive zone_length = strftime(zone, sizeof(zone), "%z", parts);
+        if (zone_length == 5)
+        {
+                memory_copy_apart(into + made, zone, 3);
+                made += 3;
+                into[made++] = ':';
+                memory_copy_apart(into + made, zone + 3, 2);
+                made += 2;
+        }
+        else
+        {
+                memory_copy_apart(into + made, "+00:00", 6);
+                made += 6;
+        }
+        into[made] = end;
+        return made;
+}
+
+static fn login_utmpdump_field(p8 address_to field, positive length,
+                               positive width)
+{
+        text_put_character('[');
+        login_put_width(field, length, width, false);
+        text_put_string("] ");
+}
+
+static bool login_utmpdump_visit(login_record address_to record)
+{
+        p8 number[32], identity[5], user[33], line[33], host[257];
+        p8 address[64], stamp[64];
+        positive length;
+
+        text_put_character('[');
+        length = positive_into(number, record->type);
+        text_put(number, length);
+        text_put_string("] [");
+        length = positive_into(number, record->process);
+        if (length < 5)
+                for (positive at = length; at < 5; at++)
+                        text_put_character('0');
+        text_put(number, length);
+        text_put_string("] ");
+
+        length = login_field(identity, sizeof(identity), record->identity,
+                             sizeof(record->identity), false);
+        login_utmpdump_field(identity, length, 4);
+        length = login_field(user, sizeof(user), record->user,
+                             sizeof(record->user), false);
+        if (length > 8) length = 8;
+        login_utmpdump_field(user, length, 8);
+        length = login_field(line, sizeof(line), record->line,
+                             sizeof(record->line), false);
+        if (length > 12) length = 12;
+        login_utmpdump_field(line, length, 12);
+        length = login_field(host, sizeof(host), record->host,
+                             sizeof(record->host), false);
+        if (length > 20) length = 20;
+        login_utmpdump_field(host, length, 20);
+
+        length = login_address_text(address, record->address);
+        login_utmpdump_field(address, length, 15);
+        length = login_iso_time(stamp, sizeof(stamp), record->seconds, true,
+                                record->microseconds);
+        text_put_character('[');
+        text_put(stamp, length);
+        text_put_string("]\n");
+        return true;
+}
+
+static const file_long login_utmpdump_longs[] = {
+    {(string_address)"follow", 'f'},
+    {(string_address)"reverse", 'r'},
+    {(string_address)"output", 'o'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 tools_utmpdump()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"utmpdump",
+            .allowed = (string_address)"frohV",
+            .valued = (string_address)"o",
+            .longs = login_utmpdump_longs,
+            .operand = file_operand,
+        };
+        text_begin("utmpdump");
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                text_put_string("Usage: utmpdump [options] [filename]\n");
+                return text_done(0);
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                text_put_string("utmpdump from dawning-kit\n");
+                return text_done(0);
+        }
+        if (file_operand_count > 1)
+                return text_refuse(file_operand_at(1), "extra operand", 1);
+        if (taking.flags & FILE_FLAG('r'))
+                return text_refuse(null,
+                    "reverse import is not supported; binary login state is never mutated",
+                    1);
+        if (taking.flags & FILE_FLAG('f'))
+                return text_refuse(null, "follow mode is not supported", 1);
+
+        positive output_handle = 1;
+        string_address output = file_option_value(address_of taking, 'o');
+        if (output)
+        {
+                bipolar opened = text_open_handle(output, FILE_WRITE, 0666);
+                if (opened < 0)
+                        return text_refuse(output, file_reason(opened), 1);
+                output_handle = (positive)opened;
+                text_out_to(output_handle);
+        }
+
+        string_address path = file_operand_count ? file_operand_at(0) : null;
+        string_format(file_fail, "Utmp dump of %s\n",
+                      path ? path : (string_address)"/dev/stdin");
+        bool okay = login_records(path, false, false, login_utmpdump_visit);
+        text_flush();
+        bool failed = text_out_failed;
+        if (output)
+        {
+                text_out_to(1);
+                system_close(output_handle);
+        }
+        return text_done(okay && !failed ? 0 : 1);
+}
+
+enum
+{
+        LOGIN_LAST_END_NONE,
+        LOGIN_LAST_END_LOGOUT,
+        LOGIN_LAST_END_DOWN,
+        LOGIN_LAST_END_CRASH,
+        LOGIN_LAST_END_STILL,
+        LOGIN_LAST_END_GONE,
+};
+
+enum
+{
+        LOGIN_LAST_TIME_SHORT,
+        LOGIN_LAST_TIME_FULL,
+        LOGIN_LAST_TIME_ISO,
+};
+
+typedef struct
+{
+        positive hash;
+        positive epoch;
+        b64 seconds;
+        p8 kind;
+        p8 line[33];
+} login_last_end;
+
+typedef struct
+{
+        login_last_end address_to ends;
+        positive end_room;
+        positive end_count;
+        positive epoch;
+        positive limit;
+        positive shown;
+        b64 latest_boot;
+        b64 latest_shutdown;
+        b64 boundary;
+        b64 newer_boot;
+        p8 boundary_kind;
+        p8 time_format;
+        bool full_names;
+        bool no_host;
+        bool host_last;
+        bool ip;
+        bool system;
+        bool tabs;
+        bool failed;
+} login_last_options;
+
+static login_last_options login_last;
+
+typedef struct
+{
+        bipolar handle;
+        positive records;
+        positive first;
+        positive count;
+        p8 address_to block;
+} login_last_reader;
+
+static bipolar login_last_reader_open(string_address path,
+                                      login_last_reader address_to reader)
+{
+        do
+                reader->handle = system_open_at(AT_FDCWD, path,
+                                                FILE_READ | O_CLOEXEC);
+        while (reader->handle == LOGIN_ERROR_INTERRUPTED);
+        if (reader->handle < 0)
+                return reader->handle;
+
+        file_facts facts;
+        if (!file_look(reader->handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts))
+        {
+                system_close((positive)reader->handle);
+                return -ERROR_INPUT_OUTPUT;
+        }
+        if (facts.size / LOGIN_UTMP_SIZE > positive_max)
+        {
+                system_close((positive)reader->handle);
+                return -ERROR_FILE_TOO_LARGE;
+        }
+        reader->records = (positive)(facts.size / LOGIN_UTMP_SIZE);
+        reader->first = 0;
+        reader->count = 0;
+        reader->block = text_arena_take(FILE_TRANSFER_SIZE);
+        if (!reader->block)
+        {
+                system_close((positive)reader->handle);
+                return -ERROR_NO_MEMORY;
+        }
+        return 0;
+}
+
+static bool login_last_record_at(login_last_reader address_to reader,
+                                 positive index,
+                                 login_record address_to record)
+{
+        if (index >= reader->records)
+                return false;
+        if (index < reader->first || index - reader->first >= reader->count)
+        {
+                positive per_block = FILE_TRANSFER_SIZE / LOGIN_UTMP_SIZE;
+                positive first = (index / per_block) * per_block;
+                positive count = min(per_block, reader->records - first);
+                positive wanted = count * LOGIN_UTMP_SIZE;
+                positive have = 0;
+                p64 offset = (p64)first * LOGIN_UTMP_SIZE;
+
+                while (have < wanted)
+                {
+                        bipolar got = system_call_4(
+                            syscall(pread64), (positive)reader->handle,
+                            (positive)(reader->block + have), wanted - have,
+                            (positive)(offset + have));
+                        if (got == LOGIN_ERROR_INTERRUPTED)
+                                continue;
+                        if (got <= 0)
+                        {
+                                login_last.failed = true;
+                                return false;
+                        }
+                        have += (positive)got;
+                }
+                reader->first = first;
+                reader->count = count;
+        }
+
+        login_record_decode(reader->block +
+                                (index - reader->first) * LOGIN_UTMP_SIZE,
+                            record);
+        return true;
+}
+
+static bool login_last_end_grow()
+{
+        positive larger = login_last.end_room ? login_last.end_room * 2 : 256;
+        if (larger < login_last.end_room ||
+            larger > (TEXT_ARENA_BYTES - text_arena_used) /
+                         sizeof(login_last_end))
+                return false;
+        login_last_end address_to table = text_arena_take(
+            larger * sizeof(login_last_end));
+        if (!table)
+                return false;
+        memory_fill(table, 0, larger * sizeof(login_last_end));
+
+        for (positive at = 0; at < login_last.end_room; at++)
+        {
+                login_last_end address_to old = login_last.ends + at;
+                if (old->epoch != login_last.epoch)
+                        continue;
+                positive slot = old->hash & (larger - 1);
+                while (table[slot].epoch)
+                        slot = (slot + 1) & (larger - 1);
+                table[slot] = *old;
+                table[slot].epoch = 1;
+        }
+        login_last.ends = table;
+        login_last.end_room = larger;
+        login_last.epoch = 1;
+        return true;
+}
+
+static login_last_end address_to login_last_end_for(string_address line,
+                                                     bool create)
+{
+        if (!login_last.end_room ||
+            (create && login_last.end_count + 1 > login_last.end_room / 2))
+        {
+                if (!create)
+                        return null;
+                if (!login_last_end_grow())
+                {
+                        login_last.failed = true;
+                        return null;
+                }
+        }
+        positive2 named = string_hash_33_length(line);
+        positive slot = named.x & (login_last.end_room - 1);
+        for (;;)
+        {
+                login_last_end address_to entry = login_last.ends + slot;
+                if (entry->epoch != login_last.epoch)
+                {
+                        if (!create)
+                                return null;
+                        entry->epoch = login_last.epoch;
+                        entry->hash = named.x;
+                        entry->seconds = 0;
+                        entry->kind = LOGIN_LAST_END_NONE;
+                        string_copy_max_end(entry->line, line,
+                                            sizeof(entry->line) - 1);
+                        login_last.end_count++;
+                        return entry;
+                }
+                if (entry->hash == named.x && string_equals(entry->line, line))
+                        return entry;
+                slot = (slot + 1) & (login_last.end_room - 1);
+        }
+}
+
+static fn login_last_new_epoch()
+{
+        login_last.epoch++;
+        login_last.end_count = 0;
+        if (!login_last.epoch)
+        {
+                memory_fill(login_last.ends, 0,
+                            login_last.end_room * sizeof(*login_last.ends));
+                login_last.epoch = 1;
+        }
+}
+
+static positive login_last_time(p8 address_to into, b64 seconds,
+                                bool ending)
+{
+        if (login_last.time_format == LOGIN_LAST_TIME_ISO)
+                return login_iso_time(into, 64, seconds, false, 0);
+
+        time_t value = (time_t)seconds;
+        tm broken;
+        tm address_to parts = localtime_r(address_of value,
+                                           address_of broken);
+        if (!parts)
+        {
+                into[0] = end;
+                return 0;
+        }
+        string_address format = login_last.time_format == LOGIN_LAST_TIME_FULL
+                                    ? (string_address)"%a %b %e %H:%M:%S %Y"
+                                    : ending ? (string_address)"%H:%M"
+                                             : (string_address)"%a %b %e %H:%M";
+        return strftime(into, 64, format, parts);
+}
+
+static positive login_last_duration(p8 address_to into, b64 start, b64 finish)
+{
+        /* Do the distance in the unsigned domain: a corrupt synthetic wtmp
+           can otherwise make INT64_MAX - INT64_MIN overflow before the cast. */
+        p64 minutes = finish > start
+                           ? ((p64)finish - (p64)start) / 60
+                           : 0;
+        positive made = 0;
+        into[made++] = '(';
+        if (minutes >= 1440)
+        {
+                made += positive_into(into + made,
+                                      (positive)(minutes / 1440));
+                into[made++] = '+';
+                minutes %= 1440;
+        }
+        made += positive_into_padded(into + made,
+                                     (positive)(minutes / 60), 2, '0');
+        into[made++] = ':';
+        made += positive_into_padded(into + made,
+                                     (positive)(minutes % 60), 2, '0');
+        into[made++] = ')';
+        into[made] = end;
+        return made;
+}
+
+static fn login_last_field(string_address value, positive minimum,
+                           bool star, bool full, p8 separator)
+{
+        positive length = string_length(value);
+        if (!full && length > minimum)
+        {
+                if (star && minimum)
+                {
+                        text_put((p8 address_to)value, minimum - 1);
+                        text_put_character('*');
+                }
+                else
+                        text_put((p8 address_to)value, minimum);
+        }
+        else
+                login_put_width(value, length, max(length, minimum), false);
+        text_put_character(separator);
+}
+
+static bool login_last_wanted(string_address user, string_address line)
+{
+        if (!file_operand_count)
+                return true;
+        for (positive at = 0; at < file_operand_count; at++)
+        {
+                string_address wanted = file_operand_at(at);
+                if (string_equals(wanted, user) || string_equals(wanted, line))
+                        return true;
+        }
+        return false;
+}
+
+static fn login_last_line(string_address user, string_address line,
+                          string_address host, b64 start, b64 finish,
+                          p8 end_kind)
+{
+        p8 separator = login_last.tabs ? '\t' : ' ';
+        login_last_field(user, 8, true, login_last.full_names, separator);
+        login_last_field(line, 12, false, false, separator);
+        if (!login_last.no_host && !login_last.host_last)
+                login_last_field(host, 16, true, login_last.full_names,
+                                 separator);
+
+        p8 start_text[64], end_text[64], duration[64];
+        positive start_length = login_last_time(start_text, start, false);
+        text_put(start_text, start_length);
+
+        bool ended = end_kind == LOGIN_LAST_END_LOGOUT ||
+                     end_kind == LOGIN_LAST_END_DOWN ||
+                     end_kind == LOGIN_LAST_END_CRASH;
+        positive duration_length = ended
+            ? login_last_duration(duration, start, finish) : 0;
+
+        if (login_last.tabs)
+        {
+                text_put_character('\t');
+                if (end_kind == LOGIN_LAST_END_LOGOUT)
+                {
+                        positive length = login_last_time(end_text, finish,
+                                                          true);
+                        text_put_string("- ");
+                        text_put(end_text, length);
+                        text_put_string("\t ");
+                        text_put(duration, duration_length);
+                }
+                else if (end_kind == LOGIN_LAST_END_DOWN ||
+                         end_kind == LOGIN_LAST_END_CRASH)
+                {
+                        text_put_string(end_kind == LOGIN_LAST_END_DOWN
+                                            ? "- down \t "
+                                            : "- crash\t ");
+                        text_put(duration, duration_length);
+                }
+                else if (end_kind == LOGIN_LAST_END_STILL)
+                        text_put_string("  still\trunning");
+                else
+                        text_put_string("   gone\t- no logout");
+        }
+        else if (end_kind == LOGIN_LAST_END_LOGOUT ||
+                 end_kind == LOGIN_LAST_END_DOWN ||
+                 end_kind == LOGIN_LAST_END_CRASH)
+        {
+                positive suffix = 0;
+                if (end_kind == LOGIN_LAST_END_LOGOUT)
+                {
+                        positive length = login_last_time(end_text, finish,
+                                                          true);
+                        text_put_string(" - ");
+                        text_put(end_text, length);
+                        suffix = 3 + length;
+                }
+                else
+                {
+                        string_address word = end_kind == LOGIN_LAST_END_DOWN
+                                                  ? (string_address)" - down"
+                                                  : (string_address)" - crash";
+                        text_put_string(word);
+                        suffix = string_length(word);
+                }
+                positive duration_at = login_last.time_format ==
+                                               LOGIN_LAST_TIME_SHORT
+                                           ? 26
+                                           : login_last.time_format ==
+                                                     LOGIN_LAST_TIME_FULL
+                                                 ? 53 : 55;
+                positive used = start_length + suffix;
+                if (used < duration_at)
+                        for (positive at = used; at < duration_at; at++)
+                                text_put_character(' ');
+                text_put(duration, duration_length);
+        }
+        else if (end_kind == LOGIN_LAST_END_STILL)
+                text_put_string("   still running");
+        else
+                text_put_string("    gone - no logout");
+
+        if (!login_last.no_host && login_last.host_last && *host)
+        {
+                positive gap = ended ? 5
+                                     : end_kind == LOGIN_LAST_END_STILL ? 6
+                                                                        : 2;
+                for (positive at = 0; at < gap; at++)
+                        text_put_character(' ');
+                text_put_string(host);
+        }
+        text_put_character('\n');
+}
+
+static bool login_last_emit(login_record address_to record,
+                            string_address user, string_address line,
+                            string_address host, p8 end_kind, b64 finish)
+{
+        if (!login_last_wanted(user, line) ||
+            login_last.shown == login_last.limit)
+                return false;
+        login_last_line(user, line, host, record->seconds, finish, end_kind);
+        login_last.shown++;
+        return login_last.shown == login_last.limit;
+}
+
+static const file_long login_last_longs[] = {
+    {(string_address)"hostlast", 'a'}, {(string_address)"dns", 'd'},
+    {(string_address)"file", 'f'}, {(string_address)"fulltimes", 'F'},
+    {(string_address)"ip", 'i'}, {(string_address)"limit", 'n'},
+    {(string_address)"present", 'p'}, {(string_address)"nohostname", 'R'},
+    {(string_address)"since", 's'}, {(string_address)"until", 't'},
+    {(string_address)"tab-separated", 'T'},
+    {(string_address)"time-format", 'z'},
+    {(string_address)"fullnames", 'w'}, {(string_address)"system", 'x'},
+    {(string_address)"help", 'h'}, {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static b32 tools_last()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"last",
+            .allowed = (string_address)"adfFinpRstTwxzhV",
+            .valued = (string_address)"fnpstz",
+            .longs = login_last_longs,
+            .operand = file_operand,
+        };
+        text_begin("last");
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                text_put_string("Usage: last [options] [username|tty ...]\n");
+                return text_done(0);
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                text_put_string("last from dawning-kit\n");
+                return text_done(0);
+        }
+        if (taking.flags & FILE_FLAG('d'))
+                return text_refuse(null, "DNS lookup is not supported", 1);
+        if (taking.flags & (FILE_FLAG('p') | FILE_FLAG('s') | FILE_FLAG('t')))
+                return text_refuse(null,
+                                   "time selection is not supported", 1);
+
+        memory_fill(address_of login_last, 0, sizeof(login_last));
+        login_last.limit = positive_max;
+        string_address limit = file_option_value(address_of taking, 'n');
+        if (limit && (!string_digits_exact(limit, address_of login_last.limit)))
+                return text_refuse(limit, "invalid line limit", 1);
+        if (!login_last.limit)
+                login_last.limit = positive_max;
+
+        login_last.time_format = (taking.flags & FILE_FLAG('F'))
+                                     ? LOGIN_LAST_TIME_FULL
+                                     : LOGIN_LAST_TIME_SHORT;
+        string_address format = file_option_value(address_of taking, 'z');
+        if (format)
+        {
+                if (string_equals(format, "short"))
+                        login_last.time_format = LOGIN_LAST_TIME_SHORT;
+                else if (string_equals(format, "full"))
+                        login_last.time_format = LOGIN_LAST_TIME_FULL;
+                else if (string_equals(format, "iso"))
+                        login_last.time_format = LOGIN_LAST_TIME_ISO;
+                else
+                        return text_refuse(format,
+                            "time format is unsupported (use short, full, or iso)",
+                            1);
+        }
+        login_last.full_names = (taking.flags & FILE_FLAG('w')) != 0;
+        login_last.no_host = (taking.flags & FILE_FLAG('R')) != 0;
+        login_last.host_last = (taking.flags & FILE_FLAG('a')) != 0;
+        login_last.ip = (taking.flags & FILE_FLAG('i')) != 0;
+        login_last.system = (taking.flags & FILE_FLAG('x')) != 0;
+        login_last.tabs = (taking.flags & FILE_FLAG('T')) != 0;
+
+        string_address path = file_option_value(address_of taking, 'f');
+        if (!path)
+                path = (string_address)"/var/log/wtmp";
+        text_arena_used = 0;
+        login_last_reader reader = {0};
+        bipolar loaded = login_last_reader_open(path, address_of reader);
+        if (loaded < 0)
+        {
+                text_error(path, file_reason(loaded));
+                return text_done(1);
+        }
+
+        login_record record;
+        for (positive at = reader.records; at; at--)
+        {
+                if (!login_last_record_at(address_of reader, at - 1,
+                                          address_of record))
+                        break;
+                p8 user[33];
+                login_field(user, sizeof(user), record.user,
+                            sizeof(record.user), true);
+                if (record.type == LOGIN_BOOT_TIME)
+                {
+                        login_last.latest_boot = record.seconds;
+                        break;
+                }
+                else if (record.type == LOGIN_RUN_LEVEL &&
+                         string_equals(user, "shutdown"))
+                {
+                        login_last.latest_shutdown = record.seconds;
+                        break;
+                }
+        }
+
+        login_last.boundary_kind = LOGIN_LAST_END_CRASH;
+        login_last.epoch = 1;
+        for (positive at = reader.records; at && !login_last.failed &&
+             login_last.shown != login_last.limit; at--)
+        {
+                if (!login_last_record_at(address_of reader, at - 1,
+                                          address_of record))
+                        break;
+                p8 user[33], line[33], host[257], ip[64];
+                login_field(user, sizeof(user), record.user,
+                            sizeof(record.user), true);
+                login_field(line, sizeof(line), record.line,
+                            sizeof(record.line), true);
+                login_field(host, sizeof(host), record.host,
+                            sizeof(record.host), true);
+                if (login_last.ip)
+                {
+                        login_address_text(ip, record.address);
+                        string_copy_max_end(host, ip, sizeof(host) - 1);
+                }
+
+                if (record.type == LOGIN_DEAD_PROCESS)
+                {
+                        if (*line)
+                        {
+                                login_last_end address_to ending =
+                                    login_last_end_for(line, true);
+                                if (!ending)
+                                        break;
+                                ending->seconds = record.seconds;
+                                ending->kind = LOGIN_LAST_END_LOGOUT;
+                        }
+                        continue;
+                }
+                if (record.type == LOGIN_USER_PROCESS)
+                {
+                        login_last_end address_to ending =
+                            login_last_end_for(line, false);
+                        b64 finish = ending ? ending->seconds : 0;
+                        p8 kind = ending ? ending->kind : LOGIN_LAST_END_NONE;
+                        if (!kind && login_last.boundary &&
+                            login_last.boundary >= record.seconds)
+                        {
+                                kind = login_last.boundary_kind;
+                                finish = login_last.boundary;
+                        }
+                        if (!kind && login_last.latest_boot >
+                                         login_last.latest_shutdown &&
+                            record.seconds >= login_last.latest_boot)
+                                kind = LOGIN_LAST_END_STILL;
+                        if (!kind)
+                                kind = LOGIN_LAST_END_GONE;
+                        login_last_emit(address_of record, user, line, host,
+                                        kind, finish);
+                        ending = login_last_end_for(line, true);
+                        if (!ending)
+                                break;
+                        ending->seconds = record.seconds;
+                        ending->kind = LOGIN_LAST_END_LOGOUT;
+                        continue;
+                }
+                if (record.type == LOGIN_BOOT_TIME)
+                {
+                        p8 kind = login_last.boundary
+                                      ? LOGIN_LAST_END_LOGOUT
+                                      : record.seconds == login_last.latest_boot &&
+                                                login_last.latest_boot >
+                                                    login_last.latest_shutdown
+                                            ? LOGIN_LAST_END_STILL
+                                            : LOGIN_LAST_END_GONE;
+                        login_last_emit(address_of record, "reboot",
+                                        "system boot", host, kind,
+                                        login_last.boundary);
+                        login_last.newer_boot = record.seconds;
+                        login_last.boundary = record.seconds;
+                        login_last.boundary_kind = LOGIN_LAST_END_CRASH;
+                        login_last_new_epoch();
+                        continue;
+                }
+                if (record.type == LOGIN_RUN_LEVEL &&
+                    string_equals(user, "shutdown"))
+                {
+                        if (login_last.system)
+                                login_last_emit(address_of record, "shutdown",
+                                                "system down", host,
+                                                login_last.newer_boot
+                                                    ? LOGIN_LAST_END_LOGOUT
+                                                    : LOGIN_LAST_END_GONE,
+                                                login_last.newer_boot);
+                        login_last.boundary = record.seconds;
+                        login_last.boundary_kind = LOGIN_LAST_END_DOWN;
+                        login_last_new_epoch();
+                        continue;
+                }
+                if (record.type == LOGIN_RUN_LEVEL && login_last.system &&
+                    string_equals(user, "runlevel"))
+                {
+                        p8 level[16] = "(to lvl ?)";
+                        p8 wanted = (p8)record.process;
+                        if (byte_is_printable(wanted))
+                                level[8] = wanted;
+                        p8 kind = login_last.boundary
+                                      ? LOGIN_LAST_END_LOGOUT
+                                      : LOGIN_LAST_END_GONE;
+                        login_last_emit(address_of record, "runlevel", level,
+                                        host, kind, login_last.boundary);
+                }
+        }
+
+        b64 beginning = (b64)file_now();
+        if (reader.records &&
+            login_last_record_at(address_of reader, 0, address_of record))
+                beginning = record.seconds;
+        system_close((positive)reader.handle);
+        if (login_last.failed)
+                return text_refuse(path,
+                                   "login database changed while reading", 1);
+        text_put_character('\n');
+        p8 beginning_text[64];
+        positive beginning_length;
+        if (login_last.time_format == LOGIN_LAST_TIME_ISO)
+                beginning_length = login_iso_time(beginning_text,
+                                                   sizeof(beginning_text),
+                                                   beginning, false, 0);
+        else
+        {
+                time_t value = (time_t)beginning;
+                tm broken;
+                tm address_to parts = localtime_r(address_of value,
+                                                   address_of broken);
+                beginning_length = parts
+                    ? strftime(beginning_text, sizeof(beginning_text),
+                               "%a %b %e %H:%M:%S %Y", parts) : 0;
+        }
+        text_put_string(file_last_component(path));
+        text_put_string(" begins ");
+        text_put(beginning_text, beginning_length);
+        text_put_character('\n');
+        return text_done(0);
 }
 
 /* who ------------------------------------------------------ */
@@ -2525,7 +3433,8 @@ static b32 tools_who()
                                   : (string_address)LOGIN_UTMP_PATH;
         bool default_path = file_operand_count != 1;
 
-        if (!login_records(path, default_path, login_who_visit))
+        if (!login_records(path, default_path, true,
+                           login_who_visit))
                 return text_done(1);
 
         if (login_who.count)
@@ -2611,7 +3520,8 @@ static b32 tools_users()
                                   : (string_address)LOGIN_UTMP_PATH;
         bool default_path = !file_operand_count;
 
-        if (!login_records(path, default_path, login_users_visit))
+        if (!login_records(path, default_path, true,
+                           login_users_visit))
                 return text_done(1);
 
         for (login_name address_to node = login_users_head; node;
@@ -2817,7 +3727,7 @@ static b32 tools_pinky()
         if (login_pinky.heading)
                 login_pinky_heading();
 
-        if (!login_records((string_address)LOGIN_UTMP_PATH, false,
+        if (!login_records((string_address)LOGIN_UTMP_PATH, false, true,
                            login_pinky_visit))
                 return text_done(1);
 

@@ -7675,6 +7675,600 @@ static b32 util_linux_getopt()
         return failed ? 1 : 0;
 }
 
+// Linux block-device ioctls ----------------------------------------
+
+#define UL_BLKROSET 0x125d
+#define UL_BLKROGET 0x125e
+#define UL_BLKRRPART 0x125f
+#define UL_BLKGETSIZE 0x1260
+#define UL_BLKFLSBUF 0x1261
+#define UL_BLKRASET 0x1262
+#define UL_BLKRAGET 0x1263
+#define UL_BLKFRASET 0x1264
+#define UL_BLKFRAGET 0x1265
+#define UL_BLKSECTGET 0x1267
+#define UL_BLKSSZGET 0x1268
+#define UL_BLKPG 0x1269
+#if BITS == 64
+#define UL_BLKBSZGET 0x80081270u
+#define UL_BLKBSZSET 0x40081271u
+#define UL_BLKGETSIZE64 0x80081272u
+#else
+#define UL_BLKBSZGET 0x80041270u
+#define UL_BLKBSZSET 0x40041271u
+#define UL_BLKGETSIZE64 0x80041272u
+#endif
+#define UL_BLKIOMIN 0x1278
+#define UL_BLKIOOPT 0x1279
+#define UL_BLKALIGNOFF 0x127a
+#define UL_BLKPBSZGET 0x127b
+#define UL_BLKDISCARDZEROES 0x127c
+#define UL_BLKGETDISKSEQ 0x80081280u
+#define UL_BLKGETZONESZ 0x80041284u
+
+#define UL_BLKPG_ADD 1
+#define UL_BLKPG_DELETE 2
+#define UL_BLKPG_RESIZE 3
+
+typedef struct
+{
+        b64 start;
+        b64 length;
+        b32 number;
+        p8 device_name[64];
+        p8 volume_name[64];
+} ul_block_partition;
+
+typedef struct
+{
+        b32 operation;
+        b32 flags;
+        b32 data_length;
+        ul_block_partition address_to data;
+} ul_block_partition_request;
+
+_Static_assert(sizeof(ul_block_partition) == 152,
+               "BLKPG partition ABI changed");
+_Static_assert(sizeof(ul_block_partition_request) ==
+                   (BITS == 64 ? 24 : 16),
+               "BLKPG request ABI changed");
+
+static bool ul_block_sysfs_path(bipolar handle, p8 address_to path,
+                                positive room)
+{
+        file_facts facts;
+        static p8 prefix[] = "/sys/dev/block/";
+        positive used = sizeof(prefix) - 1;
+
+        if (!file_look(handle, "", AT_EMPTY_PATH, address_of facts) ||
+            room <= used + 24)
+                return false;
+        memory_copy(path, prefix, used);
+        used += positive_into_string(path + used, facts.rdev_major);
+        path[used++] = ':';
+        used += positive_into_string(path + used, facts.rdev_minor);
+        path[used] = end;
+        return true;
+}
+
+static bool ul_block_number_at(bipolar directory, string_address path,
+                               positive address_to value)
+{
+        p8 text[64];
+        bipolar got = file_slurp_once_at(directory, path, text, sizeof(text));
+
+        if (got <= 0)
+                return false;
+        text[ul_trimmed(text, (positive)got)] = end;
+        return ul_unsigned(text, positive_max, value);
+}
+
+static bool ul_block_start(bipolar handle, positive number,
+                           positive address_to start)
+{
+        p8 root[96];
+        file_walk walk;
+
+        if (!ul_block_sysfs_path(handle, root, sizeof(root)) ||
+            !file_walk_open(address_of walk, AT_FDCWD, root))
+                return false;
+
+        bool found = false;
+        struct linux_dirent64 address_to entry;
+        while ((entry = file_walk_next(address_of walk)))
+        {
+                positive length = string_length_max(entry->d_name, 240);
+                p8 path[256];
+                positive candidate;
+
+                if (!length || length >= 240 ||
+                    (length == 1 && entry->d_name[0] == '.'))
+                        continue;
+                memory_copy(path, entry->d_name, length);
+                memory_copy(path + length, "/partition",
+                            sizeof("/partition"));
+                if (!ul_block_number_at(walk.handle, path,
+                                        address_of candidate) ||
+                    candidate != number)
+                        continue;
+                memory_copy(path + length, "/start", sizeof("/start"));
+                found = ul_block_number_at(walk.handle, path, start);
+                break;
+        }
+        file_walk_close(address_of walk);
+        return found;
+}
+
+static b32 ul_partition_program(string_address program, b32 operation)
+{
+        static const file_long longs[] = {
+            {"help", 'h'}, {"version", 'V'}, {null, 0},
+        };
+        file_taking taking = {
+            .program = program, .allowed = "hV", .longs = longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        string_address syntax = operation == UL_BLKPG_ADD
+            ? (string_address)"<disk> <partition> <start> <length>"
+            : operation == UL_BLKPG_DELETE
+            ? (string_address)"<disk> <partition>"
+            : (string_address)"<disk> <partition> <length>";
+        if (ul_meta(address_of taking, syntax, address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        positive wanted = operation == UL_BLKPG_ADD ? 4
+                          : operation == UL_BLKPG_DELETE ? 2 : 3;
+        if (count - taking.first != wanted)
+                return ul_bad_usage(program, "not enough arguments");
+
+        string_address device = program_argument((b32)taking.first);
+        positive partition;
+        if (!ul_unsigned(program_argument((b32)taking.first + 1), b32_max,
+                         address_of partition) || !partition)
+                return ul_bad_usage(program, "invalid partition number");
+
+        positive start = 0;
+        positive length = 0;
+        positive sector_limit = (positive)bipolar_max / 512;
+        if (operation == UL_BLKPG_ADD &&
+            !ul_unsigned(program_argument((b32)taking.first + 2),
+                         sector_limit, address_of start))
+                return ul_bad_usage(program, "invalid partition start");
+        positive length_at = taking.first +
+            (operation == UL_BLKPG_ADD ? 3 : 2);
+        if (operation != UL_BLKPG_DELETE &&
+            !ul_unsigned(program_argument((b32)length_at), sector_limit,
+                         address_of length))
+                return ul_bad_usage(program, "invalid partition length");
+
+        bipolar handle = system_open_at(AT_FDCWD, device,
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "%s: cannot open %s: %s\n",
+                              program, device, file_reason(handle));
+                return 1;
+        }
+        if (operation == UL_BLKPG_RESIZE &&
+            !ul_block_start(handle, partition, address_of start))
+        {
+                system_close(handle);
+                string_format(file_fail,
+                              "%s: %s: failed to get start of partition %p\n",
+                              program, device, partition);
+                return 1;
+        }
+
+        ul_block_partition part;
+        memory_fill(address_of part, 0, sizeof(part));
+        part.start = (b64)(start * 512);
+        part.length = (b64)(length * 512);
+        part.number = (b32)partition;
+        ul_block_partition_request request = {
+            .operation = operation,
+            .flags = 0,
+            .data_length = sizeof(part),
+            .data = address_of part,
+        };
+        bipolar changed = system_control(handle, UL_BLKPG,
+                                         address_of request);
+        system_close(handle);
+        if (changed < 0)
+        {
+                string_address action = operation == UL_BLKPG_ADD
+                    ? (string_address)"add"
+                    : operation == UL_BLKPG_DELETE
+                    ? (string_address)"remove" : (string_address)"resize";
+                string_format(file_fail, "%s: failed to %s partition: %s\n",
+                              program, action, file_reason(changed));
+                return 1;
+        }
+        return 0;
+}
+
+static b32 util_linux_addpart()
+{
+        return ul_partition_program("addpart", UL_BLKPG_ADD);
+}
+
+static b32 util_linux_delpart()
+{
+        return ul_partition_program("delpart", UL_BLKPG_DELETE);
+}
+
+static b32 util_linux_resizepart()
+{
+        return ul_partition_program("resizepart", UL_BLKPG_RESIZE);
+}
+
+enum
+{
+        UL_BLOCK_QUERY,
+        UL_BLOCK_QUERY_SECTORS,
+        UL_BLOCK_QUERY_SIGNED32,
+        UL_BLOCK_SET_POINTER,
+        UL_BLOCK_SET_ARGUMENT,
+        UL_BLOCK_SIMPLE,
+};
+
+typedef struct
+{
+        p8 letter;
+        positive request;
+        p8 operation;
+        p8 bytes;
+        string_address description;
+        string_address kernel_name;
+} ul_blockdev_descriptor;
+
+static const ul_blockdev_descriptor ul_blockdev_descriptors[] = {
+    {'0', UL_BLKGETSIZE64, UL_BLOCK_QUERY_SECTORS, 8,
+     "get size in 512-byte sectors", "BLKGETSIZE64"},
+    {'1', UL_BLKROSET, UL_BLOCK_SET_POINTER, 4,
+     "set read-only", "BLKROSET"},
+    {'2', UL_BLKROSET, UL_BLOCK_SET_POINTER, 4,
+     "set read-write", "BLKROSET"},
+    {'3', UL_BLKROGET, UL_BLOCK_QUERY, 4,
+     "get read-only", "BLKROGET"},
+    {'4', UL_BLKDISCARDZEROES, UL_BLOCK_QUERY, 4,
+     "get discard zeroes support status", "BLKDISCARDZEROES"},
+    {'5', UL_BLKSSZGET, UL_BLOCK_QUERY, 4,
+     "get logical block (sector) size", "BLKSSZGET"},
+    {'6', UL_BLKPBSZGET, UL_BLOCK_QUERY, 4,
+     "get physical block (sector) size", "BLKPBSZGET"},
+    {'7', UL_BLKIOMIN, UL_BLOCK_QUERY, 4,
+     "get minimum I/O size", "BLKIOMIN"},
+    {'8', UL_BLKIOOPT, UL_BLOCK_QUERY, 4,
+     "get optimal I/O size", "BLKIOOPT"},
+    {'9', UL_BLKALIGNOFF, UL_BLOCK_QUERY_SIGNED32, 4,
+     "get alignment offset in bytes", "BLKALIGNOFF"},
+    {'A', UL_BLKSECTGET, UL_BLOCK_QUERY, 2,
+     "get max sectors per request", "BLKSECTGET"},
+    {'B', UL_BLKBSZGET, UL_BLOCK_QUERY, sizeof(positive),
+     "get blocksize", "BLKBSZGET"},
+    {'C', UL_BLKBSZSET, UL_BLOCK_SET_POINTER, sizeof(positive),
+     "set blocksize on file descriptor opening the block device", "BLKBSZSET"},
+    {'D', UL_BLKGETSIZE, UL_BLOCK_QUERY, sizeof(positive),
+     "get 32-bit sector count (deprecated, use --getsz)", "BLKGETSIZE"},
+    {'E', UL_BLKGETSIZE64, UL_BLOCK_QUERY, 8,
+     "get size in bytes", "BLKGETSIZE64"},
+    {'F', UL_BLKRASET, UL_BLOCK_SET_ARGUMENT, sizeof(positive),
+     "set readahead", "BLKRASET"},
+    {'G', UL_BLKRAGET, UL_BLOCK_QUERY, sizeof(positive),
+     "get readahead", "BLKRAGET"},
+    {'H', UL_BLKFRASET, UL_BLOCK_SET_ARGUMENT, sizeof(positive),
+     "set filesystem readahead", "BLKFRASET"},
+    {'I', UL_BLKFRAGET, UL_BLOCK_QUERY, sizeof(positive),
+     "get filesystem readahead", "BLKFRAGET"},
+    {'J', UL_BLKGETDISKSEQ, UL_BLOCK_QUERY, 8,
+     "get disk sequence number", "BLKGETDISKSEQ"},
+    {'K', UL_BLKGETZONESZ, UL_BLOCK_QUERY, 4,
+     "get zone size", "BLKGETZONESZ"},
+    {'L', UL_BLKFLSBUF, UL_BLOCK_SIMPLE, 0,
+     "flush buffers", "BLKFLSBUF"},
+    {'M', UL_BLKRRPART, UL_BLOCK_SIMPLE, 0,
+     "reread partition table", "BLKRRPART"},
+};
+
+typedef struct
+{
+        const ul_blockdev_descriptor address_to descriptor;
+        positive argument;
+} ul_blockdev_command;
+
+#define UL_BLOCKDEV_COMMANDS 32
+static ul_blockdev_command ul_blockdev_commands[UL_BLOCKDEV_COMMANDS];
+static positive ul_blockdev_command_count;
+
+static const ul_blockdev_descriptor address_to ul_blockdev_find(p8 letter)
+{
+        for (positive at = 0; at < array_count(ul_blockdev_descriptors); at++)
+                if (ul_blockdev_descriptors[at].letter == letter)
+                        return ul_blockdev_descriptors + at;
+        return null;
+}
+
+static bool ul_blockdev_seen(p8 letter, string_address value)
+{
+        const ul_blockdev_descriptor address_to descriptor =
+            ul_blockdev_find(letter);
+        if (!descriptor)
+                return true;
+        if (ul_blockdev_command_count == UL_BLOCKDEV_COMMANDS)
+        {
+                ul_bad_usage("blockdev", "too many commands");
+                return false;
+        }
+        positive argument = letter == '1' ? 1 : 0;
+        if (value && !ul_unsigned(value, positive_max, address_of argument))
+        {
+                ul_bad_usage("blockdev", "invalid command argument");
+                return false;
+        }
+        ul_blockdev_commands[ul_blockdev_command_count++] =
+            (ul_blockdev_command){descriptor, argument};
+        return true;
+}
+
+static const file_long ul_blockdev_longs[] = {
+    {"report", 'R'}, {"getsz", '0'}, {"setro", '1'},
+    {"setrw", '2'}, {"getro", '3'}, {"getdiscardzeroes", '4'},
+    {"getss", '5'}, {"getpbsz", '6'}, {"getiomin", '7'},
+    {"getioopt", '8'}, {"getalignoff", '9'}, {"getmaxsect", 'A'},
+    {"getbsz", 'B'}, {"setbsz", 'C'}, {"getsize", 'D'},
+    {"getsize64", 'E'}, {"setra", 'F'}, {"getra", 'G'},
+    {"setfra", 'H'}, {"getfra", 'I'}, {"getdiskseq", 'J'},
+    {"getzonesz", 'K'}, {"flushbufs", 'L'}, {"rereadpt", 'M'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static p8 ul_blockdev_verbosity;
+static const file_supersede ul_blockdev_supersedes[] = {
+    {"qv", address_of ul_blockdev_verbosity}, {null, null},
+};
+
+static bipolar ul_blockdev_query(bipolar handle,
+                                 const ul_blockdev_descriptor address_to descriptor,
+                                 p64 address_to value)
+{
+        address_to value = 0;
+        bipolar result;
+
+        /* Payload width is part of the ioctl ABI.  A p64 happens to accept a
+           narrow result on little-endian hosts, but puts it in the high half
+           on a big-endian host. */
+        if (descriptor->bytes == 2)
+        {
+                p16 narrow = 0;
+                result = system_control(handle, descriptor->request,
+                                        address_of narrow);
+                address_to value = narrow;
+        }
+        else if (descriptor->bytes == 4)
+        {
+                p32 narrow = 0;
+                result = system_control(handle, descriptor->request,
+                                        address_of narrow);
+                address_to value = narrow;
+        }
+        else
+        {
+                p64 wide = 0;
+                result = system_control(handle, descriptor->request,
+                                        address_of wide);
+                address_to value = wide;
+        }
+        return result;
+}
+
+static bipolar ul_blockdev_set_pointer(
+    bipolar handle, const ul_blockdev_descriptor address_to descriptor,
+    p64 value)
+{
+        if (descriptor->bytes == 2)
+        {
+                p16 narrow = (p16)value;
+                return system_control(handle, descriptor->request,
+                                      address_of narrow);
+        }
+        if (descriptor->bytes == 4)
+        {
+                p32 narrow = (p32)value;
+                return system_control(handle, descriptor->request,
+                                      address_of narrow);
+        }
+        return system_control(handle, descriptor->request, address_of value);
+}
+
+static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "blockdev: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return 1;
+        }
+
+        for (positive at = 0; at < ul_blockdev_command_count; at++)
+        {
+                ul_blockdev_command address_to command =
+                    ul_blockdev_commands + at;
+                const ul_blockdev_descriptor address_to descriptor =
+                    command->descriptor;
+                p64 value = command->argument;
+                bipolar result;
+
+                if (descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
+                        result = ul_blockdev_query(handle, descriptor,
+                                                   address_of value);
+                else if (descriptor->operation == UL_BLOCK_SET_POINTER)
+                        result = ul_blockdev_set_pointer(handle, descriptor,
+                                                         value);
+                else
+                        result = system_control(
+                            handle, descriptor->request,
+                            descriptor->operation == UL_BLOCK_SET_ARGUMENT
+                                ? (positive)value : 0);
+                if (result < 0)
+                {
+                        system_close(handle);
+                        if (verbose &&
+                            descriptor->operation > UL_BLOCK_QUERY_SIGNED32)
+                                string_format(log, "%s failed.\n",
+                                              descriptor->description);
+                        if (descriptor->letter == '0')
+                                file_fail("blockdev: could not get device size\n",
+                                          sizeof("blockdev: could not get device size\n") - 1);
+                        else
+                                string_format(
+                                    file_fail,
+                                    "blockdev: ioctl error on %s: %s\n",
+                                    descriptor->kernel_name,
+                                    file_reason(result));
+                        return 1;
+                }
+
+                if (descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
+                {
+                        if (descriptor->operation == UL_BLOCK_QUERY_SECTORS)
+                                value /= 512;
+                        if (verbose)
+                                string_format(log, "%s: ",
+                                              descriptor->description);
+                        if (descriptor->operation == UL_BLOCK_QUERY_SIGNED32)
+                                string_format(log, "%b\n",
+                                              (bipolar)(b32)(p32)value);
+                        else
+                                string_format(log, "%p\n", (positive)value);
+                }
+                else if (verbose && !quiet)
+                        string_format(log, "%s succeeded.\n",
+                                      descriptor->description);
+        }
+        system_close(handle);
+        return 0;
+}
+
+typedef struct
+{
+        b32 status;
+} ul_blockdev_report_context;
+
+static b32 ul_blockdev_report_one(string_address path)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path,
+                                        FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+        {
+                string_format(file_fail, "blockdev: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return 1;
+        }
+        const p8 letters[] = {'3', 'G', '5', 'B', 'E'};
+        p64 values[array_count(letters)];
+        for (positive at = 0; at < array_count(letters); at++)
+        {
+                const ul_blockdev_descriptor address_to descriptor =
+                    ul_blockdev_find(letters[at]);
+                bipolar got = ul_blockdev_query(handle, descriptor,
+                                                 values + at);
+                if (got < 0)
+                {
+                        system_close(handle);
+                        string_format(file_fail,
+                                      "blockdev: ioctl error on %s\n", path);
+                        return 1;
+                }
+        }
+        positive start = 0;
+        p8 sysfs[112];
+        if (ul_block_sysfs_path(handle, sysfs, sizeof(sysfs)))
+        {
+                positive used = string_length(sysfs);
+                memory_copy(sysfs + used, "/start", sizeof("/start"));
+                (void)ul_block_number_at(AT_FDCWD, sysfs, address_of start);
+        }
+        system_close(handle);
+
+        log(values[0] ? "ro" : "rw", 2);
+        positive_to_padded(log, (positive)values[1], 6, ' ', 0);
+        positive_to_padded(log, (positive)values[2], 6, ' ', 0);
+        positive_to_padded(log, (positive)values[3], 6, ' ', 0);
+        positive_to_padded(log, start, 16, ' ', 0);
+        positive_to_padded(log, (positive)values[4], 16, ' ', 0);
+        log("   ", 3);
+        log(path, string_length(path));
+        log("\n", 1);
+        return 0;
+}
+
+static bool ul_blockdev_report_visit(string_address path, address_any opaque)
+{
+        ul_blockdev_report_context address_to context =
+            (ul_blockdev_report_context address_to)opaque;
+        context->status |= ul_blockdev_report_one(path);
+        return true;
+}
+
+static b32 util_linux_blockdev()
+{
+        ul_blockdev_command_count = 0;
+        ul_blockdev_verbosity = 0;
+        file_taking taking = {
+            .program = "blockdev", .allowed = "qvhV",
+            .valued = "CFH", .longs = ul_blockdev_longs,
+            .seen = ul_blockdev_seen,
+            .supersedes = ul_blockdev_supersedes,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[-v|-q] commands devices",
+                    address_of answer))
+                return answer;
+
+        bool report = (taking.flags & FILE_FLAG('R')) != 0;
+        positive count = (positive)program_argument_count();
+        if (report && ul_blockdev_command_count)
+                return ul_bad_usage("blockdev",
+                                    "--report cannot be combined with commands");
+        if (!report && ul_blockdev_command_count && taking.first == count)
+                return ul_bad_usage("blockdev", "no device specified");
+        bool verbose = ul_blockdev_verbosity == 'v';
+        bool quiet = ul_blockdev_verbosity == 'q';
+
+        b32 status = 0;
+        if (report)
+        {
+                log("RO    RA   SSZ   BSZ        StartSec            Size   Device\n",
+                    sizeof("RO    RA   SSZ   BSZ        StartSec            Size   Device\n") - 1);
+                if (taking.first == count)
+                {
+                        ul_blockdev_report_context context = {0};
+                        storage_each_block_path(ul_blockdev_report_visit,
+                                                address_of context);
+                        status = context.status;
+                }
+                else
+                        while (taking.first < count)
+                                status |= ul_blockdev_report_one(
+                                    program_argument((b32)taking.first++));
+        }
+        else
+                while (taking.first < count && !status)
+                        status = ul_blockdev_one(
+                            program_argument((b32)taking.first++),
+                            verbose, quiet);
+        log_flush();
+        return status;
+}
+
 // lscpu ------------------------------------------------------------
 
 /* Linux has already normalized CPU topology into sysfs, and /proc/cpuinfo

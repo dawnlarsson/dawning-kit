@@ -21,10 +21,10 @@ trap 'rm -rf "$work"' EXIT INT TERM
 . "$root/src/test/tally.sh"
 
 mkdir "$work/bin"
-for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for name in addpart blockdev delpart resizepart setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
-        logger look line nologin ul wall write; do
+        getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
+        last logger look line nologin pipesz ul utmpdump wall write; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -134,16 +134,107 @@ subject()
 section util-linux
 
 group reference
-for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
+for utility in addpart blockdev delpart resizepart setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
-        logger look ul wall write; do
+        getino fincore ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse cal col colcrt colrm column dmesg \
+        last logger look pipesz ul utmpdump wall write; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
         *) lost "$utility" "need util-linux 2.42.2 reference, got [$version]" ;;
         esac
 done
+
+group block-ioctls
+blockdev_device=$(lsblk -dn -o PATH 2>/dev/null | sed -n '1p')
+if [ -n "$blockdev_device" ] && sudo -n true >/dev/null 2>&1; then
+        compare 'all read-only blockdev queries' blockdev \
+                'for command in getsz getro getdiscardzeroes getss getpbsz getiomin getioopt getalignoff getmaxsect getbsz getsize getsize64 getra getfra getdiskseq getzonesz; do sudo -n "$TOOL" --$command "$1" || exit; done' \
+                sh "$blockdev_device"
+        compare 'ordered multi-query output' blockdev \
+                'sudo -n "$TOOL" --getsz --getro --getss --getpbsz --getsize64 "$1"' \
+                sh "$blockdev_device"
+        compare 'verbose query labels' blockdev \
+                'sudo -n "$TOOL" -v --getsz --getro --getss "$1"' \
+                sh "$blockdev_device"
+        compare 'single-device report' blockdev \
+                'sudo -n "$TOOL" --report "$1"' sh "$blockdev_device"
+fi
+compare_full 'get size ioctl error' blockdev '"$TOOL" --getsz /dev/null'
+compare_full 'read-only ioctl error' blockdev '"$TOOL" --getro /dev/null'
+compare_full 'flush ioctl error' blockdev '"$TOOL" --flushbufs /dev/null'
+compare_full 'add partition ioctl error' addpart \
+        '"$TOOL" /dev/null 1 2 3'
+compare_full 'delete partition ioctl error' delpart \
+        '"$TOOL" /dev/null 1'
+subject 'partition operands reject overflow before ioctl' addpart \
+        '"$TOOL" /dev/null 2147483648 1 1 >/dev/null 2>&1 && exit 1; "$TOOL" /dev/null 1 18014398509481984 1 >/dev/null 2>&1 && exit 1; "$TOOL" /dev/null 1 1 18014398509481984 >/dev/null 2>&1 && exit 1; :'
+subject 'blockdev setter rejects numeric overflow' blockdev \
+        '"$TOOL" --setra 18446744073709551616 /dev/null >/dev/null 2>&1; [ "$?" -ne 0 ]'
+
+if sudo -n losetup --find >/dev/null 2>&1; then
+        subject 'owned loop partition add resize delete' addpart \
+                'image="$1/partition-loop"; truncate -s 32M "$image" || exit; loop=$(sudo -n losetup --find --show "$image") || exit; cleanup() { sudo -n losetup -d "$loop" 2>/dev/null || :; rm -f "$image"; }; trap cleanup EXIT INT TERM; sudo -n "$TOOL" "$loop" 1 2048 4096 || exit; base=${loop##*/}; part=${base}p1; [ -e "/sys/class/block/$part" ] || part=${base}1; [ "$(cat "/sys/class/block/$part/start")" = 2048 ] && [ "$(cat "/sys/class/block/$part/size")" = 4096 ] || exit 1; sudo -n "$2/resizepart" "$loop" 1 8192 || exit; [ "$(cat "/sys/class/block/$part/size")" = 8192 ] || exit 1; sudo -n "$2/delpart" "$loop" 1 || exit; tries=0; while [ -e "/sys/class/block/$part" ] && [ "$tries" -lt 20 ]; do sleep .05; tries=$((tries+1)); done; [ ! -e "/sys/class/block/$part" ]' \
+                sh "$work" "$work/bin"
+        subject 'owned loop blockdev setters and flush' blockdev \
+                'image="$1/blockdev-loop"; truncate -s 8M "$image" || exit; loop=$(sudo -n losetup --find --show "$image") || exit; old_ra=$(sudo -n blockdev --getra "$loop") || exit; old_fra=$(sudo -n blockdev --getfra "$loop") || exit; cleanup() { sudo -n blockdev --setrw "$loop" 2>/dev/null || :; sudo -n blockdev --setra "$old_ra" "$loop" 2>/dev/null || :; sudo -n blockdev --setfra "$old_fra" "$loop" 2>/dev/null || :; sudo -n losetup -d "$loop" 2>/dev/null || :; rm -f "$image"; }; trap cleanup EXIT INT TERM; sudo -n "$TOOL" --setro "$loop" && [ "$(sudo -n "$TOOL" --getro "$loop")" = 1 ] || exit; sudo -n "$TOOL" --setrw "$loop" && [ "$(sudo -n "$TOOL" --getro "$loop")" = 0 ] || exit; next=$((old_ra + 8)); sudo -n "$TOOL" --setra "$next" "$loop" && [ "$(sudo -n "$TOOL" --getra "$loop")" = "$next" ] || exit; next_fra=$((old_fra + 8)); sudo -n "$TOOL" --setfra "$next_fra" "$loop" && [ "$(sudo -n "$TOOL" --getfra "$loop")" = "$next_fra" ] || exit; sudo -n "$TOOL" --setbsz 4096 --flushbufs "$loop"' \
+                sh "$work"
+fi
+
+group cal
+compare 'single Gregorian leap month' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" 2 2000'
+compare 'non-leap Gregorian century' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" 2 1900'
+compare 'British 1752 reform gap' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" 9 1752'
+compare 'proleptic Gregorian reform' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" --reform=gregorian 9 1752'
+compare 'Monday first day' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -m 2 2024'
+compare 'Julian day-of-year cells' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -j 9 1752'
+compare 'three months across year boundary' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -3 1 2024'
+compare 'forward multi-month range' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -n 4 11 2024'
+compare 'spanning multi-month range' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -S -n 4 11 2024'
+compare 'spanning whole-year layout' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -S -y 2024'
+compare 'weekday option order' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -m -s 2 2024; LC_ALL=C TZ=UTC "$TOOL" -s -m 2 2024'
+compare 'whole leap year layout' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -y 2024'
+compare 'next twelve months layout' cal \
+        'LC_ALL=C TZ=UTC "$TOOL" -Y 11 2023'
+compare 'generated Gregorian and reform edges' cal \
+        'for year in 1 4 100 400 1699 1700 1752 1800 1900 2000 2100 2400; do for month in 1 2 3 6 9 12; do LC_ALL=C TZ=UTC "$TOOL" "$month" "$year" || exit; done; done'
+subject 'unsupported week numbers reject' cal \
+        '! "$TOOL" -w 2 2024'
+subject 'unsupported vertical layout rejects' cal \
+        '! "$TOOL" -v 2 2024'
+subject 'unsupported color mutation rejects' cal \
+        '! "$TOOL" --color=always 2 2024'
+
+group pipesz
+compare 'get stdin pipe capacity and unread bytes' pipesz \
+        'printf x | "$TOOL" -g -i'
+compare 'verbose get header' pipesz \
+        'printf x | "$TOOL" -g -i -v'
+compare 'numeric descriptor selection' pipesz \
+        'printf x | sh -c '\''"$1" -g -n 0'\'' sh "$TOOL"'
+compare 'set survives command handoff' pipesz \
+        'printf x | "$TOOL" -s 4096 -i -- "$TOOL" -g -i'
+compare 'named fifo selection' pipesz \
+        'rm -f "$1"; mkfifo "$1" || exit; exec 9<>"$1"; "$TOOL" -g -f "$1"; answer=$?; exec 9>&-; rm -f "$1"; exit "$answer"' \
+        sh "$work/pipesz-fifo"
+compare 'checked non-pipe failure' pipesz \
+        '"$TOOL" -g -o -c'
+compare 'get and set conflict' pipesz \
+        '"$TOOL" -g -s 4096 -i'
+subject 'unchecked non-pipe failure remains advisory' pipesz \
+        '"$TOOL" -g -o >/dev/null 2>&1'
 
 group system-v-ipc
 subject 'owned create list and remove cycle' ipcmk \
@@ -1349,6 +1440,112 @@ compare 'journald native payload dry run' logger \
 subject 'structured data extension rejected' logger \
         '"$TOOL" --sd-id meta --no-act message >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
+group login-history
+python3 - "$work/login-history" "$work/login-dump" <<'PY'
+import ipaddress
+import platform
+import struct
+import sys
+
+history, dump = sys.argv[1:]
+order = "<" if sys.byteorder == "little" else ">"
+compat = struct.calcsize("P") == 4 or platform.machine() in (
+    "x86_64", "amd64", "i386", "i686")
+size = 384 if compat else 400
+
+def record(kind, pid, line, user, host, seconds, session=0, usec=0,
+           address="0.0.0.0", ident="id", termination=0, status=0):
+    row = bytearray(size)
+    struct.pack_into(order + "h", row, 0, kind)
+    struct.pack_into(order + "i", row, 4, pid)
+    for offset, width, value in ((8, 32, line), (40, 4, ident),
+                                 (44, 32, user), (76, 256, host)):
+        value = value.encode()
+        row[offset:offset + min(width, len(value))] = value[:width]
+    struct.pack_into(order + "hh", row, 332, termination, status)
+    if compat:
+        struct.pack_into(order + "iii", row, 336, session, seconds, usec)
+        address_offset = 348
+    else:
+        struct.pack_into(order + "q", row, 336, session)
+        struct.pack_into(order + "qq", row, 344, seconds, usec)
+        address_offset = 360
+    packed = ipaddress.ip_address(address).packed
+    row[address_offset:address_offset + len(packed)] = packed
+    return row
+
+rows = [
+    record(2, 0, "~", "reboot", "6.9.0", 1700000000),
+    record(7, 101, "pts/1", "alice", "alpha.example", 1700000100,
+           11, 123456, "127.0.0.1", "p1"),
+    record(7, 102, "tty1", "bob", "", 1700000200, 12, ident="t1"),
+    record(8, 101, "pts/1", "", "", 1700000300, 11, ident="p1"),
+    record(1, ord("3") + ord("2") * 256, "~", "runlevel", "6.9.0",
+           1700000350),
+    record(7, 103, "pts/2", "alice", "beta.example", 1700000400,
+           13, 999999, "127.0.0.2", "p2"),
+    record(1, 0, "~", "shutdown", "6.9.0", 1700000500),
+    record(2, 0, "~", "reboot", "6.10.0", 1700000600),
+    record(7, 104, "pts/3", "carol", "gamma.example", 1700000700,
+           14, 7, "127.0.0.3", "p3"),
+    record(8, 104, "pts/3", "", "", 1700000800, 14, ident="p3"),
+]
+with open(history, "wb") as stream:
+    stream.write(b"".join(rows))
+with open(dump, "wb") as stream:
+    stream.write(b"".join(rows))
+    stream.write(record(7, 105, "pts/4", "v6", "ipv6.example", 1700000900,
+                        15, 42, "2001:db8::1", "p4"))
+    stream.write(b"partial record")
+PY
+
+compare 'reverse sessions and reboot boundaries' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -f "$1"' sh "$work/login-history"
+compare 'hostname suppression' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -R -f "$1"' sh "$work/login-history"
+compare 'hostname last projection' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -a -f "$1"' sh "$work/login-history"
+compare 'full timestamps' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -F -f "$1"' sh "$work/login-history"
+compare 'tab separated records' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -T -f "$1"' sh "$work/login-history"
+compare 'shutdown and runlevel records' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -x -f "$1"' sh "$work/login-history"
+compare 'bounded result count' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -n 3 -f "$1"' sh "$work/login-history"
+compare 'zero count means unlimited' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -n 0 -f "$1"' sh "$work/login-history"
+compare 'user operand filter' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -f "$1" alice' sh "$work/login-history"
+compare 'numeric address projection' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -i -f "$1"' sh "$work/login-history"
+compare 'ISO timestamp projection' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" --time-format iso -f "$1"' \
+        sh "$work/login-history"
+compare 'native dump including IPv6 and partial tail' utmpdump \
+        'LC_ALL=C TZ=UTC0 "$TOOL" "$1"' sh "$work/login-dump"
+compare 'stdin dump' utmpdump \
+        'LC_ALL=C TZ=UTC0 "$TOOL" < "$1"' sh "$work/login-dump"
+compare 'named dump output' utmpdump \
+        'rm -f "$2/utmpdump.out"; LC_ALL=C TZ=UTC0 "$TOOL" -o "$2/utmpdump.out" "$1" || exit; cat "$2/utmpdump.out"' \
+        sh "$work/login-dump" "$work"
+compare 'missing history file' last \
+        'LC_ALL=C TZ=UTC0 "$TOOL" -f "$1/missing"' sh "$work"
+compare 'missing dump file' utmpdump \
+        'LC_ALL=C TZ=UTC0 "$TOOL" "$1/missing"' sh "$work"
+subject 'last DNS policy rejected explicitly' last \
+        '"$TOOL" -d -f "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$work/login-history"
+subject 'last time selection rejected explicitly' last \
+        '"$TOOL" -s yesterday -f "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$work/login-history"
+subject 'utmp reverse mutation rejected explicitly' utmpdump \
+        '"$TOOL" -r "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$work/login-dump"
+subject 'utmp follow policy rejected explicitly' utmpdump \
+        '"$TOOL" -f "$1" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
+        sh "$work/login-dump"
+
 group write-wall
 compare 'write requires a login' write '"$TOOL"'
 compare 'write rejects extra operands' write '"$TOOL" user pts/0 extra'
@@ -1863,7 +2060,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid wall whereis write'
+supported='addpart blkid blockdev cal choom chrt col colcrt colrm column copyfilerange delpart dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill last line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nologin nsenter pipesz prlimit renice resizepart rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare utmpdump uuidgen uuidparse waitpid wall whereis write'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

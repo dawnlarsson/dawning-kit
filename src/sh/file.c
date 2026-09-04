@@ -11928,7 +11928,7 @@ static b32 file_csplit()
                                                 break;
                                         }
                                         string_format(file_fail,
-                                                      "csplit: '%s': match not found on repetition %u\n",
+                                                      "csplit: '%s': match not found on repetition %p\n",
                                                       word, repetition + 1);
                                 }
                                 failed = true;
@@ -13618,7 +13618,7 @@ static bool shred_one(string_address path, positive iterations,
         {
                 if (verbose)
                         string_format(file_fail,
-                                      "shred: '%s': pass %u/%u (random)\n",
+                                      "shred: '%s': pass %p/%p (random)\n",
                                       path, pass + 1, iterations);
 
                 good = shred_pass(handle, path, length, false,
@@ -14600,7 +14600,7 @@ static string_address dircolors_parse(string_address input, positive length,
                 if (value == finish)
                 {
                         string_format(file_fail,
-                                      "dircolors: %s:%u: missing second token\n",
+                                      "dircolors: %s:%p: missing second token\n",
                                       name, line_number);
                         return null;
                 }
@@ -14617,7 +14617,7 @@ static string_address dircolors_parse(string_address input, positive length,
                         if (value_length >= FILE_PATH_MAX)
                         {
                                 string_format(file_fail,
-                                              "dircolors: %s:%u: terminal pattern is too long\n",
+                                              "dircolors: %s:%p: terminal pattern is too long\n",
                                               name, line_number);
                                 return null;
                         }
@@ -18206,7 +18206,7 @@ static bool groups_written(positive have)
                 if (!file_account_label(file_id_scratch[i], true, true, text))
                 {
                         string_format(file_fail,
-                                      "groups: cannot find name for group ID %u\n",
+                                      "groups: cannot find name for group ID %p\n",
                                       (positive)file_id_scratch[i]);
                         known = false;
                 }
@@ -18310,7 +18310,7 @@ static b32 file_whoami()
         if (!file_user_name(user, name, FILE_NAME_MAX))
         {
                 string_format(file_fail,
-                              "whoami: cannot find name for user ID %u\n", user);
+                              "whoami: cannot find name for user ID %p\n", user);
                 return 1;
         }
 
@@ -19529,6 +19529,489 @@ static b32 file_kill()
         }
 
         return answer;
+}
+
+// cal -------------------------------------------------------------
+/*
+        Calendar arithmetic stays beside date's one civil-time engine.  The
+        ordinary Gregorian path is clock_days_from_civil; the small Julian
+        leaf exists only for util-linux's historical 1752 default.  Rendering
+        is bounded to three fixed month blocks and writes through the shared
+        log buffer, so a year does not allocate or build a second text engine.
+*/
+#define CAL_ROWS 8
+#define CAL_NORMAL_WIDTH 20
+#define CAL_JULIAN_WIDTH 27
+
+typedef struct
+{
+        p8 row[CAL_ROWS][CAL_JULIAN_WIDTH];
+} cal_month_block;
+
+static const file_long cal_longs[] = {
+    {(string_address)"one", '1'},
+    {(string_address)"three", '3'},
+    {(string_address)"months", 'n'},
+    {(string_address)"span", 'S'},
+    {(string_address)"sunday", 's'},
+    {(string_address)"monday", 'm'},
+    {(string_address)"julian", 'j'},
+    {(string_address)"reform", 'R'},
+    {(string_address)"iso", 'I'},
+    {(string_address)"year", 'y'},
+    {(string_address)"twelve", 'Y'},
+    {(string_address)"week", 'w'},
+    {(string_address)"vertical", 'v'},
+    {(string_address)"columns", 'c'},
+    {(string_address)"color", 'C'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool cal_number(string_address text, positive address_to value)
+{
+        return string_digits_exact(text, value);
+}
+
+static bipolar cal_month_number(string_address text)
+{
+        positive value;
+        if (cal_number(text, address_of value))
+                return value >= 1 && value <= 12 ? (bipolar)value : -1;
+
+        positive length = string_length(text);
+        bipolar named = file_name_among(text, length, file_month_names, 12);
+        return named < 0 ? -1 : named + 1;
+}
+
+static bool cal_julian_leap(b64 year)
+{
+        return year % 4 == 0;
+}
+
+/* The British reform used by util-linux's default calendar: September 2,
+   1752 was followed by September 14. */
+static bool cal_gregorian_date(b64 year, positive month, positive day,
+                               bool proleptic)
+{
+        return proleptic || year > 1752 ||
+               (year == 1752 &&
+                (month > 9 || (month == 9 && day >= 14)));
+}
+
+static positive cal_days_in_month(b64 year, positive month, bool proleptic)
+{
+        if (month != 2)
+                return file_month_days(year, month);
+        if (!cal_gregorian_date(year, month, 1, proleptic))
+                return cal_julian_leap(year) ? 29 : 28;
+        return file_month_days(year, month);
+}
+
+static positive cal_weekday(b64 year, positive month, positive day,
+                            bool proleptic)
+{
+        b64 weekday;
+
+        if (cal_gregorian_date(year, month, day, proleptic))
+        {
+                b64 days = clock_days_from_civil(year, month, day);
+                weekday = (days + 4) % 7;
+        }
+        else
+        {
+                b64 adjust = (14 - (b64)month) / 12;
+                b64 y = year + 4800 - adjust;
+                b64 m = (b64)month + adjust * 12 - 3;
+                b64 julian_day = (b64)day + (153 * m + 2) / 5 +
+                                  365 * y + y / 4 - 32083;
+                weekday = (julian_day + 1) % 7;
+        }
+
+        return (positive)(weekday < 0 ? weekday + 7 : weekday);
+}
+
+static positive cal_ordinal(b64 year, positive month, positive day,
+                            bool proleptic)
+{
+        positive answer = day;
+        for (positive before = 1; before < month; before++)
+                answer += cal_days_in_month(year, before, proleptic);
+        return answer;
+}
+
+static positive cal_year_into(p8 address_to into, b64 year)
+{
+        if (year < 0)
+        {
+                into[0] = '-';
+                return 1 + positive_into_padded(into + 1, (positive)-year,
+                                                3, '0');
+        }
+        return positive_into_padded(into, (positive)year, 4, '0');
+}
+
+static fn cal_center(p8 address_to row, positive width,
+                     p8 address_to text, positive length)
+{
+        memory_fill(row, ' ', width);
+        if (length > width)
+                length = width;
+        positive left = (width - length + 1) / 2;
+        memory_copy_apart(row + left, text, length);
+}
+
+static fn cal_put_value(p8 address_to row, positive column,
+                        positive cell, positive value)
+{
+        p8 digits[32];
+        positive length = positive_into_string(digits, value);
+        if (length > cell)
+                length = cell;
+        memory_copy_apart(row + column + cell - length, digits, length);
+}
+
+static fn cal_render_month(cal_month_block address_to block, b64 year,
+                           positive month, bool with_year, bool monday,
+                           bool julian, bool proleptic)
+{
+        positive width = julian ? CAL_JULIAN_WIDTH : CAL_NORMAL_WIDTH;
+        positive cell = julian ? 3 : 2;
+        positive step = cell + 1;
+        p8 title[64];
+        positive title_length = 0;
+        string_address month_name = file_month_names[month - 1];
+        positive month_length = string_length(month_name);
+
+        memory_fill(block, ' ', sizeof(*block));
+        memory_copy_apart(title, month_name, month_length);
+        title[0] -= 'a' - 'A';
+        title_length = month_length;
+        if (with_year)
+        {
+                title[title_length++] = ' ';
+                title_length += cal_year_into(title + title_length, year);
+        }
+        cal_center(block->row[0], width, title, title_length);
+
+        static p8 sunday_normal[] = "Su Mo Tu We Th Fr Sa";
+        static p8 monday_normal[] = "Mo Tu We Th Fr Sa Su";
+        static p8 sunday_julian[] = "Sun Mon Tue Wed Thu Fri Sat";
+        static p8 monday_julian[] = "Mon Tue Wed Thu Fri Sat Sun";
+        memory_copy_apart(block->row[1],
+                          julian ? (monday ? monday_julian : sunday_julian)
+                                 : (monday ? monday_normal : sunday_normal),
+                          width);
+
+        positive weekday = cal_weekday(year, month, 1, proleptic);
+        if (monday)
+                weekday = (weekday + 6) % 7;
+        positive week = 0;
+        positive days = cal_days_in_month(year, month, proleptic);
+
+        for (positive day = 1; day <= days; day++)
+        {
+                if (!proleptic && year == 1752 && month == 9 &&
+                    day >= 3 && day <= 13)
+                        continue;
+
+                positive value = julian ? cal_ordinal(year, month, day,
+                                                      proleptic)
+                                         : day;
+                cal_put_value(block->row[week + 2], weekday * step,
+                              cell, value);
+                if (++weekday == 7)
+                {
+                        weekday = 0;
+                        week++;
+                }
+        }
+}
+
+static fn cal_month_at(b64 serial, b64 address_to year,
+                       positive address_to month)
+{
+        b64 before = clock_floor_divide(serial, 12);
+        address_to year = before + 1;
+        address_to month = (positive)(serial - before * 12 + 1);
+}
+
+static fn cal_emit_group(b64 first, positive count, bool with_year,
+                         bool monday, bool julian, bool proleptic,
+                         positive separation)
+{
+        cal_month_block blocks[3];
+        positive width = julian ? CAL_JULIAN_WIDTH : CAL_NORMAL_WIDTH;
+
+        for (positive i = 0; i < count; i++)
+        {
+                b64 year;
+                positive month;
+                cal_month_at(first + i, address_of year, address_of month);
+                cal_render_month(blocks + i, year, month, with_year, monday,
+                                 julian, proleptic);
+        }
+
+        static p8 spaces[] = "   ";
+        for (positive row = 0; row < CAL_ROWS; row++)
+        {
+                for (positive column = 0; column < count; column++)
+                {
+                        if (column)
+                                log(spaces, separation);
+                        log(blocks[column].row[row], width);
+                }
+                log("\n", 1);
+        }
+}
+
+static fn cal_emit_year_title(b64 year, positive width)
+{
+        p8 title[32];
+        p8 row[CAL_JULIAN_WIDTH * 3 + 6];
+        positive length = cal_year_into(title, year);
+        cal_center(row, width, title, length);
+        log(row, width);
+        log("\n\n", 2);
+}
+
+static b32 file_cal()
+{
+        file_operands_begin();
+        p8 week_start = 0;
+        const file_supersede supersedes[] = {
+            {(string_address)"sm", address_of week_start},
+            {null, null},
+        };
+        file_taking taking = {
+            .program = (string_address)"cal",
+            .allowed = (string_address)"13nSsmjRIyYwvcChV",
+            .valued = (string_address)"nRc",
+            .long_optional = (string_address)"wC",
+            .longs = cal_longs,
+            .operand = file_operand,
+            .supersedes = supersedes,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (taking.flags & FILE_FLAG('h'))
+        {
+                file_fail("Usage: cal [-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]\n",
+                          0);
+                return 0;
+        }
+        if (taking.flags & FILE_FLAG('V'))
+        {
+                file_fail("cal from dawning-kit\n", 0);
+                return 0;
+        }
+        if (taking.flags & (FILE_FLAG('w') | FILE_FLAG('v') |
+                            FILE_FLAG('c')))
+        {
+                file_fail("cal: week numbers, vertical layout and custom columns are unsupported\n",
+                          0);
+                return 1;
+        }
+
+        string_address color = file_option_value(address_of taking, 'C');
+        if (taking.flags & FILE_FLAG('C'))
+        {
+                if ((taking.bare & FILE_FLAG('C')) || !color ||
+                    string_compare(color, (string_address)"never"))
+                {
+                        file_fail("cal: only --color=never is supported\n", 0);
+                        return 1;
+                }
+        }
+
+        bool proleptic = false;
+        string_address reform = file_option_value(address_of taking, 'R');
+        if (taking.flags & FILE_FLAG('I'))
+                proleptic = true;
+        if (reform)
+        {
+                if (!string_compare(reform, (string_address)"gregorian") ||
+                    !string_compare(reform, (string_address)"iso"))
+                        proleptic = true;
+                else if (!string_compare(reform, (string_address)"1752"))
+                        proleptic = false;
+                else
+                {
+                        file_fail("cal: only the 1752 and Gregorian reforms are supported\n",
+                                  0);
+                        return 1;
+                }
+        }
+
+        time_t now = (time_t)file_now();
+        tm broken;
+        if (!localtime_r(address_of now, address_of broken))
+        {
+                file_fail("cal: cannot read the current calendar date\n", 0);
+                return 1;
+        }
+        b64 year = (b64)broken.tm_year + 1900;
+        positive month = (positive)broken.tm_mon + 1;
+        positive selected_day = 1;
+        bool year_only = false;
+
+        if (file_operand_count > 3)
+        {
+                file_fail("cal: too many operands\n", 0);
+                return 1;
+        }
+        if (file_operand_count == 1)
+        {
+                string_address word = file_operand_at(0);
+                positive number;
+                bipolar named;
+                if (cal_number(word, address_of number))
+                {
+                        if (!number || number > 2147483646U)
+                        {
+                                file_fail("cal: illegal year value\n", 0);
+                                return 1;
+                        }
+                        year = (b64)number;
+                        year_only = true;
+                }
+                else if ((named = cal_month_number(word)) > 0)
+                        month = (positive)named;
+                else
+                {
+                        b64 stamp;
+                        positive nanoseconds;
+                        if (!file_moment_read_exact(word, (b64)now,
+                                                    address_of stamp,
+                                                    address_of nanoseconds))
+                        {
+                                string_format(file_fail,
+                                              "cal: cannot parse date '%s'\n",
+                                              word);
+                                return 1;
+                        }
+                        positive hour, minute, second;
+                        file_split_moment(stamp, address_of year,
+                                          address_of month,
+                                          address_of selected_day,
+                                          address_of hour, address_of minute,
+                                          address_of second);
+                }
+        }
+        else if (file_operand_count >= 2)
+        {
+                bipolar named = cal_month_number(
+                    file_operand_at(file_operand_count == 2 ? 0 : 1));
+                positive parsed_year;
+                if (named < 1)
+                {
+                        file_fail("cal: illegal month value: use 1-12\n", 0);
+                        return 1;
+                }
+                if (!cal_number(file_operand_at(file_operand_count - 1),
+                                address_of parsed_year) || !parsed_year ||
+                    parsed_year > 2147483646U)
+                {
+                        file_fail("cal: illegal year value\n", 0);
+                        return 1;
+                }
+                month = (positive)named;
+                year = parsed_year;
+                if (file_operand_count == 3 &&
+                    (!cal_number(file_operand_at(0), address_of selected_day) ||
+                     !selected_day ||
+                     selected_day > cal_days_in_month(year, month,
+                                                       proleptic)))
+                {
+                        file_fail("cal: illegal day value\n", 0);
+                        return 1;
+                }
+        }
+
+        bool monday = week_start == 'm';
+        bool julian = (taking.flags & FILE_FLAG('j')) != 0;
+        bool three = (taking.flags & FILE_FLAG('3')) != 0;
+        bool twelve = (taking.flags & FILE_FLAG('Y')) != 0;
+        bool whole_year = (taking.flags & FILE_FLAG('y')) != 0;
+        bool one = (taking.flags & FILE_FLAG('1')) != 0;
+        bool span = (taking.flags & FILE_FLAG('S')) != 0;
+        string_address months_text = file_option_value(address_of taking, 'n');
+        positive months = 1;
+        bool months_given = months_text != null;
+
+        if (months_given && !cal_number(months_text, address_of months))
+        {
+                file_fail("cal: invalid month count\n", 0);
+                return 1;
+        }
+        if (!months)
+                months = 1;
+        if ((p64)months > 25769803776ULL)
+        {
+                file_fail("cal: requested calendar range is out of bounds\n", 0);
+                return 1;
+        }
+        if ((whole_year && (three || months_given || one || twelve)) ||
+            (three && (months_given || twelve)) ||
+            (one && (three || months_given || twelve)))
+        {
+                file_fail("cal: conflicting calendar range options are unsupported\n",
+                          0);
+                return 1;
+        }
+
+        b64 first = (year - 1) * 12 + (b64)month - 1;
+        bool year_layout = whole_year ||
+                           (year_only && !one && !three && !months_given);
+        positive separation = 2;
+
+        if (year_layout)
+        {
+                months = 12;
+                first = (year - 1) * 12;
+                separation = 3;
+        }
+        else if (three)
+        {
+                months = 3;
+                first--;
+        }
+        else if (twelve)
+        {
+                months = 12;
+                separation = 3;
+        }
+
+        if (span && months > 1)
+                first -= (b64)(months / 2);
+
+        b64 first_year;
+        positive first_month;
+        b64 last_year;
+        positive last_month;
+        cal_month_at(first, address_of first_year, address_of first_month);
+        cal_month_at(first + (b64)months - 1,
+                     address_of last_year, address_of last_month);
+        if (first_year < 0 || last_year > 2147483647)
+        {
+                file_fail("cal: requested calendar range is out of bounds\n", 0);
+                return 1;
+        }
+
+        positive width = julian ? CAL_JULIAN_WIDTH : CAL_NORMAL_WIDTH;
+        if (year_layout)
+                cal_emit_year_title(year, width * 3 + separation * 2);
+
+        for (positive shown = 0; shown < months; shown += 3)
+        {
+                positive across = months - shown < 3 ? months - shown : 3;
+                cal_emit_group(first + (b64)shown, across, !year_layout, monday,
+                               julian, proleptic, separation);
+        }
+        log_flush();
+        return 0;
 }
 
 // date ------------------------------------------------------------
