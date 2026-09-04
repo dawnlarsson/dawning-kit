@@ -66,6 +66,7 @@ typedef struct
 } shell_array_item;
 
 PURE p8 shell_variable_attributes(const_string name, positive length);
+PURE bool shell_variable_exported(const_string name, positive length);
 bool shell_variable_attribute_set(const_string name, positive length,
                                   p8 set, p8 clear);
 positive shell_array_length(const_string name, positive length);
@@ -306,8 +307,18 @@ static fn expand_sets_prepare()
 
         expand_plain_set['\''] = 0;
 
+        //      <( and >( are decided one byte at a time below, so neither
+        //      byte may be swallowed by a run. Both are rare inside a word,
+        //      which is where the run is.
+        expand_plain_set['<'] = expand_plain_set['>'] = 0;
+
         {
-                static const string_address changes = "'\"\\$`*?[{~";
+                //      < and > are in here for the head of a process
+                //      substitution. Neither can begin one on its own, but a
+                //      word holding either is rare enough that asking again
+                //      inside the expander costs less than a second scan
+                //      would in front of every word that holds neither.
+                static const string_address changes = "'\"\\$`*?[{~<>(";
 
                 for (positive i = 0; changes[i]; i++)
                         expand_literal_set[changes[i]] = 0;
@@ -596,6 +607,267 @@ static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
 }
 
 /*
+        shopt -s extglob.
+
+        ?( ) *( ) +( ) @( ) and !( ) are an extension to the pattern language,
+        and Bash reads them as one only where this is on -- except inside
+        [[ ]], where they are always read, because what is in there is matched
+        when the command runs and not when the line is parsed.
+
+        The option belongs to shopt, and shopt keeps every one of its names
+        in one word, so this reads that bit rather than keeping a second copy
+        of the same answer beside it. A byte of its own would have to be kept
+        in step with the one the builtin writes, and the two would disagree
+        the first time anybody forgot.
+*/
+#define shell_extglob_on shell_shopt_on(EXTGLOB)
+
+PURE bool shell_extglob_asked()
+{
+        return shell_extglob_on;
+}
+
+// Whether one of the five heads stands here with its parenthesis behind it.
+static CONST inline INLINE bool glob_group_head(p8 value)
+{
+        return value == '?' || value == '*' || value == '+' || value == '@' ||
+               value == '!';
+}
+
+/*
+        Whether the pattern holds an extended group at all.
+
+        Asked before every match, so it is one hardware scan for a
+        parenthesis and not a walk of the pattern: the overwhelming majority
+        of patterns have no parenthesis in them at all and stop on the first
+        answer.
+*/
+static PURE bool glob_extended_anywhere(string_address pattern)
+{
+        string_address at = pattern;
+
+        while (1)
+        {
+                at = string_first_of(at, '(');
+
+                if (!at)
+                        return false;
+
+                if (at > pattern && glob_group_head(string_get(at - 1)))
+                        return true;
+
+                at++;
+        }
+}
+
+// Where the group whose head is at ends, one byte past its parenthesis, or
+// nothing when it never closes.
+static PURE string_address glob_group_end(string_address at)
+{
+        string_address step = at;
+        positive depth = 0;
+
+        while (string_get(step))
+        {
+                if (string_is(step, '\\') && string_get(step + 1))
+                {
+                        step += 2;
+                        continue;
+                }
+
+                if (string_is(step, '('))
+                        depth++;
+                else if (string_is(step, ')') && !--depth)
+                        return step + 1;
+
+                step++;
+        }
+
+        return null;
+}
+
+static bool glob_bounded(string_address pattern, string_address pattern_end,
+                         string_address text, string_address text_end);
+
+// Whether any one of the alternatives in a group matches the whole run.
+static bool glob_alternatives(string_address body, string_address body_end,
+                              string_address text, string_address text_end)
+{
+        string_address start = body;
+        string_address at = body;
+        positive depth = 0;
+
+        while (at < body_end)
+        {
+                if (string_is(at, '\\') && at + 1 < body_end)
+                {
+                        at += 2;
+                        continue;
+                }
+
+                if (string_is(at, '('))
+                        depth++;
+                else if (string_is(at, ')') && depth)
+                        depth--;
+                else if (!depth && string_is(at, '|'))
+                {
+                        if (glob_bounded(start, at, text, text_end))
+                                return true;
+
+                        start = at + 1;
+                }
+
+                at++;
+        }
+
+        return glob_bounded(start, body_end, text, text_end);
+}
+
+/*
+        One extended group and everything behind it.
+
+        Where the group ends in the text is not something anything can know in
+        advance, so every split is tried and the rest of the pattern asked
+        about each one. The four counted forms differ only in how many
+        occurrences they will take; !( ) is the odd one, and reads as "some
+        split where the rest matches and the front matches none of these".
+
+        A repeat is expressed by asking the same question again with the head
+        turned into a star, which is what "one and then any number" means.
+*/
+static bool glob_extended(p8 head, string_address body, string_address body_end,
+                          string_address rest, string_address pattern_end,
+                          string_address text, string_address text_end)
+{
+        string_address at;
+
+        if (head == '!')
+        {
+                for (at = text; at <= text_end; at++)
+                        if (glob_bounded(rest, pattern_end, at, text_end) &&
+                            !glob_alternatives(body, body_end, text, at))
+                                return true;
+
+                return false;
+        }
+
+        // None at all, which only these two will take.
+        if ((head == '?' || head == '*') &&
+            glob_bounded(rest, pattern_end, text, text_end))
+                return true;
+
+        //      Longest first, which is what a glob answers with, and never an
+        //      empty occurrence: a group that matched nothing and asked again
+        //      would ask forever.
+        for (at = text_end; at > text; at--)
+        {
+                if (!glob_alternatives(body, body_end, text, at))
+                        continue;
+
+                if (head == '@' || head == '?')
+                {
+                        if (glob_bounded(rest, pattern_end, at, text_end))
+                                return true;
+
+                        continue;
+                }
+
+                if (glob_extended('*', body, body_end, rest, pattern_end, at,
+                                  text_end))
+                        return true;
+        }
+
+        return false;
+}
+
+/*
+        One pattern against one run of bytes, both bounded.
+
+        The matcher below walks the string once and keeps a single mark for
+        the last star, which is everything an ordinary glob needs. An extended
+        group is a different shape -- it splits the text somewhere nobody
+        knows and every split has to be tried -- so it is recursion, and that
+        is why this is a second matcher rather than another branch in the
+        first. Nothing without a group in it comes through here.
+*/
+static bool glob_bounded(string_address pattern, string_address pattern_end,
+                         string_address text, string_address text_end)
+{
+        while (pattern < pattern_end)
+        {
+                p8 want = string_get(pattern);
+                string_address stop;
+
+                if (glob_group_head(want) && string_is(pattern + 1, '('))
+                {
+                        string_address close = glob_group_end(pattern + 1);
+
+                        if (close && close <= pattern_end)
+                                return glob_extended(want, pattern + 2,
+                                                     close - 1, close,
+                                                     pattern_end, text,
+                                                     text_end);
+                }
+
+                if (want == '*')
+                {
+                        string_address at = text_end;
+
+                        pattern++;
+
+                        //      Longest first, and counted down to the front
+                        //      rather than past it: a cursor below the start
+                        //      of the run is not an address.
+                        while (1)
+                        {
+                                if (glob_bounded(pattern, pattern_end, at,
+                                                 text_end))
+                                        return true;
+
+                                if (at == text)
+                                        return false;
+
+                                at--;
+                        }
+                }
+
+                stop = want == '[' ? expand_set_end(pattern) : null;
+
+                if (stop && stop < pattern_end)
+                {
+                        if (text >= text_end ||
+                            !expand_in_set(pattern, stop, string_get(text)))
+                                return false;
+
+                        pattern = stop + 1;
+                        text++;
+                        continue;
+                }
+
+                if (want == '\\' && pattern + 1 < pattern_end)
+                {
+                        want = string_get(++pattern);
+
+                        if (text >= text_end || want != string_get(text))
+                                return false;
+
+                        pattern++;
+                        text++;
+                        continue;
+                }
+
+                if (text >= text_end ||
+                    (want != '?' && want != string_get(text)))
+                        return false;
+
+                pattern++;
+                text++;
+        }
+
+        return text == text_end;
+}
+
+/*
         A glob against a string, whole.
 
         This is the matcher for case, for the four trimming forms, and for every
@@ -612,6 +884,13 @@ static inline INLINE bool shell_match_core(string_address pattern,
         string_address star = null;
         string_address back = null;
         p8 behind = 0;
+
+        //      One bool, and a hardware scan for a parenthesis only when
+        //      it says the groups are being read at all. Every match in the
+        //      shell comes through here.
+        if (shell_extglob_on && glob_extended_anywhere(pattern))
+                return glob_bounded(pattern, pattern + string_length(pattern),
+                                    text, text + string_length(text));
 
         while (string_get(text))
         {
@@ -730,6 +1009,17 @@ PURE bool shell_match_folded(string_address pattern, string_address text,
 {
         return fold ? shell_match_core(pattern, text, true)
                     : shell_match_core(pattern, text, false);
+}
+
+// The same match with the extended groups read whether or not the option is
+// on, which is what [[ ]] does with them.
+PURE bool shell_match_extended(string_address pattern, string_address text)
+{
+        if (!shell_extglob_on && glob_extended_anywhere(pattern))
+                return glob_bounded(pattern, pattern + string_length(pattern),
+                                    text, text + string_length(text));
+
+        return shell_match(pattern, text);
 }
 
 //      set -- takes as many words as it is given, which after a glob may be
@@ -1555,22 +1845,33 @@ static bipolar arith_store(string_address name, bipolar value)
 }
 
 /*
-        What a name is worth here.
+        The number a name holds, and the value itself when it is not one.
 
-        Unset and empty are both zero, and anything that is not a number is
-        not a value at all -- x=bar came out as zero and the arithmetic
-        carried on around it.
+        Unset and empty are both zero. Anything else Bash reads as an
+        expression rather than a number, so with a=b and b=7 $((a)) is seven
+        and x="1 + 2" is three -- but that is the caller's to do, and this
+        function hands back the bytes instead of evaluating them.
+
+        Splitting it there is not tidiness. A loop counter is a name holding
+        digits read tens of thousands of times, and reaching the grammar from
+        in here would put this function inside the arithmetic recursion, where
+        nothing about it can be inlined into the caller that asks the
+        question. The scratch belongs to the caller for the same reason: what
+        comes back may point into it.
 */
-static bipolar arith_value_of(string_address name)
+static bipolar arith_number_of(string_address name, p8 address_to scratch,
+                               string_address address_to expression)
 {
-        p8 scratch[32];
         bool present;
         bool valid;
-        string_address step = expand_value_of(name, scratch,
+        string_address value = expand_value_of(name, scratch,
                                                address_of present, null);
+        string_address step;
         string_address digits;
         positive magnitude;
         bool negative = false;
+
+        address_to expression = null;
 
         if (!arith_active)
                 return 0;
@@ -1586,7 +1887,7 @@ static bipolar arith_value_of(string_address name)
                 return 0;
         }
 
-        step += string_span(step, string_set_blanks);
+        step = value + string_span(value, string_set_blanks);
 
         if (!string_get(step))
                 return 0;
@@ -1603,14 +1904,17 @@ static bipolar arith_value_of(string_address name)
 
         if (step == digits || !valid)
         {
-                arith_bad = true;
+                address_to expression = value;
                 return 0;
         }
 
         step += string_span(step, string_set_blanks);
 
         if (string_get(step))
-                arith_bad = true;
+        {
+                address_to expression = value;
+                return 0;
+        }
 
         if (!negative)
                 return magnitude > (positive)bipolar_max
@@ -1621,6 +1925,70 @@ static bipolar arith_value_of(string_address name)
                 return (bipolar)((positive)bipolar_max + 1);
 
         return -(bipolar)magnitude;
+}
+
+/*
+        A value that is not a number, read as an expression of its own.
+
+        The value is copied first. What it is about to be evaluated as may
+        assign a name, and an assignment is free to move the storage the value
+        was still being read out of.
+
+        A chain that comes back to a name already on it never ends, so the
+        depth is counted rather than trusted -- a=b; b=a has no answer and must
+        say so instead of running until the machine stack is gone.
+*/
+#define ARITH_NAMES 32
+
+static positive arith_names;
+
+static COLD bipolar arith_named_expression(string_address value)
+{
+        p8 held_local[EXPAND_LOCAL_NAME];
+        string_address held;
+        string_address outer = arith_at;
+        bipolar answer;
+
+        if (arith_names >= ARITH_NAMES)
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        held = expand_hold(value, string_length(value), held_local,
+                           sizeof(held_local));
+
+        if (!held)
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        arith_names++;
+        arith_at = held;
+        answer = arith_choose();
+        arith_space();
+
+        // Every byte of the value belongs to the expression, exactly as every
+        // byte of the outer one does: x=12ab is not twelve.
+        if (string_get(arith_at))
+                arith_bad = true;
+
+        arith_at = outer;
+        arith_names--;
+
+        return answer;
+}
+
+// What a name is worth to the grammar, which is the number it holds or the
+// answer to the expression it holds.
+static bipolar arith_value_of(string_address name)
+{
+        p8 scratch[32];
+        string_address expression;
+        bipolar value = arith_number_of(name, scratch, address_of expression);
+
+        return expression ? arith_named_expression(expression) : value;
 }
 
 /*
@@ -1666,6 +2034,44 @@ static CONST bipolar arith_negate(bipolar value)
         return (bipolar)(0 - (positive)value);
 }
 
+/*
+        Raising to a power, which the machine has no instruction for.
+
+        Squaring the base and halving the exponent is six-and-a-bit steps for
+        the largest exponent that answers anything at all, against sixty-three
+        for repeated multiplication -- and the wrapping is the same either way,
+        because every step goes through arith_product.
+
+        A negative exponent is not a small number here: Bash refuses it rather
+        than answering with the zero that integer division would give.
+*/
+static bipolar arith_power_of(bipolar base, bipolar exponent)
+{
+        bipolar value = 1;
+
+        if (!arith_active)
+                return 0;
+
+        if (exponent < 0)
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        while (exponent)
+        {
+                if (exponent & 1)
+                        value = arith_product(value, base);
+
+                exponent = (bipolar)((positive)exponent >> 1);
+
+                if (exponent)
+                        base = arith_product(base, base);
+        }
+
+        return value;
+}
+
 static CONST bipolar arith_shift_left(bipolar left, bipolar right)
 {
         positive count = (positive)right & (positive_bits - 1);
@@ -1704,6 +2110,80 @@ static bipolar arith_combine(p8 op, bipolar left, bipolar right)
 }
 
 
+/*
+        base#digits, with the base written out in front in decimal.
+
+        The alphabet is 0-9, then the lower-case letters, then the upper-case
+        ones, then @ and _, which is sixty-four places. Only bases past
+        thirty-six have room for both cases, so below that the two are the
+        same letter -- which is why what a letter is worth depends on the base
+        and not on the letter alone.
+
+        arith_at is on the first digit of the base and hash is the # behind
+        it, because the caller found it while deciding this was not an
+        ordinary number.
+*/
+static bipolar arith_based(string_address hash)
+{
+        positive base = 0;
+        positive value = 0;
+        bool any = false;
+
+        // A base of a hundred digits is still not a base. Stopping the
+        // accumulation once it is out of range keeps it out of the wrap that
+        // would bring it back into range.
+        while (arith_at < hash)
+        {
+                if (base < 1024)
+                        base = base * 10 +
+                               (positive)(string_get(arith_at) - '0');
+
+                arith_at++;
+        }
+
+        arith_at++;
+
+        if (base < 2 || base > 64)
+        {
+                arith_bad = true;
+                return 0;
+        }
+
+        while (1)
+        {
+                p8 seen = string_get(arith_at);
+                positive digit;
+
+                if (seen >= '0' && seen <= '9')
+                        digit = (positive)(seen - '0');
+                else if (seen >= 'a' && seen <= 'z')
+                        digit = (positive)(seen - 'a') + 10;
+                else if (seen >= 'A' && seen <= 'Z')
+                        digit = (positive)(seen - 'A') + (base <= 36 ? 10 : 36);
+                else if (seen == '@')
+                        digit = 62;
+                else if (seen == '_')
+                        digit = 63;
+                else
+                        break;
+
+                if (digit >= base)
+                {
+                        arith_bad = true;
+                        return 0;
+                }
+
+                value = value * base + digit;
+                any = true;
+                arith_at++;
+        }
+
+        if (!any)
+                arith_bad = true;
+
+        return (bipolar)value;
+}
+
 static bipolar arith_primary()
 {
         bipolar value = 0;
@@ -1736,9 +2216,8 @@ static bipolar arith_primary()
                 return ~arith_primary();
         }
 
-        if (arith_bash_mode &&
-            ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
-             (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))))
+        if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+            (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
         {
                 bool increment = string_is(arith_at, '+');
                 string_address start;
@@ -1788,6 +2267,15 @@ static bipolar arith_primary()
         if (string_get(arith_at) >= '0' && string_get(arith_at) <= '9')
         {
                 bool valid;
+                string_address scan = arith_at;
+
+                // What is in front of a # is a base and not a value, and only
+                // a run of plain decimal digits can be one: 0x10#1 is neither.
+                while (string_get(scan) >= '0' && string_get(scan) <= '9')
+                        scan++;
+
+                if (string_is(scan, '#'))
+                        return arith_based(scan);
 
                 value = expand_base_number(address_of arith_at, address_of valid);
 
@@ -1837,10 +2325,9 @@ static bipolar arith_primary()
 
                         Longest first, or <<= is < followed by <= and x >>= 1
                         halves nothing. They are all "read, combine, write"
-                        and share the tail below. Postfix ++ and -- are not in
-                        the POSIX grammar; leaving them for the final cursor
-                        check rejects them instead of silently adding a
-                        non-portable side effect.
+                        and share the tail below, with postfix ++ and -- after
+                        them: the doubled sign has to be tried before += so
+                        that x++ is not read as x + (+...).
                 */
                 {
                         p8 op = 0;
@@ -1878,9 +2365,8 @@ static bipolar arith_primary()
                                                    arith_combine(op, was, arith_choose()));
                         }
 
-                        if (arith_bash_mode &&
-                            ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
-                             (string_is(arith_at, '-') && string_is(arith_at + 1, '-'))))
+                        if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+                            (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
                         {
                                 bool increment = string_is(arith_at, '+');
                                 bipolar was = arith_value_of(name);
@@ -1903,9 +2389,32 @@ static bipolar arith_primary()
         return 0;
 }
 
-static bipolar arith_multiply()
+/*
+        Raising to a power, which sits between the unary operators and the
+        products and leans right: 2 ** 3 ** 2 is two to the ninth.
+
+        Leaning right is also why the whole level is one function and not a
+        loop -- and why -2 ** 2 is four rather than minus four: the minus is
+        part of the primary underneath, so it is the base that is negative and
+        not the answer.
+*/
+static bipolar arith_power()
 {
         bipolar value = arith_primary();
+
+        arith_space();
+
+        if (!string_is(arith_at, '*') || !string_is(arith_at + 1, '*'))
+                return value;
+
+        arith_at += 2;
+
+        return arith_power_of(value, arith_power());
+}
+
+static bipolar arith_multiply()
+{
+        bipolar value = arith_power();
 
         while (1)
         {
@@ -1914,7 +2423,7 @@ static bipolar arith_multiply()
                 if (string_is(arith_at, '*'))
                 {
                         arith_at++;
-                        value = arith_product(value, arith_primary());
+                        value = arith_product(value, arith_power());
                         continue;
                 }
 
@@ -1923,7 +2432,7 @@ static bipolar arith_multiply()
                         bool remainder = string_is(arith_at, '%');
 
                         arith_at++;
-                        value = arith_divide(value, arith_primary(), remainder);
+                        value = arith_divide(value, arith_power(), remainder);
                         continue;
                 }
 
@@ -2221,9 +2730,23 @@ static bool arith_simple_addition(string_address text,
                 return true;
         }
 
-        address_to answer = op == '+'
-                                  ? arith_addition(arith_value_of(name), right)
-                                  : arith_subtraction(arith_value_of(name), right);
+        {
+                p8 scratch[32];
+                string_address expression;
+                bipolar left = arith_number_of(name, scratch,
+                                               address_of expression);
+
+                // A name holding an expression is not this shape after all.
+                // Hand it back rather than reach the grammar from here, which
+                // is what keeps this whole path out of the recursion.
+                if (expression)
+                        return false;
+
+                address_to answer = op == '+'
+                                          ? arith_addition(left, right)
+                                          : arith_subtraction(left, right);
+        }
+
         return true;
 }
 
@@ -2756,6 +3279,235 @@ static string_address expand_backtick(string_address step, bool quoted)
         way out. A terminal is the exception, because there is somebody there
         to type the line again.
 */
+/*
+        <(command) and >(command).
+
+        The word becomes a path -- /dev/fd/N over a pipe -- and the command
+        runs at the other end of it. That is what lets a program which only
+        knows how to open files read from a command instead: diff takes two
+        file names, and two of these turn two commands into two names.
+
+        Which way the pipe faces is the whole difference between the two.
+        <( ) hands over a path this shell can read and the command writes;
+        >( ) hands over one this shell writes and the command reads.
+*/
+typedef struct
+{
+        b32 descriptor;
+        bipolar child;
+} expand_substitution;
+
+static expand_substitution address_to expand_substitutions;
+static positive expand_substitutions_room;
+static positive expand_substitutions_count;
+/* Whether this shell has ever made one. Almost no script does, and the
+   executor asks after every command it runs, so one byte in the common case
+   is worth having instead of the two the mark and its comparison cost. */
+static bool expand_substitutions_ever;
+
+#define EXPAND_WAIT_NO_HANG 1
+#define EXPAND_DUPLICATE_FROM 0
+#define EXPAND_SUBSTITUTION_FLOOR 60
+
+/*
+        The descriptors this command opened, given back.
+
+        A mark rather than the lot, because the command that made them is not
+        always the one running: a function handed /dev/fd/N as an argument may
+        open it in its third command, and closing at every command boundary
+        would have taken it away after the first.
+
+        The children are asked for without waiting. A shell that stopped here
+        would hang on >(sleep 100), which Bash returns from at once; whatever
+        is still running is asked again the next time a command finishes.
+*/
+static fn shell_substitutions_close(positive mark)
+{
+        positive at;
+        positive kept = mark;
+
+        for (at = mark; at < expand_substitutions_count; at++)
+        {
+                positive status = 0;
+                bipolar reaped;
+
+                if (expand_substitutions[at].descriptor >= 0)
+                        system_close(expand_substitutions[at].descriptor);
+
+                reaped = system_wait4_retry(expand_substitutions[at].child,
+                                            address_of status,
+                                            EXPAND_WAIT_NO_HANG, null);
+
+                if (!reaped)
+                {
+                        expand_substitutions[kept].descriptor = -1;
+                        expand_substitutions[kept].child =
+                            expand_substitutions[at].child;
+                        kept++;
+                }
+        }
+
+        expand_substitutions_count = kept;
+}
+
+// A fork inherits the list and none of the children on it. Dropping the
+// entries leaves the descriptors alone: what the child was handed a path to
+// is still a path it may open.
+static fn shell_substitutions_forget()
+{
+        expand_substitutions_count = 0;
+}
+
+static bool expand_substitution_remember(b32 descriptor, bipolar child)
+{
+        if (!shell_array_room(expand_substitutions, expand_substitutions_room,
+                              expand_substitutions_count + 1))
+                return false;
+
+        expand_substitutions[expand_substitutions_count].descriptor = descriptor;
+        expand_substitutions[expand_substitutions_count].child = child;
+        expand_substitutions_count++;
+        expand_substitutions_ever = true;
+
+        return true;
+}
+
+// The body of a substitution, run in the child that is now standing at one
+// end of the pipe. Identical to what a command substitution runs, and for
+// the same reason: a body is a script and not a line.
+static fn expand_substitution_body(string_address command)
+{
+        exec_child_began();
+        expand_in_substitution = true;
+        parse_reset_all();
+
+        if (!string_first_of(command, '\n'))
+        {
+                shell_tail_line_requested = true;
+                run_line(command);
+        }
+        else
+        {
+                string_address at = command;
+
+                while (string_get(at))
+                {
+                        string_address stop = string_first_of_or_end(at, '\n');
+
+                        if (string_get(stop))
+                        {
+                                address_to stop = end;
+                                stop++;
+                        }
+
+                        if (string_get(at))
+                                run_line(at);
+
+                        at = stop;
+                }
+        }
+
+        log_flush();
+        system_call_1(syscall(exit_group), (positive)shell_status);
+}
+
+static string_address expand_process(string_address step, p8 mark)
+{
+        bool reading = string_is(step, '<');
+        string_address inner = step + 2;
+        string_address stop = expand_paren_end(inner);
+        p8 address_to text;
+        positive length;
+        b32 channel[2];
+        b32 ours;
+        b32 theirs;
+        bipolar child;
+        p8 path[32];
+        positive written;
+
+        // No closing parenthesis in the word: the lexer stopped short of it,
+        // and what is left is the byte itself.
+        if (!stop)
+        {
+                expand_push(string_get(step), mark);
+                return step + 1;
+        }
+
+        length = (positive)(stop - inner);
+        text = shell_store_take(address_of expand_store, length + 1);
+
+        if (!text)
+        {
+                expand_overflow = true;
+                return stop + 1;
+        }
+
+        memory_copy_end(text, inner, length);
+
+        // Whatever this shell has buffered belongs to this shell, and a fork
+        // with it still in hand writes all of it a second time.
+        log_flush();
+
+        if (system_pipe(address_of channel, 0) < 0)
+        {
+                expand_fatal();
+                return stop + 1;
+        }
+
+        ours = reading ? channel[0] : channel[1];
+        theirs = reading ? channel[1] : channel[0];
+
+        child = shell_clone();
+
+        if (child == 0)
+        {
+                system_close(ours);
+                system_duplicate(theirs,
+                                 reading ? standard_output_descriptor
+                                         : standard_input_descriptor,
+                                 0);
+                system_close(theirs);
+                expand_substitution_body(text);
+        }
+
+        system_close(theirs);
+
+        /*
+                Out of the way of the script's own descriptors.
+
+                A path handed over as /dev/fd/3 is one an "exec 3<file" three
+                lines later would quietly take away, so the end this shell
+                keeps is moved somewhere nobody writes by hand -- which is
+                what Bash's sixty-somethings are. Not close-on-exec: the
+                command that opens the path is the one on the far side of an
+                exec, and a descriptor it cannot see is a path to nothing.
+        */
+        {
+                bipolar moved = system_call_3(syscall(fcntl), (positive)ours,
+                                              EXPAND_DUPLICATE_FROM,
+                                              EXPAND_SUBSTITUTION_FLOOR);
+
+                if (moved >= 0)
+                {
+                        system_close(ours);
+                        ours = (b32)moved;
+                }
+        }
+
+        if (child < 0 || !expand_substitution_remember(ours, child))
+        {
+                system_close(ours);
+                expand_fatal();
+                return stop + 1;
+        }
+
+        expand_push_run((string_address) "/dev/fd/", 8, mark);
+        written = bipolar_into_string(path, (bipolar)ours);
+        expand_push_run(path, written, mark);
+
+        return stop + 1;
+}
+
 static COLD fn expand_fatal_status(b32 status)
 {
         shell_status = status;
@@ -3186,7 +3938,11 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 that at every comma.
         */
         {
-                positive plain = string_span_without_set(pattern, "*?[\\");
+                //      A parenthesis is in here for the head of an
+                //      extended group. With the option off it is an ordinary
+                //      byte and the slower path finds the same bytes; with it
+                //      on, a literal search would find nothing at all.
+                positive plain = string_span_without_set(pattern, "*?[\\(");
 
                 if (!pattern[plain])
                 {
@@ -3469,6 +4225,306 @@ static fn expand_case_change(string_address name, string_address pattern_text,
                 expand_text[start + at] =
                     upper ? byte_to_upper(value) : byte_to_lower(value);
         }
+}
+
+/*
+        ${name@X}: the value put through one named transformation.
+
+        Q gives back bytes the shell would read as this same value, E reads
+        the backslash escapes in it as $'...' would, and U u and L are the
+        three case changes. What they have in common is that the value is
+        lifted out of the expansion buffer first: two of them change its
+        length, and every one of them is easier to write against a string
+        than against the buffer it will be written back into.
+*/
+
+// A byte a single-quoted run cannot carry, which is what decides between the
+// two forms Q may answer with.
+static CONST bool transform_awkward(p8 value)
+{
+        return value < ' ' || value == 127;
+}
+
+// The escape $'...' spells this byte with, or nothing when the byte stands
+// for itself. Bash writes the seven it has names for and octal for the rest.
+static CONST p8 transform_named(p8 value)
+{
+        switch (value)
+        {
+        case 7: return 'a';
+        case 8: return 'b';
+        case 27: return 'E';
+        case 12: return 'f';
+        case '\n': return 'n';
+        case '\r': return 'r';
+        case '\t': return 't';
+        case 11: return 'v';
+        case '\\': return '\\';
+        case '\'': return '\'';
+        }
+
+        return 0;
+}
+
+/*
+        The value as bytes the shell would read back as itself.
+
+        A single-quoted run holds anything but a quote, so that is the answer
+        wherever it can be: 'a b' reads back as a b. A value holding a
+        control byte cannot be written that way at all, so it goes out as
+        $'...' with the escapes -- which is the only form that survives being
+        pasted back into a script.
+*/
+static fn transform_quoted(string_address value, positive length, p8 mark)
+{
+        positive at;
+        bool awkward = false;
+
+        for (at = 0; at < length; at++)
+                if (transform_awkward(value[at]))
+                        awkward = true;
+
+        if (!awkward)
+        {
+                expand_push('\'', mark);
+
+                for (at = 0; at < length; at++)
+                {
+                        // A quote cannot appear inside a quoted run, so the
+                        // run is closed, the quote written escaped, and a
+                        // fresh run opened behind it.
+                        if (value[at] == '\'')
+                        {
+                                expand_push_run((string_address) "'\\''", 4,
+                                                mark);
+                                continue;
+                        }
+
+                        expand_push(value[at], mark);
+                }
+
+                expand_push('\'', mark);
+
+                return;
+        }
+
+        expand_push_run((string_address) "$'", 2, mark);
+
+        for (at = 0; at < length; at++)
+        {
+                p8 named = transform_named(value[at]);
+                p8 written[8];
+                positive shown;
+
+                if (named)
+                {
+                        expand_push('\\', mark);
+                        expand_push(named, mark);
+                        continue;
+                }
+
+                if (!transform_awkward(value[at]))
+                {
+                        expand_push(value[at], mark);
+                        continue;
+                }
+
+                //      Three octal digits behind a backslash, which is
+                //      what $'...' reads back and the only spelling every
+                //      byte with no name of its own has.
+                written[0] = '\\';
+                written[1] = (p8)('0' + ((value[at] >> 6) & 7));
+                written[2] = (p8)('0' + ((value[at] >> 3) & 7));
+                written[3] = (p8)('0' + (value[at] & 7));
+                shown = 4;
+                expand_push_run(written, shown, mark);
+        }
+
+        expand_push('\'', mark);
+}
+
+// The value with its backslash escapes read, which is what $'...' does to
+// the bytes it holds.
+static fn transform_escaped(string_address value, positive length, p8 mark)
+{
+        positive at = 0;
+
+        while (at < length)
+        {
+                positive used;
+                positive number;
+                p8 seen = value[at];
+                p8 escaped;
+
+                if (seen != '\\' || at + 1 >= length)
+                {
+                        expand_push(seen, mark);
+                        at++;
+                        continue;
+                }
+
+                seen = value[++at];
+
+                if (seen >= '0' && seen <= '7')
+                {
+                        number = string_digits_octal_escape_max(value + at, 3,
+                                                                address_of used);
+                        at += used;
+                        expand_push((p8)number, mark);
+                        continue;
+                }
+
+                if (seen == 'x')
+                {
+                        number = string_digits_hexadecimal_escape_max(
+                            value + at + 1, 2, address_of used);
+
+                        if (!used)
+                        {
+                                expand_push('\\', mark);
+                                expand_push(seen, mark);
+                                at++;
+                                continue;
+                        }
+
+                        at += used + 1;
+                        expand_push((p8)number, mark);
+                        continue;
+                }
+
+                if (seen == 'c' && at + 1 < length)
+                {
+                        p8 control = value[at + 1];
+
+                        expand_push(control == '?' ? 127 : control & 31, mark);
+                        at += 2;
+                        continue;
+                }
+
+                at++;
+                escaped = byte_simple_escape(seen);
+
+                if (seen == 'e' || seen == 'E')
+                        expand_push(27, mark);
+                else if (seen == '?')
+                        expand_push('?', mark);
+                else if (escaped)
+                        expand_push(escaped, mark);
+                else if (seen == '\\' || seen == '\'' || seen == '"')
+                        expand_push(seen, mark);
+                else
+                {
+                        expand_push('\\', mark);
+                        expand_push(seen, mark);
+                }
+        }
+}
+
+/*
+        The attribute letters a name carries, in the order Bash writes them.
+
+        Not the order they may be given in: this is a listing and a listing
+        has to read the same from both shells. An ordinary name carries none
+        of them and answers with nothing at all.
+*/
+static COLD fn transform_attributes(string_address name, p8 mark)
+{
+        positive length = string_length(name);
+        p8 attributes = shell_variable_attributes((const_string)name, length);
+        static const p8 letters[] = {'a', 'A', 'i', 'n', 'l', 'u'};
+        static const p8 bits[] = {SHELL_ARRAY_INDEXED, SHELL_ARRAY_ASSOCIATIVE,
+                                  SHELL_ARRAY_INTEGER, SHELL_ARRAY_NAMEREF,
+                                  SHELL_ARRAY_LOWER, SHELL_ARRAY_UPPER};
+
+        for (positive at = 0; at < 4; at++)
+                if (attributes & bits[at])
+                        expand_push(letters[at], mark);
+
+        if (env_readonly((const_string)name))
+                expand_push('r', mark);
+
+        if (shell_variable_exported((const_string)name, length))
+                expand_push('x', mark);
+
+        for (positive at = 4; at < array_count(letters); at++)
+                if (attributes & bits[at])
+                        expand_push(letters[at], mark);
+}
+
+static COLD fn expand_transform(string_address name, string_address word,
+                                bool quoted, b32 parameter_mode)
+{
+        positive start = expand_length;
+        p8 which = string_get(word);
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 scratch[32];
+        bool present = true;
+        positive length;
+        p8 address_to held;
+
+        // The letters are the name's own and have nothing to do with what
+        // it holds, so the value is never asked for.
+        if (which == 'a')
+        {
+                transform_attributes(name, mark);
+                return;
+        }
+
+        //      Asked before the value is pushed, because a name that is unset
+        //      and a name holding nothing push the same nothing and Q tells
+        //      them apart: one is no bytes at all and the other is a pair of
+        //      quotes with nothing between them.
+        if (which == 'Q')
+                expand_value_of(name, scratch, address_of present, null);
+
+        expand_push_parameter_as(name, quoted, parameter_mode);
+
+        if (expand_failed)
+                return;
+
+        length = expand_length - start;
+
+        //      The three case changes need no copy: the bytes are already
+        //      where they belong and only their case is wrong.
+        if (which == 'U' || which == 'L')
+        {
+                if (which == 'U')
+                        memory_to_upper_ascii(expand_text + start, length);
+                else
+                        memory_to_lower_ascii(expand_text + start, length);
+
+                return;
+        }
+
+        if (which == 'u')
+        {
+                if (length)
+                        expand_text[start] = byte_to_upper(expand_text[start]);
+
+                return;
+        }
+
+        //      Q and E both answer with a different number of bytes than they
+        //      were given, so the value comes out of the buffer before
+        //      anything is written back into it.
+        held = shell_store_take(address_of expand_store, length + 1);
+
+        if (!held)
+        {
+                expand_fail_state();
+                expand_length = start;
+                return;
+        }
+
+        memory_copy_end(held, expand_text + start, length);
+        expand_length = start;
+
+        //      Nothing is nothing: an unset name has no bytes to quote, and
+        //      Bash writes none rather than a pair of empty quotes.
+        if (which == 'Q' && present)
+                transform_quoted(held, length, mark);
+        else if (which == 'E')
+                transform_escaped(held, length, mark);
 }
 
 /* Bash ${!prefix@} is a field list; ${!prefix*} is the same sorted names
@@ -3997,6 +5053,8 @@ static COLD fn expand_array_each(string_address name, positive length, p8 form,
                 else if (operation == '^' || operation == ',')
                         expand_case_change(element, word, quoted,
                                            operation == '^', doubled, 0);
+                else if (operation == '@')
+                        expand_transform(element, word, quoted, 0);
                 else
                 {
                         string_address pattern;
@@ -4059,7 +5117,7 @@ static COLD fn expand_array_form(string_address name, positive length,
         if (operation == ':')
                 expand_array_slice(name, length, form, word, quoted);
         else if (operation == '#' || operation == '%' || operation == '/' ||
-                 operation == '^' || operation == ',')
+                 operation == '^' || operation == ',' || operation == '@')
                 expand_array_each(name, length, form, operation, doubled,
                                   word, quoted);
         else if (operation == '-' && !held)
@@ -4275,6 +5333,15 @@ static string_address expand_braced(string_address step, bool quoted)
                         doubled = true;
                         step++;
                 }
+        }
+        //      ${v@X}: one letter naming a transformation of the value. It
+        //      takes no doubled form and no pattern -- the letter is the
+        //      whole of the word behind it.
+        else if (!colon && seen == '@' && string_get(step + 1) &&
+                 step + 1 != close)
+        {
+                operation = seen;
+                step++;
         }
 
         /*
@@ -4496,6 +5563,26 @@ static string_address expand_braced(string_address step, bool quoted)
         {
                 expand_case_change(name, word, quoted, operation == '^',
                                    doubled, parameter_mode);
+                return close + 1;
+        }
+
+        if (operation == '@')
+        {
+                p8 which = string_get(word);
+
+                // One letter and one of the five, or the whole substitution
+                // is a spelling nobody wrote on purpose.
+                if (!which || string_get(word + 1) ||
+                    !string_first_of((string_address) "QEULua", which))
+                {
+                        string_format(expand_complain,
+                                      "%s: bad substitution\n", name);
+                        expand_fatal_mode(parameter_mode);
+
+                        return close + 1;
+                }
+
+                expand_transform(name, word, quoted, parameter_mode);
                 return close + 1;
         }
 
@@ -4733,8 +5820,13 @@ static string_address expand_dollar_single(string_address step)
                         at++;
                         p8 escaped = byte_simple_escape(value);
 
-                        if (value == 'e')
+                        // Escape and question mark are Bash's own two, kept
+                        // out of the shared table because printf, awk and tr
+                        // read that table and none of the three has them.
+                        if (value == 'e' || value == 'E')
                                 value = 27;
+                        else if (value == '?')
+                                value = '?';
                         else if (escaped)
                                 value = escaped;
                         else if (value != '\\' && value != '\'' && value != '"')
@@ -5009,13 +6101,39 @@ static fn expand_into(string_address text, bool quoted, p8 plain,
 
                 if (seen == '$')
                 {
-                        step = expand_dollar(step, quoted);
+                        /*
+                                $"..." asks for the string in the caller's
+                                language, and there is one language here, so
+                                the answer is the string itself -- which is
+                                what Bash answers too when its catalogue has
+                                no entry for the string.
+
+                                Asked where a quote could begin, exactly as
+                                $'...' is. Inside a double quote the dollar is
+                                an ordinary byte and the quote behind it is
+                                the one that closes the run, so "$" must not
+                                open another.
+                        */
+                        if (!quoted && string_is(step + 1, '"'))
+                                step = expand_double(step + 1);
+                        else
+                                step = expand_dollar(step, quoted);
+
                         continue;
                 }
 
                 if (seen == '`')
                 {
                         step = expand_backtick(step, quoted);
+                        continue;
+                }
+
+                //      <(command) and >(command), which are a word in a
+                //      double quote and a path outside one.
+                if (!quoted && (seen == '<' || seen == '>') &&
+                    string_is(step + 1, '('))
+                {
+                        step = expand_process(step, plain);
                         continue;
                 }
 
@@ -5120,6 +6238,13 @@ static PURE bool glob_magic(string_address pattern)
 
                 if (string_is(pattern, '*') || string_is(pattern, '?') ||
                     string_is(pattern, '['))
+                        return true;
+
+                //      + @ and ! are ordinary bytes on their own and the head
+                //      of a group in front of a parenthesis, which is a
+                //      pattern to look on disk with like any other.
+                if (shell_extglob_on && string_is(pattern + 1, '(') &&
+                    glob_group_head(string_get(pattern)))
                         return true;
 
                 pattern++;

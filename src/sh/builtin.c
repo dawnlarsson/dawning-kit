@@ -2439,7 +2439,6 @@ COLD bool shell_dynamic_wanted(const_string name, positive length)
         return true;
 }
 
-positive shell_line_number;
 positive shell_subshell_depth;
 
 COLD string_address shell_dynamic_value(const_string name, positive length,
@@ -2488,8 +2487,12 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                         return shell_dynamic_number(shell_random_next(),
                                                     value_length);
 
+                /* The line the running command was written on, which the
+                   executor keeps, and not the line the reader has reached:
+                   inside a function body those are different, and bash
+                   answers with the first. */
                 if (!memory_compare((address_any)text, "LINENO", 6))
-                        return shell_dynamic_number(shell_line_number,
+                        return shell_dynamic_number(shell_line_now(),
                                                     value_length);
 
                 if (!memory_compare((address_any)text, "OSTYPE", 6))
@@ -10344,6 +10347,11 @@ fn shell_disown(writer write, string_address input);
 fn shell_suspend(writer write, string_address input);
 fn shell_kill(writer write, string_address input);
 fn job_wait(writer write, string_address input);
+// The executor keeps the line a command was written on; $LINENO reads it.
+PURE positive shell_line_now();
+
+// caller reads the call frames, which live beside the executor.
+fn shell_caller(writer write, string_address input);
 fn shell_help(writer write, string_address input);
 COLD fn shell_bind(writer write, string_address input);
 COLD fn shell_builtin_run(writer write, string_address input);
@@ -10399,6 +10407,7 @@ shell_command shell_commands[] = {
     {"bg", shell_bg},
     {"bind", shell_bind},
     {"blkid", shell_blkid},
+    {"caller", shell_caller},
     {"builtin", shell_builtin_run},
     {"compgen", shell_compgen},
     {"complete", shell_complete},

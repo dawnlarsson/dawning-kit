@@ -619,13 +619,18 @@ answer 'modulo by zero' 'echo $((5 % 0)); echo after'
 answer 'assigning zero' 'x=1; echo $((x /= 0)); echo after'
 answer 'missing right'  'echo $((1 + )); echo after'
 answer 'missing left'   'echo $(( * 3 )); echo after'
-answer 'no such power'  'echo $((2 ** 3)); echo after'
-answer 'a word is not'  'x=bar; echo $((x + 1)); echo after'
+#       A value that is not a number is an expression in Bash and nothing at
+#       all in dash, so an unset name reached through another name is zero
+#       here and a refusal there.
+differs 'a word is a name' '1|after|' 0 'x=bar; echo $((x + 1)); echo after'
 answer 'half a word'    'x=12ab; echo $((x)); echo after'
 answer 'empty expression' 'echo $(( ))'
 answer 'comma operator' 'echo $((1,2))'
 answer 'bad octal'      'echo $((08))'
-answer 'post increment' 'x=1; echo $((x++)) $x'
+#       Two Bash forms dash has in no arithmetic context at all, so the only
+#       answer that can be given here is an extension of dash's grammar.
+differs 'the power'     '8|after|' 0 'echo $((2 ** 3)); echo after'
+differs 'post increment' '1 2|' 0 'x=1; echo $((x++)) $x'
 #       The smallest number there is has no positive opposite, and the
 #       machine faults rather than saying so: this used to kill the shell.
 answer 'the least over minus one' \

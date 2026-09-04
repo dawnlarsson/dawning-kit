@@ -1345,6 +1345,372 @@ bash_answer 'append special persists' 'x=old; x+=new export y=1; printf "[%s]\n"
 bash_answer 'append function local' 'x=old; f() { printf "[%s]\n" "$x"; }; x+=new f; printf "[%s]\n" "$x"'
 bash_answer 'append long' "x=$long_word; x+=\$x; echo \${#x}"
 
+group caller
+#       What caller answers is a line and a source. This shell's source name
+#       is the script's; Bash reading a script on standard input calls it
+#       NULL or names its own binary, so every row here takes the line and
+#       leaves the name to the shell that wrote it.
+bash_answer 'caller line' 'f() { caller | cut -d" " -f1; }
+echo one
+f'
+bash_answer 'caller line inside a function' 'f() { caller | cut -d" " -f1; }
+g() { f; }
+echo two
+g'
+bash_answer 'caller numbered' 'h() { caller 0 | cut -d" " -f1,2; }
+i() { h; }
+echo three
+i'
+#       Outside a function there is no frame to describe.
+bash_answer 'caller outside a function' 'caller; echo "st:$?"'
+bash_answer 'caller numbered outside a function' 'caller 0; echo "st:$?"'
+bash_answer 'caller past the frames' 'f() { caller 9; echo "st:$?"; }; f'
+bash_answer 'caller a bad number' 'f() { caller nope 2>/dev/null; echo "st:$?"; }; f'
+#       A body written on one line is one line, and a body written over
+#       several is the line the call itself stands on.
+bash_answer 'caller a many line body' 'f() { caller | cut -d" " -f1; }
+g() {
+        echo before
+        f
+}
+g'
+bash_answer 'caller in a loop' 'f() { caller | cut -d" " -f1; }
+g() {
+        for i in 1 2; do
+                f
+        done
+}
+g'
+
+group transform operators
+#       ${v@Q} gives back bytes the shell would read as this same value, so
+#       everything here is checked through printf rather than echo: this
+#       shell's echo reads escapes and Bash's does not, which would compare
+#       the two echoes rather than the transformation.
+bash_answer 'transform quote' 'v="a b"; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote plain' 'v=plain; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote a quote' 'v="a'"'"'b"; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote a backslash' 'v='"'"'a\b'"'"'; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote a double quote' 'v='"'"'a"b'"'"'; printf "%s\n" "${v@Q}"'
+#       A value holding a control byte cannot go inside single quotes at all,
+#       so it comes out in the only form that reads back: $'...'.
+bash_answer 'transform quote control bytes' 'v=$'"'"'a\tb\nc'"'"'; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote unnamed bytes' 'v=$'"'"'\001\002\177'"'"'; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote the bell' 'v=$'"'"'x\ay'"'"'; printf "%s\n" "${v@Q}"'
+bash_answer 'transform quote empty' 'v=; printf "[%s]\n" "${v@Q}"'
+bash_answer 'transform quote unset' 'unset v; printf "[%s]\n" "${v@Q}"'
+bash_answer 'transform quote an array' 'a=(x "y z"); printf "%s\n" "${a[@]@Q}"'
+#       What Q writes is what the shell reads: the round trip is the point.
+bash_answer 'transform quote reads back' 'v="a b"; eval "x=${v@Q}"; printf "[%s]\n" "$x"'
+bash_answer 'transform quote reads control back' \
+        'v=$'"'"'a\tb'"'"'; eval "x=${v@Q}"; printf "%s\n" "$x" | cat -A'
+#       E reads the escapes in the value exactly as $'...' reads its own.
+bash_answer 'transform escapes' 'v='"'"'a\tb\x41\e[1m'"'"'; printf "%s\n" "${v@E}" | cat -A'
+bash_answer 'transform escapes unknown' 'v='"'"'\z'"'"'; printf "%s\n" "${v@E}"'
+bash_answer 'transform escapes newline' 'v='"'"'a\nb'"'"'; printf "%s\n" "${v@E}" | cat -A'
+bash_answer 'transform case' 'v=abc; printf "%s %s %s\n" "${v@U}" "${v@u}" "${v@L}"'
+bash_answer 'transform case back' 'v=ABC; printf "%s %s\n" "${v@L}" "${v@u}"'
+bash_answer 'transform case empty' 'v=; printf "[%s][%s][%s]\n" "${v@U}" "${v@u}" "${v@L}"'
+bash_answer 'transform case an array' 'a=(ab cd); printf "%s\n" "${a[@]@U}"'
+#       A letter nobody knows and no letter at all are both refusals, and a
+#       refusal in a substitution ends the shell that met it -- so each is
+#       asked inside one and what is compared is that nothing came out and
+#       the shell went on.
+#       The letters a name carries, which have nothing to do with what it
+#       holds, in the order Bash writes a listing in.
+bash_answer 'transform attributes none' 'v=x; printf "[%s]\n" "${v@a}"'
+bash_answer 'transform attributes export' 'export v=1; printf "[%s]\n" "${v@a}"'
+bash_answer 'transform attributes integer' 'declare -i n=5; printf "[%s]\n" "${n@a}"'
+bash_answer 'transform attributes readonly' 'declare -ri r=2; printf "[%s]\n" "${r@a}"'
+bash_answer 'transform attributes arrays' \
+        'declare -A m=([k]=v); declare -a arr=(a b); printf "[%s][%s]\n" "${m@a}" "${arr@a}"'
+bash_answer 'transform attributes case' \
+        'declare -l L=x; declare -u U=x; printf "[%s][%s]\n" "${L@a}" "${U@a}"'
+bash_answer 'transform attributes ordered' 'declare -x -i w=2; printf "[%s]\n" "${w@a}"'
+bash_answer 'transform attributes unset' 'unset z; printf "[%s]\n" "${z@a}"'
+bash_answer 'transform unknown letter' \
+        'v=x; if w=$(printf "%s" "${v@Z}" 2>/dev/null); then echo "took:[$w]"; else echo refused; fi; echo alive'
+bash_answer 'transform no letter' \
+        'v=x; if w=$(printf "%s" "${v@}" 2>/dev/null); then echo "took:[$w]"; else echo refused; fi; echo alive'
+
+group coproc
+#       A pipe each way and a command running alongside the shell. The two
+#       descriptors are the shell's own numbers, so every row that shows one
+#       puts sed in front of it.
+bash_answer 'coproc named' \
+        'coproc C { read x; echo got $x; }; echo hi >&${C[1]}; read y <&${C[0]}; echo $y'
+bash_answer 'coproc default name' \
+        'coproc { read x; echo got $x; }; echo hi >&${COPROC[1]}; read y <&${COPROC[0]}; echo $y'
+bash_answer 'coproc simple command' \
+        'coproc tr a-z A-Z; echo hi >&${COPROC[1]}; read y <&${COPROC[0]}; echo $y'
+bash_answer 'coproc publishes an array' \
+        'coproc C { echo x; }; echo "${#C[@]}"; declare -p C | sed "s/[0-9][0-9]*/N/g"'
+bash_answer 'coproc publishes a pid' \
+        'coproc C { echo x; }; echo "[${C_PID:-none}]" | sed "s/[0-9][0-9]*/N/"'
+bash_answer 'coproc default pid' \
+        'coproc { echo x; }; echo "[${COPROC_PID:-none}]" | sed "s/[0-9][0-9]*/N/"'
+bash_answer 'coproc is waited for' \
+        'coproc C { echo x; }; read v <&${C[0]}; echo "$v"; wait; echo "wait:$?"'
+bash_answer 'coproc status' 'coproc C { exit 3; }; wait "$C_PID"; echo "st:$?"'
+bash_answer 'coproc many lines' \
+        'coproc C { printf "l1\nl2\n"; }; while read -r l <&${C[0]}; do echo "[$l]"; done'
+bash_answer 'coproc in a function' \
+        'f() { coproc C { echo inside; }; read v <&${C[0]}; echo "$v"; }; f'
+bash_answer 'coproc redirected' 'coproc C { echo x >&2; } 2>/dev/null; echo "st:$?"'
+#       coproc NAME is a name only when a compound command follows it, so
+#       "coproc C" alone runs C under the default name.
+bash_answer 'coproc name is a command' 'coproc C; echo "st:$?"'
+bash_answer 'coproc twice' 'coproc C { echo a; }; coproc D { echo b; }; read p <&${C[0]}; read q <&${D[0]}; echo "$p$q"'
+bash_answer 'coproc with nothing to run' 'coproc; echo "st:$?"'
+bash_answer 'coproc never closed' 'coproc C { echo x'
+
+group extglob
+#       ?( ) *( ) +( ) @( ) and !( ) are read inside [[ ]] whether or not
+#       shopt has been asked for them, because what is in there is matched
+#       when the command runs and not when the line is parsed. Everywhere
+#       else they wait on the option, which is why the rows below are the
+#       always-on half of the family and the refusals are the other.
+bash_answer 'extglob one or more' '[[ aa == +(a) ]]; echo $?; [[ ac == a+(b)c ]]; echo $?'
+bash_answer 'extglob zero or more' '[[ abc == a*(b)c ]]; echo $?; [[ ac == a*(b)c ]]; echo $?'
+bash_answer 'extglob zero or one' '[[ ab == a?(b) ]]; echo $?; [[ a == a?(b) ]]; echo $?'
+bash_answer 'extglob exactly one' '[[ axc == a@(x|y)c ]]; echo $?; [[ azc == a@(x|y)c ]]; echo $?'
+bash_answer 'extglob anything but' '[[ b == !(a) ]]; echo $?; [[ a == !(a) ]]; echo $?'
+bash_answer 'extglob anything but a pattern' '[[ foo.c == !(*.h) ]]; echo $?; [[ foo.h == !(*.h) ]]; echo $?'
+bash_answer 'extglob alternatives' '[[ aa == @(a|aa) ]]; echo $?; [[ ab == !(a|b) ]]; echo $?; [[ a == !(a|b) ]]; echo $?'
+bash_answer 'extglob in the middle' '[[ abc == a!(b)c ]]; echo $?; [[ axc == a!(b)c ]]; echo $?'
+bash_answer 'extglob one after another' '[[ abc == @(a)@(b)@(c) ]]; echo $?'
+bash_answer 'extglob repeats a group' '[[ abab == +(ab) ]]; echo $?; [[ aXbXc == *(a|X|b|c) ]]; echo $?'
+bash_answer 'extglob empty group' '[[ "" == *() ]]; echo $?; [[ x == ?(x) ]]; echo $?'
+bash_answer 'extglob before a bracket' '[[ ab == @(a|b)[b] ]]; echo $?'
+bash_answer 'extglob nested' '[[ abc == @(a@(b))c ]]; echo $?'
+#       With the option off a group is a syntax error where a pattern is
+#       parsed, and ordinary bytes where one is not.
+bash_answer 'extglob off in a case' 'case aab in +(a)b) echo yes;; esac'
+bash_answer 'extglob off in a glob' 'echo @(a|b)'
+bash_answer 'extglob off in a replacement' 'v=aXbXc; echo "${v//@(X)/-}"'
+bash_answer 'extglob off in a trim' 'v=aaab; echo "${v##+(a)}"'
+bash_answer 'extglob off quoted' 'echo "@(a)" '"'"'@(b)'"'"''
+#       A group that never closes is a head and a parenthesis, and both are
+#       ordinary bytes when nothing closes them.
+bash_answer 'extglob never closed' 'v=aa; echo "${v##+(a}"; echo $?'
+bash_answer 'extglob head quoted away' '[[ "+(a" == +\(a ]]; echo $?; [[ aa == "+(a" ]]; echo $?'
+bash_answer 'extglob head alone' '[[ a+ == a+ ]]; echo $?; [[ "a(" == "a(" ]]; echo $?'
+
+group process substitution
+#       The word becomes a path over a pipe and the command runs at the far
+#       end of it, so a program that only knows how to open files reads from
+#       a command instead. Which number the path carries is the shell's own
+#       business, so every row that shows one puts sed in front of it.
+bash_answer 'process substitution reads' 'cat <(echo x) <(echo y)'
+bash_answer 'process substitution writes' 'echo z > >(cat); sleep 0.1'
+bash_answer 'process substitution in a loop' \
+        'while read l; do echo "[$l]"; done < <(printf "a\nb\n")'
+bash_answer 'process substitution as a redirect' 'wc -l < <(printf "a\nb\nc\n")'
+bash_answer 'process substitution is a path' \
+        'echo <(echo x) | sed "s#/dev/fd/[0-9]*#FD#"'
+bash_answer 'process substitution joins a word' \
+        'echo a<(echo b) | sed "s#/dev/fd/[0-9]*#FD#"'
+bash_answer 'process substitution two paths' \
+        'echo <(echo a) <(echo b) | sed "s#/dev/fd/[0-9]*#FD#g"'
+#       A digit in front of one is a byte of the word and not a descriptor,
+#       which is what tells 2>(x) from 2>file.
+bash_answer 'process substitution after a digit' \
+        'echo 2>(:) | sed "s#/dev/fd/[0-9]*#FD#"'
+bash_answer 'process substitution nested' 'cat <(cat <(echo nested))'
+bash_answer 'process substitution in a substitution' \
+        'x=$(cat <(printf q)); echo "[$x]"'
+bash_answer 'process substitution two commands' \
+        'diff <(printf "a\n") <(printf "a\n"); echo "st:$?"'
+bash_answer 'process substitution into a function' \
+        'f() { cat "$1"; }; f <(echo fn)'
+bash_answer 'process substitution holds blanks' 'cat <( echo spaced )'
+bash_answer 'process substitution in a for list' \
+        'for f in <(echo p) <(echo q); do cat "$f"; done'
+bash_answer 'process substitution in a pipeline' 'cat <(echo a) | cat'
+bash_answer 'process substitution in a condition' \
+        'if cat <(echo cond) >/dev/null; then echo yes; fi'
+bash_answer 'process substitution never opened' ': <(echo x); echo "st:$?"'
+bash_answer 'process substitution keeps the status' \
+        'cat <(echo one) file_does_not_exist 2>/dev/null; echo "st:$?"'
+#       A path handed over must survive whatever the script does with its own
+#       low descriptors, and must be given back when the command is done with
+#       it -- two hundred turns of a loop is two hundred of them otherwise.
+bash_answer 'process substitution keeps out of the way' \
+        'exec 3< /dev/null; cat <(echo keep) <&3; echo "st:$?"'
+bash_answer 'process substitution reading many times' \
+        'i=0; while [ $i -lt 200 ]; do cat <(echo $i) > /dev/null; i=$((i+1)); done; echo done'
+bash_answer 'process substitution writing many times' \
+        'i=0; while [ $i -lt 200 ]; do echo $i > >(cat > /dev/null); i=$((i+1)); done; echo done'
+#       Quoted, it is a word like any other.
+bash_answer 'process substitution quoted' 'echo "<(echo x)"; echo '"'"'<(echo x)'"'"''
+bash_answer 'process substitution never closed' 'cat <(echo x'
+bash_answer 'process substitution nothing inside' 'echo <('
+
+group time
+#       Every number a timing carries moves from run to run, so each row
+#       either asks for no places at all or is put through sed first. What is
+#       being compared is the shape of the answer and where it was written.
+bash_answer 'time keyword' 'TIMEFORMAT=%0R; { time :; } 2>&1'
+bash_answer 'time writes to standard error' 'TIMEFORMAT=%0R; { time :; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time is not in the pipe' 'TIMEFORMAT=%0R; time : 2>/dev/null | wc -l'
+bash_answer 'time default format' \
+        '{ time :; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/" | cat -A'
+bash_answer 'time posix format' '{ time -p :; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/"'
+bash_answer 'time posix ignores the format' \
+        'TIMEFORMAT=%R; { time -p :; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/"'
+bash_answer 'time posix ends its options' \
+        '{ time -- :; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/"'
+#       time with nothing behind it times the null command, which is how a
+#       script asks what the shell has spent so far.
+bash_answer 'time alone' '{ time; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/" | cat -A'
+bash_answer 'time alone posix' '{ time -p; } 2>&1 | sed "s/[0-9][0-9]*\.[0-9][0-9]*/N/"'
+bash_answer 'time alone then more' 'TIMEFORMAT=%0R; { time; echo after; } 2>&1'
+bash_answer 'time places' 'TIMEFORMAT="[%0R][%1R][%2R]"; { time :; } 2>&1 | sed "s/[0-9]/N/g"'
+bash_answer 'time long form' 'TIMEFORMAT="[%lR][%0lU][%2lS]"; { time :; } 2>&1 | sed "s/[0-9]/N/g"'
+bash_answer 'time three clocks' 'TIMEFORMAT="%0R %0U %0S"; { time :; } 2>&1'
+bash_answer 'time percent literal' 'TIMEFORMAT="a%%b"; { time :; } 2>&1'
+bash_answer 'time trailing percent' 'TIMEFORMAT="end%"; { time :; } 2>&1 | cat -A'
+bash_answer 'time format with no directive' 'TIMEFORMAT=x; { time :; } 2>&1 | cat -A'
+#       An empty TIMEFORMAT asks for no timing, which is not the same as
+#       asking for the usual one.
+bash_answer 'time empty format' 'TIMEFORMAT=; { time :; } 2>&1 | wc -c'
+bash_answer 'time bad format character' 'TIMEFORMAT="%x"; { time :; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time bad precision' 'TIMEFORMAT="%12R"; { time :; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time percent takes no precision' 'TIMEFORMAT="%2P"; { time :; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time keeps the status' 'TIMEFORMAT=%0R; { time false; } 2>&1; echo "st:$?"'
+bash_answer 'time inverted' 'TIMEFORMAT=%0R; { ! time :; } 2>&1; echo "st:$?"'
+bash_answer 'time inverts inside' 'TIMEFORMAT=%0R; { time ! :; } 2>&1; echo "st:$?"'
+bash_answer 'time twice times once' 'TIMEFORMAT=%0R; { time time :; } 2>&1'
+bash_answer 'time a pipeline' 'TIMEFORMAT=%0R; { time echo hi | cat; } 2>&1'
+bash_answer 'time a group' 'TIMEFORMAT=%0R; { time { echo a; echo b; }; } 2>&1'
+bash_answer 'time a loop' 'TIMEFORMAT=%0R; { time for i in 1 2; do echo "$i"; done; } 2>&1'
+bash_answer 'time a subshell' 'TIMEFORMAT=%0R; { time (echo s); } 2>&1'
+bash_answer 'time in a function' 'TIMEFORMAT=%0R; f() { time :; }; { f; } 2>&1'
+bash_answer 'time a background command' 'TIMEFORMAT=%0R; { time :& } 2>&1; wait'
+bash_answer 'time an unknown command' 'TIMEFORMAT=%0R; { time nosuchcommand; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time before an and list' 'TIMEFORMAT=%0R; { time && echo after; } 2>/dev/null; echo "st:$?"'
+bash_answer 'time is a word elsewhere' 'echo time; time=5; echo "$time"; for time in a; do echo "$time"; done'
+
+group select
+#       The menu and the prompt go to standard error, so what the body writes
+#       is still the only thing on standard output. Every case here keeps the
+#       two together with 2>&1 so both halves are compared.
+bash_answer 'select menu and choice' \
+        'echo 2 | { select x in a b; do echo "got:$x rep:$REPLY"; break; done; } 2>&1'
+bash_answer 'select single item' \
+        'printf "1\n" | { select x in a; do echo "$x"; break; done; } 2>&1'
+bash_answer 'select holds blanks' \
+        'printf "2\n" | { select x in "a b" c; do echo "[$x]"; break; done; } 2>&1'
+bash_answer 'select out of range' \
+        'printf "9\n1\n" | { select x in a b; do echo "[$x][$REPLY]"; break; done; } 2>&1'
+bash_answer 'select not a number' \
+        'printf "q\n1\n" | { select x in a b; do echo "[${x-UNSET}]"; break; done; } 2>&1'
+bash_answer 'select signed and spaced' \
+        'printf " +2 \n" | { select x in a b; do echo "[$x][$REPLY]"; break; done; } 2>&1'
+#       An empty answer asks for the menu again and runs nothing.
+bash_answer 'select empty answer' \
+        'printf "\n2\n" | { select x in a b; do echo "$x"; break; done; } 2>&1'
+bash_answer 'select prompt' \
+        'PS3="pick> "; printf "1\n" | { select x in a b; do echo "$x"; break; done; } 2>&1'
+bash_answer 'select every answer' \
+        'printf "1\n2\n" | { select x in a b; do echo "$x"; done; } 2>&1'
+bash_answer 'select end of input' \
+        'printf "" | { select x in a b; do echo "$x"; break; done; } 2>&1; echo "status:$?"'
+bash_answer 'select redirected away' \
+        'printf "1\n" | { select x in a b; do echo "$x"; break; done < /dev/null; } 2>&1; echo "st:$?"'
+bash_answer 'select continues' \
+        'printf "1\n" | { select x in a b; do continue; done; } 2>&1 | head -8'
+bash_answer 'select breaks out' \
+        'printf "1\n1\n" | { while true; do select x in a b; do break 2; done; done; echo out; } 2>&1'
+bash_answer 'select returns' \
+        'f() { select x in a b; do echo "$x"; return 3; done; }; printf "1\n" | f 2>&1; echo "st:$?"'
+bash_answer 'select in a for' \
+        'printf "1\n" | { for i in 1; do select x in a b; do echo "$x"; break; done; done; } 2>&1'
+#       Without in, a select walks the positional parameters, exactly as a
+#       for does.
+bash_answer 'select walks the parameters' \
+        'set -- p q; printf "2\n" | { select x; do echo "[$x]"; break; done; } 2>&1'
+#       No items at all writes no menu, runs no body, and succeeds.
+bash_answer 'select with no items' \
+        'printf "1\n" | { select x in; do echo "$x"; break; done; } 2>&1; echo "status:$?"'
+#       The menu is laid out down the columns and padded with tabs, and a
+#       list that fits on one row is turned on its side.
+bash_answer 'select menu one to a line' \
+        'printf "1\n" | { select x in aaa bbb ccc ddd eee fff; do break; done; } 2>&1 | cat -A'
+bash_answer 'select menu numbers align' \
+        'printf "1\n" | { select x in 1 2 3 4 5 6 7 8 9 10; do break; done; } 2>&1 | cat -A'
+bash_answer 'select menu in columns' \
+        'printf "1\n" | { select x in $(seq 1 30); do break; done; } 2>&1 | cat -A'
+bash_answer 'select menu narrow' \
+        'COLUMNS=20; printf "1\n" | { select x in aaa bbb ccc ddd eee fff; do break; done; } 2>&1 | cat -A'
+bash_answer 'select never closed' 'select x in a; do echo "$x"'
+bash_answer 'select with no name' 'select'
+
+group pipe both streams
+#       |& is 2>&1 | , and Bash adds the merge behind whatever redirections
+#       the command wrote for itself rather than in front of them.
+bash_answer 'pipe both streams' '{ echo o; echo e >&2; } |& cat'
+bash_answer 'pipe both streams ordered' '{ echo o; echo e >&2; } |& sort'
+bash_answer 'pipe both after a redirect' '{ echo o; echo e >&2; } 2>/dev/null |& cat'
+bash_answer 'pipe both before a redirect' '{ echo o; echo e >&2; } |& cat 2>/dev/null'
+bash_answer 'pipe both chained' 'echo a |& cat |& cat'
+bash_answer 'pipe both status' 'false |& true; echo $?'
+bash_answer 'pipe both every status' 'false |& true; echo "${PIPESTATUS[0]}:${PIPESTATUS[1]}"'
+bash_answer 'pipe both inverted' '! echo a |& cat; echo $?'
+bash_answer 'pipe both from a function' 'f() { echo x >&2; }; f |& cat'
+bash_answer 'pipe both groups' '{ echo a; } |& { cat; }'
+bash_answer 'pipe both counts lines' 'ls /nonexistent |& wc -l'
+
+group both streams to a file
+bash_answer 'redirect both' 'p=/tmp/bash-both.$$; { echo o; echo e >&2; } &> "$p"; cat "$p"; rm -f "$p"'
+bash_answer 'append both' 'p=/tmp/bash-both.$$; echo first > "$p"; { echo o; echo e >&2; } &>> "$p"; cat "$p"; rm -f "$p"'
+bash_answer 'append both makes the file' 'p=/tmp/bash-both.$$; rm -f "$p"; : &>> "$p"; echo $?; test -f "$p"; echo $?; rm -f "$p"'
+bash_answer 'force over noclobber' 'p=/tmp/bash-both.$$; echo old > "$p"; set -C; echo new >| "$p"; echo $?; cat "$p"; rm -f "$p"'
+
+group case fall through
+bash_answer 'case fall through' 'case a in a) echo one;& b) echo two;; esac'
+bash_answer 'case fall through chain' 'case a in a) echo one;& b) echo two;& c) echo three;; esac'
+bash_answer 'case fall through to the star' 'case a in a) echo one;& *) echo last;; esac'
+#       The last item of all has nothing to fall into, so ;& there is the
+#       end of the case and not a missing item.
+bash_answer 'case fall through last item' 'case a in a) echo t;& esac'
+bash_answer 'case fall through empty body' 'case a in a) ;& esac; echo $?'
+bash_answer 'case fall through unmatched' 'case c in a) echo one;& b) echo two;; esac; echo $?'
+bash_answer 'case fall through status' 'case a in a) false;& b) true;; esac; echo $?'
+bash_answer 'case fall through alternatives' 'case a in a|b) echo p;& c) echo q;; esac'
+bash_answer 'case fall through in a loop' 'for i in 1 2; do case $i in 1) echo a;& 2) echo b;; esac; done'
+bash_answer 'case tests on' 'case a in a) echo x;;& a) echo y;; esac'
+bash_answer 'case tests on and skips' 'case a in a) echo x;;& b) echo y;; *) echo z;; esac'
+bash_answer 'case tests on twice' 'case ab in a*) echo p;;& *b) echo q;;& zz) echo r;; esac'
+bash_answer 'case tests on last item' 'case a in a) echo one ;;& esac; echo done'
+bash_answer 'case tests on same pattern' 'x=1; case $x in 1) echo one;;& 1) echo again;; esac'
+#       Neither terminator means anything where a case is not being written.
+bash_answer 'fall through outside a case' 'echo a ;& echo b'
+bash_answer 'test on outside a case' 'echo a ;;& echo b'
+
+group locale quoting
+#       $"..." is a double quote that asks for the string in the caller's
+#       language. There is one language here and Bash falls back to the
+#       string itself when its catalogue has no entry, so the two agree.
+bash_answer 'locale quoting' 'echo $"hello"'
+bash_answer 'locale quoting expands' 'x=q; echo $"a $x b" $"$(echo s)"'
+bash_answer 'locale quoting holds blanks' 'IFS=" "; printf "[%s]" $"a  b"; echo'
+bash_answer 'locale quoting joins' 'echo pre$"mid"post'
+bash_answer 'locale quoting assigns' 'v=$"a b"; printf "[%s]\n" "$v"'
+bash_answer 'locale quoting in a case' 'case ab in $"ab") echo yes;; esac'
+#       Inside a double quote the dollar is an ordinary byte and the quote
+#       behind it is the one that closes the run, not the start of another.
+bash_answer 'dollar before a closing quote' 'echo "$"'"'"'x'"'"' "a$"'
+bash_answer 'locale quoting unterminated' 'echo $"a'
+#       Escape and question mark are Bash's two additions to the POSIX list
+#       of what a backslash may carry inside $'...'.
+bash_answer 'dollar quote escape byte' \
+        'printf "%s" $'\''\E\e'\'' | od -An -tu1'
+bash_answer 'dollar quote question mark' \
+        'printf "%s" $'\''\?'\'' | od -An -tu1'
+bash_answer 'dollar quote whole list' \
+        'printf "%s" $'\''\a\b\e\E\f\n\r\t\v\101\x41\cA'\'' | od -An -tu1'
+
 group arithmetic
 bash_answer 'arithmetic command true' '((1)); echo $?'
 bash_answer 'arithmetic command false' '((0)); echo $?'
@@ -1363,6 +1729,61 @@ bash_answer 'arithmetic readonly' 'readonly x=1; ((x=2)); echo "$x:$?"'
 bash_answer 'arithmetic errexit' 'set -e; ((0)); echo after'
 bash_answer 'arithmetic syntax error' '((1+)); echo after'
 bash_answer 'arithmetic never closed' '((1'
+
+group arithmetic operators
+bash_answer 'arithmetic power' 'echo $((2 ** 10)) $((2 ** 0)) $((0 ** 0))'
+#       The power leans right and its base is a whole unary expression, so
+#       -2 ** 2 is the square of minus two and not the negative of a square.
+bash_answer 'arithmetic power leans right' 'echo $((3 ** 2 ** 2)) $((2 ** 3 ** 2))'
+bash_answer 'arithmetic power under unary' 'echo $((-2 ** 2)) $((-2 ** 3)) $((~2 ** 2))'
+bash_answer 'arithmetic power wraps' 'echo $((2 ** 62)) $((2 ** 63)) $((2 ** 64))'
+bash_answer 'arithmetic power in a product' 'echo $((3 * 2 ** 3)) $((2 ** 3 * 3))'
+bash_answer 'arithmetic bases' \
+        'echo $((2#1010)) $((8#17)) $((16#ff)) $((10#08)) $((36#z)) $((36#Z))'
+#       Only past thirty-six is there room for both cases, so what a letter
+#       is worth depends on the base it is written in.
+bash_answer 'arithmetic wide bases' 'echo $((62#Z)) $((64#zZ@_)) $((64#_))'
+bash_answer 'arithmetic base and octal' 'echo $((10#010)) $((010)) $((0x10))'
+bash_answer 'arithmetic ternary' 'echo $((1 ? 2 : 3)) $((0 ? 2 : 3)) $((1 ? 0 ? 4 : 5 : 6))'
+bash_answer 'arithmetic prefix and postfix' \
+        'x=5; echo $((x--)) $((--x)) $((++x)) $((x++)) $x'
+bash_answer 'arithmetic every assignment' \
+        'x=7; echo $((x+=1)) $((x-=2)) $((x*=3)) $((x/=2)) $((x%=5)) $((x<<=4)) $((x>>=2)) $((x&=6)) $((x|=9)) $((x^=3)) $x'
+bash_answer 'arithmetic comma in a command' 'x=1; ((x+=2, x<<=1)); echo $x $((x++)) $x'
+bash_answer 'arithmetic unary' 'echo $((!0)) $((!5)) $((~0)) $((-3)) $((+3))'
+bash_answer 'arithmetic precedence' \
+        'echo $((2 + 3 * 4)) $((1 | 2 ^ 3 & 6)) $((1 << 2 + 1)) $((2 > 1 == 1))'
+bash_answer 'arithmetic unset is zero' 'unset nope; echo $((nope)) $((nope + 1))'
+bash_answer 'arithmetic empty is zero' 'e=; echo $((e)) $((e + 1))'
+bash_answer 'arithmetic names go round again' 'a=b; b=c; c=7; echo $((a))'
+bash_answer 'arithmetic a name holds an expression' 'x="1 + 2"; y="2 ** 3"; echo $((x)) $((y)) $((x * 2))'
+bash_answer 'arithmetic a name holds a name' 'n=3; m=n; echo $((m + 1))'
+bash_answer 'arithmetic a name holds nothing' 'x=y; y=; echo $((x)) $((x + 1))'
+bash_answer 'arithmetic name cycle refused' \
+        'a=b; b=a; if v=$(echo $((a)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic half a word refused' \
+        'x=12ab; if v=$(echo $((x)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'let shares the evaluator' \
+        'let x=2**10 y=64#z z=x/2; echo $x $y $z'
+#       Every refusal below ends the shell that met it, so each is asked
+#       inside a substitution: what is compared is that the expansion gave
+#       nothing, that the failure was visible, and that the shell went on.
+bash_answer 'arithmetic negative exponent refused' \
+        'if v=$(echo $((2 ** -1)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic empty ternary arm refused' \
+        'if v=$(echo $((1 ? : 2)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic base too large refused' \
+        'if v=$(echo $((99#1)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic base too small refused' \
+        'if v=$(echo $((1#0)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic digit past the base refused' \
+        'if v=$(echo $((2#2)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic base with no digits refused' \
+        'if v=$(echo $((10#-5)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic division by zero refused' \
+        'if v=$(echo $((1/0)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
+bash_answer 'arithmetic missing operand refused' \
+        'if v=$(echo $((1+)) 2>/dev/null); then echo "took:[$v]"; else echo refused; fi; echo alive'
 bash_answer 'c for loop' 'for ((i=0;i<3;i++)); do echo "$i"; done'
 bash_answer 'c for descending' 'for ((i=3;i>0;i-=2)); do echo "$i"; done'
 bash_answer 'c for empty parts' 'i=0; for ((;;)); do echo "$i"; ((++i==2)) && break; done'
@@ -1573,7 +1994,7 @@ answer 'case empty item' 'false; case a in a) ;; esac; echo $?'
 
 group interactive-fatal
 interactive_fatal 'unsupported transform' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${x@Q}"; echo SAME-LINE'
+        'echo RAN-BAD "${x@Z}"; echo SAME-LINE'
 interactive_fatal 'invalid indirect' 'invalid variable name' 'x=bad-name' \
         'echo RAN-BAD "${!x}"; echo SAME-LINE' abort : '' 1
 interactive_fatal 'parameter required' 'x: boom' 'unset x' \
@@ -1581,24 +2002,24 @@ interactive_fatal 'parameter required' 'x: boom' 'unset x' \
 interactive_fatal 'bad arithmetic' 'arithmetic: 1/0' ':' \
         'echo RAN-BAD "$((1/0))"; echo SAME-LINE'
 interactive_fatal 'redirect expansion' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD >"${x@Q}"; echo SAME-LINE'
+        'echo RAN-BAD >"${x@Z}"; echo SAME-LINE'
 interactive_fatal 'for expansion' 'bad substitution' 'x=ab' \
-        'for v in ${x@Q}; do echo RAN-BAD; done; echo SAME-LINE'
+        'for v in ${x@Z}; do echo RAN-BAD; done; echo SAME-LINE'
 interactive_fatal 'case expansion' 'bad substitution' 'x=ab' \
-        'case ${x@Q} in *) echo RAN-BAD;; esac; echo SAME-LINE'
+        'case ${x@Z} in *) echo RAN-BAD;; esac; echo SAME-LINE'
 interactive_fatal 'heredoc expansion' 'bad substitution' 'x=ab' \
         'cat <<EOF; echo SAME-LINE
-${x@Q}
+${x@Z}
 EOF' continue
 interactive_fatal 'command substitution child' 'bad substitution' 'x=ab' \
-        'value=$(echo "${x@Q}"
+        'value=$(echo "${x@Z}"
 echo RAN-BAD >&2
 )'
 interactive_fatal 'nested fatal has no assignment' 'bad substitution' \
-        'unset x; y=ab' 'echo RAN-BAD "${x:=${y@Q}}"; echo SAME-LINE' \
+        'unset x; y=ab' 'echo RAN-BAD "${x:=${y@Z}}"; echo SAME-LINE' \
         abort 'echo X:${x+set}:${x-UNSET}' 'X::UNSET'
 interactive_fatal 'pipeline child expansion' 'bad substitution' 'x=ab' \
-        'echo RAN-BAD "${x@Q}" | cat; echo SAME-LINE' continue
+        'echo RAN-BAD "${x@Z}" | cat; echo SAME-LINE' continue
 interactive_fatal 'pipeline child redirect' 'x: boom' 'unset x' \
         'echo RAN-BAD >"${x:?boom}" | cat; echo SAME-LINE' continue
 interactive_fatal_trap
@@ -1618,7 +2039,7 @@ echo FIRST:$?
 echo X:${x+set}:${x-UNSET}'
 expected 'nested fatal isolated' 'FIRST:2|X::UNSET|AFTER|' 0 'unset x; y=ab
 cat <<EOF
-${x:=${y@Q}}
+${x:=${y@Z}}
 EOF
 echo FIRST:$?
 echo X:${x+set}:${x-UNSET}
@@ -2519,8 +2940,10 @@ answer 'large exit wraps' 'exit 999'
 group arithmetic
 answer 'empty arithmetic rejected' 'echo $(( ))'
 answer 'comma rejected' 'echo $((1,2))'
-answer 'post increment rejected' 'x=1; echo $((x++)) $x'
-answer 'post decrement rejected' 'x=1; echo $((x--)) $x'
+#       Bash has the two forms in every arithmetic context and dash has them
+#       in none, so an extension is the only answer that can be given here.
+differs 'post increment taken' '1 2|' 0 'x=1; echo $((x++)) $x'
+differs 'post decrement taken' '1 0|' 0 'x=1; echo $((x--)) $x'
 answer 'bad octal rejected' 'echo $((08))'
 answer 'bad hex rejected' 'echo $((0x))'
 
@@ -3040,7 +3463,7 @@ bash_shopt_inventory()
 
 group builtin-index
 bash_builtin_inventory supported \
-        . : '[' alias bg break cd command continue declare disown echo eval \
+        . : '[' alias bg break caller cd command continue declare disown echo eval \
         exec exit \
         export false fc fg getopts hash help history jobs kill let local \
         printf pwd read \
@@ -3051,7 +3474,7 @@ bash_builtin_inventory supported \
 bash_builtin_inventory supported \
         bind builtin compgen complete compopt dirs enable popd pushd shopt
 bash_builtin_inventory remaining \
-        caller logout
+        logout
 
 group keyword-index
 bash_keyword_inventory '! false' '!'
@@ -3065,10 +3488,10 @@ bash_keyword_inventory 'function f { :; }; f' function
 bash_keyword_inventory \
         'while false; do :; done; until true; do :; done' until while
 bash_keyword_inventory '{ :; }' '{' '}'
-bash_remaining 'ledger keyword coproc' '' 2 'coproc C { echo x; }'
-bash_remaining 'ledger keyword select' '' 2 \
+bash_answer 'ledger keyword coproc' 'coproc C { echo x; }; read v <&${C[0]}; echo "$v"'
+bash_answer 'ledger keyword select' \
         'select x in a; do echo "$x"; break; done </dev/null'
-bash_remaining 'ledger keyword time' '' 127 'PATH=; time :'
+bash_answer 'ledger keyword time' 'PATH=; TIMEFORMAT=%0R; time :'
 
 group set-option-index
 bash_set_option_inventory supported \
@@ -3533,8 +3956,8 @@ group remaining
 # anything has seen that it is inside brackets.
 bash_remaining 'ledger unquoted subscript with a blank' '[]|' 0 \
         'declare -A m; m[a b]=1; echo "[${m[a b]}]"'
-bash_remaining 'ledger process substitution' '<>|' 0 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
-bash_remaining 'ledger extglob' '' 2 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
+bash_answer 'ledger process substitution' 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
+bash_answer 'ledger extglob' 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
 bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \
         'x=outer; f() { declare -r x=local; printf "%s:<%s>|" "$?" "$x"; }; f; echo "$x"'
 bash_remaining 'ledger readonly dynamic local status' '' 2 \

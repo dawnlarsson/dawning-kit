@@ -44,6 +44,16 @@ static bool exec_tested;
 static bool exec_forked;
 static bool exec_asynchronous;
 
+/*
+        Which line the command now running was written on.
+
+        The reader's own count is where the input has got to, which is not the
+        same thing at all inside a function: a body written twenty lines ago
+        is running now, and both a call frame and $LINENO want the line it was
+        written on rather than the line that called it.
+*/
+static b32 exec_line;
+
 fn shell_trap_exit();
 fn exec_traps();
 fn job_forget();
@@ -56,6 +66,12 @@ fn exec_child_began()
         // One more shell between this process and the one the script began
         // in, which is the whole of what $BASH_SUBSHELL counts.
         shell_subshell_depth++;
+
+        //      What a process substitution left with the shell belongs to the
+        //      shell. A fork inherits the list and none of the children on
+        //      it, so it would ask about processes that are not its own and
+        //      close descriptors somebody else is still handing out.
+        shell_substitutions_forget();
         shell_background_child();
 }
 
@@ -3213,6 +3229,10 @@ static b32 exec_save_count;
 static b32 exec_redirect_status;
 
 #define F_DUPFD_CLOEXEC 1030
+
+// The longest name a coprocess pair may be called, which is what the NAME_PID
+// buffer beside it is sized from.
+#define EXEC_COPROC_NAME 128
 // A save may not occupy a descriptor this command is going to redirect. An
 // open duplication source is occupied already; a closed one is detected later
 // by exec_saved_fd_is, so neither kind needs to force every save above it.
@@ -4091,12 +4111,19 @@ static b32 exec_define(b32 index)
         arrays on the way into every function cost more than the call did
         and a script that never mentions them should not pay for them.
 
-        This shell reads a script a line at a time and keeps no line number
-        as it goes, so BASH_SOURCE names the script and BASH_LINENO answers
-        zero for every frame. That is the honest answer rather than an
-        invented one, and it is the shape a script indexes either way.
+        BASH_LINENO answers where each call was written, which is the line
+        the reader was on when the frame was pushed. BASH_SOURCE names the
+        script, which is the only source this shell has.
 */
-static string_address address_to exec_frame_name;
+// One entry and not two arrays: a call would otherwise ask twice whether
+// there was room, and a call is the thing being counted.
+typedef struct
+{
+        string_address name;
+        positive line;
+} exec_frame;
+
+static exec_frame address_to exec_frames;
 static positive exec_frame_room;
 static positive exec_frame_count;
 static bool exec_frames_published;
@@ -4142,8 +4169,8 @@ static COLD fn exec_frames_publish()
         // pushed in and the order every script that reads them expects.
         for (positive at = 0; at < exec_frame_count; at++)
         {
-                walked[at] = exec_frame_name[exec_frame_count - at - 1];
-                lines[at] = 0;
+                walked[at] = exec_frames[exec_frame_count - at - 1].name;
+                lines[at] = (bipolar)exec_frames[exec_frame_count - at - 1].line;
         }
 
         shell_array_words("FUNCNAME", 8, walked, exec_frame_count);
@@ -4154,6 +4181,78 @@ static COLD fn exec_frames_publish()
 
         shell_array_words("BASH_SOURCE", 11, walked, exec_frame_count);
         shell_store_rewind(address_of exec_store, held);
+}
+
+/*
+        caller: where the function this is running in was called from.
+
+        With no operand it is the line and the source; with a number it is
+        that many frames further out and the name of the function there as
+        well, which is what a script printing a backtrace walks. Outside a
+        function there is no frame to describe and the answer is a failure.
+*/
+PURE positive shell_line_now()
+{
+        return (positive)exec_line;
+}
+
+/*
+        Whether a name is in the environment children inherit.
+
+        Every other attribute is a bit of the variable's attribute byte and
+        shell_variable_attributes hands that over; this one is a field of the
+        entry beside it, and the entries live in the file above this one.
+*/
+PURE bool shell_variable_exported(const_string name, positive length)
+{
+        positive found = env_find_span(name, length);
+
+        return found < shell_var_count && shell_vars[found].permanent;
+}
+
+fn shell_caller(writer write, string_address input)
+{
+        positive want = 0;
+        bool numbered = shell_argc > 1;
+        p8 shown[32];
+        positive written;
+
+        if (numbered && !string_digits_exact(shell_argv[1], address_of want))
+        {
+                string_format(shell_diagnostic, "caller: %s: invalid number\n",
+                              shell_argv[1]);
+                shell_answer(2);
+                return;
+        }
+
+        if (want >= exec_frame_count)
+        {
+                shell_answer(1);
+                return;
+        }
+
+        written = bipolar_into_string(
+            shown, (bipolar)exec_frames[exec_frame_count - want - 1].line);
+        write(shown, written);
+        write(" ", 1);
+
+        //      The function one frame further out than the one asked about,
+        //      which is the shell itself once the frames run out.
+        if (numbered)
+        {
+                string_address named =
+                    want + 1 < exec_frame_count
+                        ? exec_frames[exec_frame_count - want - 2].name
+                        : (string_address) "main";
+
+                write(named, 0);
+                write(" ", 1);
+        }
+
+        write(shell_script_name, 0);
+        write("\n", 1);
+
+        shell_answer(0);
 }
 
 /*
@@ -4219,10 +4318,13 @@ static b32 exec_call(positive slot)
         exec_function_depth++;
         exec_functions[slot].active++;
 
-        if (shell_array_room(exec_frame_name, exec_frame_room,
+        if (shell_array_room(exec_frames, exec_frame_room,
                              exec_frame_count + 1))
         {
-                exec_frame_name[exec_frame_count++] =
+                // Where the call was written, which is the line of the
+                // command making it and not the line the reader is on.
+                exec_frames[exec_frame_count].line = (positive)exec_line;
+                exec_frames[exec_frame_count++].name =
                     exec_functions[slot].name;
                 exec_frames_published = false;
         }
@@ -5311,6 +5413,9 @@ static b32 exec_simple(b32 index)
         shell_words_bind(address_of arguments, address_of shell_argv,
                          address_of shell_argv_room);
 
+        // The line this command was written on, which caller and $LINENO
+        // answer with for as long as it runs.
+        exec_line = node->line;
         token_used = 0;
         token_overflow = false;
         // With no command name, POSIX makes the command's status that of the
@@ -5727,16 +5832,17 @@ static b32 exec_aborted(shell_mark mark)
         return 2;
 }
 
-static b32 exec_for(b32 index)
-{
-        parse_node address_to node = parse_nodes + index;
-        string_address name = parse_words[node->word];
-        shell_mark mark = shell_store_mark(address_of exec_store);
-        b32 count = 0;
-        b32 status = 0;
-        b32 at;
+/*
+        What a for or a select walks over, in exec_items.
 
-        token_used = 0;
+        Both take the same words in the same place and differ only in what
+        they do with them afterwards, so the expansion is one function and
+        the loop is two.
+*/
+static b32 exec_loop_items(parse_node address_to node)
+{
+        b32 count = 0;
+        b32 at;
 
         /*
                 The list is expanded the way a command's arguments are.
@@ -5810,12 +5916,379 @@ static b32 exec_for(b32 index)
                 }
         }
 
+        return count;
+}
+
+static b32 exec_for(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        string_address name = parse_words[node->word];
+        shell_mark mark = shell_store_mark(address_of exec_store);
+        b32 count;
+        b32 status = 0;
+        b32 at;
+
+        token_used = 0;
+        count = exec_loop_items(node);
+
         if (exec_line_aborted())
                 return exec_aborted(mark);
 
         for (at = 0; at < count; at++)
         {
                 if (!env_assign(name, exec_items[at]))
+                {
+                        string_format(exec_error,
+                                      env_readonly(name)
+                                          ? "%s: is read only\n"
+                                          : "%s: cannot assign\n",
+                                      name);
+                        status = 2;
+                        expand_fatal();
+                        break;
+                }
+
+                exec_loop_depth++;
+                status = exec_node(node->right);
+                exec_loop_depth--;
+
+                if (!exec_loop_again())
+                        break;
+        }
+
+        shell_store_rewind(address_of exec_store, mark);
+
+        return status;
+}
+
+/*
+        select: a numbered menu, a prompt, and a loop that runs the body once
+        for every line somebody answers with.
+
+        Everything it writes goes to standard error, so a script may take the
+        body's output on a pipe while a person still sees the menu -- which is
+        the whole reason the construct exists.
+*/
+
+// A line built whole before it is written. What a select writes is one
+// menu somebody reads and what a time writes is one timing, not thirty
+// writes with somebody else's output free to land between them.
+static p8 address_to exec_built;
+static positive exec_built_room;
+static positive exec_built_used;
+
+static bool exec_built_add(string_address text, positive length)
+{
+        if (!shell_array_room(exec_built, exec_built_room,
+                              exec_built_used + length + 1))
+                return false;
+
+        memory_copy(exec_built + exec_built_used, text, length);
+        exec_built_used += length;
+
+        return true;
+}
+
+static bool exec_built_fill(p8 value, positive times)
+{
+        if (!shell_array_room(exec_built, exec_built_room,
+                              exec_built_used + times + 1))
+                return false;
+
+        memory_fill(exec_built + exec_built_used, value, times);
+        exec_built_used += times;
+
+        return true;
+}
+
+/*
+        The gap between one column and the next, written as tabs wherever a
+        tab reaches further than the spaces would.
+
+        This is what Bash writes, and a menu is bytes somebody reads, so the
+        padding is part of the answer and not a matter of taste.
+*/
+static bool select_menu_indent(positive from, positive to)
+{
+        positive at = from;
+
+        while (at < to)
+        {
+                if (at / 8 < to / 8)
+                {
+                        if (!exec_built_fill('\t', 1))
+                                return false;
+
+                        at = (at / 8 + 1) * 8;
+                        continue;
+                }
+
+                if (!exec_built_fill(' ', to - at))
+                        return false;
+
+                at = to;
+        }
+
+        return true;
+}
+
+static CONST positive select_digits(positive value)
+{
+        positive width = 1;
+
+        while (value >= 10)
+        {
+                value /= 10;
+                width++;
+        }
+
+        return width;
+}
+
+/*
+        How wide the menu is allowed to be.
+
+        COLUMNS when it says something, and eighty otherwise, which is what
+        Bash falls back to when it is not looking at a terminal.
+*/
+static positive select_width()
+{
+        string_address given = env_get((const_string) "COLUMNS");
+        positive parsed;
+
+        if (given && string_digits_exact(given, address_of parsed) && parsed)
+                return parsed;
+
+        return 80;
+}
+
+/*
+        The menu itself.
+
+        Every cell is as wide as the longest item plus the room its number
+        takes, and the items go down the columns rather than across them. A
+        list that would fit on one row is turned on its side and written one
+        to a line, which is the shape nearly every menu has.
+*/
+static fn select_menu_write(b32 count)
+{
+        positive width = select_width();
+        positive longest = 0;
+        positive cell;
+        positive columns;
+        positive rows;
+        positive numbered;
+        positive first;
+        positive row;
+        b32 at;
+
+        for (at = 0; at < count; at++)
+        {
+                positive length = string_length(exec_items[at]);
+
+                if (length > longest)
+                        longest = length;
+        }
+
+        numbered = select_digits((positive)count);
+        cell = longest + numbered + 4;
+        columns = width / cell;
+
+        if (!columns)
+                columns = 1;
+
+        rows = (positive)count / columns + ((positive)count % columns ? 1 : 0);
+        columns = (positive)count / rows + ((positive)count % rows ? 1 : 0);
+
+        if (rows == 1)
+        {
+                rows = columns;
+                columns = 1;
+        }
+
+        first = select_digits(rows);
+        exec_built_used = 0;
+
+        for (row = 0; row < rows; row++)
+        {
+                positive item = row;
+                positive at_column = 0;
+
+                while (1)
+                {
+                        p8 shown[32];
+                        positive number = at_column ? numbered : first;
+                        positive length = string_length(exec_items[item]);
+                        positive written =
+                            bipolar_into_string(shown, (bipolar)(item + 1));
+
+                        if (written < number &&
+                            !exec_built_fill(' ', number - written))
+                                return;
+
+                        if (!exec_built_add(shown, written) ||
+                            !exec_built_add((string_address) ") ", 2) ||
+                            !exec_built_add(exec_items[item], length))
+                                return;
+
+                        item += rows;
+
+                        if (item >= (positive)count)
+                                break;
+
+                        if (!select_menu_indent(at_column + number + length + 2,
+                                                at_column + cell))
+                                return;
+
+                        at_column += cell;
+                }
+
+                if (!exec_built_add((string_address) "\n", 1))
+                        return;
+        }
+
+        log_error(exec_built, exec_built_used);
+}
+
+// The line somebody answered with, without its newline. A byte at a time,
+// because whatever is behind it on the stream belongs to the next reader.
+static p8 address_to select_reply;
+static positive select_reply_room;
+static positive select_reply_used;
+
+static bool select_read()
+{
+        select_reply_used = 0;
+
+        while (1)
+        {
+                p8 value;
+
+                if (!shell_array_room(select_reply, select_reply_room,
+                                      select_reply_used + 2))
+                        return false;
+
+                if (system_read_once(0, address_of value, 1) != 1)
+                        break;
+
+                if (value == '\n')
+                {
+                        select_reply[select_reply_used] = end;
+                        return true;
+                }
+
+                select_reply[select_reply_used++] = value;
+        }
+
+        select_reply[select_reply_used] = end;
+
+        // A last line with no newline behind it is still a line. Nothing at
+        // all is the end of the input.
+        return select_reply_used != 0;
+}
+
+/*
+        Which item the answer names, or nothing.
+
+        Blanks either side and a leading plus are read exactly as Bash reads
+        any number; anything left over makes the whole line not a number, and
+        the name is then set to the empty string rather than to an item.
+*/
+static PURE positive select_choice(b32 count)
+{
+        string_address at = select_reply;
+        positive value = 0;
+        bool any = false;
+
+        at += string_span(at, string_set_blanks);
+
+        if (string_is(at, '+'))
+                at++;
+
+        while (string_get(at) >= '0' && string_get(at) <= '9')
+        {
+                if (value <= (positive)count)
+                        value = value * 10 + (positive)(string_get(at) - '0');
+
+                any = true;
+                at++;
+        }
+
+        at += string_span(at, string_set_blanks);
+
+        if (!any || string_get(at) || !value || value > (positive)count)
+                return 0;
+
+        return value;
+}
+
+static b32 exec_select(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        string_address name = parse_words[node->word];
+        shell_mark mark = shell_store_mark(address_of exec_store);
+        b32 count;
+        b32 status = 0;
+
+        token_used = 0;
+        count = exec_loop_items(node);
+
+        if (exec_line_aborted())
+                return exec_aborted(mark);
+
+        // Nothing to choose from is not a menu nobody answered: no menu is
+        // written, the body never runs, and the construct succeeds.
+        if (!count)
+        {
+                shell_store_rewind(address_of exec_store, mark);
+                return 0;
+        }
+
+        select_menu_write(count);
+
+        while (1)
+        {
+                string_address prompt = env_get((const_string) "PS3");
+                positive chosen;
+
+                log_error(prompt ? prompt : (string_address) "#? ", 0);
+
+                if (!select_read())
+                {
+                        /*
+                                The end of the input ends the loop, and Bash
+                                calls that a failure rather than an empty
+                                answer.
+
+                                The newline that closes the unanswered prompt
+                                line goes to standard output, which is where
+                                Bash puts it and the one thing about a select
+                                that a script reading its body's output sees.
+                        */
+                        log((address_any) "\n", 1);
+                        log_flush();
+                        status = 1;
+                        break;
+                }
+
+                // An empty line asks for the menu again and nothing else.
+                if (!select_reply_used)
+                {
+                        select_menu_write(count);
+                        continue;
+                }
+
+                if (!env_assign((const_string) "REPLY", select_reply))
+                {
+                        string_format(exec_error, "REPLY: cannot assign\n");
+                        status = 2;
+                        break;
+                }
+
+                chosen = select_choice(count);
+
+                if (!env_assign(name, chosen ? exec_items[chosen - 1]
+                                             : (string_address) ""))
                 {
                         string_format(exec_error,
                                       env_readonly(name)
@@ -6121,6 +6594,25 @@ static bool conditional_tokenize(string_address text)
                 while (string_get(at) && !lex_is_space(string_get(at)))
                 {
                         p8 value = string_get(at);
+
+                        /*
+                                An extended pattern group is one piece of the
+                                word. [[ ]] reads them whether or not the
+                                option is on, because what is in here is
+                                matched when the command runs.
+                        */
+                        if (string_is(at + 1, '(') &&
+                            (value == '?' || value == '*' || value == '+' ||
+                             value == '@' || value == '!'))
+                        {
+                                string_address group = lex_nesting(at + 1);
+
+                                if (group > at + 1)
+                                {
+                                        at = group;
+                                        continue;
+                                }
+                        }
 
                         if ((value == '&' && string_is(at + 1, '&')) ||
                             (value == '|' && string_is(at + 1, '|')) ||
@@ -6488,11 +6980,23 @@ static bool conditional_primary()
 
                         if (pattern)
                         {
-                                // nocasematch is a property of [[ ]] and of
-                                // case, and of nothing else that matches.
-                                value = shell_match_folded(
-                                    right, left,
-                                    shell_shopt_on(NOCASEMATCH));
+                                /*
+                                        Both of the things [[ ]] does that
+                                        ordinary matching does not: it reads
+                                        the extended groups whether or not the
+                                        option is on, and it folds case under
+                                        nocasematch. The two do not compose --
+                                        the extended matcher has no folded
+                                        path -- so an extended pattern matches
+                                        case-sensitively even under
+                                        nocasematch, which is the one
+                                        combination this does not answer.
+                                */
+                                value = glob_extended_anywhere(right)
+                                            ? shell_match_extended(right, left)
+                                            : shell_match_folded(
+                                                  right, left,
+                                                  shell_shopt_on(NOCASEMATCH));
                                 return word_is(op, "!=") ? !value : value;
                         }
 
@@ -6603,11 +7107,21 @@ static b32 exec_case(b32 index)
 
         subject = exec_arena_copy(subject);
 
+        /*
+                An item whose predecessor ended in ;& runs without being
+                asked, which is the only way a body runs with none of its own
+                patterns matching.
+        */
+        bool falling = false;
+
         for (item = node->left; item; item = parse_nodes[item].next)
         {
                 b32 at;
+                bool taken = falling;
 
-                for (at = 0; at < parse_nodes[item].word_count; at++)
+                falling = false;
+
+                for (at = 0; !taken && at < parse_nodes[item].word_count; at++)
                 {
                         string_address pattern;
 
@@ -6618,20 +7132,37 @@ static b32 exec_case(b32 index)
                         if (exec_line_aborted())
                                 return exec_aborted(mark);
 
-                        if (!shell_match_folded(pattern, subject,
-                                                shell_shopt_on(NOCASEMATCH)))
-                                continue;
-
-                        // A matched item with nothing in it ran nothing and
-                        // answered with whatever came before the case; an
-                        // empty list of commands succeeds.
-                        status = parse_nodes[item].right
-                                     ? exec_node(parse_nodes[item].right)
-                                     : 0;
-                        shell_store_rewind(address_of exec_store, mark);
-
-                        return status;
+                        // The structure is fall-through's: an item that
+                        // matched is taken, and ;;& goes on testing. The
+                        // match is [[ ]]'s, for the same reason case reads
+                        // extended groups and folds case.
+                        taken = glob_extended_anywhere(pattern)
+                                    ? shell_match_extended(pattern, subject)
+                                    : shell_match_folded(
+                                          pattern, subject,
+                                          shell_shopt_on(NOCASEMATCH));
                 }
+
+                if (!taken)
+                        continue;
+
+                // A matched item with nothing in it ran nothing and answered
+                // with whatever came before the case; an empty list of
+                // commands succeeds.
+                status = parse_nodes[item].right
+                             ? exec_node(parse_nodes[item].right)
+                             : 0;
+
+                if (parse_nodes[item].flags == CASE_FALL_THROUGH)
+                {
+                        falling = true;
+                        continue;
+                }
+
+                // ;;& leaves the remaining patterns to be asked; ;; and the
+                // last item of all are the end of the case.
+                if (parse_nodes[item].flags != CASE_TEST_ON)
+                        break;
         }
 
         shell_store_rewind(address_of exec_store, mark);
@@ -6846,6 +7377,131 @@ static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
         }
 
         return shell_spawn_stage(words, input, output, -1);
+}
+
+/*
+        coproc: a command running alongside this shell with a pipe each way.
+
+        A pipeline hands one command's output to the next and then waits for
+        both. A coprocess is the other arrangement -- it keeps running, and
+        the shell writes to it and reads from it whenever it likes, which is
+        what makes a long-lived helper process possible at all.
+
+        The two descriptors are published as an array because that is what
+        they are: NAME[0] is read from and NAME[1] is written to, and NAME_PID
+        is who is at the other end.
+*/
+#define COPROC_FLOOR 60
+
+// Out of the way of the script's own descriptors and out of the way of the
+// commands it runs. A coprocess that could see its own pipe ends through
+// somebody else's child would wait for an end of file that never came.
+static b32 coproc_kept(b32 descriptor)
+{
+        bipolar moved = system_call_3(syscall(fcntl), (positive)descriptor,
+                                      F_DUPFD_CLOEXEC, COPROC_FLOOR);
+
+        if (moved < 0)
+                return descriptor;
+
+        system_close(descriptor);
+
+        return (b32)moved;
+}
+
+static b32 exec_coproc(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        string_address name = parse_words[node->word];
+        positive name_length = string_length(name);
+        p8 pid_name[EXEC_COPROC_NAME + 5];
+        p8 written[32];
+        b32 into[2];
+        b32 from[2];
+        bipolar pair[2];
+        bipolar child;
+
+        if (name_length > EXEC_COPROC_NAME)
+        {
+                string_format(exec_error, "coproc: %s: name too long\n", name);
+                return 1;
+        }
+
+        log_flush();
+
+        if (system_pipe(address_of into, 0) < 0)
+        {
+                string_format(exec_error, "coproc: no pipe\n");
+                return 1;
+        }
+
+        if (system_pipe(address_of from, 0) < 0)
+        {
+                system_close(into[0]);
+                system_close(into[1]);
+                string_format(exec_error, "coproc: no pipe\n");
+                return 1;
+        }
+
+        child = exec_stage_spawn(node->left, into[0], from[1]);
+
+        if (child < 0)
+                child = shell_clone();
+
+        if (child == 0)
+        {
+                trap_default_all();
+                exec_asynchronous = true;
+                exec_child_signals(true, false);
+                exec_child_began();
+
+                if (parse_nodes[node->left].kind == NODE_SUBSHELL)
+                        parse_nodes[node->left].kind = NODE_GROUP;
+
+                system_close(into[1]);
+                system_close(from[0]);
+                system_duplicate(into[0], standard_input_descriptor, 0);
+                system_close(into[0]);
+                system_duplicate(from[1], standard_output_descriptor, 0);
+                system_close(from[1]);
+
+                b32 status = exec_node(node->left);
+
+                log_flush();
+                exit(status);
+        }
+
+        system_close(into[0]);
+        system_close(from[1]);
+
+        if (child < 0)
+        {
+                system_close(into[1]);
+                system_close(from[0]);
+                string_format(exec_error, "coproc: cannot fork\n");
+                return 1;
+        }
+
+        pair[0] = coproc_kept(from[0]);
+        pair[1] = coproc_kept(into[1]);
+
+        if (!shell_array_numbers(name, name_length, pair, 2))
+                string_format(exec_error, "coproc: %s: cannot assign\n", name);
+
+        memory_copy(pid_name, name, name_length);
+        memory_copy_end(pid_name + name_length, (string_address) "_PID", 4);
+        bipolar_into_string(written, child);
+
+        if (!env_assign(pid_name, written))
+                string_format(exec_error, "coproc: %s: cannot assign\n",
+                              pid_name);
+
+        // Registered the way a background command is, so that $! names it and
+        // wait can be told what it answered.
+        if (!shell_background_started(address_of child, 1, false, false))
+                string_format(exec_error, "No room to retain coprocess\n");
+
+        return 0;
 }
 
 static b32 exec_pipe(b32 first, positive count, bool background,
@@ -7125,6 +7781,312 @@ static positive exec_pipeline_count(b32 first)
         return count;
 }
 
+/*
+        The time reserved word.
+
+        What it measures is a whole pipeline and not a command, which is why
+        it is grammar and not a utility: an external /usr/bin/time can only
+        ever time one program, and "time a | b" is two.
+
+        Three numbers come out of it. The real one is the monotonic clock,
+        which nothing else can move; the two processor ones are this shell's
+        own use plus every child it has reaped, because the work a pipeline
+        did in its stages is work the pipeline did.
+*/
+
+// The front of struct rusage, which is where the two times are. The rest is
+// counters nobody here asks after, and the kernel writes all of it.
+typedef struct
+{
+        p64 user_seconds;
+        p64 user_microseconds;
+        p64 system_seconds;
+        p64 system_microseconds;
+        p64 counters[32];
+} time_usage;
+
+#define TIME_USAGE_SELF 0
+#define TIME_USAGE_CHILDREN (-1)
+#define TIME_MICROSECONDS 1000000
+
+typedef struct
+{
+        timespec real;
+        positive user;
+        positive system;
+} time_reading;
+
+static fn time_now(time_reading address_to into)
+{
+        time_usage self;
+        time_usage children;
+
+        memory_fill(address_of self, 0, sizeof(self));
+        memory_fill(address_of children, 0, sizeof(children));
+        memory_fill(into, 0, sizeof(address_to into));
+
+        system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
+                      (positive)address_of into->real);
+        system_call_2(syscall(getrusage), (positive)TIME_USAGE_SELF,
+                      (positive)address_of self);
+        system_call_2(syscall(getrusage),
+                      (positive)(bipolar)TIME_USAGE_CHILDREN,
+                      (positive)address_of children);
+
+        into->user = (positive)self.user_seconds * TIME_MICROSECONDS +
+                     (positive)self.user_microseconds +
+                     (positive)children.user_seconds * TIME_MICROSECONDS +
+                     (positive)children.user_microseconds;
+        into->system = (positive)self.system_seconds * TIME_MICROSECONDS +
+                       (positive)self.system_microseconds +
+                       (positive)children.system_seconds * TIME_MICROSECONDS +
+                       (positive)children.system_microseconds;
+}
+
+// What went by between two readings, in microseconds. A clock that went
+// backwards is nothing, rather than an enormous number.
+static CONST positive time_apart(positive after, positive before)
+{
+        return after > before ? after - before : 0;
+}
+
+static PURE positive time_real_apart(time_reading address_to after,
+                                     time_reading address_to before)
+{
+        bipolar seconds = (bipolar)after->real.tv_sec -
+                          (bipolar)before->real.tv_sec;
+        bipolar nanoseconds = (bipolar)after->real.tv_nsec -
+                              (bipolar)before->real.tv_nsec;
+        bipolar total = seconds * TIME_MICROSECONDS + nanoseconds / 1000;
+
+        return total > 0 ? (positive)total : 0;
+}
+
+// Ten to the places, for every number of places a format may ask for.
+static CONST positive time_scale(positive places)
+{
+        static const positive powers[] = {1,     10,     100, 1000,
+                                          10000, 100000, 1000000};
+
+        return powers[places];
+}
+
+/*
+        One time, rounded to the places asked for and written out.
+
+        Rounding rather than cutting is what Bash's printf does, and the
+        difference shows at once: five microseconds at five places is one
+        hundred-thousandth of a second and not nothing.
+*/
+static fn time_number(positive microseconds, positive places, bool minutes)
+{
+        positive scale = time_scale(places);
+        positive divisor = TIME_MICROSECONDS / scale;
+        positive scaled = (microseconds + divisor / 2) / divisor;
+        positive whole = scaled / scale;
+        positive fraction = scaled % scale;
+        p8 shown[32];
+        positive written;
+
+        if (minutes)
+        {
+                written = bipolar_into_string(shown, (bipolar)(whole / 60));
+                exec_built_add(shown, written);
+                exec_built_add((string_address) "m", 1);
+                whole %= 60;
+        }
+
+        written = bipolar_into_string(shown, (bipolar)whole);
+        exec_built_add(shown, written);
+
+        if (places)
+        {
+                exec_built_add((string_address) ".", 1);
+                written = positive_into_padded(shown, fraction, places, '0');
+                exec_built_add(shown, written);
+        }
+
+        if (minutes)
+                exec_built_add((string_address) "s", 1);
+}
+
+/*
+        TIMEFORMAT, written out.
+
+        %R %U %S are the three times and %P the share of the elapsed time that
+        went on a processor. A digit in front of the letter says how many
+        places follow the point, an l asks for the minutes to be taken out in
+        front, and %% is a percent. Everything else is a byte of the line.
+
+        A letter that is none of those is refused and nothing at all is
+        written, which is what Bash does: half a timing is worse than none,
+        and a format nobody can read is a mistake somebody wants told.
+*/
+static bool time_formatted(string_address format, positive real,
+                           positive user, positive system)
+{
+        string_address at = format;
+
+        exec_built_used = 0;
+
+        while (string_get(at))
+        {
+                positive places = 3;
+                bool given = false;
+                bool minutes = false;
+                p8 letter;
+
+                if (string_not(at, '%'))
+                {
+                        exec_built_add(at, 1);
+                        at++;
+                        continue;
+                }
+
+                at++;
+
+                // A percent with nothing behind it is a percent.
+                if (!string_get(at))
+                {
+                        exec_built_add((string_address) "%", 1);
+                        break;
+                }
+
+                if (string_get(at) >= '0' && string_get(at) <= '9')
+                {
+                        places = (positive)(string_get(at) - '0');
+                        given = true;
+                        at++;
+
+                        // Microseconds are as fine as the two clocks are, so
+                        // asking for more places asks for zeroes.
+                        if (places > 6)
+                                places = 6;
+                }
+
+                if (string_is(at, 'l'))
+                {
+                        minutes = true;
+                        at++;
+                }
+
+                letter = string_get(at);
+
+                if (letter == 'R')
+                        time_number(real, places, minutes);
+                else if (letter == 'U')
+                        time_number(user, places, minutes);
+                else if (letter == 'S')
+                        time_number(system, places, minutes);
+                else if (letter == '%' && !given && !minutes)
+                        exec_built_add((string_address) "%", 1);
+                else if (letter == 'P' && !given && !minutes)
+                {
+                        /*
+                                Two times over a third, in hundredths of a
+                                percent so that the places come out of one
+                                division. A third of nothing is nothing:
+                                elapsed time can be under the clock's own
+                                resolution and then there is no share to give.
+                        */
+                        positive spent = user + system;
+                        positive parts = real ? spent * 10000 / real : 0;
+                        p8 shown[32];
+                        positive written =
+                            bipolar_into_string(shown, (bipolar)(parts / 100));
+
+                        exec_built_add(shown, written);
+                        exec_built_add((string_address) ".", 1);
+                        written = positive_into_padded(shown, parts % 100, 2,
+                                                       '0');
+                        exec_built_add(shown, written);
+                }
+                else
+                {
+                        p8 shown[2];
+
+                        shown[0] = letter;
+                        shown[1] = end;
+
+                        string_format(
+                            exec_error,
+                            "TIMEFORMAT: `%s': invalid format character\n",
+                            shown);
+
+                        return false;
+                }
+
+                at++;
+        }
+
+        exec_built_add((string_address) "\n", 1);
+
+        return true;
+}
+
+static fn time_written(bool posix, positive real, positive user,
+                       positive system)
+{
+        string_address format = env_get((const_string) "TIMEFORMAT");
+
+        if (posix)
+                format = (string_address) "real %2R\nuser %2U\nsys %2S";
+        else if (!format)
+                format = (string_address) "\nreal\t%3lR\nuser\t%3lU\nsys\t%3lS";
+
+        // An empty TIMEFORMAT asks for no timing at all, which is not the
+        // same as asking for the usual one.
+        if (!string_get(format))
+                return;
+
+        if (!time_formatted(format, real, user, system))
+                return;
+
+        // Whatever the timed command wrote comes first. It has already
+        // happened; only the buffer is holding it back.
+        log_flush();
+        log_error(exec_built, exec_built_used);
+}
+
+static b32 exec_time(b32 index)
+{
+        parse_node address_to node = parse_nodes + index;
+        bool tested = exec_tested;
+        time_reading before;
+        time_reading after;
+        b32 status;
+
+        time_now(address_of before);
+
+        // A bang in front of a time inverts what the whole of it answers, so
+        // nothing inside it is what errexit is looking at.
+        if (node->op)
+                exec_tested = true;
+
+        status = node->left ? exec_node(node->left) : 0;
+
+        exec_tested = tested;
+        time_now(address_of after);
+
+        time_written(node->flags,
+                     time_real_apart(address_of after, address_of before),
+                     time_apart(after.user, before.user),
+                     time_apart(after.system, before.system));
+
+        if (exec_line_aborted())
+        {
+                shell_status = 2;
+                return 2;
+        }
+
+        if (node->op)
+                status = status ? 0 : 1;
+
+        shell_status = status;
+
+        return status;
+}
+
 static b32 exec_pipeline(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -7305,6 +8267,19 @@ static b32 exec_node_kind(b32 index)
 
         node = parse_nodes + index;
 
+        /*
+                What a process substitution opened belongs to the command that
+                was handed the path, and to nothing inside it: a function given
+                /dev/fd/N as an argument may not open it until its third
+                command, so the mark is taken here and given back only when
+                this whole command is done with.
+
+                Until something makes one there is nothing to mark, which is
+                every command of almost every script.
+        */
+        positive substitutions =
+            expand_substitutions_ever ? expand_substitutions_count : 0;
+
         if (node->kind == NODE_SIMPLE)
         {
                 // Before the words are expanded, which is where Bash runs it
@@ -7317,11 +8292,18 @@ static b32 exec_node_kind(b32 index)
 
                 status = exec_simple(index);
                 shell_store_rewind(address_of expand_store, expanded);
+
+                if (expand_substitutions_ever &&
+                    expand_substitutions_count != substitutions)
+                        shell_substitutions_close(substitutions);
+
                 shell_status = status;
                 exec_errexit(status);
 
                 return status;
         }
+
+        exec_line = node->line;
 
         if (node->kind == NODE_LIST)
                 return exec_list(index);
@@ -7331,6 +8313,10 @@ static b32 exec_node_kind(b32 index)
 
         if (node->kind == NODE_PIPELINE)
                 return exec_pipeline(index);
+
+        // A time carries no redirections of its own: what it measures does.
+        if (node->kind == NODE_TIME)
+                return exec_time(index);
 
         if (node->kind == NODE_FUNCTION)
                 return exec_define(index);
@@ -7347,6 +8333,11 @@ static b32 exec_node_kind(b32 index)
         {
                 exec_redirect_restore(mark);
                 shell_store_rewind(address_of expand_store, expanded);
+
+                if (expand_substitutions_ever &&
+                    expand_substitutions_count != substitutions)
+                        shell_substitutions_close(substitutions);
+
                 shell_status = exec_redirect_failed_status();
                 return shell_status;
         }
@@ -7363,6 +8354,10 @@ static b32 exec_node_kind(b32 index)
                 status = exec_loop(index, true);
         else if (node->kind == NODE_FOR)
                 status = exec_for(index);
+        else if (node->kind == NODE_SELECT)
+                status = exec_select(index);
+        else if (node->kind == NODE_COPROC)
+                status = exec_coproc(index);
         else if (node->kind == NODE_CFOR)
                 status = exec_cfor(index);
         else if (node->kind == NODE_CASE)
@@ -7379,6 +8374,11 @@ static b32 exec_node_kind(b32 index)
 
         exec_redirect_restore(mark);
         shell_store_rewind(address_of expand_store, expanded);
+
+        if (expand_substitutions_ever &&
+            expand_substitutions_count != substitutions)
+                shell_substitutions_close(substitutions);
+
         shell_status = status;
 
         if (node->kind == NODE_SUBSHELL || node->kind == NODE_ARITHMETIC ||

@@ -39,6 +39,12 @@
 #define OP_ANDGREAT 17  // &>
 #define OP_ANDDGREAT 18 // &>>
 #define OP_HERESTRING 19 // <<<
+/* Appended, and never inserted among the ones above: parse.c tells a
+   redirect from anything else by the number's range, so a new value in the
+   middle would silently reclassify the operators behind it. */
+#define OP_PIPEAND 20   // |&
+#define OP_SEMIAND 21   // ;&
+#define OP_DSEMIAND 22  // ;;&
 
 
 typedef struct
@@ -73,6 +79,17 @@ typedef struct
         positive text_room;
         positive used;
         b32 count;
+        /*
+                Which line of this input the shell is running.
+
+                The lexer is handed one line at a time and used to keep no
+                count of them, so a function had no line to say it was called
+                from and $LINENO had nothing to read. It belongs in the frame
+                for the same reason everything else here does: a nested source
+                -- an eval, or a dot file -- counts its own lines from one and
+                the outer count comes back when it ends.
+        */
+        positive line;
 } lex_frame;
 
 /*
@@ -90,6 +107,11 @@ static lex_frame lex_context;
 #define lex_text_room lex_context.text_room
 #define lex_used lex_context.used
 #define lex_count lex_context.count
+#define shell_line_number lex_context.line
+
+// The builtins own $LINENO itself and read this for it. What it answers is
+// the line the running command was written on, which the executor keeps.
+PURE positive shell_line_now();
 
 fn parse_nest_enter();
 fn parse_nest_leave();
@@ -200,6 +222,15 @@ static b32 lex_operator_at(string_address at, positive address_to length)
         p8 a = string_get(at);
         p8 b = string_get(at + 1);
 
+        /* <( and >( begin a process substitution, which is part of the word
+           in front of it and not an operator at all: cat 2>(x) is one word
+           reading 2/dev/fd/N, exactly as Bash reads it. */
+        if (b == '(' && (a == '<' || a == '>'))
+        {
+                address_to length = 0;
+                return 0;
+        }
+
         if (a == '<' && b == '<' && string_is(at + 2, '<'))
         {
                 address_to length = 3;
@@ -226,8 +257,22 @@ static b32 lex_operator_at(string_address at, positive address_to length)
                 return OP_AND_IF;
         if (a == '|' && b == '|')
                 return OP_OR_IF;
+        // Both streams into the pipe, and a case item that carries on. Read
+        // where the doubled forms already are, so no byte pays for them.
+        if (a == '|' && b == '&')
+                return OP_PIPEAND;
+        if (a == ';' && b == '&')
+                return OP_SEMIAND;
         if (a == ';' && b == ';')
+        {
+                if (string_is(at + 2, '&'))
+                {
+                        address_to length = 3;
+                        return OP_DSEMIAND;
+                }
+
                 return OP_DSEMI;
+        }
         if (a == '<' && b == '<')
                 return OP_DLESS;
         if (a == '>' && b == '>')
@@ -293,6 +338,16 @@ static b32 lex_add_whole(b32 kind, string_address text, positive length)
         memory_copy_end(lex_text + lex_used, text, length);
         lex_used += length + 1;
         return lex_add(kind, 0, lex_text + start, length);
+}
+
+PURE bool shell_extglob_asked();
+
+// The five heads of an extended pattern group, which are ordinary bytes
+// everywhere a parenthesis does not follow them.
+static CONST inline INLINE bool lex_extended_head(p8 value)
+{
+        return value == '?' || value == '*' || value == '+' || value == '@' ||
+               value == '!';
 }
 
 static string_address lex_nested_at(string_address at);
@@ -675,6 +730,20 @@ b32 lex_unfinished(string_address line)
 
                 if (lex_blank[c] || lex_operator[c])
                 {
+                        //      A process substitution holds a command, and
+                        //      the line is not finished until it closes.
+                        if ((c == '<' || c == '>') && string_is(step + 1, '('))
+                        {
+                                string_address stop = lex_nesting(step + 1);
+
+                                if (stop == step + 1)
+                                        return LEX_OPEN;
+
+                                step = stop;
+                                fresh = false;
+                                continue;
+                        }
+
                         fresh = true;
                         step++;
                         continue;
@@ -818,6 +887,53 @@ static b32 lex_word(string_address address_to at)
                         string_address stop = lex_nesting(step);
 
                         if (stop > step)
+                        {
+                                run = (positive)(stop - step);
+
+                                if (!lex_room(lex_used + run + 2))
+                                        return false;
+
+                                memory_copy(lex_text + lex_used, step, run);
+                                lex_used += run;
+                                step = stop;
+                                continue;
+                        }
+                }
+
+                /*
+                        An extended pattern group is one piece of the word,
+                        parentheses and alternations and all -- which is what
+                        makes case aab in +(a)b) a pattern rather than a
+                        syntax error. Only under the option: with it off the
+                        parenthesis is what it has always been.
+                */
+                if (c == '(' && lex_used > start && shell_extglob_asked() &&
+                    lex_extended_head(lex_text[lex_used - 1]))
+                {
+                        string_address stop = lex_nesting(step);
+
+                        if (stop > step)
+                        {
+                                run = (positive)(stop - step);
+
+                                if (!lex_room(lex_used + run + 2))
+                                        return false;
+
+                                memory_copy(lex_text + lex_used, step, run);
+                                lex_used += run;
+                                step = stop;
+                                continue;
+                        }
+                }
+
+                //      <( and >( carry a whole command inside the word,
+                //      the same way $( ) does, so the blanks and operators in
+                //      it are not this line's business.
+                if ((c == '<' || c == '>') && string_is(step + 1, '('))
+                {
+                        string_address stop = lex_nesting(step + 1);
+
+                        if (stop > step + 1)
                         {
                                 run = (positive)(stop - step);
 

@@ -541,10 +541,6 @@ COLD bool shell_dynamic_assign(const_string name, positive length,
                                const_string value);
 COLD bool shell_dynamic_wanted(const_string name, positive length);
 
-//      What $LINENO answers with. The lexer publishes the line it is reading
-//      into this; nothing else writes it.
-extern positive shell_line_number;
-
 //      How many subshells deep this process is, which is what $BASH_SUBSHELL
 //      is and the only thing a fork has to remember to say it.
 extern positive shell_subshell_depth;
@@ -1179,8 +1175,15 @@ static fn run_line_inner(string_address line)
         b32 root;
 
         // What a job made of a loop or a group is listed under: the words are
-        // in the parse tree, but only the reader still has the line.
+        // in the parse tree, but only the reader still has the line. And the
+        // count of physical lines, which is the only place there is to keep
+        // it: one is what a job is named after, the other what $LINENO reads.
         exec_current_line = line;
+
+        // The lexer's own count of physical lines, which is where the line a
+        // command was written on comes from; $LINENO reads the executor's
+        // copy of that rather than this running total.
+        shell_line_number++;
 
         // A nested eval or sourced file can hand over more physical lines
         // after one of them failed expansion. They belong to the same outer

@@ -46,6 +46,9 @@ typedef struct
         // ordinary word be considered even after the command name.
         parse_alias_trace address_to alias_trace;
         b32 alias_forced;
+        // Which line of the input this word was read from, which is where a
+        // construct built out of it was written.
+        b32 line;
 } parse_token;
 
 /*
@@ -86,6 +89,9 @@ string_address alias_lookup(string_address name);
 #define NODE_ARITHMETIC 14
 #define NODE_CFOR 15
 #define NODE_CONDITIONAL 16
+#define NODE_SELECT 17
+#define NODE_TIME 18
+#define NODE_COPROC 19
 
 /*
         One node shape for every production.
@@ -112,6 +118,10 @@ typedef struct
         b32 word_count;
         b32 redirect;
         b32 redirect_count;
+        // The line this command was written on, taken from the token it
+        // begins with. A function body outlives the line that defined it, so
+        // this is how a call knows where it was made from.
+        b32 line;
 } parse_node;
 
 typedef struct
@@ -150,6 +160,11 @@ static parse_redirect parse_redirects[PARSE_REDIRECTS];
 // NAME=( ... ): the value is a list of elements and not one string, so it is
 // neither expanded nor assigned the way every other assignment word is.
 #define PARSE_WORD_COMPOUND 8
+
+// What a case item's terminator was, kept in the item node's flags.
+#define CASE_STOP 0
+#define CASE_FALL_THROUGH 1
+#define CASE_TEST_ON 2
 
 static b32 parse_node_used;
 static b32 parse_node_top;
@@ -381,6 +396,13 @@ enum
         PARSE_KEYWORD_UNTIL,
         PARSE_KEYWORD_FOR,
         PARSE_KEYWORD_CASE,
+        //      Everything from IF to OPEN begins a command and everything
+        //      from THEN to CLOSE ends a list, and two range tests below say
+        //      which is which. A new word that begins a command belongs
+        //      here, in front of OPEN, and nowhere else.
+        PARSE_KEYWORD_SELECT,
+        PARSE_KEYWORD_TIME,
+        PARSE_KEYWORD_COPROC,
         PARSE_KEYWORD_OPEN,
         PARSE_KEYWORD_THEN,
         PARSE_KEYWORD_ELSE,
@@ -440,6 +462,7 @@ static PURE HOT b32 parse_keyword(b32 ahead)
                 case byte_word_4('d', 'o', 'n', 'e'): return PARSE_KEYWORD_DONE;
                 case byte_word_4('c', 'a', 's', 'e'): return PARSE_KEYWORD_CASE;
                 case byte_word_4('e', 's', 'a', 'c'): return PARSE_KEYWORD_ESAC;
+                case byte_word_4('t', 'i', 'm', 'e'): return PARSE_KEYWORD_TIME;
                 default: return PARSE_KEYWORD_NONE;
                 }
         case 5:
@@ -447,6 +470,14 @@ static PURE HOT b32 parse_keyword(b32 ahead)
                         return PARSE_KEYWORD_WHILE;
                 if (memory_is_4(text, 'u', 'n', 't', 'i') && text[4] == 'l')
                         return PARSE_KEYWORD_UNTIL;
+                return PARSE_KEYWORD_NONE;
+        case 6:
+                if (memory_is_4(text, 's', 'e', 'l', 'e') &&
+                    memory_is_2(text + 4, 'c', 't'))
+                        return PARSE_KEYWORD_SELECT;
+                if (memory_is_4(text, 'c', 'o', 'p', 'r') &&
+                    memory_is_2(text + 4, 'o', 'c'))
+                        return PARSE_KEYWORD_COPROC;
                 return PARSE_KEYWORD_NONE;
         default:
                 return PARSE_KEYWORD_NONE;
@@ -646,6 +677,7 @@ static bool parse_copy_lex(parse_token address_to into,
         into->length = source->length;
         into->alias_trace = trace;
         into->alias_forced = false;
+        into->line = (b32)shell_line_number;
 
         if (into->kind == PT_OP)
                 return true;
@@ -686,6 +718,7 @@ static fn parse_token_newline(parse_token address_to into,
         into->length = 0;
         into->alias_trace = trace;
         into->alias_forced = false;
+        into->line = (b32)shell_line_number;
 }
 
 // Register a here-document as soon as its complete token line is available,
@@ -811,6 +844,7 @@ static b32 parse_node_new(b32 kind)
         index = parse_node_used++;
         memory_fill(parse_nodes + index, 0, sizeof(parse_node));
         parse_nodes[index].kind = kind;
+        parse_nodes[index].line = parse_look(0)->line;
 
         return index;
 }
@@ -931,8 +965,12 @@ static PURE bool parse_at_list_end()
         if (token->kind == PT_END)
                 return true;
 
+        //      The three case terminators and the closing parenthesis.
+        //      OP_SEMIAND and OP_DSEMIAND are the two highest operator
+        //      numbers there are, so one comparison covers both.
         if (token->kind == PT_OP &&
-            (token->op == OP_RPAREN || token->op == OP_DSEMI))
+            (token->op == OP_RPAREN || token->op == OP_DSEMI ||
+             token->op >= OP_SEMIAND))
                 return true;
 
         if (token->kind != PT_WORD)
@@ -1520,16 +1558,23 @@ static b32 parse_loop(b32 kind)
         return index;
 }
 
-static b32 parse_for()
+/*
+        for and select, which have one production between them.
+
+        A select is a for that reads the item back from the operator instead
+        of walking the list, so everything up to the do is the same words in
+        the same places. Only the C-style head belongs to for alone.
+*/
+static b32 parse_for(b32 kind)
 {
-        b32 index = parse_node_new(NODE_FOR);
+        b32 index = parse_node_new(kind);
 
         if (parse_state)
                 return 0;
 
         parse_position++;
 
-        if (parse_look(0)->kind == PT_ARITHMETIC)
+        if (kind == NODE_FOR && parse_look(0)->kind == PT_ARITHMETIC)
         {
                 parse_nodes[index].kind = NODE_CFOR;
                 parse_attach_word(index, parse_look(0)->text,
@@ -1682,8 +1727,24 @@ static b32 parse_case()
                 if (parse_state)
                         return 0;
 
-                if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_DSEMI)
-                        parse_position++;
+                /*
+                        Which of the three terminators closed the item, kept
+                        on the item because the executor is the only thing
+                        that can tell them apart: ;; stops, ;& runs the next
+                        body without asking, and ;;& carries on asking.
+                */
+                if (parse_look(0)->kind == PT_OP)
+                {
+                        if (parse_look(0)->op == OP_SEMIAND)
+                                parse_nodes[item].flags = CASE_FALL_THROUGH;
+                        else if (parse_look(0)->op == OP_DSEMIAND)
+                                parse_nodes[item].flags = CASE_TEST_ON;
+
+                        if (parse_look(0)->op == OP_DSEMI ||
+                            parse_look(0)->op == OP_SEMIAND ||
+                            parse_look(0)->op == OP_DSEMIAND)
+                                parse_position++;
+                }
 
                 parse_skip_newlines();
 
@@ -1784,6 +1845,56 @@ static b32 parse_function_keyword()
         return parse_state ? 0 : index;
 }
 
+// Whether a compound command begins at this token, which is the one thing
+// that tells "coproc NAME { ... }" from "coproc command arguments".
+static PURE bool parse_at_compound(b32 ahead)
+{
+        b32 keyword = parse_keyword(ahead);
+
+        if (keyword > PARSE_KEYWORD_NONE && keyword <= PARSE_KEYWORD_OPEN)
+                return true;
+
+        return parse_look(ahead)->kind == PT_ARITHMETIC ||
+               parse_look(ahead)->kind == PT_CONDITIONAL ||
+               (parse_look(ahead)->kind == PT_OP &&
+                parse_look(ahead)->op == OP_LPAREN);
+}
+
+/*
+        coproc, and what it is going to run.
+
+        The word behind it is a name only when a compound command follows it,
+        which is the rule Bash's grammar states and the only thing that tells
+        "coproc C { ... }" from "coproc cat". Without one the pair is called
+        COPROC, which is the name a script that never said otherwise reads.
+*/
+static b32 parse_coproc()
+{
+        b32 index = parse_node_new(NODE_COPROC);
+
+        if (parse_state)
+                return 0;
+
+        parse_position++;
+
+        if (parse_look(0)->kind == PT_WORD && !parse_reserved(0) &&
+            parse_at_compound(1))
+        {
+                parse_attach_word(index, parse_look(0)->text,
+                                  parse_look(0)->length);
+                parse_position++;
+        }
+        else
+                parse_attach_word(index, (string_address) "COPROC", 6);
+
+        if (parse_state)
+                return 0;
+
+        parse_nodes[index].left = parse_command();
+
+        return parse_state ? 0 : index;
+}
+
 static b32 parse_command()
 {
         b32 index;
@@ -1842,7 +1953,11 @@ static b32 parse_command()
         else if (keyword == PARSE_KEYWORD_UNTIL)
                 index = parse_loop(NODE_UNTIL);
         else if (keyword == PARSE_KEYWORD_FOR)
-                index = parse_for();
+                index = parse_for(NODE_FOR);
+        else if (keyword == PARSE_KEYWORD_SELECT)
+                index = parse_for(NODE_SELECT);
+        else if (keyword == PARSE_KEYWORD_COPROC)
+                index = parse_coproc();
         else if (keyword == PARSE_KEYWORD_CASE)
                 index = parse_case();
         else if (keyword == PARSE_KEYWORD_OPEN)
@@ -1865,10 +1980,107 @@ command_done:
         return parse_state ? 0 : index;
 }
 
-static b32 parse_pipeline()
-{
-        bool inverted = false;
+/*
+        The 2>&1 that |& adds to the command in front of the pipe.
 
+        Bash puts it behind whatever redirections the command wrote for
+        itself, so a command that sent its errors elsewhere has them brought
+        back to the pipe rather than the other way about. Appending is what
+        that means here: the redirections of one command are one run, and
+        parse_redirect_used is still standing at the end of it.
+*/
+static bool parse_merge_streams(b32 index)
+{
+        b32 slot;
+
+        if (parse_redirect_used + 1 >= parse_redirect_top)
+        {
+                parse_state = PARSE_SYNTAX;
+                return false;
+        }
+
+        slot = parse_redirect_used++;
+        parse_redirects[slot].op = OP_GREATAND;
+        parse_redirects[slot].fd = 2;
+        parse_redirects[slot].kept = false;
+        parse_redirects[slot].raw = false;
+        parse_redirects[slot].body = 0;
+        parse_redirects[slot].body_length = 0;
+        parse_redirects[slot].text = (string_address) "1";
+        parse_redirects[slot].text_length = 1;
+
+        if (!parse_nodes[index].redirect_count)
+                parse_nodes[index].redirect = slot;
+
+        parse_nodes[index].redirect_count++;
+
+        return true;
+}
+
+static PURE inline INLINE bool parse_at_pipe()
+{
+        return parse_look(0)->kind == PT_OP &&
+               (parse_look(0)->op == OP_PIPE ||
+                parse_look(0)->op == OP_PIPEAND);
+}
+
+static b32 parse_pipeline(bool inverted);
+
+/*
+        time, and what it is put in front of.
+
+        The whole of a pipeline is timed, so time takes one and everything
+        that may stand in front of a pipeline may stand behind a time: a bang,
+        and another time. -p asks for the three POSIX lines instead of
+        TIMEFORMAT, and time with nothing behind it times the null command,
+        which is how a script asks what the shell has used so far.
+*/
+static b32 parse_time(bool inverted)
+{
+        b32 index = parse_node_new(NODE_TIME);
+
+        if (parse_state)
+                return 0;
+
+        parse_nodes[index].op = inverted;
+
+        //      Bash marks the command it times rather than wrapping it, so a
+        //      time in front of a time times once and not twice.
+        while (parse_keyword(0) == PARSE_KEYWORD_TIME)
+        {
+                parse_position++;
+
+                if (parse_word_is(0, "-p"))
+                {
+                        parse_nodes[index].flags = 1;
+                        parse_position++;
+                }
+
+                //      Bash ends the options here and reports the POSIX
+                //      three lines whether or not -p was among them.
+                if (parse_word_is(0, "--"))
+                {
+                        parse_nodes[index].flags = 1;
+                        parse_position++;
+                        break;
+                }
+        }
+
+        //      Nothing to time is not a missing command: a separator, the end
+        //      of a list, or the end of the input all end the construct here
+        //      and the null command is what gets measured.
+        if (parse_look(0)->kind == PT_NEWLINE || parse_at_list_end() ||
+            (parse_look(0)->kind == PT_OP &&
+             (parse_look(0)->op == OP_SEMI || parse_look(0)->op == OP_AMP)))
+                return index;
+
+        parse_nodes[index].left = parse_pipeline(false);
+
+        return parse_state ? 0 : index;
+}
+
+static b32 parse_pipeline(bool inverted)
+{
         if (parse_state)
                 return 0;
 
@@ -1877,7 +2089,17 @@ static b32 parse_pipeline()
         if (parse_state)
                 return 0;
 
-        if (parse_word_is(0, "!"))
+        /*
+                time is four bytes long, and every command in the script comes
+                through here. Asking the classifier about each of them to find
+                that out costs more than the length does, and this is the one
+                place a keyword is looked for before the command is read.
+        */
+        if (parse_look(0)->kind == PT_WORD && parse_look(0)->length == 4 &&
+            parse_keyword(0) == PARSE_KEYWORD_TIME)
+                return parse_time(inverted);
+
+        if (!inverted && parse_word_is(0, "!"))
         {
                 inverted = true;
                 parse_position++;
@@ -1891,6 +2113,13 @@ static b32 parse_pipeline()
                         parse_state = PARSE_SYNTAX;
                         return 0;
                 }
+
+                // A time behind the bang is a whole pipeline of its own, and
+                // what the bang inverts is the answer it gives.
+                if (parse_look(0)->kind == PT_WORD &&
+                    parse_look(0)->length == 4 &&
+                    parse_keyword(0) == PARSE_KEYWORD_TIME)
+                        return parse_time(true);
         }
 
         b32 head = parse_command();
@@ -1898,8 +2127,7 @@ static b32 parse_pipeline()
         if (parse_state)
                 return 0;
 
-        bool piped = parse_look(0)->kind == PT_OP &&
-                     parse_look(0)->op == OP_PIPE;
+        bool piped = parse_at_pipe();
 
         // The grammar level carries no information in the overwhelmingly
         // common singleton case. Do not put a node in the executor merely to
@@ -1917,6 +2145,10 @@ static b32 parse_pipeline()
 
         while (piped)
         {
+                if (parse_look(0)->op == OP_PIPEAND &&
+                    !parse_merge_streams(tail))
+                        return 0;
+
                 parse_position++;
                 parse_skip_newlines();
 
@@ -1927,8 +2159,7 @@ static b32 parse_pipeline()
 
                 parse_nodes[tail].next = child;
                 tail = child;
-                piped = parse_look(0)->kind == PT_OP &&
-                        parse_look(0)->op == OP_PIPE;
+                piped = parse_at_pipe();
         }
 
         parse_nodes[index].left = head;
@@ -1941,7 +2172,7 @@ static b32 parse_and_or()
         if (parse_state)
                 return 0;
 
-        b32 head = parse_pipeline();
+        b32 head = parse_pipeline(false);
 
         if (parse_state)
                 return 0;
@@ -1966,7 +2197,7 @@ static b32 parse_and_or()
                 parse_position++;
                 parse_skip_newlines();
 
-                b32 child = parse_pipeline();
+                b32 child = parse_pipeline(false);
 
                 if (parse_state)
                         return 0;
