@@ -71,6 +71,10 @@ environment["LC_ALL"] = "C"
 work_path = Path(work)
 data = work_path / "records"
 find_tree = work_path / "find-tree"
+comm_left = work_path / "comm-left"
+comm_right = work_path / "comm-right"
+join_left = work_path / "join-left"
+join_right = work_path / "join-right"
 
 with data.open("wb") as output:
     for i in range(240_000):
@@ -84,8 +88,29 @@ for directory in range(80):
     for entry in range(300):
         (place / f"Entry-{directory:03d}-{entry:03d}.TxT").touch()
 
-tool_names = ("cat", "wc", "grep", "cut", "tr", "sed", "awk",
-              "sort", "uniq", "head", "tail", "rev", "find")
+with comm_left.open("wb") as left, \
+     comm_right.open("wb") as right, \
+     join_left.open("wb") as left_join, \
+     join_right.open("wb") as right_join:
+    for i in range(120_000):
+        record = f"{i:06d}\n".encode()
+        if i % 2 == 0:
+            left.write(record)
+        if i % 3 == 0:
+            right.write(record)
+        left_join.write(f"{i:06d} left-{i % 97:02d}\n".encode())
+        right_join.write(f"{i:06d} right-{i % 89:02d}\n".encode())
+
+tool_names = ["cat", "wc", "grep", "cut", "tr", "sed", "awk",
+              "sort", "uniq", "head", "tail", "rev", "find"]
+
+# These applets use Linux-only kernel paths in Moonwater (AF_ALG for the
+# checksum one), so keep the long-standing portable benchmark usable on
+# development hosts while making the Linux performance gate comprehensive.
+if sys.platform.startswith("linux"):
+    tool_names.extend(("base64", "base32", "od", "comm", "paste", "join",
+                       "cksum", "sha256sum", "hexdump"))
+
 ours = work_path / "ours"
 ours.mkdir()
 references = {}
@@ -97,7 +122,7 @@ for name in tool_names:
         raise SystemExit(f"bench_tools: host {name} is required")
     references[name] = found
 
-cases = (
+cases = [
     ("cat", "cat", (str(data),), None),
     ("wc-lines", "wc", ("-l", str(data)), None),
     ("grep-count", "grep", ("-c", "needle", str(data)), None),
@@ -111,7 +136,20 @@ cases = (
     ("tail", "tail", ("-n", "1000", str(data)), None),
     ("rev", "rev", (str(data),), None),
     ("find-iname", "find", (str(find_tree), "-iname", "*.TXT"), None),
-)
+]
+
+if sys.platform.startswith("linux"):
+    cases.extend((
+        ("base64", "base64", ("-w0", str(data)), None),
+        ("base32", "base32", ("-w0", str(data)), None),
+        ("od-hex", "od", ("-An", "-tx1", str(data)), None),
+        ("hexdump-canonical", "hexdump", ("-C", str(data)), None),
+        ("comm", "comm", (str(comm_left), str(comm_right)), None),
+        ("paste", "paste", (str(comm_left), str(comm_right)), None),
+        ("join", "join", (str(join_left), str(join_right)), None),
+        ("cksum", "cksum", (str(data),), None),
+        ("sha256sum", "sha256sum", (str(data),), None),
+    ))
 
 def execute(executable, arguments, stdin_path, capture):
     source = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL

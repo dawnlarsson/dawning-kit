@@ -56,6 +56,17 @@ keeping the general utility surface. When the shell and utilities are enabled,
 launcher scripts. Disabled registry roots are discarded by the section linker,
 so these settings reduce the compiled payload as well as the installed names.
 
+## Bowl
+
+Bowl runs Debian, Arch, or another Linux userspace directly on the Moonwater
+kernel. The default fast profile merges the distribution runtime with the host
+filesystem without a VM or supervisor fork; the system profile supplies the
+complete namespace and root view needed by package managers. Selected package
+executables can be exposed on Moonwater's global path with `bowl expose`.
+
+See [the Bowl runtime notes](src/bowl/README.md) for the current commands and
+installation flow.
+
 ## "Moonwater"?
 Some believe that if you leave a bowl of water outside under a full moon, it absorbs celestial energy. 
 I thought it was a funny name for this, as much of this project is unproven and experimental.

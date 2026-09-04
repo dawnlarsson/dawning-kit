@@ -144,6 +144,48 @@ answered() {
         report bad "$name" "want [$(head -c 50 "$work/want" | tr '\n' '|')][$want_status] got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
 }
 
+# A deliberately unsupported extension must fail loudly instead of being
+# silently accepted with different semantics.  These cases are Moonwater-only
+# because the system reference supports the mode we have chosen to refuse.
+rejected() {
+        name=$1
+        tool=$2
+        shift 2
+
+        if "$binaries/$tool" "$@" > "$work/got" 2>/dev/null; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ]; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "expected rejection, got [$(head -c 50 "$work/got" | tr '\n' '|')][$got_status]"
+}
+
+# An invariant that is intentionally stronger than the reference utility's
+# behaviour.  Run it only against Moonwater, with an isolated seeded tree.
+moon_effect() {
+        name=$1
+        tool=$2
+        recipe=$3
+
+        rm -rf "$work/moon"
+        mkdir -p "$work/moon"
+        seed "$work/moon"
+
+        if ( cd "$work/moon" &&
+             eval "TOOL=$binaries/$tool; $recipe" ) > "$work/got.out" 2>&1; then
+                report ok
+                return 0
+        fi
+
+        report bad "$name" "Moonwater invariant failed [$(head -c 50 "$work/got.out" | tr '\n' '|')]"
+}
+
 # Run both commands with standard input attached to a fresh pseudoterminal.
 # The allocated number is incidental; its shape, output and child status are
 # the contract under test.
@@ -1360,6 +1402,7 @@ import os, sys
 for name in ('line\nbreak', 'tab\tname', 'slash\\name', 'escape\x1bname'):
     open(os.path.join(sys.argv[1], name), 'wb').close()
 PY
+: > "$quoted_names/$control_name"
 
 group vdir
 same 'long default'     vdir "$fixture"
@@ -1370,6 +1413,14 @@ same 'numeric long'     vdir -n "$fixture"
 same 'escaped controls' vdir "$quoted_names"
 same 'escaped operands' vdir -d "$quoted_names"/*
 answered 'missing path' vdir "$fixture/nothing"
+
+group dir
+same 'default columns'   dir "$fixture"
+same 'one per line'      dir -1 "$fixture"
+same 'long explicit'     dir -l "$fixture"
+same 'escaped controls'  dir "$quoted_names"
+same 'escaped operand'   dir -d "$quoted_names/$control_name"
+answered 'missing path'  dir "$fixture/nothing"
 
 #       A file with two names in the tree is one file. Nothing above has one,
 #       so a tree with a pair of them is built for the tools that have to
@@ -1791,6 +1842,82 @@ answered 'division by zero' truncate -s /0 plain
 answered 'absolute with reference' truncate -r "$fixture/alpha" -s 2 "$fixture/beta.txt"
 answered 'blocks without size' truncate -o -r "$fixture/alpha" "$fixture/beta.txt"
 
+group shred
+effect 'no passes'        shred '$TOOL -n0 -x plain'
+effect 'zero exact'       shred '$TOOL -n0 -zx plain'
+effect 'zero rounded'     shred '$TOOL -n0 -z plain'
+effect 'zero explicit size' shred '$TOOL -n0 -z -s17 plain'
+effect 'zero short size'  shred '$TOOL -n0 -z -s2 plain'
+effect 'zero size'        shred '$TOOL -n1 -s0 plain'
+effect 'random then zero' shred '$TOOL -n2 -zx plain'
+effect 'many files'       shred '$TOOL -n1 -zx plain tree/one'
+effect 'remove unlink'    shred '$TOOL -n0 --remove=unlink plain'
+effect 'remove short'     shred '$TOOL -n0 -u plain'
+effect 'verbose'          shred '$TOOL -n1 -vzx plain'
+effect 'through symlink'  shred '$TOOL -n0 -zx link'
+effect 'force'            shred 'chmod 400 plain; $TOOL -f -n0 -x plain; stat -c %a plain > forced-mode; chmod 600 plain'
+effect 'directory refused' shred '$TOOL -n0 tree'
+effect 'option after file' shred '$TOOL plain -n0 -zx'
+moon_effect 'random overwrite' shred 'head -c 4096 /dev/zero > plain; cp plain before; "$TOOL" -n1 -x plain; ! cmp -s plain before'
+moon_effect 'wipe mode refused' shred '! "$TOOL" -n0 --remove=wipe plain >/dev/null 2>&1; test -e plain'
+moon_effect 'random source refused' shred '! "$TOOL" -n0 --random-source=plain plain >/dev/null 2>&1; test -e plain'
+answered 'missing file' shred -n0
+answered 'invalid passes' shred -n nope "$fixture/alpha"
+answered 'invalid size' shred -s nope "$fixture/alpha"
+
+group split
+effect 'default lines' split 'seq 1 2005 > input; "$TOOL" input'
+effect 'line count' split 'seq 1 9 > input; "$TOOL" -l 3 input part-'
+effect 'old line count' split 'seq 1 7 > input; "$TOOL" -2 input old-'
+effect 'mixed mode old last' split 'seq 1 7 > input; "$TOOL" -b2 -2 -a3 input old-'
+effect 'mixed mode byte last' split 'seq 1 7 > input; "$TOOL" -2 -b2 -a3 input old-'
+effect 'byte count' split 'printf abcdefghi > input; "$TOOL" -b 4 input byte-'
+effect 'binary bytes' split 'dd if=/dev/zero of=input bs=1000 count=5 status=none; printf tail >> input; "$TOOL" -b 2K input raw-'
+effect 'dense kernel chunks' split 'dd if=/dev/zero of=input bs=1M count=4 status=none; printf tail >> input; "$TOOL" -b 1M input dense-'
+effect 'stdin' split 'printf abcdefghi | "$TOOL" -b3 - stdin-'
+effect 'numeric suffix' split 'printf abcdefghi | "$TOOL" -d -a3 -b3 - numbered-'
+effect 'numeric start' split 'printf abcdefghi | "$TOOL" --numeric-suffixes=7 -b3 - numbered-'
+effect 'short numeric and count conflict' split 'printf abcdefghi | "$TOOL" -d7 -b3 - numbered-'
+effect 'hex suffix' split 'printf abcdefghi | "$TOOL" -x -b3 - hex-'
+effect 'additional suffix' split 'printf abcdefghi | "$TOOL" --additional-suffix=.part -b3 - extra-'
+effect 'nul records' split 'printf "one\0two\0three\0" > input; "$TOOL" -t "\\0" -l2 input nul-'
+effect 'line across refills' split 'dd if=/dev/zero bs=1 count=200000 status=none | tr "\0" x > input; printf "\nsecond\n" >> input; "$TOOL" -l1 input long-'
+effect 'option after input' split 'printf abcdefghi > input; "$TOOL" input after- -b3'
+effect 'empty input' split ': > input; "$TOOL" -b3 input empty-'
+effect 'existing output' split 'printf old-and-long > hit-aa; printf new | "$TOOL" -b3 - hit-'
+effect 'input collision' split 'printf source > same-aa; "$TOOL" -b3 same-aa same-'
+effect 'fixed suffix exhausted' split 'head -c 27 /dev/zero > input; "$TOOL" -a1 -b1 input short-'
+answered 'zero byte count' split -b0 "$fixture/alpha"
+answered 'zero line count' split -l0 "$fixture/alpha"
+answered 'unsupported line bytes' split -C4 "$fixture/alpha"
+answered 'unsupported distribution' split -n2 "$fixture/alpha"
+
+group csplit
+effect 'line' csplit 'seq 1 10 > input; "$TOOL" input 3 > said'
+effect 'many lines' csplit 'seq 1 10 > input; "$TOOL" input 3 6 9 > said'
+effect 'line repeat' csplit 'seq 1 10 > input; "$TOOL" input 3 "{2}" > said'
+effect 'regex' csplit 'seq 1 10 > input; "$TOOL" input "/5/" > said'
+effect 'basic regex' csplit 'printf "a1\na22\nb\n" > input; "$TOOL" input "/^a[0-9]\\{2\\}$/" > said'
+effect 'regex ahead' csplit 'seq 1 10 > input; "$TOOL" input "/5/+2" > said'
+effect 'regex behind' csplit 'seq 1 10 > input; "$TOOL" input "/5/-2" > said'
+effect 'regex repeat' csplit 'printf "a\nx\nb\nx\nc\nx\nd\n" > input; "$TOOL" input "/x/" "{2}" > said'
+effect 'regex repeat all' csplit 'printf "a\nx\nb\nx\nc\nx\nd\n" > input; "$TOOL" input "/x/" "{*}" > said'
+effect 'discard section' csplit 'seq 1 10 > input; "$TOOL" input "%5%" > said'
+effect 'discard repeated' csplit 'printf "a\nx\nb\nx\nc\nx\nd\n" > input; "$TOOL" input "%x%" "{*}" > said'
+effect 'suppress matched' csplit 'seq 1 12 > input; "$TOOL" --suppress-matched input "/5/" "/10/" > said'
+effect 'prefix digits' csplit 'seq 1 10 > input; "$TOOL" -f part- -n3 input 3 6 > said'
+effect 'quiet' csplit 'seq 1 10 > input; "$TOOL" -s input 3 6 > said'
+effect 'elide empty' csplit 'seq 1 5 > input; "$TOOL" -z input 1 3 > said'
+effect 'standard input' csplit 'seq 1 10 | "$TOOL" - 3 6 > said'
+effect 'failed cleanup' csplit 'seq 1 10 > input; "$TOOL" input "/5/" "{2}" > said 2>/dev/null'
+effect 'failed keep' csplit 'seq 1 10 > input; "$TOOL" -k input "/5/" "{2}" > said 2>/dev/null'
+effect 'line out of range' csplit 'seq 1 5 > input; "$TOOL" -k input 99 > said 2>/dev/null'
+moon_effect 'input collision' csplit 'printf "source\n" > same00; ! "$TOOL" -f same same00 3 > said 2>/dev/null; test "$(cat same00)" = source; test ! -s said'
+rejected 'unsupported suffix format' csplit -b %03d "$fixture/alpha" 1
+answered 'invalid regex' csplit "$fixture/alpha" '/[/'
+answered 'repeat first' csplit "$fixture/alpha" '{2}'
+rejected 'suppress offset rejected' csplit --suppress-matched "$fixture/alpha" '/a/+1'
+
 group cp
 large_copy_stress
 effect 'file'           cp '$TOOL tree/one copy'
@@ -1832,6 +1959,25 @@ effect 'not an option'  cp '$TOOL -W tree/one copy'
 effect 'both targets'   cp '$TOOL -T -t tree tree/one'
 effect 'same file'      cp '$TOOL tree/one tree/one'
 effect 'same hard link' cp 'ln tree/one alias; $TOOL tree/one alias'
+
+group install
+effect 'default executable' install '$TOOL tree/one made'
+effect 'explicit mode' install '$TOOL -m 0640 tree/one made'
+effect 'symbolic mode' install '$TOOL -m u=rw,go=r tree/one made'
+effect 'into directory' install '$TOOL plain tree/'
+effect 'many into directory' install '$TOOL tree/one plain tree/deep/'
+effect 'target directory' install '$TOOL -t tree/deep plain'
+effect 'no target directory' install '$TOOL -T tree/one made'
+effect 'leading directories' install '$TOOL -D tree/one new/deep/made'
+effect 'directory tree' install '$TOOL -d new/deep/made'
+effect 'directory mode' install '$TOOL -d -m 0710 new/deep/made'
+effect 'preserve timestamp' install '$TOOL -p tree/one made'
+effect 'verbose' install '$TOOL -v tree/one made > said'
+effect 'replace symlink itself' install 'printf victim > target; ln -s target aimed; $TOOL tree/one aimed'
+effect 'break destination hard link' install 'printf victim > target; ln target aimed; $TOOL tree/one aimed'
+effect 'same file refused' install '$TOOL tree/one tree/one'
+answered 'missing operand' install
+answered 'missing destination' install "$fixture/alpha"
 
 group mv
 effect 'rename'         mv '$TOOL plain renamed'

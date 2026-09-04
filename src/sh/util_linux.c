@@ -27,6 +27,13 @@
 #define UL_ERROR_INTERRUPTED (-4)
 #define UL_ERROR_AGAIN 11
 
+#define UL_FALLOC_KEEP_SIZE 0x01
+#define UL_FALLOC_PUNCH_HOLE 0x02
+#define UL_FALLOC_COLLAPSE_RANGE 0x08
+#define UL_FALLOC_ZERO_RANGE 0x10
+#define UL_FALLOC_INSERT_RANGE 0x20
+#define UL_FALLOC_WRITE_ZEROES 0x80
+
 #define UL_CPU_WORDS 1024
 #define UL_CPU_BITS (UL_CPU_WORDS * positive_bits)
 
@@ -4423,6 +4430,343 @@ static b32 util_linux_setpgid()
         return ul_exec(taking.first, "setpgid");
 }
 
+static const file_long ul_fallocate_longs[] = {
+    {(string_address)"collapse-range", 'c'},
+    {(string_address)"insert-range", 'i'},
+    {(string_address)"keep-size", 'n'},
+    {(string_address)"length", 'l'},
+    {(string_address)"offset", 'o'},
+    {(string_address)"posix", 'x'},
+    {(string_address)"punch-hole", 'p'},
+    {(string_address)"write-zeroes", 'w'},
+    {(string_address)"zero-range", 'z'},
+    {(string_address)"verbose", 'v'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+/*
+        The useful fallocate modes are already one kernel operation.  Keeping
+        the applet as a syscall front matters for image construction: no zero
+        buffer is allocated, dirtied or copied merely to reserve an extent.
+        --dig-holes and --report-holes are scanners rather than allocation
+        operations and remain deliberately unclaimed.
+*/
+static b32 util_linux_fallocate()
+{
+        file_taking taking = {
+            .program = (string_address)"fallocate",
+            .allowed = (string_address)"cilnopvwxzVh",
+            .valued = (string_address)"lo",
+            .longs = ul_fallocate_longs,
+        };
+        positive count = (positive)program_argument_count();
+        positive length;
+        positive offset = 0;
+        positive flags;
+        positive operations;
+        positive mode = 0;
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] filename", address_of answer))
+                return answer;
+        if (taking.first >= count)
+                return ul_bad_usage("fallocate", "no filename specified");
+        if (taking.first + 1 != count)
+                return ul_bad_usage("fallocate", "unexpected number of arguments");
+        if (!file_option_value(address_of taking, 'l'))
+                return ul_bad_usage("fallocate", "no length argument specified");
+        if (!ul_size(file_option_value(address_of taking, 'l'),
+                     address_of length) || !length || length > (positive)b64_max)
+                return ul_bad_usage("fallocate", "invalid length");
+        if (file_option_value(address_of taking, 'o') &&
+            (!ul_size(file_option_value(address_of taking, 'o'),
+                      address_of offset) || offset > (positive)b64_max))
+                return ul_bad_usage("fallocate", "invalid offset");
+
+        flags = taking.flags;
+        operations = ((flags & FILE_FLAG('c')) != 0) +
+                     ((flags & FILE_FLAG('i')) != 0) +
+                     ((flags & FILE_FLAG('p')) != 0) +
+                     ((flags & FILE_FLAG('w')) != 0) +
+                     ((flags & FILE_FLAG('x')) != 0) +
+                     ((flags & FILE_FLAG('z')) != 0);
+
+        if (operations > 1 ||
+            ((flags & FILE_FLAG('n')) &&
+             (flags & (FILE_FLAG('c') | FILE_FLAG('i') | FILE_FLAG('w') |
+                       FILE_FLAG('x')))))
+                return ul_bad_usage("fallocate", "mutually exclusive options");
+
+        if (flags & FILE_FLAG('c'))
+                mode = UL_FALLOC_COLLAPSE_RANGE;
+        else if (flags & FILE_FLAG('i'))
+                mode = UL_FALLOC_INSERT_RANGE;
+        else if (flags & FILE_FLAG('p'))
+                mode = UL_FALLOC_PUNCH_HOLE | UL_FALLOC_KEEP_SIZE;
+        else if (flags & FILE_FLAG('w'))
+                mode = UL_FALLOC_WRITE_ZEROES;
+        else if (flags & FILE_FLAG('z'))
+                mode = UL_FALLOC_ZERO_RANGE;
+
+        if (flags & FILE_FLAG('n'))
+                mode |= UL_FALLOC_KEEP_SIZE;
+
+        string_address path = program_argument((b32)taking.first);
+        bool create = !(mode & ~UL_FALLOC_WRITE_ZEROES);
+        bipolar handle = system_open_at_mode(
+            AT_FDCWD, path,
+            FILE_READ_WRITE | (create ? FILE_CREATE : 0), 0666);
+
+        if (handle < 0)
+        {
+                string_format(file_fail, "fallocate: cannot open %s: %s\n",
+                              path, file_reason(handle));
+                return 1;
+        }
+
+        bipolar done = system_call_4(syscall(fallocate), (positive)handle,
+                                     mode, offset, length);
+        bipolar closed = system_close(handle);
+
+        if (done < 0)
+        {
+                string_format(file_fail, "fallocate: fallocate failed: %s\n",
+                              file_reason(done));
+                return 1;
+        }
+        if (closed < 0)
+        {
+                string_format(file_fail, "fallocate: write failed: %s\n", path);
+                return 1;
+        }
+
+        if (flags & FILE_FLAG('v'))
+        {
+                p8 human[16];
+                positive human_length =
+                    positive_into_human_nearest_string(human, length, true);
+
+                /* util-linux omits a meaningless trailing decimal zero: its
+                   8192-byte spelling is "8 KiB", while the shared nearest
+                   formatter intentionally says "8.0 KiB" for dd. */
+                for (positive at = 0; at + 2 < human_length; at++)
+                        if (human[at] == '.' && human[at + 1] == '0' &&
+                            human[at + 2] == ' ')
+                        {
+                                memory_copy_apart(human + at, human + at + 2,
+                                                  human_length - at - 1);
+                                break;
+                        }
+
+                string_format(log, "%s: %s (", path, human);
+                positive_to_string(log, length);
+                log(" bytes) ", 0);
+
+                if (mode & UL_FALLOC_PUNCH_HOLE)
+                        log("hole created.\n", 0);
+                else if (mode & UL_FALLOC_COLLAPSE_RANGE)
+                        log("removed.\n", 0);
+                else if (mode & UL_FALLOC_INSERT_RANGE)
+                        log("inserted.\n", 0);
+                else if (mode & UL_FALLOC_ZERO_RANGE)
+                        log("zeroed.\n", 0);
+                else if (mode & UL_FALLOC_WRITE_ZEROES)
+                        log("written as zeroes.\n", 0);
+                else
+                        log("allocated.\n", 0);
+        }
+
+        return 0;
+}
+
+static const file_long ul_copyfilerange_longs[] = {
+    {(string_address)"verbose", 'v'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+/* source-offset:destination-offset:length, with an empty offset continuing
+   from the previous range. The kernel updates both explicit offset words, so
+   a list of ranges does not need an lseek before or after each operation. */
+static bool ul_copyfilerange_range(string_address written, bipolar in,
+                                   bipolar out, p64 source_size,
+                                   p64 address_to in_offset,
+                                   p64 address_to out_offset, bool verbose,
+                                   string_address source,
+                                   string_address destination)
+{
+        p8 copy[FILE_PATH_MAX];
+        positive length = string_length(written);
+        string_address first;
+        string_address second;
+        positive parsed;
+
+        if (length >= sizeof(copy))
+                return false;
+
+        memory_copy_apart_end(copy, written, length);
+        first = string_first_of(copy, ':');
+        if (!first)
+                return false;
+        first[0] = end;
+
+        second = string_first_of(first + 1, ':');
+        if (!second)
+                return false;
+        second[0] = end;
+
+        if (string_get(copy))
+        {
+                if (!ul_size(copy, address_of parsed) ||
+                    parsed > (positive)b64_max)
+                        return false;
+                address_to in_offset = parsed;
+        }
+
+        if (string_get(first + 1))
+        {
+                if (!ul_size(first + 1, address_of parsed) ||
+                    parsed > (positive)b64_max)
+                        return false;
+                address_to out_offset = parsed;
+        }
+
+        if (string_get(second + 1))
+        {
+                if (!ul_size(second + 1, address_of parsed) ||
+                    parsed > (positive)b64_max)
+                        return false;
+                length = parsed;
+        }
+        else
+                length = 0;
+
+        if (address_to in_offset > source_size)
+                return false;
+        if (!length)
+                length = (positive)(source_size - address_to in_offset);
+
+        while (length)
+        {
+                positive chunk = length > FILE_KERNEL_COPY_SIZE
+                                     ? FILE_KERNEL_COPY_SIZE : length;
+
+                if (verbose)
+                {
+                        string_format(log, "copy_file_range %s to %s ",
+                                      source, destination);
+                        positive_to_string(log, address_to in_offset);
+                        log(":", 1);
+                        positive_to_string(log, address_to out_offset);
+                        log(":", 1);
+                        positive_to_string(log, chunk);
+                        log("\n", 1);
+                }
+
+                bipolar copied = file_copy_range_once(
+                    in, in_offset, out, out_offset, chunk);
+
+                if (copied == UL_ERROR_INTERRUPTED)
+                        continue;
+                if (copied < 0)
+                {
+                        string_format(file_fail,
+                                      "copyfilerange: failed to copy range: %s\n",
+                                      file_reason(copied));
+                        return false;
+                }
+                if (!copied)
+                        break;
+
+                length -= (positive)copied;
+        }
+
+        return true;
+}
+
+static b32 util_linux_copyfilerange()
+{
+        file_taking taking = {
+            .program = (string_address)"copyfilerange",
+            .allowed = (string_address)"vVh",
+            .longs = ul_copyfilerange_longs,
+        };
+        positive count = (positive)program_argument_count();
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking,
+                    "[options] source destination range...",
+                    address_of answer))
+                return answer;
+        if (count - taking.first < 3)
+                return ul_bad_usage("copyfilerange", "too few arguments");
+
+        string_address source = program_argument((b32)taking.first++);
+        string_address destination = program_argument((b32)taking.first++);
+        file_facts facts;
+        bipolar in = system_open_at(AT_FDCWD, source, FILE_READ);
+
+        if (in < 0)
+        {
+                string_format(file_fail,
+                              "copyfilerange: cannot open source %s: %s\n",
+                              source, file_reason(in));
+                return 1;
+        }
+        if (!file_look(in, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts))
+        {
+                system_close(in);
+                return ul_bad_usage("copyfilerange",
+                                    "cannot determine source size");
+        }
+
+        bipolar out = system_open_at_mode(
+            AT_FDCWD, destination, FILE_WRITE & ~O_TRUNC, 0666);
+
+        if (out < 0)
+        {
+                string_format(file_fail,
+                              "copyfilerange: cannot open destination %s: %s\n",
+                              destination, file_reason(out));
+                system_close(in);
+                return 1;
+        }
+
+        p64 in_offset = 0;
+        p64 out_offset = 0;
+        bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        bool complete = true;
+
+        while (taking.first < count)
+        {
+                string_address range = program_argument((b32)taking.first++);
+
+                if (!ul_copyfilerange_range(range, in, out, facts.size,
+                                             address_of in_offset,
+                                             address_of out_offset, verbose,
+                                             source, destination))
+                {
+                        string_format(file_fail,
+                                      "copyfilerange: invalid range: %s\n",
+                                      range);
+                        complete = false;
+                        break;
+                }
+        }
+
+        system_close(in);
+        system_close(out);
+        return complete ? 0 : 1;
+}
+
 static const file_long ul_fadvise_longs[] = {
     {(string_address)"advice", 'a'}, {(string_address)"fd", 'd'},
     {(string_address)"length", 'l'}, {(string_address)"offset", 'o'},
@@ -4969,4 +5313,575 @@ static b32 util_linux_getino()
 
         log_flush();
         return 0;
+}
+
+// getopt ----------------------------------------------------------
+
+static const file_long ul_getopt_longs[] = {
+    {"alternative", 'a'}, {"longoptions", 'l'},
+    {"name", 'n'},        {"options", 'o'},
+    {"quiet", 'q'},       {"quiet-output", 'Q'},
+    {"shell", 's'},       {"test", 'T'},
+    {"unquoted", 'u'},    {"help", 'h'},
+    {"version", 'V'},     {null, 0},
+};
+
+/* file_taking deliberately keeps only the last value for an option.  getopt
+   is the exception: each -l contributes another comma-separated name list.
+   Keep views of the original argv strings in the shared text arena; no names
+   are copied and no second allocator is involved. */
+static string_address address_to ul_getopt_long_lists;
+static positive ul_getopt_long_count;
+static positive ul_getopt_long_room;
+
+static bool ul_getopt_seen(p8 letter, string_address value)
+{
+        if (letter != 'l')
+                return true;
+
+        if (ul_getopt_long_count >= ul_getopt_long_room)
+                return false;
+
+        ul_getopt_long_lists[ul_getopt_long_count++] = value;
+        return true;
+}
+
+typedef struct
+{
+        string_address name;
+        positive length;
+        p8 argument;
+        positive matches;
+        bool exact;
+} ul_getopt_long_match;
+
+/* One walk over one -l value.  util-linux accepts comma and blank separators;
+   only the final one or two colons describe the argument, so `name:::` names
+   the optional-argument option `name:` just as upstream does. */
+static fn ul_getopt_long_each(string_address list,
+                              fn(address_to visit)(string_address, positive,
+                                                   p8, address_any),
+                              address_any context)
+{
+        string_address at = list;
+
+        while (string_get(at))
+        {
+                while (string_is(at, ',') || byte_is_space(string_get(at)))
+                        at++;
+                if (!string_get(at))
+                        break;
+
+                string_address first = at;
+                while (string_get(at) && !string_is(at, ',') &&
+                       !byte_is_space(string_get(at)))
+                        at++;
+
+                positive length = (positive)(at - first);
+                p8 argument = 0;
+
+                if (length && first[length - 1] == ':')
+                {
+                        argument = 1;
+                        length--;
+                        if (length && first[length - 1] == ':')
+                        {
+                                argument = 2;
+                                length--;
+                        }
+                }
+
+                if (length)
+                        visit(first, length, argument, context);
+        }
+}
+
+typedef struct
+{
+        string_address wanted;
+        positive length;
+        ul_getopt_long_match address_to match;
+} ul_getopt_long_search;
+
+static fn ul_getopt_long_consider(string_address name, positive length,
+                                  p8 argument, address_any opaque)
+{
+        ul_getopt_long_search address_to search =
+            (ul_getopt_long_search address_to)opaque;
+        ul_getopt_long_match address_to match = search->match;
+
+        if (length < search->length ||
+            string_compare_max(name, search->wanted, search->length))
+                return;
+
+        bool exact = length == search->length;
+
+        if (match->exact && !exact)
+                return;
+
+        if (exact && !match->exact)
+        {
+                match->name = name;
+                match->length = length;
+                match->argument = argument;
+                match->matches = 1;
+                match->exact = true;
+                return;
+        }
+
+        /* Repeating the same -l list does not make one spelling ambiguous. */
+        if (match->name && match->length == length &&
+            !string_compare_max(match->name, name, length))
+                return;
+
+        if (!match->name)
+        {
+                match->name = name;
+                match->length = length;
+                match->argument = argument;
+        }
+        match->matches++;
+}
+
+static ul_getopt_long_match ul_getopt_long_find(string_address wanted,
+                                                 positive length)
+{
+        ul_getopt_long_match match = {0};
+        ul_getopt_long_search search = {wanted, length, address_of match};
+
+        for (positive i = 0; i < ul_getopt_long_count; i++)
+                ul_getopt_long_each(ul_getopt_long_lists[i],
+                                    ul_getopt_long_consider, address_of search);
+
+        return match;
+}
+
+typedef struct
+{
+        string_address wanted;
+        positive length;
+        p8 dashes;
+        bool first;
+} ul_getopt_ambiguity;
+
+static fn ul_getopt_long_possibility(string_address name, positive length,
+                                     p8 argument, address_any opaque)
+{
+        (void)argument;
+        ul_getopt_ambiguity address_to ambiguity =
+            (ul_getopt_ambiguity address_to)opaque;
+
+        if (length < ambiguity->length ||
+            string_compare_max(name, ambiguity->wanted, ambiguity->length))
+                return;
+
+        log_error(ambiguity->first ? "; possibilities: '" : " '", 0);
+        ambiguity->first = false;
+        log_error(ambiguity->dashes == 2 ? "--" : "-", ambiguity->dashes);
+        log_error(name, length);
+        log_error("'", 1);
+}
+
+/* The external getopt protocol has a canonical spelling distinct from the
+   shell's human-facing `set` spelling: an embedded quote is '\\'' here.  The
+   csh family additionally has to leave blanks and history markers outside a
+   quoted run.  This is kept as a protocol writer, not another parser or
+   general-purpose quoting layer. */
+static fn ul_getopt_quote(string_address value, bool csh)
+{
+        log("'", 1);
+
+        for (string_address at = value; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte == '\'')
+                        log("'\\''", 4);
+                else if (csh && (byte == ' ' || byte == '\t' || byte == '!'))
+                {
+                        log("'\\", 2);
+                        log(at, 1);
+                        log("'", 1);
+                }
+                else if (csh && byte == '\n')
+                        log("\\n", 2);
+                else
+                        log(at, 1);
+        }
+
+        log("'", 1);
+}
+
+static fn ul_getopt_value(string_address value, bool unquoted, bool csh,
+                           bool output)
+{
+        if (!output)
+                return;
+
+        log(" ", 1);
+        if (unquoted)
+                log(value ? value : (string_address)"", 0);
+        else
+                ul_getopt_quote(value ? value : (string_address)"", csh);
+}
+
+static string_address ul_getopt_short_find(string_address options, p8 letter)
+{
+        if (string_is(options, '+') || string_is(options, '-'))
+                options++;
+        if (string_is(options, ':'))
+                options++;
+
+        return string_first_of(options, letter);
+}
+
+static p8 ul_getopt_short_argument(string_address options, p8 letter)
+{
+        string_address found = ul_getopt_short_find(options, letter);
+
+        if (!found || found[1] != ':')
+                return 0;
+        return found[2] == ':' ? 2 : 1;
+}
+
+static fn ul_getopt_option(p8 letter, string_address argument,
+                           p8 argument_kind, bool unquoted, bool csh,
+                           bool output)
+{
+        if (!output)
+                return;
+
+        p8 spelling[3] = {' ', '-', letter};
+        log(spelling, sizeof(spelling));
+
+        if (argument_kind)
+                ul_getopt_value(argument, unquoted, csh, true);
+}
+
+static bool ul_getopt_short(string_address word, string_address next,
+                            bool has_next, string_address options,
+                            string_address name, bool quiet, bool unquoted,
+                            bool csh, bool output, bool address_to consumed)
+{
+        string_address words[4] = {name, word, next, null};
+        b32 count = has_next ? 3 : 2;
+        b32 saved_optind = optind;
+        b32 saved_opterr = opterr;
+        string_address saved_optarg = optarg;
+        b32 saved_optopt = optopt;
+        bool okay = true;
+
+        optind = 0;
+        opterr = !quiet;
+
+        while (true)
+        {
+                b32 letter = getopt(count, words, options);
+
+                if (letter == -1)
+                        break;
+                if (letter == '?' || letter == ':')
+                {
+                        okay = false;
+                        if (optind >= 2)
+                                break;
+                        continue;
+                }
+
+                p8 kind = ul_getopt_short_argument(options, (p8)letter);
+                ul_getopt_option((p8)letter, optarg, kind, unquoted, csh,
+                                  output);
+
+                /* A fresh miniature argv presents only this cluster and the
+                   one word it may consume as an argument.  Once getopt has
+                   advanced past the cluster, do not let the next option word
+                   become part of this call; the outer permutation walk owns
+                   it. */
+                if (optind >= 2)
+                        break;
+        }
+
+        address_to consumed = optind > 2;
+        optind = saved_optind;
+        opterr = saved_opterr;
+        optarg = saved_optarg;
+        optopt = saved_optopt;
+        return okay;
+}
+
+static bool ul_getopt_long(string_address word, p8 dashes,
+                           string_address next, bool has_next,
+                           string_address name, bool quiet, bool unquoted,
+                           bool csh, bool output, bool address_to consumed)
+{
+        string_address wanted = word + dashes;
+        string_address equal = string_first_of(wanted, '=');
+        positive wanted_length = equal ? (positive)(equal - wanted)
+                                         : string_length(wanted);
+        ul_getopt_long_match match =
+            ul_getopt_long_find(wanted, wanted_length);
+
+        address_to consumed = false;
+
+        if (!match.matches)
+        {
+                if (!quiet)
+                        string_format(log_error,
+                                      "%s: unrecognized option '%s'\n",
+                                      name, word);
+                return false;
+        }
+
+        if (match.matches > 1 && !match.exact)
+        {
+                if (!quiet)
+                {
+                        string_format(log_error, "%s: option '%s' is ambiguous",
+                                      name, word);
+                        ul_getopt_ambiguity ambiguity = {
+                            wanted, wanted_length, dashes, true,
+                        };
+                        for (positive i = 0; i < ul_getopt_long_count; i++)
+                                ul_getopt_long_each(
+                                    ul_getopt_long_lists[i],
+                                    ul_getopt_long_possibility,
+                                    address_of ambiguity);
+                        log_error("\n", 1);
+                }
+                return false;
+        }
+
+        string_address argument = equal ? equal + 1 : null;
+
+        if (!match.argument && equal)
+        {
+                if (!quiet)
+                {
+                        string_format(log_error, "%s: option '", name);
+                        log_error(dashes == 2 ? "--" : "-", dashes);
+                        log_error(match.name, match.length);
+                        log_error("' doesn't allow an argument\n", 0);
+                }
+                return false;
+        }
+
+        if (match.argument == 1 && !equal)
+        {
+                if (!has_next)
+                {
+                        if (!quiet)
+                        {
+                                string_format(log_error, "%s: option '", name);
+                                log_error(dashes == 2 ? "--" : "-", dashes);
+                                log_error(match.name, match.length);
+                                log_error("' requires an argument\n", 0);
+                        }
+                        return false;
+                }
+                argument = next;
+                address_to consumed = true;
+        }
+
+        if (output)
+        {
+                log(" --", 3);
+                log(match.name, match.length);
+        }
+        if (match.argument)
+                ul_getopt_value(argument, unquoted, csh, output);
+        return true;
+}
+
+static COLD b32 ul_getopt_setup_error(string_address message)
+{
+        string_format(log_error, "getopt: %s\n"
+                      "Try 'getopt --help' for more information.\n", message);
+        return 2;
+}
+
+static b32 util_linux_getopt()
+{
+        positive count = (positive)program_argument_count();
+        bool compatible = count > 1 &&
+            !string_is(program_argument(1), '-');
+        string_address options;
+        positive first;
+        bool alternative = false;
+        bool quiet = false;
+        bool quiet_output = false;
+        bool unquoted = compatible;
+        bool csh = false;
+        string_address diagnostic_name = "getopt";
+
+        text_arena_used = 0;
+        ul_getopt_long_count = 0;
+        ul_getopt_long_room = count;
+        ul_getopt_long_lists = count
+            ? (string_address address_to)text_arena_take(
+                  count * sizeof(*ul_getopt_long_lists))
+            : null;
+        if (count && !ul_getopt_long_lists)
+                return 2;
+
+        if (compatible)
+        {
+                options = program_argument(1);
+                first = 2;
+        }
+        else
+        {
+                file_taking taking = {
+                    .program = "getopt", .allowed = "alnoqQsTuhV",
+                    .valued = "lnos", .longs = ul_getopt_longs,
+                    .seen = ul_getopt_seen,
+                };
+                b32 answer;
+
+                if (!file_take(address_of taking))
+                        return 2;
+                if (taking.flags & FILE_FLAG('T'))
+                        return 4;
+                if (ul_meta(address_of taking,
+                            "[options] optstring parameters", address_of answer))
+                        return answer;
+
+                if (taking.flags & FILE_FLAG('o'))
+                {
+                        options = file_option_value(address_of taking, 'o');
+                        first = taking.first;
+                }
+                else
+                {
+                        if (taking.first >= count)
+                                return ul_getopt_setup_error(
+                                    "missing optstring argument");
+                        options = program_argument((b32)taking.first);
+                        first = taking.first + 1;
+                }
+
+                alternative = (taking.flags & FILE_FLAG('a')) != 0;
+                quiet = (taking.flags & FILE_FLAG('q')) != 0;
+                quiet_output = (taking.flags & FILE_FLAG('Q')) != 0;
+                unquoted = (taking.flags & FILE_FLAG('u')) != 0;
+                if (file_option_value(address_of taking, 'n'))
+                        diagnostic_name =
+                            file_option_value(address_of taking, 'n');
+
+                string_address shell = file_option_value(address_of taking, 's');
+                if (shell)
+                {
+                        if (string_equals(shell, "csh") ||
+                            string_equals(shell, "tcsh"))
+                                csh = true;
+                        else if (!string_equals(shell, "sh") &&
+                                 !string_equals(shell, "bash"))
+                                return ul_getopt_setup_error(
+                                    "unknown shell after -s or --shell argument");
+                }
+        }
+
+        bool address_to deferred = count
+            ? (bool address_to)text_arena_take(count * sizeof(*deferred))
+            : null;
+        if (count && !deferred)
+                return 2;
+        memory_fill(deferred, 0, count * sizeof(*deferred));
+
+        bool failed = false;
+        bool stopped = false;
+        bool positive_order = string_is(options, '+');
+        bool return_in_order = string_is(options, '-');
+        bool output = !quiet_output;
+        string_address option_body = options;
+        if (string_is(option_body, '+') || string_is(option_body, '-'))
+                option_body++;
+        bool target_quiet = quiet || string_is(option_body, ':');
+
+        for (positive i = first; i < count; i++)
+        {
+                string_address word = program_argument((b32)i);
+
+                if (stopped)
+                {
+                        deferred[i] = true;
+                        continue;
+                }
+                if (string_equals(word, "--"))
+                {
+                        stopped = true;
+                        continue;
+                }
+                if (!string_is(word, '-') || !string_get(word + 1))
+                {
+                        if (positive_order)
+                                stopped = true;
+                        if (return_in_order)
+                                ul_getopt_value(word, unquoted, csh, output);
+                        else
+                                deferred[i] = true;
+                        continue;
+                }
+
+                bool double_dash = string_is(word + 1, '-');
+                bool long_word = double_dash && string_get(word + 2);
+                p8 dashes = double_dash ? 2 : 1;
+                ul_getopt_long_match match = {0};
+
+                if (!double_dash && alternative)
+                {
+                        string_address wanted = word + 1;
+                        string_address equal = string_first_of(wanted, '=');
+                        positive length = equal ? (positive)(equal - wanted)
+                                                : string_length(wanted);
+                        match = ul_getopt_long_find(wanted, length);
+
+                        /* getopt_long_only gives a recognized long spelling
+                           priority; when there is none, a valid first short
+                           letter makes this an ordinary option cluster. */
+                        bool short_first = ul_getopt_short_find(
+                            options, string_get(word + 1)) != null;
+                        bool one_letter = !string_get(word + 2);
+
+                        long_word =
+                            (match.matches && !(one_letter && short_first)) ||
+                            (!match.matches && !short_first);
+                }
+
+                bool consumed = false;
+                bool okay;
+                string_address next = i + 1 < count
+                    ? program_argument((b32)i + 1) : null;
+
+                if (long_word)
+                        /* A leading ':' silences long diagnostics as well as
+                           the shared short parser. */
+                        okay = ul_getopt_long(word, dashes, next, i + 1 < count,
+                                              diagnostic_name, target_quiet,
+                                              unquoted, csh,
+                                              output, address_of consumed);
+                else
+                        okay = ul_getopt_short(word, next, i + 1 < count,
+                                               options, diagnostic_name,
+                                               target_quiet,
+                                               unquoted, csh, output,
+                                               address_of consumed);
+
+                if (!okay)
+                        failed = true;
+                if (consumed)
+                        i++;
+        }
+
+        if (output)
+        {
+                log(" --", 3);
+                for (positive i = first; i < count; i++)
+                        if (deferred[i])
+                                ul_getopt_value(program_argument((b32)i),
+                                                unquoted, csh, true);
+                log("\n", 1);
+                log_flush();
+        }
+
+        return failed ? 1 : 0;
 }

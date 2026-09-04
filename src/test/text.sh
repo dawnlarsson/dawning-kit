@@ -107,6 +107,67 @@ printf '\ny\n' >> "$work/nl_flush"
 printf 'xa\000yb\000zc\000' > "$work/zeros"
 printf 'a:b\000c:d\000a:b\000' > "$work/zpairs"
 
+# Power-of-two encodings cross both the three/five-byte quantum boundaries
+# and the text reader's 64 KiB refill boundary.  The binary sample keeps NUL
+# and high bytes in the differential rather than proving only ASCII text.
+printf 'f' > "$work/encoding_one"
+printf 'fo' > "$work/encoding_two"
+printf 'foo' > "$work/encoding_three"
+printf 'foobar\000\001\002\176\177\200\376\377' > "$work/encoding_binary"
+head -c 131077 /dev/zero | tr '\0' q > "$work/encoding_big"
+printf 'Zg==\n' > "$work/base64_one"
+printf 'Zm9vYmFyAAECfn+A/v8=\n' > "$work/base64_binary"
+printf 'Z!m@9v\n' > "$work/base64_garbage"
+printf 'Zg=\n' > "$work/base64_bad_padding"
+printf 'MY======\n' > "$work/base32_one"
+printf 'MZXW6YTBOIAACAT6P6AP57Y=\n' > "$work/base32_binary"
+printf 'M!Z@XW6===\n' > "$work/base32_garbage"
+
+# The three multi-input record walkers share text_reader.  These fixtures
+# cover unequal tails, repeated join keys (whose Cartesian product has an
+# observable order), NUL records, repeated standard input for paste, and a
+# record wider than one 64 KiB refill.
+printf 'a\nc\ne\n' > "$work/comm_left"
+printf 'b\nc\nd\n' > "$work/comm_right"
+printf 'aa\000cc\000ee\000' > "$work/comm_zero_left"
+printf 'bb\000cc\000dd\000' > "$work/comm_zero_right"
+printf 'b\na\n' > "$work/relation_unordered_pair"
+printf 'b\nc\na\n' > "$work/relation_unordered_tail"
+printf 'one\ntwo\nthree\n' > "$work/paste_left"
+printf '1\n2\n' > "$work/paste_right"
+printf 'a\nb\nc\nd\n' > "$work/paste_stdin"
+printf '1 a\n1 b\n2 c\n4 lone\n' > "$work/join_left"
+printf '1 x\n1 y\n3 z\n4 pair\n' > "$work/join_right"
+printf 'a:K:L\nb:M:N\n' > "$work/join_field_left"
+printf 'x:K:R\ny:Q:S\n' > "$work/join_field_right"
+printf 'A x\na y\nb z\n' > "$work/join_case_left"
+printf 'a q\na r\nc s\n' > "$work/join_case_right"
+printf 'name left extra\n1 x\n2 y z\n' > "$work/join_header_left"
+printf 'name right\n1 q r\n3 s\n' > "$work/join_header_right"
+printf '1 a\0002 b\000' > "$work/join_zero_left"
+printf '1 x\0003 y\000' > "$work/join_zero_right"
+{
+        printf '1 '
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\n1 b\n2 c\n'
+} > "$work/join_wide_left"
+printf '1 q\n1 r\n2 s\n' > "$work/join_wide_right"
+{
+        printf 'a\n'
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\nz\n'
+} > "$work/record_wide"
+
+# expand and unexpand keep display-column state across reader refills and file
+# boundaries.  Controls make the column rules observable without a terminal.
+printf '  \tA\tB\b\tC\r\tD\f\tE\n        X        Y\n' > "$work/tabs"
+printf '1234' > "$work/tabs_part_one"
+printf '\tX\n        Y\n' > "$work/tabs_part_two"
+{
+        head -c 65535 /dev/zero | tr '\0' ' '
+        printf '\tX\b\tY\n'
+} > "$work/tabs_wide"
+
 case_start()
 {
         group=$1
@@ -584,6 +645,24 @@ compares_many_grep_globs()
         compare 'many grep globs' grep one "$@" x "$work/one"
 }
 
+refuses_basenc_z85()
+{
+        "$bin/basenc" --z85 < "$work/a" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^basenc:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'z85 loud refusal' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
 # These modes have no correct bounded implementation here yet. They must be
 # rejected instead of silently becoming ordinary byte sorting.
 refuses_sort_mode()
@@ -606,6 +685,84 @@ refuses_sort_mode()
                 "$group" "$name" 'loud refusal' \
                 "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
 }
+
+case_start encoding
+compare 'base64 empty'        base64 empty
+compare 'base64 one byte'     base64 encoding_one
+compare 'base64 two bytes'    base64 encoding_two
+compare 'base64 three bytes'  base64 encoding_three
+compare 'base64 binary'       base64 encoding_binary
+compare 'base64 no wrap'      base64 encoding_binary -w 0
+compare 'base64 narrow wrap'  base64 encoding_binary -w 7
+compare 'base64 long stream'  base64 encoding_big -w 0
+compare 'base64 file'         base64 - "$work/encoding_binary"
+compare 'base64 decode one'   base64 base64_one -d
+compare 'base64 decode binary' base64 base64_binary -d
+compare 'base64 garbage'      base64 base64_garbage -di
+compare 'base64 bad padding'  base64 base64_bad_padding -d
+
+compare 'base32 empty'        base32 empty
+compare 'base32 one byte'     base32 encoding_one
+compare 'base32 two bytes'    base32 encoding_two
+compare 'base32 binary'       base32 encoding_binary
+compare 'base32 no wrap'      base32 encoding_big -w0
+compare 'base32 narrow wrap'  base32 encoding_binary -w 9
+compare 'base32 decode one'   base32 base32_one -d
+compare 'base32 decode binary' base32 base32_binary -d
+compare 'base32 garbage'      base32 base32_garbage -di
+
+compare 'basenc base64'       basenc encoding_binary --base64
+compare 'basenc base64url'    basenc encoding_binary --base64url
+compare 'basenc base32'       basenc encoding_binary --base32
+compare 'basenc base32hex'    basenc encoding_binary --base32hex
+compare 'basenc base16'       basenc encoding_binary --base16
+compare 'basenc base2msbf'    basenc encoding_three --base2msbf -w0
+compare 'basenc base2lsbf'    basenc encoding_three --base2lsbf -w0
+compare 'basenc base64 decode' basenc base64_binary --base64 -d
+refuses_basenc_z85
+
+case_start comm
+compare 'plain'              comm - "$work/comm_left" "$work/comm_right"
+compare 'suppress first'     comm - -1 "$work/comm_left" "$work/comm_right"
+compare 'suppress two'       comm - -13 "$work/comm_left" "$work/comm_right"
+compare 'output delimiter'   comm - --output-delimiter=:: "$work/comm_left" "$work/comm_right"
+compare 'empty delimiter'    comm - --output-delimiter= "$work/comm_left" "$work/comm_right"
+compare 'totals'             comm - --total "$work/comm_left" "$work/comm_right"
+compare 'no order check'     comm - --nocheck-order "$work/comm_left" "$work/comm_right"
+compare 'forced order check' comm - --check-order "$work/comm_left" "$work/comm_right"
+compare 'paired disorder default' comm - "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'paired disorder checked' comm - --check-order "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'disorder with unpaired' comm - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
+compare 'zero records'       comm - -z "$work/comm_zero_left" "$work/comm_zero_right"
+compare 'refill record'      comm - "$work/record_wide" "$work/record_wide"
+
+case_start paste
+compare 'parallel'           paste - "$work/paste_left" "$work/paste_right"
+compare 'serial'             paste - -s "$work/paste_left" "$work/paste_right"
+compare 'delimiter cycle'    paste - -d ,: "$work/paste_left" "$work/paste_right"
+compare 'escaped delimiters' paste - -d '\n\t\b' "$work/paste_left" "$work/paste_right"
+compare 'empty delimiter'    paste - -d '' "$work/paste_left" "$work/paste_right"
+compare 'stdin twice'        paste paste_stdin - -
+compare 'zero records'       paste - -z "$work/comm_zero_left" "$work/comm_zero_right"
+compare 'refill record'      paste - "$work/record_wide" "$work/paste_right"
+
+case_start join
+compare 'plain duplicates'   join - "$work/join_left" "$work/join_right"
+compare 'unpaired left'      join - -a1 "$work/join_left" "$work/join_right"
+compare 'unpaired both'      join - -a1 -a2 "$work/join_left" "$work/join_right"
+compare 'only left'          join - -v1 "$work/join_left" "$work/join_right"
+compare 'only both'          join - -v1 -v2 "$work/join_left" "$work/join_right"
+compare 'selected output'    join - -o 0,1.2,2.2 "$work/join_left" "$work/join_right"
+compare 'missing replacement' join - -a1 -e EMPTY -o 0,1.2,2.3 "$work/join_left" "$work/join_right"
+compare 'join fields'        join - -1 2 -2 2 "$work/join_field_left" "$work/join_field_right"
+compare 'separator'          join - -t: -1 2 -2 2 "$work/join_field_left" "$work/join_field_right"
+compare 'ignore case'        join - -i "$work/join_case_left" "$work/join_case_right"
+compare 'header'             join - --header "$work/join_header_left" "$work/join_header_right"
+compare 'paired disorder default' join - "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'paired disorder checked' join - --check-order "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'disorder with unpaired' join - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
+compare 'zero records'       join - -z "$work/join_zero_left" "$work/join_zero_right"
+compare 'refill duplicate'   join - "$work/join_wide_left" "$work/join_wide_right"
 
 case_start grep
 compare 'literal'        grep a  alpha
@@ -1076,6 +1233,28 @@ compare 'characters keep tab columns' fold g -c -w 3
 compare 'width plus'     fold a  -w +8
 compare 'width zero'     fold a  -w 0
 compare 'width malformed' fold a -w nope
+
+case_start tabs
+compare 'expand default'        expand tabs
+compare 'expand initial'        expand tabs -i
+compare 'expand explicit'       expand tabs -t '3,5'
+compare 'expand absolute tail'  expand tabs -t '3,5,/4'
+compare 'expand relative tail'  expand tabs --tabs='3,5,+4'
+compare 'expand repeated list'  expand tabs -t3 -t5
+compare 'expand old spacing'    expand tabs -4
+compare 'expand files continue' expand - "$work/tabs_part_one" "$work/tabs_part_two"
+compare 'expand refill'         expand tabs_wide -t 65536,65544
+compare 'unexpand initial'      unexpand tabs
+compare 'unexpand all'          unexpand tabs -a
+compare 'unexpand first only'   unexpand tabs -a --first-only
+compare 'unexpand explicit'     unexpand tabs -t '3 5'
+compare 'unexpand absolute tail' unexpand tabs -t '3,5,/4'
+compare 'unexpand relative tail' unexpand tabs --tabs='3,5,+4'
+compare 'unexpand repeated list' unexpand tabs -t3 -t5
+compare 'unexpand files continue' unexpand - -a "$work/tabs_part_one" "$work/tabs_part_two"
+compare 'unexpand refill'       unexpand tabs_wide -a
+compare 'expand bad order'      expand tabs -t 5,3
+compare 'unexpand bad repeat'   unexpand tabs -t 3,/4,+2
 
 case_start tee
 compare 'passthrough'    tee a  "$work/tee1"

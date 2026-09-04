@@ -196,8 +196,11 @@ sensitive filesystem, and this is $(uname). Name a machine that has them with
                 #
                 # tmp, etc and root because everything expects them to be there:
                 # a redirection into /tmp is the first thing anybody tries.
+                # The empty runtime directories are mount targets for Bowl's
+                # fast merged view; /bowls is where distribution roots live.
                 mkdir -p fs/sys fs/proc fs/dev fs/tmp fs/etc fs/root \
-                        fs/bin fs/sbin fs/usr ||
+                        fs/bin fs/sbin fs/usr fs/lib fs/lib64 fs/var fs/opt \
+                        fs/bowls/bin ||
                         die "filesystem setup"
 
                 make_node() {

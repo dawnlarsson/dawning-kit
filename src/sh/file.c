@@ -3,6 +3,16 @@
 /* Defined by text.c later in the multicall translation unit. */
 static address_any text_arena_take(positive bytes);
 static positive text_arena_used;
+static p8 address_to text_arena_read_all(positive handle, positive first,
+                                         positive address_to length,
+                                         bool address_to read_failed);
+
+/* file.c is included before text.c in the multicall translation unit.  These
+   two leaves let csplit use that one BRE compiler and matcher without growing
+   a second regular-expression implementation here. */
+static bool regex_compile(string_address pattern, bool extended, bool icase,
+                          bool escapes, p8 policy);
+static bool regex_search(string_address text, positive length, positive from);
 
 /* Every arena-backed vector shares one rare grow/copy path.  The common
    typed front keeps a full store to existing room on the caller's hot path. */
@@ -73,6 +83,7 @@ static TEXT_ARENA_GROW bool text_arena_grow(
 #define ERROR_NO_ENTRY 2
 #define ERROR_NO_PROCESS 3
 #define ERROR_BAD_DESCRIPTOR 9
+#define ERROR_NO_DEVICE_ADDRESS 6
 #define ERROR_ACCESS 13
 #define ERROR_ARGUMENT_LIST 7
 #define ERROR_EXISTS 17
@@ -82,8 +93,10 @@ static TEXT_ARENA_GROW bool text_arena_grow(
 #define ERROR_INVALID 22
 #define ERROR_NOT_TERMINAL 25
 #define ERROR_ILLEGAL_SEEK 29
+#define ERROR_NO_SYSTEM_CALL 38
 #define ERROR_NAME_TOO_LONG 36
 #define ERROR_NOT_EMPTY 39
+#define ERROR_NOT_SUPPORTED 95
 
 #define STATX_BASIC 0x7ff
 #define STATX_BIRTH 0x800
@@ -2638,17 +2651,208 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code)
 // Copying, removing, making --------------------------------
 
 /*
-        Regular-file copies spend almost all their time crossing this loop.
-        A 32 KiB transfer made a 512 MiB copy issue 16,384 read calls and the
-        same number of writes. 128 KiB is still a modest permanent buffer,
-        fits the kernel's ordinary readahead/writeback granularity well, and
-        quarters those crossings without changing the short-read contract.
+        One kernel copy, shared by cp and util-linux's copyfilerange.
+
+        Null offsets advance the descriptors; explicit offsets leave them
+        alone.  Linux caps an individual transfer below two gigabytes even on
+        a 64-bit machine, so callers use this ceiling instead of asking with
+        positive_max and making the kernel trim it every time.
 */
+#define FILE_KERNEL_COPY_SIZE 0x7ffff000
+
+static bipolar file_copy_range_once(bipolar in, p64 address_to in_offset,
+                                    bipolar out, p64 address_to out_offset,
+                                    positive length)
+{
+        return system_call_6(syscall(copy_file_range), (positive)in,
+                             (positive)in_offset, (positive)out,
+                             (positive)out_offset, length, 0);
+}
+
+/* sendfile is the second kernel-copy floor. Unlike copy_file_range it has no
+   destination offset, so the caller positions that descriptor before entering
+   this loop. Keeping the source offset explicit means sparse extents never
+   disturb the descriptor position used to discover the next hole. */
+static bipolar file_send_range_once(bipolar in, p64 address_to in_offset,
+                                    bipolar out, positive length)
+{
+        return system_call_4(syscall(sendfile), (positive)out, (positive)in,
+                             (positive)in_offset, length);
+}
+
+/* Regular copies use the kernel path below. The buffer exists only for a
+   filesystem, kernel or seccomp policy that cannot perform range copies. */
 #define FILE_TRANSFER_SIZE (FILE_BLOCK * 32)
 static p8 file_transfer[FILE_TRANSFER_SIZE];
 
-bool file_copy_contents(bipolar from_directory, string_address from,
-                        bipolar to_directory, string_address to, positive mode)
+static bool file_copy_range_fallback(bipolar result)
+{
+        return result == -ERROR_NOT_PERMITTED || result == -ERROR_CROSS_DEVICE ||
+               result == -ERROR_INVALID || result == -ERROR_NO_SYSTEM_CALL ||
+               result == -ERROR_NOT_SUPPORTED;
+}
+
+static bool file_copy_buffered(bipolar in, bipolar out)
+{
+        while (1)
+        {
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   sizeof(file_transfer));
+
+                if (taken < 0)
+                        return false;
+                if (!taken)
+                        return true;
+                if (system_write_all((positive)out, file_transfer,
+                                     (positive)taken) != (positive)taken)
+                        return false;
+        }
+}
+
+/* Copy one known data extent. A capability miss switches every later extent
+   to the buffered path, but never copies the holes between them. */
+static bool file_copy_extent(bipolar in, bipolar out, p64 start,
+                             positive length, bool address_to range_copy,
+                             bool address_to send_copy)
+{
+        p64 in_offset = start;
+        p64 out_offset = start;
+
+        while (length && address_to range_copy)
+        {
+                positive chunk = length > FILE_KERNEL_COPY_SIZE
+                                     ? FILE_KERNEL_COPY_SIZE : length;
+                bipolar copied = file_copy_range_once(
+                    in, address_of in_offset, out, address_of out_offset, chunk);
+
+                if (copied > 0)
+                {
+                        length -= (positive)copied;
+                        continue;
+                }
+                if (!copied)
+                        return true;
+                if (copied == -4)
+                        continue;
+                if (!file_copy_range_fallback(copied))
+                        return false;
+
+                address_to range_copy = false;
+        }
+
+        if (length && address_to send_copy)
+        {
+                if (system_seek(out, out_offset, FILE_SEEK_SET) < 0)
+                        return false;
+
+                while (length)
+                {
+                        positive chunk = length > FILE_KERNEL_COPY_SIZE
+                                             ? FILE_KERNEL_COPY_SIZE : length;
+                        bipolar copied = file_send_range_once(
+                            in, address_of in_offset, out, chunk);
+
+                        if (copied > 0)
+                        {
+                                out_offset += (positive)copied;
+                                length -= (positive)copied;
+                                continue;
+                        }
+                        if (!copied)
+                                return true;
+                        if (copied == -4)
+                                continue;
+                        if (!file_copy_range_fallback(copied))
+                                return false;
+
+                        address_to send_copy = false;
+                        break;
+                }
+        }
+
+        if (!length)
+                return true;
+        if (system_seek(in, in_offset, FILE_SEEK_SET) < 0 ||
+            system_seek(out, out_offset, FILE_SEEK_SET) < 0)
+                return false;
+
+        while (length)
+        {
+                positive ask = length < sizeof(file_transfer)
+                                   ? length : sizeof(file_transfer);
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   ask);
+
+                if (taken < 0)
+                        return false;
+                if (!taken)
+                        return true;
+                if (system_write_all((positive)out, file_transfer,
+                                     (positive)taken) != (positive)taken)
+                        return false;
+
+                length -= (positive)taken;
+        }
+
+        return true;
+}
+
+/*
+        copy_file_range alone is not sparse-preserving: on tmpfs a 64 MiB
+        image with one four-byte extent becomes 64 MiB of allocated pages.
+        SEEK_DATA/SEEK_HOLE keeps the logical layout at syscall granularity;
+        only real extents cross copy_file_range, and ftruncate restores a
+        trailing hole. Zero-sized procfs files are left to the stream path,
+        because their reported size is not their readable length.
+
+        1 means copied, 0 means the filesystem has no extent interface and
+        asks for the stream path, -1 means an actual copy failure.
+*/
+static bipolar file_copy_sparse(bipolar in, bipolar out,
+                                file_facts address_to facts)
+{
+        if ((facts->mode & MODE_FORMAT) != MODE_FILE || !facts->size ||
+            facts->size > (p64)b64_max)
+                return 0;
+
+        bipolar data = system_seek(in, 0, 3);
+
+        if (data == -ERROR_NO_DEVICE_ADDRESS)
+                return system_truncate_handle(out, facts->size) < 0 ? -1 : 1;
+        if (data < 0)
+                return 0;
+
+        bool range_copy = true;
+        bool send_copy = true;
+
+        while ((p64)data < facts->size)
+        {
+                bipolar hole = system_seek(in, (positive)data, 4);
+
+                if (hole < data)
+                        return -1;
+                if ((p64)hole > facts->size)
+                        hole = (bipolar)facts->size;
+
+                if (!file_copy_extent(in, out, (p64)data,
+                                      (positive)(hole - data),
+                                      address_of range_copy,
+                                      address_of send_copy))
+                        return -1;
+
+                data = system_seek(in, (positive)hole, 3);
+                if (data == -ERROR_NO_DEVICE_ADDRESS)
+                        break;
+                if (data < 0)
+                        return -1;
+        }
+
+        return system_truncate_handle(out, facts->size) < 0 ? -1 : 1;
+}
+
+static bool file_copy_contents_open(bipolar from_directory, string_address from,
+                                    bipolar to_directory, string_address to,
+                                    positive mode, positive flags)
 {
         bipolar in = system_open_at(from_directory, from,
                                    FILE_READ);
@@ -2656,8 +2860,7 @@ bool file_copy_contents(bipolar from_directory, string_address from,
         if (in < 0)
                 return false;
 
-        bipolar out = system_open_at_mode(to_directory, to,
-                                    FILE_WRITE, mode);
+        bipolar out = system_open_at_mode(to_directory, to, flags, mode);
 
         if (out < 0)
         {
@@ -2665,34 +2868,78 @@ bool file_copy_contents(bipolar from_directory, string_address from,
                 return false;
         }
 
-        bool complete = true;
+        file_facts facts;
+        bipolar sparse = file_look(in, (string_address)"", AT_EMPTY_PATH,
+                                   address_of facts)
+                             ? file_copy_sparse(in, out, address_of facts) : 0;
+        bool complete = sparse > 0;
 
-        while (1)
+        if (!sparse)
         {
-                bipolar taken = system_read_retry((positive)in, file_transfer,
-                                                   sizeof(file_transfer));
+                bool range_copy = true;
+                bool send_copy = true;
 
-                if (taken < 0)
+                while (1)
                 {
-                        complete = false;
+                        bipolar copied = file_copy_range_once(
+                            in, null, out, null, FILE_KERNEL_COPY_SIZE);
+
+                        if (copied > 0)
+                                continue;
+                        if (!copied)
+                        {
+                                complete = true;
+                                break;
+                        }
+                        if (copied == -4)
+                                continue;
+                        if (file_copy_range_fallback(copied))
+                        {
+                                range_copy = false;
+                                break;
+                        }
+
                         break;
                 }
 
-                if (taken == 0)
-                        break;
-
-                if (system_write_all((positive)out, file_transfer,
-                                     (positive)taken) != (positive)taken)
+                while (!complete && !range_copy && send_copy)
                 {
-                        complete = false;
+                        bipolar copied = file_send_range_once(
+                            in, null, out, FILE_KERNEL_COPY_SIZE);
+
+                        if (copied > 0)
+                                continue;
+                        if (!copied)
+                        {
+                                complete = true;
+                                break;
+                        }
+                        if (copied == -4)
+                                continue;
+                        if (file_copy_range_fallback(copied))
+                        {
+                                send_copy = false;
+                                break;
+                        }
+
                         break;
                 }
+
+                if (!complete && !range_copy && !send_copy)
+                        complete = file_copy_buffered(in, out);
         }
 
         system_close(in);
         system_close(out);
 
         return complete;
+}
+
+bool file_copy_contents(bipolar from_directory, string_address from,
+                        bipolar to_directory, string_address to, positive mode)
+{
+        return file_copy_contents_open(from_directory, from, to_directory, to,
+                                       mode, FILE_WRITE);
 }
 
 bool file_make_parents(string_address path, positive mode)
@@ -2877,6 +3124,7 @@ static p8 ls_arena[LS_ARENA];
 static positive ls_used;
 
 static bool ls_long;
+static bool ls_columns;
 static bool ls_hidden;
 static bool ls_almost;
 static bool ls_recursive;
@@ -3399,8 +3647,183 @@ static fn ls_name_say(string_address directory, ls_entry address_to entry,
         file_color_sgr(log, reset);
 }
 
+/* dir's -C presentation counts the bytes its shared name writer will emit.
+   The names are byte strings throughout this ls implementation; escaped
+   control bytes therefore have the exact two- or four-column spelling below
+   without needing a second quoting buffer. */
+static positive ls_name_width(string_address name)
+{
+        if (!ls_escape)
+                return string_length(name);
+
+        positive width = 0;
+
+        for (positive i = 0; string_get(name + i); i++)
+        {
+                p8 byte = string_get(name + i);
+
+                if (byte >= 32 && byte != 127 && byte != '\\')
+                        width++;
+                else if (byte == '\n' || byte == '\t' || byte == '\r' ||
+                         byte == '\b' || byte == '\f' || byte == '\v' ||
+                         byte == 7 || byte == '\\')
+                        width += 2;
+                else
+                        width += 4;
+        }
+
+        return width;
+}
+
+static positive ls_column_limit()
+{
+        string_address given = file_environment((string_address) "COLUMNS");
+        positive width = 80;
+
+        if (given && string_get(given))
+        {
+                string_address at = given;
+                positive parsed;
+
+                if (string_digits_checked(address_of at, 10,
+                                           address_of parsed) &&
+                    !string_get(at) && parsed)
+                        width = parsed;
+        }
+
+        return width;
+}
+
+static positive ls_column_entry(positive shown)
+{
+        return ls_reversed ? ls_count - 1 - shown : shown;
+}
+
+/* GNU's vertical -C layout: choose the widest number of columns which leaves
+   the cursor short of COLUMNS, then fill down those columns.  Widths live in
+   ls_sort_spare after sorting has finished, so column mode adds no arena or
+   permanent buffer and keeps the directory walk and quoting path shared. */
+static fn ls_print_columns(string_address directory)
+{
+        if (!ls_count)
+                return;
+
+        positive limit = ls_column_limit();
+
+        for (positive shown = 0; shown < ls_count; shown++)
+        {
+                positive sorted = ls_column_entry(shown);
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[sorted]];
+
+                ls_sort_spare[shown] = ls_name_width(ls_arena + entry->name);
+        }
+
+        positive columns = 1;
+
+        for (positive candidate = ls_count; candidate > 1; candidate--)
+        {
+                positive rows = (ls_count + candidate - 1) / candidate;
+                positive total = 0;
+                bool fits = true;
+
+                for (positive column = 0; column < candidate; column++)
+                {
+                        positive first = column * rows;
+
+                        if (first >= ls_count)
+                                break;
+
+                        positive widest = 0;
+                        positive after = first + rows;
+
+                        if (after > ls_count)
+                                after = ls_count;
+
+                        for (positive shown = first; shown < after; shown++)
+                                if (ls_sort_spare[shown] > widest)
+                                        widest = ls_sort_spare[shown];
+
+                        if (total > positive_max - widest - 2)
+                        {
+                                fits = false;
+                                break;
+                        }
+
+                        total += widest + 2;
+                }
+
+                /* No padding follows the final column.  Staying strictly
+                   short avoids a terminal's exact-width automatic wrap. */
+                if (fits && total >= 2 && total - 2 < limit)
+                {
+                        columns = candidate;
+                        break;
+                }
+        }
+
+        positive rows = (ls_count + columns - 1) / columns;
+
+        for (positive row = 0; row < rows; row++)
+        {
+                positive position = 0;
+
+                for (positive column = 0; column < columns; column++)
+                {
+                        positive shown = column * rows + row;
+
+                        if (shown >= ls_count)
+                                continue;
+
+                        positive sorted = ls_column_entry(shown);
+                        ls_entry address_to entry =
+                            address_of ls_entries[ls_sorted[sorted]];
+                        string_address name = ls_arena + entry->name;
+
+                        ls_name_say(directory, entry, name);
+
+                        positive next = (column + 1) * rows + row;
+
+                        if (next < ls_count)
+                        {
+                                positive widest = 0;
+                                positive first = column * rows;
+                                positive after = first + rows;
+
+                                if (after > ls_count)
+                                        after = ls_count;
+
+                                for (positive item = first; item < after; item++)
+                                        if (ls_sort_spare[item] > widest)
+                                                widest = ls_sort_spare[item];
+
+                                positive target = position + widest + 2;
+                                positive at = position + ls_sort_spare[shown];
+                                positive tab = (at + 8) & ~(positive)7;
+
+                                while (!(target & 7) && tab <= target)
+                                {
+                                        log("\t", 1);
+                                        at = tab;
+                                        tab += 8;
+                                }
+
+                                writer_fill(log, target - at, ' ');
+                                position = target;
+                        }
+                }
+
+                log("\n", 1);
+        }
+}
+
 static fn ls_print(string_address directory)
 {
+        if (ls_columns)
+        {
+                ls_print_columns(directory);
+                return;
+        }
+
         positive link_width = 1;
         positive size_width = 1;
         positive owner_width = 1;
@@ -3864,7 +4287,7 @@ static const file_long ls_longs[] = {
 };
 
 static b32 file_ls_as(string_address program, bool long_default,
-                      bool escape_default)
+                      bool escape_default, bool column_default)
 {
         positive count = (positive)program_argument_count();
         ls_hidden_option = 0;
@@ -3941,6 +4364,10 @@ static b32 file_ls_as(string_address program, bool long_default,
 
         if (ls_coloring)
                 ls_color_parse();
+
+        ls_columns = column_default && !ls_long &&
+                     !(flags & FILE_FLAG('1')) && !ls_inode &&
+                     !ls_classify && !ls_slash && !ls_coloring;
 
         /*
                 No operand is the working directory: under -d that is the
@@ -4092,12 +4519,18 @@ static b32 file_ls_as(string_address program, bool long_default,
 
 static b32 file_ls()
 {
-        return file_ls_as((string_address) "ls", false, false);
+        return file_ls_as((string_address) "ls", false, false, false);
+}
+
+/* GNU dir is the shared ls engine with -C and -b selected by default. */
+static b32 file_dir()
+{
+        return file_ls_as((string_address) "dir", false, true, true);
 }
 
 static b32 file_vdir()
 {
-        return file_ls_as((string_address) "vdir", true, true);
+        return file_ls_as((string_address) "vdir", true, true, false);
 }
 
 // Running a command ------------------------------------------------
@@ -9068,6 +9501,1352 @@ static b32 file_sync()
         return 0;
 }
 
+// split ------------------------------------------------------------
+/*
+        split's byte path stays in the kernel for regular files: one
+        copy_file_range per ordinary output piece, sendfile when two mounted
+        filesystems cannot range-copy, and the shared file_transfer buffer
+        only when neither kernel interface accepts the pair.  The record path
+        uses the same buffer and memory_first_of scanner already used by the
+        text tools; it does not grow a second reader or output layer.
+
+        Chunk distribution (-n), filtered outputs and line-byte packing (-C)
+        are separate algorithms rather than decorations on these two paths.
+        They are deliberately not accepted here until they can keep those
+        semantics without slowing the common -b and -l cases.
+*/
+#define SPLIT_SUFFIX_MAX 32
+
+typedef struct
+{
+        string_address prefix;
+        string_address additional;
+        positive prefix_length;
+        positive additional_length;
+        positive suffix_length;
+        positive number;
+        p8 radix;
+        bool suffix_fixed;
+        bool need_advance;
+        bool verbose;
+        bool protect_input;
+        file_facts input;
+        bipolar handle;
+        p8 suffix[SPLIT_SUFFIX_MAX];
+        p8 name[FILE_PATH_MAX];
+} split_output;
+
+static PURE p8 file_size_power(p8 suffix, bool every_lower);
+
+static const file_long split_longs[] = {
+    {(string_address) "additional-suffix", 'S'},
+    {(string_address) "bytes", 'b'},
+    {(string_address) "hex-suffixes", 'x'},
+    {(string_address) "lines", 'l'},
+    {(string_address) "numeric-suffixes", 'd'},
+    {(string_address) "separator", 't'},
+    {(string_address) "suffix-length", 'a'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
+static bool split_size(string_address text, positive address_to out)
+{
+        string_address at = text;
+        positive value;
+
+        if (!string_digits_checked(address_of at, 10, address_of value))
+                return false;
+
+        positive multiple = 1;
+        p8 suffix = string_get(at);
+
+        if (suffix == 'b' && !string_get(at + 1))
+        {
+                multiple = 512;
+                at++;
+        }
+        else if (suffix == 'B' && !string_get(at + 1))
+                at++;
+        else if (suffix)
+        {
+                positive power = file_size_power(suffix, true);
+
+                if (!power || power > 8)
+                        return false;
+
+                at++;
+                positive base = 1024;
+
+                if (byte_to_upper(string_get(at)) == 'B' &&
+                    !string_get(at + 1))
+                {
+                        base = 1000;
+                        at++;
+                }
+                else if (string_is(at, 'i') &&
+                         byte_to_upper(string_get(at + 1)) == 'B' &&
+                         !string_get(at + 2))
+                        at += 2;
+                else if (string_get(at))
+                        return false;
+
+                while (power--)
+                {
+                        if (multiple > positive_max / base)
+                                return false;
+                        multiple *= base;
+                }
+        }
+
+        if (string_get(at) || !value || value > positive_max / multiple)
+                return false;
+
+        address_to out = value * multiple;
+        return true;
+}
+
+/* The default alphabetic sequence remains lexically ordered when it grows:
+   .. yz, zaaa .. zyzz, zzaaaa ... .  An explicit -a instead uses every name
+   of its fixed width and reports exhaustion after zz. */
+static bool split_alpha_advance(split_output address_to output)
+{
+        positive at = output->suffix_length;
+
+        while (at && output->suffix[at - 1] == 'z')
+        {
+                output->suffix[at - 1] = 'a';
+                at--;
+        }
+
+        if (!at)
+                return false;
+
+        positive changed = at - 1;
+
+        if (!output->suffix_fixed && output->suffix[changed] == 'y')
+        {
+                bool leading_z = true;
+
+                for (positive i = 0; i < changed; i++)
+                        if (output->suffix[i] != 'z')
+                                leading_z = false;
+
+                if (leading_z)
+                {
+                        if (output->suffix_length + 2 > SPLIT_SUFFIX_MAX)
+                                return false;
+
+                        output->suffix[changed] = 'z';
+                        memory_fill(output->suffix + changed + 1, 'a',
+                                    output->suffix_length - changed + 1);
+                        output->suffix_length += 2;
+                        return true;
+                }
+        }
+
+        output->suffix[changed]++;
+        return true;
+}
+
+static bool split_output_advance(split_output address_to output)
+{
+        if (!output->need_advance)
+                return true;
+
+        output->need_advance = false;
+
+        if (!output->radix)
+                return split_alpha_advance(output);
+
+        if (output->number == positive_max)
+                return false;
+
+        output->number++;
+        return true;
+}
+
+static bool split_output_name(split_output address_to output)
+{
+        if (!split_output_advance(output))
+        {
+                file_fail("split: output file suffixes exhausted\n", 0);
+                return false;
+        }
+
+        p8 digits[SPLIT_SUFFIX_MAX];
+        string_address suffix = output->suffix;
+        positive suffix_length = output->suffix_length;
+
+        if (output->radix)
+        {
+                positive length = positive_into_base(
+                    digits, output->number, output->radix, false);
+
+                if (length > suffix_length)
+                {
+                        if (output->suffix_fixed || length > SPLIT_SUFFIX_MAX)
+                        {
+                                file_fail("split: output file suffixes exhausted\n", 0);
+                                return false;
+                        }
+                        suffix_length = output->suffix_length = length;
+                }
+
+                positive padding = suffix_length - length;
+                memory_fill(output->suffix, '0', padding);
+                memory_copy_apart(output->suffix + padding, digits, length);
+        }
+
+        if (output->prefix_length >= FILE_PATH_MAX ||
+            suffix_length >= FILE_PATH_MAX - output->prefix_length ||
+            output->additional_length >=
+                FILE_PATH_MAX - output->prefix_length - suffix_length)
+        {
+                file_fail("split: output file name is too long\n", 0);
+                return false;
+        }
+
+        positive used = output->prefix_length;
+        memory_copy_apart(output->name, output->prefix, used);
+        memory_copy_apart(output->name + used, suffix, suffix_length);
+        used += suffix_length;
+        memory_copy_apart_end(output->name + used, output->additional,
+                              output->additional_length);
+        return true;
+}
+
+static bool split_same_input(split_output address_to output)
+{
+        if (!output->protect_input)
+                return false;
+
+        file_facts existing;
+
+        if (!file_look_at(output->name, address_of existing))
+                return false;
+
+        return existing.inode == output->input.inode &&
+               existing.device_major == output->input.device_major &&
+               existing.device_minor == output->input.device_minor;
+}
+
+static bool split_output_open(split_output address_to output)
+{
+        if (output->handle >= 0)
+                return true;
+        if (!split_output_name(output))
+                return false;
+        if (split_same_input(output))
+        {
+                string_format(file_fail,
+                              "split: '%s' would overwrite input; aborting\n",
+                              output->name);
+                return false;
+        }
+
+        output->handle = system_open_at_mode(AT_FDCWD, output->name,
+                                             FILE_WRITE, 0666);
+
+        if (output->handle < 0)
+        {
+                string_format(file_fail, "split: cannot open '%s': %s\n",
+                              output->name, file_reason(output->handle));
+                return false;
+        }
+
+        if (output->verbose)
+                string_format(log, "creating file '%s'\n", output->name);
+
+        return true;
+}
+
+static bool split_output_write(split_output address_to output,
+                               address_any bytes, positive length)
+{
+        if (!length)
+                return true;
+        if (!split_output_open(output))
+                return false;
+        if (system_write_all((positive)output->handle, bytes, length) != length)
+        {
+                string_format(file_fail, "split: write error on '%s'\n",
+                              output->name);
+                return false;
+        }
+        return true;
+}
+
+static bool split_output_close(split_output address_to output)
+{
+        if (output->handle < 0)
+                return true;
+
+        bipolar closed = system_close(output->handle);
+        output->handle = -1;
+        output->need_advance = true;
+
+        if (closed < 0)
+        {
+                string_format(file_fail, "split: closing '%s': %s\n",
+                              output->name, file_reason(closed));
+                return false;
+        }
+        return true;
+}
+
+/* Exactly one known-size byte piece.  The capability booleans persist across
+   output files so an EXDEV or unsupported result is paid only once. */
+static bool split_copy_piece(bipolar in, bipolar out, positive length,
+                             bool address_to range_copy,
+                             bool address_to send_copy)
+{
+        while (length && address_to range_copy)
+        {
+                positive ask = length > FILE_KERNEL_COPY_SIZE
+                                   ? FILE_KERNEL_COPY_SIZE : length;
+                bipolar copied = file_copy_range_once(in, null, out, null, ask);
+
+                if (copied > 0)
+                {
+                        length -= (positive)copied;
+                        continue;
+                }
+                if (copied == -4)
+                        continue;
+                if (copied < 0 && file_copy_range_fallback(copied))
+                {
+                        address_to range_copy = false;
+                        break;
+                }
+                return false;
+        }
+
+        while (length && address_to send_copy)
+        {
+                positive ask = length > FILE_KERNEL_COPY_SIZE
+                                   ? FILE_KERNEL_COPY_SIZE : length;
+                bipolar copied = file_send_range_once(in, null, out, ask);
+
+                if (copied > 0)
+                {
+                        length -= (positive)copied;
+                        continue;
+                }
+                if (copied == -4)
+                        continue;
+                if (copied < 0 && file_copy_range_fallback(copied))
+                {
+                        address_to send_copy = false;
+                        break;
+                }
+                return false;
+        }
+
+        while (length)
+        {
+                positive ask = length < sizeof(file_transfer)
+                                   ? length : sizeof(file_transfer);
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   ask);
+
+                if (taken <= 0)
+                        return false;
+                if (system_write_all((positive)out, file_transfer,
+                                     (positive)taken) != (positive)taken)
+                        return false;
+                length -= (positive)taken;
+        }
+
+        return true;
+}
+
+static bool split_regular_bytes(bipolar in, p64 length, positive piece,
+                                split_output address_to output)
+{
+        bool range_copy = true;
+        bool send_copy = true;
+
+        while (length)
+        {
+                positive here = length < (p64)piece ? (positive)length : piece;
+
+                if (!split_output_open(output) ||
+                    !split_copy_piece(in, output->handle, here,
+                                      address_of range_copy,
+                                      address_of send_copy))
+                {
+                        file_fail("split: read or write error\n", 0);
+                        return false;
+                }
+                if (!split_output_close(output))
+                        return false;
+                length -= here;
+        }
+
+        return true;
+}
+
+static bool split_stream_bytes(bipolar in, positive piece,
+                               split_output address_to output)
+{
+        positive filled = 0;
+
+        while (1)
+        {
+                positive ask = piece - filled;
+
+                if (ask > sizeof(file_transfer))
+                        ask = sizeof(file_transfer);
+
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   ask);
+
+                if (taken < 0)
+                {
+                        file_fail("split: read error\n", 0);
+                        return false;
+                }
+                if (!taken)
+                        return split_output_close(output);
+                if (!split_output_write(output, file_transfer,
+                                        (positive)taken))
+                        return false;
+
+                filled += (positive)taken;
+
+                if (filled == piece)
+                {
+                        if (!split_output_close(output))
+                                return false;
+                        filled = 0;
+                }
+        }
+}
+
+static bool split_stream_lines(bipolar in, positive lines, p8 separator,
+                               split_output address_to output)
+{
+        positive in_piece = 0;
+
+        while (1)
+        {
+                bipolar taken = system_read_retry((positive)in, file_transfer,
+                                                   sizeof(file_transfer));
+
+                if (taken < 0)
+                {
+                        file_fail("split: read error\n", 0);
+                        return false;
+                }
+                if (!taken)
+                        return split_output_close(output);
+
+                p8 address_to pending = file_transfer;
+                p8 address_to finish = file_transfer + (positive)taken;
+
+                while (pending < finish)
+                {
+                        positive needed = lines - in_piece;
+                        positive records = memory_count(
+                            pending, (positive)(finish - pending), separator);
+
+                        /* The usual large-piece case has no boundary in this
+                           refill.  memory_count is a vector-width pass, then
+                           the whole block is one write; do not call the
+                           first-of scanner once per short input record. */
+                        if (records < needed)
+                        {
+                                if (!split_output_write(
+                                        output, pending,
+                                        (positive)(finish - pending)))
+                                        return false;
+                                in_piece += records;
+                                break;
+                        }
+
+                        p8 address_to scan = pending;
+
+                        for (positive found_count = 0;
+                             found_count < needed; found_count++)
+                        {
+                                p8 address_to found = memory_first_of(
+                                    scan, separator,
+                                    (positive)(finish - scan));
+                                scan = found + 1; /* records proved it exists */
+                        }
+
+                        if (!split_output_write(output, pending,
+                                                (positive)(scan - pending)) ||
+                            !split_output_close(output))
+                                return false;
+                        pending = scan;
+                        in_piece = 0;
+                }
+        }
+}
+
+static bool split_separator(string_address text, p8 address_to separator)
+{
+        if (string_get(text) && !string_get(text + 1))
+        {
+                address_to separator = string_get(text);
+                return true;
+        }
+        if (string_is(text, '\\') && string_is(text + 1, '0') &&
+            !string_get(text + 2))
+        {
+                address_to separator = 0;
+                return true;
+        }
+        return false;
+}
+
+static b32 file_split()
+{
+        p8 suffix_kind = 0;
+        file_supersede supersedes[] = {
+            {(string_address)"dx", address_of suffix_kind},
+            {null, null},
+        };
+
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"split",
+            .allowed = (string_address)"abdlxt",
+            .valued = (string_address)"ablSt",
+            /* Only the long spellings take an optional FROM.  In `-d7 -b3`,
+               coreutils reads 7 as the old -7 line count and diagnoses the
+               line/byte mode conflict; it is not a suffix start. */
+            .long_optional = (string_address)"dx",
+            .longs = split_longs,
+            .digits = 'l',
+            .operand = file_operand,
+            .supersedes = supersedes,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+
+        /* file_take rejects the combined -d7 spelling; with -b this is the
+           same deliberate refusal and status as GNU's mode-conflict answer. */
+        if (file_operand_count > 2)
+        {
+                file_fail("split: extra operand\n", 0);
+                return 1;
+        }
+
+        bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        bool lines = (taking.flags & FILE_FLAG('l')) != 0;
+
+        if (bytes && lines)
+        {
+                file_fail("split: cannot split in more than one way\n", 0);
+                return 1;
+        }
+
+        p8 mode = bytes ? 'b' : 'l';
+
+        positive piece = 1000;
+        string_address measure = file_option_value(address_of taking, mode);
+
+        if (measure && !split_size(measure, address_of piece))
+        {
+                string_format(file_fail, "split: invalid number of bytes: '%s'\n",
+                              measure);
+                return 1;
+        }
+
+        positive suffix_length = 2;
+        string_address width = file_option_value(address_of taking, 'a');
+
+        if (width)
+        {
+                string_address at = width;
+
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of suffix_length) ||
+                    string_get(at) || !suffix_length ||
+                    suffix_length > SPLIT_SUFFIX_MAX)
+                {
+                        string_format(file_fail,
+                                      "split: invalid suffix length: '%s'\n",
+                                      width);
+                        return 1;
+                }
+        }
+
+        p8 separator = '\n';
+        string_address separator_text = file_option_value(address_of taking, 't');
+
+        if (separator_text && !split_separator(separator_text,
+                                               address_of separator))
+        {
+                file_fail("split: multi-character separator\n", 0);
+                return 1;
+        }
+
+        string_address input_name = file_operand_count
+                                        ? file_operand_at(0)
+                                        : (string_address)"-";
+        string_address prefix = file_operand_count > 1
+                                    ? file_operand_at(1)
+                                    : (string_address)"x";
+        string_address additional = file_option_value(address_of taking, 'S');
+
+        if (!additional)
+                additional = (string_address)"";
+
+        bipolar in = string_is(input_name, '-') && !string_get(input_name + 1)
+                         ? 0
+                         : system_open_at(AT_FDCWD, input_name, FILE_READ);
+
+        if (in < 0)
+        {
+                string_format(file_fail, "split: cannot open '%s': %s\n",
+                              input_name, file_reason(in));
+                return 1;
+        }
+
+        split_output output = {
+            .prefix = prefix,
+            .additional = additional,
+            .prefix_length = string_length(prefix),
+            .additional_length = string_length(additional),
+            .suffix_length = suffix_length,
+            .radix = suffix_kind == 'd' ? 10 : suffix_kind == 'x' ? 16 : 0,
+            .suffix_fixed = width != null,
+            .verbose = (taking.flags & FILE_FLAG('v')) != 0,
+            .handle = -1,
+        };
+        memory_fill(output.suffix, output.radix ? '0' : 'a', suffix_length);
+
+        string_address first_suffix = suffix_kind
+                                          ? file_option_value(address_of taking,
+                                                              suffix_kind)
+                                          : null;
+
+        if (first_suffix)
+        {
+                string_address at = first_suffix;
+
+                if (!string_digits_checked(address_of at, output.radix,
+                                           address_of output.number) ||
+                    string_get(at))
+                {
+                        string_format(file_fail,
+                                      "split: invalid suffix start: '%s'\n",
+                                      first_suffix);
+                        if (in != 0)
+                                system_close(in);
+                        return 1;
+                }
+        }
+
+        file_facts facts;
+        bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
+                                address_of facts);
+
+        if (looked && (facts.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                output.protect_input = true;
+                output.input = facts;
+        }
+
+        bool complete;
+
+        if (mode == 'b' && output.protect_input && facts.size)
+                complete = split_regular_bytes(in, facts.size, piece,
+                                               address_of output);
+        else if (mode == 'b')
+                complete = split_stream_bytes(in, piece, address_of output);
+        else
+                complete = split_stream_lines(in, piece, separator,
+                                              address_of output);
+
+        if (output.handle >= 0)
+                split_output_close(address_of output);
+        if (in != 0)
+                system_close(in);
+        log_flush();
+        return complete ? 0 : 1;
+}
+
+// csplit -----------------------------------------------------------
+/*
+        csplit is necessarily a look-ahead utility: a negative regular-
+        expression offset can put the cut before the line which proved the
+        match.  The input therefore uses text.c's existing grow-in-place arena
+        reader, and pattern matching calls its existing BRE VM.  Sections are
+        still written through the same system_write_all path as split; there
+        is no second file reader, regex engine, or buffered writer here.
+*/
+#define CSPLIT_REGEX_POLICY 5 /* dot-newline | basic-repeat */
+
+enum
+{
+        CSPLIT_LINE,
+        CSPLIT_REGEX,
+};
+
+enum
+{
+        CSPLIT_EXECUTED,
+        CSPLIT_NOT_FOUND,
+        CSPLIT_FAILED,
+};
+
+typedef struct
+{
+        p8 kind;
+        bool discard;
+        bipolar offset;
+        positive line_step;
+        positive line_target;
+        positive search_line;
+        p8 expression[FILE_PATH_MAX];
+} csplit_pattern;
+
+typedef struct
+{
+        p8 address_to input;
+        positive length;
+        positive lines;
+        positive cursor;
+        positive cursor_line;
+        positive next_search_line;
+        string_address input_name;
+        string_address prefix;
+        positive prefix_length;
+        positive digits;
+        positive made;
+        bool keep;
+        bool quiet;
+        bool elide;
+        bool suppress_matched;
+        bool suppress_final;
+        bool protect_input;
+        file_facts input_facts;
+        p8 name[FILE_PATH_MAX];
+} csplit_state;
+
+static const file_long csplit_longs[] = {
+    {(string_address)"digits", 'n'},
+    {(string_address)"elide-empty-files", 'z'},
+    {(string_address)"keep-files", 'k'},
+    {(string_address)"prefix", 'f'},
+    {(string_address)"quiet", 's'},
+    {(string_address)"silent", 's'},
+    {(string_address)"suppress-matched", 'M'},
+    {null, 0},
+};
+
+static bool csplit_name(csplit_state address_to state, positive number)
+{
+        p8 suffix[32];
+        positive length = positive_into_base(suffix, number, 10, false);
+        positive width = length > state->digits ? length : state->digits;
+
+        if (state->prefix_length >= FILE_PATH_MAX ||
+            width >= FILE_PATH_MAX - state->prefix_length)
+        {
+                file_fail("csplit: output file name is too long\n", 0);
+                return false;
+        }
+
+        memory_copy_apart(state->name, state->prefix, state->prefix_length);
+        memory_fill(state->name + state->prefix_length, '0', width - length);
+        memory_copy_end(state->name + state->prefix_length + width - length,
+                        suffix, length);
+        return true;
+}
+
+static bool csplit_same_input(csplit_state address_to state)
+{
+        if (!state->protect_input)
+                return false;
+
+        file_facts existing;
+
+        if (!file_look_at(state->name, address_of existing))
+                return false;
+
+        return existing.inode == state->input_facts.inode &&
+               existing.device_major == state->input_facts.device_major &&
+               existing.device_minor == state->input_facts.device_minor;
+}
+
+static bool csplit_section(csplit_state address_to state, positive from,
+                           positive to, bool emit)
+{
+        if (!emit)
+                return true;
+        if (to < from)
+                return false;
+
+        positive length = to - from;
+
+        if (!length && state->elide)
+                return true;
+        if (!csplit_name(state, state->made))
+                return false;
+        if (csplit_same_input(state))
+        {
+                string_format(file_fail,
+                              "csplit: '%s' would overwrite input; aborting\n",
+                              state->name);
+                return false;
+        }
+
+        bipolar out = system_open_at_mode(AT_FDCWD, state->name,
+                                          FILE_WRITE, 0666);
+
+        if (out < 0)
+        {
+                string_format(file_fail, "csplit: cannot open '%s': %s\n",
+                              state->name, file_reason(out));
+                return false;
+        }
+
+        state->made++;
+        bool written = !length ||
+                       system_write_all((positive)out, state->input + from,
+                                        length) == length;
+        bipolar closed = system_close(out);
+
+        if (!written || closed < 0)
+        {
+                string_format(file_fail, "csplit: write error on '%s'\n",
+                              state->name);
+                return false;
+        }
+
+        if (!state->quiet)
+        {
+                positive_to_string(log, length);
+                log("\n", 1);
+        }
+
+        return true;
+}
+
+static fn csplit_cleanup(csplit_state address_to state)
+{
+        if (state->keep)
+                return;
+
+        for (positive i = 0; i < state->made; i++)
+                if (csplit_name(state, i))
+                        system_remove_at(AT_FDCWD, state->name, 0);
+}
+
+static bool csplit_line_offset(csplit_state address_to state,
+                               positive wanted, bool allow_end,
+                               positive address_to offset)
+{
+        if (wanted < state->cursor_line ||
+            wanted > state->lines + (positive)allow_end)
+                return false;
+
+        positive at = state->cursor;
+        positive line = state->cursor_line;
+
+        while (line < wanted)
+        {
+                p8 address_to found = memory_first_of(
+                    state->input + at, '\n', state->length - at);
+
+                if (found)
+                        at = (positive)(found - state->input) + 1;
+                else
+                        at = state->length;
+                line++;
+        }
+
+        if (at == state->length && !allow_end)
+                return false;
+
+        address_to offset = at;
+        return true;
+}
+
+static bool csplit_signed(string_address text, bipolar address_to value)
+{
+        bool negative = string_is(text, '-');
+
+        if (negative || string_is(text, '+'))
+                text++;
+
+        string_address at = text;
+        positive magnitude;
+
+        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
+            string_get(at) ||
+            magnitude > (positive)bipolar_max + (positive)negative)
+                return false;
+
+        address_to value = bipolar_from_magnitude(magnitude, negative);
+        return true;
+}
+
+static bool csplit_parse_regex(string_address word,
+                               csplit_pattern address_to pattern)
+{
+        p8 delimiter = string_get(word);
+        positive source = 1;
+        positive used = 0;
+
+        if (delimiter != '/' && delimiter != '%')
+                return false;
+
+        while (string_get(word + source) &&
+               string_get(word + source) != delimiter)
+        {
+                if (used + 2 >= sizeof(pattern->expression))
+                        return false;
+
+                p8 byte = string_get(word + source++);
+                pattern->expression[used++] = byte;
+
+                if (byte == '\\' && string_get(word + source))
+                        pattern->expression[used++] = string_get(word + source++);
+        }
+
+        if (!string_is(word + source, delimiter) || !used)
+                return false;
+
+        pattern->expression[used] = end;
+        pattern->kind = CSPLIT_REGEX;
+        pattern->discard = delimiter == '%';
+        source++;
+
+        string_address offset = word + source;
+
+        if (!string_get(offset))
+                pattern->offset = 0;
+        else if (!csplit_signed(offset, address_of pattern->offset))
+                return false;
+
+        return true;
+}
+
+static bool csplit_parse_line(string_address word,
+                              csplit_pattern address_to pattern)
+{
+        string_address at = word;
+        positive line;
+
+        if (!string_digits_checked(address_of at, 10, address_of line) ||
+            string_get(at) || !line)
+                return false;
+
+        pattern->kind = CSPLIT_LINE;
+        pattern->discard = false;
+        pattern->line_step = line;
+        pattern->line_target = line;
+        return true;
+}
+
+static bool csplit_repeat(string_address word, bool address_to forever,
+                          positive address_to count)
+{
+        if (!string_is(word, '{'))
+                return false;
+
+        if (string_is(word + 1, '*') && string_is(word + 2, '}') &&
+            !string_get(word + 3))
+        {
+                address_to forever = true;
+                address_to count = 0;
+                return true;
+        }
+
+        string_address at = word + 1;
+        positive got;
+
+        if (!string_digits_checked(address_of at, 10, address_of got) ||
+            !string_is(at, '}') || string_get(at + 1))
+                return false;
+
+        address_to forever = false;
+        address_to count = got;
+        return true;
+}
+
+static b32 csplit_execute_line(csplit_state address_to state,
+                               csplit_pattern address_to pattern,
+                               bool repeated)
+{
+        positive target = pattern->line_target;
+
+        if (repeated)
+        {
+                if (target > positive_max - pattern->line_step)
+                        return CSPLIT_NOT_FOUND;
+                target += pattern->line_step;
+        }
+
+        positive boundary;
+
+        if (!csplit_line_offset(state, target, false, address_of boundary))
+                return CSPLIT_NOT_FOUND;
+        if (!csplit_section(state, state->cursor, boundary, true))
+                return CSPLIT_FAILED;
+
+        pattern->line_target = target;
+        state->cursor = boundary;
+        state->cursor_line = target;
+
+        if (state->next_search_line < target)
+                state->next_search_line = target;
+
+        return CSPLIT_EXECUTED;
+}
+
+static bool csplit_find_regex(csplit_state address_to state,
+                              csplit_pattern address_to pattern,
+                              positive address_to matched_line,
+                              positive address_to matched_at,
+                              positive address_to matched_after)
+{
+        positive line = pattern->search_line;
+        positive at;
+
+        /* search_line is never behind cursor_line. */
+        if (!csplit_line_offset(state, line, false, address_of at))
+                return false;
+
+        while (at < state->length)
+        {
+                p8 address_to newline = memory_first_of(
+                    state->input + at, '\n', state->length - at);
+                positive stop = newline ? (positive)(newline - state->input)
+                                        : state->length;
+
+                if (regex_search(state->input + at, stop - at, 0))
+                {
+                        address_to matched_line = line;
+                        address_to matched_at = at;
+                        address_to matched_after = newline ? stop + 1 : stop;
+                        return true;
+                }
+
+                at = newline ? stop + 1 : stop;
+                line++;
+        }
+
+        return false;
+}
+
+static b32 csplit_execute_regex(csplit_state address_to state,
+                                csplit_pattern address_to pattern)
+{
+        positive matched_line;
+        positive matched_at;
+        positive matched_after;
+
+        if (!csplit_find_regex(state, pattern, address_of matched_line,
+                               address_of matched_at,
+                               address_of matched_after))
+                return CSPLIT_NOT_FOUND;
+
+        positive target;
+
+        if (pattern->offset < 0)
+        {
+                positive back = (positive)(-(pattern->offset + 1)) + 1;
+
+                if (back >= matched_line)
+                        return CSPLIT_NOT_FOUND;
+                target = matched_line - back;
+        }
+        else
+        {
+                positive ahead = (positive)pattern->offset;
+
+                if (matched_line > positive_max - ahead)
+                        return CSPLIT_NOT_FOUND;
+                target = matched_line + ahead;
+        }
+
+        positive boundary;
+
+        if (!csplit_line_offset(state, target, true, address_of boundary))
+                return CSPLIT_NOT_FOUND;
+
+        if (!csplit_section(state, state->cursor, boundary,
+                            !pattern->discard))
+                return CSPLIT_FAILED;
+
+        if (state->suppress_matched)
+        {
+                /* Offsets and suppression describe two different target
+                   lines. Refuse that ambiguous combination until the exact
+                   GNU ordering is represented. */
+                if (pattern->offset)
+                {
+                        file_fail("csplit: --suppress-matched with an offset is unsupported\n",
+                                  0);
+                        return CSPLIT_FAILED;
+                }
+                state->cursor = matched_after;
+                state->cursor_line = matched_line + 1;
+        }
+        else
+        {
+                state->cursor = boundary;
+                state->cursor_line = target;
+        }
+
+        pattern->search_line = matched_line + 1;
+        if (pattern->search_line < state->cursor_line)
+                pattern->search_line = state->cursor_line;
+        state->next_search_line = pattern->search_line;
+        return CSPLIT_EXECUTED;
+}
+
+static b32 csplit_execute(csplit_state address_to state,
+                          csplit_pattern address_to pattern, bool repeated)
+{
+        return pattern->kind == CSPLIT_LINE
+                   ? csplit_execute_line(state, pattern, repeated)
+                   : csplit_execute_regex(state, pattern);
+}
+
+static b32 file_csplit()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address)"csplit",
+            .allowed = (string_address)"fknsz",
+            .valued = (string_address)"fn",
+            .longs = csplit_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (file_operand_count < 2)
+        {
+                file_fail("csplit: missing operand\n", 0);
+                return 1;
+        }
+
+        positive digits = 2;
+        string_address digit_text = file_option_value(address_of taking, 'n');
+
+        if (digit_text)
+        {
+                string_address at = digit_text;
+
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of digits) ||
+                    string_get(at) || !digits || digits > 32)
+                {
+                        string_format(file_fail, "csplit: invalid number: '%s'\n",
+                                      digit_text);
+                        return 1;
+                }
+        }
+
+        string_address input_name = file_operand_at(0);
+        bipolar in = string_is(input_name, '-') && !string_get(input_name + 1)
+                         ? 0
+                         : system_open_at(AT_FDCWD, input_name, FILE_READ);
+
+        if (in < 0)
+        {
+                string_format(file_fail, "csplit: cannot open '%s': %s\n",
+                              input_name, file_reason(in));
+                return 1;
+        }
+
+        file_facts facts;
+        bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
+                                address_of facts);
+
+        text_arena_used = 0;
+        positive length;
+        bool read_failed;
+        p8 address_to input = text_arena_read_all(
+            (positive)in, FILE_TRANSFER_SIZE, address_of length,
+            address_of read_failed);
+
+        if (in != 0)
+                system_close(in);
+
+        if (!input)
+        {
+                file_fail(read_failed ? "csplit: read error\n"
+                                      : "csplit: input too large\n", 0);
+                text_arena_used = 0;
+                return 1;
+        }
+
+        csplit_state state = {
+            .input = input,
+            .length = length,
+            .lines = memory_count(input, length, '\n') +
+                     (positive)(length && input[length - 1] != '\n'),
+            .cursor = 0,
+            .cursor_line = 1,
+            .next_search_line = 1,
+            .input_name = input_name,
+            .prefix = file_option_value(address_of taking, 'f'),
+            .digits = digits,
+            .keep = (taking.flags & FILE_FLAG('k')) != 0,
+            .quiet = (taking.flags & FILE_FLAG('s')) != 0,
+            .elide = (taking.flags & FILE_FLAG('z')) != 0,
+            .suppress_matched = (taking.flags & FILE_FLAG('M')) != 0,
+        };
+
+        if (!state.prefix)
+                state.prefix = (string_address)"xx";
+        state.prefix_length = string_length(state.prefix);
+
+        if (looked && (facts.mode & MODE_FORMAT) == MODE_FILE)
+        {
+                state.protect_input = true;
+                state.input_facts = facts;
+        }
+
+        csplit_pattern pattern;
+        memory_fill(address_of pattern, 0, sizeof(pattern));
+        bool have_pattern = false;
+        bool failed = false;
+
+        for (positive i = 1; i < file_operand_count && !failed; i++)
+        {
+                string_address word = file_operand_at(i);
+                bool forever;
+                positive repeats;
+
+                if (csplit_repeat(word, address_of forever,
+                                  address_of repeats))
+                {
+                        if (!have_pattern)
+                        {
+                                file_fail("csplit: repeat with no previous pattern\n", 0);
+                                failed = true;
+                                break;
+                        }
+
+                        positive repetition = 0;
+
+                        while (forever || repetition < repeats)
+                        {
+                                b32 done = csplit_execute(address_of state,
+                                                         address_of pattern,
+                                                         true);
+
+                                if (done == CSPLIT_EXECUTED)
+                                {
+                                        repetition++;
+                                        continue;
+                                }
+                                if (done == CSPLIT_NOT_FOUND && forever)
+                                {
+                                        /* A repeated %pattern% consumes the
+                                           unmatched tail as part of the
+                                           suppressed search. */
+                                        if (pattern.discard)
+                                                state.suppress_final = true;
+                                        break;
+                                }
+
+                                if (done == CSPLIT_NOT_FOUND)
+                                {
+                                        if (!csplit_section(
+                                                address_of state, state.cursor,
+                                                length, !pattern.discard))
+                                        {
+                                                failed = true;
+                                                break;
+                                        }
+                                        string_format(file_fail,
+                                                      "csplit: '%s': match not found on repetition %u\n",
+                                                      word, repetition + 1);
+                                }
+                                failed = true;
+                                break;
+                        }
+                        continue;
+                }
+
+                memory_fill(address_of pattern, 0, sizeof(pattern));
+
+                if (string_is(word, '/') || string_is(word, '%'))
+                {
+                        if (!csplit_parse_regex(word, address_of pattern))
+                        {
+                                string_format(file_fail,
+                                              "csplit: invalid pattern: '%s'\n", word);
+                                failed = true;
+                                break;
+                        }
+                        if (state.suppress_matched && pattern.offset)
+                        {
+                                file_fail("csplit: --suppress-matched with an offset is unsupported\n",
+                                          0);
+                                failed = true;
+                                break;
+                        }
+                        if (!regex_compile(pattern.expression, false, false,
+                                           false, CSPLIT_REGEX_POLICY))
+                        {
+                                string_format(file_fail,
+                                              "csplit: invalid regular expression: '%s'\n",
+                                              pattern.expression);
+                                failed = true;
+                                break;
+                        }
+                        pattern.search_line = state.next_search_line;
+
+                        if (pattern.search_line < state.cursor_line)
+                                pattern.search_line = state.cursor_line;
+                }
+                else if (!csplit_parse_line(word, address_of pattern))
+                {
+                        string_format(file_fail, "csplit: invalid pattern: '%s'\n",
+                                      word);
+                        failed = true;
+                        break;
+                }
+
+                have_pattern = true;
+                b32 done = csplit_execute(address_of state, address_of pattern,
+                                          false);
+
+                if (done != CSPLIT_EXECUTED)
+                {
+                        if (done == CSPLIT_NOT_FOUND)
+                        {
+                                if (!csplit_section(
+                                        address_of state, state.cursor, length,
+                                        !pattern.discard))
+                                {
+                                        failed = true;
+                                        break;
+                                }
+                                string_format(file_fail,
+                                              "csplit: '%s': match not found\n", word);
+                        }
+                        failed = true;
+                }
+        }
+
+        if (!failed && !state.suppress_final &&
+            !csplit_section(address_of state, state.cursor, length, true))
+                failed = true;
+
+        if (failed)
+                csplit_cleanup(address_of state);
+
+        log_flush();
+        text_arena_used = 0;
+        return failed ? 1 : 0;
+}
+
 // truncate ---------------------------------------------------------
 
 enum
@@ -9450,6 +11229,424 @@ static b32 file_truncate()
         for (positive i = 0; i < file_operand_count; i++)
                 if (!truncate_one(file_operand_at(i), size, reference,
                                   relation, no_create, blocks))
+                        status = 1;
+
+        log_flush();
+        return status;
+}
+
+// shred ------------------------------------------------------------
+/*
+        This is deliberately a regular-file utility.  Pipes can block before
+        their kind is known, devices have media-specific erase contracts, and
+        accepting either as though ordinary writes were a secure erase would
+        be worse than refusing them.
+
+        The transfer buffer, checked write loop, size grammar, statx shape,
+        truncate and unlink paths are the same ones used by cp/split/truncate.
+        Random streams are seeded directly from Linux's CSPRNG. fdatasync
+        after every pass preserves pass order at the filesystem boundary; it cannot make
+        copy-on-write filesystems, snapshots, flash translation layers,
+        mirrors or backups overwrite their older physical copies.
+*/
+static const file_long shred_longs[] = {
+    {(string_address) "exact", 'x'},
+    {(string_address) "force", 'f'},
+    {(string_address) "iterations", 'n'},
+    {(string_address) "random-source", 'R'},
+    {(string_address) "remove", 'u'},
+    {(string_address) "size", 's'},
+    {(string_address) "verbose", 'v'},
+    {(string_address) "zero", 'z'},
+    {null, 0},
+};
+
+static bool shred_number(string_address text, positive address_to number)
+{
+        string_address at = text;
+        positive value;
+
+        if (!string_digits_checked(address_of at, 10, address_of value) ||
+            string_get(at))
+                return false;
+
+        address_to number = value;
+        return true;
+}
+
+static bool shred_size(string_address text, positive address_to size)
+{
+        if (string_is(text, '0') && !string_get(text + 1))
+        {
+                address_to size = 0;
+                return true;
+        }
+
+        return split_size(text, size);
+}
+
+typedef struct
+{
+        p64 words[4];
+} shred_random_state;
+
+typedef p64 shred_random_word_type
+    __attribute__((aligned(1), may_alias));
+
+static bool shred_random_seed(shred_random_state address_to state)
+{
+        positive filled = 0;
+
+        while (filled < sizeof(state->words))
+        {
+                bipolar got = system_call_3(syscall(getrandom),
+                                             (positive)((p8 address_to)state +
+                                                        filled),
+                                             sizeof(state->words) - filled, 0);
+
+                if (got == -4)
+                        continue;
+                if (got <= 0)
+                        return false;
+
+                filled += (positive)got;
+        }
+
+        return state->words[0] || state->words[1] || state->words[2] ||
+               state->words[3];
+}
+
+static inline INLINE p64 shred_rotate(p64 value, positive shift)
+{
+        return (value << shift) | (value >> (64 - shift));
+}
+
+/* xoshiro256** expands one kernel seed at register speed.  Erasure needs an
+   unpredictable starting stream, not one entropy syscall per output block;
+   the latter measured five times slower than GNU on the 64 MiB hot path. */
+static inline INLINE p64 shred_random_word(shred_random_state address_to state)
+{
+        p64 result = shred_rotate(state->words[1] * 5, 7) * 9;
+        p64 shifted = state->words[1] << 17;
+
+        state->words[2] ^= state->words[0];
+        state->words[3] ^= state->words[1];
+        state->words[1] ^= state->words[2];
+        state->words[0] ^= state->words[3];
+        state->words[2] ^= shifted;
+        state->words[3] = shred_rotate(state->words[3], 45);
+        return result;
+}
+
+static fn shred_random_fill(shred_random_state address_to state,
+                            p8 address_to bytes, positive length)
+{
+        positive words = length / sizeof(p64);
+        shred_random_word_type address_to output =
+            (shred_random_word_type address_to)bytes;
+
+        for (positive i = 0; i < words; i++)
+                output[i] = shred_random_word(state);
+
+        positive filled = words * sizeof(p64);
+
+        if (filled < length)
+        {
+                p64 final = shred_random_word(state);
+
+                for (positive i = 0; filled + i < length; i++)
+                        bytes[filled + i] = (p8)(final >> (i * 8));
+        }
+}
+
+static bool shred_sync(bipolar handle, string_address path, bool data)
+{
+        bipolar done;
+
+        do
+                done = system_call_1(data ? syscall(fdatasync) : syscall(fsync),
+                                     (positive)handle);
+        while (done == -4);
+
+        if (done >= 0)
+                return true;
+
+        string_format(file_fail, "shred: '%s': sync failed: %s\n", path,
+                      file_reason(done));
+        return false;
+}
+
+static bool shred_pass(bipolar handle, string_address path, positive length,
+                       bool zero, shred_random_state address_to random)
+{
+        if (system_seek(handle, 0, FILE_SEEK_SET) < 0)
+        {
+                string_format(file_fail, "shred: '%s': seek failed\n", path);
+                return false;
+        }
+
+        if (zero)
+                memory_fill(file_transfer, 0, sizeof(file_transfer));
+
+        positive left = length;
+
+        while (left)
+        {
+                positive chunk = left < sizeof(file_transfer)
+                                     ? left : sizeof(file_transfer);
+
+                if (!zero)
+                        shred_random_fill(random, file_transfer, chunk);
+
+                if (system_write_all((positive)handle, file_transfer, chunk) !=
+                    chunk)
+                {
+                        string_format(file_fail, "shred: '%s': write failed\n",
+                                      path);
+                        return false;
+                }
+
+                left -= chunk;
+        }
+
+        return !length || shred_sync(handle, path, true);
+}
+
+static bipolar shred_open(string_address path, bool force)
+{
+        positive flags = (FILE_WRITE & ~(O_TRUNC | FILE_CREATE)) | O_NONBLOCK;
+        bipolar handle = system_open_at(AT_FDCWD, path, flags);
+
+        if (handle >= 0 || !force ||
+            (handle != -ERROR_ACCESS && handle != -ERROR_NOT_PERMITTED))
+                return handle;
+
+        file_facts facts;
+
+        if (!file_look_at(path, address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_FILE ||
+            system_change_mode_at(AT_FDCWD, path, 0200) < 0)
+                return handle;
+
+        return system_open_at(AT_FDCWD, path, flags);
+}
+
+static bool shred_one(string_address path, positive iterations,
+                      bool size_given, positive requested, bool exact,
+                      bool zero, bool remove, bool force, bool verbose)
+{
+        bipolar handle = shred_open(path, force);
+
+        if (handle < 0)
+        {
+                string_format(file_fail, "shred: '%s': cannot open: %s\n", path,
+                              file_reason(handle));
+                return false;
+        }
+
+        file_facts facts;
+        bool good = file_look(handle, (string_address) "", AT_EMPTY_PATH,
+                              address_of facts);
+
+        if (!good || (facts.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                string_format(file_fail,
+                              "shred: '%s': refusing non-regular file\n", path);
+                system_close(handle);
+                return false;
+        }
+
+        positive length;
+
+        if (size_given)
+                length = requested;
+        else if (facts.size > positive_max)
+        {
+                string_format(file_fail, "shred: '%s': file is too large\n", path);
+                system_close(handle);
+                return false;
+        }
+        else
+                length = (positive)facts.size;
+
+        if (!size_given && !exact && length)
+        {
+                positive block = facts.blocksize ? facts.blocksize : FILE_BLOCK;
+                positive spare = length % block;
+
+                if (spare)
+                {
+                        positive add = block - spare;
+
+                        if (length > positive_max - add)
+                        {
+                                string_format(file_fail,
+                                              "shred: '%s': size overflow\n", path);
+                                system_close(handle);
+                                return false;
+                        }
+
+                        length += add;
+                }
+        }
+
+        if (verbose)
+                string_format(file_fail,
+                              "shred: '%s': caution: storage layers may retain old copies\n",
+                              path);
+
+        shred_random_state random;
+
+        if (iterations && good && !shred_random_seed(address_of random))
+        {
+                string_format(file_fail,
+                              "shred: '%s': kernel randomness unavailable\n", path);
+                good = false;
+        }
+
+        for (positive pass = 0; pass < iterations && good; pass++)
+        {
+                if (verbose)
+                        string_format(file_fail,
+                                      "shred: '%s': pass %u/%u (random)\n",
+                                      path, pass + 1, iterations);
+
+                good = shred_pass(handle, path, length, false,
+                                  address_of random);
+        }
+
+        if (zero && good)
+        {
+                if (verbose)
+                        string_format(file_fail, "shred: '%s': pass (zero)\n",
+                                      path);
+
+                good = shred_pass(handle, path, length, true, null);
+        }
+
+        if (remove && good)
+        {
+                bipolar shortened = system_truncate_handle(handle, 0);
+
+                if (shortened < 0)
+                {
+                        string_format(file_fail,
+                                      "shred: '%s': cannot truncate before removal: %s\n",
+                                      path, file_reason(shortened));
+                        good = false;
+                }
+                else
+                        good = shred_sync(handle, path, false);
+        }
+
+        bipolar closed = system_close(handle);
+
+        if (closed < 0)
+        {
+                string_format(file_fail, "shred: '%s': close failed: %s\n", path,
+                              file_reason(closed));
+                good = false;
+        }
+
+        if (remove && good)
+        {
+                file_facts named;
+
+                if (!file_look_at(path, address_of named) ||
+                    !file_same_identity(address_of facts, address_of named))
+                {
+                        string_format(file_fail,
+                                      "shred: '%s': name changed; refusing removal\n",
+                                      path);
+                        good = false;
+                }
+                else
+                {
+                        bipolar gone = system_remove_at(AT_FDCWD, path, 0);
+
+                        if (gone < 0)
+                        {
+                                string_format(file_fail,
+                                              "shred: '%s': cannot remove: %s\n",
+                                              path, file_reason(gone));
+                                good = false;
+                        }
+                        else if (verbose)
+                                string_format(file_fail, "shred: '%s': removed\n",
+                                              path);
+                }
+        }
+
+        return good;
+}
+
+static b32 file_shred()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "shred",
+            .allowed = (string_address) "fnsuvxz",
+            .valued = (string_address) "nRs",
+            .long_optional = (string_address) "u",
+            .longs = shred_longs,
+            .operand = file_operand,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return 1;
+        if (!file_operand_count)
+                return file_missing((string_address) "shred");
+
+        if (file_option_value(address_of taking, 'R'))
+        {
+                file_fail("shred: --random-source is unsupported; kernel randomness is mandatory\n",
+                          0);
+                return 1;
+        }
+
+        string_address remove_how = file_option_value(address_of taking, 'u');
+
+        if (remove_how && !string_equals(remove_how, (string_address) "unlink"))
+        {
+                file_fail("shred: filename wiping modes are unsupported; use --remove=unlink\n",
+                          0);
+                return 1;
+        }
+
+        positive iterations = 3;
+        string_address iteration_text = file_option_value(address_of taking, 'n');
+
+        if (iteration_text &&
+            !shred_number(iteration_text, address_of iterations))
+        {
+                string_format(file_fail, "shred: invalid number of passes: '%s'\n",
+                              iteration_text);
+                return 1;
+        }
+
+        positive size = 0;
+        string_address size_text = file_option_value(address_of taking, 's');
+
+        if (size_text && !shred_size(size_text, address_of size))
+        {
+                string_format(file_fail, "shred: invalid size: '%s'\n", size_text);
+                return 1;
+        }
+
+        positive flags = taking.flags;
+        bool remove = (flags & FILE_FLAG('u')) != 0;
+        b32 status = 0;
+
+        if (remove && !remove_how)
+                file_fail("shred: warning: -u uses unlink removal without filename wiping\n",
+                          0);
+
+        for (positive i = 0; i < file_operand_count; i++)
+                if (!shred_one(file_operand_at(i), iterations, size_text != null,
+                               size, (flags & FILE_FLAG('x')) != 0,
+                               (flags & FILE_FLAG('z')) != 0, remove,
+                               (flags & FILE_FLAG('f')) != 0,
+                               (flags & FILE_FLAG('v')) != 0))
                         status = 1;
 
         log_flush();
@@ -9995,6 +12192,255 @@ static b32 file_cp()
                 return 1;
 
         return cp_status;
+}
+
+// install ---------------------------------------------------------
+/*
+        install is the package-build copy: unlike cp, its final mode is an
+        explicit property of the destination and defaults to executable.
+        The bytes still go through file_copy_contents, so the common case is
+        the same in-kernel copy rather than a second userspace copy loop.
+
+        This is the surface used by ordinary make install rules: -D creates
+        the leading path, -d creates directory trees, -m chooses the mode,
+        -o/-g choose ownership, -p keeps timestamps, and -t/-T select the two
+        destination forms.  Unsupported transforming operations such as
+        --strip are rejected instead of silently claiming to have happened.
+*/
+static positive install_mode;
+static bipolar install_owner;
+static bipolar install_group;
+static bool install_parents;
+static bool install_preserve;
+static bool install_loud;
+static b32 install_status;
+
+static const file_long install_longs[] = {
+    {(string_address) "create-leading-directories", 'D'},
+    {(string_address) "directory", 'd'},
+    {(string_address) "group", 'g'},
+    {(string_address) "mode", 'm'},
+    {(string_address) "owner", 'o'},
+    {(string_address) "preserve-timestamps", 'p'},
+    {(string_address) "no-target-directory", 'T'},
+    {(string_address) "target-directory", 't'},
+    {(string_address) "verbose", 'v'},
+    {null, 0},
+};
+
+static bool install_identity(string_address text, bool group,
+                             bipolar address_to identity)
+{
+        positive number;
+        bipolar found;
+
+        if (string_digits_exact(text, address_of number) && number <= p32_max)
+                found = (bipolar)number;
+        else
+                found = group ? file_group_id(text) : file_user_id(text);
+
+        if (found < 0)
+        {
+                string_format(file_fail, "install: invalid %s '%s'\n",
+                              group ? "group" : "user", text);
+                return false;
+        }
+
+        address_to identity = found;
+        return true;
+}
+
+static bool install_leading(string_address destination)
+{
+        p8 parent[FILE_PATH_MAX];
+
+        path_head_copy(parent, FILE_PATH_MAX, destination);
+        if (file_make_parents(parent, 0755))
+                return true;
+
+        string_format(file_fail,
+                      "install: cannot create leading directories for '%s'\n",
+                      destination);
+        return false;
+}
+
+static bool install_attributes(string_address destination,
+                               file_facts address_to source)
+{
+        if ((install_owner >= 0 || install_group >= 0) &&
+            system_change_owner_at(AT_FDCWD, destination, install_owner,
+                                   install_group, 0) < 0)
+        {
+                string_format(file_fail,
+                              "install: cannot change ownership of '%s'\n",
+                              destination);
+                return false;
+        }
+
+        if (system_change_mode_at(AT_FDCWD, destination, install_mode) < 0)
+        {
+                string_format(file_fail, "install: cannot change mode of '%s'\n",
+                              destination);
+                return false;
+        }
+
+        if (install_preserve && source)
+        {
+                p64 times[4];
+
+                file_times_of(source, times);
+                if (system_update_times_at(AT_FDCWD, destination, times, 0) < 0)
+                {
+                        string_format(file_fail,
+                                      "install: cannot preserve times of '%s'\n",
+                                      destination);
+                        return false;
+                }
+        }
+
+        return true;
+}
+
+static fn install_pair(string_address source, string_address destination)
+{
+        file_facts from;
+        file_facts to;
+        bipolar looked = file_look_code(AT_FDCWD, source, 0, address_of from);
+
+        if (looked < 0 || (from.mode & MODE_FORMAT) != MODE_FILE)
+        {
+                string_format(file_fail, "install: cannot stat '%s': %s\n",
+                              source,
+                              looked < 0 ? file_reason(looked)
+                                         : (string_address)"Not a regular file");
+                install_status = 1;
+                return;
+        }
+
+        if (file_look_at(destination, address_of to) &&
+            file_same_identity(address_of from, address_of to))
+        {
+                string_format(file_fail,
+                              "install: '%s' and '%s' are the same file\n",
+                              source, destination);
+                install_status = 1;
+                return;
+        }
+
+        if (install_parents && !install_leading(destination))
+        {
+                install_status = 1;
+                return;
+        }
+
+        bipolar removed = system_remove_at(AT_FDCWD, destination, 0);
+
+        if (removed < 0 && removed != -ERROR_NO_ENTRY)
+        {
+                string_format(file_fail, "install: cannot remove '%s': %s\n",
+                              destination, file_reason(removed));
+                install_status = 1;
+                return;
+        }
+
+        /* O_EXCL makes the unlink/create boundary fail closed if another
+           process races a symlink into the destination. It also gives
+           install its usual inode-breaking behavior for hard links. */
+        if (!file_copy_contents_open(AT_FDCWD, source, AT_FDCWD, destination,
+                                     install_mode,
+                                     FILE_WRITE | FILE_EXCLUSIVE))
+        {
+                string_format(file_fail, "install: cannot copy '%s' to '%s'\n",
+                              source, destination);
+                install_status = 1;
+                return;
+        }
+
+        if (!install_attributes(destination, address_of from))
+        {
+                install_status = 1;
+                return;
+        }
+
+        if (install_loud)
+                string_format(log, "'%s' -> '%s'\n", source, destination);
+}
+
+static b32 file_install()
+{
+        positive count = (positive)program_argument_count();
+        file_taking taking = {
+            .program = (string_address) "install",
+            .allowed = (string_address) "DcdgmopTtv",
+            .valued = (string_address) "gmot",
+            .longs = install_longs,
+        };
+
+        install_mode = 0755;
+        install_owner = -1;
+        install_group = -1;
+        install_status = 0;
+
+        if (!file_take(address_of taking))
+                return 1;
+
+        string_address mode = file_option_value(address_of taking, 'm');
+        string_address owner = file_option_value(address_of taking, 'o');
+        string_address group = file_option_value(address_of taking, 'g');
+        string_address into = file_option_value(address_of taking, 't');
+        positive flags = taking.flags;
+        bool directories = (flags & FILE_FLAG('d')) != 0;
+
+        if ((mode && !file_mode_of(mode, 0, false, address_of install_mode)) ||
+            (owner && !install_identity(owner, false, address_of install_owner)) ||
+            (group && !install_identity(group, true, address_of install_group)))
+                return 1;
+
+        install_parents = (flags & FILE_FLAG('D')) != 0;
+        install_preserve = (flags & FILE_FLAG('p')) != 0;
+        install_loud = (flags & FILE_FLAG('v')) != 0;
+
+        if (directories)
+        {
+                if (into || (flags & (FILE_FLAG('D') | FILE_FLAG('T'))))
+                        return file_missing((string_address) "install");
+                if (taking.first >= count)
+                        return file_missing((string_address) "install");
+
+                for (positive at = taking.first; at < count; at++)
+                {
+                        string_address path = program_argument((b32)at);
+
+                        if (!file_make_parents(path, 0755) ||
+                            !install_attributes(path, null))
+                        {
+                                string_format(file_fail,
+                                              "install: cannot create directory '%s'\n",
+                                              path);
+                                install_status = 1;
+                        }
+                        else if (install_loud)
+                                string_format(log, "install: creating directory '%s'\n",
+                                              path);
+                }
+
+                log_flush();
+                return install_status;
+        }
+
+        if (install_parents && (into || count - taking.first != 2))
+        {
+                file_fail("install: -D requires one source and one destination\n", 0);
+                return 1;
+        }
+
+        if (!file_source_destination((string_address) "install", taking.first,
+                                     count, into,
+                                     (flags & FILE_FLAG('T')) != 0,
+                                     install_pair))
+                return 1;
+
+        return install_status;
 }
 
 // mv ------------------------------------------------------------

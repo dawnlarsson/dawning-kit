@@ -21,7 +21,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 . "$root/src/test/tally.sh"
 
 mkdir "$work/bin"
-for name in setsid setpgid ionice fadvise taskset renice prlimit chrt \
+for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
         getino; do
         ln -s "$subject" "$work/bin/$name"
@@ -62,6 +62,42 @@ compare()
         fi
 }
 
+compare_full()
+{
+        name=$1
+        utility=$2
+        script=$3
+        shift 3
+        reference=$(command -v "$utility" || true)
+
+        if [ -z "$reference" ]; then
+                lost "$name" "system util-linux $utility is required"
+                return
+        fi
+
+        if TOOL=$reference sh -c "$script" "$@" \
+                > "$work/want" 2> "$work/want.error"; then
+                want_status=0
+        else
+                want_status=$?
+        fi
+        if TOOL="$work/bin/$utility" sh -c "$script" "$@" \
+                > "$work/got" 2> "$work/got.error"; then
+                got_status=0
+        else
+                got_status=$?
+        fi
+
+        if cmp -s "$work/want" "$work/got" &&
+           cmp -s "$work/want.error" "$work/got.error" &&
+           [ "$want_status" = "$got_status" ]; then
+                won
+        else
+                lost "$name" \
+                     "want $(shown "$work/want") / $(shown "$work/want.error")[$want_status], got $(shown "$work/got") / $(shown "$work/got.error")[$got_status]"
+        fi
+}
+
 compare_signal()
 {
         name=$1
@@ -97,7 +133,7 @@ subject()
 section util-linux
 
 group reference
-for utility in setsid setpgid ionice fadvise taskset renice prlimit chrt \
+for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
         getino; do
         version=$($utility --version 2>/dev/null | head -1 || true)
@@ -106,6 +142,35 @@ for utility in setsid setpgid ionice fadvise taskset renice prlimit chrt \
         *) lost "$utility" "need util-linux 2.42.2 reference, got [$version]" ;;
         esac
 done
+
+group getopt
+compare 'short required optional and permutation' getopt \
+        '"$TOOL" -o "ab:c::" -- x -a -b y z -cfoo'
+compare 'positive ordering stops at operand' getopt \
+        '"$TOOL" -o "+ab:" -- x -a -b y'
+compare 'return-in-order output' getopt \
+        '"$TOOL" -o "-ab:" -- x -a z -b y'
+compare 'long required and optional arguments' getopt \
+        '"$TOOL" -o a -l "alpha,beta:,charlie::" -- --alpha --beta value x --charlie=maybe'
+compare 'repeated long option lists' getopt \
+        '"$TOOL" -o a -l foo,bar -l baz: -- --foo --baz value x'
+compare 'alternative long spelling and short priority' getopt \
+        '"$TOOL" -a -o a -l a,alpha -- -alpha -a'
+compare 'sh embedded quote protocol' getopt \
+        '"$TOOL" -s sh -o a: -- -a "a'\''b" z'
+compare 'csh blank protocol' getopt \
+        '"$TOOL" -s csh -o a: -- -a "x y" z'
+compare 'unquoted compatibility output' getopt \
+        '"$TOOL" -u -o a: -- -a "x y" z'
+compare 'legacy invocation is unquoted' getopt \
+        '"$TOOL" a: -a "x y" z'
+compare 'quiet target diagnostic' getopt \
+        '"$TOOL" -q -o a -- -x'
+compare 'quiet output still parses' getopt \
+        '"$TOOL" -Q -o a: -- -a value x'
+compare 'test mode status' getopt '"$TOOL" -T'
+compare_full 'custom diagnostic name' getopt \
+        '"$TOOL" -n parser -o a -l foo,foobar -- --fo'
 
 group setsid
 compare 'requires command' setsid '"$TOOL"'
@@ -268,6 +333,49 @@ compare 'fd and file conflict' fadvise \
 compare 'invalid advice' fadvise '"$TOOL" -a impossible "$0"' "$work/data"
 compare 'missing file' fadvise '"$TOOL" /no/such/fadvise-file'
 compare 'too many files' fadvise '"$TOOL" "$0" "$0"' "$work/data"
+
+group fallocate
+compare 'allocate new file' fallocate \
+        'rm -f "$0/f"; "$TOOL" -l 8KiB "$0/f"; stat -c "%s %b" "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'offset extends file' fallocate \
+        'rm -f "$0/f"; "$TOOL" -o 4KiB -l 8KiB "$0/f"; stat -c "%s" "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'keep apparent size' fallocate \
+        'rm -f "$0/f"; : > "$0/f"; "$TOOL" -n -l 8KiB "$0/f"; stat -c "%s %b" "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'zero range' fallocate \
+        'rm -f "$0/f"; printf abcdefgh > "$0/f"; "$TOOL" -z -o 2 -l 3 "$0/f"; od -An -tx1 "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'punch hole keeps size' fallocate \
+        'rm -f "$0/f"; dd if=/dev/zero of="$0/f" bs=4096 count=3 status=none; "$TOOL" -p -o 4096 -l 4096 "$0/f"; stat -c "%s %b" "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'verbose allocation' fallocate \
+        'rm -f "$0/f"; "$TOOL" -v -l 8KiB "$0/f"; rm -f "$0/f"' \
+        "$work"
+compare 'missing length' fallocate '"$TOOL" "$0"' "$work/data"
+compare 'zero length' fallocate '"$TOOL" -l 0 "$0"' "$work/data"
+compare 'exclusive operations' fallocate \
+        '"$TOOL" -c -i -l 1 "$0"' "$work/data"
+compare 'too many files' fallocate \
+        '"$TOOL" -l 1 "$0" "$0"' "$work/data"
+
+group copyfilerange
+subject 'one explicit range' copyfilerange \
+        'printf abcdefgh > "$0/in"; printf 00000000 > "$0/out"; "$TOOL" "$0/in" "$0/out" 2:1:3; test "$(cat "$0/out")" = 0cde0000' \
+        "$work"
+subject 'continued offsets' copyfilerange \
+        'printf abcdefgh > "$0/in"; : > "$0/out"; "$TOOL" "$0/in" "$0/out" 0:0:2 ::2; test "$(cat "$0/out")" = abcd' \
+        "$work"
+subject 'zero means remainder' copyfilerange \
+        'printf abcdefgh > "$0/in"; : > "$0/out"; "$TOOL" "$0/in" "$0/out" 3:0:0; test "$(cat "$0/out")" = defgh' \
+        "$work"
+subject 'invalid range rejected' copyfilerange \
+        'printf abc > "$0/in"; ! "$TOOL" "$0/in" "$0/out" invalid' \
+        "$work"
+subject 'source boundary rejected' copyfilerange \
+        'printf abc > "$0/in"; ! "$TOOL" "$0/in" "$0/out" 4:0:1' \
+        "$work"
 
 lock=$work/lock
 ro_lock=$work/read-only-lock
@@ -552,7 +660,7 @@ fi
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt exch fadvise findfs findmnt flock getino ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
+supported='blkid choom chrt copyfilerange exch fadvise fallocate findfs findmnt flock getino getopt hexdump ionice kill mount mountpoint nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset umount unshare waitpid'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

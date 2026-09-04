@@ -2584,6 +2584,2307 @@ static fn text_banner(b32 which, bool first)
 }
 
 /*
+        The power-of-two encodings.
+
+        base64, base32 and six of basenc's seven alphabets are one operation:
+        take a fixed number of input bits at a time and use them as an index
+        into an alphabet.  Keeping that operation here means the commands do
+        not grow three readers, three writers or three almost-equal codecs.
+
+        Encoding walks whole quanta and reserves the exact output span in the
+        shared writer.  Even base2's eightfold expansion therefore makes one
+        write reservation per four KiB of input, never one output call per
+        bit.  Decoding uses text_line as its staging area; that MiB is already
+        present for the line tools, so decoding adds neither an allocation nor
+        another large buffer to the multicall image.
+
+        Z85 is deliberately outside this engine.  It is radix 85 over a
+        thirty-two-bit integer rather than a bit-sliced alphabet, and folding
+        a second arithmetic codec into this path would make the common base64
+        loop larger for no shared work.
+*/
+enum
+{
+        ENCODING_NONE,
+        ENCODING_BASE64,
+        ENCODING_BASE64URL,
+        ENCODING_BASE32,
+        ENCODING_BASE32HEX,
+        ENCODING_BASE16,
+        ENCODING_BASE2MSBF,
+        ENCODING_BASE2LSBF,
+        ENCODING_Z85,
+};
+
+typedef struct
+{
+        string_address alphabet;
+        p8 bits;
+        p8 input;
+        p8 output;
+        bool padding;
+        bool low_bit_first;
+} encoding_codec;
+
+static const encoding_codec encoding_codecs[] = {
+    {null, 0, 0, 0, false, false},
+    {(string_address)"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+     6, 3, 4, true, false},
+    {(string_address)"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+     6, 3, 4, true, false},
+    {(string_address)"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+     5, 5, 8, true, false},
+    {(string_address)"0123456789ABCDEFGHIJKLMNOPQRSTUV",
+     5, 5, 8, true, false},
+    {(string_address)"0123456789ABCDEF", 4, 1, 2, false, false},
+    {(string_address)"01", 1, 1, 8, false, false},
+    {(string_address)"01", 1, 1, 8, false, true},
+};
+
+/* Two adjacent encoded symbols as one little-endian store.  Every ABI this
+   project supports is little-endian, and the no-wrap kernels always advance
+   by complete four/eight-byte output quanta, so these halfword stores stay
+   aligned.  One table is enough for both widths and all alphabets. */
+static p16 encoding_pairs[4096];
+static string_address encoding_pairs_alphabet;
+static p8 encoding_pairs_bits;
+
+static fn encoding_pairs_prepare(const encoding_codec address_to codec)
+{
+        if (encoding_pairs_alphabet == codec->alphabet &&
+            encoding_pairs_bits == codec->bits)
+                return;
+
+        positive symbols = (positive)1 << codec->bits;
+        positive entries = symbols * symbols;
+        positive mask = symbols - 1;
+
+        for (positive value = 0; value < entries; value++)
+                encoding_pairs[value] =
+                    (p16)(codec->alphabet[value >> codec->bits] |
+                          ((p16)codec->alphabet[value & mask] << 8));
+
+        encoding_pairs_alphabet = codec->alphabet;
+        encoding_pairs_bits = codec->bits;
+}
+
+typedef struct
+{
+        positive wrap;
+        positive column;
+        bool wrote;
+} encoding_output;
+
+static positive encoding_wrapped(encoding_output address_to output,
+                                  positive symbols)
+{
+        if (!output->wrap)
+                return symbols;
+
+        return symbols + (output->column + symbols) / output->wrap;
+}
+
+static inline INLINE p8 address_to encoding_symbol(
+    p8 address_to into, encoding_output address_to output, p8 value)
+{
+        *into++ = value;
+        output->wrote = true;
+
+        if (output->wrap && ++output->column == output->wrap)
+        {
+                *into++ = '\n';
+                output->column = 0;
+        }
+
+        return into;
+}
+
+/* Whole quanta have no carried bits.  That lets every call reserve its exact
+   result and lets one block-level dispatch select a fixed-shift kernel. */
+static bool encoding_groups(const encoding_codec address_to codec,
+                            encoding_output address_to output,
+                            p8 address_to input, positive groups)
+{
+        positive symbols = groups * codec->output;
+        p8 address_to into = text_reserve(encoding_wrapped(output, symbols));
+        string_address alphabet = codec->alphabet;
+
+        if (!into)
+                return false;
+
+        /* -w0 is common in machine-to-machine paths.  Keep its inner loops
+           completely free of column updates and wrap branches. */
+        if (!output->wrap)
+        {
+                if (codec->bits == 6)
+                        for (positive group = 0; group < groups; group++)
+                        {
+                                positive bits = ((positive)input[0] << 16) |
+                                                ((positive)input[1] << 8) |
+                                                input[2];
+
+                                address_to (p16 address_to)into =
+                                    encoding_pairs[bits >> 12];
+                                address_to (p16 address_to)(into + 2) =
+                                    encoding_pairs[bits & 4095];
+                                input += 3;
+                                into += 4;
+                        }
+                else if (codec->bits == 5)
+                        for (positive group = 0; group < groups; group++)
+                        {
+                                positive bits = ((positive)input[0] << 32) |
+                                                ((positive)input[1] << 24) |
+                                                ((positive)input[2] << 16) |
+                                                ((positive)input[3] << 8) |
+                                                input[4];
+
+                                address_to (p16 address_to)into =
+                                    encoding_pairs[bits >> 30];
+                                address_to (p16 address_to)(into + 2) =
+                                    encoding_pairs[(bits >> 20) & 1023];
+                                address_to (p16 address_to)(into + 4) =
+                                    encoding_pairs[(bits >> 10) & 1023];
+                                address_to (p16 address_to)(into + 6) =
+                                    encoding_pairs[bits & 1023];
+                                input += 5;
+                                into += 8;
+                        }
+                else if (codec->bits == 4)
+                        for (positive group = 0; group < groups; group++)
+                        {
+                                p8 value = *input++;
+
+                                *into++ = alphabet[value >> 4];
+                                *into++ = alphabet[value & 15];
+                        }
+                else
+                        for (positive group = 0; group < groups; group++)
+                        {
+                                p8 value = *input++;
+
+                                if (codec->low_bit_first)
+                                        for (positive bit = 0; bit < 8; bit++)
+                                                *into++ = alphabet[
+                                                    (value >> bit) & 1];
+                                else
+                                        for (positive bit = 8; bit; bit--)
+                                                *into++ = alphabet[
+                                                    (value >> (bit - 1)) & 1];
+                        }
+
+                output->wrote = true;
+                return true;
+        }
+
+        positive wrap = output->wrap;
+        positive column = output->column;
+
+#define ENCODING_GROUP_SYMBOL(value)                                        \
+        do                                                                  \
+        {                                                                   \
+                *into++ = (value);                                          \
+                if (++column == wrap)                                       \
+                {                                                           \
+                        *into++ = '\n';                                      \
+                        column = 0;                                         \
+                }                                                           \
+        } while (0)
+
+        /* Dispatch once per block, not once per symbol.  These fixed shifts
+           are the steady-state kernels; base64url and base32hex differ only
+           in the alphabet pointer and share the same code. */
+        if (codec->bits == 6)
+        {
+                for (positive group = 0; group < groups; group++)
+                {
+                        positive bits = ((positive)input[0] << 16) |
+                                        ((positive)input[1] << 8) | input[2];
+
+                        ENCODING_GROUP_SYMBOL(alphabet[bits >> 18]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 12) & 63]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 6) & 63]);
+                        ENCODING_GROUP_SYMBOL(alphabet[bits & 63]);
+                        input += 3;
+                }
+        }
+        else if (codec->bits == 5)
+        {
+                for (positive group = 0; group < groups; group++)
+                {
+                        positive bits = ((positive)input[0] << 32) |
+                                        ((positive)input[1] << 24) |
+                                        ((positive)input[2] << 16) |
+                                        ((positive)input[3] << 8) | input[4];
+
+                        ENCODING_GROUP_SYMBOL(alphabet[bits >> 35]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 30) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 25) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 20) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 15) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 10) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 5) & 31]);
+                        ENCODING_GROUP_SYMBOL(alphabet[bits & 31]);
+                        input += 5;
+                }
+        }
+        else if (codec->bits == 4)
+        {
+                for (positive group = 0; group < groups; group++)
+                {
+                        p8 value = *input++;
+
+                        ENCODING_GROUP_SYMBOL(alphabet[value >> 4]);
+                        ENCODING_GROUP_SYMBOL(alphabet[value & 15]);
+                }
+        }
+        else
+        {
+                for (positive group = 0; group < groups; group++)
+                {
+                        p8 value = *input++;
+
+                        if (codec->low_bit_first)
+                                for (positive bit = 0; bit < 8; bit++)
+                                        ENCODING_GROUP_SYMBOL(
+                                            alphabet[(value >> bit) & 1]);
+                        else
+                                for (positive bit = 8; bit; bit--)
+                                        ENCODING_GROUP_SYMBOL(alphabet[
+                                            (value >> (bit - 1)) & 1]);
+                }
+        }
+
+        output->column = column;
+        output->wrote = true;
+#undef ENCODING_GROUP_SYMBOL
+        return true;
+}
+
+static bool encoding_tail(const encoding_codec address_to codec,
+                          encoding_output address_to output,
+                          p8 address_to input, positive count)
+{
+        if (!count)
+                return true;
+
+        positive symbols = (count * 8 + codec->bits - 1) / codec->bits;
+        positive padding = codec->padding ? codec->output - symbols : 0;
+        positive all = symbols + padding;
+        p8 address_to into = text_reserve(encoding_wrapped(output, all));
+        positive bits = 0;
+
+        if (!into)
+                return false;
+
+        for (positive byte = 0; byte < count; byte++)
+                bits = (bits << 8) | input[byte];
+
+        bits <<= symbols * codec->bits - count * 8;
+
+        for (positive symbol = 0; symbol < symbols; symbol++)
+        {
+                positive shift = (symbols - symbol - 1) * codec->bits;
+                positive mask = ((positive)1 << codec->bits) - 1;
+
+                into = encoding_symbol(
+                    into, output,
+                    codec->alphabet[(bits >> shift) & mask]);
+        }
+
+        while (padding--)
+                into = encoding_symbol(into, output, '=');
+
+        return true;
+}
+
+static b32 encoding_encode(const encoding_codec address_to codec,
+                           positive wrap)
+{
+        /* Five is the widest input quantum (base32). */
+        p8 pending[5];
+        positive held = 0;
+        encoding_output output = {.wrap = wrap};
+        bool writing = true;
+
+        if (!wrap && (codec->bits == 6 || codec->bits == 5))
+                encoding_pairs_prepare(codec);
+
+        while (writing && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+
+                if (held)
+                {
+                        positive need = codec->input - held;
+                        positive take = left < need ? left : need;
+
+                        memory_copy_apart(pending + held, at, take);
+                        held += take;
+                        at += take;
+                        left -= take;
+
+                        if (held == codec->input)
+                        {
+                                writing = encoding_groups(codec, address_of output,
+                                                          pending, 1);
+                                held = 0;
+                        }
+                }
+
+                while (writing && left >= codec->input)
+                {
+                        positive groups = left / codec->input;
+
+                        /* At wrap width one, 4096 base2 groups reserve exactly
+                           TEXT_OUT_MAX bytes including their newlines. */
+                        if (groups > 4096)
+                                groups = 4096;
+
+                        writing = encoding_groups(codec, address_of output, at,
+                                                  groups);
+                        positive used = groups * codec->input;
+
+                        at += used;
+                        left -= used;
+                }
+
+                if (writing && left)
+                {
+                        memory_copy_apart(pending, at, left);
+                        held = left;
+                        at += left;
+                        left = 0;
+                }
+
+                text_input.position = (positive)(at - text_input.buffer);
+        }
+
+        if (writing)
+                writing = encoding_tail(codec, address_of output, pending, held);
+
+        /* A positive wrap always terminates the final nonempty short line.
+           Width zero means exactly the encoded bytes, with no final newline. */
+        if (writing && output.wrap && output.wrote && output.column)
+                text_put_character('\n');
+
+        return text_done((!writing || text_status) ? 1 : 0);
+}
+
+static bool encoding_padding(const encoding_codec address_to codec,
+                             positive residue, positive padding)
+{
+        positive expected;
+
+        if (!codec->padding)
+                return !padding && residue == 0;
+
+        if (!residue)
+                expected = 0;
+        else if (codec->bits == 6 && residue == 2)
+                expected = 2;
+        else if (codec->bits == 6 && residue == 3)
+                expected = 1;
+        else if (codec->bits == 5 && residue == 2)
+                expected = 6;
+        else if (codec->bits == 5 && residue == 4)
+                expected = 4;
+        else if (codec->bits == 5 && residue == 5)
+                expected = 3;
+        else if (codec->bits == 5 && residue == 7)
+                expected = 1;
+        else
+                return false;
+
+        return padding == expected;
+}
+
+/* Decode contiguous complete quanta straight into the shared staging area.
+   A wrapped line, padding or garbage stops before consuming its group and the
+   scalar state machine below handles that edge.  The OR folds each group's
+   validation to one branch: every alphabet value is below 64, while an
+   unrecognized byte maps to 255. */
+static positive encoding_decode_groups(
+    const encoding_codec address_to codec, const p8 address_to values,
+    p8 address_to input, positive groups, p8 address_to output)
+{
+        positive done = 0;
+
+        if (codec->bits == 6)
+        {
+                for (; done < groups; done++)
+                {
+                        positive a = values[input[0]];
+                        positive b = values[input[1]];
+                        positive c = values[input[2]];
+                        positive d = values[input[3]];
+
+                        if ((a | b | c | d) == 255)
+                                break;
+
+                        positive bits = (a << 18) | (b << 12) | (c << 6) | d;
+
+                        output[0] = (p8)(bits >> 16);
+                        output[1] = (p8)(bits >> 8);
+                        output[2] = (p8)bits;
+                        input += 4;
+                        output += 3;
+                }
+        }
+        else if (codec->bits == 5)
+        {
+                for (; done < groups; done++)
+                {
+                        positive a = values[input[0]];
+                        positive b = values[input[1]];
+                        positive c = values[input[2]];
+                        positive d = values[input[3]];
+                        positive e = values[input[4]];
+                        positive f = values[input[5]];
+                        positive g = values[input[6]];
+                        positive h = values[input[7]];
+
+                        if ((a | b | c | d | e | f | g | h) == 255)
+                                break;
+
+                        positive bits = (a << 35) | (b << 30) | (c << 25) |
+                                        (d << 20) | (e << 15) | (f << 10) |
+                                        (g << 5) | h;
+
+                        output[0] = (p8)(bits >> 32);
+                        output[1] = (p8)(bits >> 24);
+                        output[2] = (p8)(bits >> 16);
+                        output[3] = (p8)(bits >> 8);
+                        output[4] = (p8)bits;
+                        input += 8;
+                        output += 5;
+                }
+        }
+        else if (codec->bits == 4)
+        {
+                for (; done < groups; done++)
+                {
+                        positive high = values[input[0]];
+                        positive low = values[input[1]];
+
+                        if ((high | low) == 255)
+                                break;
+
+                        *output++ = (p8)((high << 4) | low);
+                        input += 2;
+                }
+        }
+        else
+        {
+                for (; done < groups; done++)
+                {
+                        positive made = 0;
+                        positive valid = 0;
+
+                        if (codec->low_bit_first)
+                                for (positive bit = 0; bit < 8; bit++)
+                                {
+                                        positive value = values[input[bit]];
+
+                                        valid |= value;
+                                        made |= value << bit;
+                                }
+                        else
+                                for (positive bit = 0; bit < 8; bit++)
+                                {
+                                        positive value = values[input[bit]];
+
+                                        valid |= value;
+                                        made = (made << 1) | value;
+                                }
+
+                        if (valid == 255)
+                                break;
+
+                        *output++ = (p8)made;
+                        input += 8;
+                }
+        }
+
+        return done;
+}
+
+static b32 encoding_decode(const encoding_codec address_to codec,
+                           bool ignore_garbage)
+{
+        p8 values[256];
+        positive symbols = (positive)1 << codec->bits;
+        positive accumulator = 0;
+        positive held = 0;
+        positive seen = 0;
+        positive padding = 0;
+        positive made = 0;
+        bool padded = false;
+        bool valid = true;
+
+        memory_fill(values, 255, sizeof(values));
+
+        for (positive value = 0; value < symbols; value++)
+                values[codec->alphabet[value]] = (p8)value;
+
+        while (valid && text_fill())
+        {
+                while (text_input.position < text_input.filled)
+                {
+                        if (!padded && !held)
+                        {
+                                positive left = text_input.filled -
+                                                text_input.position;
+                                positive groups = left / codec->output;
+                                positive room = (TEXT_READ_MAX - made) /
+                                                codec->input;
+
+                                if (groups > room)
+                                        groups = room;
+
+                                if (groups)
+                                {
+                                        positive decoded = encoding_decode_groups(
+                                            codec, values,
+                                            text_input.buffer + text_input.position,
+                                            groups, text_line + made);
+
+                                        if (decoded)
+                                        {
+                                                text_input.position +=
+                                                    decoded * codec->output;
+                                                made += decoded * codec->input;
+                                                seen += decoded * codec->output;
+
+                                                if (made == TEXT_READ_MAX)
+                                                {
+                                                        text_put(text_line, made);
+                                                        made = 0;
+                                                }
+
+                                                continue;
+                                        }
+                                }
+                        }
+
+                        p8 byte = text_input.buffer[text_input.position++];
+                        p8 value = values[byte];
+
+                        /* GNU's decoders always accept wrapped input.  Other
+                           unrecognized bytes need -i. */
+                        if (byte == '\n')
+                                continue;
+
+                        if (value != 255)
+                        {
+                                if (padded)
+                                {
+                                        valid = false;
+                                        break;
+                                }
+
+                                accumulator = (accumulator << codec->bits) | value;
+                                held += codec->bits;
+                                seen++;
+
+                                if (held >= 8)
+                                {
+                                        held -= 8;
+                                        text_line[made++] = (p8)(accumulator >> held);
+
+                                        if (made == TEXT_READ_MAX)
+                                        {
+                                                text_put(text_line, made);
+                                                made = 0;
+                                        }
+
+                                        if (held)
+                                                accumulator &= ((positive)1 << held) - 1;
+                                        else
+                                                accumulator = 0;
+                                }
+
+                                continue;
+                        }
+
+                        if (byte == '=' && codec->padding)
+                        {
+                                padded = true;
+                                padding++;
+                                continue;
+                        }
+
+                        if (!ignore_garbage)
+                        {
+                                valid = false;
+                                break;
+                        }
+                }
+        }
+
+        if (made)
+                text_put(text_line, made);
+
+        if (!encoding_padding(codec, seen % codec->output, padding))
+                valid = false;
+
+        if (!valid)
+                text_error(null, "invalid input");
+
+        return text_done((!valid || text_status) ? 1 : 0);
+}
+
+static const file_long encoding_plain_longs[] = {
+    {(string_address)"decode", 'd'},
+    {(string_address)"ignore-garbage", 'i'},
+    {(string_address)"wrap", 'w'},
+    {null, 0},
+};
+
+static const file_long basenc_longs[] = {
+    {(string_address)"decode", 'd'},
+    {(string_address)"ignore-garbage", 'i'},
+    {(string_address)"wrap", 'w'},
+    {(string_address)"base64", '6'},
+    {(string_address)"base64url", 'u'},
+    {(string_address)"base32", '3'},
+    {(string_address)"base32hex", 'x'},
+    {(string_address)"base16", 'h'},
+    {(string_address)"base2msbf", 'm'},
+    {(string_address)"base2lsbf", 'l'},
+    {(string_address)"z85", 'z'},
+    {null, 0},
+};
+
+static b32 text_encoding(string_address name, positive format)
+{
+        file_taking taking = {
+            .program = name,
+            .allowed = (string_address)"diw",
+            .valued = (string_address)"w",
+            .longs = format == ENCODING_NONE ? basenc_longs
+                                             : encoding_plain_longs,
+        };
+        positive wrap = 76;
+
+        text_begin(name);
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (format == ENCODING_NONE)
+        {
+                const p8 choices[] = {'6', 'u', '3', 'x', 'h', 'm', 'l', 'z'};
+
+                for (positive at = 0; at < sizeof(choices); at++)
+                        if (taking.flags & FILE_FLAG(choices[at]))
+                        {
+                                if (format != ENCODING_NONE)
+                                        return text_refuse(null,
+                                                           "multiple encoding types",
+                                                           1);
+
+                                format = at + ENCODING_BASE64;
+                        }
+
+                if (format == ENCODING_NONE)
+                        return text_refuse(null, "missing encoding type", 1);
+        }
+
+        if (format == ENCODING_Z85)
+                return text_refuse(null, "z85 encoding is not supported", 1);
+
+        string_address said = file_option_value(address_of taking, 'w');
+
+        if (said && !text_unsigned_option(said, false, address_of wrap))
+                return text_refuse(said, "invalid wrap size", 1);
+
+        positive operands = (positive)text_argument_count - taking.first;
+
+        if (operands > 1)
+                return text_refuse(program_argument((b32)taking.first + 1),
+                                   "extra operand", 1);
+
+        string_address path = operands
+            ? program_argument((b32)taking.first)
+            : null;
+
+        if (!text_open(path))
+                return text_done(1);
+
+        b32 answered = taking.flags & FILE_FLAG('d')
+            ? encoding_decode(address_of encoding_codecs[format],
+                              (taking.flags & FILE_FLAG('i')) != 0)
+            : encoding_encode(address_of encoding_codecs[format], wrap);
+
+        text_close();
+        return answered;
+}
+
+static b32 text_base64()
+{
+        return text_encoding((string_address)"base64", ENCODING_BASE64);
+}
+
+static b32 text_base32()
+{
+        return text_encoding((string_address)"base32", ENCODING_BASE32);
+}
+
+static b32 text_basenc()
+{
+        return text_encoding((string_address)"basenc", ENCODING_NONE);
+}
+
+/*
+        Records from more than one input.
+
+        The ordinary line tools above have one global reader.  comm, paste
+        and join need several live positions, but not another way of doing
+        I/O: each cursor is the same text_reader and the same 64 KiB refill.
+        A record wholly inside a refill is returned as a view.  Only one that
+        crosses a refill is copied into the caller's existing line-sized
+        spill buffer, so the ordered steady-state walk does no allocation and
+        no record copy.
+
+        `previous` is optional.  A merge walker gives it the record it is
+        about to replace; that record is preserved only when this advance is
+        going to refill its reader (or reuse its spill).  This is the same
+        boundary rule text_line_view uses for uniq, generalized to a named
+        reader rather than duplicated in three applets.
+*/
+typedef struct
+{
+        text_reader reader;
+        p8 address_to spill;
+        /* paste aliases repeated '-' operands to one cursor so its 64 KiB
+           reads are shared instead of making byte-sized reads or letting
+           independent buffers steal chunks from the same descriptor. */
+        positive source;
+        p8 address_to record;
+        positive length;
+        /* join parses the key once when a record becomes current.  Other
+           relation applets leave these alone. */
+        p8 address_to key;
+        positive key_length;
+        bool ended;
+        bool have;
+} text_record_cursor;
+
+static bool text_record_open(text_record_cursor address_to cursor,
+                             string_address path, p8 address_to spill)
+{
+        cursor->spill = spill;
+        cursor->source = 0;
+        cursor->record = null;
+        cursor->length = 0;
+        cursor->key = null;
+        cursor->key_length = 0;
+        cursor->ended = false;
+        cursor->have = false;
+        return text_reader_open(address_of cursor->reader, path);
+}
+
+static fn text_record_close(text_record_cursor address_to cursor)
+{
+        text_close_handle(address_of cursor->reader.opened,
+                          cursor->reader.handle);
+}
+
+static fn text_record_preserve(p8 address_to address_to record,
+                               positive length, p8 address_to storage)
+{
+        if (!record || !address_to record || address_to record == storage)
+                return;
+
+        memory_copy(storage, address_to record, length);
+        address_to record = storage;
+}
+
+static bool text_record_next(text_record_cursor address_to cursor,
+                             p8 delimiter,
+                             p8 address_to address_to previous,
+                             positive previous_length,
+                             p8 address_to previous_storage)
+{
+        text_reader address_to reader = address_of cursor->reader;
+        positive used = 0;
+
+        cursor->record = null;
+        cursor->length = 0;
+        cursor->ended = false;
+        cursor->have = false;
+
+        /* A complete next record can be taken without changing this fill.
+           Otherwise preserve a view the caller still needs before fill
+           overwrites it.  A split prior record already occupies spill, which
+           the next split record will reuse. */
+        if (previous && address_to previous)
+        {
+                positive left = reader->filled - reader->position;
+                bool complete = left && memory_first_of(
+                    reader->buffer + reader->position, delimiter, left);
+
+                if (address_to previous == cursor->spill || !complete)
+                        text_record_preserve(previous, previous_length,
+                                             previous_storage);
+        }
+
+        if (!text_reader_fill(reader))
+                return false;
+
+        for (;;)
+        {
+                p8 address_to at = reader->buffer + reader->position;
+                positive left = reader->filled - reader->position;
+                p8 address_to found = memory_first_of(at, delimiter, left);
+                positive take = found ? (positive)(found - at) : left;
+
+                if (!used && found)
+                {
+                        cursor->record = at;
+                        cursor->length = take;
+                        cursor->ended = true;
+                        cursor->have = true;
+                        reader->position += take + 1;
+                        return true;
+                }
+
+                if (take > TEXT_LINE_MAX - used)
+                {
+                        reader->position = reader->filled;
+                        reader->finished = true;
+                        reader->failed = true;
+                        text_error(reader->name, "line too long");
+                        return false;
+                }
+
+                memory_copy(cursor->spill + used, at, take);
+                used += take;
+                reader->position += take;
+
+                if (found)
+                {
+                        reader->position++;
+                        cursor->record = cursor->spill;
+                        cursor->length = used;
+                        cursor->ended = true;
+                        cursor->have = true;
+                        return true;
+                }
+
+                if (!text_reader_fill(reader))
+                {
+                        if (!used)
+                                return false;
+
+                        cursor->record = cursor->spill;
+                        cursor->length = used;
+                        cursor->have = true;
+                        return true;
+                }
+        }
+}
+
+/* A lookahead that is free when the next record is already in this refill.
+   It never fills and never changes the cursor, so a merge can prove its two
+   current keys are unique without copying either record. */
+static bool text_record_peek(text_record_cursor address_to cursor,
+                             p8 delimiter, p8 address_to address_to record,
+                             positive address_to length)
+{
+        text_reader address_to reader = address_of cursor->reader;
+
+        if (reader->position >= reader->filled)
+                return false;
+
+        p8 address_to at = reader->buffer + reader->position;
+        positive left = reader->filled - reader->position;
+        p8 address_to found = memory_first_of(at, delimiter, left);
+
+        if (!found)
+                return false;
+
+        address_to record = at;
+        address_to length = (positive)(found - at);
+        return true;
+}
+
+static fn text_record_take_peeked(text_record_cursor address_to cursor,
+                                  p8 address_to record, positive length)
+{
+        cursor->record = record;
+        cursor->length = length;
+        cursor->ended = true;
+        cursor->have = true;
+        cursor->reader.position += length + 1;
+}
+
+static bipolar text_record_compare(p8 address_to one, positive one_length,
+                                    p8 address_to two, positive two_length,
+                                    bool fold)
+{
+        positive shared = min(one_length, two_length);
+        bipolar order = fold ? memory_compare_ascii_case(one, two, shared)
+                             : memory_compare(one, two, shared);
+
+        if (order)
+                return order;
+
+        return one_length < two_length ? -1 : one_length > two_length;
+}
+
+/* text_line is idle while a relation applet runs and is the first cursor's
+   refill-spanning store.  Only the second spill and one transient prior need
+   new storage: the prior is consumed by the comparison before another side
+   advances, so it is shared by both sides. */
+static p8 relation_spill[TEXT_LINE_MAX + 1];
+/* uniq already needed one retained record.  The merge walkers use the same
+   mutually-exclusive store for the one prior record crossing a refill. */
+static p8 text_record_hold[TEXT_LINE_MAX + 1];
+
+/* comm ---------------------------------------------------- */
+
+static const file_long comm_longs[] = {
+    {(string_address)"check-order", 'C'},
+    {(string_address)"nocheck-order", 'N'},
+    {(string_address)"output-delimiter", 'O'},
+    {(string_address)"total", 'T'},
+    {(string_address)"zero-terminated", 'z'},
+    {null, 0},
+};
+
+enum
+{
+        RELATION_ORDER_DEFAULT,
+        RELATION_ORDER_FORCE,
+        RELATION_ORDER_NONE,
+};
+
+static positive comm_order_mode;
+
+static bool comm_option_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        if (letter == 'C')
+                comm_order_mode = RELATION_ORDER_FORCE;
+        else if (letter == 'N')
+                comm_order_mode = RELATION_ORDER_NONE;
+
+        return true;
+}
+
+static fn comm_separator(string_address delimiter)
+{
+        /* GNU uses one NUL when an explicitly empty delimiter is named. */
+        if (!delimiter[0])
+                text_put_character('\0');
+        else
+                text_put(delimiter, string_length(delimiter));
+}
+
+static fn comm_record(p8 address_to record, positive length, positive column,
+                      positive shown_columns, string_address separator,
+                      p8 delimiter)
+{
+        for (positive at = 0; at < column && at < shown_columns; at++)
+                comm_separator(separator);
+
+        text_put(record, length);
+        text_put_character(delimiter);
+}
+
+static bool comm_advance(text_record_cursor address_to cursor,
+                         p8 delimiter, bool check,
+                         bool address_to disorder)
+{
+        p8 address_to old = cursor->record;
+        positive old_length = cursor->length;
+        bool more = text_record_next(
+            cursor, delimiter, check ? address_of old : null,
+            old_length, text_record_hold);
+
+        if (more && check && text_record_compare(old, old_length,
+                                                  cursor->record,
+                                                  cursor->length, false) > 0)
+        {
+                address_to disorder = true;
+        }
+
+        return more;
+}
+
+static b32 text_comm()
+{
+        file_taking taking = {
+            .program = (string_address)"comm",
+            .allowed = (string_address)"123z",
+            .valued = (string_address)"O",
+            .longs = comm_longs,
+            .operand = text_file_add,
+            .seen = comm_option_seen,
+        };
+
+        text_begin("comm");
+        text_delimiter = '\n';
+        comm_order_mode = RELATION_ORDER_DEFAULT;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        if (text_files_count < 2)
+                return text_refuse(null, "missing operand", 1);
+        if (text_files_count > 2)
+                return text_refuse(text_file_name(2), "extra operand", 1);
+
+        string_address left_name = text_file_name(0);
+        string_address right_name = text_file_name(1);
+
+        if (string_equals(left_name, "-") && string_equals(right_name, "-"))
+                return text_refuse(null, "standard input is meaningful only once", 1);
+
+        if (taking.flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        text_record_cursor sides[2];
+
+        if (!text_record_open(sides, left_name, text_line))
+                return text_done(1);
+        if (!text_record_open(sides + 1, right_name, relation_spill))
+        {
+                text_record_close(sides);
+                return text_done(1);
+        }
+
+        string_address separator = file_option_value(address_of taking, 'O');
+
+        if (!separator)
+                separator = (string_address)"\t";
+
+        bool show[3] = {
+            !(taking.flags & FILE_FLAG('1')),
+            !(taking.flags & FILE_FLAG('2')),
+            !(taking.flags & FILE_FLAG('3')),
+        };
+        positive column[3];
+        positive before = 0;
+
+        for (positive at = 0; at < 3; at++)
+        {
+                column[at] = before;
+                if (show[at])
+                        before++;
+        }
+
+        positive totals[3] = {0, 0, 0};
+        bool disorder = false;
+        bool unpaired = false;
+        bool have_left = text_record_next(sides, text_delimiter,
+                                           null, 0, null);
+        bool have_right = text_record_next(sides + 1, text_delimiter,
+                                            null, 0, null);
+
+        while (have_left && have_right)
+        {
+                bipolar order = text_record_compare(
+                    sides[0].record, sides[0].length,
+                    sides[1].record, sides[1].length, false);
+                positive which = order < 0 ? 0 : order > 0 ? 1 : 2;
+
+                unpaired |= which != 2;
+
+                totals[which]++;
+                if (show[which])
+                        comm_record(sides[which == 1].record,
+                                    sides[which == 1].length,
+                                    column[which], before, separator,
+                                    text_delimiter);
+
+                if (which != 1)
+                        have_left = comm_advance(
+                            sides, text_delimiter,
+                            comm_order_mode != RELATION_ORDER_NONE,
+                            address_of disorder);
+                if (disorder && comm_order_mode == RELATION_ORDER_FORCE)
+                        break;
+                if (which != 0)
+                        have_right = comm_advance(
+                            sides + 1, text_delimiter,
+                            comm_order_mode != RELATION_ORDER_NONE,
+                            address_of disorder);
+
+                if (disorder && comm_order_mode == RELATION_ORDER_FORCE)
+                        break;
+        }
+
+        while (have_left &&
+               !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+        {
+                unpaired = true;
+                totals[0]++;
+                if (show[0])
+                        comm_record(sides[0].record, sides[0].length,
+                                    column[0], before, separator,
+                                    text_delimiter);
+                have_left = comm_advance(sides, text_delimiter,
+                                         comm_order_mode != RELATION_ORDER_NONE,
+                                         address_of disorder);
+        }
+
+        while (have_right &&
+               !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+        {
+                unpaired = true;
+                totals[1]++;
+                if (show[1])
+                        comm_record(sides[1].record, sides[1].length,
+                                    column[1], before, separator,
+                                    text_delimiter);
+                have_right = comm_advance(sides + 1, text_delimiter,
+                                          comm_order_mode != RELATION_ORDER_NONE,
+                                          address_of disorder);
+        }
+
+        if (taking.flags & FILE_FLAG('T'))
+        {
+                positive_to_string(text_put, totals[0]);
+                comm_separator(separator);
+                positive_to_string(text_put, totals[1]);
+                comm_separator(separator);
+                positive_to_string(text_put, totals[2]);
+                comm_separator(separator);
+                text_put_string("total");
+                text_put_character(text_delimiter);
+        }
+
+        bool failed = sides[0].reader.failed || sides[1].reader.failed;
+        bool order_failed = disorder &&
+            (comm_order_mode == RELATION_ORDER_FORCE || unpaired);
+
+        if (order_failed)
+                text_error(null, "input is not in sorted order");
+
+        text_record_close(sides);
+        text_record_close(sides + 1);
+        return text_done((failed || order_failed) ? 1 : 0);
+}
+
+/* paste --------------------------------------------------- */
+
+static const file_long paste_longs[] = {
+    {(string_address)"delimiters", 'd'},
+    {(string_address)"serial", 's'},
+    {(string_address)"zero-terminated", 'z'},
+    {null, 0},
+};
+
+/* 256 is the empty delimiter.  A NUL delimiter is still the byte zero. */
+#define PASTE_EMPTY 256
+
+static bool paste_delimiters(string_address said, p16 address_to made,
+                             positive room, positive address_to count)
+{
+        positive at = 0;
+        positive have = 0;
+
+        while (said[at])
+        {
+                positive value = (p8)said[at++];
+
+                if (value == '\\')
+                {
+                        p8 escaped = said[at++];
+
+                        if (!escaped)
+                                return false;
+
+                        p8 simple = byte_simple_escape(escaped);
+
+                        if (escaped == '0' &&
+                                 !byte_is_digit(said[at]))
+                                value = PASTE_EMPTY;
+                        else if (simple)
+                                value = simple;
+                        else if (escaped >= '0' && escaped <= '7')
+                        {
+                                value = escaped - '0';
+
+                                for (positive digit = 1; digit < 3 &&
+                                     said[at] >= '0' && said[at] <= '7'; digit++)
+                                        value = value * 8 + said[at++] - '0';
+
+                                value &= 255;
+                        }
+                        else
+                                value = escaped;
+                }
+
+                if (have >= room)
+                        return false;
+
+                made[have++] = (p16)value;
+        }
+
+        if (!have)
+                made[have++] = PASTE_EMPTY;
+
+        address_to count = have;
+        return true;
+}
+
+static fn paste_delimiter(p16 address_to delimiters, positive count,
+                          positive which)
+{
+        positive value = delimiters[which % count];
+
+        if (value != PASTE_EMPTY)
+                text_put_character((p8)value);
+}
+
+static b32 text_paste()
+{
+        file_taking taking = {
+            .program = (string_address)"paste",
+            .allowed = (string_address)"dsz",
+            .valued = (string_address)"d",
+            .longs = paste_longs,
+            .operand = text_file_add,
+        };
+
+        text_begin("paste");
+        text_delimiter = '\n';
+        text_arena_used = 0;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        if (taking.flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        positive delimiter_count;
+        string_address said = file_option_value(address_of taking, 'd');
+        positive delimiter_room = said ? string_length(said) : 1;
+
+        if (!delimiter_room)
+                delimiter_room = 1;
+        if (delimiter_room > positive_max / sizeof(p16))
+                return text_refuse(said, "invalid delimiter list", 1);
+
+        p16 address_to delimiters = (p16 address_to)text_arena_take(
+            delimiter_room * sizeof(p16));
+
+        if (!delimiters ||
+            !paste_delimiters(said ? said : (string_address)"\t",
+                              delimiters, delimiter_room,
+                              address_of delimiter_count))
+                return text_refuse(said, "invalid delimiter list", 1);
+
+        positive inputs = text_files_count ? text_files_count : 1;
+
+        if (inputs > positive_max / sizeof(text_record_cursor))
+                return text_refuse(null, "too many operands", 1);
+
+        text_record_cursor address_to cursors =
+            (text_record_cursor address_to)text_arena_take(
+                inputs * sizeof(text_record_cursor));
+
+        if (!cursors)
+                return text_done(1);
+
+        positive first_standard = TEXT_UNSET;
+
+        for (positive input = 0; input < inputs; input++)
+        {
+                string_address name = text_files_count
+                    ? text_file_name(input) : null;
+                bool standard = !name || string_equals(name, "-");
+
+                if (standard && first_standard != TEXT_UNSET)
+                {
+                        cursors[input].source = first_standard;
+                        continue;
+                }
+
+                text_record_open(cursors + input, name, text_line);
+                cursors[input].source = input;
+
+                if (standard)
+                        first_standard = input;
+        }
+
+        bool serial = (taking.flags & FILE_FLAG('s')) != 0;
+
+        if (serial)
+        {
+                for (positive input = 0; input < inputs; input++)
+                {
+                        text_record_cursor address_to cursor = cursors + input;
+
+                        cursor = cursors + cursor->source;
+                        positive field = 0;
+
+                        if (cursor->reader.failed)
+                                continue;
+
+                        while (text_record_next(cursor, text_delimiter,
+                                                null, 0, null))
+                        {
+                                if (field)
+                                        paste_delimiter(delimiters,
+                                                        delimiter_count,
+                                                        field - 1);
+                                text_put(cursor->record, cursor->length);
+                                field++;
+                        }
+
+                        text_put_character(text_delimiter);
+                }
+        }
+        else
+        {
+                for (;;)
+                {
+                        bool any = false;
+                        positive next_separator = 0;
+
+                        for (positive input = 0; input < inputs; input++)
+                        {
+                                text_record_cursor address_to cursor =
+                                    cursors + input;
+
+                                cursor = cursors + cursor->source;
+
+                                if (cursor->reader.failed ||
+                                    !text_record_next(cursor, text_delimiter,
+                                                      null, 0, null))
+                                        continue;
+
+                                while (next_separator < input)
+                                        paste_delimiter(delimiters,
+                                                        delimiter_count,
+                                                        next_separator++);
+
+                                text_put(cursor->record, cursor->length);
+                                any = true;
+                        }
+
+                        if (!any)
+                                break;
+
+                        while (next_separator + 1 < inputs)
+                                paste_delimiter(delimiters, delimiter_count,
+                                                next_separator++);
+
+                        text_put_character(text_delimiter);
+                }
+        }
+
+        bool failed = false;
+
+        for (positive input = 0; input < inputs; input++)
+        {
+                text_record_cursor address_to cursor = cursors + input;
+
+                if (cursor->source != input)
+                        continue;
+
+                failed |= cursor->reader.failed;
+                text_record_close(cursor);
+        }
+
+        return text_done(failed ? 1 : 0);
+}
+
+/* join ---------------------------------------------------- */
+
+#define JOIN_OUTPUT_MAX 256
+#define JOIN_GROUP_FIRST TEXT_READ_MAX
+
+typedef struct
+{
+        p8 file;
+        positive field;
+} join_output;
+
+typedef struct
+{
+        p8 address_to bytes;
+        positive length;
+        positive position;
+        positive field;
+        p8 separator;
+        bool separated;
+        bool done;
+} join_fields;
+
+typedef struct
+{
+        positive bytes;
+        positive length;
+} join_stored;
+
+static positive join_key[2];
+static positive join_unpaired;
+static positive join_only;
+static join_output join_outputs[JOIN_OUTPUT_MAX];
+static positive join_output_count;
+static bool join_output_auto;
+static positive join_order_mode;
+
+static bool join_order_check(bool unpaired)
+{
+        return join_order_mode == RELATION_ORDER_FORCE ||
+               (join_order_mode == RELATION_ORDER_DEFAULT && unpaired);
+}
+
+static bool join_number(string_address value, positive address_to number)
+{
+        positive made;
+
+        if (!text_unsigned_option(value, false, address_of made) || !made)
+                return false;
+
+        address_to number = made - 1;
+        return true;
+}
+
+static bool join_output_add(string_address word)
+{
+        positive at = 0;
+
+        if (string_equals(word, "auto"))
+        {
+                if (join_output_count)
+                        return false;
+                join_output_auto = true;
+                return true;
+        }
+
+        if (join_output_auto)
+                return false;
+
+        while (word[at])
+        {
+                while (word[at] == ',' || byte_is_blank(word[at]))
+                        at++;
+
+                if (!word[at])
+                        break;
+                if (join_output_count == JOIN_OUTPUT_MAX)
+                        return false;
+
+                join_output output = {0, 0};
+
+                if (word[at] == '0' &&
+                    (!word[at + 1] || word[at + 1] == ',' ||
+                     byte_is_blank(word[at + 1])))
+                        at++;
+                else
+                {
+                        if ((word[at] != '1' && word[at] != '2') ||
+                            word[at + 1] != '.')
+                                return false;
+
+                        output.file = word[at] - '0';
+                        at += 2;
+                        positive start = at;
+                        positive field = 0;
+
+                        while (byte_is_digit(word[at]))
+                        {
+                                positive digit = word[at++] - '0';
+
+                                if (field > (positive_max - digit) / 10)
+                                        return false;
+                                field = field * 10 + digit;
+                        }
+
+                        if (at == start || !field)
+                                return false;
+
+                        output.field = field - 1;
+                }
+
+                if (word[at] && word[at] != ',' && !byte_is_blank(word[at]))
+                        return false;
+
+                join_outputs[join_output_count++] = output;
+        }
+
+        return join_output_count != 0;
+}
+
+static bool join_side(string_address value, positive address_to mask)
+{
+        if (value && value[0] == '1' && !value[1])
+                address_to mask |= 1;
+        else if (value && value[0] == '2' && !value[1])
+                address_to mask |= 2;
+        else
+                return false;
+
+        return true;
+}
+
+static bool join_option_seen(p8 letter, string_address value)
+{
+        if (letter == '1' || letter == '2')
+        {
+                positive field;
+
+                if (!join_number(value, address_of field))
+                        return false;
+                join_key[letter - '1'] = field;
+        }
+        else if (letter == 'j')
+        {
+                positive field;
+
+                if (!join_number(value, address_of field))
+                        return false;
+                join_key[0] = join_key[1] = field;
+        }
+        else if (letter == 'a')
+        {
+                if (!join_side(value, address_of join_unpaired))
+                        return false;
+        }
+        else if (letter == 'v')
+        {
+                if (!join_side(value, address_of join_only))
+                        return false;
+        }
+        else if (letter == 'o')
+        {
+                if (!join_output_add(value))
+                        return false;
+        }
+        else if (letter == 'C')
+                join_order_mode = RELATION_ORDER_FORCE;
+        else if (letter == 'N')
+                join_order_mode = RELATION_ORDER_NONE;
+
+        return true;
+}
+
+static const file_long join_longs[] = {
+    {(string_address)"ignore-case", 'i'},
+    {(string_address)"check-order", 'C'},
+    {(string_address)"nocheck-order", 'N'},
+    {(string_address)"header", 'H'},
+    {(string_address)"zero-terminated", 'z'},
+    {null, 0},
+};
+
+static fn join_fields_begin(join_fields address_to fields,
+                            p8 address_to bytes, positive length,
+                            bool separated, p8 separator)
+{
+        fields->bytes = bytes;
+        fields->length = length;
+        fields->position = 0;
+        fields->field = 0;
+        fields->separator = separator;
+        fields->separated = separated;
+        fields->done = false;
+}
+
+static bool join_field_next(join_fields address_to fields,
+                            p8 address_to address_to value,
+                            positive address_to length)
+{
+        if (fields->done)
+                return false;
+
+        positive at = fields->position;
+        positive start;
+
+        if (!fields->separated)
+        {
+                while (at < fields->length && byte_is_blank(fields->bytes[at]))
+                        at++;
+                if (at == fields->length)
+                {
+                        fields->done = true;
+                        return false;
+                }
+
+                start = at;
+                while (at < fields->length && !byte_is_blank(fields->bytes[at]))
+                        at++;
+                fields->position = at;
+        }
+        else
+        {
+                start = at;
+                while (at < fields->length &&
+                       fields->bytes[at] != fields->separator)
+                        at++;
+
+                if (at < fields->length)
+                        fields->position = at + 1;
+                else
+                {
+                        fields->position = at;
+                        fields->done = true;
+                }
+        }
+
+        address_to value = fields->bytes + start;
+        address_to length = at - start;
+        fields->field++;
+        return true;
+}
+
+static bool join_field_at(p8 address_to line, positive length,
+                          positive wanted, bool separated, p8 separator,
+                          p8 address_to address_to value,
+                          positive address_to value_length)
+{
+        join_fields fields;
+        p8 address_to found = line;
+        positive found_length = 0;
+
+        join_fields_begin(address_of fields, line, length,
+                          separated, separator);
+
+        for (positive at = 0; at <= wanted; at++)
+                if (!join_field_next(address_of fields, address_of found,
+                                     address_of found_length))
+                {
+                        address_to value = line;
+                        address_to value_length = 0;
+                        return false;
+                }
+
+        address_to value = found;
+        address_to value_length = found_length;
+
+        return true;
+}
+
+static positive join_field_count(p8 address_to line, positive length,
+                                 bool separated, p8 separator)
+{
+        join_fields fields;
+        p8 address_to value;
+        positive value_length;
+        positive count = 0;
+
+        join_fields_begin(address_of fields, line, length,
+                          separated, separator);
+        while (join_field_next(address_of fields, address_of value,
+                               address_of value_length))
+                count++;
+
+        return count;
+}
+
+static fn join_cursor_key(text_record_cursor address_to cursor,
+                          positive side, bool separated, p8 separator)
+{
+        cursor->key = cursor->record;
+        cursor->key_length = 0;
+        join_field_at(cursor->record, cursor->length, join_key[side],
+                      separated, separator, address_of cursor->key,
+                      address_of cursor->key_length);
+}
+
+static fn join_view_key(p8 address_to record, positive length, positive side,
+                        bool separated, p8 separator,
+                        p8 address_to address_to key,
+                        positive address_to key_length)
+{
+        address_to key = record;
+        address_to key_length = 0;
+        join_field_at(record, length, join_key[side], separated, separator,
+                      key, key_length);
+}
+
+static fn join_put_field(bool address_to first,
+                         p8 address_to value, positive length,
+                         bool present, string_address empty,
+                         p8 output_separator)
+{
+        if (!address_to first)
+                text_put_character(output_separator);
+        address_to first = false;
+
+        if (present)
+                text_put(value, length);
+        else if (empty)
+                text_put(empty, string_length(empty));
+}
+
+static fn join_put_nonkeys(bool address_to first, p8 address_to line,
+                           positive length, positive key, bool separated,
+                           p8 separator, p8 output_separator)
+{
+        join_fields fields;
+        p8 address_to value;
+        positive value_length;
+        positive field = 0;
+
+        join_fields_begin(address_of fields, line, length,
+                          separated, separator);
+        while (join_field_next(address_of fields, address_of value,
+                               address_of value_length))
+        {
+                if (field++ == key)
+                        continue;
+
+                join_put_field(first, value, value_length, true, null,
+                               output_separator);
+        }
+}
+
+static fn join_emit(p8 address_to left, positive left_length,
+                    p8 address_to right, positive right_length,
+                    bool separated, p8 separator, string_address empty,
+                    positive auto_left, positive auto_right,
+                    p8 delimiter)
+{
+        bool first = true;
+        p8 output_separator = separated ? separator : ' ';
+
+        if (join_output_count)
+        {
+                for (positive at = 0; at < join_output_count; at++)
+                {
+                        join_output field = join_outputs[at];
+                        p8 address_to value = null;
+                        positive length = 0;
+                        bool present;
+
+                        if (!field.file)
+                        {
+                                present = left && join_field_at(
+                                    left, left_length, join_key[0], separated,
+                                    separator, address_of value,
+                                    address_of length);
+                                if (!present && right)
+                                        present = join_field_at(
+                                            right, right_length, join_key[1],
+                                            separated, separator,
+                                            address_of value,
+                                            address_of length);
+                        }
+                        else
+                        {
+                                p8 address_to line = field.file == 1
+                                    ? left : right;
+                                positive line_length = field.file == 1
+                                    ? left_length : right_length;
+
+                                present = line && join_field_at(
+                                    line, line_length, field.field, separated,
+                                    separator, address_of value,
+                                    address_of length);
+                        }
+
+                        join_put_field(address_of first, value, length,
+                                       present, empty, output_separator);
+                }
+        }
+        else if (join_output_auto)
+        {
+                p8 address_to value = null;
+                positive length = 0;
+                bool present = left && join_field_at(
+                    left, left_length, join_key[0], separated, separator,
+                    address_of value, address_of length);
+
+                if (!present && right)
+                        present = join_field_at(
+                            right, right_length, join_key[1], separated,
+                            separator, address_of value, address_of length);
+
+                join_put_field(address_of first, value, length, present,
+                               empty, output_separator);
+
+                for (positive side = 0; side < 2; side++)
+                {
+                        p8 address_to line = side ? right : left;
+                        positive line_length = side ? right_length : left_length;
+                        positive fields = side ? auto_right : auto_left;
+
+                        for (positive field = 0; field < fields; field++)
+                        {
+                                if (field == join_key[side])
+                                        continue;
+
+                                present = line && join_field_at(
+                                    line, line_length, field, separated,
+                                    separator, address_of value,
+                                    address_of length);
+                                join_put_field(address_of first, value, length,
+                                               present, empty,
+                                               output_separator);
+                        }
+                }
+        }
+        else
+        {
+                p8 address_to value = null;
+                positive length = 0;
+                bool present = left && join_field_at(
+                    left, left_length, join_key[0], separated, separator,
+                    address_of value, address_of length);
+
+                if (!present && right)
+                        present = join_field_at(
+                            right, right_length, join_key[1], separated,
+                            separator, address_of value, address_of length);
+
+                join_put_field(address_of first, value, length, present,
+                               empty, output_separator);
+
+                if (left)
+                        join_put_nonkeys(address_of first, left, left_length,
+                                         join_key[0], separated, separator,
+                                         output_separator);
+                if (right)
+                        join_put_nonkeys(address_of first, right, right_length,
+                                         join_key[1], separated, separator,
+                                         output_separator);
+        }
+
+        text_put_character(delimiter);
+}
+
+static bool join_advance(text_record_cursor address_to cursor,
+                         positive side, p8 delimiter, bool check,
+                         bool separated, p8 separator, bool fold,
+                         bool address_to disorder)
+{
+        p8 address_to old = cursor->record;
+        positive old_length = cursor->length;
+        positive key_offset = cursor->key
+            ? (positive)(cursor->key - cursor->record) : 0;
+        positive old_key_length = cursor->key_length;
+        bool more = text_record_next(
+            cursor, delimiter, check ? address_of old : null,
+            old_length, text_record_hold);
+
+        if (more)
+        {
+                join_cursor_key(cursor, side, separated, separator);
+
+                if (check && text_record_compare(
+                        old + key_offset, old_key_length,
+                        cursor->key, cursor->key_length, fold) > 0)
+                {
+                        address_to disorder = true;
+                }
+        }
+
+        return more;
+}
+
+static positive join_store(p8 address_to address_to buffer,
+                           positive address_to room, positive mark,
+                           positive used, p8 address_to record,
+                           positive length)
+{
+        positive bytes = sizeof(join_stored) + length;
+        positive aligned = (bytes + sizeof(positive) - 1) &
+                           ~(sizeof(positive) - 1);
+
+        if (bytes < length || aligned < bytes || used > positive_max - aligned)
+                return TEXT_UNSET;
+
+        positive wanted = used + aligned;
+
+        if (wanted > address_to room)
+        {
+                positive larger = memory_growth(address_to room, wanted,
+                                                 JOIN_GROUP_FIRST);
+                positive available = TEXT_ARENA_BYTES - mark;
+
+                if (larger > available)
+                        larger = wanted <= available ? available : 0;
+                if (!larger)
+                        return TEXT_UNSET;
+
+                /* The group is the newest arena object, so rewinding grows it
+                   at the same address and retains its bytes.  Capacity
+                   changes logarithmically; records themselves only advance
+                   `used` inside that one object. */
+                text_arena_used = mark;
+                p8 address_to grown =
+                    (p8 address_to)text_arena_take(larger);
+
+                if (!grown)
+                        return TEXT_UNSET;
+
+                address_to buffer = grown;
+                address_to room = larger;
+        }
+
+        join_stored address_to stored =
+            (join_stored address_to)(address_to buffer + used);
+
+        stored->bytes = aligned;
+        stored->length = length;
+        memory_copy(stored + 1, record, length);
+        return used + aligned;
+}
+
+static b32 text_join()
+{
+        file_taking taking = {
+            .program = (string_address)"join",
+            .allowed = (string_address)"12aeijotvz",
+            .valued = (string_address)"12aejotv",
+            .longs = join_longs,
+            .operand = text_file_add,
+            .seen = join_option_seen,
+        };
+
+        text_begin("join");
+        text_delimiter = '\n';
+        text_arena_used = 0;
+        join_key[0] = join_key[1] = 0;
+        join_unpaired = 0;
+        join_only = 0;
+        join_output_count = 0;
+        join_output_auto = false;
+        join_order_mode = RELATION_ORDER_DEFAULT;
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_refuse(null, "invalid option value", 1);
+
+        if (text_files_count < 2)
+                return text_refuse(null, "missing operand", 1);
+        if (text_files_count > 2)
+                return text_refuse(text_file_name(2), "extra operand", 1);
+
+        string_address left_name = text_file_name(0);
+        string_address right_name = text_file_name(1);
+
+        if (string_equals(left_name, "-") && string_equals(right_name, "-"))
+                return text_refuse(null, "both files cannot be standard input", 1);
+
+        string_address separator_text = file_option_value(address_of taking, 't');
+        bool separated = separator_text != null;
+        p8 separator = ' ';
+
+        if (separated)
+        {
+                if (!separator_text[0] || separator_text[1])
+                        return text_refuse(separator_text,
+                                           "separator must be one byte", 1);
+                separator = separator_text[0];
+        }
+
+        if (taking.flags & FILE_FLAG('z'))
+                text_delimiter = '\0';
+
+        bool fold = (taking.flags & FILE_FLAG('i')) != 0;
+        bool header = (taking.flags & FILE_FLAG('H')) != 0;
+        string_address empty = file_option_value(address_of taking, 'e');
+        text_record_cursor sides[2];
+
+        if (!text_record_open(sides, left_name, text_line))
+                return text_done(1);
+        if (!text_record_open(sides + 1, right_name, relation_spill))
+        {
+                text_record_close(sides);
+                return text_done(1);
+        }
+
+        positive group_mark = text_arena_used;
+        p8 address_to group = null;
+        positive group_room = 0;
+
+        bool have_left = text_record_next(sides, text_delimiter,
+                                           null, 0, null);
+        bool have_right = text_record_next(sides + 1, text_delimiter,
+                                            null, 0, null);
+
+        if (have_left)
+                join_cursor_key(sides, 0, separated, separator);
+        if (have_right)
+                join_cursor_key(sides + 1, 1, separated, separator);
+
+        positive auto_left = have_left
+            ? join_field_count(sides[0].record, sides[0].length,
+                               separated, separator) : 0;
+        positive auto_right = have_right
+            ? join_field_count(sides[1].record, sides[1].length,
+                               separated, separator) : 0;
+        bool disorder = false;
+        bool unpaired = false;
+        bool trouble = false;
+
+        if (header && (have_left || have_right))
+        {
+                join_emit(have_left ? sides[0].record : null,
+                          have_left ? sides[0].length : 0,
+                          have_right ? sides[1].record : null,
+                          have_right ? sides[1].length : 0,
+                          separated, separator, empty,
+                          auto_left, auto_right, text_delimiter);
+
+                if (have_left)
+                        have_left = join_advance(
+                            sides, 0, text_delimiter, false, separated,
+                            separator, fold, address_of disorder);
+                if (have_right)
+                        have_right = join_advance(
+                            sides + 1, 1, text_delimiter, false, separated,
+                            separator, fold, address_of disorder);
+        }
+
+        while (have_left && have_right)
+        {
+                bipolar order = text_record_compare(
+                    sides[0].key, sides[0].key_length,
+                    sides[1].key, sides[1].key_length, fold);
+
+                if (order < 0)
+                {
+                        unpaired = true;
+                        if ((join_unpaired | join_only) & 1)
+                                join_emit(sides[0].record, sides[0].length,
+                                          null, 0, separated, separator, empty,
+                                          auto_left, auto_right,
+                                          text_delimiter);
+                        have_left = join_advance(
+                            sides, 0, text_delimiter,
+                            join_order_check(unpaired),
+                            separated, separator, fold, address_of disorder);
+                        if (disorder &&
+                            join_order_mode == RELATION_ORDER_FORCE)
+                                break;
+                        continue;
+                }
+
+                if (order > 0)
+                {
+                        unpaired = true;
+                        if ((join_unpaired | join_only) & 2)
+                                join_emit(null, 0, sides[1].record,
+                                          sides[1].length, separated, separator,
+                                          empty, auto_left, auto_right,
+                                          text_delimiter);
+                        have_right = join_advance(
+                            sides + 1, 1, text_delimiter,
+                            join_order_check(unpaired),
+                            separated, separator, fold, address_of disorder);
+                        if (disorder &&
+                            join_order_mode == RELATION_ORDER_FORCE)
+                                break;
+                        continue;
+                }
+
+                /* Nearly every package index has unique ordered keys.  When
+                   both following records are already visible in their 64 KiB
+                   fills and neither repeats this key, emit and advance in
+                   place: no duplicate-group arena, no copy, no allocation.
+                   Refill boundaries and actual duplicates take the general
+                   run-buffering path below. */
+                p8 address_to next_left;
+                p8 address_to next_right;
+                p8 address_to next_left_key;
+                p8 address_to next_right_key;
+                positive next_left_length;
+                positive next_right_length;
+                positive next_left_key_length;
+                positive next_right_key_length;
+                bool peek_left = text_record_peek(
+                    sides, text_delimiter, address_of next_left,
+                    address_of next_left_length);
+                bool peek_right = text_record_peek(
+                    sides + 1, text_delimiter, address_of next_right,
+                    address_of next_right_length);
+
+                if (peek_left)
+                        join_view_key(next_left, next_left_length, 0,
+                                      separated, separator,
+                                      address_of next_left_key,
+                                      address_of next_left_key_length);
+                if (peek_right)
+                        join_view_key(next_right, next_right_length, 1,
+                                      separated, separator,
+                                      address_of next_right_key,
+                                      address_of next_right_key_length);
+
+                if (peek_left && peek_right &&
+                    text_record_compare(next_left_key,
+                                        next_left_key_length,
+                                        sides[0].key,
+                                        sides[0].key_length, fold) &&
+                    text_record_compare(sides[1].key,
+                                        sides[1].key_length,
+                                        next_right_key,
+                                        next_right_key_length, fold))
+                {
+                        bool next_disorder = join_order_check(unpaired) &&
+                            (text_record_compare(
+                                 sides[0].key, sides[0].key_length,
+                                 next_left_key, next_left_key_length,
+                                 fold) > 0 ||
+                             text_record_compare(
+                                 sides[1].key, sides[1].key_length,
+                                 next_right_key, next_right_key_length,
+                                 fold) > 0);
+
+                        disorder |= next_disorder;
+
+                        if (next_disorder &&
+                            join_order_mode == RELATION_ORDER_FORCE)
+                        {
+                                break;
+                        }
+
+                        if (!join_only)
+                                join_emit(sides[0].record, sides[0].length,
+                                          sides[1].record, sides[1].length,
+                                          separated, separator, empty,
+                                          auto_left, auto_right,
+                                          text_delimiter);
+
+                        text_record_take_peeked(sides, next_left,
+                                                next_left_length);
+                        sides[0].key = next_left_key;
+                        sides[0].key_length = next_left_key_length;
+
+                        text_record_take_peeked(sides + 1, next_right,
+                                                next_right_length);
+                        sides[1].key = next_right_key;
+                        sides[1].key_length = next_right_key_length;
+
+                        continue;
+                }
+
+                /* Buffer exactly one right-side equal-key run.  The common
+                   unique-key case stores one record, and the left-major
+                   Cartesian walk below matches GNU's duplicate ordering. */
+                positive group_used = 0;
+                p8 address_to group_key = null;
+                positive group_key_length = 0;
+
+                text_arena_used = group_mark;
+                group = null;
+                group_room = 0;
+
+                do
+                {
+                        positive next = join_store(
+                            address_of group, address_of group_room,
+                            group_mark, group_used,
+                            sides[1].record, sides[1].length);
+
+                        if (next == TEXT_UNSET)
+                        {
+                                text_error(null, "matching group too large");
+                                trouble = true;
+                                have_right = false;
+                                break;
+                        }
+
+                        group_used = next;
+
+                        if (!group_key)
+                        {
+                                join_stored address_to first =
+                                    (join_stored address_to)group;
+
+                                join_view_key((p8 address_to)(first + 1),
+                                              first->length, 1, separated,
+                                              separator, address_of group_key,
+                                              address_of group_key_length);
+                        }
+
+                        have_right = join_advance(
+                            sides + 1, 1, text_delimiter,
+                            join_order_check(unpaired),
+                            separated, separator, fold, address_of disorder);
+                        if (disorder &&
+                            join_order_mode == RELATION_ORDER_FORCE)
+                                break;
+                } while (have_right && !text_record_compare(
+                             sides[0].key, sides[0].key_length,
+                             sides[1].key, sides[1].key_length, fold));
+
+                if (trouble ||
+                    (disorder && join_order_mode == RELATION_ORDER_FORCE))
+                        break;
+
+                do
+                {
+                        if (!join_only)
+                                for (positive at = 0; at < group_used;)
+                                {
+                                        join_stored address_to stored =
+                                            (join_stored address_to)(group + at);
+
+                                        join_emit(sides[0].record,
+                                                  sides[0].length,
+                                                  (p8 address_to)(stored + 1),
+                                                  stored->length, separated,
+                                                  separator, empty,
+                                                  auto_left, auto_right,
+                                                  text_delimiter);
+                                        at += stored->bytes;
+                                }
+
+                        have_left = join_advance(
+                            sides, 0, text_delimiter,
+                            join_order_check(unpaired),
+                            separated, separator, fold, address_of disorder);
+                        if (disorder &&
+                            join_order_mode == RELATION_ORDER_FORCE)
+                                break;
+                } while (have_left && group_used && !text_record_compare(
+                             sides[0].key, sides[0].key_length,
+                             group_key, group_key_length, fold));
+        }
+
+        while (!trouble && have_left &&
+               !(disorder && join_order_mode == RELATION_ORDER_FORCE))
+        {
+                unpaired = true;
+                if ((join_unpaired | join_only) & 1)
+                        join_emit(sides[0].record, sides[0].length,
+                                  null, 0, separated, separator, empty,
+                                  auto_left, auto_right, text_delimiter);
+                have_left = join_advance(
+                    sides, 0, text_delimiter,
+                    join_order_check(unpaired),
+                    separated, separator, fold, address_of disorder);
+        }
+
+        while (!trouble && have_right &&
+               !(disorder && join_order_mode == RELATION_ORDER_FORCE))
+        {
+                unpaired = true;
+                if ((join_unpaired | join_only) & 2)
+                        join_emit(null, 0, sides[1].record,
+                                  sides[1].length, separated, separator, empty,
+                                  auto_left, auto_right, text_delimiter);
+                have_right = join_advance(
+                    sides + 1, 1, text_delimiter,
+                    join_order_check(unpaired),
+                    separated, separator, fold, address_of disorder);
+        }
+
+        bool failed = sides[0].reader.failed || sides[1].reader.failed;
+        bool order_failed = disorder &&
+            (join_order_mode == RELATION_ORDER_FORCE || unpaired);
+
+        if (order_failed)
+                text_error(null, "input is not in sorted order");
+
+        text_record_close(sides);
+        text_record_close(sides + 1);
+        return text_done((failed || trouble || order_failed) ? 1 : 0);
+}
+
+/*
         wc
 
         The padding is the whole difficulty. GNU decides one width for every
@@ -4419,6 +6720,580 @@ static const file_long fold_longs[] = {
     {null, 0},
 };
 
+/*
+        Tabs are display positions, not byte counts.  expand and unexpand
+        therefore share one description of the stops and one streaming
+        column machine.  The only held state for unexpand is the pair of
+        columns bounding a run of spaces; input and output still use the
+        common 64 KiB reader and writer above.
+
+        GNU's LIST grammar has two useful extensions.  /N repeats at the
+        multiples of N after the explicit stops, while +N repeats relative
+        to the last explicit stop.  Several -t options contribute to the
+        same list, so option parsing appends positions instead of retaining
+        only file_taking's final value.
+*/
+#define TEXT_TAB_STOP_MAX 1024
+
+static positive text_tab_stops[TEXT_TAB_STOP_MAX];
+static positive text_tab_stop_count;
+static positive text_tab_repeat;
+static bool text_tab_repeat_relative;
+static bool text_tab_repeat_said;
+static bool text_tab_custom;
+static bool text_tab_option_seen;
+
+static p8 text_tab_expand_span[256];
+static p8 text_tab_unexpand_span[256];
+static p8 text_tab_space_span[256];
+
+static fn text_tab_reset()
+{
+        text_tab_stop_count = 0;
+        text_tab_repeat = 8;
+        text_tab_repeat_relative = false;
+        text_tab_repeat_said = false;
+        text_tab_custom = false;
+        text_tab_option_seen = false;
+}
+
+static bool text_tab_number(string_address at, positive address_to used,
+                            positive address_to made)
+{
+        positive value = 0;
+        positive digits = 0;
+
+        while (byte_is_digit(at[digits]))
+        {
+                positive digit = at[digits++] - '0';
+
+                if (value > (positive_max - digit) / 10)
+                        return false;
+
+                value = value * 10 + digit;
+        }
+
+        if (!digits)
+                return false;
+
+        address_to used = digits;
+        address_to made = value;
+        return true;
+}
+
+static bool text_tab_parse(string_address list)
+{
+        positive at = 0;
+        bool any = false;
+
+        if (!text_tab_custom)
+        {
+                text_tab_custom = true;
+                text_tab_repeat = 0;
+        }
+
+        while (list[at])
+        {
+                while (list[at] == ',' || byte_is_space(list[at]))
+                        at++;
+
+                if (!list[at])
+                        break;
+
+                p8 prefix = 0;
+
+                if (list[at] == '/' || list[at] == '+')
+                        prefix = list[at++];
+
+                positive used;
+                positive value;
+
+                if (!text_tab_number(list + at, address_of used,
+                                     address_of value))
+                {
+                        text_error(list, "invalid tab stops");
+                        return false;
+                }
+
+                at += used;
+
+                if (list[at] && list[at] != ',' && !byte_is_space(list[at]))
+                {
+                        text_error(list + at, "invalid tab stops");
+                        return false;
+                }
+
+                any = true;
+
+                if (prefix)
+                {
+                        positive after = at;
+
+                        while (list[after] == ',' || byte_is_space(list[after]))
+                                after++;
+
+                        if (list[after])
+                        {
+                                text_error(list, "tab repeat must be last");
+                                return false;
+                        }
+
+                        text_tab_repeat = value;
+                        text_tab_repeat_relative = prefix == '+';
+                        text_tab_repeat_said = true;
+                        at = after;
+                        continue;
+                }
+
+                if (!value)
+                {
+                        text_error(list, "tab stop cannot be zero");
+                        return false;
+                }
+
+                if (text_tab_stop_count &&
+                    value <= text_tab_stops[text_tab_stop_count - 1])
+                {
+                        text_error(list, "tab stops must be ascending");
+                        return false;
+                }
+
+                if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
+                {
+                        text_error(list, "too many tab stops");
+                        return false;
+                }
+
+                text_tab_stops[text_tab_stop_count++] = value;
+        }
+
+        if (!any)
+        {
+                text_error(list, "empty tab list");
+                return false;
+        }
+
+        return true;
+}
+
+static bool text_tab_seen(p8 letter, string_address value)
+{
+        if (letter != 't')
+                return true;
+
+        text_tab_option_seen = true;
+        return text_tab_parse(value);
+}
+
+static fn text_tab_finish_options()
+{
+        /* A lone ordinary number is a spacing, not a finite one-stop list. */
+        if (text_tab_custom && text_tab_stop_count == 1 &&
+            !text_tab_repeat_said)
+        {
+                text_tab_repeat = text_tab_stops[0];
+                text_tab_stop_count = 0;
+        }
+}
+
+/* The first stop strictly after column, and whether it was explicitly named. */
+static bool text_tab_next(positive column, positive address_to next,
+                          bool address_to explicit)
+{
+        positive low = 0;
+        positive high = text_tab_stop_count;
+
+        while (low < high)
+        {
+                positive middle = low + (high - low) / 2;
+
+                if (text_tab_stops[middle] <= column)
+                        low = middle + 1;
+                else
+                        high = middle;
+        }
+
+        if (low < text_tab_stop_count)
+        {
+                address_to next = text_tab_stops[low];
+                address_to explicit = true;
+                return true;
+        }
+
+        if (!text_tab_repeat)
+                return false;
+
+        positive base = text_tab_repeat_relative && text_tab_stop_count
+                            ? text_tab_stops[text_tab_stop_count - 1]
+                            : 0;
+        positive distance = column >= base ? column - base : 0;
+        positive steps = distance / text_tab_repeat + 1;
+
+        if (steps > (positive_max - base) / text_tab_repeat)
+                return false;
+
+        address_to next = base + steps * text_tab_repeat;
+        address_to explicit = false;
+        return true;
+}
+
+static fn text_tab_repeat_character(p8 character, positive count)
+{
+        while (count)
+        {
+                positive take = count > TEXT_OUT_MAX ? TEXT_OUT_MAX : count;
+                p8 address_to out = text_reserve(take);
+
+                if (!out)
+                        return;
+
+                memory_fill(out, character, take);
+                count -= take;
+        }
+}
+
+/* GNU delays blanks until it knows whether their first byte belongs at a tab
+   stop. In the C byte locale they are all spaces except possibly that first
+   byte, so a count and one bit replace its allocated pending-byte array. */
+static fn text_unexpand_pending(positive count, bool first_tab)
+{
+        if (!count)
+                return;
+
+        if (first_tab)
+        {
+                text_put_character('\t');
+                count--;
+        }
+
+        text_tab_repeat_character(' ', count);
+}
+
+static fn text_tab_sets()
+{
+        if (text_tab_space_span[' '])
+                return;
+
+        memory_fill(text_tab_expand_span, 1, sizeof(text_tab_expand_span));
+        memory_fill(text_tab_unexpand_span, 1, sizeof(text_tab_unexpand_span));
+        text_tab_space_span[' '] = 1;
+
+        text_tab_expand_span['\t'] = 0;
+        text_tab_expand_span['\b'] = 0;
+        text_tab_expand_span['\n'] = 0;
+        memory_copy_apart(text_tab_unexpand_span, text_tab_expand_span,
+                          sizeof(text_tab_expand_span));
+        text_tab_unexpand_span[' '] = 0;
+}
+
+static fn text_tab_transform(bool unexpand, bool initial_only)
+{
+        positive column = 0;
+        positive pending = 0;
+        bool pending_first_tab = false;
+        bool one_blank_before_stop = false;
+        bool previous_blank = true;
+        bool convert = true;
+        b32 inputs = text_input_count();
+
+        text_tab_sets();
+
+        for (b32 i = 0; i < inputs; i++)
+        {
+                if (!text_open(text_file_name(i)))
+                        continue;
+
+                while (text_fill())
+                {
+                        p8 address_to data = text_input.buffer + text_input.position;
+                        positive left = text_input.filled - text_input.position;
+                        positive at = 0;
+
+                        while (at < left)
+                        {
+                                if (!convert)
+                                {
+                                        string_address newline = memory_first_of(
+                                            data + at, '\n', left - at);
+                                        positive take = newline
+                                                            ? (positive)(newline - data - at) + 1
+                                                            : left - at;
+
+                                        text_put(data + at, take);
+                                        at += take;
+
+                                        if (newline)
+                                        {
+                                                column = 0;
+                                                pending = 0;
+                                                pending_first_tab = false;
+                                                one_blank_before_stop = false;
+                                                previous_blank = true;
+                                                convert = true;
+                                        }
+
+                                        continue;
+                                }
+
+                                if (unexpand)
+                                {
+                                        p8 character = data[at++];
+                                        bool blank = character == ' ' ||
+                                                     character == '\t';
+                                        bool suppress = false;
+
+                                        if (blank)
+                                        {
+                                                positive stop;
+                                                bool explicit;
+                                                bool have = text_tab_next(
+                                                    column, address_of stop,
+                                                    address_of explicit);
+
+                                                if (!have)
+                                                        convert = false;
+                                                else if (character == '\t')
+                                                {
+                                                        column = stop;
+
+                                                        if (pending)
+                                                                pending_first_tab = true;
+
+                                                        pending = one_blank_before_stop;
+
+                                                        if (!pending)
+                                                                pending_first_tab = false;
+                                                }
+                                                else
+                                                {
+                                                        if (column != positive_max)
+                                                                column++;
+
+                                                        if (!(previous_blank &&
+                                                              column >= stop))
+                                                        {
+                                                                if (column == stop)
+                                                                        one_blank_before_stop =
+                                                                            true;
+
+                                                                pending++;
+                                                                previous_blank = true;
+                                                                continue;
+                                                        }
+
+                                                        text_put_character('\t');
+                                                        pending_first_tab = true;
+                                                        pending = one_blank_before_stop;
+
+                                                        if (!pending)
+                                                                pending_first_tab = false;
+                                                        suppress = true;
+                                                }
+                                        }
+                                        else if (character == '\b')
+                                                column = column ? column - 1 : 0;
+                                        else
+                                        {
+                                                if (column != positive_max)
+                                                        column++;
+                                        }
+
+                                        if (pending)
+                                        {
+                                                if (pending > 1 &&
+                                                    one_blank_before_stop)
+                                                        pending_first_tab = true;
+
+                                                text_unexpand_pending(
+                                                    pending, pending_first_tab);
+                                                pending = 0;
+                                                pending_first_tab = false;
+                                                one_blank_before_stop = false;
+                                        }
+
+                                        previous_blank = blank;
+
+                                        if (initial_only && !blank)
+                                                convert = false;
+
+                                        if (!suppress)
+                                                text_put_character(character);
+
+                                        if (character == '\n')
+                                        {
+                                                column = 0;
+                                                previous_blank = true;
+                                                convert = true;
+                                        }
+
+                                        continue;
+                                }
+
+                                if (initial_only && data[at] == ' ')
+                                {
+                                        positive run = string_span_max(
+                                            data + at, left - at,
+                                            text_tab_space_span);
+
+                                        text_put(data + at, run);
+                                        column += run;
+                                        at += run;
+                                        continue;
+                                }
+
+                                p8 character = data[at];
+
+                                if (initial_only && character != '\t' &&
+                                    character != '\n')
+                                {
+                                        convert = false;
+                                        continue;
+                                }
+
+                                positive run = string_span_max(
+                                    data + at, left - at,
+                                    text_tab_expand_span);
+
+                                if (run)
+                                {
+                                        text_put(data + at, run);
+                                        column = column > positive_max - run
+                                                     ? positive_max
+                                                     : column + run;
+                                        at += run;
+                                        continue;
+                                }
+
+                                character = data[at++];
+
+                                if (character == '\t')
+                                {
+                                        positive stop;
+                                        bool explicit;
+                                        bool have = text_tab_next(
+                                            column, address_of stop,
+                                            address_of explicit);
+
+                                        positive after = have ? stop
+                                                              : column +
+                                                                    (column != positive_max);
+                                        text_tab_repeat_character(' ',
+                                                                  after - column);
+                                        column = after;
+
+                                        continue;
+                                }
+
+                                text_put_character(character);
+
+                                if (character == '\n')
+                                {
+                                        column = 0;
+                                        convert = true;
+                                }
+                                else if (character == '\b')
+                                        column = column ? column - 1 : 0;
+                        }
+
+                        text_input.position = text_input.filled;
+                }
+
+                text_close();
+        }
+
+        if (unexpand && pending)
+        {
+                if (pending > 1 && one_blank_before_stop)
+                        pending_first_tab = true;
+
+                text_unexpand_pending(pending, pending_first_tab);
+        }
+}
+
+static const file_long expand_longs[] = {
+    {(string_address) "initial", 'i'},
+    {(string_address) "tabs", 't'},
+    {null, 0},
+};
+
+static const file_long unexpand_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "first-only", 'f'},
+    {(string_address) "tabs", 't'},
+    {null, 0},
+};
+
+static b32 text_expand()
+{
+        file_taking taking = {
+            .program = (string_address) "expand",
+            .allowed = (string_address) "it",
+            .valued = (string_address) "t",
+            .longs = expand_longs,
+            .operand = text_file_add,
+            .seen = text_tab_seen,
+            .digits = 'T',
+        };
+
+        text_begin("expand");
+        text_tab_reset();
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        if (taking.flags & FILE_FLAG('T'))
+        {
+                if (text_tab_option_seen)
+                        return text_refuse(null,
+                                           "cannot mix -N and --tabs syntax", 1);
+
+                if (!text_tab_parse(file_option_value(address_of taking, 'T')))
+                        return text_done(1);
+        }
+
+        text_tab_finish_options();
+        text_tab_transform(false, (taking.flags & FILE_FLAG('i')) != 0);
+        return text_done(text_status);
+}
+
+static b32 text_unexpand()
+{
+        file_taking taking = {
+            .program = (string_address) "unexpand",
+            .allowed = (string_address) "at",
+            .valued = (string_address) "t",
+            .longs = unexpand_longs,
+            .operand = text_file_add,
+            .seen = text_tab_seen,
+            .digits = 'T',
+        };
+
+        text_begin("unexpand");
+        text_tab_reset();
+
+        if (!file_take(address_of taking) || !text_files_ready())
+                return text_done(1);
+
+        if (taking.flags & FILE_FLAG('T'))
+        {
+                if (text_tab_option_seen)
+                        return text_refuse(null,
+                                           "cannot mix -N and --tabs syntax", 1);
+
+                if (!text_tab_parse(file_option_value(address_of taking, 'T')))
+                        return text_done(1);
+        }
+
+        text_tab_finish_options();
+
+        bool first = (taking.flags & FILE_FLAG('f')) != 0;
+        bool all = !first && ((taking.flags & FILE_FLAG('a')) ||
+                              text_tab_option_seen);
+
+        text_tab_transform(true, !all);
+        return text_done(text_status);
+}
+
 static b32 text_fold()
 {
         file_taking taking = {
@@ -5470,8 +8345,7 @@ static b32 text_uniq()
         // Most adjacent records live in the same reader fill. Keep a view of
         // the prior one and copy it here only before a refill can invalidate
         // that view. The spare byte carries its terminator with it.
-        static p8 held[TEXT_LINE_MAX + 1];
-        p8 address_to previous = held;
+        p8 address_to previous = text_record_hold;
         positive previous_length = 0;
         bool have_previous = false;
         bool shown_group = false;
@@ -5485,7 +8359,7 @@ static b32 text_uniq()
                 bool more = text_line_view(address_of line,
                                            address_of line_length,
                                            address_of previous,
-                                           previous_length, held);
+                                           previous_length, text_record_hold);
 
                 if (more)
                 {

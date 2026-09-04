@@ -1,10 +1,11 @@
 #!/bin/sh
 #
-#       dd, diff and ps against the ones already on the machine.
+#       hostid, login records, dd, diff and ps against the ones already on
+#       the machine.
 #
 #           sh src/test/tools.sh [directory of the names our shell answers to]
 #
-#       Every case runs the same input through the system's dd, diff or ps
+#       Every case runs the same input through the corresponding system tool
 #       and through ours, and compares. Agreeing with the reference is what
 #       passing means; there is no separate idea here of the right answer.
 #
@@ -277,6 +278,112 @@ compare_ps_full()
         got_status=$?
         check 'ps output write failure' "$want_status" "$got_status"
 }
+
+#
+#       hostid
+#
+
+case_start hostid
+
+compare 'default' hostid
+compare 'option terminator' hostid --
+compare 'extra operand' hostid unexpected
+
+#
+#       who, users and pinky
+#
+
+case_start login
+
+: > "$work/login-empty"
+
+if command -v python3 > /dev/null 2>&1; then
+        # Linux has two current utmp64 layouts. x86 retains the historic
+        # 384-byte time32 record, while ARM64/RISC-V use a 400-byte native
+        # timeval. Make the reference's own native records explicitly so this
+        # catches treating one layout as the other.
+        python3 - "$work/login-utmp" <<'PYTHON'
+import platform
+import struct
+import sys
+
+path = sys.argv[1]
+little = sys.byteorder == "little"
+order = "<" if little else ">"
+compat32 = struct.calcsize("P") == 4 or platform.machine() in ("x86_64", "amd64")
+size = 384 if compat32 else 400
+
+def record(kind, pid, line, user, host, seconds, termination=0, status=0):
+    row = bytearray(size)
+    struct.pack_into(order + "h", row, 0, kind)
+    struct.pack_into(order + "i", row, 4, pid)
+    for offset, width, value in ((8, 32, line), (40, 4, "id"),
+                                 (44, 32, user), (76, 256, host)):
+        value = value.encode()
+        row[offset:offset + min(width, len(value))] = value[:width]
+    struct.pack_into(order + "hh", row, 332, termination, status)
+    if compat32:
+        struct.pack_into(order + "iii", row, 336, 0, seconds, 0)
+    else:
+        struct.pack_into(order + "q", row, 336, 0)
+        struct.pack_into(order + "qq", row, 344, seconds, 0)
+    return row
+
+rows = [
+    record(2, 0, "~", "", "", 1699990000),
+    record(7, 4242, "pts/99", "root", "remote:3", 1700000000),
+    record(7, 4343, "ttyS0123456789", "daemon", "", 1700003600),
+    record(7, 4444, "pts/3", "root", "zeta", 1700007200),
+    record(6, 5151, "tty2", "", "", 1700010000),
+    record(5, 6161, "tty3", "", "", 1700011000),
+    record(8, 7171, "pts/4", "", "", 1700012000, 15, 2),
+    record(1, ord("3") + ord("2") * 256, "~", "runlevel", "", 1700013000),
+    record(3, 0, "|", "", "", 1700014000),
+]
+
+with open(path, "wb") as output:
+    output.write(b"".join(rows))
+    output.write(b"partial record")
+PYTHON
+
+        compare 'who default fixture' who "$work/login-utmp"
+        compare 'who heading fixture' who -H "$work/login-utmp"
+        compare 'who count fixture' who -q "$work/login-utmp"
+        compare 'who message fixture' who -T "$work/login-utmp"
+        compare 'who users fixture' who -u "$work/login-utmp"
+        compare 'who all fixture' who -a "$work/login-utmp"
+        compare 'who boot fixture' who -b "$work/login-utmp"
+        compare 'who dead fixture' who -d "$work/login-utmp"
+        compare 'who login fixture' who -l "$work/login-utmp"
+        compare 'who init fixture' who -p "$work/login-utmp"
+        compare 'who runlevel fixture' who -r "$work/login-utmp"
+        compare 'who clock fixture' who -t "$work/login-utmp"
+        compare 'who long alias fixture' who --all "$work/login-utmp"
+        compare 'users sorted fixture' users "$work/login-utmp"
+else
+        echo "  login    python3 missing, controlled utmp cases did not run"
+fi
+
+compare 'who empty' who "$work/login-empty"
+compare 'users empty' users "$work/login-empty"
+compare 'who missing' who "$work/login-missing"
+compare 'users missing' users "$work/login-missing"
+
+# pinky has no FILE operand. Its live short form still catches the public
+# formatter and option projections; all record parsing is the same path the
+# controlled who/users cases above exercise.
+compare 'pinky default' pinky
+compare 'pinky no heading' pinky -f
+compare 'pinky no fullname' pinky -w
+compare 'pinky terse' pinky -q
+
+if "$bin/pinky" -l root > /dev/null 2> "$work/pinky-long-error"; then
+        report 'pinky long refused' 'unsupported long mode succeeded'
+elif grep -q 'not supported' "$work/pinky-long-error"; then
+        pass=$((pass + 1))
+else
+        report 'pinky long refused' 'failure did not explain unsupported mode'
+fi
 
 #
 #       dd
@@ -646,6 +753,54 @@ if [ -p "$work/pipe" ]; then
 else
         echo "  dd       usr1: no fifo here, the three signal cases and the rate case did not run"
 fi
+
+#
+#       od and hexdump
+#
+
+case_start dump
+
+printf 'abcdef\0\377XYZ\n' > "$work/dump-short"
+printf '0123456789abcdef0123456789abcdef' > "$work/dump-repeat"
+printf '' > "$work/dump-empty"
+printf 'first-' > "$work/dump-first"
+printf 'second' > "$work/dump-second"
+
+# The two names share one reader and row formatter, but their stock layouts
+# do not: od uses an octal two-byte default and >printable< suffix, while
+# util-linux hexdump has fixed-width stock records and |canonical| output.
+compare 'od default' od "$work/dump-short"
+compare 'od byte hex printable' od -A x -t x1z -v "$work/dump-short"
+compare 'od signed words' od -A d -t d2 "$work/dump-short"
+compare 'od characters no address' od -A n -t c "$work/dump-short"
+compare 'od skip and count' od -A x -j 3 -N 5 -t x1z "$work/dump-repeat"
+compare 'od multiple formats' od -A x -t x1 -t c "$work/dump-repeat"
+compare 'od duplicate folding' od "$work/dump-repeat"
+compare 'od duplicate visible' od -v "$work/dump-repeat"
+compare 'od concatenated files' od -A x -t x1 "$work/dump-first" "$work/dump-second"
+compare 'od empty final address' od "$work/dump-empty"
+
+if command -v hexdump > /dev/null 2>&1; then
+        compare 'hexdump canonical' hexdump -C "$work/dump-short"
+        compare 'hexdump byte octal' hexdump -b "$work/dump-short"
+        compare 'hexdump characters' hexdump -c "$work/dump-short"
+        compare 'hexdump word decimal' hexdump -d "$work/dump-short"
+        compare 'hexdump word octal' hexdump -o "$work/dump-short"
+        compare 'hexdump word hex' hexdump -x "$work/dump-short"
+        compare 'hexdump skip and count' hexdump -C -s 3 -n 5 "$work/dump-repeat"
+        compare 'hexdump multiple formats' hexdump -b -c "$work/dump-repeat"
+        compare 'hexdump duplicate folding' hexdump -C "$work/dump-repeat"
+        compare 'hexdump duplicate visible' hexdump -Cv "$work/dump-repeat"
+        compare 'hexdump empty' hexdump -C "$work/dump-empty"
+fi
+
+# The custom format language is a separate language implementation, not a
+# formatting switch. Until that language exists, reject it visibly; accepting
+# it and falling back to a stock row would be plausible but corrupt output.
+"$bin/od" -t f4 "$work/dump-short" > /dev/null 2>&1
+check 'od unsupported float refused' 1 "$(( $? != 0 ))"
+"$bin/hexdump" -e '1/1 "%02x"' "$work/dump-short" > /dev/null 2>&1
+check 'hexdump expression refused' 1 "$(( $? != 0 ))"
 
 #
 #       diff

@@ -1,9 +1,10 @@
 /*
         The utilities that are neither text nor files.
 
-        dd copies with a block size and a count, diff says what changed between
-        two files, ps says what is running. They share nothing with each other
-        beyond not belonging anywhere else.
+        hostid names the current machine, dd copies with a block size and a
+        count, diff says what changed between two files, ps says what is
+        running. They share nothing with each other beyond not belonging
+        anywhere else.
 
         The reference is the tool on the machine, not the standard. dd's
         summary, diff's choice of which of two identical lines to call the
@@ -11,6 +12,976 @@
         down twice the same way, so they are taken from the bytes the real
         tool emits and from the source that emits them.
 */
+
+/* dns.c is included by net.c below this file.  hostid deliberately reuses
+   that small resolver instead of bringing libc/NSS or a second DNS client
+   into the shell. */
+static bipolar dns_resolve_any(string_address path, string_address name,
+                               p32 address_to found, positive seconds);
+
+// hostid ----------------------------------------------------
+
+/* Linux gethostid first accepts the native four-byte /etc/hostid.  Without
+   one, glibc derives the value from the first IPv4 address of the kernel host
+   name and swaps its two 16-bit halves.  Keeping that order matters: an
+   administrator-supplied ID must not unexpectedly depend on DNS. */
+static p32 tools_hostid_value()
+{
+        p32 identity;
+        bipolar handle = system_open_at(AT_FDCWD, "/etc/hostid",
+                                        FILE_READ | O_CLOEXEC);
+
+        if (handle >= 0)
+        {
+                bipolar got = system_read_retry((positive)handle,
+                                                address_of identity,
+                                                sizeof(identity));
+                system_close(handle);
+
+                if (got == sizeof(identity))
+                        return identity;
+        }
+
+        file_machine facts;
+        memory_fill(address_of facts, 0, sizeof(facts));
+
+        if (system_call_1(syscall(uname), (positive)address_of facts) < 0 ||
+            !facts.node[0])
+                return 0;
+
+        p32 host;
+
+        if (dns_resolve_any((string_address) "/etc/resolv.conf", facts.node,
+                            address_of host, 1))
+                return 0;
+
+        /* dns_resolve_any returns the numeric host; gethostid operates on
+           the native in_addr word before rotating its two halves. */
+        p32 wire = network_order_32(host);
+        return (wire << 16) | (wire >> 16);
+}
+
+static b32 tools_hostid()
+{
+        file_taking taking = {
+            .program = (string_address) "hostid",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+        };
+
+        text_begin("hostid");
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if (taking.first < (positive)program_argument_count())
+                return text_refuse(program_argument((b32)taking.first),
+                                   "extra operand", 1);
+
+        p8 digits[8];
+        positive length = positive_into_base(digits, tools_hostid_value(), 16,
+                                             false);
+
+        for (positive i = length; i < sizeof(digits); i++)
+                text_put_character('0');
+
+        text_put(digits, length);
+        text_put_character('\n');
+        return text_done(0);
+}
+
+// Login records: who, users and pinky -----------------------
+
+/* The common fields have one Linux layout through offset 336. x86 keeps the
+   historic 32-bit session/time ABI and a 384-byte record; ARM64 and RISC-V
+   use native 64-bit fields and a 400-byte record. Decode those few offsets
+   explicitly rather than pretending the compiler's struct utmp is portable. */
+#if X64 || X86
+#define LOGIN_UTMP_SIZE 384
+#define LOGIN_UTMP_SECONDS 340
+#define LOGIN_UTMP_TIME_32 1
+#else
+#define LOGIN_UTMP_SIZE 400
+#define LOGIN_UTMP_SECONDS 344
+#define LOGIN_UTMP_TIME_32 0
+#endif
+
+typedef struct
+{
+        p16 type;
+        p32 process;
+        p8 line[32];
+        p8 identity[4];
+        p8 user[32];
+        p8 host[256];
+        b16 termination;
+        b16 exit;
+        b64 seconds;
+} login_record;
+
+#define LOGIN_UTMP_PATH "/var/run/utmp"
+#define LOGIN_RUN_LEVEL 1
+#define LOGIN_BOOT_TIME 2
+#define LOGIN_NEW_TIME 3
+#define LOGIN_INIT_PROCESS 5
+#define LOGIN_LOGIN_PROCESS 6
+#define LOGIN_USER_PROCESS 7
+#define LOGIN_DEAD_PROCESS 8
+#define LOGIN_ERROR_INTERRUPTED (-4)
+
+typedef bool(address_to login_record_visit)(login_record address_to record);
+
+/* One reader for all three applets.  It uses the already resident transfer
+   block, preserves a record split across reads and copies into an aligned
+   object before interpreting it.  A truncated last record is ignored, as the
+   system readers do while a writer is extending utmp. */
+static bool login_records(string_address path, bool check_processes,
+                          login_record_visit visit)
+{
+        bipolar input;
+
+        do
+                input = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        while (input == LOGIN_ERROR_INTERRUPTED);
+
+        if (input < 0)
+        {
+                if (input == -ERROR_NO_ENTRY)
+                        return true;
+
+                text_error(path, file_reason(input));
+                return false;
+        }
+
+        positive held = 0;
+        bool answer = true;
+
+        for (;;)
+        {
+                bipolar got = system_read_retry((positive)input,
+                                                file_transfer + held,
+                                                sizeof(file_transfer) - held);
+
+                if (got < 0)
+                {
+                        text_error(path, file_reason(got));
+                        answer = false;
+                        break;
+                }
+
+                if (!got)
+                        break;
+
+                positive have = held + (positive)got;
+                positive at = 0;
+
+                while (have - at >= LOGIN_UTMP_SIZE)
+                {
+                        p8 address_to bytes = file_transfer + at;
+                        login_record record = {
+                            .type = memory_load_unaligned(p16, bytes),
+                            .process = memory_load_unaligned(p32, bytes + 4),
+                            .termination = memory_load_unaligned(b16, bytes + 332),
+                            .exit = memory_load_unaligned(b16, bytes + 334),
+                            .seconds = LOGIN_UTMP_TIME_32
+                                           ? (b64)memory_load_unaligned(b32,
+                                                                        bytes + LOGIN_UTMP_SECONDS)
+                                           : memory_load_unaligned(b64,
+                                                                   bytes + LOGIN_UTMP_SECONDS),
+                        };
+                        memory_copy_apart(record.line, bytes + 8,
+                                          sizeof(record.line));
+                        memory_copy_apart(record.identity, bytes + 40,
+                                          sizeof(record.identity));
+                        memory_copy_apart(record.user, bytes + 44,
+                                          sizeof(record.user));
+                        memory_copy_apart(record.host, bytes + 76,
+                                          sizeof(record.host));
+                        at += LOGIN_UTMP_SIZE;
+
+                        if (check_processes && record.type == LOGIN_USER_PROCESS &&
+                            record.process)
+                        {
+                                bipolar alive = system_call_2(
+                                    syscall(kill), (positive)record.process, 0);
+
+                                if (alive == -ERROR_NO_PROCESS)
+                                        continue;
+                        }
+
+                        if (!visit(address_of record))
+                        {
+                                answer = false;
+                                goto done;
+                        }
+                }
+
+                held = have - at;
+                for (positive i = 0; i < held; i++)
+                        file_transfer[i] = file_transfer[at + i];
+        }
+
+done:
+        system_close((positive)input);
+        return answer;
+}
+
+/* utmp strings need not contain a terminator.  Every consumer receives one,
+   and users/who -q can additionally discard the historical space padding. */
+static positive login_field(p8 address_to into, positive room,
+                            p8 address_to source, positive width, bool trim)
+{
+        positive length = string_length_max(source, width);
+
+        if (trim)
+                while (length && (source[length - 1] == ' ' ||
+                                  source[length - 1] == '\t'))
+                        length--;
+
+        if (length >= room)
+                length = room - 1;
+
+        memory_copy_apart(into, source, length);
+        into[length] = end;
+        return length;
+}
+
+static fn login_put_width(string_address value, positive length,
+                          positive width, bool right)
+{
+        if (right && length < width)
+                for (positive i = length; i < width; i++)
+                        text_put_character(' ');
+
+        text_put((p8 address_to)value, length);
+
+        if (!right && length < width)
+                for (positive i = length; i < width; i++)
+                        text_put_character(' ');
+}
+
+static positive login_time(p8 address_to into, b32 seconds)
+{
+        b64 year;
+        positive month, day, hour, minute, second;
+        file_split_moment((b64)seconds, address_of year, address_of month,
+                          address_of day, address_of hour, address_of minute,
+                          address_of second);
+        string_address named = file_month_names[month - 1];
+        positive made = 0;
+
+        into[made++] = byte_to_upper(named[0]);
+        into[made++] = named[1];
+        into[made++] = named[2];
+        into[made++] = ' ';
+        made += positive_into_padded(into + made, day, 2, ' ');
+        into[made++] = ' ';
+        made += positive_into_padded(into + made, hour, 2, '0');
+        into[made++] = ':';
+        made += positive_into_padded(into + made, minute, 2, '0');
+        into[made] = end;
+        return made;
+}
+
+typedef struct
+{
+        bool known;
+        bool writable;
+        b64 accessed;
+} login_terminal;
+
+static login_terminal login_terminal_facts(string_address line)
+{
+        login_terminal answer = {0};
+        p8 path[FILE_PATH_MAX];
+        string_address device = string_first_of(line, ' ');
+
+        device = device ? device + 1 : line;
+        if (!*device)
+                return answer;
+
+        if (string_is(device, '/'))
+                string_copy_max_end(path, device, sizeof(path) - 1);
+        else
+        {
+                memory_copy_apart(path, "/dev/", 5);
+                string_copy_max_end(path + 5, device, sizeof(path) - 6);
+        }
+
+        file_facts facts;
+        if (file_look_at(path, address_of facts))
+        {
+                answer.known = true;
+                answer.writable = (facts.mode & 0020) != 0;
+                answer.accessed = facts.accessed.seconds;
+        }
+
+        return answer;
+}
+
+static positive login_idle_who(p8 address_to into, login_terminal terminal,
+                                b64 boot)
+{
+        if (!terminal.known)
+                return memory_copy_apart_end(into, "  ?", 3) - into;
+
+        b64 now = file_now();
+        b64 idle = now - terminal.accessed;
+
+        if (boot < terminal.accessed && terminal.accessed <= now &&
+            idle < 86400)
+        {
+                if (idle < 60)
+                        return memory_copy_apart_end(into, "  .  ", 5) - into;
+
+                positive made = positive_into_padded(
+                    into, (positive)idle / 3600, 2, '0');
+                into[made++] = ':';
+                made += positive_into_padded(
+                    into + made, ((positive)idle / 60) % 60, 2, '0');
+                into[made] = end;
+                return made;
+        }
+
+        return memory_copy_apart_end(into, " old ", 5) - into;
+}
+
+static positive login_idle_pinky(p8 address_to into, login_terminal terminal)
+{
+        if (!terminal.known)
+                return memory_copy_apart_end(into, "?????", 5) - into;
+
+        b64 idle = file_now() - terminal.accessed;
+
+        if (idle < 60)
+                return memory_copy_apart_end(into, "     ", 5) - into;
+
+        if (idle < 86400)
+        {
+                positive made = positive_into_padded(
+                    into, (positive)idle / 3600, 2, '0');
+                into[made++] = ':';
+                made += positive_into_padded(
+                    into + made, ((positive)idle / 60) % 60, 2, '0');
+                into[made] = end;
+                return made;
+        }
+
+        positive made = positive_into(into, (positive)(idle / 86400));
+        into[made++] = 'd';
+        into[made] = end;
+        return made;
+}
+
+static positive login_signed(p8 address_to into, bipolar value)
+{
+        positive made = 0;
+        positive magnitude;
+
+        if (value < 0)
+        {
+                into[made++] = '-';
+                magnitude = (positive)(-(value + 1)) + 1;
+        }
+        else
+                magnitude = (positive)value;
+
+        made += positive_into(into + made, magnitude);
+        into[made] = end;
+        return made;
+}
+
+static bool login_ends_with(string_address text, string_address suffix)
+{
+        positive length = string_length(text);
+        positive tail = string_length(suffix);
+
+        return tail <= length && !memory_compare(text + length - tail,
+                                                  suffix, tail);
+}
+
+/* who ------------------------------------------------------ */
+
+typedef struct
+{
+        bool users;
+        bool boot;
+        bool dead;
+        bool login;
+        bool init;
+        bool runlevel;
+        bool clock;
+        bool heading;
+        bool my_line;
+        bool count;
+        bool short_output;
+        bool mesg;
+        bool idle;
+        bool exit;
+        string_address tty;
+        positive count_users;
+        bool count_first;
+        b64 boottime;
+} login_who_options;
+
+static login_who_options login_who;
+
+static fn login_who_line(string_address user, p8 state, string_address line,
+                         string_address time, string_address idle,
+                         string_address pid, string_address comment,
+                         string_address exit_text)
+{
+        positive user_length = string_length(user);
+        positive line_length = string_length(line);
+        positive time_length = string_length(time);
+        positive idle_length = string_length(idle);
+        positive pid_length = string_length(pid);
+        positive comment_length = string_length(comment);
+        positive exit_length = string_length(exit_text);
+
+        login_put_width(user, user_length, 8, false);
+        if (login_who.mesg)
+        {
+                text_put_character(' ');
+                text_put_character(state);
+        }
+        text_put_character(' ');
+        login_put_width(line, line_length, 12, false);
+        text_put_character(' ');
+        login_put_width(time, time_length, 12, false);
+
+        bool later = idle_length || pid_length || comment_length || exit_length;
+        if (login_who.idle && !login_who.short_output && later)
+        {
+                text_put_character(' ');
+                login_put_width(idle, idle_length, 6, false);
+        }
+        if (!login_who.short_output &&
+            (pid_length || comment_length || exit_length))
+        {
+                text_put_character(' ');
+                login_put_width(pid, pid_length, 10, true);
+        }
+        if (comment_length || exit_length)
+        {
+                text_put_character(' ');
+                login_put_width(comment, comment_length,
+                                exit_length ? 8 : comment_length, false);
+        }
+        if (exit_length)
+        {
+                text_put_character(' ');
+                text_put_string(exit_text);
+        }
+        text_put_character('\n');
+}
+
+static fn login_who_heading()
+{
+        login_who_line("NAME", ' ', "LINE", "TIME",
+                       login_who.idle && !login_who.short_output ? "IDLE" : "",
+                       !login_who.short_output ? "PID" : "", "COMMENT",
+                       login_who.exit ? "EXIT" : "");
+}
+
+static bool login_who_visit(login_record address_to record)
+{
+        p8 user[33], line[33], host[257], time[24];
+        login_field(user, sizeof(user), record->user, sizeof(record->user),
+                    login_who.count);
+        login_field(line, sizeof(line), record->line, sizeof(record->line),
+                    false);
+        login_field(host, sizeof(host), record->host, sizeof(record->host),
+                    false);
+
+        if (record->type == LOGIN_BOOT_TIME)
+                login_who.boottime = (b64)record->seconds;
+
+        if (login_who.my_line &&
+            (!login_who.tty || !login_ends_with(line, login_who.tty)))
+                return true;
+
+        if (login_who.count)
+        {
+                if (record->type == LOGIN_USER_PROCESS)
+                {
+                        if (!login_who.count_first)
+                                text_put_character(' ');
+                        text_put_string(user);
+                        login_who.count_first = false;
+                        login_who.count_users++;
+                }
+                return true;
+        }
+
+        login_time(time, record->seconds);
+
+        if (record->type == LOGIN_USER_PROCESS && login_who.users)
+        {
+                login_terminal terminal = login_terminal_facts(line);
+                p8 idle[32] = {0};
+                p8 pid[24] = {0};
+                p8 comment[260] = {0};
+
+                if (login_who.idle && !login_who.short_output)
+                        login_idle_who(idle, terminal, login_who.boottime);
+                if (!login_who.short_output)
+                        positive_into_string(pid, record->process);
+                if (host[0])
+                {
+                        positive length = string_length(host);
+                        comment[0] = '(';
+                        memory_copy_apart(comment + 1, host, length);
+                        comment[length + 1] = ')';
+                        comment[length + 2] = end;
+                }
+
+                login_who_line(user,
+                               terminal.known
+                                   ? terminal.writable ? '+' : '-'
+                                   : '?',
+                               line, time, idle, pid, comment, "");
+                return true;
+        }
+
+        if (record->type == LOGIN_BOOT_TIME && login_who.boot)
+                login_who_line("", ' ', "system boot", time, "", "", "", "");
+        else if (record->type == LOGIN_NEW_TIME && login_who.clock)
+                login_who_line("", ' ', "clock change", time, "", "", "", "");
+        else if (record->type == LOGIN_RUN_LEVEL && login_who.runlevel)
+        {
+                p8 level[16] = "run-level ";
+                p8 comment[8] = "last=";
+                p8 current = (p8)record->process;
+                p8 previous = (p8)(record->process >> 8);
+                level[10] = current;
+                level[11] = end;
+
+                if (byte_is_printable(previous))
+                {
+                        comment[5] = previous == 'N' ? 'S' : previous;
+                        comment[6] = end;
+                }
+                else
+                        comment[0] = end;
+
+                login_who_line("", ' ', level, time, "", "", comment, "");
+        }
+        else if ((record->type == LOGIN_LOGIN_PROCESS && login_who.login) ||
+                 (record->type == LOGIN_INIT_PROCESS && login_who.init) ||
+                 (record->type == LOGIN_DEAD_PROCESS && login_who.dead))
+        {
+                p8 pid[24], comment[16] = "id=";
+                p8 exit_text[64] = {0};
+                positive_into_string(pid, record->process);
+                positive id_length = string_length_max(record->identity,
+                                                        sizeof(record->identity));
+                memory_copy_apart(comment + 3, record->identity, id_length);
+                comment[3 + id_length] = end;
+
+                if (record->type == LOGIN_DEAD_PROCESS)
+                {
+                        positive made = memory_copy_apart_end(
+                                            exit_text, "term=", 5) - exit_text;
+                        made += login_signed(exit_text + made,
+                                             (b16)record->termination);
+                        exit_text[made++] = ' ';
+                        made += memory_copy_apart_end(exit_text + made,
+                                                     "exit=", 5) -
+                                (exit_text + made);
+                        made += login_signed(exit_text + made,
+                                             (b16)record->exit);
+                        exit_text[made] = end;
+                }
+
+                login_who_line(record->type == LOGIN_LOGIN_PROCESS
+                                   ? "LOGIN"
+                                   : "",
+                               ' ', line, time, "", pid, comment, exit_text);
+        }
+
+        return true;
+}
+
+static const file_long login_who_longs[] = {
+    {(string_address) "all", 'a'},
+    {(string_address) "boot", 'b'},
+    {(string_address) "count", 'q'},
+    {(string_address) "dead", 'd'},
+    {(string_address) "heading", 'H'},
+    {(string_address) "login", 'l'},
+    {(string_address) "message", 'T'},
+    {(string_address) "mesg", 'T'},
+    {(string_address) "process", 'p'},
+    {(string_address) "runlevel", 'r'},
+    {(string_address) "short", 's'},
+    {(string_address) "time", 't'},
+    {(string_address) "users", 'u'},
+    {(string_address) "writable", 'T'},
+    {null, 0},
+};
+
+static b32 tools_who()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "who",
+            .allowed = (string_address) "abdlmpqrstuwHT",
+            .valued = (string_address) "",
+            .longs = login_who_longs,
+            .operand = file_operand,
+        };
+
+        text_begin("who");
+        memory_fill(address_of login_who, 0, sizeof(login_who));
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+
+        if (file_operand_count > 2)
+                return text_refuse(file_operand_at(2), "extra operand", 1);
+
+        positive flags = taking.flags;
+        bool all = (flags & FILE_FLAG('a')) != 0;
+        bool assumptions = !(flags & (FILE_FLAG('a') | FILE_FLAG('b') |
+                                      FILE_FLAG('d') | FILE_FLAG('l') |
+                                      FILE_FLAG('p') | FILE_FLAG('r') |
+                                      FILE_FLAG('t') | FILE_FLAG('u')));
+
+        login_who.users = assumptions || all || (flags & FILE_FLAG('u'));
+        login_who.boot = all || (flags & FILE_FLAG('b'));
+        login_who.dead = all || (flags & FILE_FLAG('d'));
+        login_who.login = all || (flags & FILE_FLAG('l'));
+        login_who.init = all || (flags & FILE_FLAG('p'));
+        login_who.runlevel = all || (flags & FILE_FLAG('r'));
+        login_who.clock = all || (flags & FILE_FLAG('t'));
+        login_who.heading = (flags & FILE_FLAG('H')) != 0;
+        login_who.my_line = (flags & FILE_FLAG('m')) != 0 ||
+                            file_operand_count == 2;
+        login_who.count = (flags & FILE_FLAG('q')) != 0;
+        login_who.count_first = true;
+        login_who.short_output = assumptions || (flags & FILE_FLAG('s'));
+        login_who.mesg = all || (flags & (FILE_FLAG('T') | FILE_FLAG('w')));
+        login_who.idle = all ||
+                         (flags & (FILE_FLAG('d') | FILE_FLAG('l') |
+                                   FILE_FLAG('r') | FILE_FLAG('u')));
+        login_who.exit = all || (flags & FILE_FLAG('d'));
+
+        if (login_who.exit)
+                login_who.short_output = false;
+
+        p8 tty[FILE_PATH_MAX];
+        if (login_who.my_line && file_input_terminal_name(tty, sizeof(tty)) >= 0)
+                login_who.tty = !string_compare_max(tty, "/dev/", 5)
+                                    ? tty + 5
+                                    : tty;
+
+        if (login_who.heading && !login_who.count)
+                login_who_heading();
+
+        string_address path = file_operand_count == 1
+                                  ? file_operand_at(0)
+                                  : (string_address)LOGIN_UTMP_PATH;
+        bool default_path = file_operand_count != 1;
+
+        if (!login_records(path, default_path, login_who_visit))
+                return text_done(1);
+
+        if (login_who.count)
+        {
+                p8 count[24];
+                positive length = positive_into(count, login_who.count_users);
+                text_put_character('\n');
+                text_put_string("# users=");
+                text_put(count, length);
+                text_put_character('\n');
+        }
+
+        return text_done(0);
+}
+
+/* users ---------------------------------------------------- */
+
+typedef struct login_name login_name;
+struct login_name
+{
+        login_name address_to next;
+        p8 text[33];
+};
+
+static login_name address_to login_users_head;
+static positive login_users_count;
+
+static bipolar login_name_compare(string_address left, string_address right)
+{
+        while (*left && *left == *right)
+        {
+                left++;
+                right++;
+        }
+        return (bipolar)*left - (bipolar)*right;
+}
+
+static bool login_users_visit(login_record address_to record)
+{
+        if (record->type != LOGIN_USER_PROCESS)
+                return true;
+
+        login_name address_to node =
+            (login_name address_to)text_arena_take(sizeof(login_name));
+        if (!node)
+                return false;
+
+        login_field(node->text, sizeof(node->text), record->user,
+                    sizeof(record->user), true);
+        login_name address_to address_to at = address_of login_users_head;
+
+        while (*at && login_name_compare((*at)->text, node->text) <= 0)
+                at = address_of (*at)->next;
+
+        node->next = *at;
+        *at = node;
+        login_users_count++;
+        return true;
+}
+
+static b32 tools_users()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "users",
+            .allowed = (string_address) "",
+            .valued = (string_address) "",
+            .operand = file_operand,
+        };
+
+        text_begin("users");
+        text_arena_used = 0;
+        login_users_head = null;
+        login_users_count = 0;
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+        if (file_operand_count > 1)
+                return text_refuse(file_operand_at(1), "extra operand", 1);
+
+        string_address path = file_operand_count
+                                  ? file_operand_at(0)
+                                  : (string_address)LOGIN_UTMP_PATH;
+        bool default_path = !file_operand_count;
+
+        if (!login_records(path, default_path, login_users_visit))
+                return text_done(1);
+
+        for (login_name address_to node = login_users_head; node;
+             node = node->next)
+        {
+                text_put_string(node->text);
+                text_put_character(node->next ? ' ' : '\n');
+        }
+
+        return text_done(0);
+}
+
+/* pinky ---------------------------------------------------- */
+
+typedef struct
+{
+        bool short_output;
+        bool heading;
+        bool fullname;
+        bool where;
+        bool idle;
+} login_pinky_options;
+
+static login_pinky_options login_pinky;
+
+static bool login_pinky_seen(p8 letter, string_address value)
+{
+        (void)value;
+        if (letter == 's')
+                login_pinky.short_output = true;
+        else if (letter == 'l')
+                login_pinky.short_output = false;
+        return true;
+}
+
+static bool login_fullname(string_address name, p8 address_to into,
+                           positive room)
+{
+        p8 address_to accounts = file_account_text(FILE_ACCOUNT_USER);
+        positive at = 0;
+        positive wanted = string_length(name);
+        file_account_record record;
+
+        while (file_account_next(accounts, address_of at, 4, address_of record))
+        {
+                if (record.name_length != wanted ||
+                    memory_compare(record.name, name, wanted) ||
+                    !record.has_value)
+                        continue;
+
+                positive made = 0;
+                for (positive i = 0;
+                     i < record.value_length && record.value[i] != ','; i++)
+                {
+                        if (record.value[i] != '&')
+                        {
+                                if (made + 1 < room)
+                                        into[made++] = record.value[i];
+                                continue;
+                        }
+
+                        for (positive j = 0; j < wanted && made + 1 < room; j++)
+                                into[made++] = j ? name[j]
+                                                   : byte_to_upper(name[j]);
+                }
+
+                into[made] = end;
+                return true;
+        }
+
+        return false;
+}
+
+static fn login_pinky_heading()
+{
+        login_put_width("Login", 5, 8, false);
+        if (login_pinky.fullname)
+        {
+                text_put_character(' ');
+                login_put_width("Name", 4, 19, false);
+        }
+        text_put_character(' ');
+        login_put_width(" TTY", 4, 9, false);
+        if (login_pinky.idle)
+        {
+                text_put_character(' ');
+                login_put_width("Idle", 4, 6, false);
+        }
+        text_put_character(' ');
+        login_put_width("When", 4, 12, false);
+        if (login_pinky.where)
+        {
+                text_put_character(' ');
+                text_put_string("Where");
+        }
+        text_put_character('\n');
+}
+
+static bool login_pinky_visit(login_record address_to record)
+{
+        if (record->type != LOGIN_USER_PROCESS)
+                return true;
+
+        p8 user[33], line[33], host[257], time[24], idle[32];
+        positive user_length = login_field(
+            user, sizeof(user), record->user, sizeof(record->user), false);
+
+        if (file_operand_count)
+        {
+                bool wanted = false;
+                for (positive i = 0; i < file_operand_count; i++)
+                        if (string_equals(user, file_operand_at(i)))
+                        {
+                                wanted = true;
+                                break;
+                        }
+                if (!wanted)
+                        return true;
+        }
+
+        positive line_length = login_field(
+            line, sizeof(line), record->line, sizeof(record->line), false);
+        positive host_length = login_field(
+            host, sizeof(host), record->host, sizeof(record->host), false);
+        positive time_length = login_time(time, record->seconds);
+        login_terminal terminal = login_terminal_facts(line);
+
+        login_put_width(user, user_length, user_length < 8 ? 8 : user_length,
+                        false);
+
+        if (login_pinky.fullname)
+        {
+                p8 fullname[256];
+                bool known = login_fullname(user, fullname, sizeof(fullname));
+                positive length = known ? string_length(fullname) : 3;
+                if (length > 19)
+                        length = 19;
+                text_put_character(' ');
+                login_put_width(known ? fullname : (string_address)"???",
+                                length, 19, !known);
+        }
+
+        text_put_character(' ');
+        text_put_character(terminal.known
+                               ? terminal.writable ? ' ' : '*'
+                               : '?');
+        login_put_width(line, line_length, line_length < 8 ? 8 : line_length,
+                        false);
+
+        if (login_pinky.idle)
+        {
+                positive idle_length = login_idle_pinky(idle, terminal);
+                text_put_character(' ');
+                login_put_width(idle, idle_length, 6, false);
+        }
+
+        text_put_character(' ');
+        text_put(time, time_length);
+
+        if (login_pinky.where && host_length)
+        {
+                text_put_character(' ');
+                text_put(host, host_length);
+        }
+
+        text_put_character('\n');
+        return true;
+}
+
+static b32 tools_pinky()
+{
+        file_operands_begin();
+        file_taking taking = {
+            .program = (string_address) "pinky",
+            .allowed = (string_address) "sfwiqbhlp",
+            .valued = (string_address) "",
+            .operand = file_operand,
+            .seen = login_pinky_seen,
+        };
+
+        text_begin("pinky");
+        login_pinky = (login_pinky_options){
+            .short_output = true,
+            .heading = true,
+            .fullname = true,
+            .where = true,
+            .idle = true,
+        };
+
+        if (!file_take(address_of taking) || file_operand_failed)
+                return text_done(1);
+
+        if (!login_pinky.short_output)
+                return text_refuse(null, "long format is not supported", 1);
+
+        positive flags = taking.flags;
+        login_pinky.heading = !(flags & FILE_FLAG('f'));
+        login_pinky.fullname =
+            !(flags & (FILE_FLAG('w') | FILE_FLAG('i') | FILE_FLAG('q')));
+        login_pinky.where = !(flags & (FILE_FLAG('i') | FILE_FLAG('q')));
+        login_pinky.idle = !(flags & FILE_FLAG('q'));
+
+        if (login_pinky.heading)
+                login_pinky_heading();
+
+        if (!login_records((string_address)LOGIN_UTMP_PATH, false,
+                           login_pinky_visit))
+                return text_done(1);
+
+        return text_done(0);
+}
 
 // dd --------------------------------------------------------
 
@@ -1004,6 +1975,750 @@ static b32 tools_dd(void)
         dd_summary();
 
         return result;
+}
+
+// Binary dumps -------------------------------------------------------------
+
+/*
+        od and hexdump are two front ends to one sixteen-byte streaming dump.
+
+        The input is the text utilities' existing 64 KiB reader and output is
+        their existing buffered writer.  The only local storage is one input
+        row, the previous row used for `*` suppression, and one completed
+        output line.  In particular, neither personality has a byte-at-a-time
+        syscall loop or its own allocation and option machinery.
+
+        A format records only the differences between the public spellings.
+        Canonical hexdump is a special row; all the integer and character
+        rows share the same loader and field emitters.
+*/
+#define DUMP_BLOCK 16
+#define DUMP_FORMAT_MAX 16
+#define DUMP_INTEGER 0
+#define DUMP_CHARACTER 1
+#define DUMP_CANONICAL 2
+
+typedef struct
+{
+        p8 kind;
+        p8 base;
+        p8 size;
+        p8 width;
+        p8 gap;
+        bool signed_value;
+        bool zero;
+        bool printable;
+        bool hexdump;
+} dump_format;
+
+typedef struct
+{
+        dump_format format[DUMP_FORMAT_MAX];
+        positive count;
+        positive skip;
+        positive limit;
+        p8 address_base;
+        p8 address_width;
+        bool address_none;
+        bool duplicates;
+        bool od;
+        bool failed;
+} dump_options;
+
+static dump_options dump_arguments;
+
+static fn dump_add_integer(positive base, positive size, positive width,
+                           positive gap, bool signed_value, bool zero,
+                           bool printable, bool hexdump)
+{
+        if (dump_arguments.count >= DUMP_FORMAT_MAX)
+        {
+                dump_arguments.failed = true;
+                return;
+        }
+
+        dump_arguments.format[dump_arguments.count++] = (dump_format){
+            .kind = DUMP_INTEGER,
+            .base = (p8)base,
+            .size = (p8)size,
+            .width = (p8)width,
+            .gap = (p8)gap,
+            .signed_value = signed_value,
+            .zero = zero,
+            .printable = printable,
+            .hexdump = hexdump,
+        };
+}
+
+static fn dump_add_character(bool hexdump)
+{
+        if (dump_arguments.count >= DUMP_FORMAT_MAX)
+        {
+                dump_arguments.failed = true;
+                return;
+        }
+
+        dump_arguments.format[dump_arguments.count++] = (dump_format){
+            .kind = DUMP_CHARACTER,
+            .size = 1,
+            .width = 3,
+            .gap = 1,
+            .hexdump = hexdump,
+        };
+}
+
+static fn dump_add_canonical()
+{
+        if (dump_arguments.count >= DUMP_FORMAT_MAX)
+        {
+                dump_arguments.failed = true;
+                return;
+        }
+
+        dump_arguments.format[dump_arguments.count++] = (dump_format){
+            .kind = DUMP_CANONICAL,
+            .size = 1,
+            .hexdump = true,
+        };
+}
+
+static bool dump_number(string_address source, positive address_to value)
+{
+        return source && dd_size(source, value);
+}
+
+/* GNU's integer type widths are the width of the widest value, including a
+   possible minus.  Keeping that table here also makes every row take the
+   tuned positive_into_base path rather than a miniature formatter. */
+static positive dump_od_width(p8 type, positive size)
+{
+        if (type == 'x')
+                return size * 2;
+
+        if (type == 'o')
+                return size == 1 ? 3 : size == 2 ? 6 : size == 4 ? 11 : 22;
+
+        if (type == 'u')
+                return size == 1 ? 3 : size == 2 ? 5 : size == 4 ? 10 : 20;
+
+        return size == 1 ? 4 : size == 2 ? 6 : size == 4 ? 11 : 20;
+}
+
+/* One -t word can hold several formats (`-t x1c`) and z decorates the
+   integer format immediately before it.  Floating point and the named C
+   sizes are intentionally refused instead of being interpreted nearly. */
+static bool dump_od_types(string_address word)
+{
+        positive at = 0;
+
+        if (!word || !word[0])
+                return false;
+
+        while (word[at])
+        {
+                p8 type = word[at++];
+
+                if (type == 'c')
+                {
+                        dump_add_character(false);
+                        continue;
+                }
+
+                if (type != 'd' && type != 'o' && type != 'u' && type != 'x')
+                        return false;
+
+                positive size = 4;
+
+                if (word[at] == '1' || word[at] == '2' ||
+                    word[at] == '4' || word[at] == '8')
+                        size = (positive)(word[at++] - '0');
+
+                bool printable = word[at] == 'z';
+
+                if (printable)
+                        at++;
+
+                dump_add_integer(type == 'd' || type == 'u' ? 10
+                                 : type == 'o'                 ? 8
+                                                               : 16,
+                                 size, dump_od_width(type, size), 1,
+                                 type == 'd', type == 'o' || type == 'x',
+                                 printable, false);
+
+                if (dump_arguments.failed)
+                        return false;
+        }
+
+        return true;
+}
+
+static const file_long dump_od_longs[] = {
+    {(string_address) "address-radix", 'A'},
+    {(string_address) "skip-bytes", 'j'},
+    {(string_address) "read-bytes", 'N'},
+    {(string_address) "format", 't'},
+    {(string_address) "output-duplicates", 'v'},
+    {null, 0},
+};
+
+static bool dump_od_seen(p8 letter, string_address value)
+{
+        if (letter == 't' && !dump_od_types(value))
+        {
+                text_error(value, "unsupported output format");
+                return false;
+        }
+
+        return true;
+}
+
+static const file_long dump_hex_longs[] = {
+    {(string_address) "one-byte-octal", 'b'},
+    {(string_address) "one-byte-char", 'c'},
+    {(string_address) "canonical", 'C'},
+    {(string_address) "two-bytes-decimal", 'd'},
+    {(string_address) "two-bytes-octal", 'o'},
+    {(string_address) "two-bytes-hex", 'x'},
+    {(string_address) "length", 'n'},
+    {(string_address) "skip", 's'},
+    {(string_address) "no-squeezing", 'v'},
+    {null, 0},
+};
+
+/* hexdump permits more than one stock display and writes them in command-line
+   order.  file_take's seen hook preserves that order without a second option
+   parser. */
+static bool dump_hex_seen(p8 letter, string_address value)
+{
+        (void)value;
+
+        switch (letter)
+        {
+        case 'b': dump_add_integer(8, 1, 3, 1, false, true, false, true); break;
+        case 'c': dump_add_character(true); break;
+        case 'C': dump_add_canonical(); break;
+        case 'd': dump_add_integer(10, 2, 5, 3, false, true, false, true); break;
+        case 'o': dump_add_integer(8, 2, 6, 2, false, true, false, true); break;
+        case 'x': dump_add_integer(16, 2, 4, 4, false, true, false, true); break;
+        }
+
+        if (dump_arguments.failed)
+        {
+                text_error(null, "too many output formats");
+                return false;
+        }
+
+        return true;
+}
+
+static positive dump_pad(p8 address_to into, positive count, p8 byte)
+{
+        memory_fill(into, byte, count);
+        return count;
+}
+
+static positive dump_unsigned_field(p8 address_to into, positive value,
+                                    positive base, positive width, p8 pad)
+{
+        p8 digits[24];
+        positive length = positive_into_base(digits, value, base, false);
+        positive made = 0;
+
+        if (length < width)
+                made += dump_pad(into, width - length, pad);
+
+        memory_copy_apart(into + made, digits, length);
+        return made + length;
+}
+
+static positive dump_signed_field(p8 address_to into, positive value,
+                                  positive size, positive width)
+{
+        positive bits = size * 8;
+        positive sign = (positive)1 << (bits - 1);
+        positive mask = bits == positive_bits ? positive_max
+                                               : ((positive)1 << bits) - 1;
+        bool negative = (value & sign) != 0;
+        positive magnitude = negative ? ((~value + 1) & mask) : value;
+        p8 digits[24];
+        positive length = positive_into_base(digits, magnitude, 10, false);
+        positive body = length + (negative ? 1 : 0);
+        positive made = 0;
+
+        if (body < width)
+                made += dump_pad(into, width - body, ' ');
+
+        if (negative)
+                into[made++] = '-';
+
+        memory_copy_apart(into + made, digits, length);
+        return made + length;
+}
+
+static positive dump_value(p8 address_to bytes, positive have, positive size)
+{
+        positive value = 0;
+
+        if (have > size)
+                have = size;
+
+        /* All three supported ABIs are little-endian.  Loading explicitly
+           also avoids an unaligned word load at every field. */
+        for (positive at = 0; at < have; at++)
+                value |= (positive)bytes[at] << (at * 8);
+
+        return value;
+}
+
+static positive dump_character_field(p8 address_to into, p8 value)
+{
+        p8 spelling[3];
+        positive length = 1;
+
+        spelling[0] = value;
+
+        switch (value)
+        {
+        case 0: spelling[0] = '\\'; spelling[1] = '0'; length = 2; break;
+        case 7: spelling[0] = '\\'; spelling[1] = 'a'; length = 2; break;
+        case 8: spelling[0] = '\\'; spelling[1] = 'b'; length = 2; break;
+        case 9: spelling[0] = '\\'; spelling[1] = 't'; length = 2; break;
+        case 10: spelling[0] = '\\'; spelling[1] = 'n'; length = 2; break;
+        case 11: spelling[0] = '\\'; spelling[1] = 'v'; length = 2; break;
+        case 12: spelling[0] = '\\'; spelling[1] = 'f'; length = 2; break;
+        case 13: spelling[0] = '\\'; spelling[1] = 'r'; length = 2; break;
+        default:
+                if (!byte_is_printable(value))
+                        return dump_unsigned_field(into, value, 8, 3, '0');
+        }
+
+        positive made = dump_pad(into, 3 - length, ' ');
+        memory_copy_apart(into + made, spelling, length);
+        return made + length;
+}
+
+static positive dump_address(p8 address_to into, positive address,
+                             positive base, positive width)
+{
+        return dump_unsigned_field(into, address, base, width, '0');
+}
+
+static fn dump_canonical_line(p8 address_to bytes, positive length,
+                              positive address)
+{
+        p8 line[96];
+        positive made = dump_address(line, address, 16, 8);
+
+        line[made++] = ' ';
+        line[made++] = ' ';
+
+        for (positive at = 0; at < DUMP_BLOCK; at++)
+        {
+                if (at == 8)
+                        line[made++] = ' ';
+
+                if (at < length)
+                {
+                        made += dump_unsigned_field(line + made, bytes[at], 16,
+                                                    2, '0');
+                        line[made++] = ' ';
+                }
+                else
+                        made += dump_pad(line + made, 3, ' ');
+        }
+
+        line[made++] = ' ';
+        line[made++] = '|';
+
+        for (positive at = 0; at < length; at++)
+                line[made++] = byte_is_printable(bytes[at]) ? bytes[at] : '.';
+
+        line[made++] = '|';
+        line[made++] = '\n';
+        text_put(line, made);
+}
+
+static fn dump_regular_line(dump_format address_to format,
+                            p8 address_to bytes, positive length,
+                            positive address, bool first)
+{
+        p8 line[192];
+        positive made = 0;
+        positive fields = (length + format->size - 1) / format->size;
+        positive full_fields = DUMP_BLOCK / format->size;
+        positive gap = format->gap;
+
+        /* With several od formats GNU aligns their value columns to the
+           widest selected row.  Derive the slot width from the formats
+           already parsed rather than storing a second set of padded format
+           descriptors. */
+        if (dump_arguments.od && dump_arguments.count > 1)
+        {
+                positive widest = 0;
+
+                for (positive at = 0; at < dump_arguments.count; at++)
+                {
+                        dump_format address_to other =
+                            dump_arguments.format + at;
+
+                        if (other->kind == DUMP_CANONICAL)
+                                continue;
+
+                        positive span = (other->gap + other->width) *
+                                        (DUMP_BLOCK / other->size);
+
+                        if (span > widest)
+                                widest = span;
+                }
+
+                positive slot = widest / full_fields;
+
+                if (slot > format->width)
+                        gap = slot - format->width;
+        }
+
+        if (first || format->hexdump)
+        {
+                if (!dump_arguments.address_none)
+                        made += dump_address(line, address,
+                                             dump_arguments.address_base,
+                                             dump_arguments.address_width);
+        }
+        else if (!dump_arguments.address_none)
+                made += dump_pad(line, dump_arguments.address_width, ' ');
+
+        for (positive field = 0; field < fields; field++)
+        {
+                made += dump_pad(line + made, gap, ' ');
+
+                if (format->kind == DUMP_CHARACTER)
+                        made += dump_character_field(line + made, bytes[field]);
+                else
+                {
+                        positive left = length - field * format->size;
+                        positive value = dump_value(bytes + field * format->size,
+                                                    left, format->size);
+
+                        if (format->signed_value)
+                                made += dump_signed_field(line + made, value,
+                                                          format->size,
+                                                          format->width);
+                        else
+                                made += dump_unsigned_field(
+                                    line + made, value, format->base,
+                                    format->width, format->zero ? '0' : ' ');
+                }
+        }
+
+        /* util-linux's stock formats are fixed-width records, including
+           blanks for values absent from the final short row.  od does that
+           only when its z suffix needs a stable printable column. */
+        if (format->hexdump || format->printable)
+                made += dump_pad(line + made,
+                                 (full_fields - fields) *
+                                     (gap + format->width),
+                                 ' ');
+
+        if (format->printable)
+        {
+                line[made++] = ' ';
+                line[made++] = ' ';
+                line[made++] = '>';
+
+                for (positive at = 0; at < length; at++)
+                        line[made++] = byte_is_printable(bytes[at])
+                                           ? bytes[at]
+                                           : '.';
+
+                line[made++] = '<';
+        }
+
+        line[made++] = '\n';
+        text_put(line, made);
+}
+
+static fn dump_row(p8 address_to bytes, positive length, positive address)
+{
+        for (positive at = 0; at < dump_arguments.count; at++)
+        {
+                dump_format address_to format = dump_arguments.format + at;
+
+                if (format->kind == DUMP_CANONICAL)
+                        dump_canonical_line(bytes, length, address);
+                else
+                        dump_regular_line(format, bytes, length, address,
+                                          at == 0);
+        }
+}
+
+/* Skip with one seek for an ordinary file.  procfs' size-zero regular files
+   fail text_regular_size's probe and fall back to the same buffered read as a
+   pipe, so the optimization never turns a dynamic pseudo-file into EOF. */
+static positive dump_skip_input(positive wanted)
+{
+        positive size;
+
+        if (wanted && text_regular_size(text_input.handle, address_of size))
+        {
+                bipolar here = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
+
+                if (here >= 0 && (positive)here <= size)
+                {
+                        positive available = size - (positive)here;
+                        positive take = wanted < available ? wanted : available;
+
+                        if (system_seek(text_input.handle, (positive)here + take,
+                                        FILE_SEEK_SET) >= 0)
+                                return take;
+                }
+        }
+
+        positive taken = 0;
+
+        while (taken < wanted && text_fill())
+        {
+                positive available = text_input.filled - text_input.position;
+                positive take = wanted - taken < available ? wanted - taken
+                                                            : available;
+
+                text_input.position += take;
+                taken += take;
+        }
+
+        return taken;
+}
+
+static b32 dump_run(positive first)
+{
+        p8 block[DUMP_BLOCK];
+        p8 previous[DUMP_BLOCK];
+        positive held = 0;
+        positive offset = 0;
+        positive skip = dump_arguments.skip;
+        positive left = dump_arguments.limit;
+        bool have_previous = false;
+        bool starred = false;
+        bool wrote = false;
+        bool opened = false;
+        positive count = (positive)text_argument_count;
+        positive inputs = first < count ? count - first : 1;
+
+        for (positive which = 0; which < inputs; which++)
+        {
+                if (!left && !skip && !(dump_arguments.od && which == 0))
+                        break;
+
+                string_address name = first < count
+                                          ? program_argument((b32)(first + which))
+                                          : null;
+
+                if (!text_open(name))
+                        continue;
+
+                opened = true;
+
+                if (skip)
+                {
+                        positive taken = dump_skip_input(skip);
+
+                        skip -= taken;
+                        offset += taken;
+                }
+
+                if (!left)
+                {
+                        text_close();
+                        break;
+                }
+
+                while (!skip && left && text_fill())
+                {
+                        positive available = text_input.filled - text_input.position;
+
+                        if (available > left)
+                                available = left;
+
+                        while (available)
+                        {
+                                positive take = DUMP_BLOCK - held;
+
+                                if (take > available)
+                                        take = available;
+
+                                memory_copy_apart(block + held,
+                                                  text_input.buffer +
+                                                      text_input.position,
+                                                  take);
+                                held += take;
+                                text_input.position += take;
+                                available -= take;
+                                left -= take;
+
+                                if (held == DUMP_BLOCK)
+                                {
+                                        positive row_address = offset;
+                                        offset += DUMP_BLOCK;
+
+                                        if (!dump_arguments.duplicates &&
+                                            have_previous &&
+                                            !memory_compare(previous, block,
+                                                            DUMP_BLOCK))
+                                        {
+                                                if (!starred)
+                                                {
+                                                        text_put("*\n", 2);
+                                                        starred = true;
+                                                }
+                                        }
+                                        else
+                                        {
+                                                dump_row(block, DUMP_BLOCK,
+                                                         row_address);
+                                                memory_copy(previous, block,
+                                                            DUMP_BLOCK);
+                                                have_previous = true;
+                                                starred = false;
+                                                wrote = true;
+                                        }
+
+                                        held = 0;
+                                }
+                        }
+                }
+
+                text_close();
+        }
+
+        if (skip && dump_arguments.od)
+        {
+                text_error(null, "cannot skip past end of combined input");
+                return text_done(1);
+        }
+
+        if (held)
+        {
+                dump_row(block, held, offset);
+                offset += held;
+                wrote = true;
+        }
+
+        if ((dump_arguments.od && opened) || wrote ||
+            (!dump_arguments.od && opened && dump_arguments.skip))
+        {
+                if (!dump_arguments.address_none)
+                {
+                        p8 final[32];
+                        positive length = dump_address(final, offset,
+                                                       dump_arguments.address_base,
+                                                       dump_arguments.address_width);
+
+                        final[length++] = '\n';
+                        text_put(final, length);
+                }
+        }
+
+        return text_done(text_status);
+}
+
+static b32 tools_od(void)
+{
+        file_taking taking = {
+            .program = (string_address) "od",
+            .allowed = (string_address) "AjNtv",
+            .valued = (string_address) "AjNt",
+            .longs = dump_od_longs,
+            .seen = dump_od_seen,
+        };
+
+        text_begin("od");
+        memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
+        dump_arguments.limit = TEXT_UNSET;
+        dump_arguments.address_base = 8;
+        dump_arguments.address_width = 7;
+        dump_arguments.od = true;
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        string_address radix = file_option_value(address_of taking, 'A');
+
+        if (radix)
+        {
+                if (radix[0] == 'n' && !radix[1])
+                        dump_arguments.address_none = true;
+                else if (!radix[1] &&
+                         (radix[0] == 'd' || radix[0] == 'o' ||
+                          radix[0] == 'x'))
+                {
+                        dump_arguments.address_base = radix[0] == 'd' ? 10
+                                                      : radix[0] == 'o' ? 8
+                                                                        : 16;
+                        dump_arguments.address_width = radix[0] == 'x' ? 6 : 7;
+                }
+                else
+                        return text_refuse(radix, "invalid radix", 1);
+        }
+
+        if ((taking.flags & FILE_FLAG('j')) &&
+            !dump_number(file_option_value(address_of taking, 'j'),
+                         address_of dump_arguments.skip))
+                return text_refuse(file_option_value(address_of taking, 'j'),
+                                   "invalid skip", 1);
+
+        if ((taking.flags & FILE_FLAG('N')) &&
+            !dump_number(file_option_value(address_of taking, 'N'),
+                         address_of dump_arguments.limit))
+                return text_refuse(file_option_value(address_of taking, 'N'),
+                                   "invalid byte count", 1);
+
+        dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
+
+        if (!dump_arguments.count)
+                dump_add_integer(8, 2, 6, 1, false, true, false, false);
+
+        return dump_run(taking.first);
+}
+
+static b32 tools_hexdump(void)
+{
+        file_taking taking = {
+            .program = (string_address) "hexdump",
+            .allowed = (string_address) "bcCdoxnsv",
+            .valued = (string_address) "ns",
+            .longs = dump_hex_longs,
+            .seen = dump_hex_seen,
+        };
+
+        text_begin("hexdump");
+        memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
+        dump_arguments.limit = TEXT_UNSET;
+        dump_arguments.address_base = 16;
+        dump_arguments.address_width = 7;
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+
+        if ((taking.flags & FILE_FLAG('n')) &&
+            !dump_number(file_option_value(address_of taking, 'n'),
+                         address_of dump_arguments.limit))
+                return text_refuse(file_option_value(address_of taking, 'n'),
+                                   "invalid length", 1);
+
+        if ((taking.flags & FILE_FLAG('s')) &&
+            !dump_number(file_option_value(address_of taking, 's'),
+                         address_of dump_arguments.skip))
+                return text_refuse(file_option_value(address_of taking, 's'),
+                                   "invalid skip", 1);
+
+        dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
+
+        if (!dump_arguments.count)
+                dump_add_integer(16, 2, 4, 4, false, true, false, true);
+
+        if (dump_arguments.format[0].kind == DUMP_CANONICAL)
+                dump_arguments.address_width = 8;
+
+        return dump_run(taking.first);
 }
 
 // diff ------------------------------------------------------
