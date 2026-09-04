@@ -515,6 +515,7 @@ struct spawn_work
         unsigned int argc;
         bool shell_fallback;
         bool path_owned;
+        struct file *input;
         struct file *output;
         struct file *error;
 };
@@ -531,6 +532,8 @@ static void spawn_free(struct spawn_work *work)
                 fput(work->error);
         if (work->output)
                 fput(work->output);
+        if (work->input)
+                fput(work->input);
         spawn_strings_put(work->environment);
         spawn_strings_put(work->arguments);
         if (work->path_owned)
@@ -619,7 +622,11 @@ static int spawn_enter(void *data)
 
         spawn_default_signals();
 
-        if ((work->output && replace_fd(1, work->output, 0)) ||
+        /* Without the close-on-exec flag, so these three outlive the load
+           while every other descriptor the caller happened to hold does
+           not. A pipeline's other ends are among those. */
+        if ((work->input && replace_fd(0, work->input, 0)) ||
+            (work->output && replace_fd(1, work->output, 0)) ||
             (work->error && replace_fd(2, work->error, 0)))
         {
                 ret = -EBADF;
@@ -759,7 +766,7 @@ malformed:
 
 static long do_spawn(struct file *file, struct spawn __user *request,
                      bool shell_fallback, const char *fixed_path,
-                     int output, int error)
+                     int input, int output, int error)
 {
         struct device_context *context = file->private_data;
         struct spawn args;
@@ -776,6 +783,12 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         work = kzalloc(sizeof(*work), GFP_KERNEL);
         if (!work)
                 return -ENOMEM;
+
+        if (input >= 0 && !(work->input = fget(input)))
+        {
+                ret = -EBADF;
+                goto fail;
+        }
 
         if (output >= 0 && !(work->output = fget(output)))
         {
@@ -1131,13 +1144,29 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         {
         case SPARK_IOCTL_SPAWN:
                 return do_spawn(file, (struct spawn __user *)arg, false, NULL,
-                                -1, -1);
+                                -1, -1, -1);
         case SPARK_IOCTL_SPAWN_SHELL:
                 return do_spawn(file, (struct spawn __user *)arg, true, NULL,
-                                -1, -1);
+                                -1, -1, -1);
         case SPARK_IOCTL_SPAWN_TOOL:
                 return do_spawn(file, (struct spawn __user *)arg, false,
-                                "/shell", -1, -1);
+                                "/shell", -1, -1, -1);
+        case SPARK_IOCTL_SPAWN_SHELL_INTO:
+        {
+                struct spawn_into __user *request =
+                    (struct spawn_into __user *)arg;
+                int input;
+                int output;
+                int error;
+
+                if (get_user(input, &request->input) ||
+                    get_user(output, &request->output) ||
+                    get_user(error, &request->error))
+                        return -EFAULT;
+
+                return do_spawn(file, &request->spawn, true, NULL,
+                                input, output, error);
+        }
         case SPARK_IOCTL_SPAWN_TOOL_TO:
         {
                 struct spawn_to __user *request = (struct spawn_to __user *)arg;
@@ -1149,7 +1178,7 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
                         return -EFAULT;
 
                 return do_spawn(file, &request->spawn, false, "/shell",
-                                output, error);
+                                -1, output, error);
         }
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);

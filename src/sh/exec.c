@@ -2990,6 +2990,85 @@ static bipolar exec_spawn_node(b32 index, bool background)
         here is an end of file the reader never sees, and the whole shell
         stops.
 */
+/*
+        A stage that can be spawned rather than forked, and its pid.
+
+        Every stage of a pipeline is a separate process either way. The fork
+        exists only so the child can arrange its own descriptors before
+        replacing itself, and it copies a page table to do it. When the stage
+        is an ordinary external command the descriptors can be named in the
+        request instead, and nothing is copied.
+
+        The conditions are conservative on purpose, because a stage that
+        takes this path is expanded here rather than in a child, and anything
+        whose expansion could be felt afterwards must not be. Literal words
+        with no pattern bytes expand to themselves, so there is nothing to
+        feel. A redirection, an assignment prefix, a function, a builtin or
+        any word that is not exactly its own text sends the stage back to the
+        fork, which is still correct and merely slower.
+
+        Answers -1 for "not this stage", which is not an error: the caller
+        forks as it always did.
+*/
+#define EXEC_PIPE_CLOSE_ON_EXEC 02000000
+#define EXEC_STAGE_WORDS_MAX 64
+
+static bipolar exec_stage_spawn(b32 index, b32 input, b32 output)
+{
+        static p8 address_to found;
+        static positive found_room;
+        parse_node address_to node = parse_nodes + index;
+        string_address words[EXEC_STAGE_WORDS_MAX + 1];
+        string_address name;
+        positive2 named;
+        b32 at;
+
+        if (node->kind != NODE_SIMPLE || node->redirect_count ||
+            !node->word_count || node->word_count > EXEC_STAGE_WORDS_MAX)
+                return -1;
+
+        for (at = 0; at < node->word_count; at++)
+        {
+                b32 word = node->word + at;
+                string_address text = parse_words[word];
+
+                if (!(parse_word_flags[word] & PARSE_WORD_LITERAL) ||
+                    (parse_word_flags[word] & PARSE_WORD_ASSIGNMENT))
+                        return -1;
+
+                // A literal word still expands if it is a pattern, and a
+                // leading tilde is a home directory. Neither may be answered
+                // here, where the answer would be the word itself.
+                if (string_first_of_set(text, "*?[~"))
+                        return -1;
+
+                words[at] = text;
+        }
+
+        words[node->word_count] = null;
+        name = words[0];
+
+        // A slash names the program outright; anything else has to prove it
+        // is not something this shell would have run itself.
+        if (!string_first_of(name, '/'))
+        {
+                named = string_hash_33_length(name);
+
+                if (exec_function_slot(name, named) != positive_max ||
+                    shell_command_named_hashed(name, named) ||
+                    exec_control_builtin(name, false))
+                        return -1;
+
+                if (shell_find_in_path_alloc(name, address_of found,
+                                             address_of found_room) != 1)
+                        return -1;
+
+                words[0] = found;
+        }
+
+        return shell_spawn_stage(words, input, output, -1);
+}
+
 static b32 exec_pipe(b32 first, positive count, bool background,
                      bool pipefail, bool invert)
 {
@@ -3018,14 +3097,22 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 ends[0] = -1;
                 ends[1] = -1;
 
-                if (!last && system_pipe(ends, 0) < 0)
+                /* Close-on-exec, because a spawned stage inherits a copy
+                   of this shell's descriptors and a reader holding its own
+                   write end waits for an end of file that never comes. The
+                   forked path is unaffected: it duplicates the ends it wants
+                   onto 0 and 1, and a duplicate does not carry the flag. */
+                if (!last && system_pipe(ends, EXEC_PIPE_CLOSE_ON_EXEC) < 0)
                 {
                         spawn_failed = true;
                         break;
                 }
 
                 log_flush();
-                made = shell_clone();
+                made = exec_stage_spawn(child, upstream, last ? -1 : ends[1]);
+
+                if (made < 0)
+                        made = shell_clone();
 
                 if (made == 0)
                 {

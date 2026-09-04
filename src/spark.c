@@ -125,6 +125,10 @@ _Static_assert(sizeof(struct header) == SPARK_HEADER_SIZE,
 // The same launch with stdout and stderr installed before exec.
 #define SPARK_IOCTL_SPAWN_TOOL_TO 0x40387308u
 
+// _IOW('s', 9, struct spawn_into). The shell's ENOEXEC rule, with stdin,
+// stdout and stderr installed before exec: one pipeline stage.
+#define SPARK_IOCTL_SPAWN_SHELL_INTO 0x40407309u
+
 // _IOR('s', 2, struct stats). Nanoseconds accumulated inside the kernel,
 // so the split between creating the task and loading the image is measured
 // where it happens rather than inferred from the outside.
@@ -318,6 +322,31 @@ struct spawn {
 
 struct spawn_to {
         struct spawn spawn;
+        int output;
+        int error;
+};
+
+/*
+        A launch with all three standard descriptors installed.
+
+        A pipeline stage is the reason this exists. Every stage of
+        "a | b | c" is a fresh program with a pipe on one side and a pipe on
+        the other, and the shell had no way to say so: it forked itself once
+        per stage so the child could arrange its own descriptors, and paid a
+        page table copy each time for an address space the child discards at
+        exec. Naming the descriptors in the request lets a stage be spawned
+        rather than forked.
+
+        Every end the shell still holds is inherited by the child as a copy,
+        the same as a fork, so the shell opens pipeline pipes close-on-exec:
+        the three named here are installed without that flag and survive,
+        and every other copy goes when the image loads. A reader that
+        inherited its own write end would wait for an end of file that could
+        never arrive.
+*/
+struct spawn_into {
+        struct spawn spawn;
+        int input;
         int output;
         int error;
 };

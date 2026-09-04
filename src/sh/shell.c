@@ -448,6 +448,7 @@ fn storage_mount_table_release(storage_mount_table address_to table);
 #include "screen.c"
 #include "edit.c"
 #include "system.c"
+#include "../bowl/runtime.c"
 #include "builtin.c"
 
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
@@ -734,6 +735,8 @@ positive shell_flatten_env(positive address_to count_out)
         return used;
 }
 
+static bool shell_spawn_device_open();
+
 // Returns the child pid, or a negative error if the device could not take it.
 static bipolar shell_spawn_via_device(b32 operation, string_address path,
                                       string_address address_to arguments,
@@ -768,6 +771,56 @@ static bipolar shell_spawn_via_device(b32 operation, string_address path,
         directed.error = error;
 
         return system_control(spawn_device, operation, address_of directed);
+}
+
+/*
+        One pipeline stage, with its three descriptors named in the request.
+
+        The difference from the launch above is the whole point of it: a
+        stage used to be a forked copy of the shell that arranged its own
+        descriptors and then replaced itself, and the copy was a page table
+        duplicated for an address space the child discards microseconds
+        later. Naming them here means the stage is spawned instead, and the
+        fork never happens.
+
+        A descriptor of -1 is left alone, so a stage at either end of the
+        pipeline keeps the shell's own.
+*/
+bipolar shell_spawn_stage(string_address address_to arguments,
+                          b32 input, b32 output, b32 error)
+{
+        struct spawn_into directed;
+        struct spawn address_to request = address_of directed.spawn;
+        positive argc = 0;
+        positive envc = 0;
+
+        if (!shell_spawn_device_open())
+                return -1;
+
+        request->path = (unsigned long)arguments[0];
+        request->argv_bytes = shell_flatten_strings(
+            arguments, address_of spawn_argv_block,
+            address_of spawn_argv_room, address_of argc);
+
+        if (argc == positive_max)
+                return -1;
+
+        request->argv = (unsigned long)spawn_argv_block;
+        request->argv_count = (unsigned int)argc;
+        request->envp_bytes = shell_flatten_env(address_of envc);
+
+        if (envc == positive_max)
+                return -1;
+
+        request->envp = (unsigned long)spawn_envp_block;
+        request->envp_count = envc;
+        request->envp_generation = spawn_envp_generation;
+        directed.input = input;
+        directed.output = output;
+        directed.error = error;
+
+        return system_control(spawn_device, SPARK_IOCTL_SPAWN_SHELL_INTO,
+                              address_of directed);
 }
 
 static bool shell_spawn_device_open()

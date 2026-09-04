@@ -994,6 +994,23 @@ check 'pipe chain'      'echo a | cat | cat'
 # A pipeline cut short is not a shorter pipeline: the stage that becomes the
 # last one writes where the next was going to read, so twenty stages used to
 # answer with the sixteenth stage's work.
+#       A pipeline whose stages are ordinary external commands is spawned a
+#       stage at a time rather than forked, and a stage that is anything else
+#       goes back to the fork. Both halves have to be here, and mixed, because
+#       the two kinds share the pipes between them: a spawned stage inherits a
+#       copy of this shell's descriptors, so a reader that kept its own write
+#       end would wait forever for an end of file. Every case below would hang
+#       rather than fail if that went wrong.
+check 'spawned stages'  'echo one two three | tr " " "\n" | sort | tail -n 1'
+check 'spawned to builtin' 'printf "a\nb\n" | { read v; echo "first:$v"; }'
+check 'builtin to spawned' '{ echo x; echo y; } | wc -l'
+check 'redirected stage' 'echo a | cat 2>/dev/null | cat'
+check 'assignment stage' 'echo a | X=1 cat'
+check 'function stage'   'f() { cat; }; echo a | f | cat'
+check 'pattern stage'    'echo a | cat ?nonexistent 2>/dev/null; echo $?'
+check 'stage status'     'echo a | cat | false; echo $?'
+check 'long pipe closes' 'yes | head -n 3 | wc -l'
+check 'stage reads all'  'seq 1 200 | cat | wc -l'
 check 'twenty stages'   'echo a | sed s/a/b/ | sed s/b/c/ | sed s/c/d/ | sed s/d/e/ | sed s/e/f/ | sed s/f/g/ | sed s/g/h/ | sed s/h/i/ | sed s/i/j/ | sed s/j/k/ | sed s/k/l/ | sed s/l/m/ | sed s/m/n/ | sed s/n/o/ | sed s/o/p/ | sed s/p/q/ | sed s/q/r/ | sed s/r/s/ | cat'
 
 group functions
