@@ -8547,6 +8547,33 @@ static fn pr_put_separator()
         pr_output_column += pr_separator_length;
 }
 
+/* Vertical pages fill each column top-to-bottom.  On an incomplete page GNU
+   gives one extra record to each leftmost column, so later column starts are
+   cumulative rather than a fixed ceil(count / columns) stride. */
+static positive pr_page_index(positive count, positive row, positive column,
+                              bool address_to present)
+{
+        positive index;
+        if (pr_merge || pr_across)
+                index = row * pr_columns + column;
+        else
+        {
+                positive short_rows = count / pr_columns;
+                positive long_columns = count % pr_columns;
+                positive column_rows = short_rows +
+                                       (column < long_columns);
+                if (row >= column_rows)
+                {
+                        address_to present = false;
+                        return count;
+                }
+                index = column * short_rows +
+                        min(column, long_columns) + row;
+        }
+        address_to present = index < count;
+        return index;
+}
+
 static fn pr_put_page(positive count, positive rows, positive page,
                       string_address name, b64 stamp, bool forced)
 {
@@ -8573,14 +8600,10 @@ static fn pr_put_page(positive count, positive rows, positive page,
 
                 for (positive column = 0; column < pr_columns; column++)
                 {
-                        positive index;
-
-                        if (pr_merge || pr_across)
-                                index = row * pr_columns + column;
-                        else
-                                index = column * rows + row;
-
-                        if (index >= count)
+                        bool present;
+                        positive index = pr_page_index(count, row, column,
+                                                       address_of present);
+                        if (!present)
                                 break;
 
                         pr_record address_to record = pr_records + index;
@@ -8592,9 +8615,14 @@ static fn pr_put_page(positive count, positive rows, positive page,
                         positive data_start = pr_output_column;
                         pr_put_record(record, record_width);
 
-                        bool later = column + 1 < pr_columns &&
-                                     (pr_merge || index + rows < count ||
-                                      (pr_across && index + 1 < count));
+                        bool later = false;
+                        if (column + 1 < pr_columns)
+                        {
+                                bool next_present;
+                                (void)pr_page_index(count, row, column + 1,
+                                                    address_of next_present);
+                                later = next_present;
+                        }
 
                         if (later)
                         {
@@ -8926,9 +8954,20 @@ static b32 text_pr()
 
         pr_expand_input = (taking.flags & FILE_FLAG('e')) || pr_columns > 1;
         pr_tabify_output = (taking.flags & FILE_FLAG('i')) || pr_columns > 1;
+        /* GNU turns truncation on for a page that really has more than one
+           column, lets a lone -s take it back off, and lets an explicit width
+           or -W put it back; -J is the only switch that overrides all three.
+           A bare -1, or -m over a single file, is still one column and leaves
+           long records whole. */
+        bool given_width = (taking.flags & FILE_FLAG('w')) != 0;
+
         pr_truncate = !pr_join &&
-                      (pr_columns > 1 ||
-                       (taking.flags & FILE_FLAG('W')) != 0);
+                      ((taking.flags & FILE_FLAG('W')) != 0 ||
+                       (given_width &&
+                        (pr_merge ||
+                         (taking.flags & FILE_FLAG('C')) != 0)) ||
+                       (!given_width && pr_columns > 1 &&
+                        !(taking.flags & FILE_FLAG('s'))));
         text_quiet_open = (taking.flags & FILE_FLAG('r')) != 0;
 
         positive number_fields = pr_number && pr_merge ? 1 : 0;

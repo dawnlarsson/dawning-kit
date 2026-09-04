@@ -9,6 +9,7 @@
 
 #define UL_TIOCSCTTY 0x540e
 #define UL_TIOCSPGRP 0x5410
+#define UL_TCGETS 0x5401u
 #define UL_SIGNAL_BLOCK 0
 #define UL_SIGNAL_SET_MASK 2
 #define UL_SIGNAL_TTOU 22
@@ -10653,4 +10654,103 @@ static b32 util_linux_lsblk()
                              ul_lsblk_field);
         log_flush();
         return 0;
+}
+
+// mesg ------------------------------------------------------------
+
+/*
+        The terminal's group-write bit is the protocol: write(1) checks the
+        same bit before opening another user's tty.  Work on the existing
+        terminal descriptor rather than resolving its pathname through
+        procfs: that saves a readlink and remains correct if the pts name is
+        renamed or hidden by a mount namespace.
+*/
+static const file_long ul_mesg_longs[] = {
+    {"verbose", 'v'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static b32 util_linux_mesg()
+{
+        file_taking taking = {
+            .program = "mesg", .allowed = "vhV", .longs = ul_mesg_longs,
+        };
+        b32 answer;
+
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] [y | n]",
+                    address_of answer))
+                return answer;
+
+        positive count = (positive)program_argument_count();
+        string_address wanted = taking.first < count
+                                    ? program_argument((b32)taking.first)
+                                    : null;
+        bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        bool setting = wanted != null;
+        bool allowed = false;
+
+        if (setting)
+        {
+                p8 first = string_get(wanted);
+
+                if (first >= 'A' && first <= 'Z')
+                        first = (p8)(first + ('a' - 'A'));
+                if (first != 'y' && first != 'n')
+                {
+                        string_format(file_fail,
+                                      "mesg: invalid argument: %s\n", wanted);
+                        return 1;
+                }
+                allowed = first == 'y';
+        }
+
+        file_facts facts;
+        bipolar handle = -1;
+        p8 terminal_settings[64];
+
+        /* stdin is preferred, but `cmd </dev/null` still has a perfectly
+           usable terminal on stdout or stderr. */
+        for (b32 descriptor = 0; descriptor < 3; descriptor++)
+                if (system_control(descriptor, UL_TCGETS,
+                                   terminal_settings) == 0 &&
+                    file_look(descriptor, "", AT_EMPTY_PATH,
+                              address_of facts) &&
+                    (facts.mode & MODE_FORMAT) == MODE_CHARACTER)
+                {
+                        handle = descriptor;
+                        break;
+                }
+
+        if (handle < 0)
+        {
+                if (verbose)
+                        file_fail("mesg: no tty\n", 0);
+                return 2;
+        }
+
+        if (setting)
+        {
+                positive mode = facts.mode & 07777;
+                mode = allowed ? mode | 0020 : mode & ~((positive)0020);
+
+                if (system_call_2(syscall(fchmod), (positive)handle, mode) < 0)
+                {
+                        if (verbose)
+                                file_fail("mesg: cannot change terminal mode\n", 0);
+                        return 2;
+                }
+        }
+        else
+                allowed = (facts.mode & 0020) != 0;
+
+        if (verbose)
+                string_format(log, "write access to your terminal is %s\n",
+                              allowed ? (string_address)"allowed"
+                                      : (string_address)"denied");
+        else if (!setting)
+                log(allowed ? "is y\n" : "is n\n", 5);
+
+        log_flush();
+        return allowed ? 0 : 1;
 }

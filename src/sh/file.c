@@ -10331,10 +10331,11 @@ static b32 file_sync()
         uses the same buffer and memory_first_of scanner already used by the
         text tools; it does not grow a second reader or output layer.
 
-        Chunk distribution (-n), filtered outputs and line-byte packing (-C)
-        are separate algorithms rather than decorations on these two paths.
-        They are deliberately not accepted here until they can keep those
-        semantics without slowing the common -b and -l cases.
+        Line-byte packing (-C) scans mapped regular input with the shared
+        vector first-of primitive, while indeterminate streams use the shared
+        text arena.  Plain -n distribution keeps known-size input in the
+        kernel-copy path.  Its l/, r/ and K/N forms are distinct scheduling
+        contracts and are rejected until implemented rather than guessed.
 */
 #define SPLIT_SUFFIX_MAX 32
 
@@ -10363,8 +10364,10 @@ static const file_long split_longs[] = {
     {(string_address) "additional-suffix", 'S'},
     {(string_address) "bytes", 'b'},
     {(string_address) "hex-suffixes", 'x'},
+    {(string_address) "line-bytes", 'C'},
     {(string_address) "lines", 'l'},
     {(string_address) "numeric-suffixes", 'd'},
+    {(string_address) "number", 'n'},
     {(string_address) "separator", 't'},
     {(string_address) "suffix-length", 'a'},
     {(string_address) "verbose", 'v'},
@@ -10807,6 +10810,203 @@ static bool split_stream_lines(bipolar in, positive lines, p8 separator,
         }
 }
 
+/* Pack whole records while one fits, then cut an overlong record into exact
+   size pieces.  This is also the mmap hot path, so a normal short record is
+   one vector search and one buffered output write. */
+static bool split_line_bytes_memory(p8 address_to input, positive length,
+                                    positive piece, p8 separator,
+                                    split_output address_to output)
+{
+        positive at = 0;
+        positive used = 0;
+
+        while (at < length)
+        {
+                p8 address_to found = memory_first_of(input + at, separator,
+                                                      length - at);
+                positive stop = found ? (positive)(found - input) + 1 : length;
+                positive record = stop - at;
+
+                if (record <= piece)
+                {
+                        if (used && record > piece - used)
+                        {
+                                if (!split_output_close(output))
+                                        return false;
+                                used = 0;
+                        }
+                        if (!split_output_write(output, input + at, record))
+                                return false;
+                        used += record;
+                        if (used == piece)
+                        {
+                                if (!split_output_close(output))
+                                        return false;
+                                used = 0;
+                        }
+                }
+                else
+                {
+                        if (used)
+                        {
+                                if (!split_output_close(output))
+                                        return false;
+                                used = 0;
+                        }
+
+                        positive left = record;
+                        positive record_at = at;
+                        while (left >= piece)
+                        {
+                                if (!split_output_write(output,
+                                                        input + record_at,
+                                                        piece) ||
+                                    !split_output_close(output))
+                                        return false;
+                                record_at += piece;
+                                left -= piece;
+                        }
+                        if (left)
+                        {
+                                if (!split_output_write(output,
+                                                        input + record_at,
+                                                        left))
+                                        return false;
+                                used = left;
+                        }
+                }
+                at = stop;
+        }
+
+        return split_output_close(output);
+}
+
+static bool split_line_bytes(bipolar in, file_facts address_to facts,
+                             bool regular, positive piece, p8 separator,
+                             split_output address_to output)
+{
+        if (regular)
+        {
+                if (!facts->size)
+                        return true;
+
+                bipolar mapped = system_call_6(
+                    syscall(mmap), 0, (positive)facts->size,
+                    FILE_PROTECT_READ, FILE_MAP_PRIVATE, (positive)in, 0);
+                if (mapped < 0)
+                {
+                        string_format(file_fail, "split: cannot map input: %s\n",
+                                      file_reason(mapped));
+                        return false;
+                }
+
+                bool answer = split_line_bytes_memory(
+                    (p8 address_to)(positive)mapped, (positive)facts->size,
+                    piece, separator, output);
+                system_call_2(syscall(munmap), (positive)mapped,
+                              (positive)facts->size);
+                return answer;
+        }
+
+        text_arena_used = 0;
+        positive length;
+        bool read_failed;
+        p8 address_to input = text_arena_read_all(
+            (positive)in, FILE_TRANSFER_SIZE, address_of length,
+            address_of read_failed);
+
+        if (!input)
+        {
+                file_fail(read_failed ? (string_address)"split: read error\n"
+                                      : (string_address)"split: input too large\n",
+                          0);
+                text_arena_used = 0;
+                return false;
+        }
+
+        bool answer = split_line_bytes_memory(input, length, piece, separator,
+                                              output);
+        text_arena_used = 0;
+        return answer;
+}
+
+static bool split_chunks(string_address text, positive address_to chunks)
+{
+        string_address at = text;
+        positive value;
+
+        if (!string_digits_checked(address_of at, 10, address_of value) ||
+            string_get(at) || !value)
+                return false;
+        address_to chunks = value;
+        return true;
+}
+
+static bool split_distribute_regular(bipolar in, p64 length, positive chunks,
+                                     split_output address_to output)
+{
+        bool range_copy = true;
+        bool send_copy = true;
+        p64 ordinary = length / chunks;
+        positive extra = (positive)(length % chunks);
+
+        for (positive i = 0; i < chunks; i++)
+        {
+                positive here = (positive)ordinary + (positive)(i < extra);
+
+                if (!split_output_open(output) ||
+                    (here && !split_copy_piece(in, output->handle, here,
+                                               address_of range_copy,
+                                               address_of send_copy)) ||
+                    !split_output_close(output))
+                {
+                        file_fail("split: read or write error\n", 0);
+                        return false;
+                }
+        }
+        return true;
+}
+
+static bool split_distribute_stream(bipolar in, positive chunks,
+                                    split_output address_to output)
+{
+        text_arena_used = 0;
+        positive length;
+        bool read_failed;
+        p8 address_to input = text_arena_read_all(
+            (positive)in, FILE_TRANSFER_SIZE, address_of length,
+            address_of read_failed);
+
+        if (!input)
+        {
+                file_fail(read_failed ? (string_address)"split: read error\n"
+                                      : (string_address)"split: input too large\n",
+                          0);
+                text_arena_used = 0;
+                return false;
+        }
+
+        positive ordinary = length / chunks;
+        positive extra = length % chunks;
+        positive at = 0;
+        bool answer = true;
+
+        for (positive i = 0; i < chunks; i++)
+        {
+                positive here = ordinary + (positive)(i < extra);
+                if (!split_output_open(output) ||
+                    (here && !split_output_write(output, input + at, here)) ||
+                    !split_output_close(output))
+                {
+                        answer = false;
+                        break;
+                }
+                at += here;
+        }
+        text_arena_used = 0;
+        return answer;
+}
+
 static bool split_separator(string_address text, p8 address_to separator)
 {
         if (string_get(text) && !string_get(text + 1))
@@ -10834,8 +11034,8 @@ static b32 file_split()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address)"split",
-            .allowed = (string_address)"abdlxt",
-            .valued = (string_address)"ablSt",
+            .allowed = (string_address)"abCdlntx",
+            .valued = (string_address)"abClnSt",
             /* Only the long spellings take an optional FROM.  In `-d7 -b3`,
                coreutils reads 7 as the old -7 line count and diagnoses the
                line/byte mode conflict; it is not a suffix start. */
@@ -10859,21 +11059,35 @@ static b32 file_split()
 
         bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
         bool lines = (taking.flags & FILE_FLAG('l')) != 0;
+        bool line_bytes = (taking.flags & FILE_FLAG('C')) != 0;
+        bool distribute = (taking.flags & FILE_FLAG('n')) != 0;
 
-        if (bytes && lines)
+        if ((positive)bytes + (positive)lines + (positive)line_bytes +
+                (positive)distribute >
+            1)
         {
                 file_fail("split: cannot split in more than one way\n", 0);
                 return 1;
         }
 
-        p8 mode = bytes ? 'b' : 'l';
+        p8 mode = bytes ? 'b' : line_bytes ? 'C' : distribute ? 'n' : 'l';
 
         positive piece = 1000;
         string_address measure = file_option_value(address_of taking, mode);
 
-        if (measure && !split_size(measure, address_of piece))
+        if (measure && mode != 'n' &&
+            !split_size(measure, address_of piece))
         {
                 string_format(file_fail, "split: invalid number of bytes: '%s'\n",
+                              measure);
+                return 1;
+        }
+
+        positive chunks = 0;
+        if (mode == 'n' && !split_chunks(measure, address_of chunks))
+        {
+                string_format(file_fail,
+                              "split: unsupported number of chunks: '%s'\n",
                               measure);
                 return 1;
         }
@@ -10976,11 +11190,23 @@ static b32 file_split()
 
         bool complete;
 
+        bool regular = looked && (facts.mode & MODE_FORMAT) == MODE_FILE;
+
         if (mode == 'b' && output.protect_input && facts.size)
                 complete = split_regular_bytes(in, facts.size, piece,
                                                address_of output);
         else if (mode == 'b')
                 complete = split_stream_bytes(in, piece, address_of output);
+        else if (mode == 'C')
+                complete = split_line_bytes(in, address_of facts, regular,
+                                            piece, separator,
+                                            address_of output);
+        else if (mode == 'n' && regular)
+                complete = split_distribute_regular(in, facts.size, chunks,
+                                                    address_of output);
+        else if (mode == 'n')
+                complete = split_distribute_stream(in, chunks,
+                                                   address_of output);
         else
                 complete = split_stream_lines(in, piece, separator,
                                               address_of output);

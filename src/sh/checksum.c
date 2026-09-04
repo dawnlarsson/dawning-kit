@@ -457,6 +457,55 @@ static fn checksum_filename_put(string_address name, bool escaped)
         }
 }
 
+/* The check result is a human-facing shell word in coreutils 9.11, not the
+   portable backslash record used when a manifest is written.  Keep the shell
+   quoting policy in its existing writer and add only the control-byte islands
+   that quotearg spells as $'...'.  The decoded name lives in text_line, so a
+   temporary terminator can expose each printable span without allocating or
+   building a second output buffer. */
+fn shell_quoted(writer write, string_address value);
+
+static fn checksum_check_filename_put(string_address name)
+{
+        if (!checksum_filename_escaped(name))
+        {
+                text_put_string(name);
+                return;
+        }
+
+        p8 address_to step = (p8 address_to)name;
+
+        while (*step)
+        {
+                p8 address_to stop = step;
+                while (*stop && *stop >= ' ' && *stop != 127)
+                        stop++;
+
+                if (stop > step)
+                {
+                        p8 held = *stop;
+                        *stop = end;
+                        shell_quoted(text_put, step);
+                        *stop = held;
+                        step = stop;
+                }
+
+                if (!*step)
+                        break;
+
+                text_put_string("$'");
+                do
+                {
+                        p8 escaped[4];
+                        positive length = ls_escape_byte(*step++, escaped,
+                                                         false);
+                        text_put(escaped, length);
+                }
+                while (*step && (*step < ' ' || *step == 127));
+                text_put_character('\'');
+        }
+}
+
 static fn checksum_hex_put(p8 address_to digest, positive length)
 {
         static p8 alphabet[] = "0123456789abcdef";
@@ -489,12 +538,7 @@ static fn checksum_line_put(p8 address_to digest, positive length,
 static fn checksum_check_result_put(string_address name,
                                     string_address result)
 {
-        bool escaped = checksum_filename_escaped(name);
-
-        if (escaped)
-                text_put_character('\\');
-
-        checksum_filename_put(name, escaped);
+        checksum_check_filename_put(name);
         text_put_string(": ");
         text_put_string(result);
         text_put_character('\n');

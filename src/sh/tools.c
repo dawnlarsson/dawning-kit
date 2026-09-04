@@ -5811,6 +5811,7 @@ static b32 tools_dd(void)
 #define DUMP_INTEGER 0
 #define DUMP_CHARACTER 1
 #define DUMP_CANONICAL 2
+#define DUMP_NAMED 3
 
 typedef struct
 {
@@ -5878,6 +5879,22 @@ static fn dump_add_character(bool hexdump)
             .width = 3,
             .gap = 1,
             .hexdump = hexdump,
+        };
+}
+
+static fn dump_add_named()
+{
+        if (dump_arguments.count >= DUMP_FORMAT_MAX)
+        {
+                dump_arguments.failed = true;
+                return;
+        }
+
+        dump_arguments.format[dump_arguments.count++] = (dump_format){
+            .kind = DUMP_NAMED,
+            .size = 1,
+            .width = 3,
+            .gap = 1,
         };
 }
 
@@ -5980,6 +5997,50 @@ static bool dump_od_seen(p8 letter, string_address value)
         if (letter == 't' && !dump_od_types(value))
         {
                 text_error(value, "unsupported output format");
+                return false;
+        }
+
+        switch (letter)
+        {
+        case 'a': dump_add_named(); break;
+        case 'b':
+                dump_add_integer(8, 1, dump_od_width('o', 1), 1,
+                                 false, true, false, false);
+                break;
+        case 'c': dump_add_character(false); break;
+        case 'd':
+                dump_add_integer(10, 2, dump_od_width('u', 2), 1,
+                                 false, false, false, false);
+                break;
+        case 'f':
+                text_error(null, "floating point output is unsupported");
+                return false;
+        case 'h':
+        case 'x':
+                dump_add_integer(16, 2, dump_od_width('x', 2), 1,
+                                 false, true, false, false);
+                break;
+        case 'i':
+                dump_add_integer(10, 4, dump_od_width('d', 4), 1,
+                                 true, false, false, false);
+                break;
+        case 'l':
+                dump_add_integer(10, 8, dump_od_width('d', 8), 1,
+                                 true, false, false, false);
+                break;
+        case 'o':
+                dump_add_integer(8, 2, dump_od_width('o', 2), 1,
+                                 false, true, false, false);
+                break;
+        case 's':
+                dump_add_integer(10, 2, dump_od_width('d', 2), 1,
+                                 true, false, false, false);
+                break;
+        }
+
+        if (dump_arguments.failed)
+        {
+                text_error(null, "too many output formats");
                 return false;
         }
 
@@ -6111,6 +6172,44 @@ static positive dump_character_field(p8 address_to into, p8 value)
         return made + length;
 }
 
+static positive dump_named_field(p8 address_to into, p8 value)
+{
+        static const string_address control[] = {
+            (string_address)"nul", (string_address)"soh",
+            (string_address)"stx", (string_address)"etx",
+            (string_address)"eot", (string_address)"enq",
+            (string_address)"ack", (string_address)"bel",
+            (string_address)"bs",  (string_address)"ht",
+            (string_address)"nl",  (string_address)"vt",
+            (string_address)"ff",  (string_address)"cr",
+            (string_address)"so",  (string_address)"si",
+            (string_address)"dle", (string_address)"dc1",
+            (string_address)"dc2", (string_address)"dc3",
+            (string_address)"dc4", (string_address)"nak",
+            (string_address)"syn", (string_address)"etb",
+            (string_address)"can", (string_address)"em",
+            (string_address)"sub", (string_address)"esc",
+            (string_address)"fs",  (string_address)"gs",
+            (string_address)"rs",  (string_address)"us",
+            (string_address)"sp",
+        };
+        value &= 0x7f;
+        string_address name = value <= 32 ? control[value]
+                              : value == 127 ? (string_address)"del"
+                                             : null;
+        if (!name)
+        {
+                into[0] = ' ';
+                into[1] = ' ';
+                into[2] = value;
+                return 3;
+        }
+        positive length = string_length(name);
+        positive made = dump_pad(into, 3 - length, ' ');
+        memory_copy_apart(into + made, name, length);
+        return made + length;
+}
+
 static positive dump_address(p8 address_to into, positive address,
                              positive base, positive width)
 {
@@ -6207,6 +6306,8 @@ static fn dump_regular_line(dump_format address_to format,
 
                 if (format->kind == DUMP_CHARACTER)
                         made += dump_character_field(line + made, bytes[field]);
+                else if (format->kind == DUMP_NAMED)
+                        made += dump_named_field(line + made, bytes[field]);
                 else
                 {
                         positive left = length - field * format->size;
@@ -6438,7 +6539,7 @@ static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AjNtv",
+            .allowed = (string_address) "AabcdfhijlNostvx",
             .valued = (string_address) "AjNt",
             .longs = dump_od_longs,
             .seen = dump_od_seen,

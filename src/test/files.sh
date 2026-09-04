@@ -1976,10 +1976,17 @@ effect 'empty input' split ': > input; "$TOOL" -b3 input empty-'
 effect 'existing output' split 'printf old-and-long > hit-aa; printf new | "$TOOL" -b3 - hit-'
 effect 'input collision' split 'printf source > same-aa; "$TOOL" -b3 same-aa same-'
 effect 'fixed suffix exhausted' split 'head -c 27 /dev/zero > input; "$TOOL" -a1 -b1 input short-'
+effect 'line bytes' split 'printf "a\nbb\nccccc\nd\n" > input; "$TOOL" -C4 input cap-'
+effect 'line bytes exact and overlong records' split 'printf "123\n1234\n12345678" > input; "$TOOL" --line-bytes=4 input cap-'
+effect 'line bytes standard input' split 'printf "a\nbbbbb\ncc\n" | "$TOOL" -C4 - cap-'
+effect 'line bytes nul records' split 'printf "one\0two\0three\0" > input; "$TOOL" -C7 -t "\0" input cap-'
+effect 'byte distribution' split 'printf abcdefghij > input; "$TOOL" -n3 input dist-'
+effect 'distribution creates empty pieces' split ': > input; "$TOOL" --number=3 input empty-'
+effect 'distribution standard input' split 'printf abcdefghij | "$TOOL" -n3 - pipe-'
+rejected 'unsupported line-aware distribution' split -n l/2 "$fixture/alpha"
+rejected 'unsupported round-robin distribution' split -n r/2 "$fixture/alpha"
 answered 'zero byte count' split -b0 "$fixture/alpha"
 answered 'zero line count' split -l0 "$fixture/alpha"
-answered 'unsupported line bytes' split -C4 "$fixture/alpha"
-answered 'unsupported distribution' split -n2 "$fixture/alpha"
 
 group csplit
 effect 'line' csplit 'seq 1 10 > input; "$TOOL" input 3 > said'

@@ -23,7 +23,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei whereis mcookie uuidgen uuidparse col colcrt colrm column dmesg \
+        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
         logger look line ul; do
         ln -s "$subject" "$work/bin/$name"
 done
@@ -136,7 +136,7 @@ section util-linux
 group reference
 for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei mcookie uuidgen uuidparse col colcrt colrm column dmesg \
+        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
         logger look ul; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
@@ -1136,6 +1136,65 @@ subject 'column metadata rejected' lslocks \
 subject 'holders census rejected' lslocks \
         '"$TOOL" -o HOLDERS >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
+group mesg
+cat > "$work/mesg-pty.py" <<'PY'
+import errno
+import fcntl
+import os
+import pty
+import subprocess
+import sys
+import termios
+
+tool = sys.argv[1]
+
+def one(arguments, initial):
+    master, slave = pty.openpty()
+    path = os.ttyname(slave)
+    os.fchmod(slave, initial)
+
+    def session():
+        os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
+
+    child = subprocess.Popen([tool] + arguments, stdin=slave, stdout=slave,
+                             stderr=slave, close_fds=True, preexec_fn=session)
+    os.close(slave)
+    output = bytearray()
+    while True:
+        try:
+            part = os.read(master, 4096)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not part:
+            break
+        output += part
+    status = child.wait()
+    mode = os.stat(path).st_mode & 0o777
+    os.close(master)
+    said = bytes(output).replace(b"\r", b"").decode("utf-8", "strict")
+    print("%s %03o %d %03o <%s>" %
+          (" ".join(arguments) or "query", initial, status, mode,
+           said.replace("\n", "|")))
+
+one([], 0o620)
+one([], 0o600)
+one(["-v", "n"], 0o620)
+one(["-v", "y"], 0o600)
+one(["yes"], 0o600)
+one(["no"], 0o620)
+PY
+compare 'tty query and permission transitions' mesg \
+        'python3 "$1/mesg-pty.py" "$TOOL"' sh "$work"
+subject 'non-tty status is quiet' mesg \
+        '"$TOOL" > "$0/out" 2> "$0/error"; [ "$?" = 2 ] && [ ! -s "$0/out" ] && [ ! -s "$0/error" ]' \
+        "$work"
+subject 'verbose non-tty diagnostic' mesg \
+        '"$TOOL" -v > "$0/out" 2> "$0/error"; [ "$?" = 2 ] && [ ! -s "$0/out" ] && grep -qx "mesg: no tty" "$0/error"' \
+        "$work"
+
 group logger
 cat > "$work/logger-wire.py" <<'PY'
 import os
@@ -1531,7 +1590,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hexdump ionice kill line logger look lsblk lscpu lsfd lslocks lsmem lsns mcookie mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid whereis'
+supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hexdump ionice kill line logger look lsblk lscpu lsfd lslocks lsmem lsns mcookie mesg mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid whereis'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

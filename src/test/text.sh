@@ -188,6 +188,7 @@ printf 'second file begins a separate paragraph\n' > "$work/fmt_part_two"
 # refill-crossing record and an input form feed exercise the two cases which
 # cannot be represented by a short, newline-only sample.
 seq 1 120 > "$work/pr_many"
+printf 'r00\nr01\nr02\nr03\nr04\nr05\nr06\nr07\nr08\nr09\nr10\nr11\nr12\nr13\nr14\nr15\n' > "$work/pr_balance"
 printf 'left\nlonger-left\nlast\n' > "$work/pr_left"
 printf 'right\nr2\n' > "$work/pr_right"
 printf 'before\fafter\ntail\n' > "$work/pr_formfeed"
@@ -1327,6 +1328,8 @@ compare 'input form feed' pr pr_formfeed -t -l 2
 compare 'omit pagination' pr pr_formfeed -T -l 2
 compare 'double space'    pr pr_many -t -d -l 8
 compare 'columns down'    pr pr_many -t -3 -w 31
+compare 'balanced final columns' pr pr_balance -t -3 -w 41 -l 8
+compare 'balanced numbered columns' pr pr_balance -t -3 -n:3 -w 41 -l 8
 compare 'columns across'  pr pr_many -t -3 -a -w 31
 compare 'column separator' pr pr_many -t -2 -w 20 -s:
 compare 'separator string' pr pr_many -t -2 -w 22 -S '::'
@@ -1336,6 +1339,10 @@ compare 'numbered range reset' pr pr_many -t -l 7 -n -N 5 +2
 compare 'numbered columns' pr pr_many -t -2 -n -w 30
 compare 'margin width'    pr pr_many -l 12 -D '%Y' -o 4 -w 40
 compare 'page truncate'   pr pr_many -t -W 1
+compare 'explicit one column truncation' pr pr_wide -t -1 -w 8
+compare 'one column keeps records whole' pr pr_wide -t -1
+compare 'column separator keeps records whole' pr pr_wide -t -2 -s:
+compare 'merged single file keeps records whole' pr - -m -t "$work/pr_wide"
 compare 'input tab width' pr g -t -e4
 compare 'output tab width' pr pr_many -t -2 -i4 -w 20
 compare 'merge files'     pr - -m -t -w 30 "$work/pr_left" "$work/pr_right"

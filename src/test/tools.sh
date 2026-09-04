@@ -936,6 +936,29 @@ compare 'od duplicate folding' od "$work/dump-repeat"
 compare 'od duplicate visible' od -v "$work/dump-repeat"
 compare 'od concatenated files' od -A x -t x1 "$work/dump-first" "$work/dump-second"
 compare 'od empty final address' od "$work/dump-empty"
+compare 'od legacy named characters' od -An -a "$work/dump-short"
+compare 'od legacy byte octal' od -An -b "$work/dump-short"
+compare 'od legacy characters' od -An -c "$work/dump-short"
+compare 'od legacy unsigned words' od -An -d "$work/dump-short"
+compare 'od legacy short hex' od -An -h "$work/dump-short"
+compare 'od legacy signed ints' od -An -i "$work/dump-short"
+compare 'od legacy signed longs' od -An -l "$work/dump-short"
+compare 'od legacy word octal' od -An -o "$work/dump-short"
+compare 'od legacy signed shorts' od -An -s "$work/dump-short"
+compare 'od legacy word hex' od -An -x "$work/dump-short"
+compare 'od legacy format order' od -An -bc "$work/dump-short"
+
+printf 'pipeline\n' | od -An -c > "$work/want" 2>/dev/null
+want_status=$?
+printf 'pipeline\n' | "$bin/od" -An -c > "$work/got" 2>/dev/null
+got_status=$?
+if cmp -s "$work/want" "$work/got" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'od -An -c pipeline' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
 
 if command -v hexdump > /dev/null 2>&1; then
         compare 'hexdump canonical' hexdump -C "$work/dump-short"
@@ -956,6 +979,8 @@ fi
 # it and falling back to a stock row would be plausible but corrupt output.
 "$bin/od" -t f4 "$work/dump-short" > /dev/null 2>&1
 check 'od unsupported float refused' 1 "$(( $? != 0 ))"
+"$bin/od" -f "$work/dump-short" > /dev/null 2>&1
+check 'od legacy float refused' 1 "$(( $? != 0 ))"
 "$bin/hexdump" -e '1/1 "%02x"' "$work/dump-short" > /dev/null 2>&1
 check 'hexdump expression refused' 1 "$(( $? != 0 ))"
 
