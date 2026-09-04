@@ -119,18 +119,97 @@ Ranked by the share each attacks, not by how interesting it is.
    it is the only item whose win grows with the image rather than being
    fixed per spawn.
 
+## What being the kernel unlocks
+
+Everything above stays inside what a module may call. We are not a
+module: kernel/patch/apply already claims symbols from lib/string.c,
+displaces objects out of an architecture's Makefile and grafts our own
+Kconfig into the tree. Linux's source is ours to change, and three of
+the costs above only move if we change it.
+
+First, an honest correction to the table at the top. Those 43.6
+microseconds end at start_thread. The page faults that populate the new
+address space and the teardown that dismantles it happen after, and are
+counted in no phase. In the spawn-loop profile they are around six per
+cent of everything the guest kernel does, and the scheduler placing,
+running and reaping a task that lives for microseconds is another ten.
+Both are outside the number, and both are reachable only from inside the
+kernel.
+
+**A. The text as one mapping instead of two hundred.** SPARK_BASE is
+0x400000, already on a two megabyte boundary, and the text is 766 KB, so
+it sits inside a single PMD's span today. What stops that span being one
+mapping is that the writable data segment starts immediately after the
+text inside the same two megabytes. Padding the data segment to the next
+boundary in the link script gives the text a region of its own, and a
+backing store able to hand out a large folio then turns two hundred page
+mappings, their faults, their reverse mappings, their teardown and their
+TLB entries into one of each. That is a link script line and a decision
+about where the image lives, not a kernel patch, and it is the cheapest
+large win on this page.
+
+**B. One page table for every spark process.** The ceiling version of A.
+Every spark program maps the identical text at the identical address, so
+the page table entries describing it are identical in every process and
+are built and destroyed once per spawn for no reason. A single PMD page,
+owned by the module, populated once, and pointed at by every spark
+process would make mapping the text a single store and unmapping it a
+single reference drop. Linux already does exactly this for hugetlb and
+nowhere else. Doing it for a file mapping means teaching the reverse
+map that one entry stands for many address spaces, keeping teardown from
+freeing a table it does not own, and being certain reclaim never walks
+it. This is a real kernel feature with real correctness risk, and it
+should not be started until A has shown what the mapping is worth.
+
+**C. Run the child where the parent already is.** The parent asks for a
+spawn and then immediately blocks waiting for it. The scheduler does not
+know that: it runs the wake-up balancer, picks a destination CPU by
+walking the domains, and starts the child cold on another core while the
+parent's cache lines sit warm on this one. For a task that lives
+microseconds this is entirely loss, and the scheduler is around a tenth
+of the spawn loop. Placing a spark child on its parent's CPU and
+skipping the domain walk is a small patch to the path Linux would never
+take by default, because no ordinary fork can promise the parent is
+about to sleep. Ours can, because the module issued both halves.
+
+**D. An empty descriptor table by construction.** The child duplicates
+the caller's table and then discards it. Linux offers no clone flag for
+"give me a fresh empty table" because no userspace API has ever needed
+one; the flags are a public contract and this would be a private one. An
+internal field in the clone arguments, honoured in copy_files, is a
+handful of lines. Be honest about the size: the measured duplication is
+under one per cent today, because the shell holds few descriptors. It
+matters as a correctness property first -- a spawned tool should not
+inherit descriptors nobody named -- and as a cost only for a caller with
+a large table.
+
+**E. A load path that never builds a second stack.** Item 1 above,
+written as the kernel change it really is. Today the generic prologue
+builds an argument stack because every binary format needs one; ours
+does not, because the module can compose the whole thing. A flag on the
+binary format handler saying "this one supplies its own stack" lets
+bprm_mm_init, copy_strings_kernel and setup_arg_pages be skipped
+entirely rather than trimmed, and takes the prologue with them.
+
+**And the compounding.** These do not add up, they multiply, and the
+pipeline is where that shows. One ioctl starting N stages composes the
+environment block once instead of N times, because every stage of a
+pipeline has the same environment. With A or B the text is mapped once
+for the whole pipeline rather than once per stage. With C the stages
+land on the CPU that already holds the shell's cache. The per-spawn
+savings are multiplied by the stage count, and a four-stage pipeline of
+tools is the shape a shell actually runs.
+
 ## The one that is not on the list
 
-Replacing kernel_execve outright -- a spark_exec that installs a fresh
-mm, maps the three regions, drops the prebuilt stack in and sets the
-registers -- would take the whole 30.6% prologue rather than trimming
-it. It is the largest structural win available and it is left off the
-plan on purpose: begin_new_exec is where credentials are installed,
-threads are killed, ptrace is settled and the security hooks run, and a
-path that skips those is a privilege bug rather than an optimisation.
-Item 1 gets most of the same bytes without touching any of that. If the
-prologue is still the largest phase after 1 and 2, revisit this with the
-hooks kept and only the argument machinery replaced.
+Replacing begin_new_exec. Item E above removes the argument machinery
+around it -- the throwaway stack, the string copy, the shift -- and that
+is the whole of the prologue worth having. begin_new_exec itself is
+where credentials are installed, other threads are killed, ptrace is
+settled and the security hooks run, and a path that skips those is a
+privilege bug rather than an optimisation. The line between E and this
+is exactly the line between doing less work and doing less checking, and
+it is the one line on this page that must not move.
 
 ## How each step is judged
 
