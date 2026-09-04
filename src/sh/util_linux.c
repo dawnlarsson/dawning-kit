@@ -10656,6 +10656,1009 @@ static b32 util_linux_lsblk()
         return 0;
 }
 
+// System V IPC ----------------------------------------------------
+
+#define UL_IPC_MESSAGE 0
+#define UL_IPC_SHARED 1
+#define UL_IPC_SEMAPHORE 2
+#define UL_IPC_TYPES 3
+
+#define UL_IPC_MESSAGE_BIT ((positive)1 << UL_IPC_MESSAGE)
+#define UL_IPC_SHARED_BIT ((positive)1 << UL_IPC_SHARED)
+#define UL_IPC_SEMAPHORE_BIT ((positive)1 << UL_IPC_SEMAPHORE)
+#define UL_IPC_ALL_BITS                                                       \
+        (UL_IPC_MESSAGE_BIT | UL_IPC_SHARED_BIT | UL_IPC_SEMAPHORE_BIT)
+
+#define UL_IPC_CREAT 01000
+#define UL_IPC_EXCL 02000
+#define UL_IPC_RMID 0
+
+typedef struct
+{
+        p64 key;
+        positive id;
+        positive mode;
+        positive uid;
+        positive gid;
+        positive cuid;
+        positive cgid;
+        positive size;
+        positive count;
+        positive pid_one;
+        positive pid_two;
+        p64 time_one;
+        p64 time_two;
+        p64 change_time;
+        p8 type;
+} ul_ipc_row;
+
+typedef struct
+{
+        ul_ipc_row address_to rows;
+        positive count;
+        positive capacity;
+} ul_ipc_snapshot;
+
+static ul_ipc_snapshot ul_ipc;
+static bool ul_ipc_bytes;
+static bool ul_ipc_numeric_permissions;
+
+static const string_address ul_ipc_paths[] = {
+    (string_address)"/proc/sysvipc/msg",
+    (string_address)"/proc/sysvipc/shm",
+    (string_address)"/proc/sysvipc/sem",
+};
+
+static bool ul_ipc_number(p8 address_to address_to cursor, positive base,
+                          p64 address_to into)
+{
+        string_address field = storage_field(cursor);
+        string_address at = field;
+        positive value;
+        if (!field || !string_digits_checked(address_of at, base,
+                                             address_of value) ||
+            string_get(at))
+                return false;
+        address_to into = value;
+        return true;
+}
+
+static bool ul_ipc_parse(p8 type, p8 address_to line,
+                         ul_ipc_row address_to row)
+{
+        p8 address_to cursor = line;
+        string_address key = storage_field(address_of cursor);
+        positive used = 0;
+        bipolar signed_key;
+        p64 value;
+        if (!key)
+                return false;
+        signed_key = string_bipolar(key, address_of used);
+        if (!used || key[used])
+                return false;
+        memory_fill(row, 0, sizeof(*row));
+        row->key = (p64)(p32)(b32)signed_key;
+        row->type = type;
+
+#define UL_IPC_FIELD(member, base)                                           \
+        do {                                                                 \
+                if (!ul_ipc_number(address_of cursor, base, address_of value)) \
+                        return false;                                        \
+                row->member = (positive)value;                               \
+        } while (0)
+        UL_IPC_FIELD(id, 10);
+        UL_IPC_FIELD(mode, 8);
+        if (type == UL_IPC_SHARED)
+        {
+                UL_IPC_FIELD(size, 10);
+                UL_IPC_FIELD(pid_one, 10);
+                UL_IPC_FIELD(pid_two, 10);
+                UL_IPC_FIELD(count, 10);
+                UL_IPC_FIELD(uid, 10);
+                UL_IPC_FIELD(gid, 10);
+                UL_IPC_FIELD(cuid, 10);
+                UL_IPC_FIELD(cgid, 10);
+                if (!ul_ipc_number(address_of cursor, 10,
+                                   address_of row->time_one) ||
+                    !ul_ipc_number(address_of cursor, 10,
+                                   address_of row->time_two) ||
+                    !ul_ipc_number(address_of cursor, 10,
+                                   address_of row->change_time))
+                        return false;
+        }
+        else if (type == UL_IPC_MESSAGE)
+        {
+                UL_IPC_FIELD(size, 10);
+                UL_IPC_FIELD(count, 10);
+                UL_IPC_FIELD(pid_one, 10);
+                UL_IPC_FIELD(pid_two, 10);
+                UL_IPC_FIELD(uid, 10);
+                UL_IPC_FIELD(gid, 10);
+                UL_IPC_FIELD(cuid, 10);
+                UL_IPC_FIELD(cgid, 10);
+                if (!ul_ipc_number(address_of cursor, 10,
+                                   address_of row->time_one) ||
+                    !ul_ipc_number(address_of cursor, 10,
+                                   address_of row->time_two) ||
+                    !ul_ipc_number(address_of cursor, 10,
+                                   address_of row->change_time))
+                        return false;
+        }
+        else
+        {
+                UL_IPC_FIELD(count, 10);
+                UL_IPC_FIELD(uid, 10);
+                UL_IPC_FIELD(gid, 10);
+                UL_IPC_FIELD(cuid, 10);
+                UL_IPC_FIELD(cgid, 10);
+                if (!ul_ipc_number(address_of cursor, 10,
+                                   address_of row->time_one) ||
+                    !ul_ipc_number(address_of cursor, 10,
+                                   address_of row->change_time))
+                        return false;
+        }
+#undef UL_IPC_FIELD
+        return true;
+}
+
+static bool ul_ipc_snapshot_load(positive types)
+{
+        byte_store stores[UL_IPC_TYPES];
+        memory_fill(stores, 0, sizeof(stores));
+        memory_fill(address_of ul_ipc, 0, sizeof(ul_ipc));
+
+        bool okay = true;
+        for (positive type = 0; type < UL_IPC_TYPES; type++)
+        {
+                if (!(types & ((positive)1 << type)))
+                        continue;
+                if (!file_store_slurp(ul_ipc_paths[type], stores + type))
+                {
+                        okay = false;
+                        break;
+                }
+                positive lines = 0;
+                for (positive at = 0; at < stores[type].used; at++)
+                        lines += stores[type].bytes[at] == '\n';
+                if (lines)
+                        ul_ipc.capacity += lines - 1;
+        }
+        if (okay && ul_ipc.capacity)
+        {
+                if (ul_ipc.capacity >
+                    (TEXT_ARENA_BYTES - text_arena_used) / sizeof(ul_ipc_row))
+                        okay = false;
+                else
+                        ul_ipc.rows = text_arena_take(
+                            ul_ipc.capacity * sizeof(ul_ipc_row));
+                if (!ul_ipc.rows)
+                        okay = false;
+        }
+
+        for (positive type = 0; okay && type < UL_IPC_TYPES; type++)
+        {
+                if (!(types & ((positive)1 << type)))
+                        continue;
+                p8 address_to cursor = stores[type].bytes;
+                p8 address_to limit = cursor + stores[type].used;
+                (void)storage_line_next(address_of cursor, limit);
+                p8 address_to line;
+                while ((line = storage_line_next(address_of cursor, limit)))
+                {
+                        if (!string_get(line))
+                                continue;
+                        if (ul_ipc.count == ul_ipc.capacity ||
+                            !ul_ipc_parse((p8)type, line,
+                                          ul_ipc.rows + ul_ipc.count))
+                        {
+                                okay = false;
+                                break;
+                        }
+                        ul_ipc.count++;
+                }
+        }
+        for (positive type = 0; type < UL_IPC_TYPES; type++)
+                byte_store_release(stores + type);
+        return okay;
+}
+
+enum
+{
+        UL_IPC_KEY,
+        UL_IPC_ID,
+        UL_IPC_PERMS,
+        UL_IPC_OWNER,
+        UL_IPC_CUID,
+        UL_IPC_CUSER,
+        UL_IPC_CGID,
+        UL_IPC_CGROUP,
+        UL_IPC_UID,
+        UL_IPC_USER,
+        UL_IPC_GID,
+        UL_IPC_GROUP,
+        UL_IPC_CTIME,
+        UL_IPC_SIZE,
+        UL_IPC_NATTCH,
+        UL_IPC_STATUS,
+        UL_IPC_ATTACH,
+        UL_IPC_DETACH,
+        UL_IPC_COMMAND,
+        UL_IPC_CPID,
+        UL_IPC_LPID,
+        UL_IPC_USEDBYTES,
+        UL_IPC_MSGS,
+        UL_IPC_SEND,
+        UL_IPC_RECV,
+        UL_IPC_LSPID,
+        UL_IPC_LRPID,
+        UL_IPC_NSEMS,
+        UL_IPC_OTIME,
+        UL_IPC_COLUMNS,
+};
+
+static const ul_table_column ul_ipc_columns[] = {
+    {"key", "KEY", 10, false, UL_TABLE_STRING},
+    {"id", "ID", 0, false, UL_TABLE_STRING},
+    {"perms", "PERMS", 9, true, UL_TABLE_STRING},
+    {"owner", "OWNER", 5, true, UL_TABLE_STRING},
+    {"cuid", "CUID", 0, true, UL_TABLE_STRING},
+    {"cuser", "CUSER", 0, false, UL_TABLE_STRING},
+    {"cgid", "CGID", 0, true, UL_TABLE_STRING},
+    {"cgroup", "CGROUP", 0, false, UL_TABLE_STRING},
+    {"uid", "UID", 0, true, UL_TABLE_STRING},
+    {"user", "USER", 0, false, UL_TABLE_STRING},
+    {"gid", "GID", 0, true, UL_TABLE_STRING},
+    {"group", "GROUP", 0, false, UL_TABLE_STRING},
+    {"ctime", "CTIME", 5, false, UL_TABLE_STRING},
+    {"size", "SIZE", 0, true, UL_TABLE_STRING},
+    {"nattch", "NATTCH", 0, true, UL_TABLE_STRING},
+    {"status", "STATUS", 0, false, UL_TABLE_NULL_STRING},
+    {"attach", "ATTACH", 5, false, UL_TABLE_NULL_STRING},
+    {"detach", "DETACH", 5, false, UL_TABLE_NULL_STRING},
+    {"command", "COMMAND", 0, false, UL_TABLE_NULL_STRING},
+    {"cpid", "CPID", 0, true, UL_TABLE_STRING},
+    {"lpid", "LPID", 0, true, UL_TABLE_STRING},
+    {"usedbytes", "USEDBYTES", 0, true, UL_TABLE_STRING},
+    {"msgs", "MSGS", 0, false, UL_TABLE_STRING},
+    {"send", "SEND", 4, false, UL_TABLE_NULL_STRING},
+    {"recv", "RECV", 4, false, UL_TABLE_NULL_STRING},
+    {"lspid", "LSPID", 0, true, UL_TABLE_STRING},
+    {"lrpid", "LRPID", 0, true, UL_TABLE_STRING},
+    {"nsems", "NSEMS", 0, true, UL_TABLE_STRING},
+    {"otime", "OTIME", 5, false, UL_TABLE_NULL_STRING},
+};
+
+static string_address ul_ipc_key(p8 address_to text, p64 key)
+{
+        memory_copy(text, "0x", 2);
+        for (positive digit = 0; digit < 8; digit++)
+                text[2 + digit] = storage_hex_digit(
+                    (p8)((key >> ((7 - digit) * 4)) & 15), false);
+        text[10] = end;
+        return text;
+}
+
+static string_address ul_ipc_permissions(p8 address_to text, positive mode)
+{
+        if (ul_ipc_numeric_permissions)
+        {
+                positive length = positive_into_base(text, mode & 0777,
+                                                     8, false);
+                text[length] = end;
+                return text;
+        }
+        static const positive bits[] = {0400, 0200, 0100, 0040, 0020,
+                                         0010, 0004, 0002, 0001};
+        static const p8 letters[] = "rwxrwxrwx";
+        for (positive at = 0; at < 9; at++)
+                text[at] = mode & bits[at] ? letters[at] : '-';
+        text[9] = end;
+        return text;
+}
+
+static string_address ul_ipc_time(p8 address_to text, p64 stamp)
+{
+        if (!stamp)
+                return (string_address)"";
+        time_t value = (time_t)stamp;
+        tm broken;
+        if (!localtime_r(address_of value, address_of broken) ||
+            !clock_format_extended(text, 32, "%H:%M", address_of broken))
+                return (string_address)"";
+        return text;
+}
+
+static string_address ul_ipc_account(p8 address_to text, positive id,
+                                     bool group, bool named)
+{
+        /* Every ul_table field callback receives 96 bytes.  Account database
+           names may be FILE_NAME_MAX bytes, so use the bounded lookup rather
+           than file_account_label's listing-sized contract. */
+        if (named && (group ? file_group_name(id, text, 96)
+                            : file_user_name(id, text, 96)))
+                return text;
+        positive_into_string(text, id);
+        return text;
+}
+
+static string_address ul_ipc_field(address_any opaque, p8 column,
+                                   p8 address_to scratch)
+{
+        ul_ipc_row address_to row = (ul_ipc_row address_to)opaque;
+        switch (column)
+        {
+        case UL_IPC_KEY: return ul_ipc_key(scratch, row->key);
+        case UL_IPC_ID: positive_into_string(scratch, row->id); return scratch;
+        case UL_IPC_PERMS: return ul_ipc_permissions(scratch, row->mode);
+        case UL_IPC_OWNER: return ul_ipc_account(scratch, row->uid, false, true);
+        case UL_IPC_CUID: positive_into_string(scratch, row->cuid); return scratch;
+        case UL_IPC_CUSER: return ul_ipc_account(scratch, row->cuid, false, true);
+        case UL_IPC_CGID: positive_into_string(scratch, row->cgid); return scratch;
+        case UL_IPC_CGROUP: return ul_ipc_account(scratch, row->cgid, true, true);
+        case UL_IPC_UID: positive_into_string(scratch, row->uid); return scratch;
+        case UL_IPC_USER: return ul_ipc_account(scratch, row->uid, false, true);
+        case UL_IPC_GID: positive_into_string(scratch, row->gid); return scratch;
+        case UL_IPC_GROUP: return ul_ipc_account(scratch, row->gid, true, true);
+        case UL_IPC_CTIME: return ul_ipc_time(scratch, row->change_time);
+        case UL_IPC_SIZE:
+                return ul_lscpu_cache_size(row->size, ul_ipc_bytes, false);
+        case UL_IPC_NATTCH:
+        case UL_IPC_MSGS:
+        case UL_IPC_NSEMS:
+                positive_into_string(scratch, row->count); return scratch;
+        case UL_IPC_STATUS: return (string_address)"";
+        case UL_IPC_ATTACH:
+        case UL_IPC_SEND:
+        case UL_IPC_OTIME: return ul_ipc_time(scratch, row->time_one);
+        case UL_IPC_DETACH:
+        case UL_IPC_RECV: return ul_ipc_time(scratch, row->time_two);
+        case UL_IPC_COMMAND: return (string_address)"";
+        case UL_IPC_CPID:
+        case UL_IPC_LSPID:
+                positive_into_string(scratch, row->pid_one); return scratch;
+        case UL_IPC_LPID:
+        case UL_IPC_LRPID:
+                positive_into_string(scratch, row->pid_two); return scratch;
+        default:
+                return ul_lscpu_cache_size(row->size, ul_ipc_bytes, false);
+        }
+}
+
+static bool ul_ipc_column_applies(p8 type, p8 column)
+{
+        if (column <= UL_IPC_CTIME)
+                return true;
+        if (type == UL_IPC_SHARED)
+                return column >= UL_IPC_SIZE && column <= UL_IPC_LPID;
+        if (type == UL_IPC_MESSAGE)
+                return column >= UL_IPC_USEDBYTES && column <= UL_IPC_LRPID;
+        return column == UL_IPC_NSEMS || column == UL_IPC_OTIME;
+}
+
+static positive ul_ipc_filter(p8 type, bool have_id, positive id)
+{
+        positive kept = 0;
+        for (positive at = 0; at < ul_ipc.count; at++)
+                if (ul_ipc.rows[at].type == type &&
+                    (!have_id || ul_ipc.rows[at].id == id))
+                        ul_ipc.rows[kept++] = ul_ipc.rows[at];
+        ul_ipc.count = kept;
+        return kept;
+}
+
+static bool ul_ipc_octal(string_address text, positive address_to into)
+{
+        string_address at = text;
+        positive value;
+        if (!text || !string_digits_checked(address_of at, 8,
+                                             address_of value) ||
+            string_get(at) || value > 0777)
+                return false;
+        address_to into = value;
+        return true;
+}
+
+static bool ul_ipc_key_number(string_address text, positive address_to into)
+{
+        string_address at = text;
+        if (!at || !string_get(at))
+                return false;
+        if (string_is(at, '-') || string_is(at, '+'))
+        {
+                positive used = 0;
+                bipolar value = string_bipolar(at, address_of used);
+                if (!used || string_get(at + used) || value < b32_min ||
+                    value > b32_max)
+                        return false;
+                address_to into = (positive)(p32)(b32)value;
+                return true;
+        }
+        positive base = 10;
+        if (string_is(at, '0') &&
+            (string_get(at + 1) == 'x' || string_get(at + 1) == 'X'))
+        {
+                at += 2;
+                base = 16;
+        }
+        else if (string_is(at, '0') && byte_is_digit(string_get(at + 1)))
+                base = 8;
+        positive value;
+        if (!string_digits_checked(address_of at, base, address_of value) ||
+            string_get(at) || value > p32_max)
+                return false;
+        address_to into = value;
+        return true;
+}
+
+static bipolar ul_ipc_remove_one(p8 type, positive id)
+{
+        if (type == UL_IPC_MESSAGE)
+                return system_call_3(syscall(msgctl), id, UL_IPC_RMID, 0);
+        if (type == UL_IPC_SHARED)
+                return system_call_3(syscall(shmctl), id, UL_IPC_RMID, 0);
+        return system_call_4(syscall(semctl), id, 0, UL_IPC_RMID, 0);
+}
+
+static string_address ul_ipc_kind(p8 type)
+{
+        return type == UL_IPC_MESSAGE
+            ? (string_address)"message queue"
+            : type == UL_IPC_SHARED
+            ? (string_address)"shared memory segment"
+            : (string_address)"semaphore";
+}
+
+static bipolar ul_ipc_create_one(p8 type, positive value, positive mode,
+                                 file_random_state address_to random)
+{
+        for (positive attempt = 0; attempt < 128; attempt++)
+        {
+                positive key = (positive)(b32)file_random_word(random);
+                if (!key)
+                        continue;
+                positive flags = UL_IPC_CREAT | UL_IPC_EXCL | mode;
+                bipolar made = type == UL_IPC_MESSAGE
+                    ? system_call_2(syscall(msgget), key, flags)
+                    : type == UL_IPC_SHARED
+                    ? system_call_3(syscall(shmget), key, value, flags)
+                    : system_call_3(syscall(semget), key, value, flags);
+                if (made >= 0 || made != -ERROR_EXISTS)
+                        return made;
+        }
+        return -ERROR_EXISTS;
+}
+
+static const file_long ul_ipcmk_longs[] = {
+    {"shmem", 'M'}, {"posix-shmem", 'm'}, {"semaphore", 'S'},
+    {"posix-semaphore", 's'}, {"queue", 'Q'}, {"posix-mqueue", 'q'},
+    {"mode", 'p'}, {"name", 'n'}, {"help", 'h'}, {"version", 'V'},
+    {null, 0},
+};
+
+static b32 util_linux_ipcmk()
+{
+        file_taking taking = {
+            .program = "ipcmk", .allowed = "MmSsQqpnVh",
+            .valued = "MmSpn", .longs = ul_ipcmk_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("ipcmk", "unexpected operand");
+        if (taking.flags &
+            (FILE_FLAG('m') | FILE_FLAG('s') | FILE_FLAG('q') |
+             FILE_FLAG('n')))
+                return ul_bad_usage("ipcmk", "POSIX IPC is not supported");
+
+        bool shared = (taking.flags & FILE_FLAG('M')) != 0;
+        bool message = (taking.flags & FILE_FLAG('Q')) != 0;
+        bool semaphore = (taking.flags & FILE_FLAG('S')) != 0;
+        if (!shared && !message && !semaphore)
+                return ul_bad_usage("ipcmk", "no System V resource requested");
+        positive mode = 0644;
+        if ((taking.flags & FILE_FLAG('p')) &&
+            !ul_ipc_octal(file_option_value(address_of taking, 'p'),
+                          address_of mode))
+                return ul_bad_usage("ipcmk", "invalid mode");
+
+        positive shared_size = 0;
+        positive semaphores = 0;
+        if (shared &&
+            (!dd_size(file_option_value(address_of taking, 'M'),
+                      address_of shared_size) || !shared_size))
+                return ul_bad_usage("ipcmk", "invalid shared-memory size");
+        if (semaphore &&
+            (!ul_unsigned(file_option_value(address_of taking, 'S'),
+                          b32_max, address_of semaphores) || !semaphores))
+                return ul_bad_usage("ipcmk", "invalid semaphore count");
+
+        file_random_state random;
+        if (!file_random_seed(address_of random))
+                return ul_bad_usage("ipcmk", "kernel randomness unavailable");
+        bipolar ids[UL_IPC_TYPES] = {-1, -1, -1};
+        if (shared)
+                ids[UL_IPC_SHARED] = ul_ipc_create_one(
+                    UL_IPC_SHARED, shared_size, mode, address_of random);
+        bool failed = shared && ids[UL_IPC_SHARED] < 0;
+        if (message && !failed)
+                ids[UL_IPC_MESSAGE] = ul_ipc_create_one(
+                    UL_IPC_MESSAGE, 0, mode, address_of random);
+        failed |= message && ids[UL_IPC_MESSAGE] < 0;
+        if (semaphore && !failed)
+                ids[UL_IPC_SEMAPHORE] = ul_ipc_create_one(
+                    UL_IPC_SEMAPHORE, semaphores, mode, address_of random);
+        failed |= semaphore && ids[UL_IPC_SEMAPHORE] < 0;
+        if (failed)
+        {
+                for (positive type = 0; type < UL_IPC_TYPES; type++)
+                        if (ids[type] >= 0)
+                        {
+                                bipolar removed = ul_ipc_remove_one(
+                                    (p8)type, (positive)ids[type]);
+                                if (removed < 0)
+                                        string_format(
+                                            file_fail,
+                                            "ipcmk: failed to remove retained %s id %b: %s\n",
+                                            ul_ipc_kind((p8)type), ids[type],
+                                            file_reason(removed));
+                        }
+                return ul_bad_usage("ipcmk", "resource creation failed");
+        }
+        if (shared)
+                string_format(log, "Shared memory id: %b\n",
+                              ids[UL_IPC_SHARED]);
+        if (message)
+                string_format(log, "Message queue id: %b\n",
+                              ids[UL_IPC_MESSAGE]);
+        if (semaphore)
+                string_format(log, "Semaphore id: %b\n",
+                              ids[UL_IPC_SEMAPHORE]);
+        log_flush();
+        return 0;
+}
+
+static const file_long ul_ipcrm_longs[] = {
+    {"shmem-id", 'm'}, {"shmem-key", 'M'}, {"queue-id", 'q'},
+    {"queue-key", 'Q'}, {"semaphore-id", 's'}, {"semaphore-key", 'S'},
+    {"posix-shmem", 'x'}, {"posix-mqueue", 'y'},
+    {"posix-semaphore", 'z'}, {"all", 'a'}, {"verbose", 'v'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
+};
+
+static bipolar ul_ipc_id_by_key(p8 type, positive key)
+{
+        if (!key)
+                return -ERROR_INVALID;
+        if (type == UL_IPC_MESSAGE)
+                return system_call_2(syscall(msgget), key, 0);
+        if (type == UL_IPC_SHARED)
+                return system_call_3(syscall(shmget), key, 0, 0);
+        return system_call_3(syscall(semget), key, 0, 0);
+}
+
+static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
+                          bool verbose)
+{
+        positive value;
+        if (!(key ? ul_ipc_key_number(text, address_of value)
+                  : ul_unsigned(text, b32_max, address_of value)))
+        {
+                string_format(file_fail, "ipcrm: invalid %s (%s)\n",
+                              key ? (string_address)"key"
+                                  : (string_address)"id", text);
+                return 1;
+        }
+        bipolar id = key ? ul_ipc_id_by_key(type, value) : (bipolar)value;
+        bipolar removed = id < 0 ? id
+                                  : ul_ipc_remove_one(type, (positive)id);
+        if (removed < 0)
+        {
+                string_format(file_fail, "ipcrm: invalid %s (%s)\n",
+                              key ? (string_address)"key"
+                                  : (string_address)"id", text);
+                return 1;
+        }
+        if (verbose)
+        {
+                string_format(log, "removing %s id `%b'\n",
+                              ul_ipc_kind(type), id);
+        }
+        return 0;
+}
+
+static b32 util_linux_ipcrm()
+{
+        file_taking taking = {
+            .program = "ipcrm", .allowed = "mMqQsSxyzavVh",
+            .valued = "mMqQsSxyz", .longs = ul_ipcrm_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "[options] | shm|msg|sem id ...",
+                    address_of answer))
+                return answer;
+        if (taking.flags &
+            (FILE_FLAG('x') | FILE_FLAG('y') | FILE_FLAG('z')))
+                return ul_bad_usage("ipcrm", "POSIX IPC is not supported");
+        if (taking.flags & FILE_FLAG('a'))
+                return ul_bad_usage("ipcrm", "bulk removal is not supported");
+
+        bool verbose = (taking.flags & FILE_FLAG('v')) != 0;
+        b32 failed = 0;
+        static const p8 letters[] = {'q', 'm', 's'};
+        static const p8 keys[] = {'Q', 'M', 'S'};
+        for (positive type = 0; type < UL_IPC_TYPES; type++)
+        {
+                string_address id = file_option_value(address_of taking,
+                                                       letters[type]);
+                string_address key = file_option_value(address_of taking,
+                                                        keys[type]);
+                if (id) failed |= ul_ipcrm_remove((p8)type, id, false, verbose);
+                if (key) failed |= ul_ipcrm_remove((p8)type, key, true, verbose);
+        }
+
+        positive count = (positive)program_argument_count();
+        if (taking.first < count)
+        {
+                string_address kind = program_argument((b32)taking.first++);
+                p8 type = string_equals(kind, "msg") ? UL_IPC_MESSAGE
+                          : string_equals(kind, "shm") ? UL_IPC_SHARED
+                          : string_equals(kind, "sem") ? UL_IPC_SEMAPHORE
+                                                       : UL_IPC_TYPES;
+                if (type == UL_IPC_TYPES || taking.first == count)
+                        return ul_bad_usage("ipcrm", "invalid resource type");
+                while (taking.first < count)
+                        failed |= ul_ipcrm_remove(
+                            type, program_argument((b32)taking.first++), false,
+                            verbose);
+        }
+        if (verbose && !failed)
+                log("resource(s) deleted\n", 20);
+        log_flush();
+        return failed;
+}
+
+static const p8 ul_lsipc_msg_defaults[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_PERMS, UL_IPC_OWNER,
+    UL_IPC_USEDBYTES, UL_IPC_MSGS, UL_IPC_LSPID, UL_IPC_LRPID,
+};
+static const p8 ul_lsipc_shm_defaults[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_PERMS, UL_IPC_OWNER, UL_IPC_SIZE,
+    UL_IPC_NATTCH, UL_IPC_STATUS, UL_IPC_CTIME, UL_IPC_CPID,
+    UL_IPC_LPID, UL_IPC_COMMAND,
+};
+static const p8 ul_lsipc_sem_defaults[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_PERMS, UL_IPC_OWNER, UL_IPC_NSEMS,
+};
+
+static const file_long ul_lsipc_longs[] = {
+    {"shmems", 'm'}, {"posix-shmems", 'M'}, {"queues", 'q'},
+    {"posix-mqueues", 'Q'}, {"semaphores", 's'},
+    {"posix-semaphores", 'S'}, {"global", 'g'}, {"id", 'i'},
+    {"name", 'N'}, {"noheadings", 'H'}, {"notruncate", 'u'},
+    {"time-format", 'F'}, {"bytes", 'b'}, {"creator", 'c'},
+    {"export", 'e'}, {"json", 'J'}, {"newline", 'n'}, {"list", 'l'},
+    {"output", 'o'}, {"numeric-perms", 'P'}, {"raw", 'r'},
+    {"time", 't'}, {"shell", 'y'}, {"help", 'h'}, {"version", 'V'},
+    {null, 0},
+};
+
+static fn ul_lsipc_newline(p8 address_to columns, positive column_count)
+{
+        for (positive row = 0; row < ul_ipc.count; row++)
+        {
+                if (row) log("\n", 1);
+                for (positive field = 0; field < column_count; field++)
+                {
+                        p8 column = columns[field];
+                        p8 scratch[96];
+                        string_address value = ul_ipc_field(
+                            ul_ipc.rows + row, column, scratch);
+                        string_format(log, "%s=\"", ul_ipc_columns[column].heading);
+                        log(value, string_length(value));
+                        log("\"\n", 2);
+                }
+        }
+}
+
+static b32 util_linux_lsipc()
+{
+        file_taking taking = {
+            .program = "lsipc", .allowed = "mMqQsSgiNHuFbceJnlPortyVh",
+            .valued = "iNFo", .longs = ul_lsipc_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking))
+                return 1;
+        if (ul_meta(address_of taking, "-m|-q|-s [options]", address_of answer))
+                return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("lsipc", "unexpected operand");
+        if (taking.flags &
+            (FILE_FLAG('M') | FILE_FLAG('Q') | FILE_FLAG('S') |
+             FILE_FLAG('N')))
+                return ul_bad_usage("lsipc", "POSIX IPC is not supported");
+        if (taking.flags & FILE_FLAG('g'))
+                return ul_bad_usage("lsipc", "global summary is not supported");
+        if (taking.flags &
+            (FILE_FLAG('e') | FILE_FLAG('y') | FILE_FLAG('u')))
+                return ul_bad_usage(
+                    "lsipc", "export/shell/notruncate modes are not supported");
+        if (file_option_value(address_of taking, 'F'))
+                return ul_bad_usage("lsipc", "custom time format is not supported");
+
+        positive selected = ((taking.flags & FILE_FLAG('m')) != 0) +
+                            ((taking.flags & FILE_FLAG('q')) != 0) +
+                            ((taking.flags & FILE_FLAG('s')) != 0);
+        if (selected != 1)
+                return ul_bad_usage("lsipc", "select exactly one System V resource");
+        p8 type = taking.flags & FILE_FLAG('q') ? UL_IPC_MESSAGE
+                  : taking.flags & FILE_FLAG('m') ? UL_IPC_SHARED
+                                                  : UL_IPC_SEMAPHORE;
+        const p8 address_to defaults = type == UL_IPC_MESSAGE
+            ? ul_lsipc_msg_defaults
+            : type == UL_IPC_SHARED ? ul_lsipc_shm_defaults
+                                    : ul_lsipc_sem_defaults;
+        positive default_count = type == UL_IPC_MESSAGE
+            ? array_count(ul_lsipc_msg_defaults)
+            : type == UL_IPC_SHARED ? array_count(ul_lsipc_shm_defaults)
+                                    : array_count(ul_lsipc_sem_defaults);
+        p8 columns[UL_IPC_COLUMNS];
+        positive column_count = 0;
+        string_address output = file_option_value(address_of taking, 'o');
+        if (output && taking.flags & (FILE_FLAG('c') | FILE_FLAG('t')))
+                return ul_bad_usage(
+                    "lsipc", "--output is incompatible with creator/time");
+        if ((taking.flags & FILE_FLAG('c')) &&
+            (taking.flags & FILE_FLAG('t')))
+                return ul_bad_usage(
+                    "lsipc", "--creator and --time are mutually exclusive");
+        if (output &&
+            !ul_table_column_list(output, ul_ipc_columns, UL_IPC_COLUMNS,
+                                  defaults, default_count, columns,
+                                  address_of column_count))
+                return ul_bad_usage("lsipc", "unknown output column");
+        if (!output)
+                for (positive at = 0; at < default_count; at++)
+                        columns[column_count++] = defaults[at];
+        if (taking.flags & FILE_FLAG('c'))
+        {
+                static const p8 creators[] = {
+                    UL_IPC_CUID, UL_IPC_CGID, UL_IPC_UID, UL_IPC_GID};
+                for (positive at = 0; at < array_count(creators); at++)
+                        (void)ul_table_column_add(columns, address_of column_count,
+                                                  UL_IPC_COLUMNS, creators[at]);
+        }
+        if (taking.flags & FILE_FLAG('t'))
+        {
+                static const p8 shared_times[] = {UL_IPC_ATTACH, UL_IPC_DETACH};
+                static const p8 message_times[] = {
+                    UL_IPC_SEND, UL_IPC_RECV, UL_IPC_CTIME};
+                static const p8 semaphore_times[] = {
+                    UL_IPC_OTIME, UL_IPC_CTIME};
+                const p8 address_to times = type == UL_IPC_SHARED
+                    ? shared_times : type == UL_IPC_MESSAGE
+                    ? message_times : semaphore_times;
+                positive time_count = type == UL_IPC_SHARED
+                    ? array_count(shared_times) : type == UL_IPC_MESSAGE
+                    ? array_count(message_times) : array_count(semaphore_times);
+                for (positive at = 0; at < time_count; at++)
+                        (void)ul_table_column_add(columns, address_of column_count,
+                                                  UL_IPC_COLUMNS, times[at]);
+                /* smartcols keeps the open-ended command field last. */
+                if (type == UL_IPC_SHARED)
+                {
+                        positive command = 0;
+                        while (command < column_count &&
+                               columns[command] != UL_IPC_COMMAND)
+                                command++;
+                        if (command < column_count)
+                        {
+                                for (positive at = command;
+                                     at + 1 < column_count; at++)
+                                        columns[at] = columns[at + 1];
+                                columns[column_count - 1] = UL_IPC_COMMAND;
+                        }
+                }
+        }
+        for (positive at = 0; at < column_count; at++)
+                if (!ul_ipc_column_applies(type, columns[at]))
+                        return ul_bad_usage("lsipc", "column does not apply to resource");
+
+        bool have_id = (taking.flags & FILE_FLAG('i')) != 0;
+        positive id = 0;
+        if (have_id &&
+            !ul_unsigned(file_option_value(address_of taking, 'i'),
+                         b32_max, address_of id))
+                return ul_bad_usage("lsipc", "invalid resource id");
+        if (have_id && !(taking.flags & FILE_FLAG('l')))
+                return ul_bad_usage("lsipc", "--id requires --list");
+
+        text_arena_used = 0;
+        if (!ul_ipc_snapshot_load((positive)1 << type))
+                return ul_bad_usage("lsipc", "cannot read System V IPC snapshot");
+        ul_ipc_filter(type, have_id, id);
+        ul_ipc_bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        ul_ipc_numeric_permissions =
+            (taking.flags & FILE_FLAG('P')) != 0;
+        bool json = (taking.flags & FILE_FLAG('J')) != 0;
+        bool newline = (taking.flags & FILE_FLAG('n')) != 0;
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        if (json + newline + raw > 1)
+                return ul_bad_usage("lsipc", "output modes are mutually exclusive");
+        if ((taking.flags & FILE_FLAG('l')) && (json || newline || raw))
+                return ul_bad_usage(
+                    "lsipc", "--list is incompatible with structured output");
+        if (json)
+                ul_table_json(type == UL_IPC_MESSAGE ? "messages"
+                              : type == UL_IPC_SHARED ? "sharedmemory"
+                                                      : "semaphores",
+                              ul_ipc.rows, sizeof(ul_ipc.rows[0]),
+                              ul_ipc.count, ul_ipc_columns, columns,
+                              column_count, ul_ipc_field);
+        else if (newline)
+                ul_lsipc_newline(columns, column_count);
+        else
+                ul_table_out(ul_ipc.rows, sizeof(ul_ipc.rows[0]),
+                             ul_ipc.count, ul_ipc_columns, UL_IPC_COLUMNS,
+                             columns, column_count,
+                             !(taking.flags & FILE_FLAG('H')), raw,
+                             ul_ipc_field);
+        log_flush();
+        return have_id && !ul_ipc.count ? 1 : 0;
+}
+
+typedef struct
+{
+        const ul_table_column address_to definitions;
+        const p8 address_to map;
+} ul_ipcs_view;
+
+static ul_ipcs_view ul_ipcs_current;
+
+static string_address ul_ipcs_field(address_any row, p8 column,
+                                    p8 address_to scratch)
+{
+        return ul_ipc_field(row, ul_ipcs_current.map[column], scratch);
+}
+
+static const ul_table_column ul_ipcs_msg_columns[] = {
+    {"key", "key", 10, false, UL_TABLE_STRING},
+    {"id", "msqid", 10, false, UL_TABLE_STRING},
+    {"owner", "owner", 10, false, UL_TABLE_STRING},
+    {"perms", "perms", 10, false, UL_TABLE_STRING},
+    {"used", "used-bytes", 12, false, UL_TABLE_STRING},
+    {"messages", "messages", 0, false, UL_TABLE_STRING},
+};
+static const p8 ul_ipcs_msg_map[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
+    UL_IPC_USEDBYTES, UL_IPC_MSGS,
+};
+static const ul_table_column ul_ipcs_shm_columns[] = {
+    {"key", "key", 10, false, UL_TABLE_STRING},
+    {"id", "shmid", 10, false, UL_TABLE_STRING},
+    {"owner", "owner", 10, false, UL_TABLE_STRING},
+    {"perms", "perms", 10, false, UL_TABLE_STRING},
+    {"bytes", "bytes", 10, false, UL_TABLE_STRING},
+    {"nattch", "nattch", 10, false, UL_TABLE_STRING},
+    {"status", "status", 0, false, UL_TABLE_STRING},
+};
+static const p8 ul_ipcs_shm_map[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_SIZE,
+    UL_IPC_NATTCH, UL_IPC_STATUS,
+};
+static const ul_table_column ul_ipcs_sem_columns[] = {
+    {"key", "key", 10, false, UL_TABLE_STRING},
+    {"id", "semid", 10, false, UL_TABLE_STRING},
+    {"owner", "owner", 10, false, UL_TABLE_STRING},
+    {"perms", "perms", 10, false, UL_TABLE_STRING},
+    {"nsems", "nsems", 0, false, UL_TABLE_STRING},
+};
+static const p8 ul_ipcs_sem_map[] = {
+    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_NSEMS,
+};
+
+static fn ul_ipcs_table(p8 type)
+{
+        string_address title;
+        const ul_table_column address_to definitions;
+        const p8 address_to map;
+        positive count;
+        if (type == UL_IPC_MESSAGE)
+        {
+                title = "Message Queues";
+                definitions = ul_ipcs_msg_columns;
+                map = ul_ipcs_msg_map;
+                count = array_count(ul_ipcs_msg_columns);
+        }
+        else if (type == UL_IPC_SHARED)
+        {
+                title = "Shared Memory Segments";
+                definitions = ul_ipcs_shm_columns;
+                map = ul_ipcs_shm_map;
+                count = array_count(ul_ipcs_shm_columns);
+        }
+        else
+        {
+                title = "Semaphore Arrays";
+                definitions = ul_ipcs_sem_columns;
+                map = ul_ipcs_sem_map;
+                count = array_count(ul_ipcs_sem_columns);
+        }
+        string_format(log, "\n------ %s --------\n", title);
+        positive first = 0;
+        while (first < ul_ipc.count && ul_ipc.rows[first].type != type) first++;
+        positive rows = 0;
+        while (first + rows < ul_ipc.count &&
+               ul_ipc.rows[first + rows].type == type) rows++;
+        if (!rows)
+        {
+                if (type == UL_IPC_MESSAGE)
+                        log("key        msqid      owner      perms      used-bytes   messages    \n",
+                            sizeof("key        msqid      owner      perms      used-bytes   messages    \n") - 1);
+                else if (type == UL_IPC_SHARED)
+                        log("key        shmid      owner      perms      bytes      nattch     status      \n",
+                            sizeof("key        shmid      owner      perms      bytes      nattch     status      \n") - 1);
+                else
+                        log("key        semid      owner      perms      nsems     \n",
+                            sizeof("key        semid      owner      perms      nsems     \n") - 1);
+                return;
+        }
+        p8 columns[8];
+        for (positive at = 0; at < count; at++) columns[at] = (p8)at;
+        ul_ipcs_current = (ul_ipcs_view){definitions, map};
+        ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
+                     definitions, count, columns, count, true, false,
+                     ul_ipcs_field);
+}
+
+static const file_long ul_ipcs_longs[] = {
+    {"id", 'i'}, {"shmems", 'm'}, {"queues", 'q'},
+    {"semaphores", 's'}, {"all", 'a'}, {"time", 't'}, {"pid", 'p'},
+    {"creator", 'c'}, {"limits", 'l'}, {"summary", 'u'},
+    {"human", 'H'}, {"bytes", 'b'}, {"help", 'h'}, {"version", 'V'},
+    {null, 0},
+};
+
+static b32 util_linux_ipcs()
+{
+        file_taking taking = {
+            .program = "ipcs", .allowed = "imqsatpclubHVh",
+            .valued = "i", .longs = ul_ipcs_longs,
+        };
+        b32 answer;
+        if (!file_take(address_of taking)) return 1;
+        if (ul_meta(address_of taking, "[-m|-q|-s] [options]",
+                    address_of answer)) return answer;
+        if (taking.first != (positive)program_argument_count())
+                return ul_bad_usage("ipcs", "unexpected operand");
+        if (taking.flags &
+            (FILE_FLAG('i') | FILE_FLAG('t') | FILE_FLAG('p') |
+             FILE_FLAG('c') | FILE_FLAG('l') | FILE_FLAG('u')))
+                return ul_bad_usage(
+                    "ipcs", "detail/time/pid/creator/limits modes are not supported");
+        positive types = 0;
+        if (taking.flags & FILE_FLAG('q')) types |= UL_IPC_MESSAGE_BIT;
+        if (taking.flags & FILE_FLAG('m')) types |= UL_IPC_SHARED_BIT;
+        if (taking.flags & FILE_FLAG('s')) types |= UL_IPC_SEMAPHORE_BIT;
+        if (!types || (taking.flags & FILE_FLAG('a'))) types = UL_IPC_ALL_BITS;
+        text_arena_used = 0;
+        if (!ul_ipc_snapshot_load(types))
+                return ul_bad_usage("ipcs", "cannot read System V IPC snapshot");
+        ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));
+        ul_ipc_numeric_permissions = true;
+        if (types & UL_IPC_MESSAGE_BIT) ul_ipcs_table(UL_IPC_MESSAGE);
+        if (types & UL_IPC_SHARED_BIT) ul_ipcs_table(UL_IPC_SHARED);
+        if (types & UL_IPC_SEMAPHORE_BIT) ul_ipcs_table(UL_IPC_SEMAPHORE);
+        log("\n", 1);
+        log_flush();
+        return 0;
+}
+
 // mesg ------------------------------------------------------------
 
 /*

@@ -24,12 +24,24 @@
 LC_ALL=C
 export LC_ALL
 
+# Moonwater's current clock layer deliberately has no timezone database and
+# formats filesystem timestamps in UTC.  Keep date-bearing utility comparisons
+# on that common ground, just as the file-utility lane does.
+TZ=UTC0
+export TZ
+
 bin=${1:-/tmp/multi}
 rounds=${2:-600}
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/read_dir"
+# An input can refuse to open for more reasons than being absent, and what the
+# tool names as the reason is the whole of the answer in those cases.
+: > "$work/denied"
+chmod 0000 "$work/denied"
+ln -s circle_two "$work/circle_one"
+ln -s circle_one "$work/circle_two"
 
 pass=0
 fail=0
@@ -259,6 +271,22 @@ compare()
                 "$bin/$tool" "$@" < "$work/$feed" > "$work/got" 2> /dev/null
                 got_status=$?
         fi
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+
+#       Both channels together, for the cases where what a tool says about an
+#       input it could not open is the whole of what it produced.
+compare_spoken()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        "$tool" "$@" > "$work/want" 2>&1
+        want_status=$?
+        "$bin/$tool" "$@" > "$work/got" 2>&1
+        got_status=$?
 
         compare_report "$name" "$work/want" "$work/got"
 }
@@ -2044,6 +2072,16 @@ compare 'fold directory' fold - "$work/read_dir"
 compare 'cut directory'  cut  - -c1 "$work/read_dir"
 compare 'uniq directory' uniq - "$work/read_dir"
 compare 'sort directory' sort - "$work/read_dir"
+
+#       Only the tools that share the reference's "tool: name: reason" shape
+#       are compared whole here; head and sort word the same failure their own
+#       way and are left to the stdout cases above.
+case_start openerr
+compare_spoken 'cat denied'       cat "$work/denied"
+compare_spoken 'wc denied'        wc "$work/denied"
+compare_spoken 'grep denied'      grep a "$work/denied"
+compare_spoken 'cat symlink loop' cat "$work/circle_one"
+compare_spoken 'wc symlink loop'  wc "$work/circle_one"
 
 case_start big
 compare 'sort'           sort big

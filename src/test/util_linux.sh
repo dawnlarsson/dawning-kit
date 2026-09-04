@@ -23,8 +23,8 @@ trap 'rm -rf "$work"' EXIT INT TERM
 mkdir "$work/bin"
 for name in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
-        logger look line ul; do
+        getino fincore hardlink ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei whereis mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
+        logger look line ul wall write; do
         ln -s "$subject" "$work/bin/$name"
 done
 
@@ -136,14 +136,51 @@ section util-linux
 group reference
 for utility in setsid setpgid ionice fadvise fallocate copyfilerange getopt taskset renice prlimit chrt \
         uclampset flock unshare nsenter setarch setpriv waitpid choom exch \
-        getino fincore lsblk lscpu lsfd lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
-        logger look ul; do
+        getino fincore ipcmk ipcrm ipcs lsblk lscpu lsfd lsipc lslocks lsmem lsns namei mcookie mesg uuidgen uuidparse col colcrt colrm column dmesg \
+        logger look ul wall write; do
         version=$($utility --version 2>/dev/null | head -1 || true)
         case $version in
         *'util-linux 2.42.2'*) won ;;
         *) lost "$utility" "need util-linux 2.42.2 reference, got [$version]" ;;
         esac
 done
+
+group system-v-ipc
+subject 'owned create list and remove cycle' ipcmk \
+        'made=$("$TOOL" -M 4096 -Q -S 3 -p 0640) || exit; m=$(printf "%s\n" "$made" | awk '\''/Shared memory id:/ {print $NF}'\''); q=$(printf "%s\n" "$made" | awk '\''/Message queue id:/ {print $NF}'\''); s=$(printf "%s\n" "$made" | awk '\''/Semaphore id:/ {print $NF}'\''); cleanup() { [ -z "${q:-}" ] || ipcrm -q "$q" 2>/dev/null || :; [ -z "${m:-}" ] || ipcrm -m "$m" 2>/dev/null || :; [ -z "${s:-}" ] || ipcrm -s "$s" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; [ -n "$m" ] && [ -n "$q" ] && [ -n "$s" ] || exit 1; awk -v id="$q" '\''NR > 1 && $2 == id && $3 == 640 {found=1} END {exit !found}'\'' /proc/sysvipc/msg && awk -v id="$m" '\''NR > 1 && $2 == id && $3 == 640 && $4 == 4096 {found=1} END {exit !found}'\'' /proc/sysvipc/shm && awk -v id="$s" '\''NR > 1 && $2 == id && $3 == 640 && $4 == 3 {found=1} END {exit !found}'\'' /proc/sysvipc/sem || exit 1; "$1/ipcrm" -q "$q" -m "$m" -s "$s" || exit; awk -v id="$q" '\''NR > 1 && $2 == id {exit 1}'\'' /proc/sysvipc/msg && awk -v id="$m" '\''NR > 1 && $2 == id {exit 1}'\'' /proc/sysvipc/shm && awk -v id="$s" '\''NR > 1 && $2 == id {exit 1}'\'' /proc/sysvipc/sem || exit; q= m= s=' \
+        sh "$work/bin"
+subject 'controlled snapshot exact structured modes' lsipc \
+        'q=$(ipcmk -Q -p 0640 | awk '\''{print $NF}'\'') || exit; m=$(ipcmk -M 4096 -p 0640 | awk '\''{print $NF}'\'') || exit; s=$(ipcmk -S 2 -p 0640 | awk '\''{print $NF}'\'') || exit; cleanup() { ipcrm -q "$q" 2>/dev/null || :; ipcrm -m "$m" 2>/dev/null || :; ipcrm -s "$s" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; reference=$(command -v lsipc); for args in "-q -J" "-q -r" "-q -n" "-m -J" "-m -r" "-m -n" "-s -J" "-s -r" "-s -n"; do TZ=UTC0 "$reference" $args > "$1/want" || exit; TZ=UTC0 "$TOOL" $args > "$1/got" || exit; cmp -s "$1/want" "$1/got" || exit; done' \
+        sh "$work"
+subject 'controlled list content and time ordering' lsipc \
+        'q=$(ipcmk -Q -p 0640 | awk '\''{print $NF}'\'') || exit; m=$(ipcmk -M 4096 -p 0640 | awk '\''{print $NF}'\'') || exit; s=$(ipcmk -S 2 -p 0640 | awk '\''{print $NF}'\'') || exit; cleanup() { ipcrm -q "$q" 2>/dev/null || :; ipcrm -m "$m" 2>/dev/null || :; ipcrm -s "$s" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; reference=$(command -v lsipc); for args in "-q -l -i $q" "-q -l -i $q -c" "-q -l -i $q -t" "-m -l -i $m" "-m -l -i $m -c" "-m -l -i $m -t" "-s -l -i $s" "-s -l -i $s -c" "-s -l -i $s -t"; do TZ=UTC0 "$reference" $args > "$1/want" || exit; TZ=UTC0 "$TOOL" $args > "$1/got" || exit; cmp -s "$1/want" "$1/got" || exit; done' \
+        sh "$work"
+subject 'classic ipcs tables preserve values' ipcs \
+        'q=$(ipcmk -Q -p 0640 | awk '\''{print $NF}'\'') || exit; m=$(ipcmk -M 4096 -p 0640 | awk '\''{print $NF}'\'') || exit; s=$(ipcmk -S 2 -p 0640 | awk '\''{print $NF}'\'') || exit; cleanup() { ipcrm -q "$q" 2>/dev/null || :; ipcrm -m "$m" 2>/dev/null || :; ipcrm -s "$s" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; reference=$(command -v ipcs); for type in q m s; do "$reference" -$type | sed '\''s/[[:space:]]*$//'\'' > "$1/want" || exit; "$TOOL" -$type | sed '\''s/[[:space:]]*$//'\'' > "$1/got" || exit; cmp -s "$1/want" "$1/got" || exit; done' \
+        sh "$work"
+subject 'key removal only touches owned queue' ipcrm \
+        'q=$(ipcmk -Q -p 0600 | awk '\''{print $NF}'\'') || exit; cleanup() { [ -z "${q:-}" ] || ipcrm -q "$q" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; key=$(lsipc -q -r -o KEY,ID | awk -v id="$q" '\''$2 == id {print $1}'\''); [ -n "$key" ] || exit 1; "$TOOL" -Q "$key" || exit; awk -v id="$q" '\''NR > 1 && $2 == id {exit 1}'\'' /proc/sysvipc/msg; q=' \
+        sh
+subject '32-bit id and key aliases cannot remove owned queue' ipcrm \
+        'q=$(ipcmk -Q -p 0600 | awk '\''{print $NF}'\'') || exit; cleanup() { ipcrm -q "$q" 2>/dev/null || :; }; trap cleanup EXIT INT TERM; key=$(awk -v id="$q" '\''NR > 1 && $2 == id {print $1}'\'' /proc/sysvipc/msg); [ -n "$key" ] || exit 1; [ "$key" -ge 0 ] || key=$((key + 4294967296)); bad_id=$((q + 4294967296)); bad_key=$((key + 4294967296)); "$TOOL" -q "$bad_id" >/dev/null 2>&1 && exit 1; "$TOOL" -Q "$bad_key" >/dev/null 2>&1 && exit 1; awk -v id="$q" '\''NR > 1 && $2 == id {found=1} END {exit !found}'\'' /proc/sysvipc/msg'
+subject 'semaphore count is bounded before the syscall' ipcmk \
+        'before=$(wc -l < /proc/sysvipc/sem); "$TOOL" -S 4294967297 >/dev/null 2>&1 && exit 1; after=$(wc -l < /proc/sysvipc/sem); [ "$before" = "$after" ]'
+subject 'combined creation failure rolls back earlier object' ipcmk \
+        'before=$(wc -l < /proc/sysvipc/shm); "$TOOL" -M 4096 -S 2147483647 >/dev/null 2>&1 && exit 1; after=$(wc -l < /proc/sysvipc/shm); [ "$before" = "$after" ]'
+subject 'POSIX creation rejected explicitly' ipcmk \
+        '"$TOOL" -m 4096 >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'bulk removal rejected explicitly' ipcrm \
+        '"$TOOL" -a >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'unsupported global summary rejected explicitly' lsipc \
+        '"$TOOL" -g >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'default global summary rejected explicitly' lsipc \
+        '"$TOOL" >/dev/null 2>&1; [ "$?" -ne 0 ]'
+subject 'list and JSON modes rejected together' lsipc \
+        '"$TOOL" -q -l -J >/dev/null 2>&1; [ "$?" -ne 0 ]'
+compare 'custom columns and time rejected together' lsipc \
+        '"$TOOL" -q -o KEY -t'
+subject 'classic detail modes rejected explicitly' ipcs \
+        '"$TOOL" -q -t >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
 group lsblk
 compare 'default device tree' lsblk '"$TOOL"'
@@ -1312,6 +1349,167 @@ compare 'journald native payload dry run' logger \
 subject 'structured data extension rejected' logger \
         '"$TOOL" --sd-id meta --no-act message >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
+group write-wall
+compare 'write requires a login' write '"$TOOL"'
+compare 'write rejects extra operands' write '"$TOOL" user pts/0 extra'
+compare 'wall rejects a zero timeout' wall '"$TOOL" -t 0 hello'
+compare 'wall rejects an unknown group' wall \
+        '"$TOOL" -g moonwater-group-that-does-not-exist hello'
+
+# Synthetic utmp is admitted only by an unprivileged process and every entry
+# below names this process's account and a PTY it created.  It never consults
+# or writes a host session.  The same harness covers x86's 384-byte utmp and
+# the asm-generic 400-byte layout used by ARM64/RISC-V.
+if TOOL_WRITE="$work/bin/write" TOOL_WALL="$work/bin/wall" python3 <<'PY'
+import errno
+import fcntl
+import os
+import platform
+import pwd
+import pty
+import select
+import struct
+import subprocess
+import termios
+import time
+import tty
+
+write = os.environ["TOOL_WRITE"]
+wall = os.environ["TOOL_WALL"]
+user = pwd.getpwuid(os.getuid()).pw_name
+machine = platform.machine()
+small = machine in ("x86_64", "i386", "i686")
+record_size = 384 if small else 400
+seconds_offset = 340 if small else 344
+temporary = os.path.join(os.path.dirname(write), "controlled.utmp")
+
+def terminal():
+    master, slave = pty.openpty()
+    tty.setraw(slave)
+    os.fchmod(slave, 0o620)
+    path = os.ttyname(slave)
+    assert path.startswith("/dev/")
+    return master, slave, path[5:]
+
+def record(line):
+    data = bytearray(record_size)
+    struct.pack_into("<h", data, 0, 7)       # USER_PROCESS
+    struct.pack_into("<i", data, 4, os.getpid())
+    data[8:8 + min(32, len(line))] = line.encode()[:32]
+    data[44:44 + min(32, len(user))] = user.encode()[:32]
+    if small:
+        struct.pack_into("<i", data, seconds_offset, int(time.time()))
+    else:
+        struct.pack_into("<q", data, seconds_offset, int(time.time()))
+    return data
+
+def database(lines):
+    with open(temporary, "wb") as stream:
+        for line in lines:
+            stream.write(record(line))
+
+def drain(master):
+    output = bytearray()
+    os.set_blocking(master, False)
+    while select.select([master], [], [], 0.15)[0]:
+        try:
+            part = os.read(master, 65536)
+        except OSError as error:
+            if error.errno == errno.EIO:
+                break
+            raise
+        if not part:
+            break
+        output += part
+    return bytes(output)
+
+environment = dict(os.environ, MOONWATER_UTMP=temporary,
+                   LC_ALL="C", TZ="UTC")
+
+# Explicit write: control bytes and a high C-locale byte must be made safe.
+master, slave, line = terminal()
+database([line])
+result = subprocess.run([write, user, line], input=b"A\x01B\nC\x80\n",
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        env=environment)
+assert result.returncode == 0, result.stderr
+payload = drain(master)
+assert b"A^AB\r\nC\\200\r\nEOF\r\n" in payload, payload
+os.close(master); os.close(slave)
+
+# Implicit write chooses the least-idle session, and says so when there are
+# two.  atime belongs to the tty, not the utmp timestamp.
+m1, s1, l1 = terminal()
+m2, s2, l2 = terminal()
+os.utime("/dev/" + l1, (100, 100))
+os.utime("/dev/" + l2, (200, 200))
+database([l1, l2])
+result = subprocess.run([write, user], input=b"chosen\n",
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        env=environment)
+assert result.returncode == 0, result.stderr
+first, second = drain(m1), drain(m2)
+assert b"chosen\r\n" not in first and b"chosen\r\n" in second
+assert b"logged in more than once" in result.stderr
+for descriptor in (m1, s1, m2, s2): os.close(descriptor)
+
+# One wall snapshot fans one prepared message to distinct controlled PTYs;
+# duplicate utmp rows do not duplicate delivery.  Group selection exercises
+# the existing passwd/group membership engine.
+m1, s1, l1 = terminal()
+m2, s2, l2 = terminal()
+database([l1, l1, l2])
+result = subprocess.run([wall, "-g", str(os.getgid()), "hello", "world"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        env=environment)
+assert result.returncode == 0, result.stderr
+first, second = drain(m1), drain(m2)
+for payload in (first, second):
+    assert payload.count(b"hello world\r\n") == 1, payload
+    assert b"Broadcast message from " in payload
+for descriptor in (m1, s1, m2, s2): os.close(descriptor)
+
+# Tab state advances to the next eight-column stop before wall pads the row.
+master, slave, line = terminal()
+database([line])
+result = subprocess.run([wall], input=b"1234567\tZ\n",
+                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                        env=environment)
+assert result.returncode == 0, result.stderr
+payload = drain(master)
+assert b"1234567\tZ" + b" " * 70 + b"\r\n" in payload, payload
+os.close(master); os.close(slave)
+
+# File/stdin share the text reader and preserve long records across refills.
+master, slave, line = terminal()
+database([line])
+source = temporary + ".message"
+with open(source, "wb") as stream:
+    stream.write(b"x" * 70000 + b"\nend\n")
+process = subprocess.Popen([wall, source], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, env=environment)
+payload = bytearray()
+os.set_blocking(master, False)
+while process.poll() is None:
+    if select.select([master], [], [], 0.05)[0]:
+        try:
+            payload += os.read(master, 65536)
+        except BlockingIOError:
+            pass
+stderr = process.communicate()[1]
+payload += drain(master)
+assert process.returncode == 0, stderr
+assert b"end" in payload and payload.count(b"x") >= 70000
+os.unlink(source)
+os.close(master); os.close(slave)
+os.unlink(temporary)
+PY
+then
+        won
+else
+        lost 'controlled PTY write/wall delivery' 'safe local delivery failed'
+fi
+
 group ul
 printf 'plain\n_\bU x\bx R\bS \016g\017\n\0339sub\0338 normal \0338sup\0339\nform\fnext\n' \
         > "$work/ul-controls"
@@ -1555,6 +1753,73 @@ if unshare -Urn /bin/true >/dev/null 2>&1; then
                 'parent=$(stat -Lc %i /proc/$$/ns/net); export TOOL parent; unshare -Urn /bin/sh -c '\''now=$(stat -Lc %i /proc/$$/ns/net); [ "$now" != "$parent" ] && "$TOOL" -t net -p $$ -n -r -o NS,TYPE | grep -q "^$now net$"'\'''
 fi
 
+section hardlink
+compare 'recursive duplicate consolidation' hardlink \
+        'd=$(mktemp -d "$1/hardlink-recursive.XXXXXX"); mkdir -p "$d/sub"; printf same >"$d/a"; cp -p "$d/a" "$d/sub/b"; "$TOOL" -q "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/sub/b")" ] && echo linked' \
+        sh "$work"
+compare 'dry run preserves separate inodes' hardlink \
+        'd=$(mktemp -d "$1/hardlink-dry.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -qn "$d"; [ "$(stat -c %i "$d/a")" != "$(stat -c %i "$d/b")" ] && echo separate' \
+        sh "$work"
+compare 'default respects mode and timestamp' hardlink \
+        'd=$(mktemp -d "$1/hardlink-meta.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; chmod 600 "$d/b"; touch -d @1000000000 "$d/a"; touch -d @1000000001 "$d/b"; "$TOOL" -q "$d"; [ "$(stat -c %i "$d/a")" != "$(stat -c %i "$d/b")" ] && echo separate' \
+        sh "$work"
+compare 'content mode ignores metadata' hardlink \
+        'd=$(mktemp -d "$1/hardlink-content.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; chmod 600 "$d/b"; touch -d @1000000000 "$d/a"; touch -d @1000000001 "$d/b"; "$TOOL" -cq "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'equal-size unlike data is proven by bytes' hardlink \
+        'd=$(mktemp -d "$1/hardlink-unlike.XXXXXX"); printf abcd >"$d/a"; printf abce >"$d/b"; touch -r "$d/a" "$d/b"; "$TOOL" -q "$d"; [ "$(stat -c %i "$d/a")" != "$(stat -c %i "$d/b")" ] && echo separate' \
+        sh "$work"
+compare 'minimum size excludes candidate' hardlink \
+        'd=$(mktemp -d "$1/hardlink-min.XXXXXX"); printf abc >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -q -s4 "$d"; [ "$(stat -c %i "$d/a")" != "$(stat -c %i "$d/b")" ] && echo separate' \
+        sh "$work"
+compare 'maximum size includes boundary' hardlink \
+        'd=$(mktemp -d "$1/hardlink-max.XXXXXX"); printf abc >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -q -S3 "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'zero files require explicit minimum' hardlink \
+        'd=$(mktemp -d "$1/hardlink-zero.XXXXXX"); : >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -q -s0 "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'respect name keeps differently named files' hardlink \
+        'd=$(mktemp -d "$1/hardlink-name.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -q -f "$d"; [ "$(stat -c %i "$d/a")" != "$(stat -c %i "$d/b")" ] && echo separate' \
+        sh "$work"
+compare 'symlinks are not candidates' hardlink \
+        'd=$(mktemp -d "$1/hardlink-link.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; ln -s a "$d/link"; "$TOOL" -q "$d"; [ -L "$d/link" ] && [ "$(readlink "$d/link")" = a ] && echo symlink' \
+        sh "$work"
+compare 'sparse duplicate content' hardlink \
+        'd=$(mktemp -d "$1/hardlink-sparse.XXXXXX"); truncate -s 8M "$d/a"; printf tail | dd of="$d/a" bs=1 seek=8388604 conv=notrunc status=none; cp --sparse=always -p "$d/a" "$d/b"; "$TOOL" -q "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'already linked files stay valid' hardlink \
+        'd=$(mktemp -d "$1/hardlink-existing.XXXXXX"); printf same >"$d/a"; ln "$d/a" "$d/alias"; cp -p "$d/a" "$d/b"; before=$(stat -c %i "$d/a"); "$TOOL" -q "$d"; [ "$before" = "$(stat -c %i "$d/alias")" ] && [ "$before" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'reflink never selects hardlinks' hardlink \
+        'd=$(mktemp -d "$1/hardlink-reflink-never.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -q --reflink=never "$d"; [ "$(stat -c %i "$d/a")" = "$(stat -c %i "$d/b")" ] && echo linked' \
+        sh "$work"
+compare 'bounded io-size consolidates a whole group' hardlink \
+        'd=$(mktemp -d "$1/hardlink-io.XXXXXX"); printf "nonempty payload\n" >"$d/a"; i=1; while [ "$i" -le 7 ]; do cp -p "$d/a" "$d/$i"; i=$((i+1)); done; "$TOOL" -q -b1 "$d"; [ "$(find "$d" -type f -printf "%i\n" | sort -u | wc -l)" -eq 1 ] && [ -z "$(find "$d" -name "*.moonwater-hardlink-*" -print -quit)" ] && echo consolidated' \
+        sh "$work"
+compare 'list mode reports both duplicates' hardlink \
+        'd=$(mktemp -d "$1/hardlink-list.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; "$TOOL" -l "$d" | cut -f2 | sort | wc -l' \
+        sh "$work"
+subject 'missing top-level operand is an error' hardlink \
+        '! "$TOOL" -q "$1/hardlink-definitely-absent"' sh "$work"
+subject 'unsupported reflink mutation is rejected' hardlink \
+        'd=$(mktemp -d "$1/hardlink-reflink.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; ! "$TOOL" -q --reflink=auto "$d"' \
+        sh "$work"
+subject 'cross-filesystem candidates are not linked' hardlink \
+        'd=$(mktemp -d "$1/hardlink-xdev.XXXXXX"); e=$(mktemp -d /dev/shm/hardlink-xdev.XXXXXX); trap '\''rm -rf "$e"'\'' EXIT; printf same >"$d/a"; cp -p "$d/a" "$e/b"; "$TOOL" -q "$d" "$e"; [ "$(stat -c %d "$d/a")" != "$(stat -c %d "$e/b")" ]' \
+        sh "$work"
+subject 'atomic replacement tolerates name races' hardlink \
+        'd=$(mktemp -d "$1/hardlink-race.XXXXXX"); printf same >"$d/a"; cp -p "$d/a" "$d/b"; (i=0; while [ "$i" -lt 300 ]; do printf racing >"$d/new"; mv -f "$d/new" "$d/b"; cp -p "$d/a" "$d/new"; mv -f "$d/new" "$d/b"; i=$((i+1)); done) & racer=$!; i=0; while [ "$i" -lt 30 ]; do "$TOOL" -cq "$d" >/dev/null 2>&1 || :; i=$((i+1)); done; wait "$racer"; [ "$(cat "$d/a")" = same ] && [ -f "$d/b" ]' \
+        sh "$work"
+subject 'truncate and ctime races never signal' hardlink \
+        'd=$(mktemp -d "$1/hardlink-truncate.XXXXXX"); dd if=/dev/zero of="$d/a" bs=1M count=16 status=none; cp -p "$d/a" "$d/b"; (i=0; while [ "$i" -lt 400 ]; do truncate -s 8M "$d/b"; chmod 600 "$d/b"; truncate -s 16M "$d/b"; chmod 644 "$d/b"; i=$((i+1)); done) & racer=$!; "$TOOL" -qn -b4096 "$d" >/dev/null 2>&1; result=$?; wait "$racer"; [ "$result" -eq 0 ] || [ "$result" -eq 1 ]' \
+        sh "$work"
+subject 'unreadable traversal is not partial success' hardlink \
+        'd=$(mktemp -d "$1/hardlink-unreadable.XXXXXX"); mkdir "$d/closed"; printf same >"$d/closed/a"; chmod 000 "$d/closed"; if [ "$(id -u)" -eq 0 ]; then chmod 700 "$d/closed"; exit 0; fi; "$TOOL" -q "$d" >/dev/null 2>&1; result=$?; chmod 700 "$d/closed"; [ "$result" -ne 0 ]' \
+        sh "$work"
+subject 'overlapping oversized tree is indexed once' hardlink \
+        'd=$(mktemp -d "$1/hardlink-many.XXXXXX"); i=0; while [ "$i" -lt 2000 ]; do printf x >"$d/f$i"; i=$((i+1)); done; lines=$(timeout 10 "$TOOL" -l -b4096 "$d" "$d" | wc -l) || exit; [ "$lines" -eq 2000 ]' \
+        sh "$work"
+
 section whereis
 whereis_tree="$work/whereis-tree"
 mkdir -p "$whereis_tree/bin" "$whereis_tree/man" "$whereis_tree/src"
@@ -1590,7 +1855,7 @@ subject 'list emits canonical existing directories' whereis \
 # separate: every upstream name must be in exactly one side, and implementing
 # a remaining name makes this fail until the capability claim is moved.
 upstream='addpart agetty bits blkdiscard blkid blkpr blkzone blockdev cal cfdisk chcpu chfn chmem choom chrt chsh col colcrt colrm column copyfilerange coresched ctrlaltdel delpart dmesg eject enosys exch fadvise fallocate fdisk fincore findfs findmnt flock fsck fsck.cramfs fsck.minix fsfreeze fstrim getino getopt hardlink hexdump hwclock ionice ipcmk ipcrm ipcs irqtop isosize kill last lastlog2 ldattach line logger login look losetup lsblk lsclocks lscpu lsfd lsipc lsirq lslocks lslogins lsmem lsns mcookie mesg mkfs mkfs.bfs mkfs.cramfs mkfs.minix mkswap more mount mountpoint namei newgrp nologin nsenter partx pg pipesz pivot_root prlimit readprofile rename renice resizepart rev rfkill rtcwake runuser script scriptlive scriptreplay setarch setpgid setpriv setsid setterm sfdisk su sulogin swaplabel swapoff swapon switch_root taskset tunelp uclampset ul umount unshare utmpdump uuidd uuidgen uuidparse vipw waitpid wall wdctl whereis wipefs write zramctl'
-supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hexdump ionice kill line logger look lsblk lscpu lsfd lslocks lsmem lsns mcookie mesg mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid whereis'
+supported='blkid choom chrt col colcrt colrm column copyfilerange dmesg exch fadvise fallocate fincore findfs findmnt flock getino getopt hardlink hexdump ionice ipcmk ipcrm ipcs kill line logger look lsblk lscpu lsfd lsipc lslocks lsmem lsns mcookie mesg mount mountpoint namei nsenter prlimit renice rev setarch setpgid setpriv setsid taskset uclampset ul umount unshare uuidgen uuidparse waitpid wall whereis write'
 
 awk -F '[(),[:space:]]+' '$1 == "SHELL_TOOL" { print $3 }' \
         "$root/src/sh/tools.inc" | sort -u > "$work/dispatched"

@@ -1252,6 +1252,914 @@ static login_terminal login_terminal_facts(string_address line)
         return answer;
 }
 
+/* write and wall -------------------------------------------------
+
+   Both utilities consume the login snapshot above.  Their only difference
+   at that boundary is selection policy: write chooses one terminal for one
+   login, while wall retains each distinct terminal.  Keeping that policy in
+   one visitor is important on systems where utmp is being rewritten while
+   it is read; two independent walks can otherwise disagree about the same
+   broadcast.
+
+   MOONWATER_UTMP exists for namespace and controlled-PTY tests.  Like libc's
+   secure_getenv, it is ignored as soon as either effective identity differs
+   from the real one, so a conventionally setgid-tty installation cannot be
+   persuaded to trust an unprivileged login database. */
+
+#define LOGIN_MESSAGE_WIDTH 79
+#define LOGIN_MESSAGE_TIMEOUT 300
+
+typedef struct
+{
+        p8 user[33];
+        p8 line[33];
+        b64 accessed;
+} login_message_recipient;
+
+enum
+{
+        LOGIN_MESSAGE_WRITE,
+        LOGIN_MESSAGE_WALL,
+};
+
+typedef struct
+{
+        login_message_recipient address_to recipients;
+        positive count;
+        positive room;
+        string_address wanted_user;
+        string_address wanted_line;
+        string_address source_line;
+        positive real_user;
+        p32 wanted_group;
+        positive sessions;
+        positive eligible;
+        bool group;
+        bool explicit_line;
+        bool source_seen;
+        bool failed;
+        p8 mode;
+} login_message_selection;
+
+static login_message_selection login_message_select;
+
+typedef struct
+{
+        byte_store address_to store;
+        bipolar column;
+        positive width;
+        bool direct;
+        bool failed;
+} login_message_sink;
+
+static fn login_message_selection_clear()
+{
+        if (login_message_select.recipients)
+                array_store_release(login_message_select.recipients,
+                                    login_message_select.room,
+                                    login_message_select.count);
+        memory_fill(address_of login_message_select, 0,
+                    sizeof(login_message_select));
+}
+
+static string_address login_message_utmp()
+{
+        positive user = (positive)system_call(syscall(getuid));
+        positive effective_user = (positive)system_call(syscall(geteuid));
+        positive group = (positive)system_call(syscall(getgid));
+        positive effective_group = (positive)system_call(syscall(getegid));
+
+        if (user == effective_user && group == effective_group)
+        {
+                string_address testing = file_environment("MOONWATER_UTMP");
+                if (testing && string_get(testing))
+                        return testing;
+        }
+
+        return (string_address)LOGIN_UTMP_PATH;
+}
+
+/* A ut_line is relative to /dev.  Explicit write operands may use the full
+   spelling, but no other absolute namespace is accepted. */
+static bool login_message_path(string_address line, p8 address_to path,
+                               positive room)
+{
+        if (!line || !string_get(line) || !room)
+                return false;
+
+        string_address name = line;
+        if (!string_compare_max(name, "/dev/", 5))
+                name += 5;
+        else if (string_is(name, '/'))
+                return false;
+
+        positive length = string_length(name);
+        if (!length || length + 6 > room)
+                return false;
+
+        /* Reject pathname components which can leave /dev.  Slash itself is
+           required for pts/N and other modern terminal namespaces. */
+        for (positive at = 0; at < length;)
+        {
+                positive from = at;
+                while (at < length && name[at] != '/')
+                        at++;
+                if (at == from ||
+                    (at - from == 1 && name[from] == '.') ||
+                    (at - from == 2 && name[from] == '.' &&
+                     name[from + 1] == '.'))
+                        return false;
+                if (at < length)
+                        at++;
+        }
+
+        memory_copy_apart(path, "/dev/", 5);
+        memory_copy_apart_end(path + 5, name, length);
+        return true;
+}
+
+static bool login_message_terminal(string_address line,
+                                   file_facts address_to facts,
+                                   p8 address_to path, positive room)
+{
+        return login_message_path(line, path, room) &&
+               file_look_at(path, facts) &&
+               (facts->mode & MODE_FORMAT) == MODE_CHARACTER;
+}
+
+/* get_terminal_name() in util-linux checks the three standard descriptors.
+   Preserve the shared stdin helper as the first answer for write, then apply
+   the same procfs spelling to stdout/stderr.  Wall asks for stdout first,
+   matching its banner. */
+static bipolar login_message_source_tty(p8 address_to path, positive room,
+                                        bool output_first)
+{
+        static const p8 write_order[] = {0, 1, 2};
+        static const p8 wall_order[] = {1, 0, 2};
+        const p8 address_to order = output_first ? wall_order : write_order;
+
+        for (positive i = 0; i < 3; i++)
+        {
+                positive descriptor = order[i];
+                if (!stream_is_terminal(descriptor))
+                        continue;
+
+                bipolar length;
+                if (!descriptor)
+                        length = file_input_terminal_name(path, room);
+                else
+                {
+                        p8 link[32];
+                        logger_builder build = {.bytes = link,
+                                                .room = sizeof(link)};
+                        logger_build_string(address_of build,
+                                            "/proc/self/fd/");
+                        logger_build_positive(address_of build, descriptor);
+                        if (build.failed || build.used + 1 > sizeof(link))
+                                continue;
+                        link[build.used] = end;
+                        length = system_read_link_at(AT_FDCWD, link, path,
+                                                     room - 1);
+                        if (length >= 0)
+                                path[length] = end;
+                }
+
+                if (length >= 0)
+                        return length;
+        }
+
+        return -ERROR_NOT_TERMINAL;
+}
+
+static string_address login_message_line(string_address path)
+{
+        return path && !string_compare_max(path, "/dev/", 5) ? path + 5
+                                                               : path;
+}
+
+static bool login_message_group_member(string_address user)
+{
+        if (!login_message_select.group)
+                return true;
+
+        bipolar primary = file_account_id(
+            file_account_text(FILE_ACCOUNT_USER), user, 3);
+        positive have;
+        if (primary < 0 ||
+            !id_groups_named(user, (positive)primary, address_of have))
+                return false;
+
+        for (positive at = 0; at < have; at++)
+                if (file_id_scratch[at] == login_message_select.wanted_group)
+                        return true;
+        return false;
+}
+
+static bool login_message_add(string_address user, string_address line,
+                              b64 accessed)
+{
+        for (positive at = 0; at < login_message_select.count; at++)
+                if (string_equals(login_message_select.recipients[at].line,
+                                  line))
+                        return true;
+
+        if (!array_store_reserve(login_message_select.recipients,
+                                 login_message_select.room,
+                                 login_message_select.count,
+                                 login_message_select.count + 1, 16))
+        {
+                login_message_select.failed = true;
+                return false;
+        }
+
+        login_message_recipient address_to recipient =
+            login_message_select.recipients + login_message_select.count++;
+        string_copy_max_end(recipient->user, user,
+                            sizeof(recipient->user) - 1);
+        string_copy_max_end(recipient->line, line,
+                            sizeof(recipient->line) - 1);
+        recipient->accessed = accessed;
+        return true;
+}
+
+static bool login_message_visit(login_record address_to record)
+{
+        if (record->type != LOGIN_USER_PROCESS)
+                return true;
+
+        p8 user[33], line[33], path[FILE_PATH_MAX];
+        login_field(user, sizeof(user), record->user, sizeof(record->user),
+                    true);
+        login_field(line, sizeof(line), record->line, sizeof(record->line),
+                    true);
+        if (!user[0] || !line[0] || line[0] == ':')
+                return true;
+
+        if (login_message_select.mode == LOGIN_MESSAGE_WRITE)
+        {
+                if (!string_equals(user, login_message_select.wanted_user))
+                        return true;
+                login_message_select.sessions++;
+                if (login_message_select.explicit_line &&
+                    !string_equals(line, login_message_select.wanted_line))
+                        return true;
+        }
+        else if (!login_message_group_member(user))
+                return true;
+
+        file_facts facts;
+        if (!login_message_terminal(line, address_of facts, path,
+                                    sizeof(path)))
+                return true;
+
+        if (login_message_select.real_user && !(facts.mode & 0020))
+                return true;
+
+        if (login_message_select.mode == LOGIN_MESSAGE_WRITE &&
+            !login_message_select.explicit_line &&
+            login_message_select.source_line &&
+            string_equals(line, login_message_select.source_line))
+        {
+                login_message_select.source_seen = true;
+                return true;
+        }
+
+        login_message_select.eligible++;
+
+        if (login_message_select.mode == LOGIN_MESSAGE_WRITE &&
+            login_message_select.count)
+        {
+                if (facts.accessed.seconds <=
+                    login_message_select.recipients[0].accessed)
+                        return true;
+                login_message_select.count = 0;
+        }
+
+        return login_message_add(user, line, facts.accessed.seconds);
+}
+
+static fn login_message_put(login_message_sink address_to sink,
+                            address_any bytes, positive length)
+{
+        if (!length || sink->failed)
+                return;
+
+        if (sink->direct)
+        {
+                text_put(bytes, length);
+                return;
+        }
+
+        if (length > positive_max - sink->store->used ||
+            !byte_store_reserve(sink->store, sink->store->used + length,
+                                4096))
+        {
+                sink->failed = true;
+                return;
+        }
+
+        memory_copy_apart(sink->store->bytes + sink->store->used, bytes,
+                          length);
+        sink->store->used += length;
+}
+
+static fn login_message_character(login_message_sink address_to sink,
+                                  p8 character)
+{
+        login_message_put(sink, address_of character, 1);
+}
+
+static fn login_message_spaces(login_message_sink address_to sink,
+                               positive count)
+{
+        static p8 spaces[LOGIN_MESSAGE_WIDTH] = {
+            [0 ... LOGIN_MESSAGE_WIDTH - 1] = ' ',
+        };
+        while (count)
+        {
+                positive take = min(count, (positive)sizeof(spaces));
+                login_message_put(sink, spaces, take);
+                count -= take;
+        }
+}
+
+/* The C-locale form of util-linux's fputs_careful.  It is shared by write's
+   live terminal sink and wall's retained broadcast: no record allocation and
+   no byte is written through a one-byte syscall. */
+static fn login_message_careful(login_message_sink address_to sink,
+                                p8 address_to bytes, positive length)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                p8 value = bytes[at];
+
+                if (value == '\t')
+                        sink->column += 7 - (sink->column % 8);
+                else if (value == '\r')
+                        sink->column = -1;
+                else if (value == '\a')
+                        sink->column--;
+
+                if ((sink->width && sink->column >= (bipolar)sink->width) ||
+                    value == '\n')
+                {
+                        if (sink->width &&
+                            sink->column < (bipolar)sink->width)
+                                login_message_spaces(
+                                    sink, sink->width - (positive)sink->column);
+                        login_message_put(sink, "\r\n", 2);
+                        sink->column = 0;
+                        if (value == '\n')
+                                continue;
+                }
+
+                if ((value >= ' ' && value <= '~') || value == '\a' ||
+                    value == '\t' || value == '\r')
+                {
+                        login_message_character(sink, value);
+                        sink->column++;
+                }
+                else if (value & 0x80)
+                {
+                        p8 shown[4] = {
+                            '\\', (p8)('0' + ((value >> 6) & 3)),
+                            (p8)('0' + ((value >> 3) & 7)),
+                            (p8)('0' + (value & 7)),
+                        };
+                        login_message_put(sink, shown, sizeof(shown));
+                        sink->column += 4;
+                }
+                else
+                {
+                        p8 shown[2] = {'^', (p8)(value ^ 0x40)};
+                        login_message_put(sink, shown, sizeof(shown));
+                        sink->column += 2;
+                }
+        }
+}
+
+static bool login_message_stream(login_message_sink address_to sink,
+                                 string_address path)
+{
+        if (!text_open(path))
+                return false;
+
+        while (text_fill())
+        {
+                p8 address_to bytes = text_input.buffer + text_input.position;
+                positive length = text_input.filled - text_input.position;
+                login_message_careful(sink, bytes, length);
+                text_input.position = text_input.filled;
+                if (sink->failed)
+                        break;
+        }
+
+        bool answer = !text_input.failed && !sink->failed;
+        text_close();
+        return answer;
+}
+
+static bipolar login_message_open(string_address line, bool nonblocking,
+                                  bool honor_mesg, positive real_user)
+{
+        p8 path[FILE_PATH_MAX];
+        if (!login_message_path(line, path, sizeof(path)))
+                return -ERROR_INVALID;
+
+        positive flags = 01 | O_NOCTTY | O_CLOEXEC;
+        if (nonblocking)
+                flags |= O_NONBLOCK;
+
+        bipolar handle;
+        do
+                handle = system_open_at(AT_FDCWD, path, flags);
+        while (handle == -EINTR);
+        if (handle < 0)
+                return handle;
+
+        file_facts facts;
+        if (!file_look((positive)handle, "", AT_EMPTY_PATH,
+                       address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_CHARACTER ||
+            (honor_mesg && real_user &&
+             !(facts.mode & 0020)))
+        {
+                system_close((positive)handle);
+                return -ERROR_ACCESS;
+        }
+
+        return handle;
+}
+
+static bipolar login_message_send(string_address line,
+                                  p8 address_to bytes, positive length,
+                                  positive timeout, positive real_user)
+{
+        bipolar handle = login_message_open(line, true, true, real_user);
+        if (handle < 0)
+                return handle;
+
+        p64 now[2] = {0, 0};
+        system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
+                      (positive)now);
+        p64 deadline = now[0] * 1000000000ULL + now[1] +
+                       (p64)timeout * 1000000000ULL;
+        positive sent = 0;
+        bipolar answer = 0;
+
+        while (sent < length)
+        {
+                bipolar wrote = system_write_once((positive)handle,
+                                                  bytes + sent,
+                                                  length - sent);
+                if (wrote > 0)
+                {
+                        sent += (positive)wrote;
+                        continue;
+                }
+                if (wrote == -EINTR)
+                        continue;
+                if (wrote != -EAGAIN)
+                {
+                        answer = wrote ? wrote : -EIO;
+                        break;
+                }
+
+                system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
+                              (positive)now);
+                p64 current = now[0] * 1000000000ULL + now[1];
+                if (current >= deadline)
+                {
+                        answer = -ETIMEDOUT;
+                        break;
+                }
+
+                p64 left = deadline - current;
+                timespec limit = {(time_t)(left / 1000000000ULL),
+                                  (long)(left % 1000000000ULL)};
+                struct
+                {
+                        b32 descriptor;
+                        b16 events;
+                        b16 returned;
+                } waited = {(b32)handle, 4, 0}; /* POLLOUT */
+                bipolar ready = system_call_5(
+                    syscall(ppoll), (positive)address_of waited, 1,
+                    (positive)address_of limit, 0, 8);
+                if (!ready)
+                {
+                        answer = -ETIMEDOUT;
+                        break;
+                }
+                if (ready < 0 && ready != -EINTR)
+                {
+                        answer = ready;
+                        break;
+                }
+        }
+
+        system_close((positive)handle);
+        return answer;
+}
+
+static const file_long login_write_longs[] = {
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool login_message_meta(file_taking address_to taking,
+                               string_address syntax, b32 address_to answer)
+{
+        if (taking->flags & FILE_FLAG('h'))
+        {
+                text_put_string("Usage: ");
+                text_put_string(taking->program);
+                text_put_character(' ');
+                text_put_string(syntax);
+                text_put_character('\n');
+                address_to answer = text_done(0);
+                return true;
+        }
+        if (taking->flags & FILE_FLAG('V'))
+        {
+                text_put_string(taking->program);
+                text_put_string(" from dawning-kit\n");
+                address_to answer = text_done(0);
+                return true;
+        }
+        return false;
+}
+
+static b32 tools_write()
+{
+        file_taking taking = {
+            .program = (string_address)"write",
+            .allowed = (string_address)"hV",
+            .valued = (string_address)"",
+            .longs = login_write_longs,
+        };
+        text_begin("write");
+
+        if (!file_take(address_of taking))
+                return text_done(1);
+        b32 meta;
+        if (login_message_meta(address_of taking, "user [ttyname]",
+                               address_of meta))
+                return meta;
+
+        positive argc = (positive)program_argument_count();
+        if (taking.first >= argc)
+                return text_refuse(null, "missing user operand", 1);
+        if (taking.first + 2 < argc)
+                return text_refuse(program_argument((b32)taking.first + 2),
+                                   "extra operand", 1);
+
+        p8 source_path[FILE_PATH_MAX];
+        string_address source_line = (string_address)"<no tty>";
+        if (login_message_source_tty(source_path, sizeof(source_path), false) >= 0)
+        {
+                file_facts source;
+                if (!file_look_at(source_path, address_of source) ||
+                    (source.mode & MODE_FORMAT) != MODE_CHARACTER)
+                        return text_refuse(source_path,
+                                           "cannot inspect your terminal", 1);
+                if (system_call(syscall(getuid)) && !(source.mode & 0020))
+                        return text_refuse(null,
+                                           "you have write permission turned off",
+                                           1);
+                source_line = login_message_line(source_path);
+        }
+
+        login_message_selection_clear();
+        login_message_select.mode = LOGIN_MESSAGE_WRITE;
+        login_message_select.real_user =
+            (positive)system_call(syscall(getuid));
+        login_message_select.wanted_user =
+            program_argument((b32)taking.first);
+        login_message_select.source_line = source_line;
+        if (taking.first + 1 < argc)
+        {
+                login_message_select.explicit_line = true;
+                login_message_select.wanted_line = login_message_line(
+                    program_argument((b32)taking.first + 1));
+        }
+
+        bool read = login_records(login_message_utmp(), false,
+                                  login_message_visit);
+        if (!read || login_message_select.failed)
+        {
+                if (login_message_select.failed)
+                        text_error(null, "cannot retain terminal selection");
+                login_message_selection_clear();
+                return text_done(1);
+        }
+
+        if (!login_message_select.count && !login_message_select.explicit_line &&
+            login_message_select.source_seen)
+        {
+                p8 login[FILE_NAME_MAX];
+                positive uid = (positive)system_call(syscall(getuid));
+                if (file_user_name(uid, login, sizeof(login)) &&
+                    string_equals(login, login_message_select.wanted_user))
+                {
+                        p8 source[33];
+                        string_copy_max_end(source, source_line,
+                                            sizeof(source) - 1);
+                        login_message_add(login, source, 0);
+                }
+        }
+
+        if (!login_message_select.count)
+        {
+                if (!login_message_select.sessions)
+                        string_format(file_fail, "write: %s is not logged in\n",
+                                      login_message_select.wanted_user);
+                else if (login_message_select.explicit_line)
+                        string_format(file_fail,
+                                      "write: %s is not logged in on %s\n",
+                                      login_message_select.wanted_user,
+                                      login_message_select.wanted_line);
+                else
+                        string_format(file_fail,
+                                      "write: %s has messages disabled\n",
+                                      login_message_select.wanted_user);
+                login_message_selection_clear();
+                return text_done(1);
+        }
+
+        login_message_recipient chosen = login_message_select.recipients[0];
+        positive eligible = login_message_select.eligible;
+        positive real_user = login_message_select.real_user;
+        login_message_selection_clear();
+
+        if (eligible > 1)
+                string_format(file_fail,
+                              "write: %s is logged in more than once; writing to %s\n",
+                              chosen.user, chosen.line);
+
+        bipolar handle = login_message_open(chosen.line, false, true,
+                                            real_user);
+        if (handle < 0)
+        {
+                string_format(file_fail, "write: /dev/%s: %s\n", chosen.line,
+                              file_reason(handle));
+                return text_done(1);
+        }
+
+        p8 login[FILE_NAME_MAX], hostname[65];
+        positive uid = (positive)system_call(syscall(getuid));
+        if (!file_user_name(uid, login, sizeof(login)))
+                string_copy_max_end(login, "???", sizeof(login) - 1);
+        file_machine machine;
+        memory_fill(address_of machine, 0, sizeof(machine));
+        if (system_call_1(syscall(uname), (positive)address_of machine) >= 0 &&
+            machine.node[0])
+                string_copy_max_end(hostname, machine.node,
+                                    sizeof(hostname) - 1);
+        else
+                string_copy_max_end(hostname, "???", sizeof(hostname) - 1);
+
+        time_t now = (time_t)file_now();
+        tm broken;
+        p8 clock[8] = "??:??";
+        tm address_to parts = localtime_r(address_of now, address_of broken);
+        if (parts)
+                strftime(clock, sizeof(clock), "%H:%M", parts);
+
+        text_out_to((positive)handle);
+        text_put_string("\r\n\a\a\aMessage from ");
+        text_put_string(login);
+        text_put_character('@');
+        text_put_string(hostname);
+        text_put_string(" on ");
+        text_put_string(source_line);
+        text_put_string(" at ");
+        text_put_string(clock);
+        text_put_string(" ...\r\n");
+
+        login_message_sink sink = {.direct = true};
+        bool copied = login_message_stream(address_of sink, null);
+        login_message_put(address_of sink, "EOF\r\n", 5);
+        text_flush();
+        text_out_to(1);
+        system_close((positive)handle);
+        return text_done(copied && !text_out_failed ? 0 : 1);
+}
+
+static const file_long login_wall_longs[] = {
+    {(string_address)"nobanner", 'n'},
+    {(string_address)"timeout", 't'},
+    {(string_address)"group", 'g'},
+    {(string_address)"help", 'h'},
+    {(string_address)"version", 'V'},
+    {null, 0},
+};
+
+static bool login_wall_group(string_address word, p32 address_to group)
+{
+        bipolar named = file_group_id(word);
+        if (named >= 0)
+        {
+                address_to group = (p32)named;
+                return true;
+        }
+
+        positive value;
+        p8 known[FILE_NAME_MAX];
+        if (!string_digits_exact(word, address_of value) || value > p32_max ||
+            !file_group_name(value, known, sizeof(known)))
+                return false;
+        address_to group = (p32)value;
+        return true;
+}
+
+static fn login_wall_banner(login_message_sink address_to sink)
+{
+        p8 login[FILE_NAME_MAX], hostname[65], source_path[FILE_PATH_MAX];
+        positive uid = (positive)system_call(syscall(getuid));
+        if (!file_user_name(uid, login, sizeof(login)))
+                string_copy_max_end(login, "<someone>", sizeof(login) - 1);
+
+        file_machine machine;
+        memory_fill(address_of machine, 0, sizeof(machine));
+        if (system_call_1(syscall(uname), (positive)address_of machine) >= 0 &&
+            machine.node[0])
+                string_copy_max_end(hostname, machine.node,
+                                    sizeof(hostname) - 1);
+        else
+                string_copy_max_end(hostname, "???", sizeof(hostname) - 1);
+
+        string_address where = (string_address)"somewhere";
+        if (login_message_source_tty(source_path, sizeof(source_path), true) >= 0)
+                where = login_message_line(source_path);
+
+        time_t now = (time_t)file_now();
+        tm broken;
+        p8 date[64] = "???";
+        tm address_to parts = localtime_r(address_of now, address_of broken);
+        if (parts)
+                strftime(date, sizeof(date), "%a %b %e %H:%M:%S %Y", parts);
+
+        p8 header[1024];
+        logger_builder build = {.bytes = header, .room = sizeof(header)};
+        logger_build_string(address_of build, "Broadcast message from ");
+        logger_build_string(address_of build, login);
+        logger_build_character(address_of build, '@');
+        logger_build_string(address_of build, hostname);
+        logger_build_string(address_of build, " (");
+        logger_build_string(address_of build, where);
+        logger_build_string(address_of build, ") (");
+        logger_build_string(address_of build, date);
+        logger_build_string(address_of build, "):");
+
+        login_message_character(sink, '\r');
+        login_message_spaces(sink, LOGIN_MESSAGE_WIDTH);
+        login_message_put(sink, "\r\n", 2);
+        positive length = min(build.used, (positive)LOGIN_MESSAGE_WIDTH);
+        login_message_put(sink, header, length);
+        login_message_spaces(sink, LOGIN_MESSAGE_WIDTH - length);
+        login_message_put(sink, "\a\a\r\n", 4);
+}
+
+static b32 tools_wall()
+{
+        file_taking taking = {
+            .program = (string_address)"wall",
+            .allowed = (string_address)"ntghV",
+            .valued = (string_address)"tg",
+            .longs = login_wall_longs,
+        };
+        text_begin("wall");
+        if (!file_take(address_of taking))
+                return text_done(1);
+        b32 meta;
+        if (login_message_meta(address_of taking,
+                               "[options] [file | message]",
+                               address_of meta))
+                return meta;
+
+        positive timeout = LOGIN_MESSAGE_TIMEOUT;
+        string_address timeout_text = file_option_value(address_of taking, 't');
+        if (timeout_text &&
+            (!string_digits_exact(timeout_text, address_of timeout) ||
+             !timeout || timeout > p32_max))
+                return text_refuse(timeout_text, "invalid timeout", 1);
+
+        bool banner = true;
+        if (taking.flags & FILE_FLAG('n'))
+        {
+                if (!system_call(syscall(geteuid)))
+                        banner = false;
+                else
+                        file_fail("wall: --nobanner is available only for root\n",
+                                  0);
+        }
+
+        login_message_selection_clear();
+        login_message_select.mode = LOGIN_MESSAGE_WALL;
+        login_message_select.real_user =
+            (positive)system_call(syscall(getuid));
+        string_address group_text = file_option_value(address_of taking, 'g');
+        if (group_text)
+        {
+                if (!login_wall_group(group_text,
+                                      address_of login_message_select.wanted_group))
+                {
+                        login_message_selection_clear();
+                        return text_refuse(group_text, "unknown group", 1);
+                }
+                login_message_select.group = true;
+        }
+
+        byte_store message = {0};
+        login_message_sink sink = {.store = address_of message,
+                                   .width = LOGIN_MESSAGE_WIDTH};
+        if (banner)
+                login_wall_banner(address_of sink);
+        login_message_spaces(address_of sink, LOGIN_MESSAGE_WIDTH);
+        login_message_put(address_of sink, "\r\n", 2);
+
+        positive argc = (positive)program_argument_count();
+        positive operands = argc - taking.first;
+        bool made = true;
+        if (operands)
+        {
+                string_address one = program_argument((b32)taking.first);
+                file_facts facts;
+                bool from_file = operands == 1 &&
+                                 file_look_at(one, address_of facts);
+                if (from_file)
+                {
+                        positive uid = (positive)system_call(syscall(getuid));
+                        positive euid = (positive)system_call(syscall(geteuid));
+                        positive gid = (positive)system_call(syscall(getgid));
+                        positive egid = (positive)system_call(syscall(getegid));
+                        if (uid && (uid != euid || gid != egid))
+                        {
+                                string_format(file_fail,
+                                    "wall: will not read %s - use stdin.\n", one);
+                                made = false;
+                        }
+                        else
+                                made = login_message_stream(address_of sink, one);
+                }
+                else
+                {
+                        for (positive at = taking.first; at < argc; at++)
+                        {
+                                string_address word = program_argument((b32)at);
+                                login_message_careful(address_of sink,
+                                    (p8 address_to)word, string_length(word));
+                                if (at + 1 < argc)
+                                        login_message_character(address_of sink,
+                                                                ' ');
+                        }
+                        login_message_put(address_of sink, "\r\n", 2);
+                }
+        }
+        else
+                made = login_message_stream(address_of sink, null);
+
+        login_message_spaces(address_of sink, LOGIN_MESSAGE_WIDTH);
+        login_message_put(address_of sink, "\r\n", 2);
+        if (!made || sink.failed)
+        {
+                if (sink.failed)
+                        text_error(null, "message is too large");
+                byte_store_release(address_of message);
+                login_message_selection_clear();
+                return text_done(1);
+        }
+
+        if (!login_records(login_message_utmp(), false, login_message_visit) ||
+            login_message_select.failed)
+        {
+                if (login_message_select.failed)
+                        text_error(null, "cannot retain terminal list");
+                byte_store_release(address_of message);
+                login_message_selection_clear();
+                return text_done(1);
+        }
+
+        for (positive at = 0; at < login_message_select.count; at++)
+        {
+                string_address line = login_message_select.recipients[at].line;
+                bipolar sent = login_message_send(line, message.bytes,
+                                                   message.used, timeout,
+                                                   login_message_select.real_user);
+                if (sent < 0 && sent != -EACCES && sent != -ENOENT &&
+                    sent != -EBUSY && sent != -ENXIO && sent != -ENODEV &&
+                    sent != -EIO)
+                        string_format(file_fail, "wall: /dev/%s: %s\n", line,
+                                      file_reason(sent));
+        }
+
+        byte_store_release(address_of message);
+        login_message_selection_clear();
+        return text_done(0);
+}
+
 static positive login_idle_who(p8 address_to into, login_terminal terminal,
                                 b64 boot)
 {
@@ -5949,9 +6857,25 @@ static bool dump_od_types(string_address word)
         {
                 p8 type = word[at++];
 
-                if (type == 'c')
+                if (type == 'a' || type == 'c')
                 {
-                        dump_add_character(false);
+                        if (type == 'a')
+                                dump_add_named();
+                        else
+                                dump_add_character(false);
+
+                        if (dump_arguments.failed)
+                                return false;
+
+                        /* z decorates whatever format stands before it, and
+                           the character kinds are no exception. */
+                        if (word[at] == 'z')
+                        {
+                                dump_arguments.format[dump_arguments.count - 1]
+                                    .printable = true;
+                                at++;
+                        }
+
                         continue;
                 }
 
@@ -5963,6 +6887,17 @@ static bool dump_od_types(string_address word)
                 if (word[at] == '1' || word[at] == '2' ||
                     word[at] == '4' || word[at] == '8')
                         size = (positive)(word[at++] - '0');
+                else if (word[at] == 'C' || word[at] == 'S' ||
+                         word[at] == 'I' || word[at] == 'L')
+                {
+                        /* The named sizes are the host's own integers, and
+                           every target this builds for is LP64. */
+                        size = word[at] == 'C'   ? 1
+                               : word[at] == 'S' ? 2
+                               : word[at] == 'I' ? 4
+                                                 : 8;
+                        at++;
+                }
 
                 bool printable = word[at] == 'z';
 
@@ -6012,6 +6947,12 @@ static bool dump_od_seen(p8 letter, string_address value)
                 dump_add_integer(10, 2, dump_od_width('u', 2), 1,
                                  false, false, false, false);
                 break;
+        case 'D':
+                dump_add_integer(10, 4, dump_od_width('u', 4), 1,
+                                 false, false, false, false);
+                break;
+        case 'e':
+        case 'F':
         case 'f':
                 text_error(null, "floating point output is unsupported");
                 return false;
@@ -6020,16 +6961,28 @@ static bool dump_od_seen(p8 letter, string_address value)
                 dump_add_integer(16, 2, dump_od_width('x', 2), 1,
                                  false, true, false, false);
                 break;
+        case 'H':
+        case 'X':
+                dump_add_integer(16, 4, dump_od_width('x', 4), 1,
+                                 false, true, false, false);
+                break;
         case 'i':
                 dump_add_integer(10, 4, dump_od_width('d', 4), 1,
                                  true, false, false, false);
                 break;
+        case 'I':
+        case 'L':
         case 'l':
                 dump_add_integer(10, 8, dump_od_width('d', 8), 1,
                                  true, false, false, false);
                 break;
+        case 'B':
         case 'o':
                 dump_add_integer(8, 2, dump_od_width('o', 2), 1,
+                                 false, true, false, false);
+                break;
+        case 'O':
+                dump_add_integer(8, 4, dump_od_width('o', 4), 1,
                                  false, true, false, false);
                 break;
         case 's':
@@ -6415,6 +7368,7 @@ static b32 dump_run(positive first)
         bool starred = false;
         bool wrote = false;
         bool opened = false;
+        bool read_failed = false;
         positive count = (positive)text_argument_count;
         positive inputs = first < count ? count - first : 1;
 
@@ -6501,6 +7455,11 @@ static b32 dump_run(positive first)
                         }
                 }
 
+                /* An input that could not be read leaves od with no offset to
+                   report, so the closing address line goes away with it. */
+                if (text_input.failed)
+                        read_failed = true;
+
                 text_close();
         }
 
@@ -6517,7 +7476,7 @@ static b32 dump_run(positive first)
                 wrote = true;
         }
 
-        if ((dump_arguments.od && opened) || wrote ||
+        if ((dump_arguments.od && opened && !read_failed) || wrote ||
             (!dump_arguments.od && opened && dump_arguments.skip))
         {
                 if (!dump_arguments.address_none)
@@ -6539,7 +7498,7 @@ static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AabcdfhijlNostvx",
+            .allowed = (string_address) "AaBbcDdeFfhHiIjlLNoOstvxX",
             .valued = (string_address) "AjNt",
             .longs = dump_od_longs,
             .seen = dump_od_seen,

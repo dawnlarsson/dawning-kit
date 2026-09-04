@@ -409,8 +409,11 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
 
         if (handle < 0)
         {
+                /* Every reason an input can refuse to open is worth the
+                   name the system gives it; assuming the absent one made a
+                   denied file and a symlink loop read alike. */
                 if (!text_quiet_open)
-                        text_error(path, "No such file or directory");
+                        text_error(path, file_reason(handle));
                 reader->failed = true;
                 return false;
         }

@@ -849,6 +849,12 @@ touch -d @1500000000 "$fixture/alpha"
 touch -d @1400000000 "$fixture/beta.txt"
 printf 'old\n' > "$fixture/ancient"
 touch -d @1000000000 "$fixture/ancient"
+# A regular file with nothing in it is not spelled the way one with something
+# in it is.  It lives outside the fixture so the listings above are not
+# disturbed by an extra name.
+hollow=$work/hollow
+: > "$hollow"
+
 long_path=$(python3 - <<'PY'
 print("x" * 20000)
 PY
@@ -1258,6 +1264,8 @@ same 'octal mode'       stat -c '%a' "$fixture/sub"
 same 'mode letters'     stat -c '%A' "$fixture/sub"
 same 'kind'             stat -c '%F' "$fixture/sub"
 same 'kind of link'     stat -c '%F' "$fixture/sub/back"
+same 'kind of empty'    stat -c '%F' "$hollow"
+same 'empty layout'     stat "$hollow"
 same 'links'            stat -c '%h' "$fixture/alpha"
 same 'owner'            stat -c '%u %U' "$fixture/alpha"
 same 'group'            stat -c '%g %G' "$fixture/alpha"
@@ -1552,6 +1560,10 @@ near 'inodes'           "sed 's/[0-9]/X/g'" df -i
 near 'inodes of a path' "sed 's/[0-9]/X/g'" df -i /tmp
 near 'types'            "sed 's/[0-9]/X/g'" df -T
 near 'types of a path'  "sed 's/[0-9]/X/g'" df -T /tmp
+# An operand that names nothing leaves no table, and the reference prints no
+# heading over one.
+answered 'unknown operand' df no-such-file
+near 'unknown among known' "sed 's/[0-9]/X/g'" df /tmp no-such-file
 near 'portable'         "sed 's/[0-9]/X/g'" df -P
 near 'portable human'   "sed 's/[0-9]/X/g'" df -Ph
 near 'everything'       "sed 's/[0-9]/X/g' | LC_ALL=C sort" df -a

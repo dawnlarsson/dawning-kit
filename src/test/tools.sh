@@ -920,6 +920,7 @@ case_start dump
 printf 'abcdef\0\377XYZ\n' > "$work/dump-short"
 printf '0123456789abcdef0123456789abcdef' > "$work/dump-repeat"
 printf '' > "$work/dump-empty"
+mkdir -p "$work/dump-directory"
 printf 'first-' > "$work/dump-first"
 printf 'second' > "$work/dump-second"
 
@@ -947,6 +948,22 @@ compare 'od legacy word octal' od -An -o "$work/dump-short"
 compare 'od legacy signed shorts' od -An -s "$work/dump-short"
 compare 'od legacy word hex' od -An -x "$work/dump-short"
 compare 'od legacy format order' od -An -bc "$work/dump-short"
+compare 'od legacy wide unsigned' od -An -D "$work/dump-short"
+compare 'od legacy wide octal' od -An -O "$work/dump-short"
+compare 'od legacy wide hex' od -An -X "$work/dump-short"
+compare 'od legacy wide hex alias' od -An -H "$work/dump-short"
+compare 'od legacy word octal alias' od -An -B "$work/dump-short"
+compare 'od legacy long alias' od -An -I "$work/dump-short"
+compare 'od legacy long alias again' od -An -L "$work/dump-short"
+compare 'od named format' od -An -t a "$work/dump-short"
+compare 'od named format printable' od -A x -t az -v "$work/dump-short"
+compare 'od characters printable' od -A x -t cz -v "$work/dump-short"
+compare 'od named integer sizes' od -An -t dC -t uS -t xI -t oL "$work/dump-short"
+compare 'od named size in one word' od -An -t xSxI "$work/dump-short"
+# A directory opens and then refuses to be read, and the reference has no
+# offset to close a dump it never began.
+compare 'od unreadable input' od "$work/dump-directory"
+compare 'od unreadable after empty' od "$work/dump-empty" "$work/dump-directory"
 
 printf 'pipeline\n' | od -An -c > "$work/want" 2>/dev/null
 want_status=$?
