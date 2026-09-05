@@ -20,6 +20,7 @@
 #define EXEC_SIGNAL_RETURN 3
 #define EXEC_SIGNAL_FATAL 4
 #define EXEC_SIGNAL_COMMAND_ERROR 5
+#define EXEC_SIGNAL_INPUT_ERROR 6
 #define EXEC_ASSIGNMENT_LINE_ABORT 256
 
 static b32 exec_signal;
@@ -126,9 +127,29 @@ COLD fn exec_expand_fatal()
         exec_abort_line(shell_status);
 }
 
+// A recoverable arithmetic expansion error belongs to the reader that
+// evaluated it. eval/dot may continue on their next input line and consume
+// this signal on return, while functions and loops must keep unwinding.
+COLD fn exec_expand_input_error()
+{
+        exec_abort_line(shell_status);
+        exec_signal = EXEC_SIGNAL_INPUT_ERROR;
+}
+
+static PURE bool exec_input_error()
+{
+        return exec_signal == EXEC_SIGNAL_INPUT_ERROR;
+}
+
+static fn exec_input_finish()
+{
+        if (exec_input_error())
+                exec_signal = EXEC_SIGNAL_NONE;
+}
+
 static fn exec_line_begin()
 {
-        if (exec_signal == EXEC_SIGNAL_FATAL)
+        if (exec_signal == EXEC_SIGNAL_FATAL || exec_input_error())
         {
                 exec_signal = EXEC_SIGNAL_NONE;
 
@@ -174,7 +195,7 @@ static PURE bool exec_line_aborted()
 */
 static bool exec_source_stop(b32 address_to startup_status)
 {
-        if (!exec_signal)
+        if (!exec_signal || exec_input_error())
                 return false;
 
         if (exec_signal == EXEC_SIGNAL_RETURN)
@@ -4821,7 +4842,7 @@ static bool exec_redirect_apply(b32 index)
 // plain failure.
 static b32 exec_redirect_failed_status()
 {
-        return exec_line_aborted() ? 2
+        return exec_line_aborted() ? shell_status
                : exec_redirect_status ? exec_redirect_status
                                       : 1;
 }
@@ -5893,6 +5914,20 @@ static PURE bool exec_special_builtin(string_address name)
         if (shell_bash_compat && !shell_posix_on())
                 return false;
         return exec_special_active(name, exec_special_kind(name));
+}
+
+// Keep rare special-builtin error classification out of the large inlined
+// command dispatcher. The existing nested error save/reset remains at the
+// call site, and ordinary successful commands never probe the function table.
+static COLD bool exec_special_error_fatal(string_address command,
+                                          bool special, b32 status,
+                                          bool error)
+{
+        if (!error)
+                return false;
+        if (!special)
+                special = exec_special_builtin(command);
+        return special && status;
 }
 
 /*
@@ -7113,9 +7148,15 @@ static b32 exec_simple(b32 index)
         {
                 exec_redirect_restore(mark);
                 status = exec_redirect_failed_status();
-                if (!special)
-                        special = exec_special_builtin(command);
-                fatal = special;
+                // An expansion error already selected its reader boundary.
+                // Do not turn a recoverable Bash substring failure into a
+                // POSIX special-builtin redirection failure that exits.
+                if (!exec_line_aborted())
+                {
+                        if (!special)
+                                special = exec_special_builtin(command);
+                        fatal = special;
+                }
                 goto fail;
         }
 
@@ -7163,14 +7204,8 @@ static b32 exec_simple(b32 index)
                 builtin_error = exec_special_error;
                 exec_special_error = previous_error;
 
-                /* Prefix assignments need this answer before dispatch for
-                   their persistence rules.  Without prefixes it becomes
-                   observable only when a builtin has reported a POSIX
-                   special-builtin error, so keep the ordinary command path
-                   free of a second function-table probe. */
-                if (builtin_error && !special)
-                        special = exec_special_builtin(command);
-                fatal = special && status && builtin_error;
+                fatal = exec_special_error_fatal(
+                    command, special, status, builtin_error);
         }
 #undef EXEC_WORD
         log_flush();
@@ -7225,8 +7260,7 @@ static bool exec_loop_again()
         if (!exec_signal)
                 return true;
 
-        if (exec_signal == EXEC_SIGNAL_RETURN ||
-            exec_signal == EXEC_SIGNAL_FATAL)
+        if (exec_signal >= EXEC_SIGNAL_RETURN)
                 return false;
 
         if (exec_signal_level > 1)
@@ -7272,7 +7306,7 @@ static b32 exec_loop(b32 index, bool until)
 
                 if (exec_line_aborted())
                 {
-                        status = 2;
+                        status = shell_status;
                         break;
                 }
 
@@ -7309,9 +7343,7 @@ static positive exec_items_room;
 static b32 exec_aborted(shell_mark mark)
 {
         shell_store_rewind(address_of exec_store, mark);
-        shell_status = 2;
-
-        return 2;
+        return shell_status;
 }
 
 /*
@@ -7870,7 +7902,7 @@ static b32 exec_arithmetic_command(b32 index)
         if (!string_get(whole + 2 + string_span_of_set(whole + 2, " \t\n")))
                 status = 1;
         else if (!exec_arithmetic_value(whole + 2, address_of value))
-                status = exec_line_aborted() ? 2 : 1;
+                status = exec_line_aborted() ? shell_status : 1;
         else
                 status = value ? 0 : 1;
 
@@ -7970,7 +8002,7 @@ static b32 exec_cfor(b32 index)
         if (string_get(initialize) &&
             !exec_arithmetic_value(initialize, address_of value))
         {
-                status = exec_line_aborted() ? 2 : 1;
+                status = exec_line_aborted() ? shell_status : 1;
                 goto done;
         }
 
@@ -7980,7 +8012,7 @@ static b32 exec_cfor(b32 index)
                 {
                         if (!exec_arithmetic_value(condition, address_of value))
                         {
-                                status = exec_line_aborted() ? 2 : 1;
+                                status = exec_line_aborted() ? shell_status : 1;
                                 goto done;
                         }
 
@@ -7998,7 +8030,7 @@ static b32 exec_cfor(b32 index)
                 if (string_get(update) &&
                     !exec_arithmetic_value(update, address_of value))
                 {
-                        status = exec_line_aborted() ? 2 : 1;
+                        status = exec_line_aborted() ? shell_status : 1;
                         goto done;
                 }
         }
@@ -8576,7 +8608,8 @@ static b32 exec_conditional(b32 index)
                 conditional_nounset_fatal();
 
         exec_bracket_restore(whole, length, held);
-        status = arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
+        status = exec_line_aborted() ? shell_status
+                 : arith_unset ? 1 : conditional_bad ? 2 : value ? 0 : 1;
         shell_store_rewind(address_of exec_store, arena);
         return status;
 }
@@ -9692,10 +9725,7 @@ static b32 exec_time(b32 index)
                      time_apart(after.system, before.system));
 
         if (exec_line_aborted())
-        {
-                shell_status = 2;
-                return 2;
-        }
+                return shell_status;
 
         if (node->op)
                 status = status ? 0 : 1;
@@ -9729,10 +9759,7 @@ static b32 exec_pipeline(b32 index)
         exec_tested = tested;
 
         if (exec_line_aborted())
-        {
-                shell_status = 2;
-                return 2;
-        }
+                return shell_status;
 
         if (node->flags)
         {

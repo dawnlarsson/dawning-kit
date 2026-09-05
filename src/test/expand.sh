@@ -253,8 +253,8 @@ answer 'readonly assign is fatal' \
         'readonly LOCKED; echo before; printf "[%s]" "${LOCKED:=value}"; echo after'
 answer 'complain'       'printf "[%s]" ${nosuch?} ; echo after'
 answer 'complain colon' 'x=; printf "[%s]" ${x:?gone} ; echo after'
-#       A bare colon remains invalid and positional-parameter slicing remains
-#       rejected until the shell has Bash's parameter-array representation.
+#       A bare colon remains invalid. Positional slicing is a Bash-personality
+#       extension; the native/dash policy continues to reject it here.
 answer 'no bare colon'  'x=abc; echo "${x:}"; echo after'
 answer 'no colon trim'  'x=abc; echo "${x:%b}"; echo after'
 answer 'no at offset'   'set -- a b; echo "${@:1}"; echo after'
@@ -395,6 +395,58 @@ bash_answer 'ternary offset' 'x=abcdef; n=0; printf "[%s]" "${x:n?1:2:3}" END; e
 bash_answer 'substring assigns' 'x=abcdef; n=1; printf "[%s][%s]" "${x:n+=2:2}" "$n" END; echo'
 bash_answer 'substring fields' 'x="a b c"; printf "[%s]" ${x:2:3} END; echo'
 bash_answer 'long substring' "x=$long_a; y=\${x:100:1200}; echo \${#y}"
+bash_answer 'substring captures before arithmetic mutation' \
+    'x=abcdef; printf "[%s][%s]" "${x:(x=123,1):2}" "$x"; echo'
+bash_answer 'substring unset skips arithmetic' \
+    'unset x; i=0; n=0; printf "[%s][%s][%s]" "${x:i++:n++}" "$i" "$n"; echo'
+bash_answer 'substring outside skips length arithmetic' \
+    'x=abc; n=0; printf "[%s][%s]" "${x:99:n++}" "$n"; echo'
+bash_answer 'substring error resumes next input line' \
+    'x=abc
+printf "bad:%s" "${x:0:-4}"; echo bad-tail
+printf "after:%s\n" "$?"'
+bash_answer 'substring arithmetic error resumes next input line' \
+    'x=abc
+printf "bad:%s" "${x:1/0:1}"; echo bad-tail
+printf "after:%s\n" "$?"'
+
+group bash sequence slices
+bash_answer 'positional slice retains empty elements' \
+    'set -- a "" "two words" z; printf "[%s]" "${@:2:2}"; echo'
+bash_answer 'positional slice negative offset' \
+    'set -- a b c; printf "[%s]" "${@: -2}"; echo'
+bash_answer 'positional slice index zero includes argv zero' \
+    'set -- a b; for v in "${@:0:2}"; do [ "$v" = "$0" ] && v=zero; printf "[%s]" "$v"; done; echo'
+bash_answer 'sparse slice uses indices not member count' \
+    'a=([3]=three [9]=nine [12]=last); printf "[%s]" "${a[@]:5:2}"; echo'
+bash_answer 'sparse negative slice counts from highest index' \
+    'a=([3]=three [9]=nine [12]=last); printf "[%s]" "${a[@]: -4:2}"; echo'
+bash_answer 'array slice reads arithmetic mutation safely' \
+    'a=(abc def ghi); printf "[%s]" "${a[@]:(a[1]=123,1):1}"; echo'
+bash_answer 'array slice samples highest index after offset mutation' \
+    'a=([2]=two); printf "[%s]" "${a[@]:(a[10]=7,-1)}"; echo'
+bash_answer 'empty length is zero' \
+    'x=abc; a=(a b); set -- "${x::}" "${a[@]::}" "${@::}"; printf "%s" "$#"; printf "[%s]" "$@"; echo'
+bash_answer 'empty array slice skips arithmetic' \
+    'a=(); i=0; n=0; set -- "${a[@]:i++:n++}"; printf "%s:%s:%s\n" "$#" "$i" "$n"'
+bash_answer 'empty slice and transform disappear' \
+    'a=(); set -- "${a[@]:2}" "${a[@]^^}"; printf "%s\n" "$#"'
+bash_answer 'array slice rejects negative length at input boundary' \
+    'a=([3]=three)
+printf "bad:%s" "${a[@]:1:-1}"; echo bad-tail
+printf "after:%s\n" "$?"'
+bash_answer 'unquoted empty IFS removes implicit nulls' \
+    'a=("" a ""); IFS=; set -- ${a[@]} ${a[@]^^}; printf "%s" "$#"; printf "[%s]" "$@"; echo'
+bash_answer 'substring failure restores local scope without ERR trap' \
+    'x=outer
+trap "echo bad-ERR" ERR
+f() { local x=abc; : "${x:0:-4}"; echo bad-tail; }
+f
+printf "after:%s:%s\n" "$?" "$x"'
+bash_answer 'nested reader resumes after substring failure' \
+    'x=abc
+eval '\'': "${x:0:-4}"; echo bad-tail
+echo inner:$?'\''; echo caller:$?'
 
 group bash case
 bash_answer 'uppercase first' 'x=abCDef; printf "[%s]" "${x^}" END; echo'
@@ -507,7 +559,9 @@ answer 'bare star no ifs' 'set -- a b c; IFS=; printf "[%s]" $* END; echo'
 answer 'bare star splits' 'set -- "a b" c; IFS=; printf "[%s]" $* END; echo'
 #       Unquoted, an empty parameter joins to nothing and splits to nothing,
 #       so it is no field. Quoted it is a field, and with IFS empty there is
-#       no join and no splitting and it is a field again.
+#       no join and no splitting: dash preserves leading/intermediate empty
+#       parameters, but still drops the final one. Bash drops all implicit
+#       nulls, tested separately under its own invocation policy.
 answer 'bare empty goes'  'set -- "" a; printf "[%s]" $@ END; echo'
 answer 'bare empty star'  'set -- "" a; printf "[%s]" $* END; echo'
 answer 'quoted empty stays' 'set -- "" a; printf "[%s]" "$@" END; echo'
@@ -515,6 +569,9 @@ answer 'all empty'        'set -- "" ""; printf "[%s]" $@ END; echo'
 answer 'empty at the end' 'set -- "a b" ""; printf "[%s]" $@ END; echo'
 answer 'a blank goes'     'set -- " " a; printf "[%s]" $@ END; echo'
 answer 'empty no ifs'     'set -- "" a; IFS=; printf "[%s]" $@ END; echo'
+answer 'trailing empty no ifs' 'set -- a ""; IFS=; printf "[%s]" $@ END; echo'
+answer 'all empty no ifs' 'set -- "" ""; IFS=; printf "[%s]" $@ END; echo'
+bash_answer 'Bash empty no ifs' 'set -- "" a ""; IFS=; printf "[%s]" $@ END; echo'
 answer 'empty colon ifs'  'set -- a "" b; IFS=:; printf "[%s]" $@ END; echo'
 answer 'at no ifs'      'set -- a b c; IFS=; printf "[%s]" "$@" END; echo'
 answer 'braced at'      'set -- "a b" c; printf "[%s]" "${@}" END; echo'

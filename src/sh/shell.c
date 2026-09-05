@@ -1402,7 +1402,8 @@ static fn run_line_inner(string_address line)
 
 /*
         Top-level lines recover from an interactive expansion error; nested
-        lines are part of the command that failed and keep carrying it.
+        lines normally keep carrying it. Recoverable Bash slice arithmetic
+        errors instead belong to the innermost reader, including eval/dot.
 
         Keeping the depth around the entire executor call is what makes an
         eval or a multi-line dot script stop, while the next line read from the
@@ -1417,7 +1418,7 @@ fn run_line(string_address line)
         // recovery before this one has reached the user's next command.
         shell_run_depth++;
 
-        if (top)
+        if (top || exec_input_error())
                 exec_line_begin();
 
         run_line_inner(line);

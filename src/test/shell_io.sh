@@ -94,6 +94,14 @@ for pair in bash dash; do
                 'printf "%d|%f|"; printf "status:%s\n" "$?"'
         case_compare "printf character NUL bytes $pair" "$reference" "$candidate" \
                 'printf "%c|%3c|%-3c|" "" "" ""; printf "%c|"'
+        case_compare "printf zero precision signed fields $pair" "$reference" "$candidate" \
+                'printf "<%.0d><%5.0d><%05.0d><%-5.0d><%+.0d><%+5.0d><% .0d><% 5.0i>\n" 0 0 0 0 0 0 0 0'
+        case_compare "printf zero precision bases $pair" "$reference" "$candidate" \
+                'printf "<%.0u><%.0o><%#.0o><%#5.0o><%#05.0o><%#-5.0o><%.0x><%#.0x><%#.0X>\n" 0 0 0 0 0 0 0 0 0'
+        case_compare "printf dynamic zero precision $pair" "$reference" "$candidate" \
+                'printf "<%*.*d><%+*.*d><%0*.*d><%*.*d><%#*.*o><%#*.*x>\n" 5 0 0 5 0 0 5 0 0 -5 0 0 5 0 0 5 0 0'
+        case_compare "printf nonzero precision guard $pair" "$reference" "$candidate" \
+                'printf "<%#8.0x><%08.0d><%#.0o><%+5.3d>\n" 15 17 7 2'
 done
 
 case_compare 'printf option terminator Bash' "$B" "$MB" \

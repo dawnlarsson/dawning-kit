@@ -88,6 +88,7 @@ static bool exec_assignment_promote(const_string name, positive length);
 static PURE bool exec_special_builtin(string_address name);
 static fn exec_special_error_note();
 static fn exec_command_reader_finish();
+static fn exec_input_finish();
 static positive shell_command_reader_depth;
 static bool env_attribute_target_span(const_string name, positive length,
                                       const_string address_to target,
@@ -8419,6 +8420,27 @@ fn printf_number(writer write, positive magnitude, p8 sign, positive base, bool 
         positive style = sign | ((positive)upper << 26) |
                          ((positive)left << 27) | ((positive)zero << 28);
 
+        /*
+                An explicitly empty precision suppresses the zero digit.  A
+                sign still belongs to the field, while zero padding is
+                ignored once a precision was supplied.  Octal's alternate
+                form is the sole exception: it must retain one zero digit.
+
+                Keep this printf-only policy outside positive_to_base_field:
+                its other callers rely on zero always having a digit.
+        */
+        if (!magnitude && !precision)
+        {
+                if (alternate && base == 8)
+                        precision = 1;
+                else
+                {
+                        writer_field(write, address_of sign, sign ? 1 : 0,
+                                     width, ' ', left);
+                        return;
+                }
+        }
+
         // The alternate form is a prefix, and only on a value that has
         // digits to put it in front of: 0x before sixteen, 0 before eight.
         if (alternate && magnitude)
@@ -11306,6 +11328,7 @@ COLD fn shell_eval(writer write, string_address input)
                 // idiom, and what cmd printed has as many lines as it likes.
                 run_lines(eval_storage);
                 shell_input_end();
+                exec_input_finish();
 
                 lex_nest_leave(address_of frame);
         }
@@ -11918,6 +11941,7 @@ static b32 shell_source_execute(p8 address_to text, positive filled,
         }
         shell_input_end();
         shell_source_depth--;
+        exec_input_finish();
         lex_nest_leave(address_of frame);
 
         b32 failed = (b32)(shell_syntax_generation - syntax);

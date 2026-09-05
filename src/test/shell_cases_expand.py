@@ -82,6 +82,55 @@ def arithmetic_side_effect(rng):
     return "arithmetic-effects", ("bash", "posix"), script
 
 
+def arithmetic_comma(rng):
+    first = rng.randrange(0, 8)
+    second = rng.randrange(1, 8)
+    sequence = f"i += {first}, i += {second}, i * 2"
+    context = rng.choice(("group", "value", "conditional", "short-circuit"))
+    setup = "i=0"
+    if context == "value":
+        setup += "; expression=" + quote(sequence)
+        expression = "expression"
+    elif context == "conditional":
+        expression = f"{rng.randrange(0, 2)} ? {sequence} : 99"
+    elif context == "short-circuit":
+        expression = f"{rng.randrange(0, 2)} && ({sequence})"
+    else:
+        expression = "(" * rng.randrange(1, 5) + sequence
+        expression += ")" * (len(expression) - len(expression.lstrip("(")))
+    return "arithmetic-comma-" + context, ("bash", "posix"), program(
+        setup, "r=$((" + expression + "))",
+        "printf 'r=%s i=%s\\n' \"$r\" \"$i\"")
+
+
+def arithmetic_array(rng):
+    """Exercise one prepared indexed target through every lvalue form."""
+    left, right, created = sorted(rng.sample(range(1, 12), 3))
+    first = rng.randrange(1, 10)
+    second = rng.randrange(1, 10)
+    made = rng.randrange(1, 10)
+    delta = rng.randrange(1, 6)
+    operator = rng.choice(("+=", "*=", "^=", "<<="))
+    script = program(
+        f"a=([{left}]={first} [{right}]={second}); b=([1]={right})",
+        f"i={left}; j=1; new={created}",
+        "read=$((a[i]))",
+        f"write=$((a[i]={made}))",
+        f"compound=$((a[i++]{operator}{delta})); compound_i=$i; i={left}",
+        f"pre=$((++a[i++])); pre_i=$i; i={left}",
+        f"post=$((a[i++]++)); post_i=$i; i={left}",
+        "nested=$((a[b[j]]))",
+        f"create=$((a[new]={made + delta}))",
+        "held=$i; left_short=$((0 && a[i++]++)); right_short=$((1 || a[i++]++))",
+        "printf 'read=%s write=%s compound=%s:%s pre=%s:%s post=%s:%s nested=%s create=%s ' "
+        '"$read" "$write" "$compound" "$compound_i" "$pre" "$pre_i" '
+        '"$post" "$post_i" "$nested" "$create"',
+        "printf 'i=%s held=%s short=%s:%s values=%s:%s:%s\\n' "
+        '"$i" "$held" "$left_short" "$right_short" '
+        '"${a[i]}" "${a[b[j]]}" "${a[new]}"')
+    return "arithmetic-array", ("bash", "posix"), script
+
+
 def substitution_status(rng):
     prior = rng.choice(("true", "false"))
     first = rng.choice(("true", "false"))
@@ -184,18 +233,149 @@ def indirect_special(rng):
     return "indirect-special", ("bash", "posix"), script
 
 
+def substring(rng):
+    value = rng.choice(("", "a", "a b::c", "0123456789", "a" * 33))
+    offset = rng.choice((-40, -10, -2, -1, 0, 1, 3, 10, 40,
+                         -(1 << 63), (1 << 63) - 1))
+    length = rng.choice((None, -40, -2, -1, 0, 1, 3, 40))
+    suffix = "" if length is None else rng.choice((":n", ":", ": "))
+    form = "${x: i" + suffix + "}"
+    if rng.choice((False, True)):
+        form = '"' + form + '"'
+    return "substring-boundaries", ("bash", "posix"), program(
+        f"x={quote(value)}; i={offset}; n={length or 0}; IFS=:",
+        "set -- " + form,
+        "printf 'n=%s' \"$#\"; printf '<%s>' \"$@\"; echo")
+
+
+def sequence_slice(rng):
+    kind = rng.choice(("positional", "dense", "sparse"))
+    values = rng.sample(("", "a", "two words", "x:y", "*", "last"),
+                        rng.randrange(0, 6))
+    if kind == "positional":
+        setup = "set -- " + " ".join(quote(value) for value in values)
+        name = rng.choice(("@", "*"))
+    else:
+        indices = (list(range(len(values))) if kind == "dense" else
+                   sorted(rng.sample(range(1, 13), len(values))))
+        setup = "a=(" + " ".join(f"[{index}]={quote(value)}"
+                                  for index, value in zip(indices, values)) + ")"
+        name = "a[" + rng.choice(("@", "*")) + "]"
+    offset = rng.choice((-20, -5, -2, -1, 0, 1, 2, 5, 12, 20,
+                         -(1 << 63), (1 << 63) - 1))
+    length = rng.choice((None, -2, 0, 1, 2, 5, 20))
+    suffix = "" if length is None else rng.choice((":n", ":", ": "))
+    form = "${" + name + ": i" + suffix + "}"
+    if rng.choice((False, True)):
+        form = '"' + form + '"'
+    # $0 differs by input transport. Normalize it only in the observed words,
+    # after expansion, so offset zero can still exercise its inclusion.
+    return "sequence-slice-" + kind, ("bash", "posix"), program(
+        setup, f"i={offset}; n={length or 0}; IFS={quote(rng.choice((' ', ':', '')))}",
+        "observe() { printf 'n=%s' \"$#\"; for v do",
+        "if [ \"$v\" = \"$0\" ]; then v=argv-zero; fi; printf '<%s>' \"$v\"; done; echo; }",
+        "observe " + form)
+
+
+def array_transform(rng):
+    values = rng.sample(("", "a", "a b", "aa", "x:y", "AB"), rng.randrange(0, 5))
+    operation = rng.choice(("#a*", "%*a", "/a/", "//a/x", "^^", ",,"))
+    form = "${a[" + rng.choice(("@", "*")) + "]" + operation + "}"
+    quoted = rng.choice((False, True))
+    separator = rng.choice((" ", ":", ""))
+    # Bash 5.3.15 leaks its internal SOH quote marker and joins with spaces
+    # for unquoted array #/% trimming under an empty IFS. Do not make that
+    # oracle defect Moonwater's specification; cover empty IFS trim quoted,
+    # and retain unquoted empty IFS for replacement and case conversion.
+    if not separator and operation[0] in "#%":
+        quoted = True
+    if quoted:
+        form = '"' + form + '"'
+    return "array-transform-fields", ("bash", "posix"), program(
+        "a=(" + " ".join(quote(value) for value in values) + ")",
+        "IFS=" + quote(separator),
+        "set -- " + form,
+        "printf 'n=%s' \"$#\"; for v do printf '<%s>' \"$v\"; done; echo")
+
+
+def sequence_empty_fields(rng):
+    values = rng.choice((("",), ("", ""), ("", "a"), ("a", ""),
+                         ("a", "", "b"), ("", "a b", ""), ()))
+    form = rng.choice(("$@", "$*", '"$@"', '"$*"'))
+    form = rng.choice(("", "pre", "''")) + form + rng.choice(("", "post", "''"))
+    return "sequence-empty-fields", ("bash", "posix", "dash"), program(
+        "set -- " + " ".join(quote(value) for value in values),
+        "IFS=" + quote(rng.choice(("", " ", ":"))),
+        "observe() { printf 'n=%s' \"$#\"; for v do printf '<%s>' \"$v\"; done; echo; }",
+        "observe " + form)
+
+
+def slice_effects(rng):
+    setup, name = rng.choice((("x=abcdef", "x"), ("x=", "x"), ("unset x", "x"),
+                              ("a=([2]=abc [5]=def)", "a[@]"),
+                              ("a=()", "a[@]"), ("set -- abc def", "@")))
+    offset = rng.choice(("i++", "99", "-99", "1/0", "(i+=2)"))
+    length = rng.choice(("n++", "1/0", "-99", "2"))
+    command = "printf 'slice=<%s>\\n' \"${" + name + ": " + offset + ":" + length + "}\""
+    wrapper = rng.choice(("direct", "function", "eval", "source", "loop", "time",
+                          "negate", "redirect", "for-items", "case", "conditional",
+                          "while", "until"))
+    if wrapper == "function":
+        command = "f() { " + command + "; echo tail; }\nf"
+    elif wrapper in ("eval", "source"):
+        body = command + "; echo tail" + rng.choice(("", "\necho nested:$?"))
+        if wrapper == "eval":
+            command = "eval " + quote(body) + "; echo caller:$?"
+        else:
+            command = ("printf '%s\\n' " + quote(body) + " > source\n" +
+                       ". ./source; echo caller:$?")
+    elif wrapper == "loop":
+        command = "for v in a b; do " + command + "; echo tail; done"
+    elif wrapper == "time":
+        command = "TIMEFORMAT=; time " + command
+    elif wrapper == "negate":
+        command = "! " + command
+    elif wrapper == "redirect":
+        # An ambiguous redirect in Bash reevaluates its word while producing
+        # the diagnostic, repeating side effects. Keep this family about
+        # expansion-error recovery: scalar redirects avoid that oracle quirk,
+        # and the exec domain separately tests ambiguous redirect statuses.
+        if name in ("a[@]", "@"):
+            setup, name = "x=abcdef", "x"
+        command = ": > \"${" + name + ": " + offset + ":" + length + "}\""
+    elif wrapper == "for-items":
+        command = ("for v in \"${" + name + ": " + offset + ":" + length +
+                   "}\"; do printf '<%s>' \"$v\"; done")
+    elif wrapper == "case":
+        command = "case \"${" + name + ": " + offset + ":" + length + "}\" in *) echo case;; esac"
+    elif wrapper == "conditional":
+        command = "[[ \"${" + name + ": " + offset + ":" + length + "}\" = abc ]]"
+    elif wrapper in ("while", "until"):
+        command = wrapper + " " + command + "; do break; done"
+    return "slice-effects-" + wrapper, ("bash", "posix"), program(
+        setup, "i=0; n=0", command,
+        "printf 'after:%s i=%s n=%s\\n' \"$?\" \"$i\" \"$n\"")
+
+
 GENERATORS = (
     parameter_default,
     parameter_trim,
     splitting_and_glob,
     arithmetic,
     arithmetic_side_effect,
+    arithmetic_comma,
+    arithmetic_array,
     substitution_status,
     indexed_array,
     associative_array,
     nameref,
     local_scope,
     indirect_special,
+    substring,
+    sequence_slice,
+    array_transform,
+    sequence_empty_fields,
+    slice_effects,
 )
 
 

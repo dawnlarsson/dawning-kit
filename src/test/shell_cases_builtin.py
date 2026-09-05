@@ -31,6 +31,78 @@ def read_fields(rng):
     return "builtin-read-fields", MODES, script
 
 
+def read_limit_state(rng):
+    """Compose Bash's byte/count/delimiter options over one retained fd."""
+    shape = rng.randrange(4)
+    attached = bool(rng.getrandbits(1))
+
+    if shape < 2:
+        count = rng.choice((0, 1, 2, 3, 7))
+        exact = shape == 1
+        option = ("-N" if exact else "-n") + str(count)
+        if not attached:
+            option = ("-N " if exact else "-n ") + str(count)
+        # -N consumes newlines and backslashes as bytes. -n stops at newline
+        # and gives back a backslash-newline unless -r is also present.
+        text = rng.choice(("ab:cdef", "a\nbcdef", "a\\\nbcdef"))
+        script = (
+            "printf '%s' " + shlex.quote(text) + " > feed\n"
+            "exec 3<feed\n"
+            f"IFS= read -r -u3 {option} first\n"
+            "one=$?\n"
+            f"IFS= read -r -u 3 {option} second\n"
+            "two=$?\n"
+            "printf '%s:<%s>:%s:<%s>\\n' \"$one\" \"$first\" \"$two\" \"$second\"\n"
+        )
+    elif shape == 2:
+        delimiter = rng.choice((":", ",", "|"))
+        option = "-d" + delimiter if attached else "-d " + shlex.quote(delimiter)
+        text = "aa" + delimiter + "bb" + delimiter + "cc"
+        script = (
+            "printf '%s' " + shlex.quote(text) + " > feed\n"
+            "exec 3<feed\n"
+            f"IFS= read -r -u3 {option} first\n"
+            "one=$?\n"
+            f"IFS= read -r -u 3 {option} second\n"
+            "two=$?\n"
+            "printf '%s:<%s>:%s:<%s>\\n' \"$one\" \"$first\" \"$two\" \"$second\"\n"
+        )
+    else:
+        # An empty -d operand means NUL. The script contains an escape, not a
+        # NUL byte, so it remains a valid command string for every runner.
+        # Quotes are gone before read sees argv, so an empty value necessarily
+        # occupies the next argument; there is no attached spelling of it.
+        option = "-d ''"
+        script = (
+            "printf 'aa\\0bb\\0cc' > feed\n"
+            "exec 3<feed\n"
+            f"IFS= read -r -u3 {option} first\n"
+            "one=$?\n"
+            f"IFS= read -r -u 3 {option} second\n"
+            "two=$?\n"
+            "printf '%s:<%s>:%s:<%s>\\n' \"$one\" \"$first\" \"$two\" \"$second\"\n"
+        )
+
+    # dash has only its portable -r surface; Bash and Bash POSIX mode share
+    # these documented builtin extensions.
+    return "builtin-read-limit-state", ("bash", "posix"), script
+
+
+def read_array_state(rng):
+    separator = rng.choice((":", ",", " ", " :"))
+    text = rng.choice(("a:b::c", ":a:b:", " a  b c ", "one,two,,four"))
+    option = rng.choice(("-a values", "-avalues"))
+    script = (
+        "printf '%s\\n' " + shlex.quote(text) + " > feed\n"
+        "values=(old stale)\n"
+        "IFS=" + shlex.quote(separator) + f" read -r {option} < feed\n"
+        "s=$?\nprintf '%s:%s:<%s>:<%s>:<%s>:<%s>\\n' \"$s\" "
+        "\"${#values[@]}\" \"${values[0]-}\" \"${values[1]-}\" "
+        "\"${values[2]-}\" \"${values[3]-}\"\n"
+    )
+    return "builtin-read-array-state", ("bash", "posix"), script
+
+
 def printf_formats(rng):
     form = rng.choice(("%s", "<%.3s>", "%d", "%u", "%x", "%o", "%b", "%c",
                        "%f", "%g", "%a", "%A", "%08d", "%-6s", "%#x"))
@@ -57,6 +129,38 @@ def printf_hex_roundtrip(rng):
     script = ("encoded=$(printf " + shlex.quote(form) + " " + shlex.quote(value) +
               ")\ns=$?\nprintf 'status:%s:value:%.17g\\n' \"$s\" \"$encoded\"\n")
     return "builtin-printf-hex-roundtrip", MODES, script
+
+
+def printf_dynamic_fields(rng):
+    """Drive width/precision argument consumption, signs and format reuse."""
+    kind = rng.randrange(4)
+    width = rng.choice((-12, -5, 0, 1, 7, 16))
+    precision = rng.choice((-3, -1, 0, 1, 4, 9))
+
+    if kind == 0:
+        form = "<%*.*s>|"
+        values = (str(width), str(precision),
+                  rng.choice(("abcdef", "a b c", "")))
+    elif kind == 1:
+        form = "<%0*.*d>|"
+        values = (str(width), str(precision),
+                  rng.choice(("-17", "0", "42", "007")))
+    elif kind == 2:
+        form = "<%#*.*x>|"
+        values = (str(width), str(precision),
+                  rng.choice(("0", "15", "255", "0x123")))
+    else:
+        form = "<%*.*b>|"
+        values = (str(width), str(precision),
+                  rng.choice(("a\\nb", "tab\\there", "", "abcdef")))
+
+    operands = values * rng.choice((1, 2, 3))
+    script = (
+        "printf " + shlex.quote(form) + " " +
+        " ".join(shlex.quote(word) for word in operands) +
+        "\ns=$?\nprintf '\\nstatus:%s\\n' \"$s\"\n"
+    )
+    return "builtin-printf-dynamic-fields", MODES, script
 
 
 def getopts_state(rng):
@@ -99,7 +203,8 @@ def getopts_scope(rng):
     return "builtin-getopts-scope", MODES, script
 
 
-GENERATORS = (listing, read_fields, printf_formats, printf_hex_roundtrip,
+GENERATORS = (listing, read_fields, read_limit_state, read_array_state,
+              printf_formats, printf_hex_roundtrip, printf_dynamic_fields,
               getopts_state, getopts_reset, getopts_scope)
 
 

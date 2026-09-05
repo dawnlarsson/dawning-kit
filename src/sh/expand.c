@@ -113,6 +113,7 @@ fn parse_reset_all();
 fn shell_trap_exit();
 fn exec_child_began();
 COLD fn exec_expand_fatal();
+COLD fn exec_expand_input_error();
 string_address shell_flags_current();
 bool shell_tool_only_here(string_address name, positive2 named);
 bool exec_function_here_hashed(string_address name, positive2 named);
@@ -164,6 +165,9 @@ positive shell_substitution_generation;
 // stands where "" stood so that splitting knows a field was there, and every
 // other reader of the text steps over it.
 #define MARK_EMPTY 4
+// An unquoted sequence boundary preserves separate words, but not implicit
+// null arguments. MARK_BREAK is the quoted boundary that preserves both.
+#define MARK_SEPARATE 5
 
 #define EXPAND_PARAMETER_INDIRECT 1
 #define EXPAND_PARAMETER_MISSING 2
@@ -1606,7 +1610,7 @@ static bool expand_push_parameter_as(string_address name, bool quoted,
                 for (at = 0; at < shell_parameter_count; at++)
                 {
                         if (at)
-                                expand_push(' ', MARK_BREAK);
+                                expand_push(' ', quoted ? MARK_BREAK : MARK_SEPARATE);
 
                         expand_push_string(shell_parameter[at], mark);
                 }
@@ -1643,6 +1647,17 @@ static bool expand_push_parameter_as(string_address name, bool quoted,
 static bool expand_push_parameter(string_address name, bool quoted)
 {
         return expand_push_parameter_as(name, quoted, 0);
+}
+
+// Sequence readers calculate IFS once, then share this inlined boundary
+// writer. A slice, full array and per-element transform must carry identical
+// quoted/unquoted empty-field policy without rescanning IFS for each item.
+static inline INLINE fn expand_sequence_between(bool fields, p8 between, p8 mark)
+{
+        if (fields)
+                expand_push(' ', mark == MARK_QUOTED ? MARK_BREAK : MARK_SEPARATE);
+        else if (between)
+                expand_push(between, mark);
 }
 
 /*
@@ -1810,9 +1825,9 @@ static string_address expand_capture(string_address text, bool quoted, b32 mode)
 /*
         Arithmetic.
 
-        A cursor in a file scope rather than one passed down, because the whole
-        expression is already expanded by the time it gets here: nothing inside
-        can start another arithmetic, so there is nothing to be reentrant for.
+        A cursor in file scope rather than one threaded through every grammar
+        level. Recursive variable values and indexed subscripts retain and
+        restore it explicitly before entering the same evaluator again.
 */
 static string_address arith_at;
 
@@ -1849,9 +1864,18 @@ static fn arith_space()
 }
 
 static bipolar arith_choose();
+static bipolar arith_expression();
+static PURE string_address expand_bracket_end(string_address at, p8 open,
+                                              p8 close);
+static COLD string_address expand_subscript_name(string_address base,
+                                                  positive base_length,
+                                                  string_address subscript,
+                                                  positive subscript_length);
+static COLD bool expand_assign_named(string_address name,
+                                     string_address value);
 
 // Writing a name back, which every assigning form ends with.
-static bipolar arith_store(string_address name, bipolar value)
+static bipolar arith_store(string_address name, bipolar value, bool element)
 {
         p8 written[32];
 
@@ -1859,7 +1883,8 @@ static bipolar arith_store(string_address name, bipolar value)
                 return 0;
 
         bipolar_into_string(written, value);
-        if (!env_assign(name, written))
+        if (!(element ? expand_assign_named(name, written)
+                      : env_assign(name, written)))
         {
                 string_format(expand_complain,
                               env_readonly(name) ? "%s: is read only\n"
@@ -1873,6 +1898,53 @@ static bipolar arith_store(string_address name, bipolar value)
         }
 
         return value;
+}
+
+/*
+        Resolve the bracket immediately after an arithmetic variable name.
+
+        The parameter expander already owns subscript expansion, indexed
+        arithmetic, negative-index adjustment and associative keys. Reusing
+        that path here keeps one array lookup grammar. Its arithmetic call is
+        nested inside this evaluator, so retain the outer cursor and error
+        state explicitly. An inactive short-circuit arm only advances over
+        the balanced bracket: Bash neither reads nor mutates its subscript.
+*/
+static COLD string_address arith_element_name(string_address base,
+                                               positive base_length)
+{
+        string_address open = arith_at;
+        string_address close = expand_bracket_end(open + 1, '[', ']');
+        string_address after;
+        string_address name;
+        string_address held_at;
+        bool held_bad;
+        bool held_active;
+        bool nested_bad;
+
+        if (!close)
+        {
+                arith_bad = true;
+                return null;
+        }
+
+        after = close + 1;
+        arith_at = after;
+
+        if (!arith_active)
+                return base;
+
+        held_at = arith_at;
+        held_bad = arith_bad;
+        held_active = arith_active;
+        name = expand_subscript_name(base, base_length, open + 1,
+                                     (positive)(close - open - 1));
+        nested_bad = arith_bad;
+        arith_at = held_at;
+        arith_bad = held_bad || nested_bad;
+        arith_active = held_active;
+
+        return name;
 }
 
 /*
@@ -1895,8 +1967,7 @@ static bipolar arith_number_of(string_address name, p8 address_to scratch,
 {
         bool present;
         bool valid;
-        string_address value = expand_value_of(name, scratch,
-                                               address_of present, null);
+        string_address value;
         string_address step;
         string_address digits;
         positive magnitude;
@@ -1906,6 +1977,8 @@ static bipolar arith_number_of(string_address name, p8 address_to scratch,
 
         if (!arith_active)
                 return 0;
+
+        value = expand_value_of(name, scratch, address_of present, null);
 
         if (!present)
         {
@@ -1997,8 +2070,7 @@ static COLD bipolar arith_named_expression(string_address value)
 
         arith_names++;
         arith_at = held;
-        answer = arith_choose();
-        arith_space();
+        answer = arith_expression();
 
         // Every byte of the value belongs to the expression, exactly as every
         // byte of the outer one does: x=12ab is not twelve.
@@ -2224,8 +2296,7 @@ static bipolar arith_primary()
         if (string_is(arith_at, '('))
         {
                 arith_at++;
-                value = arith_choose();
-                arith_space();
+                value = arith_expression();
 
                 if (string_is(arith_at, ')'))
                         arith_at++;
@@ -2256,6 +2327,8 @@ static bipolar arith_primary()
                 string_address name;
                 positive length = 0;
                 bipolar value;
+                bool element = false;
+                shell_mark held;
 
                 arith_at += 2;
                 arith_space();
@@ -2267,20 +2340,33 @@ static bipolar arith_primary()
                         arith_at++;
                 }
 
-                name = expand_hold(start, length, name_local,
-                                   sizeof(name_local));
+                if (length && string_is(arith_at, '['))
+                {
+                        element = true;
+                        held = shell_store_mark(address_of expand_store);
+                        name = arith_element_name(start, length);
+                }
+                else
+                        name = expand_hold(start, length, name_local,
+                                           sizeof(name_local));
 
                 if (!length || !name)
                 {
                         arith_bad = true;
+                        if (element)
+                                shell_store_rewind(address_of expand_store,
+                                                   held);
                         return 0;
                 }
 
                 value = arith_value_of(name);
                 value = increment ? arith_addition(value, 1)
                                   : arith_subtraction(value, 1);
+                value = arith_store(name, value, element);
+                if (element)
+                        shell_store_rewind(address_of expand_store, held);
 
-                return arith_store(name, value);
+                return value;
         }
 
         if (string_is(arith_at, '-'))
@@ -2326,6 +2412,9 @@ static bipolar arith_primary()
                 p8 name_local[EXPAND_LOCAL_NAME];
                 string_address name;
                 positive length = 0;
+                bool element = false;
+                shell_mark held;
+                bipolar answer;
 
                 while (expand_name_character(string_get(arith_at)))
                 {
@@ -2333,12 +2422,22 @@ static bipolar arith_primary()
                         arith_at++;
                 }
 
-                name = expand_hold(start, length, name_local,
-                                   sizeof(name_local));
+                if (string_is(arith_at, '['))
+                {
+                        element = true;
+                        held = shell_store_mark(address_of expand_store);
+                        name = arith_element_name(start, length);
+                }
+                else
+                        name = expand_hold(start, length, name_local,
+                                           sizeof(name_local));
 
                 if (!name)
                 {
                         arith_bad = true;
+                        if (element)
+                                shell_store_rewind(address_of expand_store,
+                                                   held);
                         return 0;
                 }
                 arith_space();
@@ -2346,8 +2445,12 @@ static bipolar arith_primary()
                 if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
                 {
                         arith_at++;
+                        answer = arith_store(name, arith_choose(), element);
+                        if (element)
+                                shell_store_rewind(address_of expand_store,
+                                                   held);
 
-                        return arith_store(name, arith_choose());
+                        return answer;
                 }
 
                 /*
@@ -2391,9 +2494,15 @@ static bipolar arith_primary()
                                 arith_at += skip;
 
                                 was = arith_value_of(name);
+                                answer = arith_store(
+                                    name,
+                                    arith_combine(op, was, arith_choose()),
+                                    element);
+                                if (element)
+                                        shell_store_rewind(
+                                            address_of expand_store, held);
 
-                                return arith_store(name,
-                                                   arith_combine(op, was, arith_choose()));
+                                return answer;
                         }
 
                         if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
@@ -2405,12 +2514,19 @@ static bipolar arith_primary()
                                 arith_at += 2;
                                 arith_store(name,
                                             increment ? arith_addition(was, 1)
-                                                      : arith_subtraction(was, 1));
+                                                      : arith_subtraction(was, 1),
+                                            element);
+                                if (element)
+                                        shell_store_rewind(
+                                            address_of expand_store, held);
                                 return was;
                         }
                 }
 
-                return arith_value_of(name);
+                answer = arith_value_of(name);
+                if (element)
+                        shell_store_rewind(address_of expand_store, held);
+                return answer;
         }
 
         // A byte that starts no value at all, which is where a missing
@@ -2681,8 +2797,7 @@ static bipolar arith_choose()
         arith_at++;
         active = arith_active;
         arith_active = active && value;
-        taken = arith_choose();
-        arith_space();
+        taken = arith_expression();
 
         if (string_is(arith_at, ':'))
                 arith_at++;
@@ -2781,6 +2896,25 @@ static bool arith_simple_addition(string_address text,
         return true;
 }
 
+// The comma sequence is the outer arithmetic grammar, including parenthesis
+// groups, recursive variable values and a ternary's middle operand. Keeping
+// it here prevents those contexts from silently accepting only the first
+// operand, while assignments still bind more tightly through arith_choose.
+static bipolar arith_expression()
+{
+        bipolar value = arith_choose();
+        arith_space();
+
+        while (arith_bash_mode && string_is(arith_at, ','))
+        {
+                arith_at++;
+                value = arith_choose();
+                arith_space();
+        }
+
+        return value;
+}
+
 static bipolar arith_evaluate(string_address text)
 {
         bipolar value;
@@ -2813,18 +2947,7 @@ static bipolar arith_evaluate(string_address text)
            caller opted in. */
         arith_bash_mode = arith_bash_mode || shell_bash_compat;
 
-        value = arith_choose();
-        arith_space();
-
-        // Bash arithmetic commands and C-style for clauses accept the comma
-        // operator. Keep it out of POSIX $((...)), where dash rejects it, but
-        // evaluate every Bash operand left-to-right and return the final one.
-        while (arith_bash_mode && string_is(arith_at, ','))
-        {
-                arith_at++;
-                value = arith_choose();
-                arith_space();
-        }
+        value = arith_expression();
 
         // Every byte has to belong to the grammar. This catches comma and
         // postfix increment/decrement instead of returning the left prefix.
@@ -4081,30 +4204,63 @@ static PURE string_address expand_substring_separator(string_address at)
         return null;
 }
 
-static fn expand_substring(string_address name, string_address expression,
-                           bool quoted, b32 parameter_mode)
+// Bash's substring arithmetic errors abandon the current input unit, not the
+// remaining script. Reuse the executor's existing expansion unwind; native
+// and dash errors retain their fatal policy.
+static COLD fn expand_slice_error()
 {
-        string_address separator = expand_substring_separator(expression);
-        string_address offset_text = expression;
-        string_address length_text = null;
-        string_address ready;
-        bipolar offset = 0;
-        bipolar wanted = 0;
-        bool has_length = separator != null;
-        positive expansion_start = expand_length;
-        positive length;
-        positive begin;
-        positive finish;
-
-        // ${@:...} and ${*:...} slice an array of positional parameters, not
-        // the joined byte string. Keep rejecting that distinct operation
-        // until parameter arrays have a representation of their own.
-        if ((string_is(name, '@') || string_is(name, '*')) && !string_get(name + 1))
+        if (!shell_bash_compat)
         {
-                string_format(expand_complain, "%s: bad substitution\n", name);
-                expand_fatal_mode(parameter_mode);
+                expand_fatal();
                 return;
         }
+
+        shell_status = 1;
+        expand_failed = true;
+        exec_expand_input_error();
+}
+
+static bool expand_slice_number(string_address text, bipolar address_to value)
+{
+        string_address ready = expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+
+        if (expand_failed)
+                return false;
+
+        if (!string_get(arith_skip_space(ready)))
+        {
+                address_to value = 0;
+                return true;
+        }
+
+        address_to value = arith_evaluate(ready);
+
+        if (arith_bad)
+        {
+                string_format(expand_complain, "arithmetic: %s\n", ready);
+                expand_slice_error();
+                return false;
+        }
+
+        return true;
+}
+
+// Offsets are indices; lengths are counts. Scalar, positional and indexed
+// array slices share the arithmetic and short-circuit rules, but supply their
+// own index limit and negative-offset origin. Do not evaluate a length when
+// the offset is outside the sequence, including its side effects or errors.
+#define SLICE_STRING 0
+#define SLICE_POSITIONAL 1
+#define SLICE_ARRAY 2
+static bool expand_slice_bounds(string_address name, string_address expression,
+                                positive origin, positive limit, p8 kind,
+                                positive address_to begin,
+                                positive address_to count)
+{
+        string_address separator = expand_substring_separator(expression);
+        string_address length_text = null;
+        bipolar offset = 0;
+        bipolar wanted = 0;
 
         if (separator)
         {
@@ -4112,86 +4268,143 @@ static fn expand_substring(string_address name, string_address expression,
                 length_text = separator + 1;
         }
 
-        if (string_get(offset_text))
+        if (string_get(expression))
         {
-                ready = expand_capture(offset_text, true, EXPAND_CAPTURE_TEXT);
-
-                if (expand_failed)
-                        return;
-
-                offset = arith_evaluate(ready);
-
-                if (arith_bad)
-                {
-                        string_format(expand_complain, "arithmetic: %s\n", ready);
-                        expand_fatal();
-                        return;
-                }
+                if (!expand_slice_number(expression, address_of offset))
+                        return false;
         }
-        else if (!has_length)
+        else if (!separator)
         {
                 string_format(expand_complain, "%s: bad substitution\n", name);
-                expand_fatal();
-                return;
+                expand_fatal_mode(0);
+                return false;
         }
 
-        if (has_length)
+        // An offset expression may insert an element. For arrays, origin
+        // arrives as the name length so the largest live index can be read
+        // after that arithmetic, without an extra pre-evaluation lookup.
+        if (kind == SLICE_ARRAY)
         {
-                ready = expand_capture(length_text, true, EXPAND_CAPTURE_TEXT);
-
-                if (expand_failed)
-                        return;
-
-                wanted = arith_evaluate(ready);
-
-                if (arith_bad)
-                {
-                        string_format(expand_complain, "arithmetic: %s\n", ready);
-                        expand_fatal();
-                        return;
-                }
+                limit = shell_array_highest(name, origin);
+                origin = limit + 1;
         }
-
-        expand_push_parameter_as(name, quoted, parameter_mode);
-
-        if (expand_failed)
-                return;
-
-        length = expand_length - expansion_start;
 
         if (offset < 0)
-                begin = offset < -(bipolar)length
-                            ? length
-                            : (positive)((bipolar)length + offset);
-        else
-                begin = (positive)offset < length ? (positive)offset : length;
-
-        finish = length;
-
-        if (has_length)
         {
-                if (wanted >= 0)
-                        finish = (positive)wanted < length - begin
-                                     ? begin + (positive)wanted
-                                     : length;
-                else if (wanted < -(bipolar)length ||
-                         (positive)((bipolar)length + wanted) < begin)
+                positive back = (positive)(-(offset + 1)) + 1;
+                if (back > origin)
+                        return false;
+                address_to begin = origin - back;
+        }
+        else
+                address_to begin = (positive)offset;
+
+        if (address_to begin > limit)
+                return false;
+
+        address_to count = kind ? positive_max : origin - address_to begin;
+
+        if (!separator)
+                return true;
+
+        if (!expand_slice_number(length_text, address_of wanted))
+                return false;
+
+        if (wanted < 0)
+        {
+                positive back = (positive)(-(wanted + 1)) + 1;
+
+                if (kind || back > origin - address_to begin)
                 {
                         string_format(expand_complain,
                                       "%s: substring expression < 0\n", name);
-                        expand_length = expansion_start;
-                        expand_fatal();
+                        expand_slice_error();
+                        return false;
+                }
+
+                address_to count = origin - address_to begin - back;
+        }
+        else if ((positive)wanted < address_to count)
+                address_to count = (positive)wanted;
+
+        return true;
+}
+
+static COLD fn expand_positional_slice(string_address name,
+                                      string_address expression, bool quoted)
+{
+        positive begin;
+        positive count;
+        p8 form = string_get(name);
+        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        p8 between = string_get(expand_ifs());
+        bool fields = quoted ? form == '@' : !between;
+        positive origin = shell_parameter_count + 1;
+
+        if (!expand_slice_bounds(name, expression, origin, origin, SLICE_POSITIONAL,
+                                 address_of begin, address_of count))
+        {
+                if (form == '@')
+                        expand_name_at_empty = true;
+                return;
+        }
+
+        if (count > origin - begin)
+                count = origin - begin;
+
+        if (!count && form == '@')
+                expand_name_at_empty = true;
+
+        for (positive at = 0; at < count; at++)
+        {
+                positive index = begin + at;
+                if (at)
+                        expand_sequence_between(fields, between, mark);
+
+                expand_push_string(index ? shell_parameter[index - 1]
+                                         : shell_script_name, mark);
+        }
+}
+
+static fn expand_substring(string_address name, string_address expression,
+                           bool quoted, b32 parameter_mode)
+{
+        positive expansion_start = expand_length;
+        positive length;
+        positive begin;
+        positive count;
+
+        if ((string_is(name, '@') || string_is(name, '*')) && !string_get(name + 1))
+        {
+                if (!shell_bash_compat)
+                {
+                        string_format(expand_complain, "%s: bad substitution\n", name);
+                        expand_fatal_mode(parameter_mode);
                         return;
                 }
-                else
-                        finish = (positive)((bipolar)length + wanted);
+                expand_positional_slice(name, expression, quoted);
+                return;
+        }
+
+        // Capture the value before evaluating arithmetic that may reassign
+        // it. The expansion buffer already owns the bytes and marks; no new
+        // snapshot or copy is needed. An unset value skips the arithmetic.
+        if (!expand_push_parameter_as(name, quoted, parameter_mode) || expand_failed)
+                return;
+
+        length = expand_length - expansion_start;
+        if (!expand_slice_bounds(name, expression, length, length, SLICE_STRING,
+                                 address_of begin, address_of count))
+        {
+                expand_length = expansion_start;
+                return;
         }
 
         memory_copy(expand_text + expansion_start,
-                    expand_text + expansion_start + begin, finish - begin);
+                    expand_text + expansion_start + begin, count);
         memory_copy(expand_mark + expansion_start,
-                    expand_mark + expansion_start + begin, finish - begin);
-        expand_length = expansion_start + finish - begin;
+                    expand_mark + expansion_start + begin, count);
+        expand_length = expansion_start + count;
 }
 
 static fn expand_case_change(string_address name, string_address pattern_text,
@@ -4817,12 +5030,7 @@ static COLD bool expand_push_array(string_address name, positive length, p8 form
         for (positive at = 0; at < count; at++)
         {
                 if (at)
-                {
-                        if (fields)
-                                expand_push(' ', MARK_BREAK);
-                        else if (between)
-                                expand_push(between, mark);
-                }
+                        expand_sequence_between(fields, between, mark);
 
                 if (!keys)
                         expand_push_run(items[at].value, items[at].value_length,
@@ -4847,102 +5055,43 @@ static COLD bool expand_push_array(string_address name, positive length, p8 form
 
         The two numbers are read the same way the string form reads them,
         because they are the same arithmetic; what differs is only what they
-        count. A negative offset counts back from the end of the element
-        list, which is what makes ${a[@]: -2} the last two whatever the
-        subscripts are.
+        count. A negative offset counts back from one past the highest
+        index, not from the number of elements: holes still occupy indices.
 */
 static COLD fn expand_array_slice(string_address name, positive length, p8 form,
                              string_address expression, bool quoted)
 {
-        string_address separator = expand_substring_separator(expression);
-        string_address length_text = null;
-        string_address ready;
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         shell_mark held = shell_store_mark(address_of expand_store);
         shell_array_item address_to items;
         positive count = shell_array_length(name, length);
         bool fields = quoted ? form == '@' : !string_get(expand_ifs());
         p8 between = string_get(expand_ifs());
-        bipolar offset = 0;
-        bipolar wanted = 0;
-        bool has_length = separator != null;
+        positive offset;
+        positive wanted;
         positive begin;
         positive finish;
 
-        if (separator)
+        if (!count)
         {
-                separator[0] = end;
-                length_text = separator + 1;
-        }
-
-        if (string_get(expression))
-        {
-                ready = expand_capture(expression, true, EXPAND_CAPTURE_TEXT);
-
-                if (expand_failed)
-                        return;
-
-                offset = arith_evaluate(ready);
-
-                if (arith_bad)
-                {
-                        string_format(expand_complain, "arithmetic: %s\n",
-                                      ready);
-                        expand_fatal();
-                        return;
-                }
-        }
-        else if (!has_length)
-        {
-                string_format(expand_complain, "%s: bad substitution\n", name);
-                expand_fatal();
+                if (form == '@')
+                        expand_name_at_empty = true;
                 return;
         }
 
-        if (has_length)
+        if (!expand_slice_bounds(name, expression, length, 0, SLICE_ARRAY,
+                                 address_of offset, address_of wanted) || !wanted)
         {
-                ready = expand_capture(length_text, true, EXPAND_CAPTURE_TEXT);
-
-                if (expand_failed)
-                        return;
-
-                wanted = arith_evaluate(ready);
-
-                if (arith_bad)
-                {
-                        string_format(expand_complain, "arithmetic: %s\n",
-                                      ready);
-                        expand_fatal();
-                        return;
-                }
-        }
-
-        if (offset < 0)
-                begin = offset < -(bipolar)count
-                            ? count
-                            : (positive)((bipolar)count + offset);
-        else
-                begin = (positive)offset < count ? (positive)offset : count;
-
-        finish = count;
-
-        if (has_length)
-        {
-                if (wanted < 0)
-                {
-                        string_format(expand_complain,
-                                      "%s: substring expression < 0\n", name);
-                        expand_fatal();
-                        return;
-                }
-
-                if ((positive)wanted < count - begin)
-                        finish = begin + (positive)wanted;
-        }
-
-        if (!count || begin >= finish)
+                if (form == '@')
+                        expand_name_at_empty = true;
+                shell_store_rewind(address_of expand_store, held);
                 return;
+        }
 
+        // Arithmetic can change the array. Take the current elements only
+        // after it has finished; borrowed element pointers cannot survive a
+        // write to their owning environment cell.
+        count = shell_array_length(name, length);
         items = (shell_array_item address_to)shell_store_take(
             address_of expand_store, count * sizeof(items[0]));
 
@@ -4954,15 +5103,27 @@ static COLD fn expand_array_slice(string_address name, positive length, p8 form,
 
         shell_array_items(name, length, items, count);
 
+        // The shared array inventory is index-sorted. Find the first member
+        // at or above the requested index without walking a sparse prefix.
+        begin = 0;
+        finish = count;
+        while (begin < finish)
+        {
+                positive middle = begin + (finish - begin) / 2;
+                if (items[middle].index < offset)
+                        begin = middle + 1;
+                else
+                        finish = middle;
+        }
+        finish = wanted < count - begin ? begin + wanted : count;
+
+        if (begin == finish && form == '@')
+                expand_name_at_empty = true;
+
         for (positive at = begin; at < finish; at++)
         {
                 if (at > begin)
-                {
-                        if (fields)
-                                expand_push(' ', MARK_BREAK);
-                        else if (between)
-                                expand_push(between, mark);
-                }
+                        expand_sequence_between(fields, between, mark);
 
                 expand_push_run(items[at].value, items[at].value_length, mark);
         }
@@ -4992,7 +5153,11 @@ static COLD fn expand_array_each(string_address name, positive length, p8 form,
         p8 between = string_get(expand_ifs());
 
         if (!count)
+        {
+                if (form == '@')
+                        expand_name_at_empty = true;
                 return;
+        }
 
         items = (shell_array_item address_to)shell_store_take(
             address_of expand_store, count * sizeof(items[0]));
@@ -5020,13 +5185,8 @@ static COLD fn expand_array_each(string_address name, positive length, p8 form,
                 }
 
                 if (at)
-                {
-                        if (fields)
-                                expand_push(' ', MARK_BREAK);
-                        else if (between)
-                                expand_push(between,
-                                            quoted ? MARK_QUOTED : MARK_FIELD);
-                }
+                        expand_sequence_between(fields, between,
+                                                quoted ? MARK_QUOTED : MARK_FIELD);
 
                 {
                         positive needed = length + key_length + 3;
@@ -6953,9 +7113,12 @@ static positive expand_split(shell_words address_to out)
 
         while (at < expand_length)
         {
-                if (expand_mark[at] == MARK_BREAK)
+                if (expand_mark[at] == MARK_BREAK ||
+                    expand_mark[at] == MARK_SEPARATE)
                 {
-                        expand_emit(start, at, out);
+                        if (start != at || expand_mark[at] == MARK_BREAK ||
+                            !shell_bash_compat)
+                                expand_emit(start, at, out);
                         at++;
                         start = at;
                         continue;
@@ -6991,7 +7154,9 @@ static positive expand_split(shell_words address_to out)
                 at++;
         }
 
-        expand_emit(start, expand_length, out);
+        if (start != expand_length ||
+            expand_mark[expand_length - 1] != MARK_SEPARATE)
+                expand_emit(start, expand_length, out);
 
         return out->count;
 }
