@@ -21,24 +21,39 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 verbose=false
 do_run=false
 do_watch=false
-positional=""
+positional=0
+options=true
+source_file=""
+output_file=""
 
 while [ "$#" -gt 0 ]; do
-        case "$1" in
-        -v) verbose=true ;;
-        --run) do_run=true ;;
-        --watch) do_run=true; do_watch=true ;;
-        --*) echo "build: unknown option $1" >&2; exit 1 ;;
-        *) positional="$positional $1" ;;
+        if [ "$options" = true ]; then
+                case "$1" in
+                -v) verbose=true; shift; continue ;;
+                --run) do_run=true; shift; continue ;;
+                --watch) do_run=true; do_watch=true; shift; continue ;;
+                --) options=false; shift; continue ;;
+                --*) echo "build: unknown option $1" >&2; exit 1 ;;
+                esac
+        fi
+        case $positional in
+        0) source_file=$1 ;;
+        1) output_file=$1 ;;
+        *) echo "build: too many paths" >&2; exit 1 ;;
         esac
+        positional=$((positional + 1))
         shift
 done
 
-# shellcheck disable=SC2086
-set -- $positional
+[ "$positional" -ge 1 ] || source_file="src/main.c"
+[ "$positional" -ge 2 ] || output_file="bin/$(basename "$(pwd)")"
 
-source_file=${1:-"src/main.c"}
-output_file=${2:-"bin/$(basename "$(pwd)")"}
+# The compiler accepts a bare output filename; executing it must still refer
+# to this directory rather than searching PATH for a different program.
+case $output_file in
+/* | ./* | ../*) ;;
+*) output_file="./$output_file" ;;
+esac
 
 compiler=${CC:-gcc}
 program_ipa_flags=
@@ -116,6 +131,8 @@ fi
 #       merely contained it -- including this script and the watcher.
 #
 app_pid=""
+watch_pid=""
+watch_work=""
 
 stop_app() {
         [ -n "$app_pid" ] || return 0
@@ -124,7 +141,23 @@ stop_app() {
         app_pid=""
 }
 
-trap 'stop_app; exit 0' INT TERM
+stop_watch() {
+        stop_app
+        if [ -n "$watch_pid" ]; then
+                kill "$watch_pid" 2>/dev/null
+                wait "$watch_pid" 2>/dev/null
+                watch_pid=""
+        fi
+        if [ -n "$watch_work" ]; then
+                rm -f "$watch_work/events"
+                rmdir "$watch_work"
+                watch_work=""
+        fi
+}
+
+trap stop_watch EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 rebuild() {
         stop_app
@@ -141,9 +174,9 @@ rebuild() {
 source_dir=$(dirname "$source_file")
 
 if command -v inotifywait >/dev/null 2>&1; then
-        watch() { inotifywait -q -m -r -e modify,create,delete,move "$source_dir"; }
+        watch() { exec inotifywait -q -m -r -e modify,create,delete,move "$source_dir"; }
 elif command -v fswatch >/dev/null 2>&1; then
-        watch() { fswatch -r "$source_dir"; }
+        watch() { exec fswatch -r "$source_dir"; }
 else
         echo "build: --watch needs inotifywait (inotify-tools) or fswatch" >&2
         exit 1
@@ -151,6 +184,13 @@ fi
 
 rebuild
 
-watch | while read -r _; do
+# Keep the read/rebuild loop in this shell so its trap always owns the latest
+# application PID. A pipeline put that state in a subshell and left both the
+# replacement program and the watch process alive after termination.
+watch_work=$(mktemp -d "${TMPDIR:-/tmp}/moonwater-watch.XXXXXXXX") || exit 1
+mkfifo "$watch_work/events" || exit 1
+watch > "$watch_work/events" &
+watch_pid=$!
+while IFS= read -r _; do
         rebuild
-done
+done < "$watch_work/events"

@@ -22,7 +22,9 @@ name=$1
 shift
 
 case "$name" in
-        */*|"") echo "onbox: the name is one word, not a path" >&2; exit 1 ;;
+        *[!A-Za-z0-9_.-]*|"")
+                echo "onbox: the name uses only letters, digits, dot, dash and underscore" >&2
+                exit 1 ;;
 esac
 
 host=${MOONWATER_BUILD_HOST:-box}
@@ -32,11 +34,19 @@ remote="dawning-$name"
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 
 rsync -az --delete \
-      --exclude '.git' --exclude 'dist' --exclude 'linux' --exclude 'artifacts' \
+      --exclude '.git' --exclude '.claude' --exclude 'dist' --exclude 'linux' --exclude 'artifacts' \
       --exclude 'fs' --exclude '*.o' \
       "$here/" "$host:~/$remote/" || {
         echo "onbox: could not copy to $host" >&2
         exit 1
+}
+
+# ssh receives a command string, not an argument vector. Quote each caller
+# argument once so a lane or tool name cannot become remote shell syntax.
+remote_quote() {
+        printf "'"
+        printf '%s' "$1" | sed "s/'/'\\\\''/g"
+        printf "'"
 }
 
 # TMPDIR inside the copy, because /tmp on that machine has a per user quota
@@ -45,8 +55,8 @@ rsync -az --delete \
 if [ "${1:-}" = "--surface" ]; then
         shift
         tools=""
-        for t in "$@"; do tools="$tools --tool $t"; done
-        # shellcheck disable=SC2029,SC2086
+        for t in "$@"; do tools="$tools --tool $(remote_quote "$t")"; done
+        # shellcheck disable=SC2029
         ssh "$host" "cd ~/$remote && mkdir -p scratch bin && \
                 TMPDIR=\$PWD/scratch sh kit/build programs/shell.c bin/shell >/dev/null 2>&1 && \
                 for n in cat grep sed cut tr sort uniq head tail wc tee rev nl fold \
@@ -57,4 +67,6 @@ if [ "${1:-}" = "--surface" ]; then
 fi
 
 # shellcheck disable=SC2029
-ssh "$host" "cd ~/$remote && mkdir -p scratch && TMPDIR=\$PWD/scratch sh src/test/run $*"
+lanes=""
+for lane in "$@"; do lanes="$lanes $(remote_quote "$lane")"; done
+ssh "$host" "cd ~/$remote && mkdir -p scratch && TMPDIR=\$PWD/scratch sh src/test/run$lanes"

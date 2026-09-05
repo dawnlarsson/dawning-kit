@@ -274,6 +274,16 @@ fi
 #       sides and quietly creates aliases from a symbol to itself.
 #
 
+group build
+
+if command -v python3 > /dev/null 2>&1; then
+        if python3 src/test/build_tools.py > "$work/build-tools.out" 2>&1; then
+                won
+        else
+                lost 'arguments and watch' "$(tail -12 "$work/build-tools.out" | tr '\n' ' ')"
+        fi
+fi
+
 group compact
 
 if command -v python3 > /dev/null 2>&1; then
