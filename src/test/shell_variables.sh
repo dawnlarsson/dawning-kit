@@ -111,6 +111,14 @@ compare bash 'Bash nounset status' \
         'set -u; printf "%s\n" "$missing"; printf after'
 compare dash 'dash nounset status' \
         'set -u; printf "%s\n" "$missing"; printf after'
+compare bash 'POSIXLY_CORRECT tracks posix mode' \
+        'set +o posix; POSIXLY_CORRECT=1; set -o | grep -q "^posix.*on$"; printf "on:%s\n" "$?"; unset POSIXLY_CORRECT; set -o | grep -q "^posix.*off$"; printf "off:%s\n" "$?"'
+compare bash 'POSIXLY_CORRECT nameref tracks posix mode' \
+        'set +o posix; declare -n n=POSIXLY_CORRECT; n=1; set -o | grep -q "^posix.*on$"; printf "on:%s\n" "$?"; unset n; set -o | grep -q "^posix.*off$"; printf "off:%s\n" "$?"'
+compare bash 'default RHS sees preceding substitution status' \
+        'false; a=$(true) b=$? c=$(false) d=$?; printf "%s:%s:%s\n" "$b" "$d" "$?"'
+compare bash 'POSIX RHS preserves pre-command status' \
+        'set -o posix; false; a=$(true) b=$? c=$(false) d=$?; printf "%s:%s:%s\n" "$b" "$d" "$?"'
 compare bash 'brace expansion enabled' \
         'printf "<%s>\n" pre{a,b}post'
 compare bash 'brace expansion disabled' \
@@ -232,6 +240,10 @@ compare bash 'element-bound readonly write status' \
         'declare -ar a=([2]=x); n="a[2]"; declare -n n; n=y; printf after'
 compare bash 'element-bound dynamic index' \
         'a=([2]=x [3]=y); i=2; n="a[i]"; declare -n n; printf "<%s>" "$n"; i=3; printf ":<%s>\n" "$n"'
+compare bash 'indexed assignment evaluates subscript once' \
+        'j=0; i="j++"; a[i]=x; printf "%s:<%s>:<%s>\n" "$j" "${a[0]-}" "${a[1]-}"'
+compare bash 'element nameref assignment evaluates subscript once' \
+        'j=0; i="j++"; declare -n n="a[i]"; n=x; printf "%s:<%s>:<%s>\n" "$j" "${a[0]-}" "${a[1]-}"'
 compare bash 'element-bound associative write' \
         'declare -A m=([x]=old); n="m[x]"; declare -n n; n=new; declare -p m n'
 compare bash 'element-bound rejects another index' \
@@ -265,6 +277,10 @@ compare bash 'combined nameref readonly marks reference' \
         'a=old; declare -n n=a; declare -rn n; declare -p a n'
 compare bash 'temporary export follows nameref target' \
         'a=old; declare -n n=a; n=new /usr/bin/printenv a; declare -p a n'
+compare bash 'temporary element nameref exports assignment name' \
+        'a[x]=old; declare -n n="a[x]"; n=new /usr/bin/printenv n; declare -p a n'
+compare bash 'nested element nameref export unwinds' \
+        'a[x]=old; declare -n n="a[x]"; f() { /usr/bin/printenv n; n=two /usr/bin/printenv n; /usr/bin/printenv n; }; n=one f; printf "state:%s:%s\n" "${a[x]}" "$n"'
 compare bash 'explicit reference export does not promote target' \
         'a=old; declare -n n=a; n=new export n; declare -p a n'
 compare bash 'explicit target export promotes target' \

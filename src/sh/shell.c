@@ -580,6 +580,7 @@ static string_address shell_shopt_names[] = {
 #define SHELL_SHOPT_PROGCOMP 51
 #define SHELL_SHOPT_PROMPTVARS 53
 #define SHELL_SHOPT_SOURCEPATH 56
+#define SHELL_SHOPT_SHIFT_VERBOSE 55
 #define SHELL_SHOPT_XPG_ECHO 58
 
 #define SHELL_SHOPT(which) ((positive)1 << SHELL_SHOPT_##which)
@@ -633,6 +634,7 @@ extern positive shell_subshell_depth;
 
 fn shell_last_argument_set(string_address word);
 PURE bool shell_braceexpand_on();
+PURE bool shell_posix_on();
 
 //      One function's name out of the executor's table, for compgen. The
 //      table is in exec.c, which is included last.

@@ -1387,6 +1387,8 @@ EOF'
 bash_answer 'here string' 'cat <<< word'
 bash_answer 'here string empty' 'x=; cat <<< "$x" | wc -c'
 bash_answer 'here string holds fields' 'x="a  b"; cat <<< $x'
+bash_answer 'here string holds glob' 'x="*.c"; cat <<< $x'
+bash_answer 'here string holds empty unquoted' 'x=; cat <<< $x | wc -c'
 bash_answer 'here string expands' 'x=4; cat <<< "value=$x:$((x+1)):$(echo sub)"'
 bash_answer 'here string last wins' 'cat <<< one <<< two'
 bash_answer 'here string fd' 'cat 3<<< data <&3'
@@ -3570,9 +3572,7 @@ bash_builtin_inventory supported \
         ulimit umask \
         unalias unset wait
 bash_builtin_inventory supported \
-        bind builtin compgen complete compopt dirs enable popd pushd shopt
-bash_builtin_inventory remaining \
-        logout
+        bind builtin compgen complete compopt dirs enable logout popd pushd shopt
 
 group keyword-index
 bash_keyword_inventory '! false' '!'
@@ -3596,9 +3596,7 @@ bash_set_option_inventory supported \
         allexport emacs errexit ignoreeof monitor noclobber noglob nolog \
         notify nounset pipefail verbose vi xtrace braceexpand errtrace \
         functrace hashall history noexec onecmd physical keyword privileged histexpand \
-        interactive-comments
-bash_set_option_inventory remaining \
-        posix
+        interactive-comments posix
 
 group shopt-option-index
 bash_shopt_inventory supported \

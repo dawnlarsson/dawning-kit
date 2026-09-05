@@ -108,6 +108,7 @@ string_address shell_expand_subscript(string_address name, positive length,
                                       positive address_to key_length);
 positive shell_expand_fields(string_address word, shell_words address_to out);
 fn run_line(string_address line);
+fn shell_input_end();
 fn parse_reset_all();
 fn shell_trap_exit();
 fn exec_child_began();
@@ -137,6 +138,7 @@ extern positive shell_options;
         place the number is wanted, and that is the shell's to notice.
 */
 b32 shell_substitution_status;
+positive shell_substitution_generation;
 
 #define EXPAND_LOCAL_NAME 128
 #define EXPAND_LOCAL_TEXT 1024
@@ -2873,9 +2875,13 @@ static string_address expand_dollar_quoted_run(string_address at)
         nesting counted; nothing when the word runs out first, in which case
         the $ was only a $.
 */
-static PURE string_address expand_bracket_end(string_address at, p8 open, p8 close)
+static PURE string_address expand_bracket_end_mode(string_address at, p8 open,
+                                                   p8 close,
+                                                   bool posix_double)
 {
         positive depth = 1;
+        bool raw_single = posix_double && open == '{' && shell_posix_on() &&
+                          !lex_parameter_pattern(at);
 
         while (string_get(at))
         {
@@ -2890,6 +2896,12 @@ static PURE string_address expand_bracket_end(string_address at, p8 open, p8 clo
                 if (value == '\\' && string_get(at + 1))
                 {
                         at += 2;
+                        continue;
+                }
+
+                if (value == '\'' && raw_single)
+                {
+                        at++;
                         continue;
                 }
 
@@ -2909,6 +2921,12 @@ static PURE string_address expand_bracket_end(string_address at, p8 open, p8 clo
         }
 
         return null;
+}
+
+static PURE string_address expand_bracket_end(string_address at, p8 open,
+                                              p8 close)
+{
+        return expand_bracket_end_mode(at, open, close, false);
 }
 
 #define expand_paren_end(at) expand_bracket_end((at), '(', ')')
@@ -3098,6 +3116,8 @@ done:
         wrote becomes the bytes. Reading to the end before waiting is what keeps
         a command that writes more than a pipe holds from wedging both sides.
 */
+static fn expand_substitution_body(string_address command, bool capture);
+
 static fn expand_run(string_address command, bool quoted)
 {
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
@@ -3120,59 +3140,12 @@ static fn expand_run(string_address command, bool quoted)
 
         if (child == 0)
         {
-                exec_child_began();
-
                 system_close(channel[0]);
                 system_duplicate(channel[1],
                               standard_output_descriptor, 0);
                 system_close(channel[1]);
 
-                expand_in_substitution = true;
-
-                // The parser still holds the line this substitution is a word
-                // of. In here that is somebody else's half-read sentence, and
-                // feeding it another one makes a syntax error out of both.
-                parse_reset_all();
-
-                /*
-                        A substitution is not one line. run_line is, and it was
-                        handed the whole body -- so everything after the first
-                        newline was dropped, and a here-document or a loop
-                        written inside $( ) produced nothing at all.
-
-                        The body is this child's own copy, so the newlines are
-                        turned into terminators in place rather than into a
-                        second buffer.
-                */
-                if (!string_first_of(command, '\n'))
-                {
-                        shell_tail_line_requested = true;
-                        run_line(command);
-                }
-                else
-                {
-                        string_address at = command;
-
-                        while (string_get(at))
-                        {
-                                string_address stop = string_first_of_or_end(at, '\n');
-
-                                if (string_get(stop))
-                                {
-                                        address_to stop = end;
-                                        stop++;
-                                }
-
-                                if (string_get(at))
-                                        run_line(at);
-
-                                at = stop;
-                        }
-                }
-
-                log_flush();
-
-                system_call_1(syscall(exit_group), (positive)shell_status);
+                expand_substitution_body(command, true);
         }
 
         system_close(channel[1]);
@@ -3203,7 +3176,10 @@ static fn expand_run(string_address command, bool quoted)
                 expand_length--;
 
         if (child > 0)
+        {
                 shell_substitution_status = wait_status_code(status);
+                shell_substitution_generation++;
+        }
 }
 
 static string_address expand_command(string_address step, bool quoted)
@@ -3395,10 +3371,15 @@ static bool expand_substitution_remember(b32 descriptor, bipolar child)
 // The body of a substitution, run in the child that is now standing at one
 // end of the pipe. Identical to what a command substitution runs, and for
 // the same reason: a body is a script and not a line.
-static fn expand_substitution_body(string_address command)
+static fn expand_substitution_body(string_address command, bool capture)
 {
         exec_child_began();
         expand_in_substitution = true;
+        /* Only Bash command capture clears errexit by default; process
+           substitutions and dash inherit it. POSIX mode enables the same
+           inherit_errexit bit that shopt exposes, so there is one policy. */
+        if (capture && shell_bash_compat && !shell_shopt_on(INHERIT_ERREXIT))
+                shell_options &= ~((positive)1 << ('e' - 'a'));
         parse_reset_all();
 
         if (!string_first_of(command, '\n'))
@@ -3427,6 +3408,8 @@ static fn expand_substitution_body(string_address command)
                 }
         }
 
+        shell_input_end();
+        shell_trap_exit();
         log_flush();
         system_call_1(syscall(exit_group), (positive)shell_status);
 }
@@ -3488,7 +3471,7 @@ static string_address expand_process(string_address step, p8 mark)
                                          : standard_input_descriptor,
                                  0);
                 system_close(theirs);
-                expand_substitution_body(text);
+                expand_substitution_body(text, false);
         }
 
         system_close(theirs);
@@ -3540,8 +3523,10 @@ static COLD fn expand_fatal_status(b32 status)
                 return;
         }
 
-        if (!expand_in_substitution)
-                shell_trap_exit();
+        /* The child marker suppresses an inherited EXIT action while still
+           allowing one installed inside a substitution to run. The parent
+           reaches the same existing exit boundary here. */
+        shell_trap_exit();
 
         log_flush();
         system_call_1(syscall(exit_group), status);
@@ -5184,7 +5169,8 @@ static string_address expand_braced(string_address step, bool quoted)
         bool doubled = false;
         p8 name_list = 0;
         p8 operation = 0;
-        string_address close = expand_brace_end(step + 2);
+        string_address close = expand_bracket_end_mode(
+            step + 2, '{', '}', quoted && shell_posix_on());
         p8 seen;
 
         if (!close)
@@ -5208,7 +5194,9 @@ static string_address expand_braced(string_address step, bool quoted)
                 parameter. A trailing * or @ is consumed separately below
                 only when it ends an ordinary-name prefix.
         */
-        if (string_is(step, '!') && step + 1 < close)
+        if (string_is(step, '!') && step + 1 < close &&
+            !(shell_posix_on() &&
+              (string_is(step + 1, '#') || string_is(step + 1, '?'))))
         {
                 parameter_mode = EXPAND_PARAMETER_INDIRECT;
                 step++;
@@ -7398,6 +7386,36 @@ RETURNS_NONNULL string_address shell_expand_word(string_address word)
         }
 
         return result;
+}
+
+/* A redirect is a single whole word in POSIX/non-Bash policy. Bash's default
+   policy additionally splits and pathname-expands it, but still requires the
+   result to be exactly one target. The caller supplies its reusable word
+   table so a one-off large glob does not leave another retained array here.
+
+   1 is one target, 0 is Bash's ambiguous redirect, -1 is an expansion abort
+   already carrying its diagnostic/status. */
+static b32 shell_expand_redirect(string_address word,
+                                 shell_words address_to fields,
+                                 string_address address_to target)
+{
+        if (!shell_bash_compat || (shell_posix_on() && !shell_is_interactive))
+        {
+                address_to target = shell_expand_word(word);
+                return expand_failed ? -1 : 1;
+        }
+
+        {
+                positive count = shell_expand_fields(word, fields);
+
+                if (expand_failed)
+                        return -1;
+                if (count != 1)
+                        return 0;
+
+                address_to target = (address_to fields->word)[0];
+                return 1;
+        }
 }
 
 /*

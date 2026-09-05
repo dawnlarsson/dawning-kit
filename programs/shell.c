@@ -180,6 +180,14 @@ static bool shell_start_options(string_address address_to arguments,
                         break;
 
                 if (shell_bash_compat &&
+                    word_is(word, "--posix"))
+                {
+                        if (!shell_extra_told("posix", true))
+                                return false;
+                        at++;
+                        continue;
+                }
+                if (shell_bash_compat &&
                     (word_is(word, "--noprofile") || word_is(word, "--norc")))
                 {
                         /* These opt out of interactive/login files, not the
@@ -243,6 +251,8 @@ static bool shell_start_options(string_address address_to arguments,
                                                     arguments[at]);
                                                 return false;
                                         }
+                                        if (item == SHELL_SHOPT_EXPAND_ALIASES)
+                                                shell_alias_startup_told = true;
                                         if (on)
                                                 shell_shopt_state |=
                                                     (positive)1 << item;
@@ -272,7 +282,7 @@ static bool shell_start_options(string_address address_to arguments,
         return true;
 }
 
-/* Only an explicitly supplied BASH_ENV has startup work here. No PATH search
+/* Only an explicitly supplied startup variable has work here. No PATH search
    and no synthesized dot command: filename expansion and sourced-file parsing
    share the existing document expander and source reader. */
 static bool shell_startup_file()
@@ -284,12 +294,23 @@ static bool shell_startup_file()
         bool no_room = false;
         bipolar handle, got;
 
-        if (!shell_bash_compat || shell_is_interactive ||
-            shell_startup_privileged)
+        bool posix_startup = !shell_bash_compat || shell_posix_on();
+
+        if (shell_startup_privileged ||
+            (posix_startup ? !shell_is_interactive : shell_is_interactive))
                 return true;
-        value = env_get("BASH_ENV");
+        value = env_get(posix_startup ? "ENV" : "BASH_ENV");
         if (!value || !*value)
                 return true;
+
+        /* A dash/ sh ENV file must not run under mismatched credentials.
+           Keep these reads off the ordinary noninteractive dash entry path. */
+        if (!shell_bash_compat)
+        {
+                shell_privilege_prepare();
+                if (shell_privilege_mismatched)
+                        return true;
+        }
 
         token_used = 0;
         token_overflow = false;
@@ -373,9 +394,8 @@ b32 main()
                 A login shell is one whose zeroth argument begins with a dash.
 
                 That is the whole of the mark, it has been since the seventh
-                edition, and `shopt -q login_shell` is the only thing here
-                that asks: nothing behaves differently, because the profile
-                files a login shell would read are not this shell's yet.
+                edition. The mark also gates logout; login profile loading
+                is separate from the ENV/BASH_ENV startup policy below.
         */
         if (process_arguments && arguments[0] && arguments[0][0] == '-')
                 shell_shopt_state |= SHELL_SHOPT(LOGIN_SHELL);
@@ -438,6 +458,10 @@ b32 main()
            kernel vector published by the startup shim; clone-and-reentry can
            deliberately replace it without forging another initial stack. */
         shell_env_init(environ);
+        if (shell_bash_compat && env_get("POSIXLY_CORRECT"))
+                shell_posix_changed(true);
+        if (shell_bash_compat && !shell_posix_variable())
+                return 1;
 
         /*
                 sh file [word ...]

@@ -47,6 +47,15 @@ static bool exec_asynchronous;
 static bool exec_pipe_status_pending;
 static b32 exec_pipe_status_value;
 static b32 exec_return_previous;
+/* Set only by a builtin path that diagnosed an invocation error. A nonzero
+   status alone is not enough: eval, return, dot and trap can all answer
+   nonzero without the POSIX special-builtin fatality applying. */
+static bool exec_special_error;
+
+static fn exec_special_error_note()
+{
+        exec_special_error = true;
+}
 
 /*
         Which line the command now running was written on.
@@ -61,6 +70,7 @@ static b32 exec_line;
 fn shell_trap_exit();
 fn exec_traps();
 fn job_forget();
+fn trap_child_began();
 static b32 exec_child_status(bipolar child);
 static b32 job_wait_foreground(positive number);
 static fn exec_pipe_status_publish(bipolar address_to values, positive count);
@@ -68,6 +78,7 @@ static fn exec_pipe_status_publish(bipolar address_to values, positive count);
 fn exec_child_began()
 {
         exec_forked = true;
+        trap_child_began();
         // One more shell between this process and the one the script began
         // in, which is the whole of what $BASH_SUBSHELL counts.
         shell_subshell_depth++;
@@ -78,6 +89,14 @@ fn exec_child_began()
         //      close descriptors somebody else is still handing out.
         shell_substitutions_forget();
         shell_background_child();
+}
+
+static DEAD_END fn exec_child_leave(b32 status)
+{
+        shell_status = status;
+        shell_trap_exit();
+        log_flush();
+        exit(status);
 }
 
 /*
@@ -211,9 +230,10 @@ static fn exec_errexit(b32 status)
 
         shell_status = status;
 
-        if (!exec_forked)
-                shell_trap_exit();
+        if (exec_forked)
+                exec_child_leave(status);
 
+        shell_trap_exit();
         log_flush();
         exit(status);
 }
@@ -2403,6 +2423,12 @@ static bool history_hold(string_address text, positive length)
 static byte_store history_expanded;
 static byte_store history_piece;
 static byte_store history_changed;
+static byte_store history_percent;
+static byte_store history_sub_old;
+static byte_store history_sub_new;
+static positive history_percent_number;
+static bool history_percent_known;
+static bool history_substitution_known;
 
 #define HISTORY_EXPAND_ERROR (-1)
 #define HISTORY_EXPAND_RUN 0
@@ -2432,6 +2458,39 @@ static PURE bool history_event_end(p8 value)
                value == ':' || value == '=' || value == '(' || value == ')' ||
                value == ';' || value == '&' || value == '|' || value == '-' ||
                value == '\'' || value == '"' || value == '\\';
+}
+
+/* `%` names the word containing the last `?text?` match.  Find that word
+   with the shell lexer so quote/operator boundaries stay the same as every
+   other history word designator. */
+static bool history_percent_set(string_address event, string_address wanted,
+                                positive wanted_length)
+{
+        lex_frame frame;
+        b32 count;
+        bool answer = false;
+
+        history_percent.used = 0;
+        lex_nest_enter(address_of frame);
+        count = lex_line(event);
+
+        if (count >= 0)
+                for (b32 at = 0; at < count; at++)
+                        if (lex_tokens[at].kind != LEX_OPERATOR &&
+                            memory_search(lex_tokens[at].text,
+                                          lex_tokens[at].length, wanted,
+                                          wanted_length))
+                        {
+                                answer = history_store_add(
+                                    address_of history_percent,
+                                    lex_tokens[at].text,
+                                    lex_tokens[at].length);
+                                break;
+                        }
+
+        lex_nest_leave(address_of frame);
+        history_percent_known = answer;
+        return answer;
 }
 
 static bool history_event_at(string_address bang,
@@ -2510,6 +2569,24 @@ static bool history_event_at(string_address bang,
                                 break;
                         }
                 }
+
+                if (index >= history_used ||
+                    !history_percent_set(history_text[index], wanted,
+                                         wanted_length))
+                        goto missing;
+                if (index > positive_max - history_first)
+                        goto missing;
+                history_percent_number = history_first + index;
+        }
+        else if (string_is(at, '%'))
+        {
+                if (!history_percent_known)
+                        goto missing;
+                if (history_percent_number < history_first ||
+                    history_percent_number - history_first >= history_used)
+                        goto missing;
+                index = history_percent_number - history_first;
+                at++;
         }
         else if (string_is(at, '^') || string_is(at, '$') ||
                  string_is(at, '*'))
@@ -2557,7 +2634,9 @@ enum
         HISTORY_WORD_ONE,
         HISTORY_WORD_RANGE,
         HISTORY_WORD_ARGS,
-        HISTORY_WORD_LAST
+        HISTORY_WORD_LAST,
+        HISTORY_WORD_PERCENT,
+        HISTORY_WORD_RANGE_PENULTIMATE
 };
 
 static bool history_words(string_address event, b32 kind, positive first,
@@ -2570,6 +2649,11 @@ static bool history_words(string_address event, b32 kind, positive first,
         bool answer = true;
 
         history_piece.used = 0;
+        if (kind == HISTORY_WORD_PERCENT)
+                return history_percent_known &&
+                       history_store_add(address_of history_piece,
+                                         history_percent.bytes,
+                                         history_percent.used);
         if (kind == HISTORY_WORD_ALL)
                 return history_store_add(address_of history_piece, event,
                                          string_length(event));
@@ -2596,11 +2680,14 @@ static bool history_words(string_address event, b32 kind, positive first,
         }
         else if (kind == HISTORY_WORD_RANGE && last == positive_max)
                 last = words ? words - 1 : 0;
+        else if (kind == HISTORY_WORD_RANGE_PENULTIMATE)
+                last = words > 1 ? words - 2 : 0;
 
         if ((kind == HISTORY_WORD_ONE || kind == HISTORY_WORD_LAST) &&
             first >= words)
                 answer = false;
-        else if (kind == HISTORY_WORD_RANGE &&
+        else if ((kind == HISTORY_WORD_RANGE ||
+                  kind == HISTORY_WORD_RANGE_PENULTIMATE) &&
                  (first >= words || last >= words || last < first))
                 answer = false;
         else if (kind == HISTORY_WORD_ARGS && words <= 1)
@@ -2691,6 +2778,219 @@ static bool history_substitute(string_address old, positive old_length,
         return true;
 }
 
+static bool history_sub_field(byte_store address_to into,
+                              string_address address_to at, p8 delimiter,
+                              bool replacement, bool closing_required)
+{
+        string_address step = address_to at;
+
+        into->used = 0;
+        while (string_get(step) && !string_is(step, delimiter))
+        {
+                p8 value = string_get(step++);
+
+                if (value == '\\' && string_get(step) &&
+                    (string_is(step, delimiter) || string_is(step, '\\') ||
+                     (replacement && string_is(step, '&'))))
+                        value = string_get(step++);
+                else if (replacement && value == '&')
+                {
+                        if (!history_store_add(into, history_sub_old.bytes,
+                                               history_sub_old.used))
+                                return false;
+                        continue;
+                }
+
+                if (!history_store_byte(into, value))
+                        return false;
+        }
+
+        if (string_is(step, delimiter))
+                step++;
+        else if (closing_required)
+                return false;
+
+        address_to at = step;
+        return true;
+}
+
+/* Read and retain one :s expression.  Keeping the normalized old and new
+   fields is both smaller and safer than retaining pointers into a reader
+   buffer, and gives :& the same substitution without another history copy. */
+static bool history_substitution_read(string_address modifier,
+                                      string_address address_to after)
+{
+        p8 delimiter = string_get(modifier + 1);
+        string_address at = modifier + 2;
+
+        if (!delimiter ||
+            !history_sub_field(address_of history_sub_old, address_of at,
+                               delimiter, false, true) ||
+            !history_sub_old.used ||
+            !history_sub_field(address_of history_sub_new, address_of at,
+                               delimiter, true, false))
+                return false;
+
+        history_substitution_known = true;
+        address_to after = at;
+        return true;
+}
+
+static bool history_substitution_apply(bool global)
+{
+        return history_substitution_known &&
+               history_substitute(history_sub_old.bytes,
+                                  history_sub_old.used,
+                                  history_sub_new.bytes,
+                                  history_sub_new.used, global);
+}
+
+static bool history_piece_path(p8 modifier)
+{
+        positive start = 0;
+        positive length = history_piece.used;
+        p8 address_to slash;
+        p8 address_to dot;
+
+        if (modifier == 'h' || modifier == 't')
+        {
+                slash = (p8 address_to)memory_last_of(history_piece.bytes,
+                                                      '/', length);
+                if (modifier == 'h')
+                {
+                        if (!slash)
+                        {
+                                history_changed.used = 0;
+                                if (!history_store_add(
+                                        address_of history_changed,
+                                        (string_address)".", 1))
+                                        return false;
+                                goto replace;
+                        }
+                        length = (positive)(slash - history_piece.bytes);
+                        if (!length)
+                                length = 1;
+                }
+                else if (slash)
+                {
+                        start = (positive)(slash + 1 - history_piece.bytes);
+                        length -= start;
+                }
+        }
+        else
+        {
+                positive component;
+
+                slash = (p8 address_to)memory_last_of(history_piece.bytes,
+                                                      '/', length);
+                component =
+                    slash ? (positive)(slash + 1 - history_piece.bytes) : 0;
+                dot = (p8 address_to)memory_last_of(
+                    history_piece.bytes + component, '.', length - component);
+                if (modifier == 'r')
+                {
+                        if (dot)
+                                length = (positive)(dot - history_piece.bytes);
+                }
+                else
+                {
+                        if (!dot)
+                        {
+                                start = length;
+                                length = 0;
+                        }
+                        else
+                        {
+                                start = (positive)(dot - history_piece.bytes);
+                                length -= start;
+                        }
+                }
+        }
+
+        history_changed.used = 0;
+        if (!history_store_add(address_of history_changed,
+                               history_piece.bytes + start, length))
+                return false;
+
+replace:
+        {
+                byte_store held = history_piece;
+                history_piece = history_changed;
+                history_changed = held;
+        }
+        return true;
+}
+
+static bool history_quote_one(byte_store address_to into,
+                              string_address text, positive length)
+{
+        if (!history_store_byte(into, '\''))
+                return false;
+
+        for (positive at = 0; at < length; at++)
+                if (string_get(text + at) == '\'')
+                {
+                        if (!history_store_add(into,
+                                               (string_address)"'\\''", 4))
+                                return false;
+                }
+                else if (!history_store_byte(into, string_get(text + at)))
+                        return false;
+
+        return history_store_byte(into, '\'');
+}
+
+static bool history_piece_quote(bool split)
+{
+        positive at = 0;
+        bool written = false;
+
+        history_changed.used = 0;
+        while (at < history_piece.used)
+        {
+                positive start = at;
+
+                if (split)
+                {
+                        while (start < history_piece.used &&
+                               (history_piece.bytes[start] == ' ' ||
+                                history_piece.bytes[start] == '\t' ||
+                                history_piece.bytes[start] == '\n'))
+                                start++;
+                        at = start;
+                        while (at < history_piece.used &&
+                               history_piece.bytes[at] != ' ' &&
+                               history_piece.bytes[at] != '\t' &&
+                               history_piece.bytes[at] != '\n')
+                                at++;
+                }
+                else
+                        at = history_piece.used;
+
+                if (start == at && split)
+                        break;
+                if (written++ &&
+                    !history_store_byte(address_of history_changed, ' '))
+                        return false;
+                if (!history_quote_one(address_of history_changed,
+                                       history_piece.bytes + start,
+                                       at - start))
+                        return false;
+        }
+
+        if (!written &&
+            !history_quote_one(address_of history_changed,
+                               (string_address)"", 0))
+                return false;
+
+        {
+                byte_store held = history_piece;
+                history_piece = history_changed;
+                history_changed = held;
+        }
+        return true;
+}
+
 static bool history_word_designator(string_address address_to at,
                                     b32 address_to kind,
                                     positive address_to first,
@@ -2701,7 +3001,8 @@ static bool history_word_designator(string_address address_to at,
         p8 value = string_get(step + colon);
         positive number = 0;
 
-        if (value != '^' && value != '$' && value != '*' &&
+        if (value != '^' && value != '$' && value != '*' && value != '%' &&
+            value != '-' &&
             !(value >= '0' && value <= '9'))
                 return true;
 
@@ -2721,6 +3022,33 @@ static bool history_word_designator(string_address address_to at,
         {
                 address_to kind = HISTORY_WORD_ARGS;
                 step++;
+        }
+        else if (value == '%')
+        {
+                address_to kind = HISTORY_WORD_PERCENT;
+                step++;
+        }
+        else if (value == '-')
+        {
+                address_to kind = HISTORY_WORD_RANGE_PENULTIMATE;
+                address_to first = 0;
+                step++;
+
+                if (string_get(step) >= '0' && string_get(step) <= '9')
+                {
+                        positive end_word = 0;
+
+                        while (string_get(step) >= '0' &&
+                               string_get(step) <= '9')
+                        {
+                                positive digit = string_get(step++) - '0';
+                                if (end_word > (positive_max - digit) / 10)
+                                        return false;
+                                end_word = end_word * 10 + digit;
+                        }
+                        address_to kind = HISTORY_WORD_RANGE;
+                        address_to last = end_word;
+                }
         }
         else
         {
@@ -2749,7 +3077,12 @@ static bool history_word_designator(string_address address_to at,
                         {
                                 if (string_get(step) < '0' ||
                                     string_get(step) > '9')
-                                        return false;
+                                {
+                                        address_to kind =
+                                            HISTORY_WORD_RANGE_PENULTIMATE;
+                                        address_to last = 0;
+                                        goto word_done;
+                                }
                                 while (string_get(step) >= '0' &&
                                        string_get(step) <= '9')
                                 {
@@ -2764,8 +3097,15 @@ static bool history_word_designator(string_address address_to at,
                         address_to kind = HISTORY_WORD_RANGE;
                         address_to last = end_word;
                 }
+                else if (string_is(step, '*'))
+                {
+                        address_to kind = HISTORY_WORD_RANGE;
+                        address_to last = positive_max;
+                        step++;
+                }
         }
 
+word_done:
         address_to at = step;
         return true;
 }
@@ -2793,34 +3133,25 @@ b32 history_expand_line(string_address line,
            lookup or execution path. */
         if (string_is(line, '^'))
         {
-                string_address old = line + 1;
-                string_address old_end = string_first_of(old, '^');
-                string_address replacement;
-                string_address replacement_end;
+                string_address after = line + 1;
 
-                if (!history_used || !old_end)
+                if (!history_used ||
+                    !history_sub_field(address_of history_sub_old,
+                                       address_of after, '^', false, true) ||
+                    !history_sub_old.used ||
+                    !history_sub_field(address_of history_sub_new,
+                                       address_of after, '^', true, false))
                         goto bad_event;
-                replacement = old_end + 1;
-                replacement_end = string_first_of(replacement, '^');
-                if (!replacement_end)
-                        replacement_end =
-                            string_first_of_or_end(replacement, end);
+                history_substitution_known = true;
 
                 if (!history_words(history_text[history_used - 1],
                                    HISTORY_WORD_ALL, 0, positive_max) ||
-                    !history_substitute(
-                        old, (positive)(old_end - old), replacement,
-                        (positive)(replacement_end - replacement), false) ||
+                    !history_substitution_apply(false) ||
                     !history_store_add(address_of history_expanded,
                                        history_piece.bytes,
                                        history_piece.used) ||
-                    !history_store_add(
-                        address_of history_expanded,
-                        string_get(replacement_end) ? replacement_end + 1
-                                                    : replacement_end,
-                        string_length(string_get(replacement_end)
-                                          ? replacement_end + 1
-                                          : replacement_end)))
+                    !history_store_add(address_of history_expanded, after,
+                                       string_length(after)))
                         goto bad_event;
 
                 address_to expanded = history_expanded.bytes;
@@ -2881,7 +3212,9 @@ b32 history_expand_line(string_address line,
                         continue;
                 }
 
-                if (value != '!' || single || !string_get(at + 1) ||
+                if (value != '!' || single ||
+                    (double_quote && shell_posix_on()) ||
+                    !string_get(at + 1) ||
                     string_get(at + 1) == ' ' ||
                     string_get(at + 1) == '\t' ||
                     string_get(at + 1) == '=' ||
@@ -2898,18 +3231,38 @@ b32 history_expand_line(string_address line,
                 {
                         string_address event;
                         positive event_at;
-                        b32 word_kind = HISTORY_WORD_ALL;
+                        b32 word_kind = string_is(at + 1, '%')
+                                            ? HISTORY_WORD_PERCENT
+                                            : HISTORY_WORD_ALL;
                         positive first = 0;
                         positive last = positive_max;
 
-                        if (!history_event_at(at, address_of event,
-                                              address_of event_at) ||
-                            !history_word_designator(address_of event,
-                                                     address_of word_kind,
-                                                     address_of first,
-                                                     address_of last) ||
-                            !history_words(history_text[event_at], word_kind,
-                                           first, last))
+                        if (string_is(at + 1, '#'))
+                        {
+                                event = at + 2;
+                                if (!history_word_designator(
+                                        address_of event,
+                                        address_of word_kind,
+                                        address_of first,
+                                        address_of last))
+                                        goto bad_event;
+
+                                history_changed.used = 0;
+                                if (!history_store_add(
+                                        address_of history_changed, line,
+                                        (positive)(at - line)) ||
+                                    !history_words(history_changed.bytes,
+                                                   word_kind, first, last))
+                                        goto no_room;
+                        }
+                        else if (!history_event_at(at, address_of event,
+                                                   address_of event_at) ||
+                                 !history_word_designator(
+                                     address_of event,
+                                     address_of word_kind,
+                                     address_of first, address_of last) ||
+                                 !history_words(history_text[event_at],
+                                                word_kind, first, last))
                                 goto bad_event;
 
                         while (string_is(event, ':'))
@@ -2918,7 +3271,8 @@ b32 history_expand_line(string_address line,
                                 bool global = false;
 
                                 if (string_is(modifier, 'g') &&
-                                    string_is(modifier + 1, 's'))
+                                    (string_is(modifier + 1, 's') ||
+                                     string_is(modifier + 1, '&')))
                                 {
                                         global = true;
                                         modifier++;
@@ -2931,41 +3285,45 @@ b32 history_expand_line(string_address line,
                                         continue;
                                 }
 
+                                if (string_is(modifier, '&'))
+                                {
+                                        if (!history_substitution_apply(
+                                                global))
+                                                goto bad_event;
+                                        event = modifier + 1;
+                                        continue;
+                                }
+
+                                if (string_is(modifier, 'h') ||
+                                    string_is(modifier, 't') ||
+                                    string_is(modifier, 'r') ||
+                                    string_is(modifier, 'e'))
+                                {
+                                        if (!history_piece_path(
+                                                string_get(modifier)))
+                                                goto no_room;
+                                        event = modifier + 1;
+                                        continue;
+                                }
+
+                                if (string_is(modifier, 'q') ||
+                                    string_is(modifier, 'x'))
+                                {
+                                        if (!history_piece_quote(
+                                                string_is(modifier, 'x')))
+                                                goto no_room;
+                                        event = modifier + 1;
+                                        continue;
+                                }
+
                                 if (!string_is(modifier, 's') ||
                                     !string_get(modifier + 1))
                                         goto unsupported_modifier;
 
-                                {
-                                        p8 delimiter = string_get(modifier + 1);
-                                        string_address old = modifier + 2;
-                                        string_address old_end =
-                                            string_first_of(old, delimiter);
-                                        string_address replacement;
-                                        string_address replacement_end;
-
-                                        if (!old_end)
-                                                goto unsupported_modifier;
-                                        replacement = old_end + 1;
-                                        replacement_end = string_first_of(
-                                            replacement, delimiter);
-                                        if (!replacement_end)
-                                                replacement_end =
-                                                    string_first_of_or_end(
-                                                        replacement, end);
-
-                                        if (!history_substitute(
-                                                old,
-                                                (positive)(old_end - old),
-                                                replacement,
-                                                (positive)(replacement_end -
-                                                           replacement),
-                                                global))
-                                                goto bad_event;
-
-                                        event = string_get(replacement_end)
-                                                    ? replacement_end + 1
-                                                    : replacement_end;
-                                }
+                                if (!history_substitution_read(
+                                        modifier, address_of event) ||
+                                    !history_substitution_apply(global))
+                                        goto bad_event;
                         }
 
                         if (!history_store_add(address_of history_expanded,
@@ -3842,6 +4200,11 @@ typedef struct
 static exec_saved_fd exec_saves[REDIRECT_SAVE_MAX];
 static b32 exec_save_count;
 static b32 exec_redirect_status;
+/* Shared with for/select list expansion below. Redirect fields are consumed
+   before execution reaches another node, so one retained pointer table serves
+   both without another growth path. */
+static string_address address_to exec_fields;
+static positive exec_fields_room;
 
 #define F_DUPFD_CLOEXEC 1030
 
@@ -4232,12 +4595,35 @@ static bool exec_redirect_apply(b32 index)
                 // in dash, and the body was matched against it when the
                 // line was read. Expanding it here ran the substitution in
                 // "cat <<$(x)" once per command, for nothing.
-                string_address target = want->op == OP_DLESS
-                                            ? want->text
-                                            : shell_expand_word(want->text);
+                string_address target = want->text;
                 bipolar opened = -1;
                 b32 redirect_mark = exec_save_count;
                 bool both = want->op == OP_ANDGREAT || want->op == OP_ANDDGREAT;
+
+                if (want->op == OP_HERESTRING)
+                        target = shell_expand_word(want->text);
+                else if (want->op != OP_DLESS)
+                {
+                        shell_words fields;
+                        b32 expanded;
+
+                        shell_words_bind(address_of fields,
+                                         address_of exec_fields,
+                                         address_of exec_fields_room);
+                        expanded = shell_expand_redirect(want->text,
+                                                         address_of fields,
+                                                         address_of target);
+                        if (expanded < 0)
+                                return false;
+                        if (!expanded)
+                        {
+                                string_format(exec_error,
+                                              "%s: ambiguous redirect\n",
+                                              want->text);
+                                exec_redirect_status = 1;
+                                return false;
+                        }
+                }
 
                 if (exec_line_aborted())
                         return false;
@@ -5179,9 +5565,24 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
         return answer;
 }
 
+static COLD bool exec_assignment_error(bool fatal)
+{
+        if (fatal)
+        {
+                expand_fatal_mode(0);
+                return false;
+        }
+
+        /* Bash's ordinary mode diagnoses a rejected prefix assignment but
+           still invokes the command with the old value. */
+        shell_status = 1;
+        return true;
+}
+
 static bool exec_assign(string_address address_to word_at,
                         positive name_length, positive name_hash, bool append,
-                        bool compound)
+                        bool compound, string_address prepared_name,
+                        positive prepared_base_length, bool fatal_error)
 {
         string_address word = address_to word_at;
         string_address name_end = word + name_length;
@@ -5211,8 +5612,7 @@ static bool exec_assign(string_address address_to word_at,
                 {
                         string_format(exec_error, "%s: is read only\n", word);
                         address_to name_end = append ? '+' : '=';
-                        expand_fatal_mode(0);
-                        return false;
+                        return exec_assignment_error(fatal_error);
                 }
 
                 answer = shell_compound_assign(word, name_length, mark + 2,
@@ -5224,8 +5624,7 @@ static bool exec_assign(string_address address_to word_at,
                 {
                         string_format(exec_error, "%s: cannot assign\n", word);
                         address_to name_end = append ? '+' : '=';
-                        expand_fatal_mode(0);
-                        return false;
+                        return exec_assignment_error(fatal_error);
                 }
                 address_to name_end = append ? '+' : '=';
 
@@ -5254,11 +5653,10 @@ static bool exec_assign(string_address address_to word_at,
                         address_to subscript = '[';
 
                 address_to name_end = append ? '+' : '=';
-                expand_fatal_mode(0);
-                return false;
+                return exec_assignment_error(fatal_error);
         }
 
-        if (subscript)
+        if (subscript && !prepared_base_length)
         {
                 positive key_length;
                 string_address key;
@@ -5278,8 +5676,7 @@ static bool exec_assign(string_address address_to word_at,
                                 word, base_length, null, null, null, null))
                         {
                                 address_to name_end = append ? '+' : '=';
-                                expand_fatal_mode(0);
-                                return false;
+                                return exec_assignment_error(fatal_error);
                         }
                 }
 
@@ -5288,9 +5685,19 @@ static bool exec_assign(string_address address_to word_at,
                 return answer;
         }
 
-        old = append ? env_get(word) : null;
+        if (subscript)
+                address_to subscript = '[';
 
-        if (append && !old)
+        old = append && prepared_base_length
+                  ? shell_array_get(
+                        prepared_name, prepared_base_length,
+                        prepared_name + prepared_base_length + 1,
+                        string_length(prepared_name + prepared_base_length + 1) -
+                            1,
+                        null)
+                  : append ? env_get(word) : null;
+
+        if (append && !old && !prepared_base_length)
                 old = shell_reference_element_value(word, name_length, null);
 
         if (append)
@@ -5325,38 +5732,53 @@ static bool exec_assign(string_address address_to word_at,
                                 mark + 1, add_length);
         }
 
-        answer = env_assign_hashed_span(
-            word, name_length, name_hash,
-            append ? made + name_length + 1 : mark + 1);
+        if (prepared_base_length)
+        {
+                string_address key =
+                    prepared_name + prepared_base_length + 1;
+                positive key_length =
+                    string_length(key) - 1;
+
+                answer = shell_array_set(
+                    prepared_name, prepared_base_length, key, key_length,
+                    append ? made + name_length + 1 : mark + 1, false);
+        }
+        else
+                answer = env_assign_hashed_span(
+                    word, name_length, name_hash,
+                    append ? made + name_length + 1 : mark + 1);
         address_to name_end = append ? '+' : '=';
 
         if (!answer && shell_reference_element(
-                           word, name_length, null, null, null, null))
+                           word, subscript ? base_length : name_length,
+                           null, null, null, null))
         {
                 string_format(exec_error, "%s: cannot assign\n", word);
-                expand_fatal_mode(0);
-                return false;
+                return exec_assignment_error(fatal_error);
         }
 
-        if (answer && append)
+        if (answer && append && !subscript)
                 address_to word_at = made;
 
         return answer;
 }
 
-/*
-        The fifteen names POSIX calls special.
-
-        What makes them special here is only that an assignment written in
-        front of one outlives it: "x=1 export y" leaves x set and "x=1 cat"
-        does not. Everything else about them is the same as any other builtin.
-*/
-static bool exec_special_builtin(string_address name)
+/* The fifteen POSIX names, plus Bash's source spelling while Bash POSIX mode
+   is active. Outside that mode Bash deliberately lets functions precede the
+   names and restores their prefix assignments; the sh personality retains
+   the POSIX policy it has always had. */
+static PURE bool exec_special_builtin(string_address name)
 {
         static string_address names[] = {
             ":", ".", "break", "continue", "eval", "exec", "exit", "export",
             "readonly", "return", "set", "shift", "times", "trap", "unset",
         };
+
+        if (shell_bash_compat && !shell_posix_on())
+                return false;
+
+        if (shell_bash_compat && word_is(name, "source"))
+                return true;
 
         return string_table_find(name, names, sizeof(names[0]),
                                  array_count(names)) <
@@ -5986,15 +6408,14 @@ static b32 exec_dispatch(b32 command_word)
         positive2 named;
         p8 initial = string_get(name);
         positive slot;
+        bool special;
+        bool colon = initial == ':' && !string_get(name + 1);
 
-        if (initial == ':' && !string_get(name + 1))
+        if (colon && exec_special_builtin(name))
         {
                 shell_status = 0;
                 return 0;
         }
-
-        if (exec_control_builtin(name, true))
-                return shell_status;
 
         shell_command_name_stable =
             parse_words[command_word] == name &&
@@ -6021,6 +6442,25 @@ static b32 exec_dispatch(b32 command_word)
         else
                 named = string_hash_33_length(name);
 
+        special = exec_special_builtin(name);
+
+        /* POSIX special builtins precede functions. Bash's ordinary mode
+           deliberately reverses that order, including for the three control
+           builtins implemented in this file. */
+        if (special)
+        {
+                if (exec_control_builtin(name, true))
+                        return shell_status;
+
+                {
+                        bool tail = shell_tail_command;
+
+                        if (shell_builtin(null, named))
+                                return shell_status;
+                        shell_tail_command = tail;
+                }
+        }
+
         slot = exec_function_slot(name, named);
 
         if (slot != positive_max)
@@ -6029,10 +6469,19 @@ static b32 exec_dispatch(b32 command_word)
                 return exec_call(slot);
         }
 
+        if (colon)
+        {
+                shell_status = 0;
+                return 0;
+        }
+
+        if (!special && exec_control_builtin(name, true))
+                return shell_status;
+
         {
                 bool tail = shell_tail_command;
 
-                if (shell_builtin(null, named))
+                if (!special && shell_builtin(null, named))
                         return shell_status;
                 shell_tail_command = tail;
         }
@@ -6215,6 +6664,9 @@ static b32 exec_simple(b32 index)
         b32 at;
         bool bare_exec;
         bool assignments_only;
+        bool fatal_assignment;
+        bool special = false;
+        bool fatal = false;
         shell_words arguments;
 
         //      argv grows with the line. A command's words are whatever the
@@ -6326,16 +6778,28 @@ static b32 exec_simple(b32 index)
         }
 
         assignments_only = first == count;
+        fatal_assignment = assignments_only || !shell_bash_compat ||
+                           shell_posix_on();
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
                 b32 word_index = EXEC_WORD(at);
                 p8 flags = parse_word_flags[word_index];
                 string_address word = parse_words[word_index];
+                positive substitution_generation =
+                    shell_substitution_generation;
                 positive value_at = parse_word_name_lengths[word_index] + 1 +
                                       ((flags & PARSE_WORD_APPEND) != 0);
                 string_address trial =
                     (flags & (PARSE_WORD_LITERAL | PARSE_WORD_COMPOUND))
                         ? word : shell_expand_assignment(word, value_at);
+
+                /* Bash's ordinary mode exposes each substitution answer to
+                   the next assignment RHS. POSIX freezes the status from
+                   before the simple command until all RHS expansions finish;
+                   both modes still return the last substitution below. */
+                if (shell_bash_compat && !shell_posix_on() &&
+                    substitution_generation != shell_substitution_generation)
+                        shell_status = shell_substitution_status;
 
                 if (exec_line_aborted())
                         break;
@@ -6351,9 +6815,12 @@ static b32 exec_simple(b32 index)
                                  parse_word_name_lengths[word_index],
                                  parse_word_name_hashes[word_index],
                                  (flags & PARSE_WORD_APPEND) != 0,
-                                 (flags & PARSE_WORD_COMPOUND) != 0))
+                                 (flags & PARSE_WORD_COMPOUND) != 0,
+                                 expanded_kept[expanded_count - 1].name,
+                                 expanded_kept[expanded_count - 1].base_length,
+                                 fatal_assignment))
                 {
-                        status = 2;
+                        status = shell_bash_compat ? 1 : 2;
                         goto fail;
                 }
         }
@@ -6396,20 +6863,12 @@ static b32 exec_simple(b32 index)
                 stays; and assignments with no command after them are the
                 command, so they stay too.
         */
+        if (first != count)
+                special = exec_special_builtin(shell_argv[first]);
+
         if (first && first != count)
         {
-                bool special = !shell_bash_compat &&
-                               exec_special_builtin(shell_argv[first]);
                 bool save = !special;
-
-                if (special)
-                        for (at = 0; at < first; at++)
-                                if (parse_word_flags[EXEC_WORD(at)] &
-                                    PARSE_WORD_APPEND)
-                                {
-                                        save = true;
-                                        break;
-                                }
 
                 if (save)
                 {
@@ -6425,11 +6884,6 @@ static b32 exec_simple(b32 index)
 
                         for (at = 0; at < first; at++)
                         {
-                                if (special &&
-                                    !(parse_word_flags[EXEC_WORD(at)] &
-                                      PARSE_WORD_APPEND))
-                                        continue;
-
                                 if (!exec_keep_value(kept + kept_count,
                                                      shell_argv[at]))
                                 {
@@ -6449,11 +6903,36 @@ static b32 exec_simple(b32 index)
                                  (parse_word_flags[EXEC_WORD(at)] &
                                   PARSE_WORD_APPEND) != 0,
                                  (parse_word_flags[EXEC_WORD(at)] &
-                                  PARSE_WORD_COMPOUND) != 0))
+                                  PARSE_WORD_COMPOUND) != 0,
+                                 kept && kept_count == first
+                                     ? kept[at].name
+                                     : null,
+                                 kept && kept_count == first
+                                     ? kept[at].base_length
+                                     : 0,
+                                 fatal_assignment))
                 {
-                        status = 2;
+                        status = shell_bash_compat ? 1 : 2;
                         goto fail;
                 }
+
+        /* POSIXLY_CORRECT is itself a mode switch. Bash decides whether its
+           prefix persists using the mode after those writes: it stays for
+           `POSIXLY_CORRECT=y :`, but is restored after an ordinary `true`.
+           The pre-write snapshot remains necessary for the latter case; if
+           the selected command has just become special, adopt every saved
+           prefix instead of restoring it. */
+        if (first != count)
+        {
+                bool active_special =
+                    exec_special_builtin(shell_argv[first]);
+
+                if (active_special && !special)
+                        for (at = 0; at < kept_count; at++)
+                                kept[at].promoted = true;
+
+                special = active_special;
+        }
 
         /*
                 The assignment words, held apart from argv.
@@ -6481,8 +6960,7 @@ static b32 exec_simple(b32 index)
         }
 
         if (assignments &&
-            (shell_bash_compat || !exec_special_builtin(shell_argv[first]) ||
-             word_is(shell_argv[first], "exec")))
+            (!special || word_is(shell_argv[first], "exec")))
                 for (at = 0; at < first; at++)
                         if (!env_export_temporary(assignments[at]))
                         {
@@ -6498,6 +6976,7 @@ static b32 exec_simple(b32 index)
         {
                 exec_redirect_restore(mark);
                 status = exec_redirect_failed_status();
+                fatal = special;
                 goto fail;
         }
 
@@ -6533,9 +7012,19 @@ static b32 exec_simple(b32 index)
 
         log_failure_reset();
 
-        status = kept || exec_promotable
-                     ? exec_dispatch_scoped(EXEC_WORD(first), kept, kept_count)
-                     : exec_dispatch(EXEC_WORD(first));
+        {
+                bool previous_error = exec_special_error;
+                bool builtin_error;
+
+                exec_special_error = false;
+                status = kept || exec_promotable
+                             ? exec_dispatch_scoped(EXEC_WORD(first), kept,
+                                                    kept_count)
+                             : exec_dispatch(EXEC_WORD(first));
+                builtin_error = exec_special_error;
+                exec_special_error = previous_error;
+                fatal = special && status && builtin_error;
+        }
 #undef EXEC_WORD
         log_flush();
 
@@ -6558,6 +7047,9 @@ static b32 exec_simple(b32 index)
         exec_put_back(kept, kept_count);
         shell_store_rewind(address_of exec_store, arena_mark);
 
+        if (fatal)
+                expand_fatal_status(status);
+
         return status;
 
         /*
@@ -6572,6 +7064,9 @@ fail:
         exec_put_back(expanded_kept, expanded_count);
         shell_store_rewind(address_of exec_store, arena_mark);
         shell_status = status;
+
+        if (fatal)
+                expand_fatal_status(status);
 
         return status;
 }
@@ -6661,8 +7156,6 @@ static b32 exec_loop(b32 index, bool until)
 //      by the next loop instead of being sized for a guess.
 static string_address address_to exec_items;
 static positive exec_items_room;
-static string_address address_to exec_fields;
-static positive exec_fields_room;
 
 // An expansion that aborted the line leaves nothing to run: what was taken
 // goes back, and the answer is the status the abort carries.
@@ -6761,6 +7254,26 @@ static b32 exec_loop_items(parse_node address_to node)
         return count;
 }
 
+static COLD b32 exec_loop_assignment_error(string_address name)
+{
+        string_format(exec_error,
+                      env_readonly(name) ? "%s: is read only\n"
+                                         : "%s: cannot assign\n",
+                      name);
+
+        if (shell_bash_compat && !shell_posix_on())
+                return 1;
+
+        if (shell_bash_compat)
+        {
+                expand_fatal_status(127);
+                return 127;
+        }
+
+        expand_fatal();
+        return 2;
+}
+
 static b32 exec_for(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -6780,13 +7293,7 @@ static b32 exec_for(b32 index)
         {
                 if (!env_assign(name, exec_items[at]))
                 {
-                        string_format(exec_error,
-                                      env_readonly(name)
-                                          ? "%s: is read only\n"
-                                          : "%s: cannot assign\n",
-                                      name);
-                        status = 2;
-                        expand_fatal();
+                        status = exec_loop_assignment_error(name);
                         break;
                 }
 
@@ -7132,13 +7639,7 @@ static b32 exec_select(b32 index)
                 if (!env_assign(name, chosen ? exec_items[chosen - 1]
                                              : (string_address) ""))
                 {
-                        string_format(exec_error,
-                                      env_readonly(name)
-                                          ? "%s: is read only\n"
-                                          : "%s: cannot assign\n",
-                                      name);
-                        status = 2;
-                        expand_fatal();
+                        status = exec_loop_assignment_error(name);
                         break;
                 }
 
@@ -8123,8 +8624,7 @@ static bipolar exec_spawn_node(b32 index, bool background)
                                      parse_nodes[index].kind == NODE_SIMPLE;
 
                 status = exec_node(index);
-                log_flush();
-                exit(status);
+                exec_child_leave(status);
         }
 
         if (monitor && child > 0)
@@ -8314,8 +8814,7 @@ static b32 exec_coproc(b32 index)
 
                 b32 status = exec_node(node->left);
 
-                log_flush();
-                exit(status);
+                exec_child_leave(status);
         }
 
         system_close(into[0]);
@@ -8505,8 +9004,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         }
 
                         status = exec_node(child);
-                        log_flush();
-                        exit(status);
+                        exec_child_leave(status);
                 }
 
                 if (made < 0)

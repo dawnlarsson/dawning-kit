@@ -54,10 +54,11 @@ run()
 {
         program=$1
         tag=$2
+        input=${3:-input}
 
         if timeout 10 env HISTFILE="$work/history" HISTSIZE=100 \
                 HISTFILESIZE=100 "$program" --noprofile --norc -i \
-                < "$work/input" > "$work/$tag.out" 2> "$work/$tag.err"
+                < "$work/$input" > "$work/$tag.out" 2> "$work/$tag.err"
         then
                 eval "${tag}_status=0"
         else
@@ -121,13 +122,12 @@ else
         lost "final status" "want $want_status, got $got_status"
 fi
 
-# Valid Bash modifiers outside this deliberately bounded implementation must
-# be rejected by the reader; they must never fall through as an altered
-# command.  :q is useful as a fixed policy probe because Bash implements it.
+# Unknown modifiers must be rejected by the reader; they must never fall
+# through as an altered command.
 command cat > "$work/unsupported.input" <<'CASE'
 history -c
 printf '<GUARD>\n'
-!!:q
+!!:z
 printf '<AFTER:%s>\n' "$?"
 exit
 CASE
@@ -146,6 +146,99 @@ if timeout 10 env HISTFILE="$work/history" HISTSIZE=100 \
 else
         lost "unsupported modifier" \
                 "was not rejected before execution: $(cat "$work/unsupported.clean" 2>/dev/null)"
+fi
+
+section advanced
+group selectors
+
+command cat > "$work/advanced.input" <<'CASE'
+history -c
+printf '<BASE:%s:%s:%s:%s>\n' zero one two three
+printf '<NSTAR:%s>\n' "!1:2*"
+printf '<MINUS:%s>\n' "!1:-"
+printf '<LIMIT:%s>\n' "!1:-2"
+echo prefix !#
+printf '<SEARCHBASE:%s:%s:%s>\n' alpha NEEDLE/path.txt omega
+printf '<PCT:%s>\n' "!?NEEDLE?:%"
+printf '<PCTSHORT:%s>\n' "!%"
+printf '<PATH:%s>\n' /tmp/dir/file.tar.gz
+printf '<H:%s>\n' "!!:$:h"
+printf '<PATH:%s>\n' /tmp/dir/file.tar.gz
+printf '<T:%s>\n' "!!:$:t"
+printf '<PATH:%s>\n' /tmp/dir/file.tar.gz
+printf '<R:%s>\n' "!!:$:r"
+printf '<PATH:%s>\n' /tmp/dir/file.tar.gz
+printf '<E:%s>\n' "!!:$:e"
+printf '<QBASE:%s>\n' 'two words $HOME'
+printf '<Q:%s>\n' !!:$:q
+printf '<XBASE:%s>\n' 'two words $HOME'
+printf '<X:%s>\n' !!:$:x
+printf '<AMPBASE:%s>\n' foofoo
+!!:s/foo/[&]/
+printf '<REPEAT:%s>\n' foofoo
+!!:&
+printf '<GLOBALREPEAT:%s>\n' foofoo
+!!:g&
+printf '<ESCBASE:%s>\n' 'a/b&a/b'
+!!:gs/a\/b/\&/
+set -o posix
+printf '<POSIXDQ:%s>\n' "!1:$"
+printf '<POSIXUQ:%s>\n' !1:$
+exit
+CASE
+
+run /bin/bash advanced_want advanced.input
+run "$work/bash" advanced_got advanced.input
+sed '1s/^.*<BASE/<BASE/' "$work/advanced_got.out" \
+        > "$work/advanced.got.clean"
+
+filtered_case()
+{
+        filter_name=$1
+        filter=$2
+        grep "$filter" "$work/advanced_want.out" > "$work/want.part" || :
+        grep "$filter" "$work/advanced.got.clean" > "$work/got.part" || :
+        if cmp -s "$work/want.part" "$work/got.part"; then
+                won
+        else
+                lost "$filter_name" \
+                        "want $(tr '\n' '|' < "$work/want.part"), got $(tr '\n' '|' < "$work/got.part")"
+        fi
+}
+
+filtered_case "n star" '^<NSTAR:'
+filtered_case "zero-to-penultimate" '^<MINUS:'
+filtered_case "zero-to-n" '^<LIMIT:'
+filtered_case "current line" '^prefix '
+filtered_case "matched word" '^<PCT:'
+filtered_case "matched shorthand" '^<PCTSHORT:'
+
+group pathname
+filtered_case "head" '^<H:'
+filtered_case "tail" '^<T:'
+filtered_case "root" '^<R:'
+filtered_case "extension" '^<E:'
+
+group quoting
+filtered_case "quote one word" '^<Q:'
+filtered_case "quote split words" '^<X:'
+
+group substitution
+filtered_case "ampersand replacement" '^<AMPBASE:'
+filtered_case "repeat substitution" '^<REPEAT:'
+filtered_case "global repeat" '^<GLOBALREPEAT:'
+filtered_case "escaped delimiter amp" '^<ESCBASE:'
+
+group posix
+filtered_case "double quote suppresses" '^<POSIXDQ:'
+filtered_case "unquoted still expands" '^<POSIXUQ:'
+
+if cmp -s "$work/advanced_want.out" "$work/advanced.got.clean" &&
+        [ "$advanced_want_status" = "$advanced_got_status" ]; then
+        won
+else
+        lost "advanced transcript" \
+                "stdout/status mismatch $advanced_want_status/$advanced_got_status"
 fi
 
 section ""

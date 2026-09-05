@@ -296,6 +296,10 @@ bash_answer 'positional source and target' \
         'set -- y two; y=value; x=2; printf "[%s][%s]" "${!1}" "${!x}" END; echo'
 bash_answer 'special sources' \
         'set -- one two; false; printf "[%s][%s]" "${!?}" "${!#}" END; echo'
+bash_answer 'posix special exclamation trim' \
+        'set -o posix; set -- one two; printf "[%s]" "${!#}" END; echo'
+bash_answer 'posix special exclamation error' \
+        'set -o posix; printf before; printf "[%s]" "${!?}"; printf after'
 bash_answer 'absent positional source' \
         'set --; printf "[%s][%s]" "${!1}" "${!1-default}" END; echo'
 bash_answer 'special targets' \

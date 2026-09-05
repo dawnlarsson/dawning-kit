@@ -118,6 +118,17 @@ bash_script_case()
         same_result "$case_name" exact
 }
 
+bash_script_diagnostic_case()
+{
+        case_name=$1
+        command cat > "$work/input"
+        capture_input /bin/bash want
+        capture_input "$work/names/bash" got
+        # Syntax diagnostics necessarily contain the invoked pathname. The
+        # bytes written before it and the terminating status remain exact.
+        same_result "$case_name" ignore
+}
+
 dash_case()
 {
         case_name=$1
@@ -317,6 +328,134 @@ subject_expected "sh policy unaffected" '<one>
 ' <<'CASE'
 shopt -u interactive_comments
 printf '<%s>\n' one # still comment
+CASE
+
+group "bash aliases"
+
+bash_script_case "noninteractive alias default off" <<'CASE'
+shopt -u expand_aliases
+alias moon_alias='printf "<EXPANDED>\n"'
+moon_alias 2>/dev/null
+printf '<STATUS:%s>\n' "$?"
+CASE
+
+bash_script_case "expand_aliases enables parser" <<'CASE'
+shopt -s expand_aliases
+alias moon_alias='printf "<EXPANDED>\n"'
+moon_alias
+CASE
+
+bash_script_case "posix enables aliases" <<'CASE'
+set -o posix
+alias moon_alias='printf "<EXPANDED>\n"'
+moon_alias
+CASE
+
+bash_script_case "default aliases reserved word" <<'CASE'
+shopt -s expand_aliases
+alias time='printf "<ALIASED-TIME>\n"'
+time :
+CASE
+
+bash_script_case "posix keeps reserved word" <<'CASE'
+set -o posix
+alias time='printf "<ALIASED-TIME>\n"'
+{ time :; } 2>/dev/null
+printf '<DONE>\n'
+CASE
+
+group "posix parameter quote"
+
+bash_script_case "default single quote holds brace" <<'CASE'
+unset x
+printf '<%s>\n' "${x:-'a}b'}"
+CASE
+
+bash_script_case "posix single quote releases brace" <<'CASE'
+set -o posix
+unset x
+printf '<%s>\n' "${x:-'a}b'}"
+CASE
+
+bash_script_case "pattern removal quote exception" <<'CASE'
+set -o posix
+x=abc
+printf '<%s>\n' "${x#'a}b'}"
+CASE
+
+bash_script_diagnostic_case "unmatched pattern quote rejected" <<'CASE'
+set -o posix
+x=abc
+printf '<%s>\n' "${x#'a}"
+CASE
+
+group "time policy"
+
+bash_script_case "default time remains reserved" <<'CASE'
+d=$(mktemp -d) || exit
+printf '#!/bin/sh\nprintf "<EXTERNAL:%%s>\\n" "$*"\n' > "$d/time"
+chmod +x "$d/time"
+PATH="$d:$PATH"
+{ time -p marker; } 2>/dev/null
+printf '<DONE>\n'
+rm -rf "$d"
+CASE
+
+bash_script_case "posix time option is command word" <<'CASE'
+d=$(mktemp -d) || exit
+printf '#!/bin/sh\nprintf "<EXTERNAL:%%s>\\n" "$*"\n' > "$d/time"
+chmod +x "$d/time"
+PATH="$d:$PATH"
+set -o posix
+time -p marker
+rm -rf "$d"
+CASE
+
+group "bash redirects"
+
+bash_script_case "default unique redirect glob" <<'CASE'
+d=$(mktemp -d) || exit
+: > "$d/one.target"
+printf '<UNIQUE>\n' > "$d"/*.target
+cat "$d/one.target"
+rm -rf "$d"
+CASE
+
+bash_script_case "default ambiguous redirect glob" <<'CASE'
+d=$(mktemp -d) || exit
+: > "$d/one.target"
+: > "$d/two.target"
+{ printf bad > "$d"/*.target; } 2>/dev/null
+printf '<STATUS:%s>\n' "$?"
+rm -rf "$d"
+CASE
+
+bash_script_case "posix redirect keeps pattern" <<'CASE'
+d=$(mktemp -d) || exit
+: > "$d/one.target"
+set -o posix
+printf '<LITERAL>\n' > "$d"/*.target
+cat "$d/*.target"
+rm -rf "$d"
+CASE
+
+bash_script_case "default redirect splits" <<'CASE'
+d=$(mktemp -d) || exit
+target="$d/one $d/two"
+{ printf bad > $target; } 2>/dev/null
+printf '<STATUS:%s>\n' "$?"
+rm -rf "$d"
+CASE
+
+bash_script_case "posix redirect stays whole" <<'CASE'
+d=$(mktemp -d) || exit
+cd "$d" || exit
+target='one two'
+set -o posix
+printf '<WHOLE>\n' > $target
+cat 'one two'
+cd /
+rm -rf "$d"
 CASE
 
 section "boundaries"

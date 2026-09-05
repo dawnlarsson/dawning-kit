@@ -358,6 +358,8 @@ static CONST inline INLINE bool lex_extended_head(p8 value)
 static string_address lex_nested_at(string_address at);
 static __attribute__((noinline)) string_address
 lex_nesting(string_address at);
+static __attribute__((noinline)) string_address
+lex_nesting_double(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
 static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline);
@@ -645,9 +647,24 @@ static string_address lex_quote_end(string_address at, p8 quote)
 
                 {
                         string_address inner = lex_nested_at(step);
-                        string_address stop = inner ? lex_nesting(inner) : null;
+                        string_address stop =
+                            inner ? (string_is(inner, '{')
+                                         ? lex_nesting_double(inner)
+                                         : lex_nesting(inner))
+                                  : null;
 
-                        step = stop && stop > inner ? stop : step + 1;
+                        if (stop && stop > inner)
+                                step = stop;
+                        else if (inner)
+                        {
+                                /* A nested construct with no mate also leaves
+                                   this outer quote open. Stepping over its `$`
+                                   let the outer quote appear to close and made
+                                   EOF execute the broken construct literally. */
+                                step = inner + string_length(inner);
+                        }
+                        else
+                                step++;
                 }
         }
 
@@ -665,7 +682,61 @@ static string_address lex_quote_end(string_address at, p8 quote)
         started when there is no closing byte at all -- an unfinished one is the
         parser's to complain about, the same as an unfinished quote.
 */
-static string_address lex_nesting_at(string_address at, positive nesting)
+/* Whether the operator after a parameter name is # or %, the two POSIX
+   pattern-removal forms whose words retain single-quote handling inside an
+   outer double quote. */
+static PURE bool lex_parameter_pattern(string_address at)
+{
+        string_address step = at;
+
+        if (string_is(step, '!'))
+                step++;
+        if (string_is(step, '#'))
+                step++;
+
+        if ((string_get(step) >= 'a' && string_get(step) <= 'z') ||
+            (string_get(step) >= 'A' && string_get(step) <= 'Z') ||
+            string_is(step, '_'))
+                while ((string_get(step) >= 'a' && string_get(step) <= 'z') ||
+                       (string_get(step) >= 'A' && string_get(step) <= 'Z') ||
+                       (string_get(step) >= '0' && string_get(step) <= '9') ||
+                       string_is(step, '_'))
+                        step++;
+        else if (string_get(step) >= '0' && string_get(step) <= '9')
+                while (string_get(step) >= '0' && string_get(step) <= '9')
+                        step++;
+        else if (string_get(step))
+                step++;
+
+        if (string_is(step, '['))
+        {
+                positive depth = 1;
+
+                step++;
+                while (string_get(step) && depth)
+                {
+                        if (string_is(step, '\\') && string_get(step + 1))
+                                step += 2;
+                        else if (string_is(step, '['))
+                        {
+                                depth++;
+                                step++;
+                        }
+                        else if (string_is(step, ']'))
+                        {
+                                depth--;
+                                step++;
+                        }
+                        else
+                                step++;
+                }
+        }
+
+        return string_is(step, '#') || string_is(step, '%');
+}
+
+static string_address lex_nesting_at(string_address at, positive nesting,
+                                     bool posix_double)
 {
         p8 open = string_get(at);
         p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
@@ -682,6 +753,8 @@ static string_address lex_nesting_at(string_address at, positive nesting)
         bool fresh = commands;
         bool comment = false;
         bool maybe_here = false;
+        bool raw_single = posix_double && open == '{' && shell_posix_on() &&
+                          !lex_parameter_pattern(at + 1);
 
         if (nesting >= EXPAND_DEPTH)
                 return at;
@@ -753,6 +826,13 @@ static string_address lex_nesting_at(string_address at, positive nesting)
 
                 // Stepped over, not looked into: a bracket in a string closes
                 // nothing, and lex_quote_end would call back in here.
+                if (c == '\'' && raw_single)
+                {
+                        step++;
+                        fresh = false;
+                        continue;
+                }
+
                 if (c == '\'' || c == '"')
                 {
                         step++;
@@ -777,7 +857,9 @@ static string_address lex_nesting_at(string_address at, positive nesting)
                 {
                         string_address inner = step + 1;
                         string_address stop =
-                            lex_nesting_at(inner, nesting + 1);
+                            lex_nesting_at(inner, nesting + 1,
+                                           posix_double && open == '{' &&
+                                               string_is(inner, '{'));
 
                         if (stop == inner)
                                 return at;
@@ -791,7 +873,7 @@ static string_address lex_nesting_at(string_address at, positive nesting)
                 {
                         string_address inner = step + 1;
                         string_address stop =
-                            lex_nesting_at(inner, nesting + 1);
+                            lex_nesting_at(inner, nesting + 1, false);
 
                         if (stop == inner)
                                 return at;
@@ -804,7 +886,7 @@ static string_address lex_nesting_at(string_address at, positive nesting)
                 if (c == '`' && open != '`')
                 {
                         string_address stop =
-                            lex_nesting_at(step, nesting + 1);
+                            lex_nesting_at(step, nesting + 1, false);
 
                         if (stop == step)
                                 return at;
@@ -862,7 +944,13 @@ static string_address lex_nesting_at(string_address at, positive nesting)
 static __attribute__((noinline)) string_address
 lex_nesting(string_address at)
 {
-        return lex_nesting_at(at, 0);
+        return lex_nesting_at(at, 0, false);
+}
+
+static __attribute__((noinline)) string_address
+lex_nesting_double(string_address at)
+{
+        return lex_nesting_at(at, 0, true);
 }
 
 /*

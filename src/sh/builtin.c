@@ -54,11 +54,18 @@ fn shell_input_end();
 bool exec_function_here_hashed(string_address name, positive2 named);
 bool exec_function_unset(string_address name);
 static bool exec_line_aborted();
+static COLD fn shell_posix_changed(bool on);
 static bool exec_assignment_promote(const_string name, positive length);
+static PURE bool exec_special_builtin(string_address name);
+static fn exec_special_error_note();
 static bool env_attribute_target_span(const_string name, positive length,
                                       const_string address_to target,
                                       positive address_to target_length,
                                       positive address_to target_index);
+COLD bool shell_reference_element(
+    const_string name, positive length, const_string address_to base,
+    positive address_to base_length, const_string address_to subscript,
+    positive address_to subscript_length);
 static bool shell_declare_binding(string_address name, positive length,
                                   positive hash, string_address value);
 static bool exec_source_stop(b32 address_to startup_status);
@@ -287,6 +294,20 @@ static positive shell_envp_room;
 static bool shell_envp_dirty = true;
 static positive shell_envp_generation;
 static bool shell_env_initialized;
+
+/* Only an element-bound nameref needs environment text different from its
+   stored binding: `n=value command` changes a[key], but Bash hands the child
+   the already-expanded text `n=value`. Keep those rare texts as a LIFO over
+   the existing assignment strings. Ordinary temporary exports allocate and
+   scan nothing, and nested functions naturally uncover the outer spelling. */
+typedef struct env_temporary_override
+{
+        struct env_temporary_override address_to previous;
+        string_address assignment;
+        positive name_length;
+} env_temporary_override;
+
+static env_temporary_override address_to env_temporary_overrides;
 
 static bool env_table_room(positive want)
 {
@@ -1040,6 +1061,64 @@ static bool env_export_mark_direct(string_address name)
 #define env_export_restore(name, enabled)                                   \
         env_mark_restore((name), (enabled), true)
 
+static env_temporary_override address_to
+env_temporary_override_take(string_address assignment, positive name_length)
+{
+        env_cell address_to cell =
+            env_cell_take(sizeof(env_temporary_override));
+        env_temporary_override address_to made;
+
+        if (!cell)
+                return null;
+
+        made = (env_temporary_override address_to)(cell + 1);
+        made->previous = env_temporary_overrides;
+        made->assignment = assignment;
+        made->name_length = name_length;
+        return made;
+}
+
+static fn env_temporary_override_release(string_address assignment)
+{
+        env_temporary_override address_to address_to link =
+            address_of env_temporary_overrides;
+
+        while (*link)
+        {
+                env_temporary_override address_to one = *link;
+
+                if (one->assignment == assignment)
+                {
+                        *link = one->previous;
+                        env_cell_drop((string_address)one);
+                        return;
+                }
+
+                link = address_of one->previous;
+        }
+}
+
+static string_address
+env_temporary_override_of(env_variable address_to variable)
+{
+        env_temporary_override address_to one = env_temporary_overrides;
+
+        if (!variable->temporary)
+                return null;
+
+        while (one)
+        {
+                if (one->name_length == variable->name_length &&
+                    !memory_compare(one->assignment, variable->text,
+                                    one->name_length))
+                        return one->assignment;
+
+                one = one->previous;
+        }
+
+        return null;
+}
+
 /*
         An element assignment in front of a command exports nothing.
 
@@ -1063,9 +1142,14 @@ static bool env_export_temporary(string_address assignment)
         positive target_length = length;
         positive target_index;
         env_variable address_to entry;
+        env_temporary_override address_to override = null;
+        bool element_reference;
 
         if (env_assignment_element(assignment, length))
                 return true;
+
+        element_reference = shell_reference_element(
+            assignment, length, null, null, null, null);
 
         if (!env_attribute_target_span(
                 assignment, length, address_of target,
@@ -1079,7 +1163,17 @@ static bool env_export_temporary(string_address assignment)
         if (!entry)
                 return false;
 
+        if (element_reference)
+        {
+                override =
+                    env_temporary_override_take(assignment, length);
+                if (!override)
+                        return false;
+        }
+
         entry->temporary++;
+        if (override)
+                env_temporary_overrides = override;
         shell_envp_dirty = true;
         return true;
 }
@@ -1091,6 +1185,8 @@ static fn env_export_release(string_address assignment)
         const_string target = assignment;
         positive target_length = length;
         positive found = shell_var_count;
+
+        env_temporary_override_release(assignment);
 
         if (env_assignment_element(assignment, length))
                 return;
@@ -1133,7 +1229,13 @@ string_address address_to shell_environment()
 
         for (positive at = 0; at < shell_var_count; at++)
                 if (env_variable_exports(shell_vars + at))
-                        shell_envp[count++] = shell_vars[at].text;
+                {
+                        string_address override =
+                            env_temporary_override_of(shell_vars + at);
+
+                        shell_envp[count++] = override ? override
+                                                       : shell_vars[at].text;
+                }
 
         shell_envp[count] = null;
         shell_envp_dirty = false;
@@ -1150,6 +1252,9 @@ PURE bool shell_environment_is_initialized()
 static bool env_write_hashed_span(const_string name, positive name_len,
                                   positive hash, const_string value,
                                   bool assignment);
+static bool env_write_found_span(const_string name, positive name_len,
+                                 positive hash, positive idx,
+                                 const_string value, bool assignment);
 static bool env_assign_hashed_span(const_string name, positive name_len,
                                    positive hash, const_string value);
 static bool env_write(const_string name, const_string value, bool assignment);
@@ -1606,6 +1711,14 @@ positive env_names_prefix(string_address prefix, positive length,
 #define ENV_ATTRIBUTE_VALUE                                                  \
         (SHELL_ARRAY_INTEGER | SHELL_ARRAY_LOWER | SHELL_ARRAY_UPPER)
 
+static bool env_write_noted(const_string name, positive length, bool written)
+{
+        if (written && length == 15 &&
+            !memory_compare((address_any)name, "POSIXLY_CORRECT", 15))
+                shell_posix_changed(true);
+        return written;
+}
+
 static COLD string_address env_attribute_value(p8 attributes,
                                                const_string value)
 {
@@ -1684,11 +1797,12 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
                                    : 2;
                 }
 
-                return env_write_hashed_span(
-                           resolved.name, resolved.length, resolved.hash,
-                           value, assignment)
-                           ? 1
-                           : 2;
+                return env_write_noted(
+                           resolved.name, resolved.length,
+                           env_write_found_span(
+                               resolved.name, resolved.length, resolved.hash,
+                               resolved.index, value, assignment))
+                           ? 1 : 2;
         }
 
         if (attributes & ENV_ATTRIBUTE_VALUE)
@@ -1822,27 +1936,31 @@ static bool env_write_hashed_span(const_string name, positive name_len,
                                   bool assignment)
 {
         positive idx;
+        bool written;
 
         if (!name || !value)
                 return false;
 
         idx = env_find_hashed_span(name, name_len, hash);
-        return env_write_found_span(name, name_len, hash, idx, value,
-                                    assignment);
+        written = env_write_found_span(name, name_len, hash, idx, value,
+                                       assignment);
+        return env_write_noted(name, name_len, written);
 }
 
 static bool env_write(const_string name, const_string value, bool assignment)
 {
         positive2 answer;
         positive idx;
+        bool written;
 
         if (!name || !value)
                 return false;
 
         answer = string_hash_33_length(env_reading(name));
         idx = env_find_hashed_span(name, answer.y, answer.x);
-        return env_write_found_span(name, answer.y, answer.x, idx, value,
-                                    assignment);
+        written = env_write_found_span(name, answer.y, answer.x, idx, value,
+                                       assignment);
+        return env_write_noted(name, answer.y, written);
 }
 
 bool env_set(const_string name, const_string value)
@@ -3155,12 +3273,18 @@ fn shell_quoted(writer write, string_address value)
                 if (!quotes)
                         return;
 
-                write("\"", 1);
-                write(value, quotes);
-                write("\"", 1);
+                if (shell_bash_compat)
+                        for (positive at = 0; at < quotes; at++)
+                                write("\\'", 2);
+                else
+                {
+                        write("\"", 1);
+                        write(value, quotes);
+                        write("\"", 1);
+                }
                 value += quotes;
 
-                if (!string_get(value))
+                if (!string_get(value) && !shell_bash_compat)
                         return;
         }
 }
@@ -3173,28 +3297,25 @@ static fn shell_no_room(string_address command)
         shell_answer(2);
 }
 
-// An assignment a readonly name refused stops a script where it stands,
-// which is what the reference shell does for a special builtin.
+/* Record a declaration error separately from its status. The executor can
+   then make a direct POSIX special invocation fatal without also killing the
+   shell for `command export ...` or an ordinary declare. */
 static fn shell_readonly_refused(string_address name, positive length)
 {
         shell_diagnostic(name, length);
         shell_diagnostic(": is read only\n", 0);
-        if (shell_bash_compat)
-                expand_fatal_status(1);
-        else
-                expand_fatal();
+        exec_special_error_note();
+        shell_answer(shell_bash_compat ? 1 : 2);
 }
 
-/* Bash's unset reports a readonly target and returns one without terminating
-   the script; dash treats the same special-builtin error as fatal. */
+/* Whether this stops the script is likewise a property of the direct command,
+   not of the variable engine doing the refusal. */
 static fn shell_unset_readonly(string_address name, positive length)
 {
-        if (!shell_bash_compat)
-                return shell_readonly_refused(name, length);
-
         shell_diagnostic(name, length);
         shell_diagnostic(": is read only\n", 0);
-        shell_answer(1);
+        exec_special_error_note();
+        shell_answer(shell_bash_compat ? 1 : 2);
 }
 
 static bool shell_valid_name(string_address name, positive length)
@@ -3215,7 +3336,8 @@ static fn shell_bad_name(string_address command, string_address name,
         string_format(shell_diagnostic, "%s: bad variable name: ", command);
         shell_diagnostic(name, length);
         shell_diagnostic("\n", 1);
-        expand_fatal();
+        exec_special_error_note();
+        shell_answer(shell_bash_compat ? 1 : 2);
 }
 
 static positive shell_declaration_options(bool address_to listed)
@@ -4158,23 +4280,28 @@ fn printf_escaped(writer write, string_address text);
 /*
         echo.
 
-        The escapes are read, which is what the reference shell does and what
-        Bash's xpg_echo asks for; -E stops that and -e starts it again. Bash
-        takes a whole run of option words and the reference shell takes one
-        and prints the rest, so one is what is taken here -- the two disagree
-        about `echo -n -n x` and this shell has always answered as the
-        reference does.
+        One escape writer, with each personality's option grammar. Dash only
+        takes a single exact -n; Bash takes runs of n/e/E options, unless
+        POSIX mode together with xpg_echo makes every word an operand.
 */
 fn shell_echo(writer write, string_address input)
 {
         positive index = 1;
         bool newline = true;
-        bool escapes = true;
+        bool escapes = !shell_bash_compat || shell_shopt_on(XPG_ECHO);
 
         printf_cut = false;
 
-        if (index < shell_argc && string_is(shell_argv[index], '-') &&
-            string_get(shell_argv[index] + 1))
+        if (!shell_bash_compat && index < shell_argc &&
+            word_is(shell_argv[index], "-n"))
+        {
+                newline = false;
+                index++;
+        }
+        while (shell_bash_compat && !(shell_posix_on() &&
+                                      shell_shopt_on(XPG_ECHO)) &&
+               index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1))
         {
                 string_address letter = shell_argv[index] + 1;
 
@@ -4197,6 +4324,8 @@ fn shell_echo(writer write, string_address input)
 
                         index++;
                 }
+                else
+                        break;
         }
 
         for (positive first = index; index < shell_argc; index++)
@@ -4280,9 +4409,7 @@ COLD fn shell_exec(writer write, string_address input)
                                 string_format(shell_diagnostic,
                                               "exec: -%s: invalid option\n",
                                               said);
-                                // A special builtin's failure ends a script,
-                                // but these three options are Bash's and Bash
-                                // leaves the script standing.
+                                exec_special_error_note();
                                 return shell_answer(2);
                         }
                 }
@@ -4300,6 +4427,7 @@ COLD fn shell_exec(writer write, string_address input)
                 {
                         shell_diagnostic("exec: -a: option requires an "
                                          "argument\n", 0);
+                        exec_special_error_note();
                         return shell_answer(2);
                 }
         }
@@ -4471,35 +4599,64 @@ COLD fn shell_pwd(writer write, string_address input)
 }
 
 fn shell_trap_exit();
+static bool exec_control_integer(string_address word, bipolar address_to answer);
 
-DEAD_END COLD fn shell_exit(writer write, string_address input)
+COLD fn shell_exit(writer write, string_address input)
 {
         bipolar exit_code = shell_status_entering;
-        bool good = true;
+        positive first = 1;
 
-        if (shell_argc > 1)
+        if (shell_bash_compat && first < shell_argc &&
+            word_is(shell_argv[first], "--"))
+                first++;
+
+        if (first < shell_argc)
         {
-                exit_code = shell_signed(shell_argv[1], address_of good);
+                bool good = exec_control_integer(shell_argv[first],
+                                                   address_of exit_code);
 
-                // dash accepts the optional plus sign and wraps non-negative
-                // values to one byte, but a negative or non-number is an
-                // illegal operand and terminates the shell with status 2.
-                if (!good || exit_code < 0)
+                // Reuse return's checked integer parser. Bash accepts signed
+                // machine words; dash rejects negative statuses. Operand
+                // errors go through the special-builtin policy so command
+                // can suppress their fatality without suppressing valid exit.
+                if (!good || (!shell_bash_compat && exit_code < 0))
                 {
-                        string_format(shell_diagnostic, "exit: Illegal number: %s\n",
-                                      shell_argv[1]);
-                        exit_code = 2;
+                        string_format(shell_diagnostic,
+                                      shell_bash_compat
+                                          ? "%s: %s: numeric argument required\n"
+                                          : "%s: Illegal number: %s\n",
+                                      shell_argv[0], shell_argv[first]);
+                        exec_special_error_note();
+                        return shell_answer(2);
                 }
-                else
-                        exit_code &= 0xff;
+
+                if (shell_bash_compat && shell_argc > first + 1)
+                {
+                        string_format(shell_diagnostic,
+                                      "%s: too many arguments\n", shell_argv[0]);
+                        expand_fatal_status(1);
+                        return;
+                }
         }
 
+        exit_code = (bipolar)((positive)exit_code & 0xff);
         shell_status = (b32)exit_code;
         shell_trap_exit();
 
         log_flush();
 
         exit(exit_code);
+}
+
+COLD fn shell_logout(writer write, string_address input)
+{
+        if (!shell_bash_compat || !shell_shopt_on(LOGIN_SHELL))
+        {
+                shell_diagnostic("logout: not login shell: use `exit'\n", 0);
+                return shell_answer(1);
+        }
+
+        shell_exit(write, input);
 }
 
 
@@ -4556,7 +4713,12 @@ static fn env_unset_span(string_address name, positive length)
         positive index = env_find_span(name, length);
 
         if (index < shell_var_count)
+        {
                 env_variable_drop(index);
+                if (length == 15 &&
+                    !memory_compare(name, "POSIXLY_CORRECT", 15))
+                        shell_posix_changed(false);
+        }
 }
 
 fn env_unset(string_address name)
@@ -4651,6 +4813,7 @@ static shell_option shell_extra_options[] = {
     {"privileged", 'p'},
     {"histexpand", 'H'},
     {"interactive-comments", 0},
+    {"posix", 0},
     {null, 0},
 };
 
@@ -4665,10 +4828,12 @@ static shell_option shell_extra_options[] = {
 #define SHELL_EXTRA_PRIVILEGED 8
 #define SHELL_EXTRA_HISTEXPAND 9
 #define SHELL_EXTRA_INTERACTIVE_COMMENTS 10
+#define SHELL_EXTRA_POSIX 11
 
 /* Startup +/-H is parsed before interactivity is known.  Remember an explicit
    choice so the interactive Bash default does not overwrite it later. */
 static bool shell_histexpand_told;
+static bool shell_alias_startup_told;
 
 static positive shell_extra_state = ((positive)1 << SHELL_EXTRA_BRACEEXPAND) |
                                     ((positive)1 << SHELL_EXTRA_HASHALL);
@@ -4679,6 +4844,49 @@ static PURE bool shell_extra_on(positive which)
                 return (shell_shopt_state &
                         SHELL_SHOPT(INTERACTIVE_COMMENTS)) != 0;
         return (shell_extra_state & ((positive)1 << which)) != 0;
+}
+
+PURE bool shell_posix_on()
+{
+        return shell_extra_on(SHELL_EXTRA_POSIX);
+}
+
+/* POSIX is a policy over the Bash personality, never a second interpreter.
+   Variable writes call this after committing POSIXLY_CORRECT. Option changes
+   also maintain that variable, but only after the environment is initialized. */
+static COLD fn shell_posix_changed(bool on)
+{
+        if (!shell_bash_compat)
+                return;
+        if (on)
+        {
+                shell_extra_state |= (positive)1 << SHELL_EXTRA_POSIX;
+                shell_shopt_state |= SHELL_SHOPT(EXPAND_ALIASES) |
+                                     SHELL_SHOPT(INHERIT_ERREXIT) |
+                                     SHELL_SHOPT(SHIFT_VERBOSE) |
+                                     SHELL_SHOPT(INTERACTIVE_COMMENTS);
+        }
+        else
+        {
+                shell_extra_state &= ~((positive)1 << SHELL_EXTRA_POSIX);
+                shell_shopt_state &= ~SHELL_SHOPT(SHIFT_VERBOSE);
+                if (!shell_is_interactive)
+                        shell_shopt_state &= ~SHELL_SHOPT(EXPAND_ALIASES);
+        }
+}
+
+static COLD bool shell_posix_variable()
+{
+        const_string name = "POSIXLY_CORRECT";
+
+        if (!shell_env_initialized)
+                return true;
+        if (shell_posix_on())
+                return env_get(name) || env_assign(name, "y");
+        /* `set +o posix` removes even a readonly POSIXLY_CORRECT, just as
+           option restoration bypasses the ordinary user assignment guard. */
+        env_unset((string_address)name);
+        return true;
 }
 
 PURE bool shell_braceexpand_on()
@@ -4785,6 +4993,13 @@ static bool shell_extra_told(string_address word, bool on)
 
         if (index >= SHELL_EXTRA_OPTIONS)
                 return false;
+
+        if (index == SHELL_EXTRA_POSIX)
+        {
+                if (shell_posix_on() != on)
+                        shell_posix_changed(on);
+                return shell_posix_variable();
+        }
 
         if (index == SHELL_EXTRA_INTERACTIVE_COMMENTS)
         {
@@ -4964,6 +5179,8 @@ fn shell_options_started(bool interactive, b32 monitor)
 
         if (shell_bash_compat && interactive && !shell_histexpand_told)
                 shell_extra_state |= (positive)1 << SHELL_EXTRA_HISTEXPAND;
+        if (shell_bash_compat && interactive && !shell_alias_startup_told)
+                shell_shopt_state |= SHELL_SHOPT(EXPAND_ALIASES);
 
         // Defer the one monitor side effect until interactive identity is
         // known. Parsing -m earlier would mark job control initialized before
@@ -5006,7 +5223,7 @@ fn shell_options_listed(writer write, bool as_commands)
                     "ignoreeof", "interactive-comments", "keyword",
                     "monitor", "noclobber", "noexec", "noglob", "nolog",
                     "notify", "nounset", "onecmd", "physical", "pipefail",
-                    "privileged", "verbose", "vi", "xtrace"
+                    "posix", "privileged", "verbose", "vi", "xtrace"
                 };
 
                 for (positive at = 0; at < array_count(names); at++)
@@ -5035,7 +5252,7 @@ fn shell_options_listed(writer write, bool as_commands)
                         }
                         else
                         {
-                                string_to_field(write, names[at], 14, ' ', true);
+                                string_to_field(write, names[at], 15, ' ', true);
                                 write("\t", 1);
                                 string_format(write, "%s\n", on ? "on" : "off");
                         }
@@ -5434,7 +5651,7 @@ COLD fn shell_set(writer write, string_address input)
                                                               "%s\n",
                                                               shell_argv[index]);
                                                 shell_answer(2);
-                                                expand_fatal();
+                                                exec_special_error_note();
                                                 return;
                                         }
 
@@ -5450,7 +5667,7 @@ COLD fn shell_set(writer write, string_address input)
                                                       "set: Illegal option %s%s\n",
                                                       on ? "-" : "+", said);
                                         shell_answer(2);
-                                        expand_fatal();
+                                        exec_special_error_note();
                                         return;
                                 }
 
@@ -5483,18 +5700,41 @@ COLD fn shell_set(writer write, string_address input)
 fn shell_shift(writer write, string_address input)
 {
         positive amount = 1;
+        positive first = 1;
 
-        if (shell_argc > 1)
+        if (shell_bash_compat && shell_argc > first &&
+            word_is(shell_argv[first], "--"))
+                first++;
+
+        if (shell_bash_compat && shell_argc > first + 1)
+        {
+                shell_diagnostic("shift: too many arguments\n", 0);
+                expand_fatal_status(1);
+                return;
+        }
+
+        if (shell_argc > first)
         {
                 bool good;
-                bipolar asked = shell_signed(shell_argv[1], address_of good);
+                bipolar asked = shell_signed(shell_argv[first], address_of good);
 
                 if (!good || asked < 0)
                 {
+                        if (shell_bash_compat)
+                        {
+                                if (!good)
+                                        exec_special_error_note();
+                                string_format(shell_diagnostic,
+                                              "shift: %s: %s\n",
+                                              shell_argv[first],
+                                              good ? "shift count out of range"
+                                                   : "numeric argument required");
+                                return shell_answer(good ? 1 : 2);
+                        }
                         string_format(shell_diagnostic, "shift: Illegal number: %s\n",
-                                      shell_argv[1]);
-                        expand_fatal();
-                        return;
+                                      shell_argv[first]);
+                        exec_special_error_note();
+                        return shell_answer(2);
                 }
 
                 amount = (positive)asked;
@@ -5502,9 +5742,19 @@ fn shell_shift(writer write, string_address input)
 
         if (amount > shell_parameter_count)
         {
+                if (shell_bash_compat)
+                {
+                        if (shell_shopt_on(SHIFT_VERBOSE))
+                                string_format(shell_diagnostic,
+                                              "shift: %s: shift count out of range\n",
+                                              shell_argc > first
+                                                  ? shell_argv[first]
+                                                  : (string_address)"1");
+                        return shell_answer(1);
+                }
                 shell_diagnostic("shift: can't shift that many\n", 0);
-                expand_fatal();
-                return;
+                exec_special_error_note();
+                return shell_answer(2);
         }
 
         shell_parameters_shift(amount);
@@ -5534,8 +5784,8 @@ COLD fn shell_unset(writer write, string_address input)
                         // ends the script, as the reference shell's does.
                         string_format(shell_diagnostic,
                                       "unset: Illegal option -%c\n", letter);
+                        exec_special_error_note();
                         shell_answer(2);
-                        expand_fatal();
                         return;
                 }
         }
@@ -6881,6 +7131,11 @@ static fn shell_declare(writer write, string_address input)
 static fn shell_marked_written(writer write, string_address name,
                                positive length, b32 mark)
 {
+        if (shell_bash_compat && !shell_posix_on())
+        {
+                shell_declare_print_one(write, name, length, mark);
+                return;
+        }
         shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
         env_variable address_to variable =
@@ -6900,7 +7155,11 @@ static fn shell_marked_written(writer write, string_address name,
         if (variable && env_variable_has_value(variable))
         {
                 write("=", 1);
-                shell_quoted(write, variable->text + length + 1);
+                if (shell_bash_compat)
+                        shell_declare_quoted(write,
+                                             variable->text + length + 1);
+                else
+                        shell_quoted(write, variable->text + length + 1);
         }
 
         write("\n", 1);
@@ -9871,6 +10130,12 @@ bipolar trap_number(string_address word)
 static volatile p8 trap_pending[TRAP_SIGNAL_MAX + 1];
 static volatile bool trap_caught;
 static bool trap_inside;
+/* A fork sees the parent's trap table, and `trap -p EXIT` in that child must
+   still print it, but the inherited action must not run when the child ends.
+   Keep that distinction beside the shared table instead of copying or
+   deleting the action. A child which replaces EXIT clears the marker below. */
+static bool trap_child_context;
+static bool trap_exit_inherited;
 
 fn trap_signal_caught(b32 number)
 {
@@ -10017,6 +10282,12 @@ PURE string_address trap_action(positive number)
         positive index = trap_index(number);
 
         return index < trap_count ? trap_table[index].action : null;
+}
+
+fn trap_child_began()
+{
+        trap_child_context = true;
+        trap_exit_inherited = trap_action(0) != null;
 }
 
 static fn trap_write_condition(writer write, positive number,
@@ -10283,6 +10554,9 @@ COLD fn shell_trap(writer write, string_address input)
                 bool deaf = number > 0 && !shell_is_interactive &&
                             shell_was_ignored((positive)number);
 
+                if (!number)
+                        trap_exit_inherited = false;
+
                 trap_forget((positive)number);
 
                 if (action && !trap_record((positive)number, action))
@@ -10406,6 +10680,13 @@ bool alias_record(string_address name, positive name_length, string_address valu
 // reads its own aliases back is reading that.
 fn alias_written(writer write, positive index)
 {
+        if (shell_bash_compat)
+        {
+                string_format(write, "%s=", alias_table[index].name);
+                shell_quoted(write, alias_table[index].value);
+                write("\n", 1);
+                return;
+        }
         string_format(write, "'%s=%s'\n", alias_table[index].name, alias_table[index].value);
 }
 
@@ -10413,15 +10694,37 @@ COLD fn shell_alias(writer write, string_address input)
 {
         positive index = 1;
         b32 answer = 0;
+        bool prefixed = shell_bash_compat && !shell_posix_on();
+        bool listed = false;
 
-        if (shell_argc < 2)
+        while (shell_bash_compat && index < shell_argc &&
+               string_is(shell_argv[index], '-') && shell_argv[index][1])
+        {
+                string_address word = shell_argv[index++];
+
+                if (word_is(word, "--"))
+                        break;
+                if (!word_is(word, "-p"))
+                {
+                        shell_diagnostic("alias: invalid option\n", 0);
+                        return shell_answer(2);
+                }
+                prefixed = listed = true;
+        }
+
+        if (index == shell_argc || listed)
         {
                 positive at = 0;
 
                 while (at < alias_count)
+                {
+                        if (prefixed)
+                                write("alias ", 6);
                         alias_written(write, at++);
+                }
 
-                return shell_answer(0);
+                if (index == shell_argc)
+                        return shell_answer(0);
         }
 
         while (index < shell_argc)
@@ -10444,7 +10747,11 @@ COLD fn shell_alias(writer write, string_address input)
                                                         alias_count);
 
                         if (at < alias_count)
+                        {
+                                if (prefixed)
+                                        write("alias ", 6);
                                 alias_written(write, at);
+                        }
                         else
                                 answer = 1;
                 }
@@ -10975,7 +11282,15 @@ fn shell_trap_exit()
         // Every way out of an interactive shell comes through here, which is
         // the only place a history file can be written once rather than at
         // each of them.
-        history_leaving();
+        if (!trap_child_context)
+                history_leaving();
+
+        if (trap_exit_inherited)
+        {
+                if (action)
+                        memory_free(action, action_room);
+                return;
+        }
 
         if (!action || !string_get(action))
         {
@@ -11086,9 +11401,12 @@ static bipolar shell_source_open(string_address name,
                         return handle;
         }
 
-        // Bash's ordinary source policy falls back to the current directory.
-        // Dash only visits it when PATH explicitly has a current-directory field.
-        return shell_bash_compat ? shell_source_direct(name) : -1;
+        /* Bash's ordinary source policy falls back to the current directory.
+           POSIX mode removes that fallback; dash only visits it when PATH
+           explicitly contains a current-directory field. */
+        return shell_bash_compat && !shell_posix_on()
+                   ? shell_source_direct(name)
+                   : -1;
 }
 
 static bipolar shell_source_read(bipolar handle,
@@ -11188,7 +11506,10 @@ COLD fn shell_dot(writer write, string_address input)
         if (first >= shell_argc)
         {
                 if (shell_bash_compat)
+                {
                         shell_diagnostic(".: filename argument required\n", 0);
+                        exec_special_error_note();
+                }
                 return shell_answer(shell_bash_compat ? 2 : 0);
         }
 
@@ -11224,36 +11545,11 @@ COLD fn shell_dot(writer write, string_address input)
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
                               shell_argv[0], path);
 
-                /*
-                        Bash's spelling is Bash's answer: `source` on a file
-                        that is not there leaves 1 behind and the script goes
-                        on. The dot is POSIX's, and POSIX makes it a special
-                        builtin whose failure ends the script.
-                */
-                if (shell_bash_compat || word_is(shell_argv[0], "source"))
-                        return shell_answer(1);
-
-                // Two, as the reference shell answers: the failure is the
-                // special builtin's own and not the file's.
-                shell_answer(2);
-
-                /*
-                        A special builtin that fails ends the script.
-
-                        POSIX says so of the whole set -- ., eval, exec, exit,
-                        export, readonly, set, shift, times, trap, unset -- and
-                        it matters most here: a script that sources a file it
-                        cannot find should stop, not carry on without whatever
-                        was in it. Only when nobody is watching; at a terminal
-                        the shell stays, or a typo would close the session.
-                */
-                if (!shell_is_interactive)
-                {
-                        shell_trap_exit();
-                        shell_stop_when_scripted(2);
-                }
-
-                return;
+                /* The executor applies special-builtin fatality only to a
+                   direct invocation. That distinction is essential here:
+                   `command . missing` must report failure and continue. */
+                exec_special_error_note();
+                return shell_answer(shell_bash_compat ? 1 : 2);
         }
 
         filled = (positive)got;
@@ -11666,6 +11962,7 @@ shell_command shell_commands[] = {
     {"jobs", shell_jobs},
     {"kill", shell_kill},
     {"let", shell_let},
+    {"logout", shell_logout},
     {"mount", shell_mount},
     {"mountpoint", shell_mountpoint},
     {"popd", shell_popd},
@@ -12260,6 +12557,7 @@ COLD fn shell_type(writer write, string_address input)
                 bool function = !no_functions &&
                                 exec_function_here_hashed(name, named);
                 bool builtin = shell_command_builtin_here(name, named);
+                bool special = builtin && exec_special_builtin(name);
                 bool any = false;
                 bipolar located;
 
@@ -12298,6 +12596,18 @@ COLD fn shell_type(writer write, string_address input)
                                         continue;
                         }
 
+                        if (special)
+                        {
+                                string_format(write,
+                                              terse ? "builtin\n"
+                                                    : "%s is a shell builtin\n",
+                                              name);
+                                any = true;
+
+                                if (!every)
+                                        continue;
+                        }
+
                         if (function)
                         {
                                 string_format(write,
@@ -12310,7 +12620,7 @@ COLD fn shell_type(writer write, string_address input)
                                         continue;
                         }
 
-                        if (builtin)
+                        if (builtin && !special)
                         {
                                 string_format(write,
                                               terse ? "builtin\n"
@@ -12424,6 +12734,7 @@ fn shell_command_builtin(writer write, string_address input)
                 {
                         string_address name = shell_argv[index++];
                         positive2 named = string_hash_33_length(name);
+                        bool special = exec_special_builtin(name);
                         bipolar located;
 
                         // Before the builtins, because a grammar word is what
@@ -12455,6 +12766,18 @@ fn shell_command_builtin(writer write, string_address input)
                                 continue;
                         }
 
+                        if (special &&
+                            shell_command_builtin_here(name, named))
+                        {
+                                string_format(write,
+                                              at_length
+                                                ? "%s is a shell builtin\n"
+                                                : "%s\n",
+                                              name);
+                                any = true;
+                                continue;
+                        }
+
                         if (exec_function_here_hashed(name, named))
                         {
                                 string_format(write,
@@ -12466,7 +12789,8 @@ fn shell_command_builtin(writer write, string_address input)
                                 continue;
                         }
 
-                        if (shell_command_builtin_here(name, named))
+                        if (!special &&
+                            shell_command_builtin_here(name, named))
                         {
                                 string_format(write,
                                               at_length
@@ -12735,6 +13059,13 @@ static shell_limit shell_bash_limits[] = {
     {null, null, 0, 0, 0},
 };
 
+static PURE positive shell_limit_step(shell_limit address_to limit)
+{
+        return shell_posix_on() &&
+                       (limit->resource == 1 || limit->resource == 4)
+                   ? 512 : limit->step;
+}
+
 fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
 {
         ul_limit_pair pair;
@@ -12751,7 +13082,7 @@ fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
         if (value == UL_LIMIT_INFINITE)
                 return string_format(write, "unlimited\n");
 
-        positive_to_string(write, (positive)(value / limit->step));
+        positive_to_string(write, (positive)(value / shell_limit_step(limit)));
         write("\n", 1);
 }
 
@@ -12905,7 +13236,8 @@ fn shell_ulimit(writer write, string_address input)
                             (shell_bash_compat &&
                              (asked < 0 ||
                               (positive)asked >
-                                  (UL_LIMIT_INFINITE - 1) / chosen->step)))
+                                  (UL_LIMIT_INFINITE - 1) /
+                                      shell_limit_step(chosen))))
                         {
                                 shell_answer(shell_bash_compat ? 1 : 2);
 
@@ -12914,7 +13246,7 @@ fn shell_ulimit(writer write, string_address input)
                                                      shell_argv[index]);
                         }
 
-                        value = (p64)asked * chosen->step;
+                        value = (p64)asked * shell_limit_step(chosen);
                 }
 
                 // Neither said means both, which is the only way a script can

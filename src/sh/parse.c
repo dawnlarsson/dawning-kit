@@ -1256,6 +1256,12 @@ static bool parse_alias_replace(b32 position)
         if (token->kind != PT_WORD || token->alias_forced == 2)
                 return false;
 
+        /* POSIX shells always consider aliases. Bash deliberately disables
+           them in a non-interactive reader unless expand_aliases (or POSIX
+           mode, which drives that same bit) is on. */
+        if (shell_bash_compat && !shell_shopt_on(EXPAND_ALIASES))
+                return false;
+
         for (chain = token->alias_trace; chain; chain = chain->next)
                 if (!string_compare(token->text, chain->name))
                 {
@@ -1477,7 +1483,8 @@ static fn parse_alias_command()
                         }
 
                         if (token->kind != PT_WORD ||
-                            parse_keyword(at - parse_position) ||
+                            ((!shell_bash_compat || shell_posix_on()) &&
+                             parse_keyword(at - parse_position)) ||
                             parse_word_is_length(at - parse_position,
                                                  "function", 8) ||
                             !parse_alias_replace(at))
@@ -2204,6 +2211,21 @@ static PURE inline INLINE bool parse_at_pipe()
 
 static b32 parse_pipeline(bool inverted);
 
+static PURE bool parse_time_reserved()
+{
+        if (parse_look(0)->kind != PT_WORD ||
+            parse_look(0)->length != 4 ||
+            parse_keyword(0) != PARSE_KEYWORD_TIME)
+                return false;
+
+        /* In Bash POSIX mode, a following option-shaped word makes `time`
+           an ordinary command name. This is what lets a function or the
+           external POSIX time utility receive -p itself. */
+        return !(shell_bash_compat && shell_posix_on() &&
+                 parse_look(1)->kind == PT_WORD &&
+                 string_is(parse_look(1)->text, '-'));
+}
+
 /*
         time, and what it is put in front of.
 
@@ -2224,7 +2246,7 @@ static b32 parse_time(bool inverted)
 
         //      Bash marks the command it times rather than wrapping it, so a
         //      time in front of a time times once and not twice.
-        while (parse_keyword(0) == PARSE_KEYWORD_TIME)
+        while (parse_time_reserved())
         {
                 parse_position++;
 
@@ -2273,8 +2295,7 @@ static b32 parse_pipeline(bool inverted)
                 that out costs more than the length does, and this is the one
                 place a keyword is looked for before the command is read.
         */
-        if (parse_look(0)->kind == PT_WORD && parse_look(0)->length == 4 &&
-            parse_keyword(0) == PARSE_KEYWORD_TIME)
+        if (parse_time_reserved())
                 return parse_time(inverted);
 
         if (!inverted && parse_word_is(0, "!"))
@@ -2294,9 +2315,7 @@ static b32 parse_pipeline(bool inverted)
 
                 // A time behind the bang is a whole pipeline of its own, and
                 // what the bang inverts is the answer it gives.
-                if (parse_look(0)->kind == PT_WORD &&
-                    parse_look(0)->length == 4 &&
-                    parse_keyword(0) == PARSE_KEYWORD_TIME)
+                if (parse_time_reserved())
                         return parse_time(true);
         }
 

@@ -39,7 +39,7 @@ capture()
 {
         executable=$1 tag=$2 startup=$3
         shift 3
-        if HOME="$work/home" ROOT="$work" RESULT="$work/$tag.effect" BASH_ENV="$startup" ENV= \
+        if HOME="$work/home" ROOT="$work" RESULT="$work/$tag.effect" BASH_ENV="$startup" ENV="${env_startup:-}" \
                 PATH="$work/search:/usr/bin:/bin" LC_ALL=C \
                 timeout 5 "$executable" "$@" < "$work/input" \
                 > "$work/$tag.out" 2> "$work/$tag.err"; then result=0; else result=$?; fi
@@ -204,6 +204,80 @@ compare 'keyword append lifetime' bash '' -c 'set -k; X=old; printf "<%s>\n" X+=
 compare 'keyword declarations without operands stay temporary' bash '' -c 'set -k; X=old; export X=new >/dev/null; printf "after:%s\n" "$X"'
 compare 'cached function words survive keyword toggles' bash '' -c 'f() { printf "<%s>\n" X=new one; }; f; set -k; f; set +k; f; printf "after:%s\n" "${X-unset}"'
 compare 'keyword function environment is restored' bash '' -c 'f() { printf "%s:%s\n" "$X" "$*"; }; X=old; set -k; f one X=new two; printf "after:%s\n" "$X"'
+
+section posix_mode
+group state
+compare 'POSIX startup retains Bash extensions' bash '' --posix -c 'a=(one two); printf "%s:%s\n" "${a[1]}" "$POSIXLY_CORRECT"; shopt -qo posix; echo "$?"'
+compare 'named POSIX startup' bash '' -o posix -c 'printf "%s\n" "$POSIXLY_CORRECT"; shopt -p expand_aliases inherit_errexit shift_verbose interactive_comments'
+compare 'POSIX enable disable state' bash '' -c 'set -o posix; printf "%s\n" "$POSIXLY_CORRECT"; set +o posix; printf "%s\n" "${POSIXLY_CORRECT-unset}"; shopt -p expand_aliases inherit_errexit shift_verbose interactive_comments'
+compare 'POSIX repeated enable preserves explicit shopt' bash '' -c 'set -o posix; shopt -u expand_aliases; set -o posix; shopt -p expand_aliases'
+compare 'POSIX variable assignment controls mode' bash '' -c 'POSIXLY_CORRECT=custom; shopt -qo posix; echo "$?"; unset POSIXLY_CORRECT; shopt -qo posix; echo "$?"'
+compare 'POSIX variable reassignment reapplies mode defaults' bash '' -c 'POSIXLY_CORRECT=y; shopt -u expand_aliases; POSIXLY_CORRECT=z; shopt -p expand_aliases'
+compare 'POSIX mode removes readonly control variable' bash '' -c 'readonly POSIXLY_CORRECT=y; set +o posix; printf "%s\n" "${POSIXLY_CORRECT-unset}"; shopt -qo posix; echo "$?"'
+POSIXLY_CORRECT=custom compare 'inherited POSIX control variable' bash '' -c 'printf "%s\n" "$POSIXLY_CORRECT"; shopt -qo posix; echo "$?"'
+POSIXLY_CORRECT= compare 'empty inherited POSIX control variable' bash '' -c 'printf "<%s>\n" "$POSIXLY_CORRECT"; shopt -qo posix; echo "$?"'
+POSIXLY_CORRECT=y compare 'inherited POSIX applied after startup option parsing' bash '' +o posix -c 'printf "%s\n" "${POSIXLY_CORRECT-unset}"; shopt -qo posix; echo "$?"'
+
+group startup
+compare 'POSIX skips noninteractive BASH_ENV' bash "$work/start" --posix -c 'echo body'
+env_startup="$work/start" compare 'POSIX skips noninteractive ENV' bash '' --posix -c 'echo body'
+env_startup="$work/start" diagnostic=ignore compare 'POSIX interactive ENV' bash "$work/missing" --noprofile --norc --posix -ic 'printf "body:%s\n" "$value"' named
+env_startup='$ROOT/start file' diagnostic=ignore compare 'POSIX ENV uses shared filename expansion' bash '' --noprofile --norc --posix -ic 'echo body'
+env_startup="$work/start" diagnostic=ignore compare 'Bash privileged skips POSIX ENV' bash '' --noprofile --norc --posix -pic 'echo body'
+env_startup="$work/start" diagnostic=ignore compare 'dash interactive ENV' dash '' -ic 'printf "body:%s\n" "$value"' named
+env_startup="$work/start" compare 'dash ignores noninteractive ENV' dash '' -c 'echo body'
+
+group builtin_policy
+compare 'Bash command capture clears errexit by default' bash '' -ec 'value=$(false; echo survived); printf "value:%s\n" "$value"'
+compare 'Bash command capture inherits explicit errexit' bash '' -ec 'shopt -s inherit_errexit; value=$(false; echo forbidden); echo forbidden'
+compare 'POSIX command capture inherits errexit' bash '' --posix -ec 'value=$(false; echo forbidden); echo forbidden'
+compare 'POSIX inherit_errexit can be explicitly disabled' bash '' --posix -ec 'shopt -u inherit_errexit; value=$(false; echo survived); printf "value:%s\n" "$value"'
+compare 'dash command capture inherits errexit' dash '' -ec 'value=$(false; echo forbidden); echo forbidden'
+diagnostic=ignore compare 'interactive aliases enabled by default' bash '' --noprofile --norc -ic 'shopt -q expand_aliases; echo "$?"'
+diagnostic=ignore compare 'explicit startup disables interactive aliases' bash '' --noprofile --norc +O expand_aliases -ic 'shopt -q expand_aliases; echo "$?"'
+for mode in bash dash; do
+        compare 'echo default escape policy' "$mode" '' -c 'echo "a\tb"; echo "a\cb" next; echo done'
+        compare 'echo option word grammar' "$mode" '' -c 'echo -n -n x; echo end; echo -e -n "a\tb"; echo end; echo -en -E "x\ny"'
+        compare 'echo invalid option stays operand' "$mode" '' -c 'echo -neQ "a\tb"; echo -- -n x'
+        compare 'alias listing policy' "$mode" '' -c 'alias zz="echo x"; alias zz'
+        diagnostic=ignore compare 'shift out of range policy' "$mode" '' -c 'set -- one; shift 2; printf "after:%s:%s\n" "$?" "$*"'
+        diagnostic=ignore compare 'shift invalid number policy' "$mode" '' -c 'set -- one; shift bad; printf "after:%s:%s\n" "$?" "$*"'
+        diagnostic=ignore compare 'shift negative count policy' "$mode" '' -c 'set -- one; shift -1; printf "after:%s:%s\n" "$?" "$*"'
+        diagnostic=ignore compare 'shift option end policy' "$mode" '' -c 'set -- one two; shift --; printf "after:%s:%s\n" "$?" "$*"'
+        diagnostic=ignore compare 'shift extra operand policy' "$mode" '' -c 'set -- one two; shift 0 1; printf "after:%s:%s\n" "$?" "$*"'
+        diagnostic=ignore compare 'command wrapper suppresses set option fatality' "$mode" '' -c 'command set -Z; printf "after:%s\n" "$?"; command set -o BAD; printf "after:%s\n" "$?"'
+        diagnostic=ignore compare 'command wrapper suppresses shift fatality' "$mode" '' -c 'command shift 2; printf "after:%s\n" "$?"; command shift bad; printf "after:%s\n" "$?"'
+done
+diagnostic=ignore compare 'POSIX command wrapper suppresses set fatality' bash '' --posix -c 'command set -Z; printf "after:%s\n" "$?"; command set -o BAD; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'POSIX shift range is not a fatal builtin error' bash '' --posix -c 'shift 2; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'Bash set option errors continue' bash '' -c 'set -Z; printf "after:%s\n" "$?"; set -o BAD; printf "after:%s\n" "$?"'
+compare 'Bash xpg echo can be disabled' bash '' -c 'shopt -s xpg_echo; echo "a\tb"; shopt -u xpg_echo; echo "a\tb"'
+compare 'POSIX xpg echo treats options as operands' bash '' --posix -c 'shopt -s xpg_echo; echo -n -e "a\tb"; echo -E "c\td"'
+compare 'POSIX echo without xpg keeps Bash options' bash '' --posix -c 'echo -n -e "a\tb"; echo end'
+compare 'POSIX alias listing and explicit prefix' bash '' --posix -c 'alias zz="echo x"; alias zz; alias -p'
+compare 'Bash alias reconstructible single quotes' bash '' -c 'alias zz="echo '\''x'\''"; alias zz'
+compare 'Bash export and readonly share declare listing' bash '' -c 'export zz="a b"; readonly yy="a b"; export -p | /bin/grep " zz="; readonly -p | /bin/grep " yy="'
+compare 'POSIX export and readonly listing' bash '' --posix -c 'export zz="a b"; readonly yy="a b"; export -p | /bin/grep " zz="; readonly -p | /bin/grep " yy="'
+compare 'POSIX limits use 512-byte blocks' bash '' --posix -c 'ulimit -S -c 2; ulimit -S -f 4; set +o posix; ulimit -S -c; ulimit -S -f'
+compare 'Bash limits rescale when POSIX enabled' bash '' -c 'ulimit -S -c 2; ulimit -S -f 4; set -o posix; ulimit -S -c; ulimit -S -f'
+
+section exit_operands
+group status
+for mode in bash dash; do
+        for operand in '-1' '+7' '256' '" 3 "' '9223372036854775808' 'bad' '1 2' 'bad 2' '--' '-- 7'; do
+                diagnostic=ignore compare "exit operand $operand" "$mode" '' -c "exit $operand; printf 'after:%s\\n' \"\$?\""
+        done
+        diagnostic=ignore compare 'command exit numeric error exception' "$mode" '' -c 'command exit bad; printf "after:%s\n" "$?"'
+        compare 'exit retains entering status' "$mode" '' -c 'false; exit'
+done
+diagnostic=ignore compare 'POSIX exit numeric error runs EXIT once' bash '' --posix -c 'trap '\''printf "trap:%s\n" "$?"'\'' EXIT; exit bad; echo forbidden'
+diagnostic=ignore compare 'POSIX command exit error continues' bash '' --posix -c 'command exit bad; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'Bash signed minimum status wraps' bash '' -c 'exit -9223372036854775808'
+diagnostic=ignore compare 'logout rejects non-login shell' bash '' -c 'logout 7; printf "after:%s\n" "$?"'
+compare 'logout shares exit numeric policy' bash '' --noprofile -lc 'logout -- -1; echo forbidden'
+compare 'logout retains entering status' bash '' --noprofile -lc 'false; logout'
+diagnostic=ignore compare 'logout invalid operand returns status' bash '' --noprofile -lc 'logout bad; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'logout extra operands abort command' bash '' --noprofile -lc 'logout 1 2; echo forbidden'
 
 section ""
 printf '  total        %s of %s\n' "$pass" "$((pass + fail))"
