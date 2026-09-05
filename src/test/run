@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -86,6 +86,8 @@ describe()
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
         shell_compat) echo "invocation policies, startup flags and adversarial language cases against dash and Bash" ;;
+        shell_posix_exec) echo "POSIX special builtins, assignments, child traps and source lookup against Bash and dash" ;;
+        shell_generated) echo "seeded shell syntax, expansion and execution variance against Bash and dash" ;;
         shell_pipeline) echo "lastpipe, PIPESTATUS lifetime, descriptor restoration and noexec" ;;
         shell_variables) echo "scoped readonly attributes and resource-limit policies against dash and Bash" ;;
         shell_startup) echo "BASH_ENV and one-command input against Bash, preserving dash identity" ;;
@@ -2288,6 +2290,28 @@ lane_shell_compat()
 {
         need_shell || return 1
         sh src/test/shell_compat.sh "$shell_binary"
+}
+
+lane_shell_posix_exec()
+{
+        need_shell || return 1
+        sh src/test/shell_posix_exec.sh "$shell_binary"
+}
+
+lane_shell_generated()
+{
+        need_shell || return 1
+        if ! command -v python3 >/dev/null 2>&1; then
+                note "shell_generated NOT RUN -- no python3"
+                return 2
+        fi
+        python3 src/test/shell_generated_test.py || return 1
+        generated_status=0
+        for generated_input in ${MW_SHELL_INPUTS:-command file stdin}; do
+                python3 src/test/shell_generated.py "$shell_binary" \
+                        --input "$generated_input" || generated_status=1
+        done
+        return "$generated_status"
 }
 
 lane_shell_pipeline()

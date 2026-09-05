@@ -101,6 +101,19 @@ compare 'prefix mode stays temporary for regular' plain "$B" "$MB" \
         'POSIXLY_CORRECT=y true; shopt -qo posix; printf "%s:%s\n" "${POSIXLY_CORRECT-unset}" "$?"'
 compare 'POSIX readonly prefix is fatal' posix "$B" "$MB" \
         'readonly x=old; x=new true; echo AFTER'
+compare 'POSIX readonly special exits 127' posix "$B" "$MB" \
+        'readonly x=old; x=new :; echo AFTER'
+compare 'POSIX command prefix exits one' posix "$B" "$MB" \
+        'readonly x=old; x=new command :; echo AFTER'
+compare 'POSIX prefix aborts only its physical line' posix "$B" "$MB" \
+        'readonly x=old
+f() {
+x=new command :; echo INNER
+}
+f
+printf "outer:%s:%s\n" "$x" "$?"'
+compare 'POSIX same-line prefix skips successor' posix "$B" "$MB" \
+        'readonly x=old; f(){ x=new command :; echo INNER; }; f; echo AFTER'
 compare 'default Bash readonly prefix continues' plain "$B" "$MB" \
         'readonly x=old; x=new true; printf "after:%s\n" "$?"'
 compare 'assignment-only error is fatal' plain "$B" "$MB" \
@@ -125,12 +138,22 @@ compare 'default function precedes special' plain "$B" "$MB" \
         'unset(){ echo FUNCTION; }; unset no; echo AFTER'
 compare 'default colon function precedes builtin' plain "$B" "$MB" \
         'function : { echo FUNCTION; }; :; echo AFTER'
+compare 'reused function slot learns special name' plain "$B" "$MB" \
+        'f(){ echo OLD; }; unset -f f; function : { echo FUNCTION; }; :; set -o posix; :; echo AFTER'
+compare 'deleted special function restores builtin' plain "$B" "$MB" \
+        'function export { echo FUNCTION; }; builtin unset -f export; export x=y; printf "%s\\n" "$x"'
 compare 'type sees POSIX special first' plain "$B" "$MB" \
         'unset(){ :; }; POSIXLY_CORRECT=1; type -t unset; command -v unset'
 compare 'disabled colon is not special' plain "$B" "$MB" \
         'enable -n :; x=old; x=new :; printf "x=%s s=%s\n" "$x" "$?"'
 compare 'disabled control builtin can be a function' plain "$B" "$MB" \
         'enable -n return; function return { echo FUNCTION; }; return; echo AFTER'
+compare 'disabled special permits function in POSIX mode' posix "$B" "$MB" \
+        'enable -n :; function : { echo FUNCTION; }; :; echo AFTER'
+compare 'disabled control is absent from command query' plain "$B" "$MB" \
+        'enable -n return; command -v return; printf "query:%s\n" "$?"'
+compare 'builtin cannot invoke disabled control' plain "$B" "$MB" \
+        'enable -n return; builtin return 7; printf "builtin:%s\n" "$?"'
 
 group fatality
 compare 'bad export is fatal' posix "$B" "$MB" \

@@ -1330,6 +1330,13 @@ answer 'one thousand function calls with locals' 'n=outer; f() { local n=$1; if 
 answer 'two hundred fifty six locals' 'f() { i=0; while [ "$i" -lt 256 ]; do eval "local v$i=$i"; i=$((i+1)); done; echo "$v0:$v127:$v255"; }; f; echo "${v0-unset}:${v255-unset}"'
 answer 'long local name' 'local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=outer; f() { local local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz=inner; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"; }; f; echo "$local_name_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz_abcdefghijklmnopqrstuvwxyz"'
 bash_answer 'function simple body rejected' 'function f echo body'
+bash_answer 'declare function names and missing status' \
+        'z() { :; }; a() { :; }; declare -F; declare -F z missing a; echo "$?"'
+bash_answer 'declare missing function name' 'declare -F missing; echo "$?"'
+bash_answer 'readonly function blocks mutation' \
+        'f() { echo old; }; readonly -f f; unset -f f 2>/dev/null; echo "unset:$?"; f() { echo new; }; echo "define:$?"; f'
+bash_answer 'readonly function requires definition' \
+        'readonly -f missing 2>/dev/null; echo "$?"; missing() { :; }; readonly -f missing; echo "$?"'
 #       A function that redefines itself is still running the old body,
 #       which stays where it is until the call comes back.
 answer 'function redefines itself' 'f() { f() { echo new; }; echo old; }; f; f'
@@ -3829,6 +3836,10 @@ bash_answer 'builtin on a name that is not one' 'builtin nosuchname; echo $?'
 bash_answer 'enable takes a builtin away and back' \
         'enable -n echo; echo $?; enable echo; echo $?; enable nosuchname; echo $?'
 bash_answer 'compgen -A function' 'aa() { :; }; ab() { :; }; compgen -A function'
+bash_answer 'compgen function holes' \
+        'aa() { :; }; ab() { :; }; ac() { :; }; unset -f aa; compgen -A function'
+bash_answer 'compgen long function name' \
+        'n=f; i=0; while [ "$i" -lt 300 ]; do n=${n}x; i=$((i+1)); done; eval "$n() { :; }"; compgen -A function "$n" | wc -c'
 bash_answer 'compgen -W filters on the prefix' 'compgen -W "aa ab bb" a'
 bash_answer 'compgen -A variable' 'compgen -A variable | grep -c "^PATH$"'
 bash_answer 'compgen with nothing to offer' 'compgen -A function; echo $?'

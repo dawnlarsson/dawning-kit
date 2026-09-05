@@ -169,6 +169,7 @@ b32 shell_is_interactive;
    selects Bash policy only when invoked as bash; sh/dash and embedded callers
    retain Moonwater's existing dash-compatible defaults. */
 bool shell_bash_compat;
+bool shell_dash_compat;
 
 // Whether output that can carry colour does. An interface that draws its own
 // screen turns it off while it holds the terminal.
@@ -572,6 +573,7 @@ static string_address shell_shopt_names[] = {
 #define SHELL_SHOPT_INHERIT_ERREXIT 37
 #define SHELL_SHOPT_INTERACTIVE_COMMENTS 38
 #define SHELL_SHOPT_LASTPIPE 39
+#define SHELL_SHOPT_LOCALVAR_INHERIT 41
 #define SHELL_SHOPT_LOGIN_SHELL 43
 #define SHELL_SHOPT_NOCASEGLOB 46
 #define SHELL_SHOPT_NOCASEMATCH 47
@@ -636,9 +638,10 @@ fn shell_last_argument_set(string_address word);
 PURE bool shell_braceexpand_on();
 PURE bool shell_posix_on();
 
-//      One function's name out of the executor's table, for compgen. The
-//      table is in exec.c, which is included last.
-bool exec_function_named(positive slot, p8 address_to into, positive room);
+//      The next live function out of the executor's table. The table is in
+//      exec.c, which is included last; callers keep only the stable name.
+string_address exec_function_next(positive address_to slot,
+                                  bool address_to readonly);
 
 #include "lex.c"
 #include "file.c"
@@ -663,6 +666,8 @@ bool exec_function_named(positive slot, p8 address_to into, positive room);
 #include "system.c"
 #include "../bowl/runtime.c"
 #define PROMPT TERM_RESET TERM_BOLD " $ " TERM_RESET
+
+static positive shell_syntax_generation;
 
 #include "builtin.c"
 
@@ -1283,6 +1288,17 @@ bool shell_reading_more()
         return shell_more;
 }
 
+/*
+        A syntax failure is scoped to the reader that encountered it.
+
+        The process reader leaves on one, while eval and dot return it to the
+        executor so POSIX special-builtin policy can distinguish a direct
+        invocation from one behind command. A generation, rather than a
+        sticky bit, lets nested readers notice only failures that happened
+        inside their own input.
+*/
+static positive shell_run_depth;
+
 static fn run_line_inner(string_address line)
 {
         string_address waiting = parse_here_open();
@@ -1336,6 +1352,22 @@ static fn run_line_inner(string_address line)
                 string_format(exec_error, "Syntax error\n");
                 shell_status = 2;
                 parse_reset();
+
+                shell_syntax_generation += 2;
+
+                /* A terminal recovers at its next prompt. A direct script,
+                   file, stdin stream or -c string has no enclosing builtin
+                   to receive this error, so the rest of that input must not
+                   run. Use the ordinary fatal boundary so an installed EXIT
+                   trap is still honored. */
+                if (shell_run_depth == 1 && !shell_source_depth)
+                {
+                        if (string_is(shell_option_flags, 'c'))
+                                exec_child_leave(2);
+                        if (!shell_is_interactive)
+                                expand_fatal_status(2);
+                }
+
                 return;
         }
 
@@ -1376,8 +1408,6 @@ static fn run_line_inner(string_address line)
         eval or a multi-line dot script stop, while the next line read from the
         terminal gets a clean execution signal and still sees $? == 2.
 */
-static positive shell_run_depth;
-
 fn run_line(string_address line)
 {
         bool top = !shell_run_depth;
@@ -1441,6 +1471,8 @@ fn run_lines(string_address text)
         positive length;
         string_address at;
 
+        positive syntax = shell_syntax_generation;
+
         if (!string_first_of(text, '\n'))
         {
                 run_line(text);
@@ -1474,6 +1506,8 @@ fn run_lines(string_address text)
                 // An empty line is a line: it is a body line of a
                 // here-document, and it ends a command a backslash held open.
                 run_line(at);
+                if (shell_syntax_generation != syntax)
+                        break;
                 at = stop;
         }
 
@@ -1529,12 +1563,12 @@ fn shell_input_end()
         }
 
         string_format(exec_error, "Syntax error: unexpected end of input\n");
+        bool word_eof = parse_pending_used &&
+                        lex_unfinished(parse_pending) == LEX_OPEN_WORD;
         parse_reset();
         shell_more = false;
         shell_status = 2;
-
-        if (shell_run_depth)
-                expand_fatal();
+        shell_syntax_generation += word_eof ? 1 : 2;
 }
 
 // A prompt is for somebody watching. Asking the terminal about itself is the

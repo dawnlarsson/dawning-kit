@@ -82,6 +82,20 @@ D=/bin/dash
 M=$work/names/moonwater
 MB=$work/names/bash
 
+for pair in bash dash; do
+        if [ "$pair" = bash ]; then reference=$B; candidate=$MB; else reference=$D; candidate=$M; fi
+        case_compare "printf empty integer $pair" "$reference" "$candidate" \
+                'printf "%d|%u|%x|" "" "" ""; printf "status:%s\n" "$?"'
+        case_compare "printf empty decimal $pair" "$reference" "$candidate" \
+                'printf "%f|" ""; printf "status:%s\n" "$?"'
+        case_compare "printf blank number $pair" "$reference" "$candidate" \
+                'printf "%d|%f|" " " " "; printf "status:%s\n" "$?"'
+        case_compare "printf missing numeric operands $pair" "$reference" "$candidate" \
+                'printf "%d|%f|"; printf "status:%s\n" "$?"'
+        case_compare "printf character NUL bytes $pair" "$reference" "$candidate" \
+                'printf "%c|%3c|%-3c|" "" "" ""; printf "%c|"'
+done
+
 case_compare 'printf option terminator Bash' "$B" "$MB" \
         'printf -- "%s\n" x; printf "s=%s\n" "$?"'
 case_compare 'printf option terminator dash' "$D" "$M" \
@@ -129,6 +143,20 @@ case_compare 'read timeout publishes partial' "$B" "$MB" \
         'value=old; { printf a; sleep .15; } | { read -t .02 value; printf "%s:<%s>\n" "$?" "$value"; }'
 case_compare 'read escaped byte shares deadline' "$B" "$MB" \
         'value=old; { printf "%s" "\\"; sleep .15; printf x; } | { read -t .02 value; printf "%s\n" "$?"; }'
+
+for pair in bash dash; do
+        if [ "$pair" = bash ]; then reference=$B; candidate=$MB; else reference=$D; candidate=$M; fi
+        case_compare "read terminal nonwhite IFS $pair" "$reference" "$candidate" \
+                'printf "%s" "a::b:" | { IFS=: read a b c; printf "<%s>:<%s>:<%s>\n" "$a" "$b" "$c"; }'
+        case_compare "read terminal whitespace IFS $pair" "$reference" "$candidate" \
+                'printf "%s" "  a   b   " | { IFS=" " read a b; printf "<%s>:<%s>\n" "$a" "$b"; }'
+        case_compare "read escaped separator $pair" "$reference" "$candidate" \
+                'printf "%s" "a:\\:b:" | { IFS=: read a b; printf "<%s>:<%s>\n" "$a" "$b"; }'
+        case_compare "read empty IFS $pair" "$reference" "$candidate" \
+                'printf "%s" "a::b:" | { IFS= read a b; printf "<%s>:<%s>\n" "$a" "$b"; }'
+        case_compare "read repeated terminal separator $pair" "$reference" "$candidate" \
+                'printf "%s" "a::b::" | { IFS=: read a b c; printf "<%s>:<%s>:<%s>\n" "$a" "$b" "$c"; }'
+done
 
 section ""
 printf '  %-12s %s of %s\n' total "$pass" "$((pass + fail))"

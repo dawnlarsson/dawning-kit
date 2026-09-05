@@ -203,6 +203,10 @@ compare bash 'nameref indexed element writes' \
         'a=([2]=x); declare -n n=a; n[4]=y; declare -p a n'
 compare bash 'nameref associative element access' \
         'declare -A m=([x]=a); declare -n n=m; n[y]=b; printf "<%s>|<%s>:%s\n" "${n[x]}" "${n[y]}" "${#n[@]}"'
+compare bash 'associative quoted numeric key unsets plainly' \
+        'declare -A m; m["2"]=x; m[keep]=y; unset "m[2]"; printf "%s:<%s>:<%s>\n" "${#m[@]}" "${m[2]-unset}" "${m[keep]-unset}"'
+compare bash 'associative quoted space key unsets plainly' \
+        'declare -A m; m["a b"]=x; m[keep]=y; unset "m[a b]"; printf "%s:<%s>:<%s>\n" "${#m[@]}" "${m[a b]-unset}" "${m[keep]-unset}"'
 compare bash 'nameref element unset' \
         'a=([2]=x [4]=y); declare -n n=a; unset '\''n[2]'\''; declare -p a n'
 compare bash 'nameref target unset' \

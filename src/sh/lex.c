@@ -619,7 +619,8 @@ static string_address lex_nested_at(string_address at)
         no partner, or a trailing backslash -- which is not the same as an
         unclosed quote and the caller reading a line wants to tell them apart.
 */
-static string_address lex_quote_end(string_address at, p8 quote)
+static string_address lex_quote_end_kind(string_address at, p8 quote,
+                                         bool address_to command_open)
 {
         string_address step = at;
 
@@ -661,6 +662,9 @@ static string_address lex_quote_end(string_address at, p8 quote)
                                    this outer quote open. Stepping over its `$`
                                    let the outer quote appear to close and made
                                    EOF execute the broken construct literally. */
+                                if (command_open && string_is(inner, '(') &&
+                                    string_not(inner + 1, '('))
+                                        *command_open = true;
                                 step = inner + string_length(inner);
                         }
                         else
@@ -669,6 +673,11 @@ static string_address lex_quote_end(string_address at, p8 quote)
         }
 
         return step;
+}
+
+static string_address lex_quote_end(string_address at, p8 quote)
+{
+        return lex_quote_end_kind(at, quote, null);
 }
 
 /*
@@ -970,6 +979,10 @@ lex_nesting_double(string_address at)
 #define LEX_COMPLETE 0
 #define LEX_CONTINUES 1
 #define LEX_OPEN 2
+// Bash treats an EOF inside a word differently from incomplete command
+// grammar when eval/dot returns to its caller. The parser still joins both
+// kinds with a newline; only its EOF boundary needs this distinction.
+#define LEX_OPEN_WORD 3
 
 b32 lex_unfinished(string_address line)
 {
@@ -1053,7 +1066,7 @@ b32 lex_unfinished(string_address line)
                         step = lex_dollar_quote_end(step + 2);
 
                         if (!string_get(step))
-                                return LEX_OPEN;
+                                return LEX_OPEN_WORD;
 
                         step++;
                         continue;
@@ -1061,7 +1074,9 @@ b32 lex_unfinished(string_address line)
 
                 if (c == '\'' || c == '"')
                 {
-                        step = lex_quote_end(step + 1, c);
+                        bool command_open = false;
+                        step = lex_quote_end_kind(step + 1, c,
+                                                  address_of command_open);
 
                         // A backslash at the end inside double quotes is still
                         // a continuation: the quote is open and the line is
@@ -1071,7 +1086,7 @@ b32 lex_unfinished(string_address line)
                                 return LEX_CONTINUES;
 
                         if (!string_get(step))
-                                return LEX_OPEN;
+                                return command_open ? LEX_OPEN : LEX_OPEN_WORD;
 
                         step++;
                         continue;
@@ -1083,7 +1098,9 @@ b32 lex_unfinished(string_address line)
                         string_address stop = lex_nesting(inner);
 
                         if (stop == inner)
-                                return LEX_OPEN;
+                                return string_is(inner, '(') &&
+                                               string_not(inner + 1, '(')
+                                           ? LEX_OPEN : LEX_OPEN_WORD;
 
                         step = stop;
                         continue;

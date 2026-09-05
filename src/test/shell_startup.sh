@@ -279,6 +279,30 @@ compare 'logout retains entering status' bash '' --noprofile -lc 'false; logout'
 diagnostic=ignore compare 'logout invalid operand returns status' bash '' --noprofile -lc 'logout bad; printf "after:%s\n" "$?"'
 diagnostic=ignore compare 'logout extra operands abort command' bash '' --noprofile -lc 'logout 1 2; echo forbidden'
 
+section getopts_personality
+group bundles
+for mode in bash dash; do
+        compare 'bundled option index and OPTARG' "$mode" '' -c 'set -- -abvalue; while getopts :ab: option; do printf "%s:%s:<%s>\n" "$option" "$OPTIND" "${OPTARG-unset}"; done; printf "end:%s:<%s>\n" "$OPTIND" "${OPTARG-unset}"'
+        compare 'end retains or unsets old OPTARG' "$mode" '' -c 'OPTARG=old; getopts ab option; printf "%s:<%s>\n" "$?" "${OPTARG-unset}"'
+        compare 'local OPTIND preserves bundled caller cursor' "$mode" '' -c 'set -- -ab; getopts ab o; f() { local OPTIND=1; getopts xy o -xy; echo in:$o:$OPTIND; }; f; getopts ab o; echo out:$o:$OPTIND'
+        compare 'unset local OPTIND preserves bundled caller cursor' "$mode" '' -c 'set -- -ab; getopts ab o; f() { local OPTIND; getopts xy o -xy; echo in:$o:$OPTIND; }; f; getopts ab o; echo out:$o:$OPTIND'
+        compare 'function arguments carry getopts scan scope' "$mode" '' -c 'set -- -ab; getopts ab o; f() { getopts xy o; getopts xy o; getopts xy o; echo in:$o:$OPTIND; }; f -x -y; echo visible:$OPTIND; getopts ab o; echo out:$o:$OPTIND'
+        for reset in ':' 'OPTIND=0' 'OPTIND=1' 'OPTIND=2' 'unset OPTIND'; do
+                compare "bundle reset $reset" "$mode" '' -c "set -- -ab -c; getopts abc option; printf '%s:%s\\n' \"\$option\" \"\$OPTIND\"; $reset; getopts abc option; printf '%s:%s\\n' \"\$option\" \"\$OPTIND\""
+        done
+done
+compare 'POSIX Bash bundle index and explicit reset' bash '' --posix -c 'set -- -ab; getopts ab o; echo "$o:$OPTIND"; OPTIND=1; getopts ab o; echo "$o:$OPTIND"; getopts ab o; echo "$o:$OPTIND"'
+compare 'Bash getopts clamps exhausted explicit index' bash '' -c 'OPTIND=10; getopts ab o -a; echo "$?:$o:$OPTIND"'
+compare 'Bash getopts new shorter bundle restarts current word' bash '' -c 'set -- -ab -c; getopts abc o; getopts xy o -x -y; echo "$o:$OPTIND"; getopts abc o; echo "$o:$OPTIND"'
+compare 'Bash local nonreset index retains bundled byte' bash '' -c 'set -- -ab -c; getopts abc o; f() { local OPTIND=2; getopts xy o -xy -x -y; echo "$o:$OPTIND"; }; f; getopts abc o; echo "$o:$OPTIND"'
+
+section local_bindings
+group fresh
+compare 'Bash bare locals hide outer values and preserve repeat writes' bash '' -c 'x=outer; f() { local x; echo "${x-unset}"; x=inner; local x; echo "$x"; }; f; echo "$x"'
+compare 'Bash fresh locals preserve export visibility' bash '' -c 'export x=outer; f() { local x; declare -p x; x=inner; /bin/sh -c '\''echo "$x"'\''; }; f; echo "$x"'
+compare 'Bash fresh locals clear array and nameref attributes' bash '' -c 'declare -a a=(one two); declare -n n=target; target=outer; f() { local a n; declare -p a n; a=inner; n=value; }; f; declare -p a n; echo "$target"'
+compare 'Bash declare and local share inherited policy' bash '' -c 'x=outer; y=outer; shopt -s localvar_inherit; f() { local x; declare y; echo "$x:$y"; }; f'
+
 section ""
 printf '  total        %s of %s\n' "$pass" "$((pass + fail))"
 [ "$fail" -eq 0 ]

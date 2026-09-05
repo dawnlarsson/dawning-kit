@@ -52,12 +52,43 @@ positive shell_argc;
 fn run_line(string_address line);
 fn shell_input_end();
 bool exec_function_here_hashed(string_address name, positive2 named);
-bool exec_function_unset(string_address name);
+bool exec_function_readonly_set(string_address name);
+bool exec_function_readonly_hashed(string_address name, positive2 named);
+b32 exec_function_unset(string_address name);
 static bool exec_line_aborted();
 static COLD fn shell_posix_changed(bool on);
+static COLD fn shell_getopts_index_changed();
+static fn shell_getopts_parameters_changed();
+
+typedef struct
+{
+        bipolar offset;
+        positive word;
+        positive next;
+} shell_getopts_state;
+
+static bipolar getopts_offset = -1;
+static positive getopts_word;
+static positive getopts_next;
+static bool getopts_publishing;
+
+static shell_getopts_state shell_getopts_save()
+{
+        shell_getopts_state saved = {getopts_offset, getopts_word, getopts_next};
+        return saved;
+}
+
+static fn shell_getopts_restore(shell_getopts_state saved)
+{
+        getopts_offset = saved.offset;
+        getopts_word = saved.word;
+        getopts_next = saved.next;
+}
 static bool exec_assignment_promote(const_string name, positive length);
 static PURE bool exec_special_builtin(string_address name);
 static fn exec_special_error_note();
+static fn exec_command_reader_finish();
+static positive shell_command_reader_depth;
 static bool env_attribute_target_span(const_string name, positive length,
                                       const_string address_to target,
                                       positive address_to target_length,
@@ -1716,6 +1747,9 @@ static bool env_write_noted(const_string name, positive length, bool written)
         if (written && length == 15 &&
             !memory_compare((address_any)name, "POSIXLY_CORRECT", 15))
                 shell_posix_changed(true);
+        else if (written && length == 6 && shell_bash_compat &&
+                 !memory_compare((address_any)name, "OPTIND", 6))
+                shell_getopts_index_changed();
         return written;
 }
 
@@ -3253,6 +3287,8 @@ fn shell_quoted(writer write, string_address value)
 {
         if (!value)
                 value = "";
+        if (shell_bash_compat && string_is(value, '\'') && !string_get(value + 1))
+                return write("\\'", 2);
 
         while (1)
         {
@@ -3275,7 +3311,11 @@ fn shell_quoted(writer write, string_address value)
 
                 if (shell_bash_compat)
                         for (positive at = 0; at < quotes; at++)
+                        {
+                                if (at)
+                                        write("''", 2);
                                 write("\\'", 2);
+                        }
                 else
                 {
                         write("\"", 1);
@@ -3338,24 +3378,6 @@ static fn shell_bad_name(string_address command, string_address name,
         shell_diagnostic("\n", 1);
         exec_special_error_note();
         shell_answer(shell_bash_compat ? 1 : 2);
-}
-
-static positive shell_declaration_options(bool address_to listed)
-{
-        positive index = 1;
-
-        address_to listed = shell_argc < 2;
-
-        while (index < shell_argc && word_is(shell_argv[index], "-p"))
-        {
-                address_to listed = true;
-                index++;
-        }
-
-        if (index < shell_argc && word_is(shell_argv[index], "--"))
-                index++;
-
-        return index;
 }
 
 /*
@@ -4708,6 +4730,17 @@ PURE bool word_is(string_address word, string_address text)
         return word && !string_compare(word, text);
 }
 
+static COLD fn env_unset_noted(string_address name, positive length)
+{
+        if (length == 15 && !memory_compare(name, "POSIXLY_CORRECT", 15))
+                shell_posix_changed(false);
+        else if (length == 6 && !memory_compare(name, "OPTIND", 6))
+        {
+                shell_getopts_index_changed();
+                shell_getopts_parameters_changed();
+        }
+}
+
 static fn env_unset_span(string_address name, positive length)
 {
         positive index = env_find_span(name, length);
@@ -4715,9 +4748,7 @@ static fn env_unset_span(string_address name, positive length)
         if (index < shell_var_count)
         {
                 env_variable_drop(index);
-                if (length == 15 &&
-                    !memory_compare(name, "POSIXLY_CORRECT", 15))
-                        shell_posix_changed(false);
+                env_unset_noted(name, length);
         }
 }
 
@@ -5546,6 +5577,7 @@ COLD fn shell_shopt(writer write, string_address input)
 
 static COLD fn shell_declare_elements(writer write, string_address name,
                                       positive length, bool keyed);
+static COLD fn shell_listing_value(writer write, string_address value);
 
 // A bare set is the variables as lines the shell could be fed: sorted, and
 // scalar values quoted. Arrays use declare's existing reconstructible element
@@ -5583,7 +5615,10 @@ static fn shell_set_written(writer write, string_address name,
 
         write(name, length);
         write("=", 1);
-        shell_quoted(write, shell_vars[found].text + length + 1);
+        if (shell_bash_compat)
+                shell_listing_value(write, shell_vars[found].text + length + 1);
+        else
+                shell_quoted(write, shell_vars[found].text + length + 1);
         write("\n", 1);
 }
 
@@ -5693,7 +5728,10 @@ COLD fn shell_set(writer write, string_address input)
         }
 
         if (operands)
+        {
                 shell_parameters_replaced = true;
+                shell_getopts_parameters_changed();
+        }
         shell_answer(0);
 }
 
@@ -5758,6 +5796,7 @@ fn shell_shift(writer write, string_address input)
         }
 
         shell_parameters_shift(amount);
+        shell_getopts_parameters_changed();
 
         shell_answer(0);
 }
@@ -5886,7 +5925,19 @@ COLD fn shell_unset(writer write, string_address input)
                 }
 
                 if (functions)
-                        exec_function_unset(word);
+                {
+                        b32 removed = exec_function_unset(word);
+
+                        if (removed < 0)
+                        {
+                                string_format(shell_diagnostic,
+                                              "unset: %s: cannot unset: readonly function\n",
+                                              word);
+                                exec_special_error_note();
+                                shell_answer(1);
+                                return;
+                        }
+                }
                 else
                 {
                         env_reference resolved =
@@ -5978,6 +6029,54 @@ static positive local_initialized;
 static positive address_to local_from;
 static positive local_from_room;
 static positive local_depth;
+
+static PURE bool local_getopts_scope(string_address name, positive length)
+{
+        return length == 6 && !memory_compare(name, "OPTIND", 6);
+}
+
+static PURE p8 address_to local_getopts_saved(shell_local_entry address_to entry)
+{
+        return entry->text + entry->name_length + 1 +
+               (entry->present ? entry->value_length + 1 : 0);
+}
+
+/* A fresh Bash local hides the value and attributes, but inherits export
+   visibility. Reuse the existing cell and name index when owned: unsetting
+   and recreating the entire record would move the variable vector twice. */
+static COLD bool local_hide_saved(string_address name, positive length,
+                                  bool assigning)
+{
+        env_variable address_to entry = env_export_take(name, length);
+
+        if (!entry)
+                return false;
+        if (!entry->owned)
+        {
+                env_cell address_to cell = env_cell_take(length + 1);
+                if (!cell)
+                        return false;
+                memory_copy_end((p8 address_to)(cell + 1), name, length);
+                entry->text = (string_address)(cell + 1);
+                entry->owned = true;
+        }
+        else
+                entry->text[length] = end;
+
+        array_table_release(entry->array);
+        entry->array = 0;
+        entry->attributes = 0;
+        entry->value_length = 0;
+        entry->declared = true;
+        shell_envp_dirty = true;
+        if (length == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
+                hash_forget();
+        // An explicit OPTIND initializer controls cursor reset itself. In
+        // particular, local OPTIND=2 must retain a pending bundled byte.
+        if (!assigning || !local_getopts_scope(name, length))
+                env_unset_noted(name, length);
+        return true;
+}
 
 static COLD bool local_keep_array(shell_local_entry address_to entry,
                              string_address name, positive length)
@@ -6139,6 +6238,15 @@ fn shell_local_leave()
 
                 env_export_restore(name, local_table[at].exported);
                 env_declare_restore(name, local_table[at].declared);
+
+                if (local_getopts_scope(name, length))
+                {
+                        shell_getopts_state saved;
+                        memory_copy(address_of saved,
+                                    local_getopts_saved(local_table + at),
+                                    sizeof(saved));
+                        shell_getopts_restore(saved);
+                }
         }
 
         local_count = local_from[local_depth];
@@ -6222,6 +6330,15 @@ static b32 local_remember(string_address name)
         wanted = name_length + 1 +
                  (local_table[local_count].present ? value_length + 1 : 0);
 
+        bool option_scope = local_getopts_scope(name, name_length);
+
+        if (option_scope)
+        {
+                if (wanted > positive_max - sizeof(shell_getopts_state))
+                        return -1;
+                wanted += sizeof(shell_getopts_state);
+        }
+
         if (!local_text_room(local_table + local_count, 0, wanted))
                 return -1;
 
@@ -6237,6 +6354,17 @@ static b32 local_remember(string_address name)
                 memory_copy_end(local_table[local_count].text + name_length + 1,
                                 variable->text + name_length + 1,
                                 value_length);
+
+        if (option_scope)
+        {
+                /* Only OPTIND needs a private cursor as well as its public
+                   value. Keep it in that local's existing cell, not in every
+                   local record or a second parallel scope registry. */
+                shell_getopts_state saved = shell_getopts_save();
+                memory_copy(local_getopts_saved(local_table + local_count),
+                            address_of saved, sizeof(saved));
+                shell_getopts_parameters_changed();
+        }
 
         local_count++;
 
@@ -6258,17 +6386,28 @@ static bool local_saved_assign(shell_local_entry address_to entry,
         positive old_length = append && entry->present ? entry->value_length : 0;
         positive add_length = string_length(value);
         positive prefix = entry->name_length + 1;
+        bool option_scope = local_getopts_scope(entry->text, entry->name_length);
+        positive extra = option_scope ? sizeof(shell_getopts_state) : 0;
+        shell_getopts_state saved;
 
-        if (old_length > positive_max - add_length - 1 ||
-            prefix > positive_max - old_length - add_length - 1 ||
+        if (option_scope)
+                memory_copy(address_of saved, local_getopts_saved(entry),
+                            sizeof(saved));
+
+        if (add_length > positive_max - extra - 1 ||
+            old_length > positive_max - add_length - extra - 1 ||
+            prefix > positive_max - old_length - add_length - extra - 1 ||
             !local_text_room(entry, prefix + old_length,
-                             prefix + old_length + add_length + 1))
+                             prefix + old_length + add_length + extra + 1))
                 return false;
 
         memory_copy_end(entry->text + prefix + old_length, value, add_length);
         entry->value_length = old_length + add_length;
         entry->present = true;
         entry->declared = true;
+        if (option_scope)
+                memory_copy(local_getopts_saved(entry), address_of saved,
+                            sizeof(saved));
         return true;
 }
 
@@ -6280,6 +6419,7 @@ static bool local_saved_assign(shell_local_entry address_to entry,
 // held in the same order the option letters take, so that turning a letter
 // into a bit is a table and not a ladder.
 #define DECLARE_ATTRIBUTE 16
+#define DECLARE_FUNCTION 32
 
 typedef struct
 {
@@ -6316,6 +6456,7 @@ static bool shell_declare_options(shell_declare_state address_to state)
                        : value == 'r' ? DECLARE_READONLY
                        : value == 'p' && direction == '-' ? DECLARE_PRINT
                        : value == 'g' && direction == '-' ? DECLARE_GLOBAL
+                       : value == 'F' && direction == '-' ? DECLARE_FUNCTION
                        : attribute ? DECLARE_ATTRIBUTE
                                    : 0;
 
@@ -6363,26 +6504,38 @@ static bool shell_declare_options(shell_declare_state address_to state)
         return true;
 }
 
+/* The existing hardware-floor set scanner copies ordinary quote payloads
+   in runs. These immutable byte sets add no initialization or retained heap
+   state, and keep the two output quote styles on the same escape writer. */
+static const b8 shell_quote_printable[STRING_SET_BYTES] = {
+    [32 ... 126] = 1
+};
+static const b8 shell_quote_double[STRING_SET_BYTES] = {
+    [32 ... 33] = 1, [35] = 1, [37 ... 91] = 1,
+    [93 ... 95] = 1, [97 ... 126] = 1
+};
+static const b8 shell_quote_ansi[STRING_SET_BYTES] = {
+    [32 ... 38] = 1, [40 ... 91] = 1, [93 ... 126] = 1
+};
+
 static fn shell_declare_quoted(writer write, string_address value)
 {
-        bool control = false;
-        string_address at = value;
-
-        while (string_get(at))
-        {
-                p8 byte = string_get(at++);
-
-                if (byte < ' ' || byte == 127)
-                {
-                        control = true;
-                        break;
-                }
-        }
+        bool control = string_get(value +
+                                  string_span(value, shell_quote_printable));
 
         write(control ? "$'" : "\"", 2 - !control);
 
         while (string_get(value))
         {
+                positive run = string_span(value, control ? shell_quote_ansi
+                                                          : shell_quote_double);
+                if (run)
+                {
+                        write(value, run);
+                        value += run;
+                }
+                if (!string_get(value))
+                        break;
                 p8 byte = string_get(value++);
 
                 if (control)
@@ -6393,7 +6546,17 @@ static fn shell_declare_quoted(writer write, string_address value)
                                 write("\\r", 2);
                         else if (byte == '\t')
                                 write("\\t", 2);
-                        else if (byte < ' ' || byte == 127)
+                        else if (byte == '\a')
+                                write("\\a", 2);
+                        else if (byte == '\b')
+                                write("\\b", 2);
+                        else if (byte == '\v')
+                                write("\\v", 2);
+                        else if (byte == '\f')
+                                write("\\f", 2);
+                        else if (byte == 27)
+                                write("\\E", 2);
+                        else if (byte < ' ' || byte >= 127)
                         {
                                 p8 octal[4] = {'\\',
                                                (p8)('0' + (byte >> 6)),
@@ -6638,24 +6801,32 @@ static bool shell_declare_print_all(writer write, b32 filter)
 
         Bash quotes here only when the value has something in it that would
         not survive being read back as a word, so `a=b` comes out bare and
-        `a b` comes out quoted. `set` quotes everything and is compared
-        against the reference shell, which does the same; this is Bash's
-        listing and its own rule.
+        `a b` comes out quoted. Bash's bare set shares this spelling; dash
+        continues to quote every scalar. Control bytes use the existing
+        ANSI-C serializer instead of embedding literal newlines in a listing.
 */
 static COLD PURE bool shell_listing_quoted(string_address value)
 {
-        static const p8 wanted[] = " \t\n'\"\\|&;()<>!{}*?[]$`^";
+        static const b8 plain[STRING_SET_BYTES] = {
+            [1 ... 8] = 1, [11 ... 31] = 1,
+            [35] = 1, [37] = 1, [43 ... 58] = 1, [61] = 1,
+            [64 ... 90] = 1, [95] = 1, [97 ... 122] = 1,
+            [126 ... 255] = 1
+        };
 
-        while (string_get(value))
-        {
-                p8 byte = string_get(value++);
+        return string_is(value, '#') || string_is(value, '~') ||
+               string_get(value + string_span(value, plain));
+}
 
-                if (byte < ' ' || byte == 127 ||
-                    string_first_of((string_address)wanted, byte))
-                        return true;
-        }
-
-        return false;
+static COLD fn shell_listing_value(writer write, string_address value)
+{
+        if (!shell_posix_on() &&
+            string_get(value + string_span(value, shell_quote_printable)))
+                shell_declare_quoted(write, value);
+        else if (shell_listing_quoted(value))
+                shell_quoted(write, value);
+        else
+                write(value, string_length(value));
 }
 
 static COLD fn shell_declare_listed(writer write, string_address name,
@@ -6675,10 +6846,7 @@ static COLD fn shell_declare_listed(writer write, string_address name,
         write(name, length);
         write("=", 1);
 
-        if (shell_listing_quoted(value))
-                shell_quoted(write, value);
-        else
-                write(value, string_length(value));
+        shell_listing_value(write, value);
 
         write("\n", 1);
 }
@@ -6758,6 +6926,92 @@ static bool shell_declare_assign(string_address name, string_address value,
         return answer;
 }
 
+/* `declare -F` is metadata, not body serialization. Named queries retain the
+   operand order Bash uses; the no-operand inventory is sorted through the
+   same pointer sorter as variable/function completion. */
+static bool shell_functions_sorted(writer write, b32 mark,
+                                   shell_name_writer written)
+{
+        shell_mark held = shell_store_mark(address_of expand_store);
+        string_address address_to names;
+        positive at = 0;
+        positive count = 0;
+        string_address name;
+
+        while ((name = exec_function_next(address_of at, null)))
+                count++;
+
+        if (!count)
+                return true;
+        if (count > positive_max / sizeof(names[0]) ||
+            !(names = (string_address address_to)shell_store_take(
+                  address_of expand_store, count * sizeof(names[0]))))
+                goto failed;
+
+        at = 0;
+        count = 0;
+        while ((name = exec_function_next(address_of at, null)))
+                names[count++] = name;
+
+        if (!expand_sort_names(names, count))
+                goto failed;
+
+        for (at = 0; at < count; at++)
+                written(write, names[at], string_length(names[at]), mark);
+
+        shell_store_rewind(address_of expand_store, held);
+        return true;
+
+failed:
+        shell_store_rewind(address_of expand_store, held);
+        return false;
+}
+
+static COLD fn shell_declare_function_written(writer write,
+                                              string_address name,
+                                              positive length, b32 mark)
+{
+        positive2 named = {
+            memory_hash_33((address_any)name, length), length};
+        bool readonly = exec_function_readonly_hashed(name, named);
+
+        (void)mark;
+        write(readonly ? "declare -fr " : "declare -f ",
+              readonly ? 12 : 11);
+        write(name, length);
+        write("\n", 1);
+}
+
+static COLD b32 shell_declare_functions(writer write, positive index)
+{
+        if (index < shell_argc)
+        {
+                bool failed = false;
+
+                while (index < shell_argc)
+                {
+                        string_address name = shell_argv[index++];
+                        positive2 named = string_hash_33_length(name);
+
+                        if (!exec_function_here_hashed(name, named))
+                        {
+                                failed = true;
+                                continue;
+                        }
+
+                        write(name, named.y);
+                        write("\n", 1);
+                }
+
+                return failed ? 0 : 1;
+        }
+
+        return shell_functions_sorted(write, 0,
+                                      shell_declare_function_written)
+                   ? 1
+                   : -1;
+}
+
 COLD fn shell_local(writer write, string_address input)
 {
         shell_declare_state state = {1};
@@ -6814,7 +7068,12 @@ COLD fn shell_local(writer write, string_address input)
                         break;
                 }
 
-                if (local_remember(word) < 0)
+                b32 fresh = local_remember(word);
+
+                if (fresh < 0 ||
+                    (fresh && shell_bash_compat &&
+                     !shell_shopt_on(LOCALVAR_INHERIT) &&
+                     !local_hide_saved(word, length, mark != null)))
                 {
                         shell_diagnostic("local: too many\n", 0);
                         shell_answer(2);
@@ -6899,6 +7158,28 @@ static fn shell_declare(writer write, string_address input)
 
         if (!shell_declare_options(address_of state))
                 return;
+
+        if (state.set & DECLARE_FUNCTION)
+        {
+                b32 listed;
+
+                /* Function bodies and function attributes other than the
+                   readonly state require an AST serializer. Reject those
+                   combinations instead of printing variable-shaped output. */
+                if ((state.set & ~DECLARE_FUNCTION) || state.clear ||
+                    state.attributes_set || state.attributes_clear)
+                {
+                        shell_diagnostic(
+                            "declare: function attribute combination is not supported\n",
+                            0);
+                        return shell_answer(2);
+                }
+
+                listed = shell_declare_functions(write, state.index);
+                if (listed < 0)
+                        return shell_no_room("declare");
+                return shell_answer(listed ? 0 : 1);
+        }
 
         if ((state.set & DECLARE_PRINT) || state.index >= shell_argc)
         {
@@ -7050,10 +7331,9 @@ static fn shell_declare(writer write, string_address input)
                         if (fresh < 0)
                                 goto no_room;
 
-                        if (fresh)
-                        {
-                                env_unset(word);
-                        }
+                        if (fresh && !shell_shopt_on(LOCALVAR_INHERIT) &&
+                            !local_hide_saved(word, length, mark != null))
+                                goto no_room;
                 }
 
                 // The kind is decided before the value is written, because
@@ -7169,8 +7449,66 @@ static COLD fn shell_marked(writer write, p8 mark)
 {
         string_address command = mark == DECLARE_EXPORT ? "export"
                                                         : "readonly";
-        bool listed;
-        positive index = shell_declaration_options(address_of listed);
+        bool listed = shell_argc < 2;
+        bool functions = false;
+        shell_option_walk walk = {1};
+        p8 option;
+        positive index;
+
+        while (shell_option_letter(address_of walk, address_of option))
+        {
+                if (option == 'p')
+                        listed = true;
+                else if (option == 'f' && shell_bash_compat &&
+                         mark == DECLARE_READONLY)
+                        functions = true;
+                else
+                {
+                        if (option == 'f' && shell_bash_compat)
+                                shell_diagnostic(
+                                    "export: function export is not supported\n",
+                                    0);
+                        else
+                                string_format(shell_diagnostic,
+                                              "%s: -%c: invalid option\n",
+                                              command, option);
+                        return shell_answer(2);
+                }
+        }
+
+        index = walk.index;
+
+        if (functions)
+        {
+                bool failed = false;
+
+                /* Bash's no-operand form serializes each retained body before
+                   its declaration. Until that shared AST serializer exists,
+                   refuse the listing rather than emit an incomplete command. */
+                if (listed || index >= shell_argc)
+                {
+                        shell_diagnostic(
+                            "readonly: function listing is not supported\n",
+                            0);
+                        return shell_answer(2);
+                }
+
+                while (index < shell_argc)
+                {
+                        string_address name = shell_argv[index++];
+
+                        if (string_first_of(name, '=') ||
+                            !exec_function_readonly_set(name))
+                        {
+                                string_format(shell_diagnostic,
+                                              "readonly: %s: not a function\n",
+                                              name);
+                                failed = true;
+                        }
+                }
+
+                return shell_answer(failed ? 1 : 0);
+        }
 
         if (listed && index >= shell_argc)
         {
@@ -8107,7 +8445,9 @@ fn printf_not_a_number(string_address word)
         strtoimax's grammar, which is what the reference shell reads with:
         blanks in front, a sign, 0x for sixteen and a leading 0 for eight --
         and before any of that, a quote, which means the byte after it. An
-        empty or missing argument is zero and no complaint. What the digits
+        missing argument is zero and no complaint. Bash diagnoses an explicitly
+        empty operand; dash accepts that operand but diagnoses blanks alone.
+        What the digits
         leave behind is a complaint and not a refusal: the number read is
         printed, and "not completely converted" is said afterwards with the
         status, the same as no digits at all is zero and "expected numeric
@@ -8127,7 +8467,12 @@ static positive printf_integer(string_address word, bool signed_value)
         at += string_span(at, string_set_blanks);
 
         if (!string_get(at))
+        {
+                if (word != printf_nothing &&
+                    (shell_bash_compat || string_get(word)))
+                        printf_not_a_number(word);
                 return 0;
+        }
 
         if (string_is(at, '\'') || string_is(at, '"'))
                 return (positive)string_get(at + 1);
@@ -8189,7 +8534,12 @@ static decimal printf_decimal(string_address word)
         at += string_span(at, string_set_blanks);
 
         if (!string_get(at))
+        {
+                if (word != printf_nothing &&
+                    (shell_bash_compat || string_get(word)))
+                        printf_not_a_number(word);
                 return 0.0;
+        }
 
         if (string_is(at, '\'') || string_is(at, '"'))
                 return (decimal)(positive)string_get(at + 1);
@@ -8371,9 +8721,11 @@ fn printf_one(writer write, string_address format)
                 if (conversion == 'c')
                 {
                         string_address value = printf_next();
-                        positive length = string_get(value) ? 1 : 0;
 
-                        writer_field(write, value, length, width, ' ', left);
+                        // Empty and missing operands still write a NUL byte.
+                        // printf_next supplies a real one-byte zero object for
+                        // the latter, so the same field writer handles both.
+                        writer_field(write, value, 1, width, ' ', left);
 
                         continue;
                 }
@@ -8473,17 +8825,10 @@ fn printf_one(writer write, string_address format)
                         continue;
                 }
 
-                /*
-                        Not %a and %A. The standard layer's field writer has
-                        no hexadecimal float in it, and it answers one of
-                        these with the decimal spelling instead -- a wrong
-                        number, where refusing the directive is merely a
-                        missing one. They stay refused until it grows the
-                        path, which is the same place awk would read it from.
-                */
                 if (conversion == 'f' || conversion == 'F' ||
                     conversion == 'e' || conversion == 'E' ||
-                    conversion == 'g' || conversion == 'G')
+                    conversion == 'g' || conversion == 'G' ||
+                    conversion == 'a' || conversion == 'A')
                 {
                         /*
                                 Through the standard layer's own field
@@ -8511,9 +8856,14 @@ fn printf_one(writer write, string_address format)
                         spec.precision = precision;
                         spec.conversion = conversion;
 
-                        format_decimal_field(address_of sink,
-                                             printf_decimal(printf_next()),
-                                             address_of spec);
+                        decimal value = printf_decimal(printf_next());
+
+                        if (conversion == 'a' || conversion == 'A')
+                                format_hex_field(address_of sink, value,
+                                                 address_of spec);
+                        else
+                                format_decimal_field(address_of sink, value,
+                                                     address_of spec);
                         continue;
                 }
 
@@ -9306,6 +9656,28 @@ COLD fn shell_read(writer write, string_address input)
                         while (stop > begin && read_blank(ifs, stop - 1))
                                 stop--;
 
+                        /* One final non-blank IFS byte terminates the last
+                           field; it is not part of that field. Two of them
+                           already describe an additional empty field, and
+                           Bash/dash retain the remainder verbatim when the
+                           last destination has to absorb it (a:: -> a:: for
+                           one name, but a: -> a). Check for an earlier
+                           non-blank separator only on this uncommon terminal
+                           shape, leaving the ordinary one-name line unscanned. */
+                        if (stop > begin && read_separates(ifs, stop - 1) &&
+                            !read_blank(ifs, stop - 1))
+                        {
+                                positive separator = begin;
+
+                                while (separator + 1 < stop &&
+                                       (!read_separates(ifs, separator) ||
+                                        read_blank(ifs, separator)))
+                                        separator++;
+
+                                if (separator + 1 == stop)
+                                        stop--;
+                        }
+
                         read_line[stop] = end;
                         if (!read_set(shell_argv[names], read_line + begin))
                                 return shell_answer(
@@ -9572,14 +9944,35 @@ COLD fn shell_mapfile(writer write, string_address input)
         One option per call, its place kept in OPTIND and, within a bundled
         word, in an offset of its own that OPTIND has no room for.
 
-        OPTIND names the word the next call will start at, and a bundle is
-        counted as read the moment its first letter is taken -- so "-ab" leaves
-        OPTIND at two after the a as well as after the b, and the offset is all
-        that says the word is not finished. Setting OPTIND back to one starts
-        the whole thing again, which POSIX asks for and this reference shell
-        does not do.
+        Bash exposes the current bundled word until its final letter; dash
+        exposes the next word from the first letter. Both share the offset
+        walk. Native POSIX behavior resets on OPTIND=1 and unsets an unused
+        OPTARG; dash's historical exceptions apply only to that exact identity.
 */
-static bipolar getopts_offset = -1;
+static fn shell_getopts_parameters_changed()
+{
+        if (shell_dash_compat)
+        {
+                getopts_next = 0;
+                getopts_offset = -1;
+        }
+}
+
+static COLD fn shell_getopts_index_changed()
+{
+        if (!getopts_publishing && shell_number(env_get("OPTIND")) <= 1)
+                getopts_offset = -1;
+}
+
+static bool getopts_publish(positive index)
+{
+        bool assigned;
+
+        getopts_publishing = true;
+        assigned = env_set_number("OPTIND", index);
+        getopts_publishing = false;
+        return assigned;
+}
 
 static bool getopts_optarg(string_address value)
 {
@@ -9612,8 +10005,9 @@ static PURE bool getopts_complains()
 fn shell_getopts_done(string_address name, positive next, bool assigned)
 {
         getopts_offset = -1;
+        getopts_next = next;
 
-        if (!env_set_number("OPTIND", next + 1))
+        if (!getopts_publish(next + 1))
                 assigned = false;
         if (!env_assign(name, "?"))
                 assigned = false;
@@ -9628,8 +10022,10 @@ fn shell_getopts_answer(string_address name, string_address said,
                         bool assigned)
 {
         getopts_offset = step && string_get(step) ? (bipolar)(step - word) : -1;
+        getopts_next = next;
 
-        if (!env_set_number("OPTIND", next + 1))
+        if (!getopts_publish(next + 1 -
+                             (shell_bash_compat && getopts_offset >= 0)))
                 assigned = false;
         if (!env_assign(name, said))
                 assigned = false;
@@ -9701,37 +10097,56 @@ COLD fn shell_getopts(writer write, string_address input)
                         }
         }
 
-        optind = shell_number(env_get("OPTIND"));
+        optind = shell_dash_compat ? getopts_next + 1
+                                  : shell_number(env_get("OPTIND"));
 
         if (optind < 1)
                 optind = 1;
 
         next = optind - 1;
 
-        // Where the last call stopped inside a word it had not finished. Only
-        // believable while OPTIND still names the word after that one.
-        if (optind > 1 && optind - 2 < count && getopts_offset >= 0 &&
-            (positive)getopts_offset <= string_length(shell_getopts_list[optind - 2]))
+        if (shell_bash_compat && next >= count)
+                return shell_getopts_done(name, count, getopts_optarg(null));
+
+        // Bash publishes the current bundled word until its last option,
+        // while dash publishes the following word immediately. Keep only the
+        // word's index and byte offset, never a pointer into a replaced argv.
+        if (getopts_offset >= 0 &&
+            ((shell_bash_compat || shell_dash_compat)
+                 ? getopts_word < count
+                 : optind > 1 && optind - 2 < count))
         {
-                word = shell_getopts_list[optind - 2];
-                step = word + getopts_offset;
+                positive resumed = (shell_bash_compat || shell_dash_compat)
+                                       ? getopts_word : optind - 2;
+                word = shell_getopts_list[resumed];
+                if ((positive)getopts_offset < string_length(word))
+                {
+                        step = word + getopts_offset;
+                        if (shell_bash_compat)
+                                next++;
+                        else if (shell_dash_compat)
+                                next = resumed + 1;
+                }
         }
 
         if (!step || !string_get(step))
         {
+                getopts_word = next;
                 word = next < count ? shell_getopts_list[next] : null;
                 step = word;
 
                 if (!step || string_not(step, '-') || !string_get(step + 1))
                         return shell_getopts_done(name, next,
-                                                  getopts_optarg(null));
+                                                  shell_dash_compat ||
+                                                      getopts_optarg(null));
 
                 step++;
                 next++;
 
                 if (string_is(step, '-') && !string_get(step + 1))
                         return shell_getopts_done(name, next,
-                                                  getopts_optarg(null));
+                                                  shell_dash_compat ||
+                                                      getopts_optarg(null));
         }
 
         letter = string_get(step++);
@@ -9798,7 +10213,8 @@ COLD fn shell_getopts(writer write, string_address input)
                                             assigned);
         }
 
-        bool assigned = getopts_optarg(null);
+        bool assigned = getopts_optarg(shell_dash_compat
+                                          ? (string_address)"" : null);
 
         return shell_getopts_answer(name, value, word, step, next, assigned);
 }
@@ -10829,6 +11245,7 @@ COLD fn shell_eval(writer write, string_address input)
         positive used = 0;
         positive index = 1;
         bool room = true;
+        positive syntax = shell_syntax_generation;
 
         if (shell_argc < 2 || !run_line)
                 return shell_answer(0);
@@ -10891,6 +11308,15 @@ COLD fn shell_eval(writer write, string_address input)
         }
 
         memory_free(eval_storage, eval_room);
+
+        if (shell_syntax_generation != syntax)
+        {
+                positive kind = shell_syntax_generation - syntax;
+                shell_syntax_generation = syntax;
+                if (!shell_bash_compat ||
+                    (!shell_command_reader_depth && kind != 1))
+                        exec_special_error_note();
+        }
 
         // After the nested line, not before it: the commands inside set the
         // status themselves, and claiming it early would eat their answer.
@@ -11464,10 +11890,12 @@ static bipolar shell_source_read(bipolar handle,
         return (bipolar)used;
 }
 
-static fn shell_source_execute(p8 address_to text, positive filled, bool startup)
+static b32 shell_source_execute(p8 address_to text, positive filled,
+                                 bool startup)
 {
         lex_frame frame;
         positive at = 0;
+        positive syntax = shell_syntax_generation;
 
         lex_nest_enter(address_of frame);
         shell_source_depth++;
@@ -11479,6 +11907,8 @@ static fn shell_source_execute(p8 address_to text, positive filled, bool startup
 
                 text[stop] = end;
                 run_line(text + at);
+                if (shell_syntax_generation != syntax)
+                        break;
                 if (exec_source_stop(startup ? address_of shell_status : null))
                         break;
                 at = stop + 1;
@@ -11486,6 +11916,10 @@ static fn shell_source_execute(p8 address_to text, positive filled, bool startup
         shell_input_end();
         shell_source_depth--;
         lex_nest_leave(address_of frame);
+
+        b32 failed = (b32)(shell_syntax_generation - syntax);
+        shell_syntax_generation = syntax;
+        return failed;
 }
 
 COLD fn shell_dot(writer write, string_address input)
@@ -11589,7 +12023,7 @@ COLD fn shell_dot(writer write, string_address input)
         bool replaced_arguments = held != EXPAND_NO_ROOM;
         if (replaced_arguments)
                 shell_parameters_replaced = false;
-        shell_source_execute(source_text, filled, false);
+        b32 syntax = shell_source_execute(source_text, filled, false);
 
         memory_free(source_text, source_room);
 
@@ -11611,6 +12045,10 @@ COLD fn shell_dot(writer write, string_address input)
         // boundary. Without operands, it shares the caller's parameter state.
         if (replaced_arguments)
                 shell_parameters_replaced = false;
+
+        if (syntax && (!shell_bash_compat ||
+                       (!shell_command_reader_depth && syntax != 1)))
+                exec_special_error_note();
 
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);
@@ -12061,7 +12499,8 @@ static bool shell_command_builtin_here(string_address name, positive2 named)
 {
         return shell_command_named_hashed(name, named) ||
                shell_tool_find_hashed(name, named) != SHELL_TOOLS ||
-               exec_control_builtin(name, false);
+               (!shell_builtin_disabled(name) &&
+                exec_control_builtin(name, false));
 }
 
 /*
@@ -12838,7 +13277,10 @@ fn shell_command_builtin(writer write, string_address input)
                 if (found)
                         memory_free(found, found_room);
 
-                return shell_answer(bad ? bad : (any ? 0 : 127));
+                return shell_answer(bad ? bad
+                                        : (any ? 0
+                                               : (shell_bash_compat ? 1
+                                                                    : 127)));
         }
 
         // Running it is the executor's business, and it is told to skip the
@@ -12852,14 +13294,28 @@ fn shell_command_builtin(writer write, string_address input)
                 shell_argv[shell_argc] = null;
         }
 
-        if (exec_control_builtin(shell_argv[0], true))
+        if (!shell_builtin_disabled(shell_argv[0]) &&
+            exec_control_builtin(shell_argv[0], true))
                 return;
 
         {
                 bool tail = shell_tail_command;
+                bool reader = word_is(shell_argv[0], "eval") ||
+                              word_is(shell_argv[0], ".") ||
+                              word_is(shell_argv[0], "source");
 
-                if (shell_builtin(shell_arguments(),
-                                  string_hash_33_length(shell_argv[0])))
+                if (reader)
+                        shell_command_reader_depth++;
+
+                bool found = shell_builtin(
+                    shell_arguments(), string_hash_33_length(shell_argv[0]));
+
+                if (reader)
+                {
+                        shell_command_reader_depth--;
+                        exec_command_reader_finish();
+                }
+                if (found)
                 {
                         shell_tail_command = tail;
                         return;
@@ -13290,7 +13746,8 @@ fn shell_builtin_run(writer write, string_address input)
                     (positive)shell_argc * sizeof(shell_argv[0]));
         shell_argc--;
 
-        if (exec_control_builtin(shell_argv[0], true))
+        if (!shell_builtin_disabled(shell_argv[0]) &&
+            exec_control_builtin(shell_argv[0], true))
                 return;
 
         if (shell_builtin(shell_arguments(),
@@ -13482,6 +13939,14 @@ static COLD fn compgen_variable(writer write, string_address name, positive leng
         compgen_offer(write, held);
 }
 
+static COLD fn compgen_function(writer write, string_address name,
+                                positive length, b32 mark)
+{
+        (void)length;
+        (void)mark;
+        compgen_offer(write, name);
+}
+
 fn shell_compgen(writer write, string_address input)
 {
         positive index = 1;
@@ -13589,11 +14054,8 @@ fn shell_compgen(writer write, string_address input)
 
         if (functions || commands)
         {
-                p8 held[256];
-                positive at = 0;
-
-                while (exec_function_named(at++, held, sizeof(held)))
-                        compgen_offer(write, held);
+                if (!shell_functions_sorted(write, 0, compgen_function))
+                        return shell_no_room("compgen");
         }
 
         if (aliases || commands)

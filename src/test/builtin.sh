@@ -221,9 +221,8 @@ answer 'long measured escapes' 'v=$(awk '\''BEGIN { for (i = 0; i < 5000; i++) p
 #       its numbers with. The reference reads them with strtod, so a leading
 #       0x is sixteen and "inf" is itself, and the exact digits and the
 #       half-to-even rounding are the formatter's rather than a second
-#       spelling of them here. Not %a: the field writer has no hexadecimal
-#       float, so that directive is still refused rather than answered with
-#       a decimal.
+#       spelling of them here. Hexadecimal output also reuses that writer,
+#       including precision rounding and signed-zero handling.
 group floating
 answer 'fixed'           "printf '%f|' 1.5; echo"
 answer 'fixed precision' "printf '%.2f|%.0f|' 3.14159 2.5; echo"
@@ -244,6 +243,11 @@ answer 'not a number'    "printf '%f\\n' nope 2>/dev/null; echo \$?"
 answer 'not completely'  "printf '%f\\n' 1.5x 2>/dev/null; echo \$?"
 answer 'wide precision'  "printf '%.40f\\n' 0.1"
 answer 'zero and sign'   "printf '%f %f\\n' 0 -0.0"
+answer 'hexadecimal out' "printf '%a %A\\n' 8 1.5"
+answer 'hexadecimal rounding' "printf '%.0a %.1a %.0a\\n' 1.5 1.96875 2.5"
+answer 'hexadecimal padding' "printf '[%+016a][%-16A][%#.0a]\\n' 8 1.5 -0"
+answer 'hexadecimal tiny' "printf '%a\\n' 0x1p-1074"
+answer 'hexadecimal special' "printf '%a %A %a\\n' inf -inf nan"
 
 #       The grammar an integer conversion reads: strtoimax's, with a quote
 #       meaning the byte after it. Nothing is zero and no complaint; a tail

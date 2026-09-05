@@ -458,6 +458,43 @@ cd /
 rm -rf "$d"
 CASE
 
+bash_interactive_case "posix interactive redirect stays whole" <<'CASE'
+d=$(mktemp -d) || exit
+cd "$d" || exit
+target='one two'
+set -o posix
+printf '<WHOLE>\n' > $target
+cat 'one two'
+cd /
+rm -rf "$d"
+CASE
+
+bash_interactive_case "posix interactive redirect still globs" <<'CASE'
+d=$(mktemp -d) || exit
+: > "$d/one.target"
+set -o posix
+printf '<GLOB>\n' > "$d"/*.target
+cat "$d/one.target"
+rm -rf "$d"
+CASE
+
+bash_interactive_case "posix interactive empty redirect is ambiguous" <<'CASE'
+unset target
+set -o posix
+{ printf bad > $target; } 2>/dev/null
+printf '<STATUS:%s>\n' "$?"
+CASE
+
+bash_interactive_case "posix interactive redirect brace stays ambiguous" <<'CASE'
+d=$(mktemp -d) || exit
+cd "$d" || exit
+set -o posix
+{ printf bad > x{a,b}; } 2>/dev/null
+printf '<STATUS:%s>\n' "$?"
+cd /
+rm -rf "$d"
+CASE
+
 section "boundaries"
 group "dash grammar"
 
@@ -541,6 +578,35 @@ OF
 EOF
 )
 printf '<%s>\n' "$value"
+CASE
+
+section "syntax_readers"
+group "recovery"
+for syntax_mode in bash posix dash; do
+        for syntax_wrapper in '' 'command '; do
+                syntax_script="${syntax_wrapper}eval '}
+printf forbidden
+'; printf 'after:%s\\n' \"\$?\""
+                if [ "$syntax_mode" = dash ]; then
+                        capture_command /bin/dash want "$syntax_script"
+                        capture_command "$work/names/sh" got "$syntax_script"
+                elif [ "$syntax_mode" = posix ]; then
+                        capture_command /bin/bash want "$syntax_script" --posix
+                        capture_command "$work/names/bash" got "$syntax_script" --posix
+                else
+                        capture_command /bin/bash want "$syntax_script"
+                        capture_command "$work/names/bash" got "$syntax_script"
+                fi
+                same_result "eval syntax boundary $syntax_mode $syntax_wrapper" ignore
+        done
+done
+bash_script_diagnostic_case "bare closing token terminates script" <<'CASE'
+}
+printf forbidden
+CASE
+bash_interactive_case "interactive command string still stops on syntax" <<'CASE'
+}
+printf 'recovered:%s\n' "$?"
 CASE
 
 section "bounds"

@@ -384,6 +384,7 @@ b32 main()
         if (called && *called == '-')
                 called++;
         shell_bash_compat = called && word_is(called, "bash");
+        shell_dash_compat = called && word_is(called, "dash");
 
         /* Bash privilege policy is decided from the entry credentials, not
            from an ID a startup file or command might later change. */

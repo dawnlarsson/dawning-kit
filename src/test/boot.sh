@@ -122,6 +122,16 @@ ONECMD
 /bin/bash -c 'set -k; f() { printf "keyword-%s-%s\n" "$MWKEY" "$*"; }; f one MWKEY=ready two'
 /bin/bash -c 'X=old; X=temporary :; printf "prefix-kept-%s\n" "$X"; X=ready export X; printf "prefix-export-%s\n" "$X"'
 /bin/bash -pc 'case $- in *p*) printf "privileged-%s\n" ready;; esac; set +p; case $- in *p*) :;; *) printf "privileged-%s\n" dropped;; esac'
+/bin/bash --posix -c 'x=old; x=ready :; printf "posix-prefix-%s-%s\n" "$x" "$POSIXLY_CORRECT"'
+/bin/bash -c 'v=$(trap "printf ready" EXIT; :); printf "child-trap-%s\n" "$v"'
+/bin/bash --posix -ec 'value=$(false; echo forbidden); echo forbidden'
+printf 'inherit-errexit-%s\n' "$?"
+/bin/bash -c 'declare -A a; a["two words"]=ready; unset "a[two words]"; printf "assoc-unset-%s\n" "${#a[@]}"'
+/bin/bash -c 'f() { :; }; readonly -f f; unset -f f; printf "function-readonly-%s\n" "$?"' 2>/dev/null
+/bin/bash -c 'enable -n :; :' 2>/dev/null
+printf 'disabled-colon-%s\n' "$?"
+/bin/bash -c 'exit -1'
+printf 'signed-exit-%s\n' "$?"
 cat > /tmp/nested-here <<'NESTED_HERE'
 value=$(cat <<EOF
 )
@@ -221,6 +231,13 @@ says 'Bash prefix lifetime' 'prefix-kept-old'
 says 'Bash prefix export'  'prefix-export-ready'
 says 'Bash privileged mode' 'privileged-ready'
 says 'Bash privileged reset' 'privileged-dropped'
+says 'POSIX prefix and mode' 'posix-prefix-ready-y'
+says 'child EXIT trap'      'child-trap-ready'
+says 'POSIX inherited errexit' 'inherit-errexit-1'
+says 'associative unset'    'assoc-unset-0'
+says 'readonly function'   'function-readonly-1'
+says 'disabled builtin'    'disabled-colon-127'
+says 'Bash signed exit'    'signed-exit-255'
 says 'nested heredoc boundary' 'here-)'
 says 'root is mounted'     'storage-root'
 says 'findmnt linked'      'storage-target-/'

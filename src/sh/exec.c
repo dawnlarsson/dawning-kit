@@ -19,11 +19,14 @@
 #define EXEC_SIGNAL_CONTINUE 2
 #define EXEC_SIGNAL_RETURN 3
 #define EXEC_SIGNAL_FATAL 4
+#define EXEC_SIGNAL_COMMAND_ERROR 5
+#define EXEC_ASSIGNMENT_LINE_ABORT 256
 
 static b32 exec_signal;
 static b32 exec_signal_level;
 static b32 exec_loop_depth;
 static b32 exec_function_depth;
+static PURE p8 exec_special_kind(string_address name);
 
 /*
         set -e, and the places it does not reach.
@@ -108,16 +111,19 @@ static DEAD_END fn exec_child_leave(b32 status)
         break, except that no construct is allowed to consume it. The reader
         clears it when the next top-level input line begins.
 */
-COLD fn exec_expand_fatal()
+static COLD fn exec_abort_line(b32 status)
 {
         if (exec_forked)
-        {
-                log_flush();
-                system_call_1(syscall(exit_group), 2);
-        }
+                exec_child_leave(status);
 
+        shell_status = status;
         exec_signal = EXEC_SIGNAL_FATAL;
         exec_signal_level = 0;
+}
+
+COLD fn exec_expand_fatal()
+{
+        exec_abort_line(shell_status);
 }
 
 static fn exec_line_begin()
@@ -133,9 +139,30 @@ static fn exec_line_begin()
         }
 }
 
+static COLD fn exec_special_fail(b32 status)
+{
+        // Dash's command-wrapped eval/dot catches special-builtin failures
+        // at that reader boundary. Carry the error through the existing
+        // executor signal, without unwinding unrelated EXIT/trap state.
+        if (!shell_bash_compat && shell_command_reader_depth)
+        {
+                shell_status = status;
+                exec_signal = EXEC_SIGNAL_COMMAND_ERROR;
+                exec_signal_level = 0;
+        }
+        else
+                expand_fatal_status(status);
+}
+
+static fn exec_command_reader_finish()
+{
+        if (exec_signal == EXEC_SIGNAL_COMMAND_ERROR)
+                exec_signal = EXEC_SIGNAL_NONE;
+}
+
 static PURE bool exec_line_aborted()
 {
-        return exec_signal == EXEC_SIGNAL_FATAL;
+        return exec_signal >= EXEC_SIGNAL_FATAL;
 }
 
 /*
@@ -4813,32 +4840,45 @@ typedef struct
         // How many calls of it are on the stack. A body being walked is not
         // given back, because the next definition would be written over it.
         positive active;
+        bool readonly;
+        /* Zero is an ordinary function name, one a POSIX special name, and
+           two Bash's `source` spelling. The name never changes while this
+           slot is live, so command dispatch must not scan the same static
+           name table on every call. */
+        p8 special_kind;
 } exec_function;
 
 static exec_function address_to exec_functions;
 
 /*
-        The name of the function in one slot, for compgen.
+        The next live function at or beyond one slot.
 
-        By index and into the caller's buffer, because the table lives here
-        and the only thing that walks it lives in builtin.c, which is included
-        before this file is.
+        Unset slots remain reusable and may sit between live ones. Advancing
+        here keeps every table walker from stopping at the first hole, and
+        returning the separately allocated name removes compgen's old
+        255-byte function-name ceiling.
 */
-bool exec_function_named(positive slot, p8 address_to into, positive room);
 static positive exec_function_room;
 static positive exec_function_count;
 
-bool exec_function_named(positive slot, p8 address_to into, positive room)
+string_address exec_function_next(positive address_to slot,
+                                  bool address_to readonly)
 {
-        if (slot >= exec_function_count || !exec_functions[slot].name ||
-            exec_functions[slot].name_length >= room)
-                return false;
+        positive at = address_to slot;
 
-        memory_copy_apart(into, exec_functions[slot].name,
-                          exec_functions[slot].name_length);
-        into[exec_functions[slot].name_length] = end;
+        while (at < exec_function_count && !exec_functions[at].body)
+                at++;
 
-        return true;
+        if (at >= exec_function_count)
+        {
+                address_to slot = exec_function_count;
+                return null;
+        }
+
+        address_to slot = at + 1;
+        if (readonly)
+                address_to readonly = exec_functions[at].readonly;
+        return exec_functions[at].name;
 }
 static positive exec_function_recent = positive_max;
 
@@ -4891,7 +4931,26 @@ bool exec_function_here_hashed(string_address name, positive2 named)
         return exec_function_find(name, named) != 0;
 }
 
-bool exec_function_unset(string_address name)
+bool exec_function_readonly_set(string_address name)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = exec_function_slot(name, named);
+
+        if (slot == positive_max)
+                return false;
+
+        exec_functions[slot].readonly = true;
+        return true;
+}
+
+bool exec_function_readonly_hashed(string_address name, positive2 named)
+{
+        positive slot = exec_function_slot(name, named);
+
+        return slot != positive_max && exec_functions[slot].readonly;
+}
+
+b32 exec_function_unset(string_address name)
 {
         positive2 named = string_hash_33_length(name);
         positive slot;
@@ -4903,6 +4962,9 @@ bool exec_function_unset(string_address name)
 
                 if (!exec_functions[slot].body)
                         return false;
+
+                if (exec_functions[slot].readonly)
+                        return -1;
 
                 // A function unsetting itself is still running its body.
                 if (!exec_functions[slot].active)
@@ -4948,6 +5010,14 @@ static b32 exec_define(b32 index)
                         break;
         }
 
+        if (slot < exec_function_count && exec_functions[slot].body &&
+            exec_functions[slot].readonly)
+        {
+                string_format(exec_error, "%s: readonly function\n", name);
+                shell_status = 1;
+                return 1;
+        }
+
         if (slot == exec_function_count)
         {
                 // An unset slot has no live tree and can carry a new name --
@@ -4974,6 +5044,8 @@ static b32 exec_define(b32 index)
                         exec_functions[slot].name_length = 0;
                         exec_functions[slot].body = 0;
                         exec_functions[slot].active = 0;
+                        exec_functions[slot].readonly = false;
+                        exec_functions[slot].special_kind = 0;
                         exec_function_count++;
                 }
 
@@ -4987,6 +5059,9 @@ static b32 exec_define(b32 index)
                 string_copy(exec_functions[slot].name, name);
                 exec_functions[slot].name_hash = named.x;
                 exec_functions[slot].name_length = named.y;
+                exec_functions[slot].readonly = false;
+                exec_functions[slot].special_kind =
+                    exec_special_kind(name);
         }
 
         /*
@@ -5223,7 +5298,11 @@ static b32 exec_call(positive slot)
         positive saved_count = shell_parameter_count;
         positive saved;
         b32 status;
+        shell_getopts_state saved_getopts;
         bool saved_replaced = shell_parameters_replaced;
+
+        if (shell_dash_compat)
+                saved_getopts = shell_getopts_save();
 
         if (exec_function_depth == 0x7fffffff)
         {
@@ -5251,6 +5330,8 @@ static b32 exec_call(positive slot)
                 shell_status = 1;
                 return 1;
         }
+
+        shell_getopts_parameters_changed();
 
         // By index and not by address: a definition made inside the body can
         // grow the table, and the table may move when it does.
@@ -5309,6 +5390,9 @@ static b32 exec_call(positive slot)
                 log_flush();
                 exit(2);
         }
+
+        if (shell_dash_compat)
+                shell_getopts_restore(saved_getopts);
 
         shell_parameters_replaced = saved_replaced;
         return status;
@@ -5565,11 +5649,21 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
         return answer;
 }
 
-static COLD bool exec_assignment_error(bool fatal)
+static COLD bool exec_assignment_error(b32 fatal_status)
 {
-        if (fatal)
+        if (fatal_status)
         {
-                expand_fatal_mode(0);
+                /* A regular prefix error in POSIX mode aborts the current
+                   physical input program with one. A following physical line
+                   still runs; assignment-only and direct-special errors use
+                   Bash's terminal 127 path below. */
+                if (fatal_status == EXEC_ASSIGNMENT_LINE_ABORT)
+                {
+                        exec_abort_line(1);
+                        return false;
+                }
+
+                expand_fatal_status(fatal_status);
                 return false;
         }
 
@@ -5582,7 +5676,7 @@ static COLD bool exec_assignment_error(bool fatal)
 static bool exec_assign(string_address address_to word_at,
                         positive name_length, positive name_hash, bool append,
                         bool compound, string_address prepared_name,
-                        positive prepared_base_length, bool fatal_error)
+                        positive prepared_base_length, b32 assignment_error)
 {
         string_address word = address_to word_at;
         string_address name_end = word + name_length;
@@ -5612,7 +5706,7 @@ static bool exec_assign(string_address address_to word_at,
                 {
                         string_format(exec_error, "%s: is read only\n", word);
                         address_to name_end = append ? '+' : '=';
-                        return exec_assignment_error(fatal_error);
+                        return exec_assignment_error(assignment_error);
                 }
 
                 answer = shell_compound_assign(word, name_length, mark + 2,
@@ -5624,7 +5718,7 @@ static bool exec_assign(string_address address_to word_at,
                 {
                         string_format(exec_error, "%s: cannot assign\n", word);
                         address_to name_end = append ? '+' : '=';
-                        return exec_assignment_error(fatal_error);
+                        return exec_assignment_error(assignment_error);
                 }
                 address_to name_end = append ? '+' : '=';
 
@@ -5653,7 +5747,7 @@ static bool exec_assign(string_address address_to word_at,
                         address_to subscript = '[';
 
                 address_to name_end = append ? '+' : '=';
-                return exec_assignment_error(fatal_error);
+                return exec_assignment_error(assignment_error);
         }
 
         if (subscript && !prepared_base_length)
@@ -5676,7 +5770,7 @@ static bool exec_assign(string_address address_to word_at,
                                 word, base_length, null, null, null, null))
                         {
                                 address_to name_end = append ? '+' : '=';
-                                return exec_assignment_error(fatal_error);
+                                return exec_assignment_error(assignment_error);
                         }
                 }
 
@@ -5754,7 +5848,7 @@ static bool exec_assign(string_address address_to word_at,
                            null, null, null, null))
         {
                 string_format(exec_error, "%s: cannot assign\n", word);
-                return exec_assignment_error(fatal_error);
+                return exec_assignment_error(assignment_error);
         }
 
         if (answer && append && !subscript)
@@ -5763,26 +5857,40 @@ static bool exec_assign(string_address address_to word_at,
         return answer;
 }
 
+/* The name classification is stable and cached with a function definition;
+   invocation policy is not. `enable`, Bash POSIX mode and the invocation
+   personality can all change after a function is defined. */
+static PURE p8 exec_special_kind(string_address name)
+{
+        static string_address names[] = {
+            ":", ".", "break", "continue", "eval", "exec", "exit", "export",
+            "readonly", "return", "set", "shift", "times", "trap", "unset",
+        };
+        positive which = string_table_find(name, names, sizeof(names[0]),
+                                           array_count(names));
+
+        if (which < array_count(names))
+                return 1;
+
+        return word_is(name, "source") ? 2 : 0;
+}
+
+static PURE bool exec_special_active(string_address name, p8 kind)
+{
+        if (!kind || shell_builtin_disabled(name) ||
+            (shell_bash_compat && !shell_posix_on()))
+                return false;
+
+        return kind == 1 || shell_bash_compat;
+}
+
 /* The fifteen POSIX names, plus Bash's source spelling while Bash POSIX mode
    is active. Outside that mode Bash deliberately lets functions precede the
    names and restores their prefix assignments; the sh personality retains
    the POSIX policy it has always had. */
 static PURE bool exec_special_builtin(string_address name)
 {
-        static string_address names[] = {
-            ":", ".", "break", "continue", "eval", "exec", "exit", "export",
-            "readonly", "return", "set", "shift", "times", "trap", "unset",
-        };
-
-        if (shell_bash_compat && !shell_posix_on())
-                return false;
-
-        if (shell_bash_compat && word_is(name, "source"))
-                return true;
-
-        return string_table_find(name, names, sizeof(names[0]),
-                                 array_count(names)) <
-               array_count(names);
+        return exec_special_active(name, exec_special_kind(name));
 }
 
 /*
@@ -6408,10 +6516,15 @@ static b32 exec_dispatch(b32 command_word)
         positive2 named;
         p8 initial = string_get(name);
         positive slot;
-        bool special;
+        bool disabled = shell_builtin_disabled(name);
         bool colon = initial == ':' && !string_get(name + 1);
 
-        if (colon && exec_special_builtin(name))
+        /* With no function at all, or in a personality where : cannot be
+           overridden, its answer needs neither a name hash nor a table walk.
+           Bash ordinary mode reaches the lookup only when a function could
+           actually have claimed this name. */
+        if (colon && !disabled &&
+            (!shell_bash_compat || shell_posix_on() || !exec_function_count))
         {
                 shell_status = 0;
                 return 0;
@@ -6442,46 +6555,46 @@ static b32 exec_dispatch(b32 command_word)
         else
                 named = string_hash_33_length(name);
 
-        special = exec_special_builtin(name);
-
-        /* POSIX special builtins precede functions. Bash's ordinary mode
-           deliberately reverses that order, including for the three control
-           builtins implemented in this file. */
-        if (special)
-        {
-                if (exec_control_builtin(name, true))
-                        return shell_status;
-
-                {
-                        bool tail = shell_tail_command;
-
-                        if (shell_builtin(null, named))
-                                return shell_status;
-                        shell_tail_command = tail;
-                }
-        }
-
         slot = exec_function_slot(name, named);
 
         if (slot != positive_max)
         {
+                /* POSIX special builtins precede a same-named function.
+                   Ordinary Bash reverses that order. The name classification
+                   was made once at definition, while the active policy is
+                   checked now because set -o posix and enable can change. */
+                if (exec_special_active(
+                        name, exec_functions[slot].special_kind))
+                {
+                        if (exec_control_builtin(name, true))
+                                return shell_status;
+
+                        {
+                                bool tail = shell_tail_command;
+
+                                if (shell_builtin(null, named))
+                                        return shell_status;
+                                shell_tail_command = tail;
+                        }
+                }
+
                 shell_tail_command = false;
                 return exec_call(slot);
         }
 
-        if (colon)
+        if (colon && !disabled)
         {
                 shell_status = 0;
                 return 0;
         }
 
-        if (!special && exec_control_builtin(name, true))
+        if (!disabled && exec_control_builtin(name, true))
                 return shell_status;
 
         {
                 bool tail = shell_tail_command;
 
-                if (!special && shell_builtin(null, named))
+                if (shell_builtin(null, named))
                         return shell_status;
                 shell_tail_command = tail;
         }
@@ -6644,6 +6757,21 @@ static COLD b32 address_to exec_keyword_order(parse_node address_to node,
         return order;
 }
 
+static PURE b32 exec_assignment_error_status(bool assignments_only,
+                                               string_address command)
+{
+        if (!shell_bash_compat)
+                return 2;
+
+        if (!shell_posix_on())
+                return assignments_only ? 1 : 0;
+
+        if (assignments_only || exec_special_builtin(command))
+                return string_is(shell_option_flags, 'c') ? 127 : 1;
+
+        return EXEC_ASSIGNMENT_LINE_ABORT;
+}
+
 static b32 exec_simple(b32 index)
 {
         parse_node address_to node = parse_nodes + index;
@@ -6662,9 +6790,9 @@ static b32 exec_simple(b32 index)
         b32 address_to word_order = null;
         b32 status;
         b32 at;
+        string_address command = null;
         bool bare_exec;
         bool assignments_only;
-        bool fatal_assignment;
         bool special = false;
         bool fatal = false;
         shell_words arguments;
@@ -6778,8 +6906,6 @@ static b32 exec_simple(b32 index)
         }
 
         assignments_only = first == count;
-        fatal_assignment = assignments_only || !shell_bash_compat ||
-                           shell_posix_on();
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
                 b32 word_index = EXEC_WORD(at);
@@ -6818,7 +6944,10 @@ static b32 exec_simple(b32 index)
                                  (flags & PARSE_WORD_COMPOUND) != 0,
                                  expanded_kept[expanded_count - 1].name,
                                  expanded_kept[expanded_count - 1].base_length,
-                                 fatal_assignment))
+                                 exec_assignment_error_status(
+                                     assignments_only,
+                                     assignments_only ? null
+                                                      : shell_argv[first])))
                 {
                         status = shell_bash_compat ? 1 : 2;
                         goto fail;
@@ -6864,7 +6993,10 @@ static b32 exec_simple(b32 index)
                 command, so they stay too.
         */
         if (first != count)
-                special = exec_special_builtin(shell_argv[first]);
+                command = shell_argv[first];
+
+        if (first && first != count)
+                special = exec_special_builtin(command);
 
         if (first && first != count)
         {
@@ -6910,7 +7042,10 @@ static b32 exec_simple(b32 index)
                                  kept && kept_count == first
                                      ? kept[at].base_length
                                      : 0,
-                                 fatal_assignment))
+                                 exec_assignment_error_status(
+                                     assignments_only,
+                                     assignments_only ? null
+                                                      : shell_argv[first])))
                 {
                         status = shell_bash_compat ? 1 : 2;
                         goto fail;
@@ -6922,10 +7057,10 @@ static b32 exec_simple(b32 index)
            The pre-write snapshot remains necessary for the latter case; if
            the selected command has just become special, adopt every saved
            prefix instead of restoring it. */
-        if (first != count)
+        if (first && first != count)
         {
                 bool active_special =
-                    exec_special_builtin(shell_argv[first]);
+                    exec_special_builtin(command);
 
                 if (active_special && !special)
                         for (at = 0; at < kept_count; at++)
@@ -6976,6 +7111,8 @@ static b32 exec_simple(b32 index)
         {
                 exec_redirect_restore(mark);
                 status = exec_redirect_failed_status();
+                if (!special)
+                        special = exec_special_builtin(command);
                 fatal = special;
                 goto fail;
         }
@@ -7023,6 +7160,14 @@ static b32 exec_simple(b32 index)
                              : exec_dispatch(EXEC_WORD(first));
                 builtin_error = exec_special_error;
                 exec_special_error = previous_error;
+
+                /* Prefix assignments need this answer before dispatch for
+                   their persistence rules.  Without prefixes it becomes
+                   observable only when a builtin has reported a POSIX
+                   special-builtin error, so keep the ordinary command path
+                   free of a second function-table probe. */
+                if (builtin_error && !special)
+                        special = exec_special_builtin(command);
                 fatal = special && status && builtin_error;
         }
 #undef EXEC_WORD
@@ -7048,7 +7193,7 @@ static b32 exec_simple(b32 index)
         shell_store_rewind(address_of exec_store, arena_mark);
 
         if (fatal)
-                expand_fatal_status(status);
+                exec_special_fail(status);
 
         return status;
 
@@ -7066,7 +7211,7 @@ fail:
         shell_status = status;
 
         if (fatal)
-                expand_fatal_status(status);
+                exec_special_fail(status);
 
         return status;
 }

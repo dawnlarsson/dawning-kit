@@ -2798,8 +2798,20 @@ static bipolar arith_evaluate(string_address text)
                 return 0;
         }
 
+        /* This is the overwhelmingly common arithmetic path and its grammar
+           is identical in every personality. Keep Bash-mode state entirely
+           out of it. */
         if (arith_simple_addition(text, address_of value))
                 return value;
+
+        bool held_bash_mode = arith_bash_mode;
+
+        /* The same arithmetic engine serves POSIX expansion and Bash-only
+           commands. A Bash personality gives every complex arithmetic
+           context the extensions those commands already requested
+           explicitly; native sh/dash keeps the stricter grammar unless its
+           caller opted in. */
+        arith_bash_mode = arith_bash_mode || shell_bash_compat;
 
         value = arith_choose();
         arith_space();
@@ -2819,6 +2831,7 @@ static bipolar arith_evaluate(string_address text)
         if (string_get(arith_at))
                 arith_bad = true;
 
+        arith_bash_mode = held_bash_mode;
         return value;
 }
 
@@ -4633,7 +4646,11 @@ static COLD string_address expand_subscript_key(string_address base,
         if (!text)
                 return null;
 
-        key = expand_capture(text, true, EXPAND_CAPTURE_TEXT);
+        /* The subscript remains one field because capture never splits it,
+           but its own quote syntax is still syntax. Passing an outer quoted
+           context here retained those bytes, so m['x'] created the literal
+           key 'x' and `unset 'm[x]'` could not find it. */
+        key = expand_capture(text, false, EXPAND_CAPTURE_TEXT);
 
         if (expand_failed || !key)
                 return null;
@@ -5097,6 +5114,25 @@ static COLD fn expand_array_each(string_address name, positive length, p8 form,
         path a scalar takes, and the buffer it needs was in that reader's
         frame for every ${x} in every script that has no array in it.
 */
+static COLD fn expand_parameter_unset_error(string_address name,
+                                             string_address said,
+                                             b32 parameter_mode)
+{
+        string_format(expand_complain, "%s: %s\n", name,
+                      said[0] ? said : (string_address) "parameter not set");
+        /* Bash reserves 1 for an invalid indirection source. Once a real
+           parameter reaches ?, a -c command terminates with 127, while a
+           script or standard-input reader reports 1 at its input boundary.
+           Dash keeps 2. shell_option_flags is already the entry-source mark
+           used by $- and diagnostics; no second execution-mode state is
+           needed here. */
+        if (shell_bash_compat)
+                expand_fatal_status(string_is(shell_option_flags, 'c')
+                                        ? 127 : 1);
+        else
+                expand_fatal_mode(parameter_mode);
+}
+
 static COLD fn expand_array_form(string_address name, positive length,
                                  p8 form, bool want_length, p8 operation,
                                  bool doubled, string_address word,
@@ -5139,10 +5175,7 @@ static COLD fn expand_array_form(string_address name, positive length,
                 if (expand_failed)
                         return;
 
-                string_format(expand_complain, "%s: %s\n", name,
-                              said[0] ? said
-                                      : (string_address) "parameter not set");
-                expand_fatal_mode(parameter_mode);
+                expand_parameter_unset_error(name, said, parameter_mode);
         }
         else if (operation != '+')
                 expand_push_array(name, length, form, quoted, keys);
@@ -5683,10 +5716,8 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
-                                string_format(expand_complain, "%s: %s\n", name,
-                                              said[0] ? said : (string_address) "parameter not set");
-
-                                expand_fatal_mode(parameter_mode);
+                                expand_parameter_unset_error(
+                                    name, said, parameter_mode);
 
                                 return close + 1;
                         }
@@ -7094,15 +7125,25 @@ static positive expand_brace_number_text(p8 address_to out, bipolar value,
 }
 
 static positive shell_expand_braces(string_address word,
-                                    shell_words address_to out);
+                                    shell_words address_to out, bool split);
 
 static positive shell_expand_without_braces(string_address word,
-                                             shell_words address_to out)
+                                             shell_words address_to out,
+                                             bool split)
 {
         if (!expand_word_ready(word))
                 return out->count;
 
-        return expand_split(out);
+        if (split)
+                return expand_split(out);
+
+        /* POSIX interactive redirections pathname-expand one whole word, but
+           do not field-split it. An unquoted expansion to nothing is still no
+           target, while a quoted empty expansion is one empty target. */
+        if (expand_length || expand_quoted_seen)
+                expand_emit(0, expand_length, out);
+
+        return out->count;
 }
 
 static positive expand_brace_made(string_address word,
@@ -7110,7 +7151,7 @@ static positive expand_brace_made(string_address word,
                                   string_address close,
                                   string_address middle,
                                   positive middle_length,
-                                  shell_words address_to out)
+                                  shell_words address_to out, bool split)
 {
         positive prefix = (positive)(open - word);
         positive suffix = string_length(close + 1);
@@ -7129,11 +7170,12 @@ static positive expand_brace_made(string_address word,
         memory_copy(made + prefix, middle, middle_length);
         memory_copy_end(made + prefix + middle_length, close + 1, suffix);
 
-        return shell_expand_braces(made, out);
+        return shell_expand_braces(made, out, split);
 }
 
 static bool expand_brace_range(string_address word, string_address open,
-                               string_address close, shell_words address_to out)
+                               string_address close, shell_words address_to out,
+                               bool split)
 {
         string_address first_dots = null;
         string_address second_dots = null;
@@ -7218,7 +7260,8 @@ static bool expand_brace_range(string_address word, string_address open,
                         positive length = expand_brace_number_text(
                             made, current, width, padded);
 
-                        expand_brace_made(word, open, close, made, length, out);
+                        expand_brace_made(word, open, close, made, length, out,
+                                          split);
 
                         if (expand_failed || current == last_number ||
                             (step > 0 && current > bipolar_max - step) ||
@@ -7254,7 +7297,7 @@ static bool expand_brace_range(string_address word, string_address open,
                         p8 made = (p8)current;
 
                         expand_brace_made(word, open, close, address_of made, 1,
-                                          out);
+                                          out, split);
 
                         if (expand_failed || current == last)
                                 break;
@@ -7267,7 +7310,7 @@ static bool expand_brace_range(string_address word, string_address open,
 }
 
 static positive shell_expand_braces(string_address word,
-                                    shell_words address_to out)
+                                    shell_words address_to out, bool split)
 {
         string_address open = word;
 
@@ -7313,7 +7356,7 @@ static positive shell_expand_braces(string_address word,
 
                 if (!comma)
                 {
-                        if (expand_brace_range(word, open, close, out))
+                        if (expand_brace_range(word, open, close, out, split))
                                 return out->count;
 
                         open++;
@@ -7327,7 +7370,7 @@ static positive shell_expand_braces(string_address word,
                         comma = expand_brace_comma(piece, close);
                         expand_brace_made(word, open, close, piece,
                                           (positive)((comma ? comma : close) - piece),
-                                          out);
+                                          out, split);
                         if (expand_failed || !comma)
                                 return out->count;
                         piece = comma + 1;
@@ -7336,7 +7379,7 @@ static positive shell_expand_braces(string_address word,
                 return out->count;
         }
 
-        return shell_expand_without_braces(word, out);
+        return shell_expand_without_braces(word, out, split);
 }
 
 /*
@@ -7351,8 +7394,8 @@ static positive shell_expand_braces(string_address word,
 positive shell_expand_fields(string_address word, shell_words address_to out)
 {
         positive count = shell_braceexpand_on()
-                             ? shell_expand_braces(word, out)
-                             : shell_expand_without_braces(word, out);
+                             ? shell_expand_braces(word, out, true)
+                             : shell_expand_without_braces(word, out, true);
 
         if (expand_overflow)
         {
@@ -7406,7 +7449,15 @@ static b32 shell_expand_redirect(string_address word,
         }
 
         {
-                positive count = shell_expand_fields(word, fields);
+                positive count;
+
+                if (shell_posix_on())
+                        count = shell_braceexpand_on()
+                                    ? shell_expand_braces(word, fields, false)
+                                    : shell_expand_without_braces(word, fields,
+                                                                  false);
+                else
+                        count = shell_expand_fields(word, fields);
 
                 if (expand_failed)
                         return -1;
