@@ -1,5 +1,8 @@
 # Shell compatibility checkpoint — 2026-09-05
 
+Historical first pass. The [second pass](shell_compatibility_wave2.md) closes
+more gaps and adds adversarial coverage that exposes additional known failures.
+
 ## Scope and reference
 
 This bounded pass started at source baseline `cf59680`. It tests one Moonwater

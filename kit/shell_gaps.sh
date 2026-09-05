@@ -197,6 +197,10 @@ probe $B 'command -V' 'command -V cd'
 probe $B 'declare -p' 'declare -i n=5; declare -p n'
 probe $B 'declare -r' 'declare -r r=1; r=2; echo $?'
 probe $B 'local -n nameref' 'f() { local -n ref=$1; ref=changed; }; v=orig; f v; echo $v'
+probe $B 'nameref array read' 'a=([2]=x); declare -n n=a; printf "<%s>\n" "${n[2]}"'
+probe $B 'nameref array write' 'a=([2]=x); declare -n n=a; n[4]=y; printf "<%s>\n" "${a[4]}"'
+probe $B 'nameref array unset' 'a=([2]=x); declare -n n=a; unset "n[2]"; printf "<%s>\n" "${a[2]}"'
+probe $B 'nameref compound assignment' 'a=(x y); declare -n n=a; n=(p q); printf "<%s>\n" "${a[*]}"'
 probe $B 'indexed arrays' 'a=(x y z); a[5]=w; echo ${a[0]} ${a[@]} ${#a[@]} ${!a[@]}'
 probe $B 'array append slice' 'a=(1 2); a+=(3 4); echo ${a[@]:1:2} "${a[*]}"'
 probe $B 'assoc arrays' 'declare -A m; m[k]=v; m[j]=w; echo ${m[k]} ${#m[@]}'
@@ -315,4 +319,8 @@ probe $D 'assignment does not split' 'v="x y *"; a=$v; printf "<%s>\n" "$a"'
 probe $D 'nested heredoc parse' 'v=$(cat <<-EOF
 	one $((1+1))
 	EOF
+); printf "<%s>\n" "$v"'
+probe $D 'heredoc closing paren in subst' 'v=$(cat <<EOF
+)
+EOF
 ); printf "<%s>\n" "$v"'
