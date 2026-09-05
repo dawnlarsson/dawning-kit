@@ -65,13 +65,14 @@ def effects(directory):
 
 
 class Runner:
-    def __init__(self, subject, root, timeout, emulator=None, input_kind="command"):
+    def __init__(self, subject, root, timeout, emulator=None, input_kind="command", locale="C"):
         self.subject = subject
         self.root = root
         self.directory = root / "case"
         self.timeout = timeout
         self.emulator = emulator
         self.input_kind = input_kind
+        self.locale = locale
 
     def run(self, mode, script, candidate):
         if self.directory.exists():
@@ -94,7 +95,7 @@ class Runner:
         if candidate and self.emulator:
             argv = [self.emulator, "-0", argv[0], self.subject, *argv[1:]]
             executable = self.emulator
-        environment = {"PATH": "/usr/bin:/bin", "LC_ALL": "C", "TZ": "UTC",
+        environment = {"PATH": "/usr/bin:/bin", "LC_ALL": self.locale, "TZ": "UTC",
                        "HOME": str(self.directory), "TMPDIR": str(self.directory)}
         with tempfile.TemporaryFile(dir=self.root) as out, \
              tempfile.TemporaryFile(dir=self.root) as err, \
@@ -179,6 +180,8 @@ def main():
     parser.add_argument("--cases", type=int, default=int(os.environ.get("MW_SHELL_CASES", "96")),
                         help="case budget per domain and seed; generators balance their families")
     parser.add_argument("--domain", action="append", choices=("expand", "exec", "lex", "builtin"))
+    parser.add_argument("--family", action="append", help="select an exact generated semantic family")
+    parser.add_argument("--locale", help="LC_ALL for both shells (default: C)")
     parser.add_argument("--mode", action="append", choices=tuple(MODES))
     parser.add_argument("--input", dest="input_kind", choices=("command", "file", "stdin"),
                         help="execute with -c (default), a script file, or standard input")
@@ -193,9 +196,9 @@ def main():
     parser.add_argument("--artifacts", type=Path, default=os.environ.get("MW_SHELL_ARTIFACTS"))
     parser.add_argument("--shrink", action="store_true")
     args = parser.parse_args()
-    if args.replay and (args.case or args.domain or args.mode or args.seed or args.input_kind):
+    if args.replay and (args.case or args.domain or args.mode or args.seed or args.input_kind or args.locale or args.family):
         parser.error(
-            "--replay cannot be combined with --case, --domain, --mode, --seed or --input")
+            "--replay cannot be combined with --case, --domain, --mode, --seed, --input, --locale or --family")
     subject = args.subject.resolve(strict=True)
     emulator = str(args.emulator.resolve(strict=True)) if args.emulator else None
     seeds = args.seed or [int(value, 0) for value in
@@ -217,10 +220,12 @@ def main():
             saved_script = saved["script"]
             saved_seed = saved["seed"]
             args.input_kind = saved.get("input", "command")
+            args.locale = saved.get("locale", "C")
             if (not isinstance(saved_family, str) or saved_mode not in MODES or
                     not isinstance(saved_script, str) or
                     not isinstance(saved_seed, int) or
-                    args.input_kind not in ("command", "file", "stdin")):
+                    args.input_kind not in ("command", "file", "stdin") or
+                    not isinstance(args.locale, str) or not args.locale or "\0" in args.locale):
                 raise ValueError("invalid field type")
         except (OSError, ValueError, KeyError, TypeError,
                 json.JSONDecodeError) as error:
@@ -242,6 +247,7 @@ def main():
                    name.removeprefix("shell_cases_") in args.domain]
     passed = failed = invalid = 0
     args.input_kind = args.input_kind or "command"
+    args.locale = args.locale or "C"
     coverage = collections.Counter()
     failures = collections.Counter()
     seen = set()
@@ -250,9 +256,9 @@ def main():
     if emulator:
         identities["emulator"] = identity(emulator)
     print("  generated seeds=" + ",".join(hex(seed) for seed in seeds) +
-          f" budget={args.cases}/domain input={args.input_kind}; compares status, stdout and filesystem effects")
+          f" budget={args.cases}/domain input={args.input_kind} locale={args.locale}; compares status, stdout and filesystem effects")
     with tempfile.TemporaryDirectory(prefix="moonwater-generated-") as temporary:
-        runner = Runner(str(subject), Path(temporary), args.timeout, emulator, args.input_kind)
+        runner = Runner(str(subject), Path(temporary), args.timeout, emulator, args.input_kind, args.locale)
         for seed in seeds:
             for module in modules:
                 # Per-domain randomness stays stable when another domain gains
@@ -260,6 +266,8 @@ def main():
                 domain_seed = int.from_bytes(hashlib.sha256(
                     f"{seed}:{module.__name__}".encode()).digest()[:8], "little")
                 for family, modes, script in module.cases(random.Random(domain_seed), args.cases):
+                    if args.family and family not in args.family:
+                        continue
                     for mode in modes:
                         if args.mode and mode not in args.mode:
                             continue
@@ -268,6 +276,8 @@ def main():
                         identity_input = mode + "\0" + script
                         if args.input_kind != "command":
                             identity_input += "\0" + args.input_kind
+                        if args.locale != "C":
+                            identity_input += "\0" + args.locale
                         key = hashlib.sha256(identity_input.encode()).hexdigest()[:16]
                         if key in seen or (args.case and args.case != key):
                             continue
@@ -303,6 +313,7 @@ def main():
                             base.with_suffix(".json").write_text(json.dumps({
                                 "seed": seed, "budget": args.cases, "case": key,
                                 "input": args.input_kind,
+                                "locale": args.locale,
                                 "family": family, "mode": mode, "original": original,
                                 "script": script, "identities": identities,
                                 "reference": serializable(want), "candidate": serializable(got),

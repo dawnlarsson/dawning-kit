@@ -237,6 +237,10 @@ wait_status_code_base working_directory_get working_directory_set writer_fill
 cover('correctness_only', 'src/test/needle.c', 'memory_search_prepare',
       'prepared-anchor ABI and empty, one-byte, long, exact and folded needles on all architectures')
 
+cover('correctness_only', 'src/test/utf8.c', 'memory_utf8_span',
+      'bounded scalar reference, invalid sequences, alignment and guard pages '
+      'on all architecture floors; no isolated timing claim')
+
 cover('correctness_only', 'src/test/number.c', '''
 string_to_number_checked string_to_number_unsigned_checked
 ''', 'single-scan overflow status, end pointers, and folded/dynamic parity; '

@@ -33,6 +33,70 @@ string_address env_saved_state(const_string name, positive length,
                                bool address_to exported, p8 address_to kind);
 bool env_assign(const_string name, const_string value);
 
+// Resolve LC_CTYPE only for character operations. Keeping this a read of the
+// live environment makes prefix assignments, locals, unset and restoration
+// agree without a second locale cache/invalidation protocol. Other encodings
+// retain the byte path; UTF-8 names may include an @modifier.
+static PURE bool shell_utf8_on()
+{
+        // These names never vary. Supply their compile-time DJB2 hashes to
+        // the same span lookup used by prepared parameter expansions, instead
+        // of scanning and hashing a literal on every character operation.
+        static const positive all_hash =
+            ((((((positive)5381 * 33 + 'L') * 33 + 'C') * 33 + '_') * 33 + 'A') * 33 + 'L') * 33 + 'L';
+        static const positive type_hash =
+            ((((((((positive)5381 * 33 + 'L') * 33 + 'C') * 33 + '_') * 33 + 'C') * 33 + 'T') * 33 + 'Y') * 33 + 'P') * 33 + 'E';
+        static const positive lang_hash =
+            ((((positive)5381 * 33 + 'L') * 33 + 'A') * 33 + 'N') * 33 + 'G';
+        string_address locale = env_get_hashed_span("LC_ALL", 6, all_hash, null);
+        if (!locale || !locale[0])
+                locale = env_get_hashed_span("LC_CTYPE", 8, type_hash, null);
+        if (!locale || !locale[0])
+                locale = env_get_hashed_span("LANG", 4, lang_hash, null);
+        if (!locale || !locale[0])
+                return false;
+        if (locale[0] == 'C' && !locale[1])
+                return false;
+
+        string_address code = string_first_of(locale, '.');
+        code = code ? code + 1 : locale;
+        if (byte_to_lower(code[0]) != 'u' ||
+            byte_to_lower(code[1]) != 't' ||
+            byte_to_lower(code[2]) != 'f')
+                return false;
+        code += 3;
+        if (*code == '-')
+                code++;
+        return code[0] == '8' && (!code[1] || code[1] == '@');
+}
+
+static PURE positive expand_character_width(string_address text, positive size)
+{
+        return memory_utf8_span(text, size, 1).x;
+}
+
+static PURE positive expand_character_previous(string_address text, positive size)
+{
+        if (!size)
+                return 0;
+        positive at = size > 4 ? size - 4 : 0;
+        for (; at + 1 < size; at++)
+                if (text[at] >= 0xc2 &&
+                    expand_character_width(text + at, size - at) == size - at)
+                        return at;
+        return size - 1;
+}
+
+// The matcher has terminated strings rather than spans. Inspect at most four
+// bytes, stopping at NUL before asking the same bounded library primitive.
+static PURE positive expand_character_step(string_address text)
+{
+        positive size = 0;
+        while (size < 4 && text[size])
+                size++;
+        return expand_character_width(text, size);
+}
+
 /*
         The Bash variable attributes, and the array surface built on them.
 
@@ -758,13 +822,19 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
                           string_address text, string_address text_end)
 {
         string_address at;
+        bool utf8 = shell_utf8_on();
 
         if (head == '!')
         {
-                for (at = text; at <= text_end; at++)
+                for (at = text; ;)
+                {
                         if (glob_bounded(rest, pattern_end, at, text_end) &&
                             !glob_alternatives(body, body_end, text, at))
                                 return true;
+                        if (at == text_end)
+                                break;
+                        at += utf8 ? expand_character_width(at, text_end - at) : 1;
+                }
 
                 return false;
         }
@@ -777,7 +847,8 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
         //      Longest first, which is what a glob answers with, and never an
         //      empty occurrence: a group that matched nothing and asked again
         //      would ask forever.
-        for (at = text_end; at > text; at--)
+        for (at = text_end; at > text;
+             at = utf8 ? text + expand_character_previous(text, at - text) : at - 1)
         {
                 if (!glob_alternatives(body, body_end, text, at))
                         continue;
@@ -845,7 +916,9 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                                 if (at == text)
                                         return false;
 
-                                at--;
+                                at = shell_utf8_on()
+                                    ? text + expand_character_previous(text, at - text)
+                                    : at - 1;
                         }
                 }
 
@@ -879,7 +952,8 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                         return false;
 
                 pattern++;
-                text++;
+                text += want == '?' && *text >= 0x80 && shell_utf8_on()
+                    ? expand_character_width(text, text_end - text) : 1;
         }
 
         return text == text_end;
@@ -974,7 +1048,8 @@ static inline INLINE bool shell_match_core(string_address pattern,
                                                       string_get(text)))))
                         {
                                 pattern++;
-                                text++;
+                                text += !escaped && want == '?' && *text >= 0x80 && shell_utf8_on()
+                                    ? expand_character_step(text) : 1;
                                 continue;
                         }
                 }
@@ -990,7 +1065,9 @@ static inline INLINE bool shell_match_core(string_address pattern,
                         return false;
 
                 pattern = star;
-                text = ++back;
+                back += *back >= 0x80 && shell_utf8_on()
+                    ? expand_character_step(back) : 1;
+                text = back;
 
                 if (behind)
                 {
@@ -1671,9 +1748,8 @@ static inline INLINE fn expand_sequence_between(bool fields, p8 between, p8 mark
         stable environment value. A bounded hash and the value length metadata
         select that span without a scan or a temporary copy.
 
-        This deliberately stays byte-oriented, matching the shell matcher it
-        replaces. Special and positional parameters retain their existing
-        path because their value may have to be formatted or joined first.
+        Special and positional parameters retain their existing path because
+        their value may have to be formatted or joined first.
 */
 static fn expand_push_named_trim_one(string_address name, positive name_length,
                                      bool prefix, bool quoted)
@@ -1706,10 +1782,19 @@ static fn expand_push_named_trim_one(string_address name, positive name_length,
 
         if (value_length)
         {
+                positive removed = 1;
+                // ASCII at the selected edge is one byte in either mode.
+                // Keep the common trim independent of locale lookup.
+                if ((prefix ? value[0] : value[value_length - 1]) >= 0x80 &&
+                    shell_utf8_on())
+                        removed = prefix
+                            ? expand_character_width(value, value_length)
+                            : value_length - expand_character_previous(value,
+                                                                        value_length);
                 if (prefix)
-                        value++;
+                        value += removed;
 
-                value_length--;
+                value_length -= removed;
         }
 
         expand_push_run(value, value_length,
@@ -3766,6 +3851,7 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
         positive cut = 0;
         bool found = false;
         positive at;
+        bool utf8 = shell_utf8_on();
 
         // An empty value cannot be shortened, and the buffer this reads is
         // only made by the first push: ${nosuch#} as the first expansion of
@@ -3803,7 +3889,7 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
                 }
         }
 
-        for (at = 0; !found && at <= length; at++)
+        for (at = 0; !found && at <= length;)
         {
                 positive size = longest ? (length - at) : at;
                 p8 held;
@@ -3830,6 +3916,12 @@ static fn expand_trim(positive start, string_address pattern, bool prefix, bool 
                         found = true;
                         break;
                 }
+                if (at == length)
+                        break;
+                at += !utf8 ? 1 : prefix != longest
+                    ? expand_character_width(expand_text + start + at, length - at)
+                    : length - at - expand_character_previous(expand_text + start,
+                                                              length - at);
         }
 
         if (!found || !cut)
@@ -4393,11 +4485,23 @@ static fn expand_substring(string_address name, string_address expression,
                 return;
 
         length = expand_length - expansion_start;
-        if (!expand_slice_bounds(name, expression, length, length, SLICE_STRING,
+        bool utf8 = shell_utf8_on();
+        positive characters = utf8
+            ? memory_utf8_span(expand_text + expansion_start, length, positive_max).y
+            : length;
+        if (!expand_slice_bounds(name, expression, characters, characters, SLICE_STRING,
                                  address_of begin, address_of count))
         {
                 expand_length = expansion_start;
                 return;
+        }
+
+        if (utf8)
+        {
+                begin = memory_utf8_span(expand_text + expansion_start,
+                                         length, begin).x;
+                count = memory_utf8_span(expand_text + expansion_start + begin,
+                                         length - begin, count).x;
         }
 
         memory_copy(expand_text + expansion_start,
@@ -5678,8 +5782,12 @@ static string_address expand_braced(string_address step, bool quoted)
                     (string_is(name, '@') || string_is(name, '*')))
                         count = shell_parameter_count;
                 else
-                        expand_value_of(name, scratch, address_of present,
-                                        address_of count);
+                {
+                        string_address value = expand_value_of(
+                            name, scratch, address_of present, address_of count);
+                        if (present && count && shell_utf8_on())
+                                count = memory_utf8_span(value, count, positive_max).y;
+                }
 
                 if (!present)
                 {

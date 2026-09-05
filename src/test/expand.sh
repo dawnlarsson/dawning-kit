@@ -832,6 +832,44 @@ answer 'not after slash' 'printf "[%s]" /~ END; echo'
 #       What ours says where dash says something else.
 #
 
+section characters
+
+# Set the locale inside each script as well as covering inherited locales in
+# shell_generated. These check live precedence and restoration, not a locale
+# value cached only at startup. Refuse to count a byte-only oracle as UTF-8.
+if [ "$(LC_ALL=C.UTF-8 /bin/bash -c 'x=é; printf %s "${#x}"' 2>/dev/null)" = 1 ]; then
+        group length
+        bash_answer 'UTF-8 scalar and positional lengths' \
+                'LC_ALL=C.UTF-8; x="éΩ界🌙é"; set -- "$x"; printf "%s:%s\n" "${#x}" "${#1}"'
+        bash_answer 'C overrides UTF-8 character category' \
+                'LC_ALL=C; LC_CTYPE=C.UTF-8; LANG=C.UTF-8; x=é; echo "${#x}"'
+        bash_answer 'empty all defers to character category' \
+                'LC_ALL=; LC_CTYPE=C.UTF-8; LANG=C; x=é; echo "${#x}"'
+        bash_answer 'empty categories defer to language' \
+                'LC_ALL=; LC_CTYPE=; LANG=C.UTF-8; x=é; echo "${#x}"'
+        bash_answer 'UTF-8 array and nameref lengths' \
+                'LC_ALL=C.UTF-8; a=([3]=éΩ界🌙); declare -n r=a[3]; printf "%s:%s:%s\n" "${#a[3]}" "${#r}" "${#a[@]}"'
+        bash_answer 'local locale is restored' \
+                'LC_ALL=C; x=é; f() { local LC_ALL=C.UTF-8; echo "${#x}"; }; echo "${#x}"; f; echo "${#x}"'
+        bash_answer 'prefix locale is restored' \
+                'LC_ALL=C; x=é; f() { echo "${#x}"; }; LC_ALL=C.UTF-8 f; echo "${#x}"'
+        group slice
+        bash_answer 'UTF-8 positive and negative character slices' \
+                'LC_ALL=C.UTF-8; x="01234567éΩ界🌙z"; printf "<%s>\n" "${x:8:2}" "${x: -3:2}" "${x:8:-1}" "${x:99:1}"'
+        bash_answer 'C slices still count bytes' \
+                'LC_ALL=C; x=éΩ界; printf "<%s>\n" "${x:1:1}" "${x: -2:1}"'
+        group pattern
+        bash_answer 'UTF-8 question consumes one character' \
+                'LC_ALL=C.UTF-8; for x in é Ω 界 🌙; do case $x in ?) echo yes;; *) echo no;; esac; done'
+        bash_answer 'UTF-8 trim starts and ends at character boundaries' \
+                'LC_ALL=C.UTF-8; x=éΩ界🌙; for p in "?" "??" "*?" "?*" "*界?"; do printf "<%s>\n" "${x#$p}" "${x##$p}" "${x%$p}" "${x%%$p}"; done'
+        bash_answer 'UTF-8 extended pattern repetition' \
+                'LC_ALL=C.UTF-8; shopt -s extglob
+x=éΩ界🌙; for p in "+(?)" "@(?|??)" "!(??)"; do case $x in $p) echo yes;; *) echo no;; esac; printf "<%s>\n" "${x#$p}" "${x%$p}"; done'
+else
+        lost 'UTF-8 oracle' 'C.UTF-8 character support is required for character cases'
+fi
+
 section diverges
 
 group trim

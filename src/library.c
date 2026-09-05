@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        242 routines (233 public, 9 local), 242 of them on all three.
+        243 routines (234 public, 9 local), 243 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -187,6 +187,7 @@
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
           memory_translate               public  yes     yes     yes
+          memory_utf8_span               public  yes     yes     yes
           memory_zero                    public  yes     yes     yes
           moonwater_cpu_detect           public  yes     yes     yes
           narrow_absolute                public  yes     yes     yes
@@ -5249,6 +5250,41 @@ __asm__(
     ASM_RET
     ASM_END(string_hash_33_length)
 
+    // Bounded UTF-8 character traversal shared by lengths, slices and
+    // matchers. x is bytes consumed and y is characters consumed, stopping
+    // at either bound. Invalid or incomplete sequences consume one byte.
+    // Eight ASCII bytes share one integer test; no vector state, allocation,
+    // terminator read or access past size is needed, including at a guard.
+    ASM_FUNC(memory_utf8_span)
+    "xor %r8d, %r8d\n   xor %r9d, %r9d\n"
+    "movabs $0x8080808080808080, %r10\n"
+    "1:  test %rsi, %rsi\n   jz 9f\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmp $8, %rsi\n   jb 2f\n   cmp $8, %rdx\n   jb 2f\n"
+    "mov (%rdi), %rax\n   test %r10, %rax\n   jnz 2f\n"
+    "add $8, %rdi\n   sub $8, %rsi\n   sub $8, %rdx\n"
+    "add $8, %r8\n   add $8, %r9\n   jmp 1b\n"
+    "2:  movzbl (%rdi), %eax\n   mov $1, %r11d\n"
+    "cmp $0xc2, %eax\n   jb 8f\n   cmp $0xf4, %eax\n   ja 8f\n"
+    "mov $2, %r11d\n   cmp $0xdf, %eax\n   jbe 3f\n"
+    "mov $3, %r11d\n   cmp $0xef, %eax\n   jbe 3f\n   mov $4, %r11d\n"
+    "3:  cmp %r11, %rsi\n   jb 7f\n"
+    "movzbl 1(%rdi), %ecx\n   and $0xc0, %ecx\n   cmp $0x80, %ecx\n   jne 7f\n"
+    "movzbl 1(%rdi), %ecx\n"
+    "cmp $0xe0, %eax\n   jne 4f\n   cmp $0xa0, %ecx\n   jb 7f\n"
+    "4:  cmp $0xed, %eax\n   jne 5f\n   cmp $0xa0, %ecx\n   jae 7f\n"
+    "5:  cmp $0xf0, %eax\n   jne 6f\n   cmp $0x90, %ecx\n   jb 7f\n"
+    "6:  cmp $0xf4, %eax\n   jne 4f\n   cmp $0x90, %ecx\n   jae 7f\n"
+    "4:  cmp $2, %r11d\n   je 8f\n"
+    "movzbl 2(%rdi), %eax\n   and $0xc0, %eax\n   cmp $0x80, %eax\n   jne 7f\n"
+    "cmp $3, %r11d\n   je 8f\n"
+    "movzbl 3(%rdi), %eax\n   and $0xc0, %eax\n   cmp $0x80, %eax\n   je 8f\n"
+    "7:  mov $1, %r11d\n"
+    "8:  add %r11, %rdi\n   sub %r11, %rsi\n   add %r11, %r8\n"
+    "inc %r9\n   dec %rdx\n   jmp 1b\n"
+    "9:  mov %r8, %rax\n   mov %r9, %rdx\n"
+    ASM_RET
+    ASM_END(memory_utf8_span)
+
     ASM_FUNC(memory_span_byte)
     "xor %eax, %eax\n"
 #ifndef KERNEL_MODE
@@ -9617,6 +9653,35 @@ __asm__(
     ASM_RET
     ASM_END(string_hash_33_length)
 
+    // memory_utf8_span: the x86_64 body carries the shared contract.
+    ASM_FUNC(memory_utf8_span)
+    "mov x3, #0\n   mov x4, #0\n   mov x5, #0x8080808080808080\n"
+    "1:  cbz x1, 9f\n   cbz x2, 9f\n"
+    "cmp x1, #8\n   b.lo 2f\n   cmp x2, #8\n   b.lo 2f\n"
+    "ldr x7, [x0]\n   tst x7, x5\n   b.ne 2f\n"
+    "add x0, x0, #8\n   sub x1, x1, #8\n   sub x2, x2, #8\n"
+    "add x3, x3, #8\n   add x4, x4, #8\n   b 1b\n"
+    "2:  ldrb w7, [x0]\n   mov x6, #1\n"
+    "cmp w7, #0xc2\n   b.lo 8f\n   cmp w7, #0xf4\n   b.hi 8f\n"
+    "mov x6, #2\n   cmp w7, #0xdf\n   b.ls 3f\n"
+    "mov x6, #3\n   cmp w7, #0xef\n   b.ls 3f\n   mov x6, #4\n"
+    "3:  cmp x1, x6\n   b.lo 7f\n"
+    "ldrb w8, [x0, #1]\n   and w9, w8, #0xc0\n   cmp w9, #0x80\n   b.ne 7f\n"
+    "cmp w7, #0xe0\n   b.ne 4f\n   cmp w8, #0xa0\n   b.lo 7f\n"
+    "4:  cmp w7, #0xed\n   b.ne 5f\n   cmp w8, #0xa0\n   b.hs 7f\n"
+    "5:  cmp w7, #0xf0\n   b.ne 6f\n   cmp w8, #0x90\n   b.lo 7f\n"
+    "6:  cmp w7, #0xf4\n   b.ne 4f\n   cmp w8, #0x90\n   b.hs 7f\n"
+    "4:  cmp x6, #2\n   b.eq 8f\n"
+    "ldrb w8, [x0, #2]\n   and w8, w8, #0xc0\n   cmp w8, #0x80\n   b.ne 7f\n"
+    "cmp x6, #3\n   b.eq 8f\n"
+    "ldrb w8, [x0, #3]\n   and w8, w8, #0xc0\n   cmp w8, #0x80\n   b.eq 8f\n"
+    "7:  mov x6, #1\n"
+    "8:  add x0, x0, x6\n   sub x1, x1, x6\n   add x3, x3, x6\n"
+    "add x4, x4, #1\n   sub x2, x2, #1\n   b 1b\n"
+    "9:  mov x0, x3\n   mov x1, x4\n"
+    ASM_RET
+    ASM_END(memory_utf8_span)
+
     ASM_FUNC(memory_span_byte)
     "mov x3, #0\n   mov x4, x0\n"
 #ifndef KERNEL_MODE
@@ -12992,6 +13057,36 @@ __asm__(
     ASM_RET
     ASM_END(string_hash_33_length)
 
+    // memory_utf8_span: bounded, scalar, with naturally aligned word loads.
+    ASM_FUNC(memory_utf8_span)
+    "li t0, 0\n   li t1, 0\n   li t2, 0x8080808080808080\n"
+    "1:  beqz a1, 9f\n   beqz a2, 9f\n"
+    "li t6, 8\n   bltu a1, t6, 2f\n   bltu a2, t6, 2f\n"
+    "andi t6, a0, 7\n   bnez t6, 2f\n"
+    "ld t4, 0(a0)\n   and t4, t4, t2\n   bnez t4, 2f\n"
+    "addi a0, a0, 8\n   addi a1, a1, -8\n   addi a2, a2, -8\n"
+    "addi t0, t0, 8\n   addi t1, t1, 8\n   j 1b\n"
+    "2:  lbu t4, 0(a0)\n   li t3, 1\n"
+    "li a3, 0xc2\n   bltu t4, a3, 8f\n   li a3, 0xf4\n   bgtu t4, a3, 8f\n"
+    "li t3, 2\n   li a3, 0xdf\n   bleu t4, a3, 3f\n"
+    "li t3, 3\n   li a3, 0xef\n   bleu t4, a3, 3f\n   li t3, 4\n"
+    "3:  bltu a1, t3, 7f\n"
+    "lbu t5, 1(a0)\n   andi t6, t5, 0xc0\n   li a3, 0x80\n   bne t6, a3, 7f\n"
+    "li a3, 0xe0\n   bne t4, a3, 4f\n   li a3, 0xa0\n   bltu t5, a3, 7f\n"
+    "4:  li a3, 0xed\n   bne t4, a3, 5f\n   li a3, 0xa0\n   bgeu t5, a3, 7f\n"
+    "5:  li a3, 0xf0\n   bne t4, a3, 6f\n   li a3, 0x90\n   bltu t5, a3, 7f\n"
+    "6:  li a3, 0xf4\n   bne t4, a3, 4f\n   li a3, 0x90\n   bgeu t5, a3, 7f\n"
+    "4:  li a3, 2\n   beq t3, a3, 8f\n"
+    "lbu t5, 2(a0)\n   andi t5, t5, 0xc0\n   li a3, 0x80\n   bne t5, a3, 7f\n"
+    "li a3, 3\n   beq t3, a3, 8f\n"
+    "lbu t5, 3(a0)\n   andi t5, t5, 0xc0\n   li a3, 0x80\n   beq t5, a3, 8f\n"
+    "7:  li t3, 1\n"
+    "8:  add a0, a0, t3\n   sub a1, a1, t3\n   add t0, t0, t3\n"
+    "addi t1, t1, 1\n   addi a2, a2, -1\n   j 1b\n"
+    "9:  mv a0, t0\n   mv a1, t1\n"
+    ASM_RET
+    ASM_END(memory_utf8_span)
+
     ASM_FUNC(memory_span_byte)
     "mv t0, a0\n   li t1, 0\n   li t6, 4\n"
     "bltu a2, t6, .Lmemory_span_byte_rv_tail\n"
@@ -15222,6 +15317,9 @@ PURE p32 memory_sum_bytes(address_any block, positive size);
 PURE p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
+// Returns {bytes, characters}, bounded by both size and count. Invalid UTF-8
+// bytes each count once; zero bounds permit a null block without reading it.
+PURE positive2 memory_utf8_span(address_any block, positive size, positive count);
 PURE b32 memory_compare_ascii_case(address_any one, address_any two, positive size);
 PURE address_any memory_first_of_ascii_case(address_any block, b8 value,
                                             positive size);

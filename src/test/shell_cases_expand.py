@@ -6,6 +6,8 @@ state and quoting instead of multiplying a fixed assertion into a large test
 count.
 """
 
+MODES = ("bash", "posix", "dash")
+
 
 def quote(text):
     return "'" + text.replace("'", "'\"'\"'") + "'"
@@ -357,6 +359,57 @@ def slice_effects(rng):
         "printf 'after:%s i=%s n=%s\\n' \"$?\" \"$i\" \"$n\"")
 
 
+def character_value(rng):
+    # Cross ASCII word boundaries with two-, three- and four-byte characters,
+    # combining marks and a zero-width joiner. These are valid UTF-8 strings,
+    # not arbitrary labels that merely inflate the case count.
+    unit = rng.choice(("é", "Ω", "界", "🌙", "e\u0301", "👩\u200d💻", "éΩ界🌙"))
+    return "a" * rng.choice((0, 1, 7, 8, 15, 16, 31, 32)) + unit * rng.choice((1, 2, 5)) + rng.choice(("", "z", "/é"))
+
+
+def character_length(rng):
+    value = character_value(rng)
+    shape = rng.choice(("scalar", "positional", "array", "nameref"))
+    modes = MODES if shape in ("scalar", "positional") else ("bash", "posix")
+    if shape == "scalar":
+        setup, operand = "x=" + quote(value), "x"
+    elif shape == "positional":
+        setup, operand = "set -- " + quote(value), "1"
+    elif shape == "array":
+        setup, operand = "a=([3]=" + quote(value) + ")", "a[3]"
+    else:
+        setup, operand = "x=" + quote(value) + "; declare -n n=x", "n"
+    return "character-length", modes, program(setup,
+        "printf 'length:%s:<%s>\\n' \"${#" + operand + "}\" \"${" + operand + "}\"")
+
+
+def character_slice(rng):
+    value = character_value(rng)
+    offset = rng.choice((-99, -8, -3, -1, 0, 1, 2, 7, 8, 15, 16, 33, 99))
+    length = rng.choice(("", ":0", ":1", ":2", ":8", ":99", ":-1"))
+    return "character-slice", ("bash", "posix"), program(
+        "x=" + quote(value),
+        "printf '<%s>\\n' \"${x: " + str(offset) + length + "}\"",
+        "printf 'after:%s\\n' \"$?\"")
+
+
+def character_patterns(rng):
+    value = rng.choice(("é", "Ω界", "éxΩ", "aé界z", "🌙🌙", "e\u0301"))
+    pattern = rng.choice(("?", "??", "???", "*?", "?*", "*?Ω", "é?*", "*界*"))
+    return "character-patterns", MODES, program(
+        "x=" + quote(value),
+        f"case \"$x\" in {pattern}) echo match;; *) echo no;; esac",
+        "printf '<%s>' \"${x#" + pattern + "}\" \"${x##" + pattern +
+        "}\" \"${x%" + pattern + "}\" \"${x%%" + pattern + "}\"; echo")
+
+
+def character_glob(rng):
+    pattern = rng.choice(("u_?", "u_??", "u_?*", "u_*?", "u_?x", "u_é?"))
+    return "character-glob", MODES, program(
+        ": > u_é; : > u_Ω; : > u_界x; : > u_🌙; : > u_éx",
+        f"set -- {pattern}; printf '<%s>\\n' \"$@\"")
+
+
 GENERATORS = (
     parameter_default,
     parameter_trim,
@@ -376,6 +429,10 @@ GENERATORS = (
     array_transform,
     sequence_empty_fields,
     slice_effects,
+    character_length,
+    character_slice,
+    character_patterns,
+    character_glob,
 )
 
 

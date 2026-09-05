@@ -317,6 +317,11 @@ cover('folds_already', 'length', 'string_copy_max',
       'there is no production call, and the copied length remains runtime '
       'even when the padding bound is folded')
 
+cover('folds_already', 'count', 'memory_utf8_span',
+      'character count one already skips the ASCII word loop; the byte bound '
+      'and input bytes remain runtime, so a separate decoder would duplicate '
+      'validation without removing its decisions')
+
 # These shapes make a synthetic constant-call benchmark smaller, but no
 # production caller presents the required constant. Keeping their macro and
 # helper machinery would therefore add source without changing an image.

@@ -43,6 +43,42 @@ class OracleTest(unittest.TestCase):
             status = shell_generated.main()
         return status, output.getvalue()
 
+    def test_selected_locale_reaches_both_shells(self):
+        runner = Runner("/bin/bash", self.root, 2, locale="C.UTF-8")
+        want, got = runner.pair("bash", 'printf "%s" "$LC_ALL"')
+        self.assertEqual(want["stdout"], b"C.UTF-8")
+        self.assertFalse(differences(want, got))
+
+    def test_family_filter_does_not_claim_unselected_coverage(self):
+        def generated(rng, budget):
+            yield "selected", ("bash",), ":"
+            yield "unselected", ("bash",), "printf missing"
+        status, output = self.run_main(generated, "--family", "selected")
+        self.assertEqual(status, 0)
+        self.assertIn("generated 1 of 1", output)
+        self.assertNotIn("unselected", output)
+
+    def test_locale_is_part_of_case_identity_and_replay(self):
+        def generated(rng, budget):
+            yield "locale-replay", ("bash",), 'printf "%s" "$LC_ALL"'
+        artifacts = self.root / "locale-artifacts"
+        _, ordinary = self.run_main(generated)
+        status, output = self.run_main(generated, "--locale", "C.UTF-8",
+                                      "--artifacts", str(artifacts))
+        self.assertEqual(status, 1)
+        case = re.search(r"case=([0-9a-f]{16})", output).group(1)
+        self.assertNotIn("case=" + case, ordinary)
+        artifact = artifacts / (case + ".json")
+        self.assertEqual(json.loads(artifact.read_text())["locale"], "C.UTF-8")
+        replayed = io.StringIO()
+        with mock.patch.dict(os.environ, {"TEST_TALLY": ""}), \
+             mock.patch.object(sys, "argv", ["shell_generated.py", self.true,
+                                              "--replay", str(artifact)]), \
+             contextlib.redirect_stdout(replayed):
+            self.assertEqual(shell_generated.main(), 1)
+        self.assertIn("locale=C.UTF-8", replayed.getvalue())
+        self.assertIn("case=" + case, replayed.getvalue())
+
     def test_same_shell_same_directory_and_environment(self):
         want, got = self.runner.pair("bash", 'printf "%s:%s\\n" "$PWD" "$HOME"; printf x > made')
         self.assertFalse(differences(want, got))
