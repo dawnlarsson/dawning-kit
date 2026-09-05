@@ -422,6 +422,10 @@ static fn fetching(void)
         check("a port above the wire field is refused",
               http_split((string_address) "http://h:65536/", name, sizeof name,
                          address_of port, address_of path) == HTTP_BAD_URL);
+        check("a wrapping port is refused",
+              http_split((string_address) "http://h:18446744073709551696/",
+                         name, sizeof name, address_of port,
+                         address_of path) == HTTP_BAD_URL);
 
         {
                 p8 head[] = "HTTP/1.0 200 OK\r\n"
@@ -436,13 +440,14 @@ static fn fetching(void)
                       http_header_end(head, size) == (bipolar)size);
 
                 value = http_header(head, size, (string_address) "content-length",
-                                    address_of length);
+                                    address_of length, null);
                 check("a header is found whatever its case", value != null);
                 check("and its value read",
                       value && string_digits_max(value, length, null) == 42);
 
                 check("a header that is not there is not invented",
-                      http_header(head, size, (string_address) "location", null) == null);
+                      http_header(head, size, (string_address) "location", null,
+                                  null) == null);
         }
 
         {
@@ -467,6 +472,30 @@ static fn fetching(void)
                 p8 body[] = "not-a-size\r\n";
 
                 check("a non-hex chunk size is refused",
+                      http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+
+        {
+                p8 body[] = "10000000000000000\r\n";
+
+                check("an overflowing chunk size is refused",
+                      http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+
+        {
+                p8 body[] = "A;extension=value\r\nabcdefghij\r\n"
+                            "0;finished=yes\r\n\r\n";
+                bipolar length = http_unchunk(body, sizeof(body) - 1);
+
+                check("chunk extensions preserve the checked size", length == 10);
+                check("extended chunks unwrap in place",
+                      memory_compare(body, "abcdefghij", 10) == 0);
+        }
+
+        {
+                p8 body[] = "ffffffffffffffff\r\nx";
+
+                check("the largest native chunk cannot wrap the bound",
                       http_unchunk(body, sizeof(body) - 1) < 0);
         }
 }
@@ -512,18 +541,59 @@ static fn fetching_for_real(void)
         if (child == 0)
         {
                 p8 said[256];
-                bipolar taken = socket_accept((b32)listening, 0, 0, 0);
-                p8 answer[] = "HTTP/1.0 200 OK\r\n"
-                              "Content-Length: 11\r\n"
-                              "\r\n"
-                              "hello there";
+                p8 answer_good[] = "HTTP/1.0 200 OK\r\n"
+                                   "cOnTeNt-LeNgTh: 11\r\n"
+                                   "\r\n"
+                                   "hello there";
+                p8 answer_short[] = "HTTP/1.0 200 OK\r\n"
+                                    "Content-Length: 12\r\n"
+                                    "\r\n"
+                                    "short";
+                p8 answer_repeated[] = "HTTP/1.0 200 OK\r\n"
+                                       "Content-Length: 5\r\n"
+                                       "content-LENGTH: 5\r\n"
+                                       "\r\n"
+                                       "hello";
+                p8 answer_conflicting[] = "HTTP/1.0 200 OK\r\n"
+                                          "Transfer-Encoding: chunked\r\n"
+                                          "Content-Length: 5\r\n"
+                                          "\r\n"
+                                          "5\r\nhello\r\n0\r\n\r\n";
+                p8 answer_bad_length[] = "HTTP/1.0 200 OK\r\n"
+                                         "Content-Length: 5x\r\n"
+                                         "\r\n"
+                                         "hello";
+                p8 answer_overflow[] = "HTTP/1.0 200 OK\r\n"
+                                       "Content-Length: 18446744073709551616\r\n"
+                                       "\r\n"
+                                       "hello";
+                string_address answers[] = {
+                    (string_address)answer_good,
+                    (string_address)answer_short,
+                    (string_address)answer_repeated,
+                    (string_address)answer_conflicting,
+                    (string_address)answer_bad_length,
+                    (string_address)answer_overflow};
+                positive sizes[] = {
+                    sizeof(answer_good) - 1,
+                    sizeof(answer_short) - 1,
+                    sizeof(answer_repeated) - 1,
+                    sizeof(answer_conflicting) - 1,
+                    sizeof(answer_bad_length) - 1,
+                    sizeof(answer_overflow) - 1};
 
-                if (taken >= 0)
+                for (positive at = 0; at < sizeof(answers) / sizeof(answers[0]);
+                     at++)
                 {
-                        socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
-                        system_write_all((positive)taken, answer, sizeof(answer) - 1);
-                        socket_shutdown((b32)taken, SHUT_BOTH);
-                        socket_close((b32)taken);
+                        bipolar taken = socket_accept((b32)listening, 0, 0, 0);
+
+                        if (taken >= 0)
+                        {
+                                socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
+                                system_write_all((positive)taken, answers[at], sizes[at]);
+                                socket_shutdown((b32)taken, SHUT_BOTH);
+                                socket_close((b32)taken);
+                        }
                 }
 
                 system_call_1(syscall(exit_group), 0);
@@ -532,20 +602,65 @@ static fn fetching_for_real(void)
         {
                 http_buffer body = {0};
                 b32 code = 0;
-                bipolar status = http_get(HOST_LOOPBACK, port,
-                                          (string_address) "127.0.0.1",
-                                          (string_address) "/", address_of body,
-                                          address_of code);
-                positive raw = 0;
+                bipolar status;
+                p8 address_to prior;
+
+                check("the caller buffer can be primed",
+                      byte_store_reserve(address_of body, 16, 16));
+                prior = body.bytes;
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
 
                 check("the fetch succeeds", status == HTTP_OK);
                 check("the status line is read", code == 200);
                 check("the body is its stated length", body.used == 11);
                 check("and is what was sent",
                       body.bytes && memory_compare(body.bytes, "hello there", 11) == 0);
+                check("the response allocation becomes the body",
+                      body.bytes && body.bytes != prior);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a short Content-Length body is refused",
+                      status == HTTP_MALFORMED);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("case-insensitive repeated lengths are refused",
+                      status == HTTP_MALFORMED);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("conflicting response framing is refused",
+                      status == HTTP_MALFORMED);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a numeric Content-Length prefix is refused",
+                      status == HTTP_MALFORMED);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("an overflowing Content-Length is refused",
+                      status == HTTP_MALFORMED);
+                check("a rejected response leaves the prior body owned",
+                      body.used == 11 && body.bytes &&
+                      memory_compare(body.bytes, "hello there", 11) == 0);
 
                 http_forget(address_of body);
-                (void)raw;
         }
 
         system_wait4_retry((b32)child, null, 0, null);

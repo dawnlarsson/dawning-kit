@@ -92,19 +92,22 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
 
         if (string_is(at, ':'))
         {
-                positive used;
+                string_address digits;
                 positive bound;
                 positive value;
 
                 at++;
                 bound = (positive)(string_first_of_or_end(at, '/') - at);
-                value = string_digits_max(at, bound, address_of used);
+                digits = at;
 
-                if (!bound || used != bound || value > 65535)
+                if (!bound ||
+                    !string_digits_checked(address_of digits, 10,
+                                           address_of value) ||
+                    (positive)(digits - at) != bound || value > 65535)
                         return HTTP_BAD_URL;
 
                 address_to port = (p16)value;
-                at += used;
+                at = digits;
         }
 
         address_to path = string_get(at) ? at : (string_address) "/";
@@ -133,10 +136,16 @@ static PURE bipolar http_header_end(p8 address_to bytes, positive size)
 
 //      One header's value, by name, without regard to its case.
 static string_address http_header(p8 address_to bytes, positive size,
-                                  string_address name, positive address_to length)
+                                  string_address name, positive address_to length,
+                                  bool address_to repeated)
 {
         positive at = 0;
         positive want = string_length(name);
+        string_address found = null;
+        positive found_length = 0;
+
+        if (repeated)
+                address_to repeated = false;
 
         while (at < size)
         {
@@ -162,14 +171,22 @@ static string_address http_header(p8 address_to bytes, positive size,
                         from += string_span_max((string_address)(bytes + from), stop - from,
                                                 string_set_blanks);
 
-                        if (length)
-                                address_to length = stop - from;
+                        if (found)
+                        {
+                                if (repeated)
+                                        address_to repeated = true;
+                                continue;
+                        }
 
-                        return (string_address)(bytes + from);
+                        found = (string_address)(bytes + from);
+                        found_length = stop - from;
                 }
         }
 
-        return null;
+        if (found && length)
+                address_to length = found_length;
+
+        return found;
 }
 
 /*
@@ -188,7 +205,8 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
         {
                 positive line = read;
                 positive length;
-                positive used;
+                string_address number;
+                string_address line_end;
                 p8 address_to newline = (p8 address_to)memory_first_of(
                     bytes + read, '\n', size - read);
 
@@ -197,17 +215,40 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
 
                 read = (positive)(newline - bytes);
 
-                length = string_digits_hexadecimal_max(
-                    (string_address)(bytes + line), read - line, address_of used);
-                read++;
+                number = (string_address)(bytes + line);
+                line_end = (string_address)(bytes + read);
+                if (line_end > number && line_end[-1] == '\r')
+                        line_end--;
 
-                if (!used)
+                if (!string_digits_checked(address_of number, 16,
+                                           address_of length))
                         return HTTP_MALFORMED;
+
+                //      Chunk extensions do not change framing. Preserve the
+                //      semicolon-led extension form while refusing an
+                //      arbitrary suffix after the checked length. The tail
+                //      is still bounded by the newline found above.
+                while (number < line_end &&
+                       (number[0] == ' ' || number[0] == '\t'))
+                        number++;
+
+                if (number < line_end)
+                {
+                        if (number[0] != ';')
+                                return HTTP_MALFORMED;
+
+                        while (++number < line_end)
+                                if ((number[0] < ' ' && number[0] != '\t') ||
+                                    number[0] == 0x7f)
+                                        return HTTP_MALFORMED;
+                }
+
+                read++;
 
                 if (!length)
                         return (bipolar)written;
 
-                if (read + length > size)
+                if (length > size - read)
                         return HTTP_MALFORMED;
 
                 memory_copy(bytes + written, bytes + read, length);
@@ -295,7 +336,7 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                                  "Connection: close\r\n\r\n") - 1);
 #undef HTTP_COPY
 
-                if (socket_send((b32)handle, request, used, 0, 0, 0) < 0)
+                if (system_write_all((positive)handle, request, used) != used)
                 {
                         status = HTTP_NO_REPLY;
                         goto done;
@@ -304,18 +345,30 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
         for (;;)
         {
+                if (whole.used > positive_max - 65536)
+                        goto done;
+
                 if (!byte_store_reserve(address_of whole,
                                         whole.used + 65536, 65536))
                         goto done;
 
-                got = socket_receive((b32)handle, whole.bytes + whole.used,
-                                     whole.room - whole.used - 1, 0, 0, 0);
+                got = system_read_retry((positive)handle,
+                                        whole.bytes + whole.used,
+                                        whole.room - whole.used - 1);
 
-                if (got <= 0)
+                if (got < 0)
+                {
+                        status = HTTP_NO_REPLY;
+                        goto done;
+                }
+
+                if (!got)
                         break;
 
                 whole.used += (positive)got;
         }
+
+        whole.bytes[whole.used] = end;
 
         socket_close((b32)handle);
         handle = -1;
@@ -339,42 +392,93 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         if (header < 0)
                 goto done;
 
-        value = http_header(whole.bytes, (positive)header,
-                            (string_address) "transfer-encoding", address_of value_length);
-
-        length = whole.used - (positive)header;
-
-        if (value && value_length >= 7 &&
-            !string_compare_max(value, (string_address) "chunked", 7))
         {
-                bipolar plain = http_unchunk(whole.bytes + header, length);
+                bool transfer_repeated = false;
+                bool length_repeated = false;
+                string_address content_length;
+                positive content_length_size = 0;
 
-                if (plain < 0)
+                value = http_header(whole.bytes, (positive)header,
+                                    (string_address) "transfer-encoding",
+                                    address_of value_length,
+                                    address_of transfer_repeated);
+                content_length = http_header(
+                    whole.bytes, (positive)header,
+                    (string_address) "content-length",
+                    address_of content_length_size, address_of length_repeated);
+
+                //      More than one framing declaration, or both kinds at
+                //      once, is ambiguous. Picking the first lets a proxy and
+                //      this client disagree about where the response ends.
+                if (transfer_repeated || length_repeated ||
+                    (value && content_length))
                         goto done;
 
-                length = (positive)plain;
-        }
-        else
-        {
-                value = http_header(whole.bytes, (positive)header,
-                                    (string_address) "content-length",
-                                    address_of value_length);
+                length = whole.used - (positive)header;
 
                 if (value)
                 {
-                        positive said = string_digits_max(value, value_length, null);
+                        positive from = 0;
+                        positive to = value_length;
+                        bipolar plain;
 
-                        if (said < length)
-                                length = said;
+                        while (from < to &&
+                               (value[from] == ' ' || value[from] == '\t'))
+                                from++;
+                        while (to > from &&
+                               (value[to - 1] == ' ' || value[to - 1] == '\t'))
+                                to--;
+
+                        if (to - from != 7 ||
+                            memory_compare_ascii_case(value + from, "chunked", 7))
+                                goto done;
+
+                        plain = http_unchunk(whole.bytes + header, length);
+                        if (plain < 0)
+                                goto done;
+
+                        length = (positive)plain;
+                }
+                else if (content_length)
+                {
+                        string_address cursor = content_length;
+                        positive said;
+                        positive at;
+
+                        if (!string_digits_checked(address_of cursor, 10,
+                                                   address_of said))
+                                goto done;
+
+                        at = (positive)(cursor - content_length);
+
+                        while (at < content_length_size &&
+                               (content_length[at] == ' ' ||
+                                content_length[at] == '\t'))
+                                at++;
+
+                        //      A short close is not a successful partial
+                        //      download, and a numeric prefix is not a valid
+                        //      length. Both used to pass silently.
+                        if (at != content_length_size || said > length)
+                                goto done;
+
+                        length = said;
                 }
         }
 
-        if (!byte_store_reserve(body, length + 1, 65536))
-                goto done;
+        //      The complete response already owns enough room for the body.
+        //      Compact it in place and hand that allocation to the caller;
+        //      reserving a second store doubled peak RAM for every large
+        //      download only to release the first one immediately afterward.
+        memory_copy(whole.bytes, whole.bytes + header, length);
+        whole.used = length;
+        whole.bytes[length] = end;
 
-        memory_copy(body->bytes, whole.bytes + header, length);
-        body->used = length;
-        body->bytes[length] = end;
+        byte_store_release(body);
+        address_to body = whole;
+        whole.bytes = null;
+        whole.room = 0;
+        whole.used = 0;
 
         status = HTTP_OK;
 
