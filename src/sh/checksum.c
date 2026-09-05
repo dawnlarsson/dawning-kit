@@ -44,6 +44,7 @@ _Static_assert(sizeof(checksum_socket_address) == 88,
 typedef struct
 {
         string_address command;
+        string_address type;
         string_address kernel;
         string_address label;
         positive bytes;
@@ -51,20 +52,20 @@ typedef struct
 } checksum_algorithm;
 
 static const checksum_algorithm checksum_algorithms[] = {
-    {(string_address) "b2sum", (string_address) "blake2b-512",
-     (string_address) "BLAKE2", 64, true},
-    {(string_address) "md5sum", (string_address) "md5",
+    {(string_address) "b2sum", (string_address) "blake2b",
+     (string_address) "blake2b-512", (string_address) "BLAKE2b", 64, true},
+    {(string_address) "md5sum", (string_address) "md5", (string_address) "md5",
      (string_address) "MD5", 16, false},
-    {(string_address) "sha1sum", (string_address) "sha1",
+    {(string_address) "sha1sum", (string_address) "sha1", (string_address) "sha1",
      (string_address) "SHA1", 20, false},
     {(string_address) "sha224sum", (string_address) "sha224",
-     (string_address) "SHA224", 28, false},
+     (string_address) "sha224", (string_address) "SHA224", 28, false},
     {(string_address) "sha256sum", (string_address) "sha256",
-     (string_address) "SHA256", 32, false},
+     (string_address) "sha256", (string_address) "SHA256", 32, false},
     {(string_address) "sha384sum", (string_address) "sha384",
-     (string_address) "SHA384", 48, false},
+     (string_address) "sha384", (string_address) "SHA384", 48, false},
     {(string_address) "sha512sum", (string_address) "sha512",
-     (string_address) "SHA512", 64, false},
+     (string_address) "sha512", (string_address) "SHA512", 64, false},
 };
 
 static const file_long checksum_longs[] = {
@@ -123,6 +124,16 @@ static const checksum_algorithm address_to checksum_algorithm_find(
 {
         for (positive i = 0; i < array_count(checksum_algorithms); i++)
                 if (string_equals(command, checksum_algorithms[i].command))
+                        return checksum_algorithms + i;
+
+        return null;
+}
+
+static const checksum_algorithm address_to checksum_algorithm_type_find(
+    string_address type)
+{
+        for (positive i = 0; i < array_count(checksum_algorithms); i++)
+                if (string_equals(type, checksum_algorithms[i].type))
                         return checksum_algorithms + i;
 
         return null;

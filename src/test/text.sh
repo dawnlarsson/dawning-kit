@@ -134,6 +134,15 @@ printf 'Zg=\n' > "$work/base64_bad_padding"
 printf 'MY======\n' > "$work/base32_one"
 printf 'MZXW6YTBOIAACAT6P6AP57Y=\n' > "$work/base32_binary"
 printf 'M!Z@XW6===\n' > "$work/base32_garbage"
+printf '\206\117\322\157\265\131\367\133' > "$work/z85_known"
+printf 'HelloWorld' > "$work/z85_encoded"
+printf 'Hello\nWorld\n' > "$work/z85_wrapped"
+printf '00 000' > "$work/z85_garbage"
+printf '0000' > "$work/z85_short"
+printf '%%nSc1' > "$work/z85_overflow"
+head -c 30721 /dev/zero > "$work/z85_partial_quantum"
+head -c 65536 /dev/zero > "$work/z85_refill"
+head -c 81920 /dev/zero | tr '\0' 0 > "$work/z85_refill_encoded"
 
 # The three multi-input record walkers share text_reader.  These fixtures
 # cover unequal tails, repeated join keys (whose Cartesian product has an
@@ -716,24 +725,6 @@ compares_many_grep_globs()
         compare 'many grep globs' grep one "$@" x "$work/one"
 }
 
-refuses_basenc_z85()
-{
-        "$bin/basenc" --z85 < "$work/a" > "$work/got" 2> "$work/err"
-        got_status=$?
-
-        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
-           grep -q '^basenc:' "$work/err"
-        then
-                pass=$((pass + 1))
-                return 0
-        fi
-
-        fail=$((fail + 1))
-        printf '  %-8s %-30s want %-24s got %s\n' \
-                "$group" 'z85 loud refusal' 'loud refusal' \
-                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
-}
-
 # These modes have no correct bounded implementation here yet. They must be
 # rejected instead of silently becoming ordinary byte sorting.
 refuses_sort_mode()
@@ -811,7 +802,18 @@ compare 'basenc base16'       basenc encoding_binary --base16
 compare 'basenc base2msbf'    basenc encoding_three --base2msbf -w0
 compare 'basenc base2lsbf'    basenc encoding_three --base2lsbf -w0
 compare 'basenc base64 decode' basenc base64_binary --base64 -d
-refuses_basenc_z85
+compare 'basenc z85 known'     basenc z85_known --z85 -w0
+compare 'basenc z85 wrap'      basenc z85_known --z85 -w4
+compare 'basenc z85 narrow'    basenc z85_known --z85 -w1
+compare 'basenc z85 refill'    basenc z85_refill --z85 -w0
+compare 'basenc z85 partial quantum' basenc z85_partial_quantum --z85 -w0
+compare 'basenc z85 decode'    basenc z85_encoded --z85 -d
+compare 'basenc z85 wrapped decode' basenc z85_wrapped --z85 -d
+compare 'basenc z85 decode refill' basenc z85_refill_encoded --z85 -d
+compare 'basenc z85 garbage'   basenc z85_garbage --z85 -d
+compare 'basenc z85 ignore garbage' basenc z85_garbage --z85 -di
+compare 'basenc z85 short'     basenc z85_short --z85 -d
+compare 'basenc z85 overflow'  basenc z85_overflow --z85 -d
 
 case_start comm
 compare 'plain'              comm - "$work/comm_left" "$work/comm_right"

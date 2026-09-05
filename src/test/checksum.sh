@@ -123,8 +123,16 @@ same 'cksum missing continues' cksum abc absent large
 mkdir crc-directory
 same 'cksum read error' cksum crc-directory
 
+for algorithm in md5 sha1 sha224 sha256 sha384 sha512 blake2b; do
+        same "cksum $algorithm tagged" cksum -a "$algorithm" abc large
+done
+fed 'cksum sha256 stdin' large cksum -a sha256
+same 'cksum sha512 long option' cksum --algorithm=sha512 abc
+same 'cksum digest after file' cksum abc --algorithm=sha256
+same 'cksum digest missing continues' cksum -a sha256 abc absent large
+
 total=$((total + 1))
-if "$bin/cksum" --algorithm=sha256 abc > "$work/reject.out" \
+if "$bin/cksum" --algorithm=sha3 abc > "$work/reject.out" \
      2> "$work/reject.err"; then
         echo '  cksum unsupported algorithm  was silently accepted'
 elif [ ! -s "$work/reject.out" ] &&
@@ -187,6 +195,7 @@ newline_name=$(printf 'ab\nc')
 printf 'slash' > "$slash_name"
 printf 'newline' > "$newline_name"
 same 'escaped filenames output' sha256sum "$slash_name" "$newline_name"
+same 'cksum escaped tagged output' cksum -a sha256 "$slash_name" "$newline_name"
 
 sha256sum "$slash_name" "$newline_name" > escaped.list
 same 'escaped filenames check' sha256sum -c escaped.list

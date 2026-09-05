@@ -2632,10 +2632,10 @@ static fn text_banner(b32 which, bool first)
         present for the line tools, so decoding adds neither an allocation nor
         another large buffer to the multicall image.
 
-        Z85 is deliberately outside this engine.  It is radix 85 over a
-        thirty-two-bit integer rather than a bit-sliced alphabet, and folding
-        a second arithmetic codec into this path would make the common base64
-        loop larger for no shared work.
+        Z85 is deliberately a small sibling below.  It is radix 85 over a
+        thirty-two-bit integer rather than a bit-sliced alphabet, so it shares
+        this reader, writer and wrap state without putting division or another
+        dispatch in the common base64 loop.
 */
 enum
 {
@@ -3269,6 +3269,203 @@ static b32 encoding_decode(const encoding_codec address_to codec,
         return text_done((!valid || text_status) ? 1 : 0);
 }
 
+/* ZeroMQ Z85 consumes complete 32-bit big-endian words.  GNU basenc validates
+   one 30 KiB input quantum before emitting it, so retaining exactly that much
+   in the existing line staging block gives short malformed input no plausible
+   prefix while keeping a long pipe streaming at the same boundary. */
+#define Z85_INPUT_BLOCK 30720
+
+static const p8 z85_alphabet[] =
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#";
+
+static bool z85_groups(encoding_output address_to output,
+                       p8 address_to input, positive groups)
+{
+        /* With -w1 every symbol also has a newline.  Keep each exact reserve
+           below the shared 64 KiB writer ceiling without shrinking the input
+           quantum which pins GNU's malformed-stream behavior. */
+        if (output->wrap && groups > 4096)
+        {
+                while (groups)
+                {
+                        positive take = min(groups, (positive)4096);
+
+                        if (!z85_groups(output, input, take))
+                                return false;
+
+                        groups -= take;
+                        input += take * 4;
+                }
+
+                return true;
+        }
+
+        positive symbols = groups * 5;
+        p8 address_to into = text_reserve(encoding_wrapped(output, symbols));
+
+        if (!into)
+                return false;
+
+        if (!output->wrap)
+        {
+                for (positive group = 0; group < groups; group++)
+                {
+                        p32 value = ((p32)input[0] << 24) |
+                                    ((p32)input[1] << 16) |
+                                    ((p32)input[2] << 8) | input[3];
+                        p8 digits[5];
+
+                        for (positive at = 5; at; at--)
+                        {
+                                digits[at - 1] = z85_alphabet[value % 85];
+                                value /= 85;
+                        }
+
+                        memory_copy_apart(into, digits, sizeof(digits));
+                        into += sizeof(digits);
+                        input += 4;
+                }
+
+                output->wrote = true;
+                return true;
+        }
+
+        for (positive group = 0; group < groups; group++)
+        {
+                p32 value = ((p32)input[0] << 24) |
+                            ((p32)input[1] << 16) |
+                            ((p32)input[2] << 8) | input[3];
+                p8 digits[5];
+
+                for (positive at = 5; at; at--)
+                {
+                        digits[at - 1] = z85_alphabet[value % 85];
+                        value /= 85;
+                }
+
+                for (positive at = 0; at < sizeof(digits); at++)
+                        into = encoding_symbol(into, output, digits[at]);
+
+                input += 4;
+        }
+
+        return true;
+}
+
+static b32 z85_encode(positive wrap)
+{
+        positive held = 0;
+        encoding_output output = {.wrap = wrap};
+        bool valid = true;
+
+        while (valid && text_fill())
+        {
+                p8 address_to at = text_input.buffer + text_input.position;
+                positive left = text_input.filled - text_input.position;
+
+                while (valid && left)
+                {
+                        positive take = min(left,
+                                            (positive)Z85_INPUT_BLOCK - held);
+
+                        memory_copy_apart(text_line + held, at, take);
+                        held += take;
+                        at += take;
+                        left -= take;
+
+                        if (held == Z85_INPUT_BLOCK)
+                        {
+                                valid = z85_groups(address_of output, text_line,
+                                                   Z85_INPUT_BLOCK / 4);
+                                held = 0;
+                        }
+                }
+
+                text_input.position = (positive)(at - text_input.buffer);
+        }
+
+        if (valid && (held & 3))
+        {
+                text_error(null,
+                           "invalid input (length must be multiple of 4 characters)");
+                valid = false;
+        }
+        else if (valid && held)
+                valid = z85_groups(address_of output, text_line, held / 4);
+
+        if (valid && output.wrap && output.wrote && output.column)
+                text_put_character('\n');
+
+        return text_done((!valid || text_status) ? 1 : 0);
+}
+
+static b32 z85_decode(bool ignore_garbage)
+{
+        p8 values[256];
+        positive accumulator = 0;
+        positive held = 0;
+        positive made = 0;
+        bool valid = true;
+
+        memory_fill(values, 255, sizeof(values));
+        for (positive at = 0; at < 85; at++)
+                values[z85_alphabet[at]] = (p8)at;
+
+        while (valid && text_fill())
+        {
+                while (text_input.position < text_input.filled)
+                {
+                        p8 byte = text_input.buffer[text_input.position++];
+                        positive value = values[byte];
+
+                        if (value == 255)
+                        {
+                                if (byte == '\n' || ignore_garbage)
+                                        continue;
+
+                                valid = false;
+                                break;
+                        }
+
+                        accumulator = accumulator * 85 + value;
+                        if (++held != 5)
+                                continue;
+
+                        /* 85^5 is slightly wider than 32 bits, so some
+                           five-symbol spellings are not Z85 words. */
+                        if (accumulator > 0xffffffffu)
+                        {
+                                valid = false;
+                                break;
+                        }
+
+                        text_line[made++] = (p8)(accumulator >> 24);
+                        text_line[made++] = (p8)(accumulator >> 16);
+                        text_line[made++] = (p8)(accumulator >> 8);
+                        text_line[made++] = (p8)accumulator;
+                        accumulator = 0;
+                        held = 0;
+
+                        if (made == TEXT_READ_MAX)
+                        {
+                                text_put(text_line, made);
+                                made = 0;
+                        }
+                }
+        }
+
+        if (made)
+                text_put(text_line, made);
+
+        if (held)
+                valid = false;
+
+        if (!valid)
+                text_error(null, "invalid input");
+
+        return text_done((!valid || text_status) ? 1 : 0);
+}
+
 static const file_long encoding_plain_longs[] = {
     {(string_address)"decode", 'd'},
     {(string_address)"ignore-garbage", 'i'},
@@ -3326,9 +3523,6 @@ static b32 text_encoding(string_address name, positive format)
                         return text_refuse(null, "missing encoding type", 1);
         }
 
-        if (format == ENCODING_Z85)
-                return text_refuse(null, "z85 encoding is not supported", 1);
-
         string_address said = file_option_value(address_of taking, 'w');
 
         if (said && !text_unsigned_option(said, false, address_of wrap))
@@ -3347,10 +3541,18 @@ static b32 text_encoding(string_address name, positive format)
         if (!text_open(path))
                 return text_done(1);
 
-        b32 answered = taking.flags & FILE_FLAG('d')
-            ? encoding_decode(address_of encoding_codecs[format],
-                              (taking.flags & FILE_FLAG('i')) != 0)
-            : encoding_encode(address_of encoding_codecs[format], wrap);
+        b32 answered;
+
+        if (format == ENCODING_Z85)
+                answered = taking.flags & FILE_FLAG('d')
+                               ? z85_decode((taking.flags & FILE_FLAG('i')) != 0)
+                               : z85_encode(wrap);
+        else
+                answered = taking.flags & FILE_FLAG('d')
+                               ? encoding_decode(address_of encoding_codecs[format],
+                                                 (taking.flags & FILE_FLAG('i')) != 0)
+                               : encoding_encode(address_of encoding_codecs[format],
+                                                 wrap);
 
         text_close();
         return answered;
