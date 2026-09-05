@@ -529,6 +529,14 @@ static HOT bool system_snapshot_take(system_snapshot address_to sample,
 
         if (!accelerated)
         {
+                /* The header prefix is reserved space, not live bytes until
+                   the backing store exists. In particular the first /proc
+                   sample must not ask reserve to preserve bytes from a null
+                   mapping with zero capacity. */
+                sample->records.used = 0;
+                if (!byte_store_reserve(address_of sample->records,
+                                        sizeof(struct snapshot_header), 4096))
+                        return false;
                 sample->records.used = sizeof(struct snapshot_header);
                 memory_fill(address_of sample->header, 0,
                             sizeof(sample->header));
