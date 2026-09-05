@@ -233,6 +233,11 @@ wait_status_code_base working_directory_get working_directory_set writer_fill
 cover('correctness_only', 'src/test/needle.c', 'memory_search_prepare',
       'prepared-anchor ABI and empty, one-byte, long, exact and folded needles on all architectures')
 
+cover('correctness_only', 'src/test/number.c', '''
+string_to_number_checked string_to_number_unsigned_checked
+''', 'single-scan overflow status, end pointers, and folded/dynamic parity; '
+     'no shipped isolated timing harness')
+
 cover('correctness_only', 'src/test/verify.c', '''
 file_new_lazy library_close library_get library_open shell_set_cursor
 ''', 'focused ABI, error-path and writer-output coverage on all three architectures')

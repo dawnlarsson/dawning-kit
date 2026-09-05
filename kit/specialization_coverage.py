@@ -206,6 +206,11 @@ cover('specialized', 'base', 'string_to_number string_to_number_unsigned',
       'base ten and sixteen are the two a caller ever writes down, and each '
       'drops the general digit-value path and the base range check',
       expansion='number_known', evidence='src/test/exact_base.c')
+cover('specialized', 'base',
+      'string_to_number_checked string_to_number_unsigned_checked',
+      'the same constant-base scanner also produces overflow status without '
+      'a second digit walk; boundary and early-exit parity are checked',
+      expansion='number_known', evidence='src/test/number.c')
 
 cover('specialized', 'bound', 'string_length_max',
       'Measured literal bounds become a straight bounded word/byte scan',

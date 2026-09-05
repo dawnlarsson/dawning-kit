@@ -336,6 +336,12 @@ PYTHON
         else
                 lost 'performance map' "$(tail -8 "$work/performance.out" | tr '\n' ' ')"
         fi
+
+        if python3 kit/specialization_coverage.py > "$work/specialization.out" 2>&1; then
+                won
+        else
+                lost 'specialization map' "$(tail -8 "$work/specialization.out" | tr '\n' ' ')"
+        fi
 else
         printf '  %-10s %s\n' compact 'no python3, skipped'
 fi
