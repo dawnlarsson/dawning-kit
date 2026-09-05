@@ -35,6 +35,7 @@ def read_limit_state(rng):
     """Compose Bash's byte/count/delimiter options over one retained fd."""
     shape = rng.randrange(4)
     attached = bool(rng.getrandbits(1))
+    descriptor = rng.choice((3, 9, 10, 11, 31, 62))
 
     if shape < 2:
         count = rng.choice((0, 1, 2, 3, 7))
@@ -85,6 +86,15 @@ def read_limit_state(rng):
 
     # dash has only its portable -r surface; Bash and Bash POSIX mode share
     # these documented builtin extensions.
+    # Vary the actual fd in both opens and retained reads; command-only
+    # execution cannot discover script-input ownership bugs. Keep 63 out of
+    # this differential family: Bash's private reader occupies it under the
+    # runner's fd limit and read -u63 can consume its script buffer instead
+    # of the redirected data. Startup tests check private-fd collisions with
+    # explicit expected results, independent of that implementation detail.
+    script = script.replace("exec 3<", f"exec {descriptor}<")
+    script = script.replace("-u3 ", f"-u{descriptor} ")
+    script = script.replace("-u 3 ", f"-u {descriptor} ")
     return "builtin-read-limit-state", ("bash", "posix"), script
 
 

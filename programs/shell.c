@@ -575,6 +575,12 @@ b32 main()
                         log_flush();
                         return shell_bash_compat ? (input == -2 ? 127 : 126) : 2;
                 }
+                exec_script_fd = (b32)input;
+                if (!exec_script_preserve(null))
+                        // At a very low descriptor limit there may be no
+                        // spare slot. Keep streaming the original, CLOEXEC,
+                        // and refuse a later collision if it cannot move.
+                        system_call_3(syscall(fcntl), input, 2, 1);
         }
 
         /*
@@ -665,6 +671,8 @@ b32 main()
                         return 1;
                 }
 
+                if (script_file)
+                        input = exec_script_fd;
                 got = system_read_once(input, shell_buffer + held,
                                        shell_buffer_room - 1 - held);
 
@@ -722,7 +730,10 @@ input_finished:
         shell_input_end();
 
         if (script_file)
-                system_close(input);
+        {
+                system_close(exec_script_fd);
+                exec_script_fd = -1;
+        }
 
         // Input ran out, which is a way of leaving like any other.
         shell_trap_exit();

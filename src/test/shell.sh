@@ -3804,7 +3804,10 @@ bash_answer 'read -p writes the prompt away from stdout' \
 bash_answer 'read -d takes a delimiter' \
         'printf "a:b" | { read -d : v; echo "[$v]"; }'
 bash_answer 'read -t 0 asks and does not read' \
-        'echo x | { read -t 0 v; echo "$?[$v]"; }'
+        '{ v=old; read -t 0 -u 3 v; first=$?; read -u 3 next; second=$?;
+           printf "%s:[%s]:%s:[%s]\n" "$first" "$v" "$second" "$next"; } 3<<EOF
+x
+EOF'
 bash_answer 'read -u names a descriptor' \
         'p=/tmp/bash-readu.$$; echo fromfile > "$p"; exec 3< "$p"; read -u 3 v; exec 3<&-; echo "$v"; rm "$p"'
 bash_answer 'read -e and -i are taken' \

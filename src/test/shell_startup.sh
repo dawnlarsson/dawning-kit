@@ -65,6 +65,39 @@ compare()
         fi
 }
 
+expect_capture()
+{
+        name=$1 executable=$2 script=$3
+        capture "$executable" got '' "$script"
+        printf 'survived:[feed]\n' > "$work/want.out"
+        : > "$work/want.err"
+        printf '0\n' > "$work/want.status"
+        if cmp -s "$work/want.out" "$work/got.out" &&
+                cmp -s "$work/want.err" "$work/got.err" &&
+                cmp -s "$work/want.status" "$work/got.status"; then
+                won
+        else
+                lost "$name" "expected survived:[feed][0], got $(tr '\n' '|' < "$work/got.out")[$(cat "$work/got.status")]; stderr $(head -c 120 "$work/got.err")"
+        fi
+}
+
+# The first command runs before the reader can need the tail. Keeping the
+# following physical line beyond two MAX_INPUT_STEP reads proves a descriptor
+# collision did not merely survive on bytes already buffered in memory.
+stream_pad=x
+while [ "${#stream_pad}" -le 8192 ]; do stream_pad=$stream_pad$stream_pad; done
+printf 'feed\n' > "$work/feed"
+stream_script()
+{
+        path=$1 first=$2 fd=$3
+        {
+                printf '%s\n' "$first"
+                printf '#%s\n' "$stream_pad"
+                printf 'IFS= read -r value <&%s\n' "$fd"
+                printf 'printf "survived:[%%s]\\n" "$value"\n'
+        } > "$path"
+}
+
 section startup_files
 group bash
 compare 'source before command' bash "$work/start" -c 'printf "body:%s\n" "$value"' named arg
@@ -117,6 +150,36 @@ compare 'named onecmd' bash '' -o onecmd -c 'case $- in *t*) echo yes;; esac'
 compare 'runtime onecmd command string' bash '' -c 'set -t; echo one
 echo two'
 compare 'onecmd flag state' bash '' -tc 'case $- in *t*) echo yes;; esac; set +t; case $- in *t*) echo bad;; *) echo off;; esac'
+
+section streamed_scripts
+group public_descriptors
+stream_script "$work/stream-3" 'exec 3< "$ROOT/feed"' 3
+stream_script "$work/stream-9" 'exec 9< "$ROOT/feed"' 9
+for mode in bash dash moonwater; do
+        compare 'script survives fd 3 claim' "$mode" '' "$work/stream-3"
+        compare 'script survives fd 9 claim' "$mode" '' "$work/stream-9"
+done
+
+group private_descriptor_collisions
+stream_script "$work/stream-255" \
+        'exec 255< "$ROOT/feed" 256<&- 257<&-' 255
+expect_capture 'Bash script survives multi-target fd 255 claim' \
+        "$work/names/bash" "$work/stream-255"
+
+printf '%s\n' '#!/bin/sh' 'ulimit -n 64 || exit 125' \
+        "exec \"$work/names/bash\" \"\$@\"" > "$work/low-bash"
+chmod +x "$work/low-bash"
+stream_script "$work/stream-63" 'exec 63< "$ROOT/feed" 62<&-' 63
+expect_capture 'low-limit script survives multi-target fd 63 claim' \
+        "$work/low-bash" "$work/stream-63"
+
+# The inner exec may relocate script input onto fd 10 while the enclosing
+# redirection remembers that 10 began closed. Restoration must reserve the
+# relocated reader rather than close it before the tail is streamed.
+stream_script "$work/stream-nested-63" \
+        '{ exec 63< "$ROOT/feed"; } 10<&-' 63
+expect_capture 'low-limit nested restore preserves script fd' \
+        "$work/low-bash" "$work/stream-nested-63"
 
 section source_files
 group policy

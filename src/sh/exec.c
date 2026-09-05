@@ -4248,6 +4248,9 @@ typedef struct
 static exec_saved_fd exec_saves[REDIRECT_SAVE_MAX];
 static b32 exec_save_count;
 static b32 exec_redirect_status;
+// Only the top-level script reader streams an open file across commands.
+// Its descriptor can move when user redirections claim the same number.
+static b32 exec_script_fd = -1;
 /* Shared with for/select list expansion below. Redirect fields are consumed
    before execution reaches another node, so one retained pointer table serves
    both without another growth path. */
@@ -4295,7 +4298,7 @@ static bipolar exec_save_duplicate(b32 fd, parse_node address_to node, b32 floor
                 if (saved < 0)
                         return saved;
 
-                if (!exec_redirect_target_is(node, (b32)saved))
+                if (!node || !exec_redirect_target_is(node, (b32)saved))
                         return saved;
 
                 system_close(saved);
@@ -4307,10 +4310,65 @@ static bipolar exec_save_duplicate(b32 fd, parse_node address_to node, b32 floor
         }
 }
 
+static COLD bipolar exec_script_duplicate(parse_node address_to node, b32 floor)
+{
+        for (;;)
+        {
+                bipolar saved = exec_save_duplicate(exec_script_fd, node, floor);
+                if (saved < 0)
+                        return saved;
+
+                // A closed descriptor in an enclosing redirect is free now,
+                // but restoration will close or replace it later. The script
+                // must outlive that scope, unlike an ordinary redirect save.
+                b32 at = 0;
+                while (at < exec_save_count && exec_saves[at].fd != saved)
+                        at++;
+                if (at == exec_save_count)
+                        return saved;
+
+                system_close(saved);
+                if (saved >= 0x7ffffffe)
+                        return -1;
+                floor = (b32)saved + 1;
+        }
+}
+
+static COLD bool exec_script_preserve(parse_node address_to node)
+{
+        ul_limit_pair limits;
+        b32 floor = 255;
+        bipolar moved;
+
+        if (ul_prlimit(0, 7, null, address_of limits) >= 0 && limits.soft <= 255)
+                floor = limits.soft > 3 ? (b32)limits.soft - 1 : 3;
+
+        moved = exec_script_duplicate(node, floor);
+        if (moved < 0 && floor > 10)
+                moved = exec_script_duplicate(node, 10);
+        if (moved < 0 && floor > 3)
+                moved = exec_script_duplicate(node, 3);
+        if (moved < 0)
+                return false;
+
+        system_close(exec_script_fd);
+        exec_script_fd = (b32)moved;
+        return true;
+}
+
 static bool exec_save_fd(b32 fd, parse_node address_to node)
 {
         bipolar saved;
         bool closed = false;
+
+        // Reuse the save allocator's complete target exclusion, so a command
+        // claiming several descriptors cannot overwrite the relocated one
+        // later in the same redirect list. Keep the original live on failure.
+        if (fd == exec_script_fd && !exec_script_preserve(node))
+        {
+                string_format(exec_error, "Cannot preserve script input\n");
+                return false;
+        }
 
         if (exec_save_count >= REDIRECT_SAVE_MAX)
         {
