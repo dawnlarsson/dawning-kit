@@ -47,6 +47,69 @@ same()
         lost "$name" "want [$want] got [$got]"
 }
 
+# The remote copy must not recursively ship agent worktrees. Stub the two
+# remote tools and fail the copy deliberately, before any build can start.
+group build
+mkdir -p "$work/build-bin"
+cat > "$work/build-bin/ssh" <<'SCRIPT'
+#!/bin/sh
+exit 0
+SCRIPT
+cat > "$work/build-bin/rsync" <<'SCRIPT'
+#!/bin/sh
+printf '%s\n' "$@" > "$MOONWATER_TEST_COPY"
+exit 23
+SCRIPT
+chmod +x "$work/build-bin/ssh" "$work/build-bin/rsync"
+PATH="$work/build-bin:$PATH" MOONWATER_TEST_COPY="$work/copy-arguments" \
+        sh build.sh --host build-fixture > "$work/build-log" 2>&1
+copy_status=$?
+if [ "$copy_status" -ne 0 ] &&
+        grep -q -x -F '.claude' "$work/copy-arguments"; then
+        won
+else
+        lost 'agent worktree excluded' "copy status $copy_status"
+fi
+
+# Test the benchmark driver's argv contract without a cross compiler or a
+# heavyweight benchmark. Native/taskset and emulated paths see the same words.
+group benchmark
+mkdir -p "$work/bench-bin"
+cat > "$work/bench-program" <<'SCRIPT'
+#!/bin/sh
+printf 'BENCH_ARGS:%s' "$#"
+for word in "$@"; do printf '<%s>' "$word"; done
+printf '\n'
+SCRIPT
+cat > "$work/bench-bin/compiler" <<'SCRIPT'
+#!/bin/sh
+output=
+while [ "$#" -gt 0 ]; do
+        if [ "$1" = -o ]; then output=$2; shift 2; else shift; fi
+done
+[ -n "$output" ] || exit 1
+cp "$MOONWATER_TEST_BENCH_PROGRAM" "$output" || exit 1
+chmod +x "$output"
+SCRIPT
+cat > "$work/bench-bin/runner" <<'SCRIPT'
+#!/bin/sh
+case $0 in */taskset) shift 2 ;; esac
+exec "$@"
+SCRIPT
+chmod +x "$work/bench-bin/compiler" "$work/bench-bin/runner"
+for name in gcc x86_64-linux-gnu-gcc aarch64-linux-gnu-gcc riscv64-linux-gnu-gcc; do
+        ln -s compiler "$work/bench-bin/$name"
+done
+for name in taskset qemu-x86_64 qemu-aarch64 qemu-riscv64; do
+        ln -s runner "$work/bench-bin/$name"
+done
+PATH="$work/bench-bin:$PATH" CC="$work/bench-bin/gcc" \
+        MOONWATER_TEST_BENCH_PROGRAM="$work/bench-program" \
+        sh kit/bench reserve 128 'two words' > "$work/bench-log" 2>&1
+bench_status=$?
+bench_arguments=$(grep -c -x -F 'BENCH_ARGS:2<128><two words>' "$work/bench-log")
+same 'arguments preserved on all targets' '0:3' "$bench_status:$bench_arguments"
+
 #
 #       Bytes.
 #

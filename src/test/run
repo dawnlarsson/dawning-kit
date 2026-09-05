@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text checksum tools process_utils files storage util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -89,6 +89,7 @@ describe()
         checksum) echo "POSIX CRC and optional kernel checksum aliases against GNU coreutils" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
         storage)  echo "mount tables and block identities against util-linux, then real namespace effects" ;;
+        storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
         util)     echo "the pinned util-linux executable denominator and process/I/O policy utilities" ;;
         expand)   echo "quoting, the order the expansions happen in, and the arithmetic" ;;
         builtin)  echo "the commands the shell runs without leaving itself" ;;
@@ -1944,6 +1945,7 @@ lane_declare()   { freestanding_checks_lane declare src/test/declare.c; }
 lane_fold()      { freestanding_checks_lane fold src/test/fold.c; }
 lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
 lane_reserve()   { freestanding_checks_lane reserve src/test/reserve.c; }
+lane_storage_io() { freestanding_checks_lane storage_io src/test/storage_io.c; }
 lane_leaving()   { freestanding_checks_lane leaving src/test/leaving.c; }
 lane_numbers()   { freestanding_checks_lane numbers src/test/number.c; }
 lane_scan()      { freestanding_checks_lane scan src/test/scan.c; }

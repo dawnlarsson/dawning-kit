@@ -57,21 +57,12 @@ static p8 address_to stdbuf_preload_assignment;
 static positive stdbuf_preload_room;
 static p8 stdbuf_library[FILE_PATH_MAX];
 
-static PURE positive stdbuf_u16(p8 address_to bytes)
-{
-        return (positive)bytes[0] | (positive)bytes[1] << 8;
-}
-
-static PURE positive stdbuf_u32(p8 address_to bytes)
-{
-        return (positive)bytes[0] | (positive)bytes[1] << 8 |
-               (positive)bytes[2] << 16 | (positive)bytes[3] << 24;
-}
-
-static PURE p64 stdbuf_u64(p8 address_to bytes)
-{
-        return (p64)stdbuf_u32(bytes) | (p64)stdbuf_u32(bytes + 4) << 32;
-}
+/* Native ELF is little-endian on every supported target. Use the common
+   alias-safe load so x86/ARM get one load and baseline RV64 stays alignment
+   safe, rather than maintaining another byte-decoding family. */
+#define stdbuf_u16(bytes) memory_load_unaligned(p16, (bytes))
+#define stdbuf_u32(bytes) memory_load_unaligned(p32, (bytes))
+#define stdbuf_u64(bytes) memory_load_unaligned(p64, (bytes))
 
 static PURE positive stdbuf_elf_machine()
 {
@@ -310,11 +301,9 @@ static b32 stdbuf_target_kind(string_address path)
 
         if (phoff + bytes > (positive)got)
         {
-                bipolar read = system_call_4(
-                    syscall(pread64), (positive)handle,
-                    (positive)file_transfer, bytes, (positive)phoff);
-
-                if (read != (bipolar)bytes)
+                /* ELF headers beyond the first block use the same bounded,
+                   EINTR/short-read-safe positional reader as disk metadata. */
+                if (storage_read(handle, file_transfer, bytes, phoff) != bytes)
                 {
                         system_close(handle);
                         return STDBUF_ELF_STATIC;

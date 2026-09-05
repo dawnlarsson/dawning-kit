@@ -123,7 +123,6 @@ static positive storage_read(bipolar handle, p8 address_to bytes,
 {
         positive used = 0;
 
-        memory_zero(bytes, room);
         while (used < room)
         {
                 bipolar got = system_call_4(syscall(pread64), (positive)handle,
@@ -138,6 +137,11 @@ static positive storage_read(bipolar handle, p8 address_to bytes,
                 used += (positive)got;
         }
 
+        /* Only unread bytes need padding. A complete read already overwrote
+           every byte; clearing the whole probe first doubled the stores and
+           faulted fresh pages before the kernel filled them. */
+        if (used < room)
+                memory_zero(bytes + used, room - used);
         return used;
 }
 

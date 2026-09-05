@@ -126,6 +126,7 @@ build_remote() {
         # checkout. linux/ is the upstream tree, not part of this repository.
         rsync -az --delete \
                 --exclude '.git' \
+                --exclude '.claude' \
                 --exclude 'linux' \
                 --exclude 'artifacts' \
                 --exclude 'fs' \
