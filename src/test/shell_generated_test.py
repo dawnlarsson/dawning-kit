@@ -37,6 +37,7 @@ class OracleTest(unittest.TestCase):
         output = io.StringIO()
         with mock.patch.object(shell_generated, "MODULES", (module.__name__,)), \
              mock.patch.dict(sys.modules, {module.__name__: module}), \
+             mock.patch.dict(os.environ, {"TEST_TALLY": ""}), \
              mock.patch.object(sys, "argv", argv), \
              contextlib.redirect_stdout(output):
             status = shell_generated.main()
@@ -57,6 +58,19 @@ class OracleTest(unittest.TestCase):
         wrong = Runner(self.true, self.root, 2)
         want, got = wrong.pair("bash", "false")
         self.assertEqual(differences(want, got), ("status",))
+
+    def test_deliberate_failures_do_not_pollute_parent_tally(self):
+        tally = self.root / "parent-tally"
+        tally.write_text("previous 1 1\n")
+
+        def generated(rng, budget):
+            del rng, budget
+            yield "deliberate-failure", ("bash",), "printf correct"
+
+        with mock.patch.dict(os.environ, {"TEST_TALLY": str(tally)}):
+            status, _ = self.run_main(generated)
+        self.assertEqual(status, 1)
+        self.assertEqual(tally.read_text(), "previous 1 1\n")
 
     def test_wrong_subject_cannot_pass_stdout(self):
         wrong = Runner(self.true, self.root, 2)
@@ -177,6 +191,7 @@ class OracleTest(unittest.TestCase):
         self.assertTrue(saved["script"].startswith("printf replayed-"))
         replayed = io.StringIO()
         with mock.patch.object(shell_generated, "MODULES", ("missing_after_save",)), \
+             mock.patch.dict(os.environ, {"TEST_TALLY": ""}), \
              mock.patch.object(sys, "argv", ["shell_generated.py", self.true,
                                                "--replay", str(artifact)]), \
              contextlib.redirect_stdout(replayed):
@@ -198,7 +213,8 @@ class OracleTest(unittest.TestCase):
         artifact = next(artifacts.glob("*.json"))
         self.assertEqual(json.loads(artifact.read_text())["input"], "stdin")
         replayed = io.StringIO()
-        with mock.patch.object(sys, "argv", ["shell_generated.py", self.true,
+        with mock.patch.dict(os.environ, {"TEST_TALLY": ""}), \
+             mock.patch.object(sys, "argv", ["shell_generated.py", self.true,
                                                "--replay", str(artifact)]), \
              contextlib.redirect_stdout(replayed):
             self.assertEqual(shell_generated.main(), 1)

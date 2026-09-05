@@ -1744,10 +1744,13 @@ positive env_names_prefix(string_address prefix, positive length,
 
 static bool env_write_noted(const_string name, positive length, bool written)
 {
-        if (written && length == 15 &&
+        if (!shell_bash_compat || !written)
+                return written;
+
+        if (length == 15 &&
             !memory_compare((address_any)name, "POSIXLY_CORRECT", 15))
                 shell_posix_changed(true);
-        else if (written && length == 6 && shell_bash_compat &&
+        else if (length == 6 &&
                  !memory_compare((address_any)name, "OPTIND", 6))
                 shell_getopts_index_changed();
         return written;

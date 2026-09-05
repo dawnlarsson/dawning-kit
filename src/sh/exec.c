@@ -5890,6 +5890,8 @@ static PURE bool exec_special_active(string_address name, p8 kind)
    the POSIX policy it has always had. */
 static PURE bool exec_special_builtin(string_address name)
 {
+        if (shell_bash_compat && !shell_posix_on())
+                return false;
         return exec_special_active(name, exec_special_kind(name));
 }
 

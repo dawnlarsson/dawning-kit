@@ -2487,6 +2487,11 @@ done < "$TEST_TALLY"
 
 printf '  %-14s %s of %s\n' "" "$total_pass" "$total_all"
 
+# A lane returning zero cannot overrule failed assertions in its tally.
+if [ "$total_pass" -ne "$total_all" ]; then
+        broken="$broken tally"
+fi
+
 if [ -n "$broken" ]; then
         echo
         echo "failed:$broken"
