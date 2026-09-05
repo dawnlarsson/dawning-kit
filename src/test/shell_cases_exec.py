@@ -106,6 +106,52 @@ def _function_scope(rng):
             f"x={outer}; x={prefix} f; printf 'out:%s:%s\\n' \"$x\" \"$?\"")
 
 
+def _function_serialization(rng):
+    """Round-trip retained ASTs, varying structure as well as operand bytes."""
+    value = rng.choice(("plain", "two words", "quote'and\"slash\\", "é🌙"))
+    quoted = "'" + value.replace("'", "'\"'\"'") + "'"
+    body = "printf '<%s:%s>\\n' \"$1\" \"$x\""
+    layers = rng.sample(("group", "subshell", "if", "for", "case", "andor"),
+                        rng.randrange(1, 5))
+    for layer in layers:
+        if layer == "group":
+            body = "{\n" + body + "\n}"
+        elif layer == "subshell":
+            body = "(\n" + body + "\n)"
+        elif layer == "if":
+            body = "if test -n \"$1\"; then\n" + body + "\nelse echo EMPTY; fi"
+        elif layer == "for":
+            body = "for x in a 'b c'; do\n" + body + "\ndone"
+        elif layer == "case":
+            body = "case $1 in v*)\n" + body + "\n;; *) echo OTHER;; esac"
+        else:
+            body = "false || {\n" + body + "\n}"
+    attribute = rng.choice(("", "export -f f\n"))
+    return ("function-serialization", ("bash", "posix"),
+            "x=" + quoted + "\nf() {\n" + body + "\n}\n" + attribute +
+            "saved=$(declare -f f); status=$?; unset -f f\n"
+            "eval \"$saved\"; f value\n"
+            "printf 'status=%s x=<%s>\\n' \"$status\" \"$x\"\n")
+
+
+def _function_heredoc_serialization(rng):
+    headers = []
+    bodies = []
+    for at in range(rng.randrange(1, 5)):
+        delimiter = f"END_{at}"
+        headers.append("<<" + ("'" + delimiter + "'" if rng.randrange(2) else delimiter))
+        body = rng.choice(("", "$VALUE\n", "MOONWATER_FUNCTION_EOF_0\n",
+                           "a\\\nb\n", "a\\\\b\n", "\t$VALUE\n",
+                           "$(printf touched > marker)text\n"))
+        bodies.append(body + delimiter + "\n")
+    return ("function-heredoc-serialization", ("bash", "posix"),
+            "VALUE=before\nf() { cat " + " ".join(headers) + "\n" +
+            "".join(bodies) + "}\n"
+            "saved=$(declare -f f); status=$?; unset -f f\n"
+            "VALUE=after; eval \"$saved\"; f\n"
+            "printf 'status=%s\\n' \"$status\"\n")
+
+
 def _redirect_cardinality(rng):
     pattern = rng.choice(("?.txt", "a.*", "missing.*"))
     operator = rng.choice((">", ">|"))
@@ -251,7 +297,8 @@ def _readonly_scope(rng):
 GENERATORS = (_special_prefix, _command_exception, _disabled_special,
               _control_status,
               _errexit_context, _child_exit, _inherited_exit, _rhs_status,
-              _function_scope, _redirect_cardinality, _pipeline_context,
+              _function_scope, _function_serialization, _function_heredoc_serialization,
+              _redirect_cardinality, _pipeline_context,
               _subshell_scope, _composed_status, _deep_control, _special_scope,
               _descriptor_order, _readonly_scope)
 

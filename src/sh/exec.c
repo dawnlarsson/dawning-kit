@@ -4920,6 +4920,12 @@ typedef struct
         // given back, because the next definition would be written over it.
         positive active;
         bool readonly;
+        bool exported;
+        // The execve spelling is built lazily and retained while the
+        // function is exported. Redefinition reuses this allocation.
+        p8 address_to environment;
+        positive environment_room;
+        bool environment_valid;
         /* Zero is an ordinary function name, one a POSIX special name, and
            two Bash's `source` spelling. The name never changes while this
            slot is live, so command dispatch must not scan the same static
@@ -4939,6 +4945,14 @@ static exec_function address_to exec_functions;
 */
 static positive exec_function_room;
 static positive exec_function_count;
+static positive exec_function_env_generation = 1;
+
+static fn exec_function_environment_changed()
+{
+        exec_function_env_generation++;
+        if (!exec_function_env_generation)
+                exec_function_env_generation = 1;
+}
 
 string_address exec_function_next(positive address_to slot,
                                   bool address_to readonly)
@@ -5029,6 +5043,601 @@ bool exec_function_readonly_hashed(string_address name, positive2 named)
         return slot != positive_max && exec_functions[slot].readonly;
 }
 
+b32 exec_function_attributes_hashed(string_address name, positive2 named)
+{
+        positive slot = exec_function_slot(name, named);
+
+        if (slot == positive_max)
+                return 0;
+        return (exec_functions[slot].readonly ? DECLARE_READONLY : 0) |
+               (exec_functions[slot].exported ? DECLARE_EXPORT : 0);
+}
+
+typedef struct
+{
+        p8 address_to address_to text;
+        positive address_to room;
+        positive used;
+        bool failed;
+} exec_function_text;
+
+static fn exec_function_text_add(exec_function_text address_to made,
+                                 const_string text, positive length)
+{
+        if (made->failed || !length)
+                return;
+
+        if (made->used > positive_max - length - 1 ||
+            !shell_room((address_any address_to)made->text, made->room,
+                        made->used + length + 1, 1))
+        {
+                made->failed = true;
+                return;
+        }
+
+        memory_copy_apart(address_to made->text + made->used,
+                          (address_any)text, length);
+        made->used += length;
+        (address_to made->text)[made->used] = end;
+}
+
+#define exec_function_text_literal(made, literal)                           \
+        exec_function_text_add((made), (const_string)(literal),             \
+                               sizeof(literal) - 1)
+
+static bool exec_function_text_node(exec_function_text address_to made,
+                                    b32 index, positive depth);
+
+static bool exec_function_text_body(exec_function_text address_to made,
+                                    b32 body, positive depth)
+{
+        if (body && parse_nodes[body].kind == NODE_GROUP)
+                return exec_function_text_node(made, body, depth + 1);
+
+        exec_function_text_literal(made, "{ ");
+        if (!exec_function_text_node(made, body, depth + 1))
+                return false;
+        exec_function_text_literal(made, "\n}");
+        return !made->failed;
+}
+
+static bool exec_function_node_has_here(b32 index, positive depth)
+{
+        if (depth > PARSE_NODES)
+                return true;
+
+        while (index)
+        {
+                parse_node address_to node = parse_nodes + index;
+
+                for (b32 at = 0; at < node->redirect_count; at++)
+                        if (parse_redirects[node->redirect + at].op == OP_DLESS)
+                                return true;
+                if (exec_function_node_has_here(node->left, depth + 1) ||
+                    exec_function_node_has_here(node->right, depth + 1) ||
+                    exec_function_node_has_here(node->extra, depth + 1))
+                        return true;
+                index = node->next;
+        }
+
+        return false;
+}
+
+static positive exec_function_here_delimiter(parse_redirect address_to redirect,
+                                              positive ordinal,
+                                              p8 address_to delimiter)
+{
+        static const p8 prefix[] = "MOONWATER_FUNCTION_EOF_";
+        string_address body = (redirect->kept ? parse_kept_text : here_text) +
+                              redirect->body;
+        positive prefix_length = sizeof(prefix) - 1;
+
+        for (;; ordinal++)
+        {
+                positive digits = positive_into(delimiter + prefix_length,
+                                                ordinal);
+                positive length = prefix_length + digits;
+                positive at = 0;
+                bool collision = false;
+
+                memory_copy(delimiter, (address_any)prefix, prefix_length);
+                while (at < redirect->body_length)
+                {
+                        positive start = at;
+
+                        while (at < redirect->body_length && body[at] != '\n')
+                                at++;
+                        if (at - start == length &&
+                            !memory_compare(body + start, delimiter, length))
+                        {
+                                collision = true;
+                                break;
+                        }
+                        if (at < redirect->body_length)
+                                at++;
+                }
+
+                if (!collision)
+                        return length;
+        }
+}
+
+static bool exec_function_text_redirects(exec_function_text address_to made,
+                                         parse_node address_to node)
+{
+        static const string_address spelling[] = {
+            null, null, null, null, "<<", ">>", "<&", ">&", "<>",
+            ">|", null, null, null, "<", ">", null, null, "&>",
+            "&>>", "<<<"};
+
+        for (b32 at = 0; at < node->redirect_count; at++)
+        {
+                parse_redirect address_to redirect =
+                    parse_redirects + node->redirect + at;
+                p8 number[32];
+                positive used;
+
+                if (redirect->op >= sizeof(spelling) / sizeof(spelling[0]) ||
+                    !spelling[redirect->op])
+                        return false;
+
+                exec_function_text_literal(made, " ");
+
+                if (redirect->op != OP_ANDGREAT &&
+                    redirect->op != OP_ANDDGREAT)
+                {
+                        used = positive_into(number,
+                                             (positive)redirect->fd);
+                        exec_function_text_add(made, number, used);
+                }
+
+                exec_function_text_add(
+                    made, spelling[redirect->op],
+                    string_length(spelling[redirect->op]));
+
+                if (redirect->op == OP_DLESS)
+                {
+                        p8 delimiter[64];
+                        positive length = exec_function_here_delimiter(
+                            redirect, (positive)at, delimiter);
+
+                        if (redirect->raw)
+                                exec_function_text_literal(made, "'");
+                        exec_function_text_add(made, delimiter, length);
+                        if (redirect->raw)
+                                exec_function_text_literal(made, "'");
+                }
+                else
+                        exec_function_text_add(made, redirect->text,
+                                               redirect->text_length);
+        }
+
+        /* Here-document bodies follow the complete redirection header in
+           lexical order. A generated delimiter is checked against every
+           body line; quoting it exactly preserves the original expansion
+           policy without needing a second delimiter grammar. */
+        bool first_body = true;
+
+        for (b32 at = 0; at < node->redirect_count; at++)
+        {
+                parse_redirect address_to redirect =
+                    parse_redirects + node->redirect + at;
+                string_address body;
+                p8 delimiter[64];
+                positive length;
+
+                if (redirect->op != OP_DLESS)
+                        continue;
+
+                length = exec_function_here_delimiter(
+                    redirect, (positive)at, delimiter);
+                body = (redirect->kept ? parse_kept_text : here_text) +
+                       redirect->body;
+                if (first_body)
+                        exec_function_text_literal(made, "\n");
+                exec_function_text_add(made, body, redirect->body_length);
+                if (redirect->body_length &&
+                    body[redirect->body_length - 1] != '\n')
+                        exec_function_text_literal(made, "\n");
+                exec_function_text_add(made, delimiter, length);
+                exec_function_text_literal(made, "\n");
+                first_body = false;
+        }
+
+        return !made->failed;
+}
+
+static bool exec_function_text_words(exec_function_text address_to made,
+                                     parse_node address_to node,
+                                     positive first)
+{
+        for (positive at = first; at < node->word_count; at++)
+        {
+                b32 word = node->word + (b32)at;
+
+                if (at != first)
+                        exec_function_text_literal(made, " ");
+                exec_function_text_add(made, parse_words[word],
+                                       parse_word_lengths[word]);
+        }
+
+        return !made->failed;
+}
+
+static bool exec_function_text_list(exec_function_text address_to made,
+                                    b32 child, positive depth)
+{
+        while (child)
+        {
+                b32 next = parse_nodes[child].next;
+
+                if (!exec_function_text_node(made, child, depth + 1))
+                        return false;
+                if (next)
+                        exec_function_text_literal(made, "\n");
+                child = next;
+        }
+
+        return !made->failed;
+}
+
+static bool exec_function_text_node(exec_function_text address_to made,
+                                    b32 index, positive depth)
+{
+        parse_node address_to node;
+        b32 child;
+
+        if (!index)
+                return true;
+        if (depth > PARSE_NODES)
+                return false;
+
+        node = parse_nodes + index;
+
+        if (node->kind == NODE_SIMPLE || node->kind == NODE_ARITHMETIC ||
+            node->kind == NODE_CONDITIONAL)
+        {
+                exec_function_text_words(made, node, 0);
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_PIPELINE)
+        {
+                /* Here-document bodies follow the whole pipeline header,
+                   not the command whose redirect owns them. The compact
+                   serializer has no pending-body side table, so reject this
+                   narrow form rather than emit a definition that imports as
+                   a different program. */
+                if (exec_function_node_has_here(node->left, depth + 1))
+                        return false;
+                if (node->flags)
+                        exec_function_text_literal(made, "! ");
+                for (child = node->left; child; child = parse_nodes[child].next)
+                {
+                        if (child != node->left)
+                                exec_function_text_literal(made, " | ");
+                        if (!exec_function_text_node(made, child, depth + 1))
+                                return false;
+                }
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_ANDOR)
+        {
+                if (exec_function_node_has_here(node->left, depth + 1))
+                        return false;
+                for (child = node->left; child; child = parse_nodes[child].next)
+                {
+                        if (child != node->left)
+                                exec_function_text_add(
+                                    made, parse_nodes[child].op == OP_AND_IF
+                                              ? (const_string)" && "
+                                              : (const_string)" || ", 4);
+                        if (!exec_function_text_node(made, child, depth + 1))
+                                return false;
+                }
+                if (node->flags)
+                        exec_function_text_literal(made, " &");
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_LIST)
+                return exec_function_text_list(made, node->left, depth);
+
+        if (node->kind == NODE_SUBSHELL || node->kind == NODE_GROUP)
+        {
+                exec_function_text_add(
+                    made, node->kind == NODE_GROUP ? (const_string)"{ "
+                                                   : (const_string)"( ", 2);
+                if (!exec_function_text_node(made, node->left, depth + 1))
+                        return false;
+                exec_function_text_add(
+                    made, node->kind == NODE_GROUP ? (const_string)"\n}"
+                                                   : (const_string)"\n)", 2);
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_IF)
+        {
+                exec_function_text_literal(made, "if ");
+                if (!exec_function_text_node(made, node->left, depth + 1))
+                        return false;
+                exec_function_text_literal(made, "\nthen ");
+                if (!exec_function_text_node(made, node->right, depth + 1))
+                        return false;
+                if (node->extra)
+                {
+                        exec_function_text_literal(made, "\nelse ");
+                        if (!exec_function_text_node(made, node->extra,
+                                                     depth + 1))
+                                return false;
+                }
+                exec_function_text_literal(made, "\nfi");
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_WHILE || node->kind == NODE_UNTIL)
+        {
+                exec_function_text_add(
+                    made, node->kind == NODE_WHILE ? (const_string)"while "
+                                                   : (const_string)"until ",
+                    6);
+                if (!exec_function_text_node(made, node->left, depth + 1))
+                        return false;
+                exec_function_text_literal(made, "\ndo ");
+                if (!exec_function_text_node(made, node->right, depth + 1))
+                        return false;
+                exec_function_text_literal(made, "\ndone");
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_FOR || node->kind == NODE_SELECT ||
+            node->kind == NODE_CFOR)
+        {
+                exec_function_text_add(
+                    made, node->kind == NODE_SELECT ? (const_string)"select "
+                                                    : (const_string)"for ",
+                    node->kind == NODE_SELECT ? 7 : 4);
+                if (node->kind == NODE_CFOR)
+                        exec_function_text_words(made, node, 0);
+                else
+                {
+                        b32 word = node->word;
+
+                        if (node->word_count)
+                                exec_function_text_add(
+                                    made, parse_words[word],
+                                    parse_word_lengths[word]);
+                        if (node->flags)
+                        {
+                                exec_function_text_literal(made, " in");
+                                if (node->word_count > 1)
+                                {
+                                        exec_function_text_literal(made, " ");
+                                        exec_function_text_words(made, node, 1);
+                                }
+                        }
+                }
+                exec_function_text_literal(made, "\ndo ");
+                if (!exec_function_text_node(made, node->right, depth + 1))
+                        return false;
+                exec_function_text_literal(made, "\ndone");
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_CASE)
+        {
+                exec_function_text_literal(made, "case ");
+                exec_function_text_words(made, node, 0);
+                exec_function_text_literal(made, " in ");
+
+                for (child = node->left; child; child = parse_nodes[child].next)
+                {
+                        parse_node address_to item = parse_nodes + child;
+
+                        for (positive at = 0; at < item->word_count; at++)
+                        {
+                                b32 word = item->word + (b32)at;
+                                if (at)
+                                        exec_function_text_literal(made, "|");
+                                exec_function_text_add(made, parse_words[word],
+                                                       parse_word_lengths[word]);
+                        }
+                        exec_function_text_literal(made, ") ");
+                        if (!exec_function_text_node(made, item->right,
+                                                     depth + 1))
+                                return false;
+                        exec_function_text_literal(made, "\n");
+                        exec_function_text_add(
+                            made,
+                            item->flags == CASE_FALL_THROUGH
+                                ? (const_string)";& "
+                                : item->flags == CASE_TEST_ON
+                                      ? (const_string)";;& "
+                                      : (const_string)";; ",
+                            item->flags == CASE_TEST_ON ? 4 : 3);
+                }
+
+                exec_function_text_literal(made, "esac");
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_FUNCTION)
+        {
+                exec_function_text_words(made, node, 0);
+                exec_function_text_literal(made, " () ");
+                if (!exec_function_text_body(made, node->right, depth + 1))
+                        return false;
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_TIME)
+        {
+                if (node->op)
+                        exec_function_text_literal(made, "! ");
+                exec_function_text_literal(made, "time ");
+                if (node->flags)
+                        exec_function_text_literal(made, "-p ");
+                if (!exec_function_text_node(made, node->left, depth + 1))
+                        return false;
+                return exec_function_text_redirects(made, node);
+        }
+
+        if (node->kind == NODE_COPROC)
+        {
+                exec_function_text_literal(made, "coproc ");
+                if (node->word_count &&
+                    !word_is(parse_words[node->word], "COPROC"))
+                {
+                        exec_function_text_words(made, node, 0);
+                        exec_function_text_literal(made, " ");
+                }
+                if (!exec_function_text_node(made, node->left, depth + 1))
+                        return false;
+                return exec_function_text_redirects(made, node);
+        }
+
+        return false;
+}
+
+static bool exec_function_text_definition(exec_function_text address_to made,
+                                          positive slot, bool environment)
+{
+        exec_function address_to function = exec_functions + slot;
+
+        made->used = 0;
+        made->failed = false;
+
+        if (environment)
+        {
+                exec_function_text_literal(made, "BASH_FUNC_");
+                exec_function_text_add(made, function->name,
+                                       function->name_length);
+                exec_function_text_literal(made, "%%=() ");
+        }
+        else
+        {
+                exec_function_text_add(made, function->name,
+                                       function->name_length);
+                exec_function_text_literal(made, " () \n");
+        }
+
+        if (!exec_function_text_body(made, function->body, 0))
+                return false;
+
+        if (!environment)
+                exec_function_text_literal(made, "\n");
+
+        return !made->failed;
+}
+
+static bool exec_function_environment_prepare(positive slot)
+{
+        exec_function address_to function = exec_functions + slot;
+        exec_function_text made = {
+            address_of function->environment,
+            address_of function->environment_room, 0, false};
+
+        if (function->environment_valid)
+                return true;
+        function->environment_valid =
+            exec_function_text_definition(address_of made, slot, true);
+        return function->environment_valid;
+}
+
+bool exec_function_write(writer write, string_address name, b32 filter)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = exec_function_slot(name, named);
+        p8 address_to text = null;
+        positive room = 0;
+        exec_function_text made = {address_of text, address_of room, 0, false};
+        exec_function address_to function;
+        bool answer;
+
+        if (slot == positive_max)
+                return false;
+        function = exec_functions + slot;
+        if ((filter & DECLARE_EXPORT) && !function->exported)
+                return true;
+        if ((filter & DECLARE_READONLY) && !function->readonly)
+                return true;
+
+        answer = exec_function_text_definition(address_of made, slot, false);
+        if (answer)
+        {
+                write(text, made.used);
+                if (function->readonly || function->exported)
+                {
+                        write("declare -f", 10);
+                        if (function->readonly)
+                                write("r", 1);
+                        if (function->exported)
+                                write("x", 1);
+                        write(" ", 1);
+                        write(function->name, function->name_length);
+                        write("\n", 1);
+                }
+        }
+
+        if (text)
+                memory_free(text, room);
+        return answer;
+}
+
+bool exec_function_export_set(string_address name, bool enabled)
+{
+        positive2 named = string_hash_33_length(name);
+        positive slot = exec_function_slot(name, named);
+
+        if (slot == positive_max)
+                return false;
+        if (enabled && !exec_function_environment_prepare(slot))
+                return false;
+        if (exec_functions[slot].exported != enabled)
+        {
+                exec_functions[slot].exported = enabled;
+                exec_function_environment_changed();
+        }
+        return true;
+}
+
+positive exec_function_environment_generation()
+{
+        return exec_function_env_generation;
+}
+
+positive exec_function_environment_count()
+{
+        positive count = 0;
+
+        for (positive at = 0; at < exec_function_count; at++)
+                if (exec_functions[at].body && exec_functions[at].exported)
+                        count++;
+        return count;
+}
+
+bool exec_function_environment_fill(string_address address_to environment,
+                                    positive count)
+{
+        positive used = 0;
+
+        for (positive at = 0; at < exec_function_count; at++)
+        {
+                exec_function address_to function = exec_functions + at;
+                if (!function->body || !function->exported)
+                        continue;
+                if (used >= count)
+                        return false;
+
+                if (!exec_function_environment_prepare(at))
+                        return false;
+                environment[used++] = function->environment;
+        }
+
+        return used == count;
+}
+
 b32 exec_function_unset(string_address name)
 {
         positive2 named = string_hash_33_length(name);
@@ -5050,7 +5659,11 @@ b32 exec_function_unset(string_address name)
                         parse_release(address_of exec_functions[slot].from,
                                       address_of exec_functions[slot].to);
 
+                if (exec_functions[slot].exported)
+                        exec_function_environment_changed();
                 exec_functions[slot].body = 0;
+                exec_functions[slot].exported = false;
+                exec_functions[slot].environment_valid = false;
                 if (exec_function_recent == slot)
                         exec_function_recent = positive_max;
                 return true;
@@ -5124,6 +5737,10 @@ static b32 exec_define(b32 index)
                         exec_functions[slot].body = 0;
                         exec_functions[slot].active = 0;
                         exec_functions[slot].readonly = false;
+                        exec_functions[slot].exported = false;
+                        exec_functions[slot].environment = null;
+                        exec_functions[slot].environment_room = 0;
+                        exec_functions[slot].environment_valid = false;
                         exec_functions[slot].special_kind = 0;
                         exec_function_count++;
                 }
@@ -5139,6 +5756,8 @@ static b32 exec_define(b32 index)
                 exec_functions[slot].name_hash = named.x;
                 exec_functions[slot].name_length = named.y;
                 exec_functions[slot].readonly = false;
+                exec_functions[slot].exported = false;
+                exec_functions[slot].environment_valid = false;
                 exec_functions[slot].special_kind =
                     exec_special_kind(name);
         }
@@ -5174,7 +5793,15 @@ static b32 exec_define(b32 index)
                 // What was there was written over by the attempt, so saying
                 // the name is gone is the honest answer.
                 if (released)
+                {
                         exec_functions[slot].body = 0;
+                        exec_functions[slot].environment_valid = false;
+                        if (exec_functions[slot].exported)
+                        {
+                                exec_functions[slot].exported = false;
+                                exec_function_environment_changed();
+                        }
+                }
 
                 return exec_function_no_room(name);
         }
@@ -5182,10 +5809,164 @@ static b32 exec_define(b32 index)
         exec_functions[slot].from = before;
         exec_functions[slot].to = after;
         exec_functions[slot].body = body;
+        exec_functions[slot].environment_valid = false;
         exec_function_recent = slot;
+        if (exec_functions[slot].exported)
+        {
+                if (!exec_function_environment_prepare(slot))
+                {
+                        exec_functions[slot].exported = false;
+                        exec_function_environment_changed();
+                        string_format(exec_error,
+                                      "%s: function body cannot be exported\n",
+                                      name);
+                        shell_status = 1;
+                        return 1;
+                }
+                exec_function_environment_changed();
+        }
         shell_status = 0;
 
         return 0;
+}
+
+static bool exec_function_import_one(string_address entry)
+{
+        static const p8 prefix[] = "BASH_FUNC_";
+        positive entry_length = string_length(entry);
+        string_address equal;
+        string_address value;
+        positive name_length;
+        positive value_length;
+        p8 address_to source = null;
+        positive room = 0;
+        positive source_length;
+        string_address line;
+        b32 root = 0;
+        bool answer = false;
+        lex_frame lexed;
+
+        if (entry_length < sizeof(prefix) + 5 ||
+            memory_compare(entry, (address_any)prefix, sizeof(prefix) - 1))
+                return false;
+
+        equal = string_first_of(entry + sizeof(prefix) - 1, '=');
+        if (!equal || equal < entry + sizeof(prefix) + 1 ||
+            equal[-1] != '%' || equal[-2] != '%')
+                return false;
+
+        name_length = (positive)(equal - entry) - (sizeof(prefix) - 1) - 2;
+        value = equal + 1;
+        value_length = entry_length - (positive)(value - entry);
+        if (!name_length || value_length < 4 || value[0] != '(' ||
+            value[1] != ')' || (value[2] != ' ' && value[2] != '\t') ||
+            value[3] != '{' ||
+            name_length > positive_max - value_length - 2)
+                return false;
+
+        source_length = name_length + value_length + 1;
+        if (!shell_room((address_any address_to)address_of source,
+                        address_of room, source_length + 1, 1))
+                return false;
+
+        memory_copy(source, entry + sizeof(prefix) - 1, name_length);
+        source[name_length] = ' ';
+        memory_copy_end(source + name_length + 1, value, value_length);
+
+        parse_nest_enter();
+        lex_nest_enter(address_of lexed);
+        line = source;
+
+        while (string_get(line))
+        {
+                string_address stop = string_first_of_or_end(line, '\n');
+                string_address next = stop;
+                string_address waiting;
+
+                if (string_get(stop))
+                {
+                        address_to stop = end;
+                        next = stop + 1;
+                }
+
+                waiting = parse_here_open();
+                if (waiting)
+                        parse_here_line(line);
+                else if (!parse_feed(line))
+                        goto leave;
+
+                if (!parse_here_open())
+                {
+                        root = parse_program();
+                        if (parse_state == PARSE_INCOMPLETE)
+                        {
+                                line = next;
+                                continue;
+                        }
+                        if (parse_state || !root ||
+                            parse_nodes[root].kind != NODE_FUNCTION)
+                                goto leave;
+
+                        {
+                                parse_node address_to function =
+                                    parse_nodes + root;
+                                b32 word = function->word;
+
+                                if (function->word_count != 1 ||
+                                    parse_word_lengths[word] != name_length ||
+                                    memory_compare(
+                                        parse_words[word],
+                                        entry + sizeof(prefix) - 1,
+                                        name_length))
+                                        goto leave;
+                        }
+
+                        /* A valid definition may end before the environment
+                           string does. Only blank physical lines may follow;
+                           another AST is never installed or executed. */
+                        for (string_address rest = next; string_get(rest); rest++)
+                                if (string_not(rest, ' ') &&
+                                    string_not(rest, '\t') &&
+                                    string_not(rest, '\n') &&
+                                    string_not(rest, '\r'))
+                                        goto leave;
+
+                        answer = exec_define(root) == 0;
+                        if (answer &&
+                            !exec_function_export_set(
+                                exec_functions[exec_function_recent].name,
+                                true))
+                        {
+                                exec_function_unset(
+                                    exec_functions[exec_function_recent].name);
+                                answer = false;
+                        }
+                        goto leave;
+                }
+
+                line = next;
+        }
+
+leave:
+        parse_reset();
+        lex_nest_leave(address_of lexed);
+        parse_nest_leave();
+        memory_free(source, room);
+        return answer;
+}
+
+fn exec_function_import_environment(string_address address_to environment)
+{
+        b32 status = shell_status;
+
+        if (!shell_bash_compat || shell_startup_privileged)
+                return;
+
+        for (positive at = 0; environment && environment[at]; at++)
+                if (env_function_assignment(environment[at]))
+                        exec_function_import_one(environment[at]);
+
+        shell_status = status;
 }
 
 /*

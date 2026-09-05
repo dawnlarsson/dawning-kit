@@ -43,6 +43,12 @@ compare()
         name=$2
         shift 2
 
+        child=
+        if [ "$mode" = bash_child ]; then
+                mode=bash
+                child=yes
+        fi
+
         printf '%s\n' "$*" > "$work/case.sh"
 
         if [ "$mode" = bash ]; then
@@ -53,13 +59,23 @@ compare()
                 ours=$work/sh
         fi
 
-        if timeout 5 "$reference" "$work/case.sh" > "$work/want" 2>/dev/null; then
+        if [ "$child" ]; then
+                set -- "$reference"
+        else
+                set --
+        fi
+        if timeout 5 "$reference" "$work/case.sh" "$@" > "$work/want" 2>/dev/null; then
                 want_status=0
         else
                 want_status=$?
         fi
 
-        if timeout 5 "$ours" "$work/case.sh" > "$work/got" 2>/dev/null; then
+        if [ "$child" ]; then
+                set -- "$ours"
+        else
+                set --
+        fi
+        if timeout 5 "$ours" "$work/case.sh" "$@" > "$work/got" 2>/dev/null; then
                 got_status=0
         else
                 got_status=$?
@@ -123,6 +139,66 @@ compare bash 'brace expansion enabled' \
         'printf "<%s>\n" pre{a,b}post'
 compare bash 'brace expansion disabled' \
         'set +B; printf "<%s>\n" pre{a,b}post'
+
+section functions
+group attributes
+
+compare bash_child 'export -n removes variable environment mark' \
+        'x=secret; export x; export -n x; "$1" -c '\''printf "<%s>\n" "${x-unset}"'\'''
+compare bash_child 'export -n follows nameref target' \
+        'target=secret; export target; declare -n ref=target; export -n ref; "$1" -c '\''printf "<%s>\n" "${target-unset}"'\'''
+compare bash_child 'exported function reaches Bash child' \
+        'f(){ printf "child:<%s>\n" "$1"; }; export -f f; "$1" -c '\''f "$1"'\'' child value'
+compare bash_child 'exported function reaches Moonwater child' \
+        'f(){ for x in a b; do case $x in a) printf A;; *) printf B;; esac; done; }; export -f f; "$1" -c '\''f; echo'\'''
+compare bash_child 'exported direct compound bodies are wrapped' \
+        'sub() (printf S); cond() if :; then printf I; fi; loop() for x in L; do printf "%s" "$x"; done; export -f sub cond loop; "$1" -c '\''sub; cond; loop; echo'\'''
+compare bash_child 'exported inverted time keeps status' \
+        'f(){ ! time false; printf "%s\n" "$?"; }; export -f f; "$1" -c f'
+compare bash_child 'exported heredoc keeps expansion policy' \
+        'f(){ cat <<EOF
+$VALUE
+EOF
+}; export -f f; VALUE=child "$1" -c f'
+compare bash_child 'exported quoted heredoc avoids delimiter collision' \
+        'f(){ cat <<'\''EOF'\''
+$VALUE
+MOONWATER_FUNCTION_EOF_0
+EOF
+}; export -f f; VALUE=child "$1" -c f'
+compare bash_child 'multiple exported heredocs retain body boundaries' \
+        'f(){ cat <<A <<B
+ignored
+A
+kept
+B
+}; export -f f; "$1" -c f'
+compare bash_child 'empty exported heredoc stays zero bytes' \
+        'f(){ cat <<E
+E
+}; export -f f; "$1" -c f | wc -c'
+compare bash_child 'exported redefinition refreshes child body' \
+        'f(){ echo old; }; export -f f; "$1" -c f; f(){ echo new; }; "$1" -c f'
+compare bash_child 'export -nf removes function environment mark' \
+        'f(){ :; }; export -f f; export -nf f; "$1" -c '\''command -v f >/dev/null 2>&1'\''; printf "%s\n" "$?"'
+compare bash_child 'unset removes exported function cache' \
+        'f(){ :; }; export -f f; unset -f f; "$1" -c '\''command -v f >/dev/null 2>&1'\''; printf "%s\n" "$?"'
+compare bash_child 'malformed exported function is never run' \
+        'env '\''BASH_FUNC_f%%=() { echo GOOD; }; echo BAD'\'' "$1" -c '\''command -v f >/dev/null 2>&1'\''; printf "%s\n" "$?"'
+compare bash_child 'ordinary BASH_FUNC prefix remains an environment variable' \
+        'env BASH_FUNC_bad=ordinary "$1" -c '\''printf "<%s>\n" "$BASH_FUNC_bad"'\'''
+compare bash_child 'privileged mode suppresses function import' \
+        'env '\''BASH_FUNC_f%%=() { echo GOOD; }'\'' "$1" -p -c '\''command -v f >/dev/null 2>&1'\''; printf "%s\n" "$?"'
+
+group serialization
+compare bash 'declare -f body round trips compound grammar' \
+        'f(){ for x in a b; do if test "$x" = a; then printf A; else printf B; fi; done; }; text=$(declare -f f); unset -f f; eval "$text"; f; echo'
+compare bash 'declare -F preserves operand status' \
+        'f(){ :; }; declare -F f missing >/dev/null; printf "%s\n" "$?"'
+compare bash 'readonly function listing carries attribute' \
+        'f(){ :; }; readonly -f f; case $(readonly -fp) in *"declare -fr f"*) echo yes;; *) echo no;; esac'
+compare bash 'declare function attribute inventory is not silent' \
+        'f(){ :; }; export -f f; case $(declare -fx) in *"declare -fx f"*) echo yes;; *) echo no;; esac'
 
 section ulimit
 group bash

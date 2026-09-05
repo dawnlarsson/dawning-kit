@@ -642,6 +642,14 @@ PURE bool shell_posix_on();
 //      exec.c, which is included last; callers keep only the stable name.
 string_address exec_function_next(positive address_to slot,
                                   bool address_to readonly);
+bool exec_function_write(writer write, string_address name, b32 filter);
+b32 exec_function_attributes_hashed(string_address name, positive2 named);
+bool exec_function_export_set(string_address name, bool enabled);
+positive exec_function_environment_generation();
+positive exec_function_environment_count();
+bool exec_function_environment_fill(string_address address_to environment,
+                                    positive count);
+fn exec_function_import_environment(string_address address_to environment);
 
 #include "lex.c"
 #include "file.c"

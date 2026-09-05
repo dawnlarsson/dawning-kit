@@ -555,6 +555,7 @@ b32 main()
             !job_terminal_owned)
                 shell_option_told(SHELL_OPTION_MONITOR, false);
         history_start();
+        exec_function_import_environment(environ);
 
         if (!shell_startup_file())
         {

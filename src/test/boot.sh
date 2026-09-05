@@ -128,6 +128,8 @@ ONECMD
 printf 'inherit-errexit-%s\n' "$?"
 /bin/bash -c 'declare -A a; a["two words"]=ready; unset "a[two words]"; printf "assoc-unset-%s\n" "${#a[@]}"'
 /bin/bash -c 'f() { :; }; readonly -f f; unset -f f; printf "function-readonly-%s\n" "$?"' 2>/dev/null
+/bin/bash -c 'LC_ALL=C.UTF-8; x=$(printf "\303\251z"); printf "utf8-count-%s\n" "${#x}"; printf "utf8-slice-%s\n" "${x:1:1}"; case $x in ??) printf "utf8-pattern-%s\n" matched;; esac'
+printf 'abcd' | /bin/basenc --z85 -w0 | rev
 /bin/bash -c 'enable -n :; :' 2>/dev/null
 printf 'disabled-colon-%s\n' "$?"
 /bin/bash -c 'exit -1'
@@ -236,6 +238,10 @@ says 'child EXIT trap'      'child-trap-ready'
 says 'POSIX inherited errexit' 'inherit-errexit-1'
 says 'associative unset'    'assoc-unset-0'
 says 'readonly function'   'function-readonly-1'
+says 'UTF-8 character count' 'utf8-count-2'
+says 'UTF-8 character slice' 'utf8-slice-z'
+says 'UTF-8 pattern boundary' 'utf8-pattern-matched'
+says 'Z85 stream codec'     'S.Apv'
 says 'disabled builtin'    'disabled-colon-127'
 says 'Bash signed exit'    'signed-exit-255'
 says 'nested heredoc boundary' 'here-)'

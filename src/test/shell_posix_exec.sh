@@ -155,6 +155,12 @@ compare 'disabled control is absent from command query' plain "$B" "$MB" \
 compare 'builtin cannot invoke disabled control' plain "$B" "$MB" \
         'enable -n return; builtin return 7; printf "builtin:%s\n" "$?"'
 
+group functions
+compare 'POSIX set omits function bodies' posix "$B" "$MB" \
+        'f(){ :; }; set | grep -q "^f ()"; printf "%s\n" "$?"'
+compare 'default Bash set includes function bodies' plain "$B" "$MB" \
+        'f(){ :; }; set | grep -q "^f ()"; printf "%s\n" "$?"'
+
 group fatality
 compare 'bad export is fatal' posix "$B" "$MB" \
         'export 1bad=x; echo AFTER'

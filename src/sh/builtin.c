@@ -325,6 +325,7 @@ string_address address_to shell_envp;
 static positive shell_envp_room;
 static bool shell_envp_dirty = true;
 static positive shell_envp_generation;
+static positive shell_envp_function_generation;
 static bool shell_env_initialized;
 
 /* Only an element-bound nameref needs environment text different from its
@@ -1090,6 +1091,32 @@ static bool env_export_mark_direct(string_address name)
         return env_export_mark_span_mode(name, string_length(name), true);
 }
 
+static bool env_export_unmark(string_address name)
+{
+        positive length = string_length(name);
+        const_string target = name;
+        positive target_length = length;
+        positive target_index = shell_var_count;
+
+        if (!env_attribute_target_span(name, length, address_of target,
+                                       address_of target_length,
+                                       address_of target_index))
+                return false;
+
+        if (target_index < shell_var_count)
+        {
+                env_variable address_to entry = shell_vars + target_index;
+
+                entry->permanent = false;
+                if (!entry->temporary && !entry->declared &&
+                    !env_variable_has_value(entry))
+                        env_variable_drop(target_index);
+        }
+
+        shell_envp_dirty = true;
+        return true;
+}
+
 #define env_export_restore(name, enabled)                                   \
         env_mark_restore((name), (enabled), true)
 
@@ -1246,15 +1273,22 @@ string_address address_to shell_environment()
 {
         static string_address empty[1];
         positive count = 0;
+        positive function_generation =
+            exec_function_environment_generation();
+        positive function_count;
 
-        if (!shell_envp_dirty)
+        if (!shell_envp_dirty &&
+            shell_envp_function_generation == function_generation)
                 return shell_envp ? shell_envp : empty;
 
         for (positive at = 0; at < shell_var_count; at++)
                 if (env_variable_exports(shell_vars + at))
                         count++;
 
-        if (!shell_array_room(shell_envp, shell_envp_room, count + 1))
+        function_count = exec_function_environment_count();
+        if (function_count > positive_max - count - 1 ||
+            !shell_array_room(shell_envp, shell_envp_room,
+                              count + function_count + 1))
                 return null;
 
         count = 0;
@@ -1269,8 +1303,14 @@ string_address address_to shell_environment()
                                                        : shell_vars[at].text;
                 }
 
+        if (!exec_function_environment_fill(shell_envp + count,
+                                             function_count))
+                return null;
+        count += function_count;
+
         shell_envp[count] = null;
         shell_envp_dirty = false;
+        shell_envp_function_generation = function_generation;
         shell_envp_generation++;
 
         return shell_envp;
@@ -1339,6 +1379,27 @@ static bool env_borrow_assignment(string_address entry, bool replace)
         return true;
 }
 
+static PURE bool env_function_assignment(string_address entry)
+{
+        static const p8 prefix[] = "BASH_FUNC_";
+        string_address at;
+
+        if (!shell_bash_compat || !entry)
+                return false;
+        for (positive at = 0; at < sizeof(prefix) - 1; at++)
+                if (entry[at] != prefix[at])
+                        return false;
+
+        at = entry + sizeof(prefix) - 1;
+        if (!string_get(at) || string_is(at, '='))
+                return false;
+        while (string_get(at) && string_not(at, '='))
+                at++;
+
+        return string_is(at, '=') && at >= entry + sizeof(prefix) + 2 &&
+               at[-1] == '%' && at[-2] == '%';
+}
+
 fn shell_env_init(string_address address_to process_environment)
 {
         positive inherited = 0;
@@ -1377,9 +1438,16 @@ fn shell_env_init(string_address address_to process_environment)
         // and copying an assignment cell plus a second export-name cell.
         for (positive at = 0;
              process_environment && process_environment[at]; at++)
+        {
+                /* Function transport is parsed and validated after shell
+                   startup has initialized parser policy. Never also expose
+                   its implementation-name as an ordinary variable. */
+                if (env_function_assignment(process_environment[at]))
+                        continue;
                 // Duplicate names are legal; keep the old last-one-wins
                 // behavior without creating a second index entry.
                 env_borrow_assignment(process_environment[at], true);
+        }
 
         // Programs live at the root of the image, so it is on the path.
         string_address defaults[] = {"PATH=/bin:/usr/bin:/bowls/bin:/",
@@ -5582,6 +5650,7 @@ COLD fn shell_shopt(writer write, string_address input)
 static COLD fn shell_declare_elements(writer write, string_address name,
                                       positive length, bool keyed);
 static COLD fn shell_listing_value(writer write, string_address value);
+static bool shell_function_bodies_sorted(writer write, b32 filter);
 
 // A bare set is the variables as lines the shell could be fed: sorted, and
 // scalar values quoted. Arrays use declare's existing reconstructible element
@@ -5638,6 +5707,9 @@ COLD fn shell_set(writer write, string_address input)
         if (shell_argc < 2)
         {
                 if (!shell_names_sorted(write, 0, shell_set_written))
+                        return shell_no_room("set");
+                if (shell_bash_compat && !shell_posix_on() &&
+                    !shell_function_bodies_sorted(write, 0))
                         return shell_no_room("set");
 
                 return shell_answer(0);
@@ -6423,7 +6495,8 @@ static bool local_saved_assign(shell_local_entry address_to entry,
 // held in the same order the option letters take, so that turning a letter
 // into a bit is a table and not a ladder.
 #define DECLARE_ATTRIBUTE 16
-#define DECLARE_FUNCTION 32
+#define DECLARE_FUNCTION_NAMES 32
+#define DECLARE_FUNCTION_BODY 64
 
 typedef struct
 {
@@ -6460,7 +6533,8 @@ static bool shell_declare_options(shell_declare_state address_to state)
                        : value == 'r' ? DECLARE_READONLY
                        : value == 'p' && direction == '-' ? DECLARE_PRINT
                        : value == 'g' && direction == '-' ? DECLARE_GLOBAL
-                       : value == 'F' && direction == '-' ? DECLARE_FUNCTION
+                       : value == 'F' && direction == '-' ? DECLARE_FUNCTION_NAMES
+                       : value == 'f' ? DECLARE_FUNCTION_BODY
                        : attribute ? DECLARE_ATTRIBUTE
                                    : 0;
 
@@ -6740,7 +6814,7 @@ static bool shell_names_sorted(writer write, b32 mark,
 {
         positive count;
         shell_mark held = shell_store_mark(address_of expand_store);
-        string_address address_to names;
+        string_address address_to names = null;
 
         // Materialize before taking the count and copying names. Doing it in
         // a per-name callback cannot add an absent PIPESTATUS to the captured
@@ -6934,7 +7008,7 @@ static bool shell_declare_assign(string_address name, string_address value,
    operand order Bash uses; the no-operand inventory is sorted through the
    same pointer sorter as variable/function completion. */
 static bool shell_functions_sorted(writer write, b32 mark,
-                                   shell_name_writer written)
+                                   shell_name_writer written, bool bodies)
 {
         shell_mark held = shell_store_mark(address_of expand_store);
         string_address address_to names;
@@ -6961,7 +7035,16 @@ static bool shell_functions_sorted(writer write, b32 mark,
                 goto failed;
 
         for (at = 0; at < count; at++)
-                written(write, names[at], string_length(names[at]), mark);
+        {
+                if (bodies)
+                {
+                        if (!exec_function_write(write, names[at], mark))
+                                goto failed;
+                }
+                else
+                        written(write, names[at], string_length(names[at]),
+                                mark);
+        }
 
         shell_store_rewind(address_of expand_store, held);
         return true;
@@ -6977,16 +7060,26 @@ static COLD fn shell_declare_function_written(writer write,
 {
         positive2 named = {
             memory_hash_33((address_any)name, length), length};
-        bool readonly = exec_function_readonly_hashed(name, named);
+        b32 attributes = exec_function_attributes_hashed(name, named);
 
         (void)mark;
-        write(readonly ? "declare -fr " : "declare -f ",
-              readonly ? 12 : 11);
+        write("declare -f", 10);
+        if (attributes & DECLARE_READONLY)
+                write("r", 1);
+        if (attributes & DECLARE_EXPORT)
+                write("x", 1);
+        write(" ", 1);
         write(name, length);
         write("\n", 1);
 }
 
-static COLD b32 shell_declare_functions(writer write, positive index)
+static bool shell_function_bodies_sorted(writer write, b32 filter)
+{
+        return shell_functions_sorted(write, filter, null, true);
+}
+
+static COLD b32 shell_declare_functions(writer write, positive index,
+                                        bool bodies)
 {
         if (index < shell_argc)
         {
@@ -7003,17 +7096,27 @@ static COLD b32 shell_declare_functions(writer write, positive index)
                                 continue;
                         }
 
-                        write(name, named.y);
-                        write("\n", 1);
+                        if (bodies)
+                        {
+                                if (!exec_function_write(write, name, 0))
+                                        return -1;
+                        }
+                        else
+                        {
+                                write(name, named.y);
+                                write("\n", 1);
+                        }
                 }
 
                 return failed ? 0 : 1;
         }
 
-        return shell_functions_sorted(write, 0,
-                                      shell_declare_function_written)
-                   ? 1
-                   : -1;
+        return bodies
+                   ? (shell_function_bodies_sorted(write, 0) ? 1 : -1)
+                   : (shell_functions_sorted(write, 0,
+                                             shell_declare_function_written,
+                                             false)
+                          ? 1 : -1);
 }
 
 COLD fn shell_local(writer write, string_address input)
@@ -7163,15 +7266,19 @@ static fn shell_declare(writer write, string_address input)
         if (!shell_declare_options(address_of state))
                 return;
 
-        if (state.set & DECLARE_FUNCTION)
+        if (state.set & (DECLARE_FUNCTION_NAMES | DECLARE_FUNCTION_BODY))
         {
                 b32 listed;
+                bool bodies = (state.set & DECLARE_FUNCTION_BODY) != 0;
+                b32 attributes = state.set &
+                                 (DECLARE_EXPORT | DECLARE_READONLY);
 
-                /* Function bodies and function attributes other than the
-                   readonly state require an AST serializer. Reject those
-                   combinations instead of printing variable-shaped output. */
-                if ((state.set & ~DECLARE_FUNCTION) || state.clear ||
-                    state.attributes_set || state.attributes_clear)
+                if ((state.set & DECLARE_FUNCTION_NAMES) && bodies ||
+                    (state.set & ~(DECLARE_FUNCTION_NAMES |
+                                   DECLARE_FUNCTION_BODY | DECLARE_PRINT |
+                                   DECLARE_EXPORT | DECLARE_READONLY)) ||
+                    state.attributes_set || state.attributes_clear ||
+                    (state.clear & ~(DECLARE_FUNCTION_BODY | DECLARE_EXPORT)))
                 {
                         shell_diagnostic(
                             "declare: function attribute combination is not supported\n",
@@ -7179,7 +7286,54 @@ static fn shell_declare(writer write, string_address input)
                         return shell_answer(2);
                 }
 
-                listed = shell_declare_functions(write, state.index);
+                /* With an attribute, -f selects function targets instead of
+                   asking for their bodies. The same export/readonly bits are
+                   used by the dedicated builtins below. */
+                if (attributes || (state.clear & DECLARE_EXPORT))
+                {
+                        bool failed = false;
+
+                        if (state.index >= shell_argc)
+                        {
+                                if (attributes)
+                                        return shell_answer(
+                                            shell_function_bodies_sorted(
+                                                write, attributes)
+                                                ? 0 : 1);
+                                shell_diagnostic(
+                                    "declare: function attribute removal wants a name\n",
+                                    0);
+                                return shell_answer(2);
+                        }
+
+                        while (state.index < shell_argc)
+                        {
+                                string_address name = shell_argv[state.index++];
+                                positive2 named = string_hash_33_length(name);
+                                bool okay = true;
+
+                                if (!exec_function_here_hashed(name, named))
+                                        okay = false;
+                                else if (state.clear & DECLARE_EXPORT)
+                                        okay = exec_function_export_set(name,
+                                                                          false);
+                                if (okay && (attributes & DECLARE_EXPORT))
+                                        okay = exec_function_export_set(name,
+                                                                          true);
+                                if (okay && (attributes & DECLARE_READONLY))
+                                        okay = exec_function_readonly_set(name);
+                                if (!okay)
+                                {
+                                        string_format(shell_diagnostic,
+                                                      "declare: %s: function cannot be marked\n",
+                                                      name);
+                                        failed = true;
+                                }
+                        }
+                        return shell_answer(failed ? 1 : 0);
+                }
+
+                listed = shell_declare_functions(write, state.index, bodies);
                 if (listed < 0)
                         return shell_no_room("declare");
                 return shell_answer(listed ? 0 : 1);
@@ -7455,6 +7609,7 @@ static COLD fn shell_marked(writer write, p8 mark)
                                                         : "readonly";
         bool listed = shell_argc < 2;
         bool functions = false;
+        bool unmark = false;
         shell_option_walk walk = {1};
         p8 option;
         positive index;
@@ -7463,19 +7618,16 @@ static COLD fn shell_marked(writer write, p8 mark)
         {
                 if (option == 'p')
                         listed = true;
-                else if (option == 'f' && shell_bash_compat &&
-                         mark == DECLARE_READONLY)
+                else if (option == 'f' && shell_bash_compat)
                         functions = true;
+                else if (option == 'n' && shell_bash_compat &&
+                         mark == DECLARE_EXPORT && walk.direction == '-')
+                        unmark = true;
                 else
                 {
-                        if (option == 'f' && shell_bash_compat)
-                                shell_diagnostic(
-                                    "export: function export is not supported\n",
-                                    0);
-                        else
-                                string_format(shell_diagnostic,
-                                              "%s: -%c: invalid option\n",
-                                              command, option);
+                        string_format(shell_diagnostic,
+                                      "%s: -%c: invalid option\n",
+                                      command, option);
                         return shell_answer(2);
                 }
         }
@@ -7486,27 +7638,49 @@ static COLD fn shell_marked(writer write, p8 mark)
         {
                 bool failed = false;
 
-                /* Bash's no-operand form serializes each retained body before
-                   its declaration. Until that shared AST serializer exists,
-                   refuse the listing rather than emit an incomplete command. */
                 if (listed || index >= shell_argc)
                 {
-                        shell_diagnostic(
-                            "readonly: function listing is not supported\n",
-                            0);
-                        return shell_answer(2);
+                        if (index >= shell_argc)
+                                return shell_answer(
+                                    shell_function_bodies_sorted(write, mark)
+                                        ? 0 : 1);
+
+                        while (index < shell_argc)
+                        {
+                                string_address name = shell_argv[index++];
+                                positive2 named = string_hash_33_length(name);
+
+                                if (!(exec_function_attributes_hashed(
+                                          name, named) & mark) ||
+                                    !exec_function_write(write, name, mark))
+                                        failed = true;
+                        }
+                        return shell_answer(failed ? 1 : 0);
                 }
 
                 while (index < shell_argc)
                 {
                         string_address name = shell_argv[index++];
+                        positive2 named = string_hash_33_length(name);
+                        bool exists = exec_function_here_hashed(name, named);
 
                         if (string_first_of(name, '=') ||
-                            !exec_function_readonly_set(name))
+                            !exists ||
+                            !(mark == DECLARE_EXPORT
+                                  ? exec_function_export_set(name, !unmark)
+                                  : exec_function_readonly_set(name)))
                         {
-                                string_format(shell_diagnostic,
-                                              "readonly: %s: not a function\n",
-                                              name);
+                                if (exists && mark == DECLARE_EXPORT &&
+                                    !unmark)
+                                        string_format(
+                                            shell_diagnostic,
+                                            "export: %s: function body cannot be exported\n",
+                                            name);
+                                else
+                                        string_format(
+                                            shell_diagnostic,
+                                            "%s: %s: not a function\n",
+                                            command, name);
                                 failed = true;
                         }
                 }
@@ -7551,10 +7725,19 @@ static COLD fn shell_marked(writer write, p8 mark)
                 }
 
                 // A name on its own is already marked here: every value
-                // assigned to it later inherits the attribute.
-                kept = (!value || env_assign(word, value + 1)) &&
-                       (mark == DECLARE_EXPORT ? env_export_mark(word)
-                                               : readonly_add(word, length));
+                // assigned to it later inherits the attribute. `export -n`
+                // deliberately does not create a missing variable.
+                if (mark == DECLARE_EXPORT && unmark)
+                {
+                        kept = !value || env_assign(word, value + 1);
+                        if (kept)
+                                kept = env_export_unmark(word);
+                }
+                else
+                        kept = (!value || env_assign(word, value + 1)) &&
+                               (mark == DECLARE_EXPORT
+                                    ? env_export_mark(word)
+                                    : readonly_add(word, length));
 
                 if (value)
                         address_to value = '=';
@@ -14081,7 +14264,8 @@ fn shell_compgen(writer write, string_address input)
 
         if (functions || commands)
         {
-                if (!shell_functions_sorted(write, 0, compgen_function))
+                if (!shell_functions_sorted(write, 0, compgen_function,
+                                            false))
                         return shell_no_room("compgen");
         }
 
