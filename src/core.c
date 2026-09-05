@@ -1323,6 +1323,8 @@ static void __init check_ticks(void)
 // Likewise: an initcall does not need external linkage.
 static b32 __init start()
 {
+        int ret;
+
         /*
                 KERNEL_MODE emits only the scalar bodies: the feature gates
                 become direct branches to them and the userspace SIMD bodies
@@ -1352,8 +1354,13 @@ static b32 __init start()
 
         register_binfmt(&format);
 
-        if (misc_register(&device))
-                log_k("could not register /dev/spark\n");
+        ret = misc_register(&device);
+        if (ret)
+        {
+                log_k("could not register /dev/spark: %d\n", ret);
+                unregister_binfmt(&format);
+                return ret;
+        }
 
 #if defined(CONFIG_MOONWATER_CANVAS) && \
     defined(CONFIG_MOONWATER_CANVAS_AUTOSTART)

@@ -22,74 +22,87 @@
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
 
 /*
-        THE HALF OF THIS FAMILY THAT WAS ALREADY WRITTEN, AND WHY IT IS ONLY
-        DECLARED HERE
+        THE EXISTING INTEGER ENGINE, AND THE STANDARD WRAPPERS
 
-        src/platform/standard.inc holds the whole integer half of the number
-        conversions as assembly at three-architecture parity, and attaches the
-        C names to it with ASM_ALIAS:
+        src/platform/standard.inc holds the integer scanners as assembly at
+        three-architecture parity, and attaches the names that cannot report
+        an error with ASM_ALIAS:
 
               abs labs llabs        absolute_whole, absolute_wide
               atoi atol atoll       string_to_whole, string_to_whole_wide
-              strtol strtoll        string_to_number
-              strtoul strtoull      string_to_number_unsigned
 
-        ASM_ALIAS emits `.set strtol, string_to_number` into the one assembly
-        stream this translation unit becomes. That is a real global symbol
-        with no C declaration in front of it, which is exactly the gap the
-        tree has been carrying: nm shows "T strtol" in the built object, and
-        `strtol(text, &stop, 0)` still fails to compile, because the compiler
-        has never been told the name exists. Worse, an undeclared call in
-        C99 and later is an error rather than an implicit int, so the failure
-        is at the first call site rather than at the link.
+        declare.c gives all ten standard names their exact C types. The six
+        operations above remain direct assembly aliases. strtol, strtoll,
+        strtoul and strtoull are C bodies here because errno is C-library
+        state and deliberately is not a dependency of the raw platform
+        library. Their pointer casts bridge C's char to this tree's unsigned
+        string_address; both are one address in the ABI.
 
-        So the block below is declarations and nothing else. Writing a C body
-        for any of these names would not override the assembly -- it would be
-        a second definition of the same label in the same assembly stream,
-        which the assembler rejects outright, not a link-time tie the linker
-        could break. The correct fix for a name that already has a symbol is
-        to declare it, and that is what this does.
+        WHAT THE CHECKED ASSEMBLY ENTRIES ADD
 
-        The string parameters are string_address, which is p8 address_to and
-        not char address_to, for the reason strerror gives in error.c: every
-        string in this tree is unsigned, and a program that assigns the other
-        way makes the same conversion it already makes for string_find. All
-        three cross compilers accept the whole block below with no warning at
-        all, without -w, which was checked rather than assumed.
-
-        WHAT THE ASSEMBLY DOES NOT DO, WHICH IS ERRNO
-
-        string_to_number saturates on overflow and says nothing, and the
-        paragraph above it in standard.inc says so and says why: there was no
-        errno when it was written. There is one now, in error.c, and C wants
-        strtol to set ERANGE and return the clamped value. That cannot be
-        fixed from here. A C wrapper cannot wrap a name the assembly has
-        already taken, and a wrapper under a different name that the alias
-        then pointed at would have to re-measure the digit run the assembly
-        just walked in order to tell a spelled-out limit from a clamped one.
-        It is a change to standard.inc, it belongs to whoever owns that file,
-        and it is written down here rather than papered over. strtod below
-        does set ERANGE, because strtod is new and nothing had taken the name.
+        The raw string_to_number routines keep their original contract: they
+        saturate and do not touch errno, so their pure atoi/atol callers stay
+        pure. Their checked entries call that exact scanner once and preserve
+        its sticky overflow register long enough to store one b32. The four C
+        wrappers below turn that bit into ERANGE. A successful conversion does
+        not clear an errno it did not set, as C requires, and a spelled-out
+        limit is distinguishable from the same clamped answer without walking
+        the digits again.
 */
 /*
-        These ten were declared here in the house types, and are not any more.
+        These ten were once declared here in the house types, and are not any
+        more.
 
         declare.c says them first, in C's own spellings -- long labs(long),
         int atoi(const char *) -- and it is right to and this file was not.
-        The two disagree about nothing at runtime: every one of them is an
-        ASM_ALIAS onto a prose routine, so the address is the same and the
-        register is the same, and `positive` and `size_t` are the same width
-        in the same register on all three of these targets. They disagree
-        about TYPE, which is what a second declaration is checked against,
-        and C's spelling is the one that has to win: the whole reason
-        declare.c exists is that a program bringing its own <stdlib.h> line
-        must compile against these, and it cannot if the tree has already
-        said labs takes a bipolar.
+        The house and C spellings disagree about nothing at runtime: their
+        integers are the same width in the same register on all three targets.
+        They disagree about TYPE, which is what a second declaration checks,
+        and C's spelling is the one that has to win when a program brings its
+        own <stdlib.h> declarations.
 
         So the declarations are gone and nothing else is. The definitions
-        this file does own -- strtod and the <inttypes.h> spellings below --
-        are unaffected, and the ERANGE note above still stands.
+        this file owns -- the checked strto* wrappers, strtod and the
+        <inttypes.h> spellings below -- use the C declarations from declare.c.
 */
+
+long strtol(const char address_to input,
+            char address_to address_to stopped, int base)
+{
+        b32 out_of_range;
+        bipolar value = string_to_number_checked(
+                (string_address)input, (string_address address_to)stopped,
+                base, address_of out_of_range);
+
+        if (out_of_range)
+                errno = ERANGE;
+        return (long)value;
+}
+
+long long strtoll(const char address_to input,
+                  char address_to address_to stopped, int base)
+{
+        return (long long)strtol(input, stopped, base);
+}
+
+unsigned long strtoul(const char address_to input,
+                      char address_to address_to stopped, int base)
+{
+        b32 out_of_range;
+        positive value = string_to_number_unsigned_checked(
+                (string_address)input, (string_address address_to)stopped,
+                base, address_of out_of_range);
+
+        if (out_of_range)
+                errno = ERANGE;
+        return (unsigned long)value;
+}
+
+unsigned long long strtoull(const char address_to input,
+                            char address_to address_to stopped, int base)
+{
+        return (unsigned long long)strtoul(input, stopped, base);
+}
 
 /*
         The three <inttypes.h> spellings, which are the only integer names in

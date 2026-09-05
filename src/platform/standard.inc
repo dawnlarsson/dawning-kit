@@ -418,14 +418,12 @@ fn memory_copy_source_first(address_any source, address_any destination,
         terminator. A string ending exactly at a page boundary was run against
         an unreadable page after it to check that rather than to assert it.
 
-        Overflow saturates and says nothing, and that is a real gap rather than
-        a choice worth defending: C reports it through errno, this library has
-        no errno, and a caller here cannot tell 9223372036854775807 spelled out
-        from 9223372036854775808 clamped down to it. A sticky flag in library
-        storage was considered and dropped -- it is new public surface, and one
-        word shared by every caller on every thread is a worse answer than an
-        honest paragraph. A caller that must know can measure the digit run the
-        end pointer delimits, or parse it unsigned and compare.
+        The raw pair saturates and says nothing, because the platform library
+        has no errno and its pure atoi/atol users must not acquire state. The
+        userspace-only checked pair runs that same scanner once and copies its
+        register-held overflow fact through an optional pointer. numbers.c uses
+        those entries to implement C's ERANGE contract without shared storage,
+        a second digit walk or a side effect in the raw routines.
 
         An unrecognised base stores the input pointer through the end pointer
         rather than leaving it untouched, which is what glibc does there. C
@@ -441,7 +439,8 @@ fn memory_copy_source_first(address_any source, address_any destination,
         "0x" block with 98 in place of 120 and a binary digit test, if it is
         ever wanted.
 
-        Four public routines and one private core. string_to_whole is atoi,
+        Four raw routines, two userspace checked entries and one private core.
+        string_to_whole is atoi,
         which is the wide parse with the answer read as an int -- not a
         separate 32 bit accumulation, because atoi("99999999999999999999") is
         the low half of the clamped long and comes out minus one, where an
@@ -456,6 +455,16 @@ bipolar string_to_number(string_address input, string_address address_to stopped
                          b32 base);
 positive string_to_number_unsigned(string_address input,
                                    string_address address_to stopped, b32 base);
+#ifndef KERNEL_MODE
+//      The checked pair are the same single scan with its sticky overflow
+//      fact copied out. Like stopped, out_of_range may be null.
+bipolar string_to_number_checked(string_address input,
+                                 string_address address_to stopped, b32 base,
+                                 b32 address_to out_of_range);
+positive string_to_number_unsigned_checked(
+        string_address input, string_address address_to stopped, b32 base,
+        b32 address_to out_of_range);
+#endif
 PURE bipolar string_to_whole_wide(string_address input);
 PURE b32 string_to_whole(string_address input);
 
@@ -1223,6 +1232,28 @@ __asm__(
     "mov $2, %r11d\n   jmp string_to_number_core\n"
     ASM_END(string_to_number_unsigned)
 
+    //       These two preserve the pure house entry points: they ask the
+    //       same core for its sticky overflow register, then store that one
+    //       fact for the C strto* wrappers. There is one scan, and a normal
+    //       string_to_number call pays none of this call/save/store path.
+#ifndef KERNEL_MODE
+    ASM_FUNC(string_to_number_checked)
+    "push %rcx\n   xor %r10d, %r10d\n   call string_to_number\n"
+    "pop %rcx\n   xor %edx, %edx\n   test %r10, %r10\n   setne %dl\n"
+    "test %rcx, %rcx\n   je .Lnumber_x64_checked_done\n"
+    "mov %edx, (%rcx)\n   .Lnumber_x64_checked_done:\n"
+    ASM_RET
+    ASM_END(string_to_number_checked)
+
+    ASM_FUNC(string_to_number_unsigned_checked)
+    "push %rcx\n   xor %r10d, %r10d\n   call string_to_number_unsigned\n"
+    "pop %rcx\n   xor %edx, %edx\n   test %r10, %r10\n   setne %dl\n"
+    "test %rcx, %rcx\n   je .Lnumber_x64_unsigned_checked_done\n"
+    "mov %edx, (%rcx)\n   .Lnumber_x64_unsigned_checked_done:\n"
+    ASM_RET
+    ASM_END(string_to_number_unsigned_checked)
+#endif
+
     ASM_FUNC(string_to_whole_wide)
     "xor %esi, %esi\n   mov $10, %edx\n   xor %r11d, %r11d\n"
     "jmp string_to_number_core\n"
@@ -1341,7 +1372,7 @@ __asm__(
     "movabs $0x7fffffffffffffff, %rcx\n   mov %r11d, %edx\n   and $1, %edx\n"
     "add %rdx, %rcx\n   test %r10, %r10\n   jne .Lnumber_x64_clamp\n"
     "cmp %rcx, %rax\n   jbe .Lnumber_x64_sign\n"
-    ".Lnumber_x64_clamp:\n   mov %rcx, %rax\n"
+    ".Lnumber_x64_clamp:\n   mov %rcx, %rax\n   mov $1, %r10d\n"
     ".Lnumber_x64_sign:\n   test $1, %r11b\n   je .Lnumber_x64_done\n"
     "neg %rax\n"
     ASM_RET
@@ -2148,6 +2179,26 @@ __asm__(
     "mov x11, #2\n   b string_to_number_core\n"
     ASM_END(string_to_number_unsigned)
 
+#ifndef KERNEL_MODE
+    ASM_FUNC(string_to_number_checked)
+    "stp x3, x30, [sp, #-16]!\n   mov x5, xzr\n"
+    "bl string_to_number\n   ldp x3, x30, [sp], #16\n"
+    "cbz x3, .Lnumber_a64_checked_done\n"
+    "cmp x5, #0\n   cset w4, ne\n   str w4, [x3]\n"
+    ".Lnumber_a64_checked_done:\n"
+    ASM_RET
+    ASM_END(string_to_number_checked)
+
+    ASM_FUNC(string_to_number_unsigned_checked)
+    "stp x3, x30, [sp, #-16]!\n   mov x5, xzr\n"
+    "bl string_to_number_unsigned\n   ldp x3, x30, [sp], #16\n"
+    "cbz x3, .Lnumber_a64_unsigned_checked_done\n"
+    "cmp x5, #0\n   cset w4, ne\n   str w4, [x3]\n"
+    ".Lnumber_a64_unsigned_checked_done:\n"
+    ASM_RET
+    ASM_END(string_to_number_unsigned_checked)
+#endif
+
     ASM_FUNC(string_to_whole_wide)
     "mov x1, xzr\n   mov w2, #10\n   mov x11, xzr\n"
     "b string_to_number_core\n"
@@ -2225,14 +2276,18 @@ __asm__(
     "b .Lnumber_a64_loop\n"
     ".Lnumber_a64_stop:\n   sub x3, x3, #1\n   cbz x1, .Lnumber_a64_kept\n   str x3, [x1]\n"
     //
-    //       Two conditional selects rather than two branches: one clamps a
-    //       magnitude that walked past the limit, the other forces the limit
-    //       when the sticky word says a multiply overflowed.
+    //       The signed limit is also where x5 becomes the checked entry's
+    //       answer. Branching to the cold clamp leaves the ordinary path one
+    //       instruction shorter than the former pair of conditional selects,
+    //       and gives the wrapper the range fact without another digit pass.
     //
     ".Lnumber_a64_kept:\n   tbnz x11, #1, .Lnumber_a64_unsigned\n"
     "mov x8, #0x7fffffffffffffff\n   and x9, x11, #1\n   add x8, x8, x9\n"
-    "cmp x0, x8\n   csel x0, x0, x8, ls\n"
-    "cmp x5, #0\n   csel x0, x0, x8, eq\n"
+    "cmp x0, x8\n   b.hi .Lnumber_a64_clamp\n"
+    "cbnz x5, .Lnumber_a64_clamp\n"
+    "tbz x11, #0, .Lnumber_a64_done\n   neg x0, x0\n"
+    ASM_RET
+    ".Lnumber_a64_clamp:\n   mov x0, x8\n   mov x5, #1\n"
     "tbz x11, #0, .Lnumber_a64_done\n   neg x0, x0\n"
     ASM_RET
     ".Lnumber_a64_unsigned:\n   cbnz x5, .Lnumber_a64_all_ones\n"
@@ -2822,6 +2877,26 @@ __asm__(
     "li a4, 2\n   j string_to_number_core\n"
     ASM_END(string_to_number_unsigned)
 
+#ifndef KERNEL_MODE
+    ASM_FUNC(string_to_number_checked)
+    "addi sp, sp, -16\n   sd a3, 0(sp)\n   sd ra, 8(sp)\n   li a6, 0\n"
+    "call string_to_number\n   ld t0, 0(sp)\n   ld ra, 8(sp)\n"
+    "beqz t0, .Lnumber_rv_checked_done\n"
+    "snez t1, a6\n   sw t1, 0(t0)\n"
+    ".Lnumber_rv_checked_done:\n   addi sp, sp, 16\n"
+    ASM_RET
+    ASM_END(string_to_number_checked)
+
+    ASM_FUNC(string_to_number_unsigned_checked)
+    "addi sp, sp, -16\n   sd a3, 0(sp)\n   sd ra, 8(sp)\n   li a6, 0\n"
+    "call string_to_number_unsigned\n   ld t0, 0(sp)\n   ld ra, 8(sp)\n"
+    "beqz t0, .Lnumber_rv_unsigned_checked_done\n"
+    "snez t1, a6\n   sw t1, 0(t0)\n"
+    ".Lnumber_rv_unsigned_checked_done:\n   addi sp, sp, 16\n"
+    ASM_RET
+    ASM_END(string_to_number_unsigned_checked)
+#endif
+
     ASM_FUNC(string_to_whole_wide)
     "li a1, 0\n   li a2, 10\n   li a4, 0\n   j string_to_number_core\n"
     ASM_END(string_to_whole_wide)
@@ -2902,7 +2977,7 @@ __asm__(
     ".Lnumber_rv_kept:\n   andi t1, a4, 2\n   bnez t1, .Lnumber_rv_unsigned\n"
     "li t1, -1\n   srli t1, t1, 1\n   andi t2, a4, 1\n   add t1, t1, t2\n"
     "bnez a6, .Lnumber_rv_clamp\n   bgeu t1, a0, .Lnumber_rv_sign\n"
-    ".Lnumber_rv_clamp:\n   mv a0, t1\n"
+    ".Lnumber_rv_clamp:\n   mv a0, t1\n   li a6, 1\n"
     ".Lnumber_rv_sign:\n   andi t2, a4, 1\n"
     "beqz t2, .Lnumber_rv_done\n   sub a0, zero, a0\n"
     "j .Lnumber_rv_done\n"
@@ -3289,10 +3364,6 @@ __asm__(
     ASM_ALIAS(atoi,     string_to_whole)
     ASM_ALIAS(atol,     string_to_whole_wide)
     ASM_ALIAS(atoll,    string_to_whole_wide)
-    ASM_ALIAS(strtol,   string_to_number)
-    ASM_ALIAS(strtoll,  string_to_number)
-    ASM_ALIAS(strtoul,  string_to_number_unsigned)
-    ASM_ALIAS(strtoull, string_to_number_unsigned)
 
     ASM_ALIAS(ffs,      bits_first_set)
     ASM_ALIAS(ffsl,     bits_first_set_wide)

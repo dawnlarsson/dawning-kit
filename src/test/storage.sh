@@ -480,6 +480,60 @@ else
         echo "  storage  partition identity NOT RUN -- sudo loop authority required"
 fi
 
+# Bowl's system profile is its own mount/PID/UTS/IPC namespace. A failure to
+# build one of the required pseudo-filesystems must stop before guest exec;
+# continuing would hand package managers a root with a half-built /proc or
+# /dev. The successful twin proves the negative case did not merely fail
+# because this runner cannot create Bowl namespaces at all.
+#
+# The multicall image dispatches Bowl by argv[0]. Copy it rather than symlink
+# it so sudo policies which reject a writable symlink target cannot turn this
+# into a false failure. Every mount is owned by Bowl's child namespace and
+# disappears when the child exits.
+if [ "$(uname -s)" = Linux ] && sudo -n true >/dev/null 2>&1; then
+        bowl_bad=$work/bowl-bad
+        bowl_good=$work/bowl-good
+        mkdir -p "$bowl_bad/sys" "$bowl_bad/dev/pts" "$bowl_bad/dev/shm" \
+                 "$bowl_bad/run" "$bowl_bad/tmp" \
+                 "$bowl_good/proc" "$bowl_good/sys" \
+                 "$bowl_good/dev/pts" "$bowl_good/dev/shm" \
+                 "$bowl_good/run" "$bowl_good/tmp"
+        touch "$bowl_bad/proc"
+        cp "$shell" "$work/bowl"
+        cp "$shell" "$bowl_bad/shell"
+        cp "$shell" "$bowl_good/shell"
+        chmod 0755 "$work/bowl" "$bowl_bad/shell" "$bowl_good/shell"
+
+        if sudo -n "$work/bowl" --system "$bowl_bad" /shell -c \
+                'echo EXECUTED' > "$work/bowl-bad.out" 2>&1; then
+                bowl_status=0
+        else
+                bowl_status=$?
+        fi
+        same_status "Bowl required mount failure" 1 "$bowl_status"
+        if grep -qx EXECUTED "$work/bowl-bad.out"; then
+                bad "Bowl failed-root exec barrier" "guest command executed"
+        else
+                good
+        fi
+
+        if sudo -n "$work/bowl" --system "$bowl_good" /shell -c \
+                'echo EXECUTED' > "$work/bowl-good.out" 2>&1; then
+                bowl_status=0
+        else
+                bowl_status=$?
+        fi
+        same_status "Bowl valid root status" 0 "$bowl_status"
+        if grep -qx EXECUTED "$work/bowl-good.out"; then
+                good
+        else
+                bad "Bowl valid-root exec" \
+                    "guest marker absent [$(head -c 80 "$work/bowl-good.out" | tr '\n' '|')]"
+        fi
+else
+        echo "  storage  Bowl system namespace NOT RUN -- passwordless sudo required"
+fi
+
 findmnt -n -r -o TARGET -T / > "$work/want"
 "$farm/findmnt" -n -r -o TARGET -T / > "$work/got"
 same_file "findmnt root target" "$work/want" "$work/got"

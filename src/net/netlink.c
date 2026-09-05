@@ -184,11 +184,22 @@ static bool netlink_begin(netlink_buffer address_to buffer, p16 type, p16 flags,
                           p32 sequence, positive body)
 {
         netlink_header address_to header;
+        positive aligned;
 
         buffer->used = 0;
         buffer->failed = false;
 
-        if (!net_room(buffer, NETLINK_HEADER + netlink_align(body) + 64))
+        /* nlmsg_len is 32 bits. Refuse an unrepresentable body before either
+           the alignment or allocation arithmetic can wrap. */
+        if (body > 0xffffffffu - NETLINK_HEADER)
+        {
+                buffer->failed = true;
+                return false;
+        }
+
+        aligned = netlink_align(body);
+        if (aligned < body || aligned > positive_max - NETLINK_HEADER - 64 ||
+            !net_room(buffer, NETLINK_HEADER + aligned + 64))
         {
                 netlink_forget(buffer);
                 return false;
@@ -226,15 +237,41 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
                                   address_any data, positive size)
 {
         netlink_attribute address_to attribute;
-        positive length = sizeof(netlink_attribute) + size;
-        positive padded = netlink_align(length);
+        positive length;
+        positive padded;
+        p32 message_length;
         netlink_header address_to header;
 
         if (buffer->failed)
                 return false;
 
+        /* rta_len is 16 bits, while nlmsg_len is 32. Truncating either one
+           produces a message whose allocated bytes and advertised bytes no
+           longer agree, so poison the request rather than emitting it. */
+        if (size > 0xffffu - sizeof(netlink_attribute))
+        {
+                buffer->failed = true;
+                return false;
+        }
+
+        length = sizeof(netlink_attribute) + size;
+        padded = netlink_align(length);
+        header = (netlink_header address_to)buffer->bytes;
+        message_length = header->length;
+
+        if (buffer->used > positive_max - padded ||
+            padded > 0xffffffffu - message_length)
+        {
+                buffer->failed = true;
+                return false;
+        }
+
         if (!net_room(buffer, buffer->used + padded))
                 return false;
+
+        /* net_room may move the allocation. Never carry an interior pointer
+           across it. */
+        header = (netlink_header address_to)buffer->bytes;
 
         attribute = (netlink_attribute address_to)(buffer->bytes + buffer->used);
         attribute->length = (p16)length;
@@ -253,7 +290,6 @@ static bool netlink_attribute_add(netlink_buffer address_to buffer, p16 type,
 
         buffer->used += padded;
 
-        header = (netlink_header address_to)buffer->bytes;
         header->length += (p32)padded;
 
         return true;

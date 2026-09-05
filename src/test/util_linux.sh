@@ -1820,6 +1820,13 @@ subject 'utmp follow policy rejected explicitly' utmpdump \
 group terminal-recording
 script_work="$work/script"
 mkdir -p "$script_work"
+cat > "$script_work/controlling-tty.py" <<'PY'
+import os
+
+descriptor = os.open("/dev/tty", os.O_RDONLY)
+print(os.tcgetpgrp(descriptor) == os.getpgrp())
+os.close(descriptor)
+PY
 compare 'quiet command output' script \
         'rm -f "$1/out"; LC_ALL=C TZ=UTC0 "$TOOL" -q -e -O "$1/out" -c "printf \"hello\\n\"" </dev/null' \
         sh "$script_work"
@@ -1843,6 +1850,9 @@ subject 'log aliases cannot interleave streams' script \
         sh "$script_work"
 subject 'log symlink is rejected without force' script \
         'printf sentinel > "$1/target"; rm -f "$1/link"; ln -s target "$1/link"; ! "$TOOL" -q -O "$1/link" -c true </dev/null >/dev/null 2>&1 && [ "$(cat "$1/target")" = sentinel ]' \
+        sh "$script_work"
+subject 'detached recorder gives child controlling terminal' script \
+        'rm -f "$1/ctty.log"; out=$(timeout 5 setsid "$TOOL" -q -e -O "$1/ctty.log" -c "python3 $1/controlling-tty.py" </dev/null 2>/dev/null | tr -d "\r"); [ "$out" = True ]' \
         sh "$script_work"
 
 printf 'Script started on fixture\nabcDEF\nScript done on fixture\n' > "$script_work/classic.log"

@@ -1637,7 +1637,8 @@ static inline bool string_digits_checked(string_address address_to text,
 */
 static inline INLINE positive number_known(string_address input,
                                            string_address address_to stopped,
-                                           positive base, bool is_signed)
+                                           positive base, bool is_signed,
+                                           b32 address_to out_of_range)
 {
         string_address at = input;
         positive value = 0;
@@ -1684,6 +1685,8 @@ static inline INLINE positive number_known(string_address input,
         {
                 if (stopped)
                         address_to stopped = input;
+                if (out_of_range)
+                        address_to out_of_range = 0;
                 return 0;
         }
 
@@ -1753,6 +1756,8 @@ static inline INLINE positive number_known(string_address input,
                 //      not applied to it, which is what strtoul does; one
                 //      that did not overflow negates in the machine word, so
                 //      "-1" is the largest unsigned number and not an error.
+                if (out_of_range)
+                        address_to out_of_range = overflowed != 0;
                 if (overflowed)
                         return ~(positive)0;
                 return negative ? -value : value;
@@ -1762,8 +1767,11 @@ static inline INLINE positive number_known(string_address input,
         //      that limit is exactly the most negative number, so the same
         //      two steps serve both ends.
         positive limit = (positive)0x7fffffffffffffffUL + negative;
+        bool range = overflowed || value > limit;
 
-        if (overflowed || value > limit)
+        if (out_of_range)
+                address_to out_of_range = range;
+        if (range)
                 value = limit;
         return negative ? -value : value;
 }
@@ -2457,13 +2465,32 @@ static inline INLINE address_any copy_until_known(address_any destination,
 #define string_to_number(input, stopped, base)                                \
         (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
                  ? (bipolar)number_known((input), (stopped),                  \
-                                         (positive)(base), 1)                 \
+                                         (positive)(base), 1, null)           \
                  : string_to_number((input), (stopped), (base)))
 
 #define string_to_number_unsigned(input, stopped, base)                       \
         (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
-                 ? number_known((input), (stopped), (positive)(base), 0)      \
+                 ? number_known((input), (stopped), (positive)(base), 0, null)\
                  : string_to_number_unsigned((input), (stopped), (base)))
+
+//      The standard strto* wrappers need the same folded parser and the same
+//      end pointer, with the one fact the house routine deliberately omits:
+//      whether its saturated answer came from an overflow. The dynamic arm
+//      is still the single assembly scan; its checked entry only saves the
+//      status pointer around that call.
+#define string_to_number_checked(input, stopped, base, out_of_range)          \
+        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+                 ? (bipolar)number_known((input), (stopped),                  \
+                                         (positive)(base), 1, (out_of_range)) \
+                 : string_to_number_checked((input), (stopped), (base),       \
+                                            (out_of_range)))
+
+#define string_to_number_unsigned_checked(input, stopped, base, out_of_range)\
+        (__builtin_constant_p(base) && KNOWN_BASE_PARSES(base)                \
+                 ? number_known((input), (stopped), (positive)(base), 0,      \
+                                (out_of_range))                               \
+                 : string_to_number_unsigned_checked(                        \
+                           (input), (stopped), (base), (out_of_range)))
 
 #define positive_into_base(into, value, base, upper)                          \
         (__builtin_constant_p(base) && (positive)(base) - 2 <= 34             \

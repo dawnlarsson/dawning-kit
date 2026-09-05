@@ -124,6 +124,57 @@ static fn padding(void)
         netlink_forget(address_of request);
 }
 
+/* The two public wire lengths are narrower than positive. A caller mistake
+   must fail before it can wrap a length or make the builder touch its data. */
+static fn oversized(void)
+{
+        netlink_buffer request = {0};
+
+        check("a netlink body wider than nlmsg_len is refused",
+              !netlink_begin(address_of request, RTM_NEWLINK, NLM_REQUEST, 1,
+                             (positive)0xffffffffu));
+        check("an oversized body poisons the request", request.failed);
+
+        check("a fresh request can follow a refused body",
+              netlink_begin(address_of request, RTM_NEWLINK, NLM_REQUEST, 2,
+                            sizeof(netlink_link)));
+        check("an attribute wider than rta_len is refused before its data",
+              !netlink_attribute_add(address_of request, IFLA_IFNAME,
+                                     address_bad, 0x10000u));
+        check("an oversized attribute poisons the request", request.failed);
+
+        netlink_forget(address_of request);
+}
+
+static fn attribute_growth(void)
+{
+        netlink_buffer request = {0};
+        p8 payload[4060];
+
+        memory_fill(payload, 0x5a, sizeof payload);
+        check("a growth request begins",
+              netlink_begin(address_of request, RTM_NEWLINK, NLM_REQUEST, 3,
+                            sizeof(netlink_link)));
+
+        /* The first allocation is one 4096-byte step: header+body are 32,
+           and this attribute fills the remainder exactly. The next one must
+           grow, exercising the point at which an interior header pointer used
+           to survive realloc. */
+        check("an attribute can fill the first allocation",
+              netlink_attribute_add(address_of request, IFLA_IFNAME,
+                                    payload, sizeof payload));
+        check("the first allocation is full", request.used == 4096);
+        check("a following attribute grows the request",
+              netlink_attribute_add(address_of request, IFLA_MTU, null, 0));
+        check("growth preserves the message length",
+              ((netlink_header address_to)request.bytes)->length == 4100 &&
+                  request.used == 4100);
+        check("growth keeps the payload bytes",
+              request.bytes[36] == 0x5a && request.bytes[4095] == 0x5a);
+
+        netlink_forget(address_of request);
+}
+
 static fn talking(void)
 {
         netlink_search search;
@@ -662,6 +713,8 @@ b32 main(void)
         arithmetic();
         building();
         padding();
+        oversized();
+        attribute_growth();
         talking();
         resolving();
         fetching();

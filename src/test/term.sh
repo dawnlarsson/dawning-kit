@@ -58,6 +58,7 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/spark.c"
 #include "src/canvas/window.c"
 #include "src/sh/term.c"
+#include "src/sh/pty.c"
 #include "src/sh/screen.c"
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
@@ -290,39 +291,12 @@ b32 main()
                 else if (string_compare(verb, (string_address) "pty") == 0)
                 {
                         terminal_modes modes;
-                        unsigned int slot = 0;
-                        int unlock = 0;
-                        p8 name[16] = "/dev/pts/";
-                        positive at = 9;
                         b32 master, slave;
 
-                        master = system_call_4(syscall(openat), AT_FDCWD,
-                                               (positive) "/dev/ptmx",
-                                               FILE_READ_WRITE | O_NONBLOCK, 0);
-
-                        if (master < 0)
+                        if (process_pty_open(address_of master,
+                                             address_of slave, true) < 0)
                         {
                                 tell("no pty\n");
-                                continue;
-                        }
-
-                        system_call_3(syscall(ioctl), master, TIOCSPTLCK,
-                                      (positive)address_of unlock);
-                        system_call_3(syscall(ioctl), master, TIOCGPTN,
-                                      (positive)address_of slot);
-
-                        if (slot >= 10)
-                                name[at++] = (p8)('0' + slot / 10 % 10);
-
-                        name[at++] = (p8)('0' + slot % 10);
-                        name[at] = 0;
-
-                        slave = system_call_4(syscall(openat), AT_FDCWD,
-                                              (positive)name, FILE_READ_WRITE, 0);
-
-                        if (slave < 0)
-                        {
-                                tell("no slave\n");
                                 continue;
                         }
 
@@ -350,6 +324,70 @@ b32 main()
 
                         system_call_1(syscall(close), slave);
                         system_call_1(syscall(close), master);
+                }
+                else if (string_compare(verb,
+                                        (string_address) "pty-low") == 0)
+                {
+                        b32 pair[2];
+                        if (system_pipe(pair, O_CLOEXEC) < 0)
+                        {
+                                tell("lowfds unavailable\n");
+                                continue;
+                        }
+
+                        bipolar child = system_fork();
+                        if (!child)
+                        {
+                                system_close((positive)pair[0]);
+                                system_close(0);
+                                system_close(1);
+                                system_close(2);
+
+                                b32 master = -1;
+                                b32 slave = -1;
+                                bipolar opened = process_pty_open(
+                                    address_of master, address_of slave, true);
+                                /* Keep a master reference across setup just
+                                   as the recorder parent does; otherwise the
+                                   last master close correctly hangs up this
+                                   child before it can report the result. */
+                                bipolar held = opened < 0 ? opened
+                                    : system_duplicate(master, pair[0],
+                                                       O_CLOEXEC);
+                                bipolar auxiliary = held < 0 ? held
+                                    : system_open_at(AT_FDCWD, "/dev/null",
+                                                     FILE_READ | O_CLOEXEC);
+                                bipolar prepared = auxiliary < 0 ? auxiliary
+                                    : process_pty_child_setup(master, slave,
+                                                              auxiliary, -1);
+                                p8 result = prepared >= 0 ? 1 : 10;
+
+                                for (b32 descriptor = 0;
+                                     result == 1 && descriptor < 3;
+                                     descriptor++)
+                                        if (system_call_3(syscall(fcntl),
+                                                          (positive)descriptor,
+                                                          PTY_F_GETFD, 0) != 0)
+                                                result = (p8)(20 + descriptor);
+
+                                system_write_all((positive)pair[1],
+                                                 address_of result, 1);
+                                system_call_1(syscall(exit),
+                                              result == 1 ? 0 : 1);
+                        }
+
+                        system_close((positive)pair[1]);
+                        p8 result = 0;
+                        bipolar got = child > 0
+                            ? system_read_retry((positive)pair[0],
+                                                address_of result, 1)
+                            : child;
+                        system_close((positive)pair[0]);
+                        if (child > 0)
+                                system_call_4(syscall(wait4),
+                                              (positive)child, 0, 0, 0);
+                        tell(got == 1 && result == 1 ? "lowfds ok\n"
+                                                     : "lowfds failed\n");
                 }
                 else if (string_compare(verb, (string_address) "mode") == 0)
                 {
@@ -965,6 +1003,8 @@ group pty
 if [ -c /dev/ptmx ]; then
         same 'canonical is a line editor' \
                 'editing=1 canonical=1 echo=0|raw editing=0' 20 3 pty
+        same 'auxiliary low fd closes first' \
+                'lowfds ok' 20 3 pty-low
 else
         echo "  discipline   no /dev/ptmx here, skipped"
 fi

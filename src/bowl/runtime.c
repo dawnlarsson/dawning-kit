@@ -371,7 +371,7 @@ static bipolar bowl_system_enter(string_address root)
         return system_change_directory("/");
 }
 
-static fn bowl_system_populate()
+static bipolar bowl_system_populate()
 {
         for (positive i = 0; bowl_system_mounts[i].target; i++)
         {
@@ -379,15 +379,24 @@ static fn bowl_system_populate()
                     bowl_system_mounts + i;
                 bipolar failed;
 
-                if (bowl_mkdir(point->target) < 0)
-                        continue;
+                failed = bowl_mkdir(point->target);
+                if (failed < 0)
+                {
+                        bowl_fail(point->target, failed);
+                        return failed;
+                }
 
                 failed = system_mount(point->source, point->target,
                                       point->filesystem, point->flags, 0);
 
                 if (failed)
+                {
                         bowl_fail(point->target, failed);
+                        return failed;
+                }
         }
+
+        return 0;
 }
 
 /* Overlay only the distribution directories needed to run its programs. */
@@ -459,10 +468,14 @@ static DEAD_END fn bowl_inside(string_address root,
                 failed = bowl_system_enter(root);
                 if (!failed)
                 {
-                        bowl_system_populate();
-                        path_tail_copy(name, sizeof(name), root);
-                        system_call_2(syscall(sethostname), (positive)name,
-                                      string_length((string_address)name));
+                        failed = bowl_system_populate();
+                        if (!failed)
+                        {
+                                path_tail_copy(name, sizeof(name), root);
+                                failed = system_call_2(
+                                    syscall(sethostname), (positive)name,
+                                    string_length((string_address)name));
+                        }
                 }
         }
         else

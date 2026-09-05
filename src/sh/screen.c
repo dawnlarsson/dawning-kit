@@ -163,8 +163,7 @@ static b32 screen_term()
                 system_close(slave);
                 system_close(master);
                 window_close(window);
-                string_format(file_fail, "term: cannot fork: %s\n",
-                              file_reason(child));
+                log_direct(str("term: cannot fork\n"));
                 return 1;
         }
 
@@ -173,12 +172,8 @@ static b32 screen_term()
                 string_address argv[] = {SHELL, null};
                 string_address envp[] = {"TERM=ansi", null};
 
-                system_call(syscall(setsid));
-                system_control(slave, TIOCSCTTY, 0);
-                system_duplicate(slave, 0, 0);
-                system_duplicate(slave, 1, 0);
-                system_duplicate(slave, 2, 0);
-                system_close(master);
+                if (process_pty_child_setup(master, slave, -1, -1) < 0)
+                        system_call_1(syscall(exit), 126);
 
                 system_execute(SHELL, argv, envp);
                 system_call_1(syscall(exit), 127);

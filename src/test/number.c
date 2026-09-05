@@ -112,6 +112,56 @@ typedef union
 
 typedef struct
 {
+        const char address_to input;
+        b32 base;
+        p64 answer;
+        b32 out_of_range;
+} number_integer_range_case;
+
+static const number_integer_range_case number_signed_range_cases[] = {
+        {"9223372036854775807!", 10, 0x7fffffffffffffffULL, 0},
+        {"9223372036854775808!", 10, 0x7fffffffffffffffULL, 1},
+        {"-9223372036854775808!", 10, 0x8000000000000000ULL, 0},
+        {"-9223372036854775809!", 10, 0x8000000000000000ULL, 1},
+        {"0x7fffffffffffffff!", 0, 0x7fffffffffffffffULL, 0},
+        {"0x8000000000000000!", 0, 0x7fffffffffffffffULL, 1},
+        {"-0x8000000000000000!", 0, 0x8000000000000000ULL, 0},
+        {"-0x8000000000000001!", 0, 0x8000000000000000ULL, 1},
+        {"111111111111111111111111111111111111111111111111111111111111111!",
+         2, 0x7fffffffffffffffULL, 0},
+        {"1000000000000000000000000000000000000000000000000000000000000000!",
+         2, 0x7fffffffffffffffULL, 1},
+        {"777777777777777777777!", 8, 0x7fffffffffffffffULL, 0},
+        {"1000000000000000000000!", 8, 0x7fffffffffffffffULL, 1},
+        {"7fffffffffffffff!", 16, 0x7fffffffffffffffULL, 0},
+        {"8000000000000000!", 16, 0x7fffffffffffffffULL, 1},
+        {"1y2p0ij32e8e7!", 36, 0x7fffffffffffffffULL, 0},
+        {"1y2p0ij32e8e8!", 36, 0x7fffffffffffffffULL, 1},
+};
+
+static const number_integer_range_case number_unsigned_range_cases[] = {
+        {"18446744073709551615!", 10, 0xffffffffffffffffULL, 0},
+        {"18446744073709551616!", 10, 0xffffffffffffffffULL, 1},
+        {"0xffffffffffffffff!", 0, 0xffffffffffffffffULL, 0},
+        {"0x10000000000000000!", 0, 0xffffffffffffffffULL, 1},
+        {"1111111111111111111111111111111111111111111111111111111111111111!",
+         2, 0xffffffffffffffffULL, 0},
+        {"10000000000000000000000000000000000000000000000000000000000000000!",
+         2, 0xffffffffffffffffULL, 1},
+        {"1777777777777777777777!", 8, 0xffffffffffffffffULL, 0},
+        {"2000000000000000000000!", 8, 0xffffffffffffffffULL, 1},
+        {"ffffffffffffffff!", 16, 0xffffffffffffffffULL, 0},
+        {"10000000000000000!", 16, 0xffffffffffffffffULL, 1},
+        {"3w5e11264sgsf!", 36, 0xffffffffffffffffULL, 0},
+        {"3w5e11264sgsg!", 36, 0xffffffffffffffffULL, 1},
+};
+
+//      Going through a volatile pointer prevents atoi's PURE declaration from
+//      making the errno-preservation check below true without a runtime call.
+static int (*volatile number_atoi_call)(const char address_to) = atoi;
+
+typedef struct
+{
         const char address_to text;
         p64 wide_bits;
         positive wide_end;
@@ -444,6 +494,7 @@ static const number_float_case number_float_cases[] = {
 number_case(integers)
 {
         string_address stop;
+        positive index;
 
         number_note(abs(-5) == 5, text("abs"), (positive)abs(-5), 5);
         number_note(abs(0) == 0, text("abs zero"), (positive)abs(0), 0);
@@ -479,10 +530,22 @@ number_case(integers)
                    text("strtol bare prefix endptr"));
 
         stop = null;
+        errno = EDOM;
         number_note(strtol(text("zzz"), (char address_to address_to)address_of stop, 10) == 0,
                     text("strtol no conversion"), 0, 0);
         number_say(stop != null && address_to stop == 'z',
                    text("strtol no conversion endptr"));
+        number_note(errno == EDOM, text("strtol no conversion errno"), errno,
+                    EDOM);
+
+        stop = null;
+        errno = EDOM;
+        number_note(strtoul(text("10"),
+                            (char address_to address_to)address_of stop, 1) == 0,
+                    text("strtoul invalid base"), 0, 0);
+        number_say(stop == text("10"), text("strtoul invalid base endptr"));
+        number_note(errno == EDOM, text("strtoul invalid base errno"), errno,
+                    EDOM);
 
         number_note(strtoll(text("777"), null, 8) == 511, text("strtoll octal"),
                     (positive)strtoll(text("777"), null, 8), 511);
@@ -500,6 +563,185 @@ number_case(integers)
                     (positive)(bipolar)-1234);
         number_note(strtoumax(text("1234"), null, 10) == 1234, text("strtoumax"),
                     strtoumax(text("1234"), null, 10), 1234);
+
+        /*
+                Every integer width here is sixty four bits, but the four C
+                entry points are called separately so an alias or wrapper can
+                never make one of them silently lose the range report. Bases
+                0, 2, 8, 10, 16 and 36 cover prefix selection, both digit
+                alphabets, the multiply path and the power-of-two path. The
+                marker proves an overflowing run is consumed in full.
+        */
+        for (index = 0;
+             index < sizeof number_signed_range_cases /
+                             sizeof number_signed_range_cases[0];
+             index++)
+        {
+                const number_integer_range_case address_to one =
+                        address_of number_signed_range_cases[index];
+                long first;
+                long long second;
+
+                stop = null;
+                errno = EDOM;
+                first = strtol(one->input,
+                               (char address_to address_to)address_of stop,
+                               one->base);
+                number_note((p64)first == one->answer, text("strtol boundary"),
+                            (p64)first, one->answer);
+                number_note(errno == (one->out_of_range ? ERANGE : EDOM),
+                            text("strtol boundary errno"), errno,
+                            one->out_of_range ? ERANGE : EDOM);
+                number_say(stop != null && address_to stop == '!',
+                           text("strtol boundary endptr"));
+
+                stop = null;
+                errno = EDOM;
+                second = strtoll(one->input,
+                                 (char address_to address_to)address_of stop,
+                                 one->base);
+                number_note((p64)second == one->answer,
+                            text("strtoll boundary"), (p64)second,
+                            one->answer);
+                number_note(errno == (one->out_of_range ? ERANGE : EDOM),
+                            text("strtoll boundary errno"), errno,
+                            one->out_of_range ? ERANGE : EDOM);
+                number_say(stop != null && address_to stop == '!',
+                           text("strtoll boundary endptr"));
+        }
+
+        for (index = 0;
+             index < sizeof number_unsigned_range_cases /
+                             sizeof number_unsigned_range_cases[0];
+             index++)
+        {
+                const number_integer_range_case address_to one =
+                        address_of number_unsigned_range_cases[index];
+                unsigned long first;
+                unsigned long long second;
+
+                stop = null;
+                errno = EDOM;
+                first = strtoul(one->input,
+                                (char address_to address_to)address_of stop,
+                                one->base);
+                number_note((p64)first == one->answer,
+                            text("strtoul boundary"), (p64)first, one->answer);
+                number_note(errno == (one->out_of_range ? ERANGE : EDOM),
+                            text("strtoul boundary errno"), errno,
+                            one->out_of_range ? ERANGE : EDOM);
+                number_say(stop != null && address_to stop == '!',
+                           text("strtoul boundary endptr"));
+
+                stop = null;
+                errno = EDOM;
+                second = strtoull(one->input,
+                                  (char address_to address_to)address_of stop,
+                                  one->base);
+                number_note((p64)second == one->answer,
+                            text("strtoull boundary"), (p64)second,
+                            one->answer);
+                number_note(errno == (one->out_of_range ? ERANGE : EDOM),
+                            text("strtoull boundary errno"), errno,
+                            one->out_of_range ? ERANGE : EDOM);
+                number_say(stop != null && address_to stop == '!',
+                           text("strtoull boundary endptr"));
+        }
+
+        //      A valid negative magnitude is reduced modulo the unsigned
+        //      width; only a magnitude that itself overflowed reports range.
+        errno = EDOM;
+        number_note(strtoul(text("-18446744073709551615"), null, 10) == 1,
+                    text("strtoul negative boundary"),
+                    strtoul(text("-18446744073709551615"), null, 10), 1);
+        number_note(errno == EDOM, text("strtoul negative boundary errno"),
+                    errno, EDOM);
+        errno = EDOM;
+        number_note(strtoul(text("-18446744073709551616"), null, 10) ==
+                            0xffffffffffffffffULL,
+                    text("strtoul negative overflow"),
+                    strtoul(text("-18446744073709551616"), null, 10),
+                    0xffffffffffffffffULL);
+        number_note(errno == ERANGE, text("strtoul negative overflow errno"),
+                    errno, ERANGE);
+
+        //      Exercise the constant-base expansion directly. It must carry
+        //      the same status and end pointer as the assembly checked entry,
+        //      including the no-conversion case.
+        {
+                b32 out_of_range = -1;
+                bipolar folded;
+
+                stop = null;
+                folded = string_to_number_checked(
+                        text("9223372036854775808!"), address_of stop, 10,
+                        address_of out_of_range);
+                number_note((p64)folded == 0x7fffffffffffffffULL,
+                            text("folded signed boundary"), (p64)folded,
+                            0x7fffffffffffffffULL);
+                number_say(out_of_range == 1 && stop && address_to stop == '!',
+                           text("folded signed range and endptr"));
+
+                out_of_range = -1;
+                stop = null;
+                folded = string_to_number_checked(text("nope"), address_of stop,
+                                                  16, address_of out_of_range);
+                number_say(folded == 0 && out_of_range == 0 &&
+                                   stop == text("nope"),
+                           text("folded no conversion"));
+
+                out_of_range = -1;
+                stop = null;
+                number_note(string_to_number_unsigned_checked(
+                                    text("xyz"), address_of stop, 10,
+                                    address_of out_of_range) == 0,
+                            text("folded unsigned no conversion"), 0, 0);
+                number_say(out_of_range == 0 && stop == text("xyz"),
+                           text("folded unsigned no conversion state"));
+
+                out_of_range = -1;
+                stop = null;
+                number_note((p64)(string_to_number_checked)(
+                                    text("none"), address_of stop, 10,
+                                    address_of out_of_range) == 0,
+                            text("dynamic checked no conversion"), 0, 0);
+                number_say(out_of_range == 0 && stop == text("none"),
+                           text("dynamic checked no conversion state"));
+
+                out_of_range = -1;
+                stop = null;
+                number_note((string_to_number_unsigned_checked)(
+                                    text("10"), address_of stop, 37,
+                                    address_of out_of_range) == 0,
+                            text("dynamic checked invalid base"), 0, 0);
+                number_say(out_of_range == 0 && stop == text("10"),
+                           text("dynamic checked invalid base state"));
+
+                number_note((p64)(string_to_number_checked)(
+                                    text("9223372036854775808"), null, 10,
+                                    null) == 0x7fffffffffffffffULL,
+                            text("dynamic checked optional status"),
+                            0x7fffffffffffffffULL,
+                            0x7fffffffffffffffULL);
+        }
+
+        //      The raw parser and the pure atoi alias do not own errno. Even
+        //      their saturating paths must leave caller state alone.
+        errno = EDOM;
+        number_note((p64)(string_to_number)(
+                            text("9223372036854775808"), null, 10) ==
+                            0x7fffffffffffffffULL,
+                    text("raw signed overflow"), 0x7fffffffffffffffULL,
+                    0x7fffffffffffffffULL);
+        number_note(errno == EDOM, text("raw signed overflow errno"), errno,
+                    EDOM);
+        errno = EDOM;
+        b32 narrowed = number_atoi_call(
+                (const char address_to)text("99999999999999999999"));
+        number_note(narrowed == -1,
+                    text("atoi overflowing raw value"),
+                    (positive)(bipolar)narrowed, (positive)(bipolar)-1);
+        number_note(errno == EDOM, text("atoi overflow errno"), errno, EDOM);
 
         //      The addresses have to be takeable, which a macro alias could
         //      not give and an undeclared name could not give either.

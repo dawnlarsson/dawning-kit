@@ -562,6 +562,7 @@ bool exec_function_named(positive slot, p8 address_to into, positive room);
 #include "cksum.c"
 #include "awk.c"
 #include "tools.c"
+#include "pty.c"
 #include "process_tools.c"
 #include "monitor.c"
 #include "net.c"

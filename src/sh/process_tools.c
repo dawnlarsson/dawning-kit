@@ -1670,15 +1670,7 @@ static b32 process_timeout()
 }
 
 // script ----------------------------------------------------------
-/*
-        The terminal recorder and the graphical terminal use the same PTY
-        floor.  Keep creation here, before screen.c is included, so both get
-        the same unlock/name/open cleanup and neither grows a libc openpty
-        dependency.
-*/
-#define PROCESS_TIOCSPTLCK 0x40045431u
-#define PROCESS_TIOCGPTN 0x80045430u
-#define PROCESS_TIOCSCTTY 0x540eu
+/* The terminal recorder and graphical terminal share pty.c's open floor. */
 #define PROCESS_TCGETS 0x5401u
 #define PROCESS_TCSETS 0x5402u
 #define PROCESS_TIOCGWINSZ 0x5413u
@@ -1705,49 +1697,6 @@ typedef struct
 {
         p16 rows, columns, x_pixels, y_pixels;
 } process_terminal_size;
-
-static bipolar process_pty_open(b32 address_to master_out,
-                                b32 address_to slave_out,
-                                bool nonblocking)
-{
-        positive flags = FILE_READ_WRITE | O_CLOEXEC;
-        if (nonblocking)
-                flags |= O_NONBLOCK;
-
-        bipolar master = system_open_at(AT_FDCWD, "/dev/ptmx", flags);
-        if (master < 0)
-                return master;
-
-        b32 unlock = 0;
-        p32 number = 0;
-        bipolar answer = system_control((b32)master, PROCESS_TIOCSPTLCK,
-                                        address_of unlock);
-        if (answer >= 0)
-                answer = system_control((b32)master, PROCESS_TIOCGPTN,
-                                        address_of number);
-        if (answer < 0)
-        {
-                system_close((positive)master);
-                return answer;
-        }
-
-        p8 path[32] = "/dev/pts/";
-        positive used = 9;
-        used += positive_into(path + used, number);
-        path[used] = end;
-
-        bipolar slave = system_open_at(AT_FDCWD, path,
-                                       FILE_READ_WRITE | O_CLOEXEC);
-        if (slave < 0)
-        {
-                system_close((positive)master);
-                return slave;
-        }
-
-        address_to master_out = (b32)master;
-        address_to slave_out = (b32)slave;
-        return 0;
-}
 
 typedef struct
 {
@@ -2007,18 +1956,15 @@ static b32 process_script_child(string_address command,
 {
         system_signal_mask(UL_SIGNAL_SET_MASK, address_of previous_mask, null,
                            8);
-        system_call(syscall(setsid));
-        system_control(slave, PROCESS_TIOCSCTTY, 0);
-        system_duplicate(slave, 0, 0);
-        system_duplicate(slave, 1, 0);
-        system_duplicate(slave, 2, 0);
-        if (slave > 2)
-                system_close((positive)slave);
-        system_close((positive)master);
-        if (signal_fd >= 0)
-                system_close((positive)signal_fd);
-        if (pidfd >= 0)
-                system_close((positive)pidfd);
+        bipolar prepared = process_pty_child_setup(master, slave, signal_fd,
+                                                   pidfd);
+        if (prepared < 0)
+        {
+                string_format(file_fail,
+                              "script: cannot establish pseudo-terminal: %s\n",
+                              file_reason(prepared));
+                return 1;
+        }
 
         if (command)
         {
