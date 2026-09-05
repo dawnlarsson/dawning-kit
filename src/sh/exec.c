@@ -62,6 +62,7 @@ fn exec_traps();
 fn job_forget();
 static b32 exec_child_status(bipolar child);
 static b32 job_wait_foreground(positive number);
+static fn exec_pipe_status_publish(bipolar address_to values, positive count);
 
 fn exec_child_began()
 {
@@ -7841,7 +7842,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         }
 
         exec_pipe_status_pending = false;
-        shell_array_numbers("PIPESTATUS", 10, children, started);
+        exec_pipe_status_publish(children, started);
 
         if (rightmost_failure && pipefail)
                 status = rightmost_failure;
@@ -7881,6 +7882,33 @@ static positive exec_pipeline_count(b32 first)
    reads it. Keep the one integer in registers/data until an environment or
    array reader actually asks; that reader calls the public materializer
    below. A real pipeline publishes its already-built vector directly. */
+static fn exec_pipe_status_publish(bipolar address_to values, positive count)
+{
+        bool locked;
+
+        /* `readonly PIPESTATUS` with no value stays an unset readonly array
+           in Bash. An existing readonly vector remains shell-owned and is
+           refreshed normally, so only the absent case refuses creation. */
+        locked = env_readonly("PIPESTATUS");
+
+        if (locked && !shell_array_length("PIPESTATUS", 10))
+                return;
+
+        /* Ordinary writes must respect readonly. This is the shell updating
+           its own status register, which Bash permits once that register has
+           a value; lift and restore only that attribute around the common
+           array writer rather than adding a second internal write engine. */
+        if (locked)
+                shell_variable_attribute_set("PIPESTATUS", 10, 0,
+                                             SHELL_ARRAY_READONLY);
+
+        shell_array_numbers("PIPESTATUS", 10, values, count);
+
+        if (locked)
+                shell_variable_attribute_set("PIPESTATUS", 10,
+                                             SHELL_ARRAY_READONLY, 0);
+}
+
 fn exec_pipe_status_wanted()
 {
         bipolar value;
@@ -7890,7 +7918,7 @@ fn exec_pipe_status_wanted()
 
         exec_pipe_status_pending = false;
         value = exec_pipe_status_value;
-        shell_array_numbers("PIPESTATUS", 10, address_of value, 1);
+        exec_pipe_status_publish(address_of value, 1);
 }
 
 static fn exec_pipe_status_one(b32 status)

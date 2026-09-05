@@ -1525,8 +1525,17 @@ static string_address expand_value_of(string_address name, p8 address_to scratch
 
         {
                 positive2 answer = string_hash_33_length(name);
-                string_address value = env_get_hashed_span(
-                    name, answer.y, answer.x, value_length);
+                string_address value;
+
+                // A simple command's one-element PIPESTATUS is deferred by
+                // the executor. Materialize it only for the exact scalar
+                // read; array forms already pass through dynamic_wanted.
+                if (shell_bash_compat && answer.y == 10 &&
+                    !memory_compare(name, "PIPESTATUS", 10))
+                        shell_dynamic_wanted(name, answer.y);
+
+                value = env_get_hashed_span(name, answer.y, answer.x,
+                                            value_length);
 
                 if (value)
                         return value;

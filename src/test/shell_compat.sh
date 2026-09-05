@@ -85,6 +85,12 @@ same_result()
                         return
                 fi
                 ;;
+        ignore)
+                # Forced interactive shells write terminal/job-control
+                # decoration that depends on whether the harness owns a tty.
+                # The caller must use this only when stdout and status carry
+                # the option behavior under test.
+                ;;
         *)
                 lost "$case_name" "bad diagnostic policy $diagnostic"
                 return
@@ -165,6 +171,76 @@ posix_startup()
                 "$name [dash]" "$input" "$diagnostic" "$@"
 }
 
+monitor_pty_case()
+{
+        if command -v python3 >/dev/null 2>&1 &&
+                timeout 12 python3 - /bin/bash "$work/names/bash" <<'PY'
+import fcntl
+import os
+import pty
+import select
+import signal
+import subprocess
+import sys
+import termios
+import time
+
+script = (
+    "/usr/bin/python3 -c 'import os; "
+    "print(\"FG\" if os.tcgetpgrp(0)==os.getpgrp() else \"BG\")'; :"
+)
+
+
+def run(shell):
+    master, slave = pty.openpty()
+
+    def session():
+        os.setsid()
+        fcntl.ioctl(0, termios.TIOCSCTTY, 0)
+
+    process = subprocess.Popen(
+        [shell, "-i", "-m", "-c", script],
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        close_fds=True,
+        preexec_fn=session,
+    )
+    os.close(slave)
+    output = bytearray()
+    deadline = time.monotonic() + 5
+
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            try:
+                output.extend(os.read(master, 4096))
+            except OSError:
+                break
+        if process.poll() is not None:
+            break
+
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGKILL)
+    status = process.wait()
+    os.close(master)
+    return status, bytes(output).replace(b"\r", b"")
+
+
+want = run(sys.argv[1])
+got = run(sys.argv[2])
+if want != (0, b"FG\n") or got != want:
+    print("PTY monitor: want %r, got %r" % (want, got), file=sys.stderr)
+    raise SystemExit(1)
+PY
+        then
+                won
+        else
+                lost 'explicit -i -m owns PTY' \
+                        'foreground child did not own the controlling terminal'
+        fi
+}
+
 group startup
 section startup
 
@@ -174,6 +250,7 @@ bash_startup 'combined -ce' '' exact -ce \
         'printf "before\n"; false; printf "after\n"'
 bash_startup '-ce trailing operands' '' exact -ce \
         'printf "%s:%s\n" "$0" "$1"; false' -x argument
+bash_startup '-ce missing command status' '' mentions:-c -ce -x
 bash_startup 'combined -eu -c' '' mentions:missing -eu -c \
         'printf "%s\n" "$missing"; printf "after\n"'
 bash_startup 'startup pipefail' '' exact -o pipefail -c \
@@ -189,6 +266,8 @@ bash_startup 'plus option disables' '' exact -e +e -c \
         'false; printf "after\n"'
 bash_startup 'stdin -s operands' 'printf "%s:%s\n" "$1" "$2"
 ' exact -s -- one two
+bash_startup 'plus-s still selects stdin' 'printf "<%s>\n" "$1"
+' exact +s operand
 bash_startup '-c name operands' '' exact -c \
         'printf "%s:%s\n" "$0" "$1"' named one
 
@@ -211,6 +290,7 @@ posix_startup '-c option terminator' '' exact -c -- \
         'printf "command-after-terminator\n"'
 posix_startup 'missing -c operand' '' mentions:-c -c
 posix_startup 'unknown startup flag' '' mentions:-Z -Z
+posix_startup 'reject Bash extra letter' '' mentions:-B -B -c ':'
 posix_startup 'plus option disables' '' exact -e +e -c \
         'false; printf "after\n"'
 posix_startup 'stdin -s operands' 'printf "%s:%s\n" "$1" "$2"
@@ -218,6 +298,16 @@ posix_startup 'stdin -s operands' 'printf "%s:%s\n" "$1" "$2"
 posix_startup '-c name operands' '' exact -c \
         'printf "%s:%s\n" "$0" "$1"' named one
 posix_startup 'option terminator' '' exact -- "$work/-script"
+
+bash_startup 'interactive +m precedence' '' ignore -i +m -c \
+        'case $- in *m*) echo m-on;; *) echo m-off;; esac'
+posix_startup 'interactive +m precedence' '' ignore -i +m -c \
+        'case $- in *m*) echo m-on;; *) echo m-off;; esac'
+bash_startup 'interactive without tty has no monitor' '' ignore -i -c \
+        'case $- in *m*) echo m-on;; *) echo m-off;; esac'
+posix_startup 'interactive without tty has no monitor' '' ignore -i -c \
+        'case $- in *m*) echo m-on;; *) echo m-off;; esac'
+monitor_pty_case
 
 group mode
 section mode
@@ -238,10 +328,16 @@ MW_COMPAT_HASH_B=$work/hash-b
 export MW_COMPAT_HASH_A MW_COMPAT_HASH_B
 bash_case 'hashall h toggle' \
         'PATH="$MW_COMPAT_HASH_A:/usr/bin"; hash -p "$MW_COMPAT_HASH_B/pick" pick; set +h; pick; set -h; hash -p "$MW_COMPAT_HASH_B/pick" pick; pick; case $- in *h*) echo h-on;; *) echo h-off;; esac'
+bash_case 'flag cache follows mutations' \
+        'printf "<%s>\n" "$-"; set -eu; printf "<%s>\n" "$-"; set +e; set +B; printf "<%s>\n" "$-"; set -B; printf "<%s>\n" "$-"'
 posix_case 'non-bash identity' \
         '[ -z "${BASH_VERSION+x}" ]; echo $?'
 posix_case 'set -n same parsed line' \
         'set -n; printf "must-not-run\n"; set +n; printf "still-must-not-run\n"'
+posix_case 'reject Bash set letter' \
+        '(set -B) 2>/dev/null; echo $?'
+posix_case 'flag cache follows mutations' \
+        'printf "<%s>\n" "$-"; set -eu; printf "<%s>\n" "$-"; set +e; printf "<%s>\n" "$-"'
 
 group pipeline
 section pipeline

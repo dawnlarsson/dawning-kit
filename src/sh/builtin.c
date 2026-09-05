@@ -64,6 +64,19 @@ fn parse_nest_enter();
 fn parse_nest_leave();
 static bool exec_arithmetic_value(string_address text,
                                   bipolar address_to value);
+// exec owns the lifetime of PIPESTATUS; the variable engine materializes its
+// deferred one-element value only when a reader actually names it.
+fn exec_pipe_status_wanted();
+
+static bool shell_pipe_status_wanted(const_string name, positive length)
+{
+        if (!shell_bash_compat || length != 10 ||
+            memory_compare((address_any)name, "PIPESTATUS", 10))
+                return false;
+
+        exec_pipe_status_wanted();
+        return true;
+}
 
 /*
         An executable text file does not need to name an interpreter when it
@@ -1368,6 +1381,13 @@ positive env_names_prefix(string_address prefix, positive length,
 {
         positive count = 0;
 
+        // A deferred PIPESTATUS is still a variable name. Prefix discovery
+        // must publish it before sizing the answer, including the empty
+        // prefix which asks for every variable.
+        if (shell_bash_compat && length <= 10 &&
+            !memory_compare("PIPESTATUS", prefix, length))
+                exec_pipe_status_wanted();
+
         for (positive at = 0; at < shell_var_count; at++)
         {
                 env_variable address_to variable = shell_vars + at;
@@ -2432,6 +2452,9 @@ static COLD fn shell_dynamic_dirstack()
 COLD bool shell_dynamic_wanted(const_string name, positive length)
 {
         positive which;
+
+        if (shell_pipe_status_wanted(name, length))
+                return true;
 
         if (length == 13 &&
             shell_bash_compat &&
@@ -4154,7 +4177,7 @@ static bool shell_option_letter_told(p8 letter, bool on)
                         return true;
                 }
 
-        return shell_extra_letter(letter, on);
+        return shell_bash_compat && shell_extra_letter(letter, on);
 }
 
 /*
@@ -4169,6 +4192,27 @@ static bool shell_option_letter_told(p8 letter, bool on)
 RETURNS_NONNULL string_address shell_flags_current()
 {
         static p8 flags[32];
+        static positive last_options, last_named, last_extra;
+        static bool last_bash, known;
+        static p8 last_source;
+        p8 source = string_get(shell_option_flags);
+
+        /* Observe the state instead of maintaining invalidation hooks: local
+           option unwind and command-substitution policy restore whole words
+           directly. Repeated $- expansion needs no table walk when none of
+           these words changed. */
+        if (known && last_options == shell_options &&
+            last_named == shell_options_named && last_extra == shell_extra_state &&
+            last_bash == shell_bash_compat && last_source == source)
+                return flags;
+
+        last_options = shell_options;
+        last_named = shell_options_named;
+        last_extra = shell_extra_state;
+        last_bash = shell_bash_compat;
+        last_source = source;
+        known = true;
+
         string_address order = shell_bash_compat
                                    ? (string_address) "abefhiklmnptuvxBCEHPT"
                                    : (string_address) "ubaCvxsiImfne";
@@ -4207,19 +4251,20 @@ RETURNS_NONNULL string_address shell_flags_current()
 
 // Entry mode supplies the initial s/i state. From this point on they are
 // ordinary set options: `set +s` and `set +i` must also disappear from `$-`.
-fn shell_options_started(bool interactive)
+fn shell_options_started(bool interactive, b32 monitor)
 {
         if (string_first_of(shell_option_flags, 's'))
                 shell_options |= SHELL_FLAG('s');
 
         if (interactive)
-        {
                 shell_options |= SHELL_FLAG('i');
 
-                // Somebody is watching, so job control is on: that is what
-                // makes control-Z a job rather than a stopped shell.
-                shell_option_told(SHELL_OPTION_MONITOR, true);
-        }
+        // Defer the one monitor side effect until interactive identity is
+        // known. Parsing -m earlier would mark job control initialized before
+        // it could acquire the terminal; an explicit +m overrides the default.
+        if (interactive || monitor >= 0)
+                shell_option_told(SHELL_OPTION_MONITOR,
+                                  monitor < 0 ? interactive : monitor != 0);
 }
 
 /*
@@ -4322,7 +4367,7 @@ bool shell_option_named(string_address word, bool on)
                                            SHELL_OPTION_NAMES);
 
         if (index >= SHELL_OPTION_NAMES)
-                return shell_extra_told(word, on);
+                return shell_bash_compat && shell_extra_told(word, on);
 
         shell_option_told(index, on);
 
@@ -4542,6 +4587,7 @@ COLD fn shell_shopt(writer write, string_address input)
 static fn shell_set_written(writer write, string_address name,
                             positive length, b32 mark)
 {
+        shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
 
         (void)mark;
@@ -5064,6 +5110,7 @@ static b32 local_remember(string_address name)
 
         name_info = string_hash_33_length(name);
         name_length = name_info.y;
+        shell_pipe_status_wanted(name, name_length);
         found = env_find_hashed_span(name, name_length, name_info.x);
         variable = found < shell_var_count ? shell_vars + found : null;
         local_table[local_count].exported =
@@ -5360,6 +5407,7 @@ static COLD fn shell_declare_elements(writer write, string_address name,
 static bool shell_declare_print_one(writer write, string_address name,
                                     positive length, b32 filter)
 {
+        shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
         env_variable address_to variable =
             found < shell_var_count ? shell_vars + found : null;
@@ -5434,9 +5482,17 @@ static bool shell_declare_print_one(writer write, string_address name,
 static bool shell_names_sorted(writer write, b32 mark,
                                shell_name_writer written)
 {
-        positive count = shell_var_count;
+        positive count;
         shell_mark held = shell_store_mark(address_of expand_store);
         string_address address_to names;
+
+        // Materialize before taking the count and copying names. Doing it in
+        // a per-name callback cannot add an absent PIPESTATUS to the captured
+        // vector and may grow the environment while that vector is walked.
+        if (shell_bash_compat)
+                exec_pipe_status_wanted();
+
+        count = shell_var_count;
 
         if (count > positive_max / sizeof(names[0]))
                 return false;
@@ -5935,6 +5991,7 @@ static fn shell_declare(writer write, string_address input)
 static fn shell_marked_written(writer write, string_address name,
                                positive length, b32 mark)
 {
+        shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
         env_variable address_to variable =
             found < shell_var_count ? shell_vars + found : null;
@@ -5992,6 +6049,8 @@ static COLD fn shell_marked(writer write, p8 mark)
                 // word is argv's and goes back the way it was.
                 if (value)
                         address_to value = end;
+
+                shell_pipe_status_wanted(word, length);
 
                 if (value && env_readonly(word))
                 {

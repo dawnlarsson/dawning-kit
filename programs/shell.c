@@ -137,6 +137,7 @@ typedef struct
         bool command;
         bool from_stdin;
         b32 interactive;
+        b32 monitor;
 } shell_invocation;
 
 /* The command-line grammar locates the source and operands, while set's
@@ -148,6 +149,7 @@ static bool shell_start_options(string_address address_to arguments,
         positive at = 1;
 
         invocation->interactive = -1;
+        invocation->monitor = -1;
         while (at < count)
         {
                 string_address word = arguments[at];
@@ -177,7 +179,9 @@ static bool shell_start_options(string_address address_to arguments,
 
                         if (value == 'c')
                                 invocation->command = true;
-                        else if (value == 'l' && shell_bash_compat)
+                        else if (value == 'm')
+                                invocation->monitor = on;
+                        else if (value == 'l')
                         {
                                 if (on)
                                         shell_shopt_state |=
@@ -190,6 +194,11 @@ static bool shell_start_options(string_address address_to arguments,
                         {
                                 if (at + 1 == count)
                                         shell_options_listed(log, !on);
+                                else if (word_is(arguments[at + 1], "monitor"))
+                                {
+                                        invocation->monitor = on;
+                                        at++;
+                                }
                                 else if (!shell_option_named(arguments[++at],
                                                              on))
                                 {
@@ -237,7 +246,7 @@ static bool shell_start_options(string_address address_to arguments,
                         }
 
                         if (value == 's')
-                                invocation->from_stdin = on;
+                                invocation->from_stdin = shell_bash_compat || on;
                         else if (value == 'i')
                                 invocation->interactive = on;
                 }
@@ -381,7 +390,9 @@ b32 main()
                 if (first >= process_arguments)
                 {
                         log_error("sh: -c wants a command\n", 0);
-                        return 2;
+                        return shell_bash_compat &&
+                                       (shell_options & SHELL_FLAG('e'))
+                                   ? 1 : 2;
                 }
 
                 command = arguments[first];
@@ -437,7 +448,10 @@ b32 main()
         interactive = shell_is_interactive = invocation.interactive >= 0
                           ? invocation.interactive
                           : (!script_file && shell_interactive());
-        shell_options_started(interactive);
+        shell_options_started(interactive, invocation.monitor);
+        if (interactive && shell_option_on(SHELL_OPTION_MONITOR) &&
+            !job_terminal_owned)
+                shell_option_told(SHELL_OPTION_MONITOR, false);
         history_start();
 
         /*

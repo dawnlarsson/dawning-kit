@@ -132,6 +132,36 @@ group dash
 compare dash 'default listing unchanged' 'ulimit -a'
 compare dash 'default scales unchanged' 'ulimit -c; ulimit -f; ulimit -p; ulimit -n'
 
+section pipestatus
+group lazy
+
+compare bash 'initial vector' \
+        'printf "<%s>:%s\n" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+compare bash 'simple status materializes' \
+        'false; printf "<%s>:%s\n" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+compare bash 'pipeline vector stays whole' \
+        'true | false | true; printf "%s:<%s>:<%s>:<%s>\n" "${#PIPESTATUS[@]}" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}" "${PIPESTATUS[2]}"'
+compare bash 'copy sees prior pipeline' \
+        'false | true; copy=("${PIPESTATUS[@]}"); printf "<%s>|<%s>\n" "${copy[*]}" "${PIPESTATUS[*]}"'
+compare bash 'user assignment superseded' \
+        'PIPESTATUS=(7 8); printf "%s:<%s>\n" "${#PIPESTATUS[@]}" "${PIPESTATUS[*]}"'
+compare bash 'scalar copy then reset' \
+        'false | true; copy=${PIPESTATUS[*]}; printf "<%s>|<%s>\n" "$copy" "${PIPESTATUS[*]}"'
+compare bash 'eval observes pending' \
+        'false; eval '\''printf "<%s>\n" "${PIPESTATUS[*]}"'\'''
+compare bash 'unset recreates on read' \
+        'unset PIPESTATUS; printf "%s:<%s>\n" "${#PIPESTATUS[@]}" "${PIPESTATUS[*]}"'
+compare bash 'empty readonly stays empty' \
+        'readonly PIPESTATUS; false; declare -p PIPESTATUS'
+compare bash 'valued readonly publishes' \
+        'false; readonly PIPESTATUS; declare -p PIPESTATUS'
+compare bash 'declare sees absent pending' \
+        ':; declare -p PIPESTATUS'
+compare bash 'prefix sees absent pending' \
+        ':; printf "<%s>\n" ${!PIPESTATUS*}'
+compare bash 'set includes absent pending' \
+        ':; set | grep -q "^PIPESTATUS="; printf "%s\n" "$?"'
+
 section ""
 total=$((pass + fail))
 echo

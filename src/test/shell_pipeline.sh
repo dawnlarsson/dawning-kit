@@ -113,12 +113,40 @@ case_compare 'lastpipe restores closed stdin' "$B" "$M" \
         'set +m; shopt -s lastpipe; exec 0<&-; printf x | read value; read after 2>/dev/null; if [ "$?" -ne 0 ]; then echo "closed:$value"; fi'
 case_compare 'ordinary pipeline statuses' "$B" "$MB" \
         'false | true; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"'
+case_compare 'lastpipe keeps direct external final' "$B" "$M" \
+        'set +m; shopt -s lastpipe; /bin/false | /bin/true; printf "%s:%s\n" "$?" "${PIPESTATUS[*]}"'
+case_compare 'initial PIPESTATUS scalar and length' "$B" "$MB" \
+        'printf "%s:%s:%s\n" "$PIPESTATUS" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'simple failure updates PIPESTATUS' "$B" "$MB" \
+        'false; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
 case_compare 'PIPESTATUS reset by assignment' "$B" "$MB" \
         'set -o pipefail; (exit 3) | (exit 7) | true; s=$?; printf "%s:%s:%s:%s\n" "$s" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}" "${PIPESTATUS[2]}"'
+case_compare 'PIPESTATUS vector collapses after simple' "$B" "$MB" \
+        'false | true; :; printf "%s:%s:%s\n" "${!PIPESTATUS[*]}" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'PIPESTATUS returns after unset' "$B" "$MB" \
+        'unset PIPESTATUS; printf "%s:%s\n" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'PIPESTATUS readonly absent stays absent' "$B" "$MB" \
+        'readonly PIPESTATUS; false; printf "%s:%s\n" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'PIPESTATUS readonly existing refreshes' "$B" "$MB" \
+        'false | true; readonly PIPESTATUS; false; printf "%s:%s:%s\n" "${!PIPESTATUS[*]}" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'PIPESTATUS readonly existing pipeline refreshes' "$B" "$MB" \
+        'false; readonly PIPESTATUS; (exit 3) | (exit 7); printf "%s:%s\n" "${!PIPESTATUS[*]}" "${PIPESTATUS[*]}"'
+case_compare 'PIPESTATUS readonly absent rejects pipeline' "$B" "$MB" \
+        'readonly PIPESTATUS; (exit 3) | (exit 7); printf "%s:%s:%s\n" "${!PIPESTATUS[*]}" "${PIPESTATUS[*]}" "${#PIPESTATUS[@]}"'
+case_compare 'declare sees pending PIPESTATUS' "$B" "$MB" \
+        'false | true; saved=$?; declare -p PIPESTATUS'
 case_compare 'Bash redirect failure status' "$B" "$MB" \
         ': >/no/moonwater-pipeline/target 2>/dev/null; printf "%s\n" "$?"'
 case_compare 'Bash noclobber failure status' "$B" "$MB" \
         'p=/tmp/mw-noclobber.$$; : >"$p"; set -C; : >"$p" 2>/dev/null; s=$?; rm -f "$p"; echo "$s"'
+case_compare 'Bash final redirect pipeline status' "$B" "$MB" \
+        'set -o pipefail; true | cat < /no/moonwater-pipeline/input 2>/dev/null; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"'
+case_compare 'Bash left redirect pipeline status' "$B" "$MB" \
+        'set -o pipefail; cat < /no/moonwater-pipeline/input 2>/dev/null | true; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"'
+case_compare 'lastpipe redirect failure state' "$B" "$MB" \
+        'set +m; shopt -s lastpipe; value=old; printf new | read value < /no/moonwater-pipeline/input 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
+case_compare 'lastpipe readonly builtin status' "$B" "$MB" \
+        'set +m; shopt -s lastpipe; readonly value=old; printf new | read value 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
 case_compare 'dash redirect failure status' "$D" "$M" \
         ': >/no/moonwater-pipeline/target 2>/dev/null'
 case_compare 'dynamic noexec skips successors' "$B" "$MB" \
