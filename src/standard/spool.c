@@ -834,7 +834,7 @@ static b32 spool_close_process(stream address_to handle)
 */
 static fn spool_set_line_buffered(stream address_to handle)
 {
-        stream_set_buffering(handle, null, _IOLBF, BUFSIZ);
+        stream_set_buffering(handle, null, _IOLBF, STREAM_DYNAMIC_BUFFER);
 }
 
 static fn spool_set_buffer_sized(stream address_to handle,

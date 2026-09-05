@@ -212,7 +212,11 @@ for target in x86_64 arm64 riscv64; do
                 continue
         fi
 
-        $runner "$work/t.$target" > "$work/t.$target.out" 2>&1
+        if $runner "$work/t.$target" > "$work/t.$target.out" 2>&1; then
+                report ok "$target internal invariants"
+        else
+                report no "$target internal invariants" "test returned failure"
+        fi
 
         if diff -q "$work/t.reference.out" "$work/t.$target.out" > /dev/null; then
                 report ok "$target file trace"

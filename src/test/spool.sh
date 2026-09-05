@@ -150,9 +150,19 @@ for target in x86_64 arm64 riscv64; do
         fi
 
         if [ -n "$runner" ]; then
-                $runner "$work/spool.$target" > "$work/$target.out" 2>&1
+                if $runner "$work/spool.$target" > "$work/$target.out" 2>&1
+                then
+                        report ok
+                else
+                        report bad "$target" "internal invariant failed"
+                fi
         else
-                "$work/spool.$target" > "$work/$target.out" 2>&1
+                if "$work/spool.$target" > "$work/$target.out" 2>&1
+                then
+                        report ok
+                else
+                        report bad "$target" "internal invariant failed"
+                fi
         fi
 
         if [ ! -s "$work/$target.out" ]; then

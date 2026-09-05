@@ -101,6 +101,14 @@ fn free(address_any block);
         "fully buffered". BUFSIZ is 4096 rather than glibc's 8192: a page is
         the unit every read and write here ends up costing, and MAX_INPUT
         beside it in any.inc is the same number.
+
+        A dynamically attached default is eight bytes smaller. malloc puts
+        its tag in the same allocation, so asking it for a 4096-byte payload
+        needs the next 5120-byte shelf; 4088 plus that tag fits one 4096-byte
+        shelf exactly. Static stdin and stdout buffers have no allocation
+        header and keep the full BUFSIZ. Large fread/fwrite calls bypass the
+        buffer, so the only throughput difference is one extra refill or
+        flush per roughly two megabytes of buffered traffic.
 */
 #define _IOFBF 0
 #define _IOLBF 1
@@ -108,6 +116,7 @@ fn free(address_any block);
 
 #define EOF (-1)
 #define BUFSIZ 4096
+#define STREAM_DYNAMIC_BUFFER (BUFSIZ - sizeof(positive))
 
 #ifndef SEEK_SET
 #define SEEK_SET 0
@@ -425,7 +434,7 @@ static fn stream_ready(stream address_to handle)
                 return;
         }
 
-        handle->buffer = (p8 address_to)stream_allocate(BUFSIZ);
+        handle->buffer = (p8 address_to)stream_allocate(STREAM_DYNAMIC_BUFFER);
 
         if (handle->buffer == null)
         {
@@ -436,7 +445,7 @@ static fn stream_ready(stream address_to handle)
         }
 
         handle->flags |= STREAM_BUFFER_OURS;
-        handle->buffer_size = BUFSIZ;
+        handle->buffer_size = STREAM_DYNAMIC_BUFFER;
 }
 
 /*
