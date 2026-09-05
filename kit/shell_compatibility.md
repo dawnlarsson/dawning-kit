@@ -87,6 +87,31 @@ the variable loop when comparing Bash and sh policy in the same binary. The
 discarded eager and scalar-intermediate designs had measured +57.5% and
 +36.3% respectively.
 
+The final `3586546` LTO binary was checked again with nine CPU-0-pinned samples
+of `instructions:u`, not elapsed time. For 1000 `: | :` pipelines the median
+was 10603542 at `cf59680`, 10571228 in the final default policy (-0.30%), and
+10272597 with `lastpipe` enabled (-2.82% against the same final binary).
+The final 10000-iteration simple loop measured 63947141 instructions through
+the default name and 64044111 through the Bash name: +0.1516% for lazy Bash
+status policy. These are bounded instruction costs, not whole-shell speedups.
+
+Reproduce each sample with a binary built by `sh kit/build programs/shell.c
+/path/to/binary` and the same compiler/options for the control:
+
+```sh
+body='i=0; while [ "$i" -lt 1000 ]; do : | :; i=$((i + 1)); done'
+taskset -c 0 perf stat -x, -e instructions:u -- "$binary" -c "$body"
+taskset -c 0 perf stat -x, -e instructions:u -- "$binary" -c \
+    "set +m; shopt -s lastpipe; $body"
+```
+
+An earlier tracepoint collection of 200 such pipelines counted 400 clone and
+400 wait4 calls by default, versus 200 of each with `lastpipe`. Both made 200
+pipe2 calls; descriptor preservation added 200 fcntl calls and increased dup3
+from 400 to 600. This syscall collection preceded the final readonly-writer
+fold; it was not rerun on the sealed binary. The process/descriptor paths did
+not change in that final fold.
+
 ## Gap map
 
 `kit/shell_gaps.sh` remains an informative map rather than a passing gate. Its
@@ -133,6 +158,10 @@ including the 61 build-kit checks. The standard, storage_io, term and probe
 lanes passed another 883/883; storage_io compiled and ran on native x86-64
 and emulated AArch64/RV64. Those cross-architecture checks are not a complete
 cross-architecture shell-language differential.
+Final static AArch64 and RV64 shell builds additionally passed representative
+QEMU smokes for lastpipe, lazy status, readonly full/absent vectors, redirect
+status, noexec and errexit. Those smokes establish neither timing nor ISA-floor
+claims; the explicit RV64 floor belongs to the separate storage_io lane.
 
 The x86-64 image rebuilt on `box` as kernel build #437 and passed 45/45 boot
 checks, including both interpreter links and a Bash-shebang `lastpipe` script.
