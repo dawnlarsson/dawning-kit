@@ -4231,6 +4231,7 @@ static b32 exec_call(positive slot)
         positive saved_count = shell_parameter_count;
         positive saved;
         b32 status;
+        bool saved_replaced = shell_parameters_replaced;
 
         if (exec_function_depth == 0x7fffffff)
         {
@@ -4317,6 +4318,7 @@ static b32 exec_call(positive slot)
                 exit(2);
         }
 
+        shell_parameters_replaced = saved_replaced;
         return status;
 }
 
@@ -4430,12 +4432,25 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
                            bool append)
 {
         shell_mark held = shell_store_mark(address_of exec_store);
-        bool keyed = (shell_variable_attributes(name, name_length) &
-                      SHELL_ARRAY_ASSOCIATIVE) != 0;
+        const_string resolved_name;
+        positive resolved_length;
+        bool keyed;
         string_address at = body;
         string_address stop = body + body_length;
         positive next = 0;
         bool answer = true;
+
+        if (!shell_reference_resolve(name, name_length, address_of resolved_name,
+                                     address_of resolved_length))
+        {
+                shell_store_rewind(address_of exec_store, held);
+                return false;
+        }
+
+        name = (string_address)resolved_name;
+        name_length = resolved_length;
+        keyed = (shell_array_attributes(name, name_length) &
+                      SHELL_ARRAY_ASSOCIATIVE) != 0;
 
         if (!shell_variable_attribute_set(
                 name, name_length,
@@ -4585,7 +4600,8 @@ static bool exec_assign(string_address address_to word_at,
         {
                 positive length = string_length(mark + 1);
 
-                if (env_readonly_hashed_span(word, name_length, name_hash))
+                if (env_assignment_readonly_hashed_span(
+                        word, name_length, name_hash))
                 {
                         string_format(exec_error, "%s: is read only\n", word);
                         address_to name_end = append ? '+' : '=';
@@ -4613,7 +4629,7 @@ static bool exec_assign(string_address address_to word_at,
         if (subscript)
                 address_to subscript = end;
 
-        if (env_readonly_hashed_span(
+        if (env_assignment_readonly_hashed_span(
                 word, base_length,
                 subscript ? memory_hash_33(word, base_length) : name_hash))
         {
@@ -4812,11 +4828,18 @@ static COLD bool exec_keep_array(exec_kept_value address_to kept)
 static bool exec_keep_value(exec_kept_value address_to kept, string_address word)
 {
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
+        bool append;
+        bool compound;
         string_address bracket;
         string_address value;
 
-        if (length && word[length - 1] == '+')
+        append = length && word[length - 1] == '+';
+
+        if (append)
                 length--;
+
+        compound = string_is(word + length + append, '=') &&
+                   string_is(word + length + append + 1, '(');
 
         bracket = string_first_of(word, '[');
 
@@ -4873,6 +4896,29 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                 return kept->value != exec_nothing;
         }
 
+        value = env_saved_state(word, length, address_of kept->exported,
+                                address_of kept->attributes);
+
+        /* The common case stays the original one-probe save. A nameref alone
+           takes the cold second probe needed to save the target that the
+           provisional assignment will actually change. */
+        if (kept->attributes & SHELL_ARRAY_NAMEREF)
+        {
+                const_string resolved_name;
+                positive resolved_length;
+
+                if (!shell_reference_resolve(
+                        word, length, address_of resolved_name,
+                        address_of resolved_length))
+                        return false;
+
+                word = (string_address)resolved_name;
+                length = resolved_length;
+                value = env_saved_state(word, length,
+                                        address_of kept->exported,
+                                        address_of kept->attributes);
+        }
+
         kept->name = shell_store_take(address_of exec_store, length + 1);
 
         if (!kept->name)
@@ -4885,12 +4931,8 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
         kept->element_count = 0;
         // Whether the value about to be written is a list. Nothing else says
         // that a scalar restore would leave elements standing behind it.
-        kept->compound = string_is(word + length + (word[length] == '+'), '=') &&
-                         string_is(word + length + (word[length] == '+') + 1,
-                                   '(');
+        kept->compound = compound;
 
-        value = env_saved_state(kept->name, length, address_of kept->exported,
-                                address_of kept->attributes);
         kept->value = null;
 
         if ((kept->attributes & SHELL_ARRAY_EITHER) &&
@@ -5074,33 +5116,91 @@ static PURE b32 exec_declaration_from(parse_node address_to node)
 }
 
 /*
-        A control-flow operand that has to fit in b32 without wrapping.
-
-        string_digits_exact deliberately accepts an arbitrarily long decimal
-        spelling and wraps its accumulator; file sizes and similar callers
-        impose their own policy afterward. That is not enough here, because a
-        huge return operand wrapping to zero is silent success. Strip zeroes
-        with the floor routine, reject values wider than INT_MAX before the
-        conversion, then let the exact parser prove every remaining byte.
+        Control operands share the checked library scanner: signs, whitespace
+        and overflow are parsed once. Dash then bounds the value to INT_MAX;
+        Bash return accepts a signed machine word before truncating to status.
 */
+static bool exec_control_integer(string_address word, bipolar address_to answer)
+{
+        // The common status/loop count is one digit: settle it in registers
+        // before entering the shared sign/whitespace/overflow scanner.
+        positive digit = (positive)(word[0] - '0');
+        if (digit <= 9 && !word[1])
+        {
+                *answer = (bipolar)digit;
+                return true;
+        }
+        string_address stopped;
+        b32 overflow;
+        bipolar parsed = string_to_number_checked(word, address_of stopped, 10,
+                                                   address_of overflow);
+
+        if (overflow || stopped == word)
+                return false;
+        while (byte_is_space(*stopped))
+                stopped++;
+        if (*stopped)
+                return false;
+
+        *answer = parsed;
+        return true;
+}
+
 static bool exec_control_number(string_address word, bool allow_zero,
                                 b32 address_to answer)
 {
-        static p8 maximum[] = "2147483647";
-        positive length = string_length(word);
-        positive zeroes = memory_span_byte(word, '0', length);
-        positive significant = length - zeroes;
-        positive parsed;
+        bipolar parsed;
 
-        if (significant > 10 ||
-            (significant == 10 &&
-             string_compare_max(word + zeroes, maximum, 10) > 0) ||
-            !string_digits_exact(word, address_of parsed) ||
-            (!allow_zero && !parsed))
+        if (!exec_control_integer(word, address_of parsed) || parsed < 0 ||
+            parsed > 0x7fffffff || (!allow_zero && !parsed))
                 return false;
-
         *answer = (b32)parsed;
         return true;
+}
+
+static COLD fn exec_return_bash()
+{
+        positive first = 1;
+        bipolar value = shell_status;
+        bool valid = true;
+
+        if (first < shell_argc && word_is(shell_argv[first], "--"))
+                first++;
+        if (first < shell_argc)
+        {
+                valid = exec_control_integer(shell_argv[first], address_of value);
+                if (!valid)
+                {
+                        string_format(exec_error,
+                                      "return: %s: numeric argument required\n",
+                                      shell_argv[first]);
+                        value = 2;
+                }
+                else if (shell_argc > first + 1)
+                {
+                        exec_error("return: too many arguments\n", 0);
+                        shell_status = 1;
+                        if (!shell_is_interactive || exec_forked ||
+                            string_is(shell_option_flags, 'c'))
+                        {
+                                shell_trap_exit();
+                                log_flush();
+                                exit(1);
+                        }
+                        exec_expand_fatal();
+                        return;
+                }
+        }
+
+        if (!exec_function_depth && !shell_source_depth)
+        {
+                exec_error("return: can only return from a function or sourced script\n", 0);
+                shell_status = 2;
+                return;
+        }
+
+        shell_status = (b32)((positive)value & 0xff);
+        exec_signal = EXEC_SIGNAL_RETURN;
 }
 
 /* break, continue and return are executor operations, not ordinary C
@@ -5151,6 +5251,11 @@ bool exec_control_builtin(string_address name, bool run)
                 return true;
 
         exec_return_previous = shell_status;
+        if (shell_bash_compat)
+        {
+                exec_return_bash();
+                return true;
+        }
         if (shell_argc > 1 &&
             !exec_control_number(shell_argv[1], true, address_of shell_status))
         {

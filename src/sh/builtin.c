@@ -1285,35 +1285,91 @@ fn shell_env_init(string_address address_to process_environment)
 */
 #define env_reading(text) ((string_address)(text))
 
-/*
-        Follow a nameref to the record it stands for.
+typedef struct
+{
+        const_string name;
+        positive length;
+        positive hash;
+        positive index;
+        bool valid;
+} env_reference;
 
-        Kept out of line and iterative on purpose: reading a variable is one
-        of the two hottest things this shell does, and a recursive hop
-        between the reader and itself is enough to stop it being inlined
-        where it is read. A ring of namerefs is a name with nothing behind
-        it rather than a shell that never answers.
-*/
-static COLD positive env_nameref_index(positive index)
+static COLD PURE positive env_reference_follow(
+    positive index, env_reference address_to absent)
 {
         for (positive step = 0; step < 16; step++)
         {
-                string_address target =
-                    shell_vars[index].text + shell_vars[index].name_length + 1;
-                positive length = shell_vars[index].value_length;
-                positive next = env_find_span(target, length);
+                env_variable address_to variable = shell_vars + index;
+                const_string name =
+                    variable->text + variable->name_length + 1;
+                positive length = variable->value_length;
+                positive hash = env_name_hash(name, length);
+                positive next = env_find_hashed_span(name, length, hash);
 
-                if (next >= shell_var_count ||
+                if (next >= shell_var_count)
+                {
+                        if (absent)
+                        {
+                                absent->name = name;
+                                absent->length = length;
+                                absent->hash = hash;
+                        }
+
+                        return next;
+                }
+
+                if (!(shell_vars[next].attributes & SHELL_ARRAY_NAMEREF) ||
                     !env_variable_has_value(shell_vars + next))
-                        return shell_var_count;
-
-                if (!(shell_vars[next].attributes & SHELL_ARRAY_NAMEREF))
                         return next;
 
                 index = next;
         }
 
+        if (absent)
+                absent->valid = false;
         return shell_var_count;
+}
+
+/*
+        Follow a nameref to the name it stands for.
+
+        Scalar lookup, every array operation, compound assignment and unset
+        all need the same answer. Keeping that answer as a span avoids making
+        a terminated copy at each hop, and returning the final index saves the
+        array side from looking the target up a second time. A ring is an
+        invalid reference rather than an unbounded walk.
+*/
+static COLD PURE env_reference env_reference_hashed(const_string name,
+                                                     positive length,
+                                                     positive hash)
+{
+        env_reference answer = {name, length, hash, shell_var_count, true};
+
+        answer.index = env_find_hashed_span(name, length, hash);
+
+        if (answer.index < shell_var_count &&
+            (shell_vars[answer.index].attributes & SHELL_ARRAY_NAMEREF) &&
+            env_variable_has_value(shell_vars + answer.index))
+        {
+                answer.index =
+                    env_reference_follow(answer.index, address_of answer);
+
+                if (answer.index < shell_var_count)
+                {
+                        answer.name = shell_vars[answer.index].text;
+                        answer.length = shell_vars[answer.index].name_length;
+                        answer.hash = shell_vars[answer.index].hash;
+                }
+        }
+
+        return answer;
+}
+
+static COLD PURE env_reference env_reference_span(const_string name,
+                                                   positive length)
+{
+        return env_reference_hashed(name, length,
+                                    env_name_hash(name, length));
 }
 
 string_address env_get_hashed_span(const_string name, positive length,
@@ -1331,13 +1387,14 @@ string_address env_get_hashed_span(const_string name, positive length,
             !env_variable_has_value(shell_vars + index))
                 return null;
 
-        // Reading a nameref is reading the name it holds. The bit is in the
-        // record already loaded, so a scalar pays one predicted branch.
+        /* Keep the ordinary scalar path at one probe. Only the attribute bit
+           pays for the shared multi-hop resolver. */
         if (shell_vars[index].attributes & SHELL_ARRAY_NAMEREF)
         {
-                index = env_nameref_index(index);
+                index = env_reference_follow(index, null);
 
-                if (index >= shell_var_count)
+                if (index >= shell_var_count ||
+                    !env_variable_has_value(shell_vars + index))
                         return null;
 
                 length = shell_vars[index].name_length;
@@ -1472,10 +1529,12 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         p8 attributes = shell_vars[idx].attributes;
 
         if ((attributes & SHELL_ARRAY_NAMEREF) &&
-            env_variable_has_value(shell_vars + idx) &&
-            env_nameref_depth < 16)
+            env_variable_has_value(shell_vars + idx))
         {
                 bool answer;
+
+                if (env_nameref_depth >= 16)
+                        return 2;
 
                 env_nameref_depth++;
                 answer = env_write(shell_vars[idx].text + name_len + 1, value,
@@ -1527,7 +1586,12 @@ static bool env_write_found_span(const_string name, positive name_len,
         // is stored, and every one of them is out of line.
         if (idx < shell_var_count && shell_vars[idx].attributes)
         {
-                if (shell_vars[idx].attributes & SHELL_ARRAY_READONLY)
+                /* Readonly on a nameref freezes the reference binding, not
+                   the target value an ordinary assignment reaches. The
+                   recursive write applies the target's own readonly bit. */
+                if ((shell_vars[idx].attributes & SHELL_ARRAY_READONLY) &&
+                    (!(shell_vars[idx].attributes & SHELL_ARRAY_NAMEREF) ||
+                     !env_variable_has_value(shell_vars + idx)))
                         return false;
 
                 b32 done = env_write_attributed(idx, name, name_len, value,
@@ -1677,6 +1741,59 @@ COLD PURE p8 shell_variable_attributes(const_string name, positive length)
         return found < shell_var_count ? shell_vars[found].attributes : 0;
 }
 
+/* Array syntax acts on a nameref's target, while declaration syntax still
+   needs shell_variable_attributes() above to describe the reference itself. */
+COLD PURE p8 shell_array_attributes(const_string name, positive length)
+{
+        env_reference resolved = env_reference_span(name, length);
+
+        return resolved.valid && resolved.index < shell_var_count
+                   ? shell_vars[resolved.index].attributes
+                   : 0;
+}
+
+COLD bool shell_reference_resolve(const_string name, positive length,
+                                  const_string address_to resolved_name,
+                                  positive address_to resolved_length)
+{
+        env_reference resolved = env_reference_span(name, length);
+
+        if (!resolved.valid)
+                return false;
+
+        address_to resolved_name = resolved.name;
+        address_to resolved_length = resolved.length;
+        return true;
+}
+
+PURE bool env_assignment_readonly_hashed_span(const_string name,
+                                              positive length,
+                                              positive hash)
+{
+        positive found;
+
+        if (!name || !readonly_count)
+                return false;
+
+        found = env_find_hashed_span(name, length, hash);
+
+        if (found >= shell_var_count)
+                return false;
+
+        if ((shell_vars[found].attributes & SHELL_ARRAY_NAMEREF) &&
+            env_variable_has_value(shell_vars + found))
+        {
+                env_reference resolved =
+                    env_reference_hashed(name, length, hash);
+
+                return resolved.valid && resolved.index < shell_var_count &&
+                       (shell_vars[resolved.index].attributes &
+                        SHELL_ARRAY_READONLY) != 0;
+        }
+
+        return (shell_vars[found].attributes & SHELL_ARRAY_READONLY) != 0;
+}
+
 PURE bool env_readonly_hashed_span(const_string name, positive length,
                                    positive hash)
 {
@@ -1761,18 +1878,29 @@ static bool readonly_add(string_address name, positive length)
                                             SHELL_ARRAY_READONLY, 0);
 }
 
+static COLD env_reference shell_array_reference(const_string name,
+                                                 positive length,
+                                                 bool frames)
+{
+        env_reference resolved = env_reference_span(name, length);
+
+        if (resolved.valid && resolved.index >= shell_var_count && frames &&
+            shell_frames_wanted(resolved.name, resolved.length))
+                resolved.index = env_find_hashed_span(
+                    resolved.name, resolved.length, resolved.hash);
+
+        return resolved;
+}
+
 COLD positive shell_array_length(const_string name, positive length)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = shell_array_reference(name, length, true);
         env_variable address_to variable;
 
-        if (found >= shell_var_count && shell_frames_wanted(name, length))
-                found = env_find_span(name, length);
-
-        if (found >= shell_var_count)
+        if (!resolved.valid || resolved.index >= shell_var_count)
                 return 0;
 
-        variable = shell_vars + found;
+        variable = shell_vars + resolved.index;
 
         return (variable->array ? array_tables[variable->array - 1].count : 0) +
                (env_variable_has_value(variable) ? 1 : 0);
@@ -1782,13 +1910,13 @@ COLD positive shell_array_length(const_string name, positive length)
 // subscript in use and not by how many there are, so a hole does not move it.
 COLD PURE positive shell_array_highest(const_string name, positive length)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = env_reference_span(name, length);
         array_table address_to table;
 
-        if (found >= shell_var_count)
+        if (!resolved.valid || resolved.index >= shell_var_count)
                 return 0;
 
-        table = array_table_of(shell_vars + found);
+        table = array_table_of(shell_vars + resolved.index);
 
         return table && table->count ? table->element[table->count - 1].key : 0;
 }
@@ -1796,18 +1924,15 @@ COLD PURE positive shell_array_highest(const_string name, positive length)
 COLD positive shell_array_items(const_string name, positive length,
                            shell_array_item address_to items, positive room)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = shell_array_reference(name, length, true);
         env_variable address_to variable;
         array_table address_to table;
         positive count = 0;
 
-        if (found >= shell_var_count && shell_frames_wanted(name, length))
-                found = env_find_span(name, length);
-
-        if (found >= shell_var_count)
+        if (!resolved.valid || resolved.index >= shell_var_count)
                 return 0;
 
-        variable = shell_vars + found;
+        variable = shell_vars + resolved.index;
         table = array_table_of(variable);
 
         if (env_variable_has_value(variable))
@@ -1848,18 +1973,15 @@ COLD string_address shell_array_get(const_string name, positive length,
                                const_string key, positive key_length,
                                positive address_to value_length)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = shell_array_reference(name, length, true);
         env_variable address_to variable;
         array_table address_to table;
         positive at;
 
-        if (found >= shell_var_count && shell_frames_wanted(name, length))
-                found = env_find_span(name, length);
-
-        if (found >= shell_var_count)
+        if (!resolved.valid || resolved.index >= shell_var_count)
                 return null;
 
-        variable = shell_vars + found;
+        variable = shell_vars + resolved.index;
         table = array_table_of(variable);
 
         if (variable->attributes & SHELL_ARRAY_ASSOCIATIVE)
@@ -1893,7 +2015,7 @@ COLD string_address shell_array_get(const_string name, positive length,
                                 address_to value_length =
                                     variable->value_length;
 
-                        return variable->text + length + 1;
+                        return variable->text + resolved.length + 1;
                 }
 
                 if (!table)
@@ -1963,15 +2085,25 @@ static COLD bool array_scalar_write(const_string name, positive length,
 COLD bool shell_array_set(const_string name, positive length, const_string key,
                      positive key_length, const_string value, bool append)
 {
-        positive hash = env_name_hash(name, length);
+        env_reference resolved = env_reference_span(name, length);
+        positive hash;
         env_variable address_to variable =
-            env_export_take_hashed(name, length, hash);
+            null;
         array_table address_to table;
         bool keyed;
         positive index = 0;
         positive at;
 
-        if (!variable)
+        if (!resolved.valid)
+                return false;
+
+        name = resolved.name;
+        length = resolved.length;
+        hash = resolved.hash;
+        variable = env_export_take_hashed(name, length, hash);
+
+        if (!variable ||
+            (variable->attributes & SHELL_ARRAY_READONLY))
                 return false;
 
         keyed = (variable->attributes & SHELL_ARRAY_ASSOCIATIVE) != 0;
@@ -2034,14 +2166,23 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
 */
 COLD bool shell_array_clear(const_string name, positive length)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = env_reference_span(name, length);
         env_variable address_to variable;
         array_table address_to table;
 
-        if (found >= shell_var_count)
+        if (!resolved.valid)
+                return false;
+
+        if (resolved.index >= shell_var_count)
                 return true;
 
-        variable = shell_vars + found;
+        name = resolved.name;
+        length = resolved.length;
+        variable = shell_vars + resolved.index;
+
+        if (variable->attributes & SHELL_ARRAY_READONLY)
+                return false;
+
         table = array_table_of(variable);
 
         for (positive at = 0; table && at < table->count; at++)
@@ -2147,15 +2288,24 @@ static COLD bool shell_status_array_numbers(const_string name, positive length,
 COLD bool shell_array_forget(const_string name, positive length, const_string key,
                         positive key_length)
 {
-        positive found = env_find_span(name, length);
+        env_reference resolved = env_reference_span(name, length);
         env_variable address_to variable;
         array_table address_to table;
         positive at;
 
-        if (found >= shell_var_count)
+        if (!resolved.valid)
+                return false;
+
+        if (resolved.index >= shell_var_count)
                 return true;
 
-        variable = shell_vars + found;
+        name = resolved.name;
+        length = resolved.length;
+        variable = shell_vars + resolved.index;
+
+        if (variable->attributes & SHELL_ARRAY_READONLY)
+                return false;
+
         table = array_table_of(variable);
 
         if (variable->attributes & SHELL_ARRAY_ASSOCIATIVE)
@@ -2782,6 +2932,18 @@ static fn shell_readonly_refused(string_address name, positive length)
                 expand_fatal_status(1);
         else
                 expand_fatal();
+}
+
+/* Bash's unset reports a readonly target and returns one without terminating
+   the script; dash treats the same special-builtin error as fatal. */
+static fn shell_unset_readonly(string_address name, positive length)
+{
+        if (!shell_bash_compat)
+                return shell_readonly_refused(name, length);
+
+        shell_diagnostic(name, length);
+        shell_diagnostic(": is read only\n", 0);
+        shell_answer(1);
 }
 
 static bool shell_valid_name(string_address name, positive length)
@@ -4830,6 +4992,10 @@ static fn shell_set_written(writer write, string_address name,
         write("\n", 1);
 }
 
+// An explicit set replaces a source caller's arguments; shift only borrows
+// them. Function calls save this bit alongside their positional parameters.
+static bool shell_parameters_replaced;
+
 COLD fn shell_set(writer write, string_address input)
 {
         positive index = 1;
@@ -4931,6 +5097,8 @@ COLD fn shell_set(writer write, string_address input)
                 return shell_answer(2);
         }
 
+        if (operands)
+                shell_parameters_replaced = true;
         shell_answer(0);
 }
 
@@ -4971,6 +5139,7 @@ COLD fn shell_unset(writer write, string_address input)
         shell_option_walk walk = {1};
         positive index;
         bool functions = false;
+        bool reference = false;
         p8 letter;
 
         while (shell_option_letter(address_of walk, address_of letter))
@@ -4979,6 +5148,8 @@ COLD fn shell_unset(writer write, string_address input)
                         functions = true;
                 else if (letter == 'v')
                         functions = false;
+                else if (letter == 'n')
+                        reference = true;
                 else
                 {
                         // A special builtin, so a letter it does not have
@@ -5000,6 +5171,45 @@ COLD fn shell_unset(writer write, string_address input)
                 string_address bracket =
                     functions ? null : string_first_of(word, '[');
 
+                /* -n removes a nameref record rather than what it names.
+                   Applied to an element or an ordinary variable it is a
+                   successful no-op, as in Bash. */
+                if (reference && !functions)
+                {
+                        p8 attributes;
+
+                        if (bracket)
+                        {
+                                index++;
+                                continue;
+                        }
+
+                        if (!shell_valid_name(word, word_length))
+                        {
+                                shell_bad_name("unset", word, word_length);
+                                return;
+                        }
+
+                        attributes = shell_variable_attributes(word,
+                                                               word_length);
+
+                        if (!(attributes & SHELL_ARRAY_NAMEREF))
+                        {
+                                index++;
+                                continue;
+                        }
+
+                        if (attributes & SHELL_ARRAY_READONLY)
+                        {
+                                shell_unset_readonly(word, word_length);
+                                return;
+                        }
+
+                        env_unset_span(word, word_length);
+                        index++;
+                        continue;
+                }
+
                 /*
                         `unset a[1]` forgets one element and leaves the array
                         standing, hole and all. The subscript is resolved the
@@ -5014,9 +5224,15 @@ COLD fn shell_unset(writer write, string_address input)
                         positive key_length;
                         string_address key;
 
-                        if (env_readonly_span(word, base))
+                        if (env_assignment_readonly_hashed_span(
+                                word, base, env_name_hash(word, base)))
                         {
-                                shell_readonly_refused(word, base);
+                                env_reference resolved =
+                                    env_reference_span(word, base);
+
+                                shell_unset_readonly(
+                                    (string_address)resolved.name,
+                                    resolved.length);
                                 return;
                         }
 
@@ -5041,16 +5257,32 @@ COLD fn shell_unset(writer write, string_address input)
                         return;
                 }
 
-                if (!functions && env_readonly(word))
-                {
-                        shell_readonly_refused(word, word_length);
-                        return;
-                }
-
                 if (functions)
                         exec_function_unset(word);
                 else
-                        env_unset(word);
+                {
+                        env_reference resolved =
+                            env_reference_span(word, word_length);
+
+                        if (!resolved.valid)
+                        {
+                                shell_answer(1);
+                                return;
+                        }
+
+                        if (resolved.index < shell_var_count &&
+                            (shell_vars[resolved.index].attributes &
+                             SHELL_ARRAY_READONLY))
+                        {
+                                shell_unset_readonly(
+                                    (string_address)resolved.name,
+                                    resolved.length);
+                                return;
+                        }
+
+                        env_unset_span((string_address)resolved.name,
+                                       resolved.length);
+                }
 
                 index++;
         }
@@ -6874,6 +7106,12 @@ static p8 printf_nothing[1];
 // was found in: everything still to be written, format and all, is dropped.
 static b32 printf_status;
 
+static fn printf_format_failed()
+{
+        printf_status = shell_bash_compat ? 1 : 2;
+        printf_cut = true;
+}
+
 static p8 address_to printf_hold;
 static positive printf_hold_room;
 static positive printf_held;
@@ -7187,12 +7425,12 @@ fn printf_not_a_number(string_address word)
         value". A conversion that refused every one of those printed nothing
         for "$maybe_empty" and set the status where every other shell did not.
 */
-static bipolar printf_integer(string_address word)
+static positive printf_integer(string_address word, bool signed_value)
 {
         string_address at = word;
-        positive magnitude;
-        positive used = 0;
-        bool negative = false;
+        string_address stopped;
+        positive value;
+        b32 out_of_range;
 
         if (!word)
                 return 0;
@@ -7203,57 +7441,39 @@ static bipolar printf_integer(string_address word)
                 return 0;
 
         if (string_is(at, '\'') || string_is(at, '"'))
-                return (bipolar)string_get(at + 1);
+                return (positive)string_get(at + 1);
 
-        if (string_is(at, '-'))
-        {
-                negative = true;
-                at++;
-        }
-        else if (string_is(at, '+'))
-                at++;
+        /* The standard layer's checked strtoimax/strtoumax cores already
+           carry this exact prefix/sign grammar in one assembly scan. Keep
+           printf on that path too: the old digit-count readers wrapped a
+           long operand and lost the one bit that says to clamp and report. */
+        value = signed_value
+                    ? (positive)string_to_number_checked(
+                          at, address_of stopped, 0, address_of out_of_range)
+                    : string_to_number_unsigned_checked(
+                          at, address_of stopped, 0, address_of out_of_range);
 
-        if (string_is(at, '0') && (string_is(at + 1, 'x') || string_is(at + 1, 'X')))
-        {
-                magnitude = string_digits_hexadecimal_max(at + 2, positive_max,
-                                                          address_of used);
-
-                // "0x" with nothing after it is the zero and then an x.
-                if (used)
-                        at += 2 + used;
-                else
-                {
-                        magnitude = 0;
-                        used = 1;
-                        at++;
-                }
-        }
-        else if (string_is(at, '0'))
-        {
-                magnitude = string_digits_octal_max(at, positive_max,
-                                                    address_of used);
-                at += used;
-        }
-        else
-        {
-                magnitude = string_digits_max(at, positive_max, address_of used);
-                at += used;
-        }
-
-        if (!used)
+        if (stopped == at)
         {
                 printf_not_a_number(word);
                 return 0;
         }
 
-        if (string_get(at))
+        if (out_of_range)
+        {
+                string_format(shell_diagnostic,
+                              "printf: %s: numerical result out of range\n",
+                              word);
+                printf_status = 1;
+        }
+        else if (string_get(stopped))
         {
                 string_format(shell_diagnostic,
                               "printf: %s: not completely converted\n", word);
                 printf_status = 1;
         }
 
-        return bipolar_from_magnitude(magnitude, negative);
+        return value;
 }
 
 /*
@@ -7348,7 +7568,7 @@ fn printf_one(writer write, string_address format)
 
                 if (string_is(step, '*'))
                 {
-                        bipolar asked = printf_integer(printf_next());
+                        bipolar asked = (bipolar)printf_integer(printf_next(), true);
 
                         // A negative width is the minus flag written out long.
                         if (asked < 0)
@@ -7376,7 +7596,7 @@ fn printf_one(writer write, string_address format)
 
                         if (string_is(step, '*'))
                         {
-                                precision = printf_integer(printf_next());
+                                precision = (bipolar)printf_integer(printf_next(), true);
 
                                 if (precision < 0)
                                         precision = -1;
@@ -7401,7 +7621,11 @@ fn printf_one(writer write, string_address format)
                 conversion = string_get(step);
 
                 if (!conversion)
+                {
+                        shell_diagnostic("printf: missing format character\n", 0);
+                        printf_format_failed();
                         break;
+                }
 
                 step++;
 
@@ -7503,14 +7727,13 @@ fn printf_one(writer write, string_address format)
                                 string_format(shell_diagnostic,
                                               "printf: %%(%s: invalid directive\n",
                                               shape);
-                                printf_status = 2;
-                                printf_cut = true;
+                                printf_format_failed();
                                 continue;
                         }
 
                         step++;
                         when = printf_took_argument()
-                                 ? printf_integer(printf_next())
+                                 ? (bipolar)printf_integer(printf_next(), true)
                                  : -1;
 
                         if (when == -1)
@@ -7529,7 +7752,8 @@ fn printf_one(writer write, string_address format)
 
                 if (conversion == 'd' || conversion == 'i')
                 {
-                        bipolar value = printf_integer(printf_next());
+                        bipolar value =
+                            (bipolar)printf_integer(printf_next(), true);
                         p8 sign = 0;
 
                         if (value < 0)
@@ -7552,10 +7776,10 @@ fn printf_one(writer write, string_address format)
                 if (conversion == 'u' || conversion == 'o' ||
                     conversion == 'x' || conversion == 'X')
                 {
-                        bipolar value = printf_integer(printf_next());
+                        positive value = printf_integer(printf_next(), false);
                         positive base = conversion == 'o' ? 8 : (conversion == 'u' ? 10 : 16);
 
-                        printf_number(write, (positive)value, 0, base, conversion == 'X',
+                        printf_number(write, value, 0, base, conversion == 'X',
                                       width, precision, left, zero, alternate);
                         continue;
                 }
@@ -7611,8 +7835,7 @@ fn printf_one(writer write, string_address format)
                                       "printf: %s: invalid directive\n", said);
                 }
 
-                printf_status = 2;
-                printf_cut = true;
+                printf_format_failed();
         }
 }
 
@@ -7622,19 +7845,40 @@ fn shell_printf(writer write, string_address input)
         string_address into = null;
         positive first = 1;
 
-        // -v names a variable to fill instead of a descriptor to write down,
-        // which is how a script formats a value without a subshell.
-        if (shell_argc > 1 && word_is(shell_argv[1], "-v"))
+        /* `--` is needed for formats beginning with a dash. Bash also takes
+           -vname as well as -v name; both reach the same existing keeper and
+           assignment path, rather than growing another formatter. */
+        while (first < shell_argc && string_is(shell_argv[first], '-') &&
+               string_not(shell_argv[first] + 1, end))
         {
-                if (shell_argc < 3)
+                string_address option = shell_argv[first];
+
+                if (word_is(option, "--"))
                 {
-                        shell_diagnostic("printf: -v: option requires an "
-                                         "argument\n", 0);
-                        return shell_answer(2);
+                        first++;
+                        break;
                 }
 
-                into = shell_argv[2];
-                first = 3;
+                if (string_is(option + 1, 'v'))
+                {
+                        if (string_get(option + 2))
+                                into = option + 2;
+                        else if (++first < shell_argc)
+                                into = shell_argv[first];
+                        else
+                        {
+                                shell_diagnostic("printf: -v: option requires an "
+                                                 "argument\n", 0);
+                                return shell_answer(2);
+                        }
+
+                        first++;
+                        continue;
+                }
+
+                string_format(shell_diagnostic, "printf: %s: bad option\n",
+                              option);
+                return shell_answer(2);
         }
 
         if (shell_argc <= first)
@@ -7731,8 +7975,6 @@ PURE bool read_blank(string_address ifs, positive at)
         return string_first_of(ifs, read_line[at]) != null;
 }
 
-// A tenth of a second at a time is close enough for a timeout measured in
-// whole seconds, and it keeps the wait in one place.
 /*
         The moment read -t gives up, and whether a byte arrived before it.
 
@@ -7742,14 +7984,77 @@ PURE bool read_blank(string_address ifs, positive at)
         the monotonic clock, and every wait is for what is left of it.
 */
 #define READ_CLOCK_MONOTONIC 1
+#define READ_TIMEOUT_STATUS 142
 
-static fn read_deadline(bipolar tenths, timespec address_to deadline)
+/* Bash's timeout operand is a fixed decimal, kept to the microseconds its
+   interface observes. Empty, a bare sign and a bare point are its spellings
+   of zero; an exponent or any other suffix is not silently accepted. */
+static bool read_timeout(string_address text, timespec address_to span)
+{
+        string_address at = text;
+        positive seconds = 0;
+        positive fraction = 0;
+        positive scale = 100000;
+        bool negative = false;
+        bool overflow = false;
+
+        if (string_is(at, '-') || string_is(at, '+'))
+        {
+                negative = string_is(at, '-');
+                at++;
+        }
+
+        while (byte_is_digit(string_get(at)))
+        {
+                positive digit = string_get(at++) - '0';
+
+                if (seconds > ((positive)b64_max - digit) / 10)
+                        overflow = true;
+                else
+                        seconds = seconds * 10 + digit;
+        }
+
+        if (string_is(at, '.'))
+        {
+                at++;
+
+                while (byte_is_digit(string_get(at)))
+                {
+                        positive digit = string_get(at++) - '0';
+
+                        if (scale)
+                        {
+                                fraction += digit * scale;
+                                scale /= 10;
+                        }
+                }
+        }
+
+        if (string_get(at) || overflow ||
+            (negative && (seconds || fraction)))
+                return false;
+
+        span->tv_sec = seconds;
+        span->tv_nsec = fraction * 1000;
+        return true;
+}
+
+static fn read_deadline(timespec span, timespec address_to deadline)
 {
         system_call_2(syscall(clock_gettime), READ_CLOCK_MONOTONIC,
                       (positive)deadline);
 
-        deadline->tv_sec += (p64)(tenths / 10);
-        deadline->tv_nsec += (p64)(tenths % 10) * 100000000;
+        if (span.tv_sec > (positive)b64_max - deadline->tv_sec ||
+            (span.tv_sec == (positive)b64_max - deadline->tv_sec &&
+             span.tv_nsec > 999999999 - deadline->tv_nsec))
+        {
+                deadline->tv_sec = b64_max;
+                deadline->tv_nsec = 999999999;
+                return;
+        }
+
+        deadline->tv_sec += span.tv_sec;
+        deadline->tv_nsec += span.tv_nsec;
 
         if (deadline->tv_nsec >= 1000000000)
         {
@@ -7781,6 +8086,31 @@ static bool read_waited(b32 descriptor, timespec address_to deadline)
         }
 
         return descriptor_wait_readable(descriptor, address_of left, null) > 0;
+}
+
+static PURE b32 read_result(bool failed, bool ended, bool timed_out)
+{
+        if (failed)
+                return shell_bash_compat ? 1 : 2;
+        if (timed_out)
+                return shell_bash_compat ? READ_TIMEOUT_STATUS : 1;
+        return ended ? 1 : 0;
+}
+
+static bool read_nonnegative(string_address text, positive maximum,
+                             positive address_to value)
+{
+        string_address stopped;
+        b32 out_of_range;
+        bipolar got = string_to_number_checked(
+            text, address_of stopped, 10, address_of out_of_range);
+
+        if (out_of_range || stopped == text || string_get(stopped) || got < 0 ||
+            (positive)got > maximum)
+                return false;
+
+        address_to value = (positive)got;
+        return true;
 }
 
 /*
@@ -7825,7 +8155,9 @@ COLD fn shell_read(writer write, string_address input)
         bool failed = false;
         bool limited = false;
         positive limit = 0;
-        bipolar tenths = -1;
+        bool timed = false;
+        bool timed_out = false;
+        timespec timeout;
         timespec deadline;
         p8 stop_at = '\n';
         bool exact = false;
@@ -7933,10 +8265,10 @@ COLD fn shell_read(writer write, string_address input)
                         }
                         else if (which == 'u')
                         {
-                                bool good;
-                                bipolar asked = shell_signed(value, address_of good);
+                                positive asked;
 
-                                if (!good || asked < 0)
+                                if (!read_nonnegative(value, b32_max,
+                                                      address_of asked))
                                 {
                                         string_format(shell_diagnostic,
                                                       "read: bad descriptor: %s\n",
@@ -7948,10 +8280,10 @@ COLD fn shell_read(writer write, string_address input)
                         }
                         else if (which == 'n' || which == 'N')
                         {
-                                bool good;
-                                bipolar asked = shell_signed(value, address_of good);
+                                positive asked;
 
-                                if (!good || asked < 0)
+                                if (!read_nonnegative(value, positive_max,
+                                                      address_of asked))
                                 {
                                         string_format(shell_diagnostic,
                                                       "read: bad count: %s\n", value);
@@ -7960,23 +8292,20 @@ COLD fn shell_read(writer write, string_address input)
 
                                 limited = true;
                                 exact = which == 'N';
-                                limit = (positive)asked;
+                                limit = asked;
                         }
                         else if (which == 'd')
                                 stop_at = string_get(value);
                         else
                         {
-                                bool good;
-                                bipolar asked = shell_signed(value, address_of good);
-
-                                if (!good || asked < 0 || asked > bipolar_max / 10)
+                                if (!read_timeout(value, address_of timeout))
                                 {
                                         string_format(shell_diagnostic,
                                                       "read: bad timeout: %s\n", value);
                                         return shell_answer(1);
                                 }
 
-                                tenths = asked * 10;
+                                timed = true;
                         }
                 }
 
@@ -8021,7 +8350,7 @@ COLD fn shell_read(writer write, string_address input)
                 for whether the descriptor is ready and reads nothing, which
                 is the only way a script can poll without consuming.
         */
-        if (tenths == 0)
+        if (timed && !timeout.tv_sec && !timeout.tv_nsec)
         {
                 timespec none = {0, 0};
 
@@ -8031,8 +8360,8 @@ COLD fn shell_read(writer write, string_address input)
                         : 1);
         }
 
-        if (tenths > 0)
-                read_deadline(tenths, address_of deadline);
+        if (timed)
+                read_deadline(timeout, address_of deadline);
 
         if (hidden)
                 quieted = read_echo_off(descriptor, address_of quiet_held);
@@ -8051,8 +8380,9 @@ COLD fn shell_read(writer write, string_address input)
                         return shell_answer(2);
                 }
 
-                if (tenths > 0 && !read_waited(descriptor, address_of deadline))
+                if (timed && !read_waited(descriptor, address_of deadline))
                 {
+                        timed_out = true;
                         ended = true;
                         break;
                 }
@@ -8076,6 +8406,14 @@ COLD fn shell_read(writer write, string_address input)
                 if (!exact && !raw && value == '\\')
                 {
                         p8 next;
+
+                        if (timed &&
+                            !read_waited(descriptor, address_of deadline))
+                        {
+                                timed_out = true;
+                                ended = true;
+                                break;
+                        }
 
                         got = system_read_once(descriptor, address_of next, 1);
 
@@ -8115,12 +8453,17 @@ COLD fn shell_read(writer write, string_address input)
                 shell_diagnostic("\n", 1);
         }
 
+        /* Bash leaves destinations alone on a descriptor/syscall failure.
+           EOF and timeout are different: both still publish what was read. */
+        if (failed && shell_bash_compat)
+                return shell_answer(1);
+
         if (!array_name && names >= shell_argc)
         {
                 if (!read_set("REPLY", read_line))
                         return shell_answer(read_set_failed_status("REPLY"));
 
-                return shell_answer(failed ? 2 : ended ? 1 : 0);
+                return shell_answer(read_result(failed, ended, timed_out));
         }
 
         /*
@@ -8153,9 +8496,9 @@ COLD fn shell_read(writer write, string_address input)
                                             read_set_failed_status(
                                                 shell_argv[name]));
 
-                return shell_answer(failed ? 2
-                                           : (ended && read_length < limit) ? 1
-                                                                            : 0);
+                return shell_answer(
+                    read_result(failed, ended && read_length < limit,
+                                timed_out));
         }
 
         {
@@ -8249,7 +8592,7 @@ COLD fn shell_read(writer write, string_address input)
                         return shell_answer(2);
                 }
 
-                return shell_answer(failed ? 2 : ended ? 1 : 0);
+                return shell_answer(read_result(failed, ended, timed_out));
         }
 
         while (names < shell_argc)
@@ -8318,7 +8661,7 @@ COLD fn shell_read(writer write, string_address input)
                 names++;
         }
 
-        shell_answer(failed ? 2 : ended ? 1 : 0);
+        shell_answer(read_result(failed, ended, timed_out));
 }
 
 /*
@@ -10252,6 +10595,18 @@ static bool shell_path_wanted(string_address value, positive name_length,
         return true;
 }
 
+static positive shell_source_depth;
+
+static bipolar shell_source_direct(string_address name)
+{
+        bipolar handle;
+
+        do
+                handle = system_open_at(AT_FDCWD, name, FILE_READ);
+        while (handle == -4);
+        return handle;
+}
+
 static bipolar shell_source_open(string_address name,
                                   p8 address_to address_to found,
                                   positive address_to found_room,
@@ -10263,17 +10618,9 @@ static bipolar shell_source_open(string_address name,
         if (!name || !string_get(name))
                 return -1;
 
-        if (string_first_of(name, '/'))
-        {
-                bipolar handle;
-
-                do
-                        handle = system_open_at(AT_FDCWD,
-                                               name, FILE_READ);
-                while (handle == -4);
-
-                return handle;
-        }
+        if (string_first_of(name, '/') ||
+            (shell_bash_compat && !shell_shopt_on(SOURCEPATH)))
+                return shell_source_direct(name);
 
         value = env_get("PATH");
 
@@ -10303,16 +10650,15 @@ static bipolar shell_source_open(string_address name,
                                     walk.length, name, ""))
                         continue;
 
-                do
-                        handle = system_open_at(AT_FDCWD,
-                                               *found, FILE_READ);
-                while (handle == -4);
+                handle = shell_source_direct(*found);
 
                 if (handle >= 0)
                         return handle;
         }
 
-        return -1;
+        // Bash's ordinary source policy falls back to the current directory.
+        // Dash only visits it when PATH explicitly has a current-directory field.
+        return shell_bash_compat ? shell_source_direct(name) : -1;
 }
 
 static bipolar shell_source_read(bipolar handle,
@@ -10376,6 +10722,7 @@ static fn shell_source_execute(p8 address_to text, positive filled, bool startup
         positive at = 0;
 
         lex_nest_enter(address_of frame);
+        shell_source_depth++;
         while (at < filled)
         {
                 p8 address_to newline = (p8 address_to)memory_first_of(
@@ -10389,6 +10736,7 @@ static fn shell_source_execute(p8 address_to text, positive filled, bool startup
                 at = stop + 1;
         }
         shell_input_end();
+        shell_source_depth--;
         lex_nest_leave(address_of frame);
 }
 
@@ -10403,11 +10751,18 @@ COLD fn shell_dot(writer write, string_address input)
         positive filled;
         bool no_room = false;
         bipolar handle;
+        positive first = 1;
 
-        if (shell_argc < 2)
-                return shell_answer(2);
+        if (first < shell_argc && word_is(shell_argv[first], "--"))
+                first++;
+        if (first >= shell_argc)
+        {
+                if (shell_bash_compat)
+                        shell_diagnostic(".: filename argument required\n", 0);
+                return shell_answer(shell_bash_compat ? 2 : 0);
+        }
 
-        path = shell_argv[1];
+        path = shell_argv[first];
         handle = shell_source_open(path, address_of found, address_of found_room,
                                    address_of no_room);
 
@@ -10437,7 +10792,7 @@ COLD fn shell_dot(writer write, string_address input)
         {
                 memory_free(source_text, source_room);
                 string_format(shell_diagnostic, "%s: %s: cannot open\n",
-                              shell_argv[0], shell_argv[1]);
+                              shell_argv[0], path);
 
                 /*
                         Bash's spelling is Bash's answer: `source` on a file
@@ -10445,7 +10800,7 @@ COLD fn shell_dot(writer write, string_address input)
                         on. The dot is POSIX's, and POSIX makes it a special
                         builtin whose failure ends the script.
                 */
-                if (word_is(shell_argv[0], "source"))
+                if (shell_bash_compat || word_is(shell_argv[0], "source"))
                         return shell_answer(1);
 
                 // Two, as the reference shell answers: the failure is the
@@ -10462,7 +10817,11 @@ COLD fn shell_dot(writer write, string_address input)
                         was in it. Only when nobody is watching; at a terminal
                         the shell stays, or a typo would close the session.
                 */
-                shell_stop_when_scripted(1);
+                if (!shell_is_interactive)
+                {
+                        shell_trap_exit();
+                        shell_stop_when_scripted(2);
+                }
 
                 return;
         }
@@ -10481,13 +10840,14 @@ COLD fn shell_dot(writer write, string_address input)
         positive held_count = shell_parameter_count;
         positive held = EXPAND_NO_ROOM;
 
-        if (shell_argc > 2)
+        if (shell_bash_compat && shell_argc > first + 1)
         {
                 held = shell_parameters_save();
 
                 if (held == EXPAND_NO_ROOM ||
                     !shell_parameters_restore_prepare(held_count) ||
-                    !shell_parameters_set(shell_argv + 2, shell_argc - 2))
+                    !shell_parameters_set(shell_argv + first + 1,
+                                          shell_argc - first - 1))
                 {
                         if (held != EXPAND_NO_ROOM)
                                 shell_parameter_stack_used = held;
@@ -10500,10 +10860,19 @@ COLD fn shell_dot(writer write, string_address input)
                 }
         }
 
+        bool replaced_arguments = held != EXPAND_NO_ROOM;
+        if (replaced_arguments)
+                shell_parameters_replaced = false;
         shell_source_execute(source_text, filled, false);
 
         memory_free(source_text, source_room);
 
+        if (held != EXPAND_NO_ROOM && shell_parameters_replaced)
+        {
+                // Discard the saved caller copy, retaining the explicit set.
+                shell_parameter_stack_used = held;
+                held = EXPAND_NO_ROOM;
+        }
         if (held != EXPAND_NO_ROOM &&
             !shell_parameters_restore(held, held_count))
         {
@@ -10512,6 +10881,10 @@ COLD fn shell_dot(writer write, string_address input)
                 log_flush();
                 exit(2);
         }
+        // A source with operands consumes the replacement marker at its own
+        // boundary. Without operands, it shares the caller's parameter state.
+        if (replaced_arguments)
+                shell_parameters_replaced = false;
 
         // The status of the last line it ran, which is already there.
         shell_answer(shell_status);

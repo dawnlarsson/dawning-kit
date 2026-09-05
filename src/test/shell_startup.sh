@@ -39,7 +39,7 @@ capture()
 {
         executable=$1 tag=$2 startup=$3
         shift 3
-        if HOME="$work/home" ROOT="$work" BASH_ENV="$startup" ENV= \
+        if HOME="$work/home" ROOT="$work" RESULT="$work/$tag.effect" BASH_ENV="$startup" ENV= \
                 PATH="$work/search:/usr/bin:/bin" LC_ALL=C \
                 timeout 5 "$executable" "$@" < "$work/input" \
                 > "$work/$tag.out" 2> "$work/$tag.err"; then result=0; else result=$?; fi
@@ -53,7 +53,10 @@ compare()
         case $mode in bash) reference=/bin/bash ;; *) reference=/bin/dash ;; esac
         capture "$reference" want "$startup" "$@"
         capture "$work/names/$mode" got "$startup" "$@"
-        if cmp -s "$work/want.out" "$work/got.out" &&
+        # The native interactive renderer has its own prompt/escape bytes.
+        # A recovery case compares the command's file effect, not that UI.
+        suffix=${output_kind:-out}
+        if cmp -s "$work/want.$suffix" "$work/got.$suffix" &&
                 cmp -s "$work/want.status" "$work/got.status" &&
                 { [ "${diagnostic:-exact}" = ignore ] || cmp -s "$work/want.err" "$work/got.err"; }; then
                 won
@@ -114,6 +117,54 @@ compare 'named onecmd' bash '' -o onecmd -c 'case $- in *t*) echo yes;; esac'
 compare 'runtime onecmd command string' bash '' -c 'set -t; echo one
 echo two'
 compare 'onecmd flag state' bash '' -tc 'case $- in *t*) echo yes;; esac; set +t; case $- in *t*) echo bad;; *) echo off;; esac'
+
+section source_files
+group policy
+: > "$work/input"
+for mode in bash sh dash moonwater; do
+        diagnostic=ignore compare 'missing dot-file status and EXIT' "$mode" '' -c 'trap '\''printf "exit:%s\n" "$?"'\'' EXIT; . "$ROOT/missing"; printf "after:%s\n" "$?"'
+        diagnostic=ignore compare 'missing dot-file under errexit' "$mode" '' -ec '. "$ROOT/missing"; echo forbidden'
+        diagnostic=ignore compare 'dot without filename' "$mode" '' -c '.; printf "status:%s\n" "$?"'
+        diagnostic=ignore compare 'dot option end without filename' "$mode" '' -c '. --; printf "status:%s\n" "$?"'
+        compare 'dot option end' "$mode" '' -c '. -- "$ROOT/start file"; printf "status:%s\n" "$?"'
+        diagnostic=ignore compare 'current directory source fallback' "$mode" '' -c 'cd "$ROOT"; PATH=/nonexistent; . "start file"; printf "status:%s\n" "$?"'
+        compare 'source positional parameter policy' "$mode" '' -c 'set -- outer args; . "$ROOT/start" inner words; printf "after:%s:%s\n" "$?" "$*"' named
+        compare 'explicit set in source persists' "$mode" '' -c 'set -- outer args; . "$ROOT/parameters" inner words; printf "after:%s:%s\n" "$?" "$*"'
+done
+compare 'disabled sourcepath opens local file' bash '' -c 'cd "$ROOT"; shopt -u sourcepath; . "start file"'
+diagnostic=ignore compare 'disabled sourcepath skips PATH' bash '' -c 'shopt -u sourcepath; . only-in-path; printf "status:%s\n" "$?"'
+compare 'enabled sourcepath visits PATH' bash '' -c '. only-in-path'
+printf '%s\n' 'shift' > "$work/shift"
+printf '%s\n' 'f() { set -- function; }; f' > "$work/function-parameters"
+printf '%s\n' '. "$ROOT/parameters" nested words' > "$work/nested-parameters"
+compare 'shift restores source arguments' bash '' -c 'set -- outer args; . "$ROOT/shift" inner words; printf "after:%s\n" "$*"'
+compare 'function set does not replace source caller arguments' bash '' -c 'set -- outer args; . "$ROOT/function-parameters" inner words; printf "after:%s\n" "$*"'
+compare 'nested source operands isolate replacement marker' bash '' -c 'set -- outer args; . "$ROOT/nested-parameters" inner words; printf "after:%s\n" "$*"'
+printf '%s\n' '. "$ROOT/parameters"' > "$work/nested-no-parameters"
+printf '%s\n' 'set -- explicit outer' '. "$ROOT/parameters" nested words' > "$work/nested-explicit-parameters"
+compare 'nested source without operands shares replacement marker' bash '' -c 'set -- outer args; . "$ROOT/nested-no-parameters" inner words; printf "after:%s\n" "$*"'
+compare 'nested source operands consume earlier replacement marker' bash '' -c 'set -- outer args; . "$ROOT/nested-explicit-parameters" inner words; printf "after:%s\n" "$*"'
+
+section control_numbers
+group return
+for value in '-1' '+2' '2147483648' '9223372036854775807' '-9223372036854775808' \
+        '9223372036854775808' '-9223372036854775809' '99999999999999999999999999999999999999999' \
+        '00000000000000000000000000000000000000003' 'bad' '0x10' '-- 7' '--' '"  +3  "'; do
+        for mode in bash dash; do
+                diagnostic=ignore compare "return numeric policy $value" "$mode" '' -c "f() { return $value; echo forbidden; }; f; printf 'status:%s\\n' \"\$?\""
+        done
+done
+diagnostic=ignore compare 'Bash top-level return continues' bash '' -c 'return 7; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'Bash top-level invalid return continues' bash '' -c 'return bad; printf "after:%s\n" "$?"'
+diagnostic=ignore compare 'Bash return too many arguments' bash '' -c 'trap '\''printf "exit:%s\n" "$?"'\'' EXIT; f() { return 1 2; echo forbidden; }; f || echo forbidden; echo forbidden'
+diagnostic=ignore compare 'interactive command return too many arguments' bash '' --noprofile --norc -ic 'f() { return 1 2; echo forbidden; }; f; echo forbidden
+echo forbidden'
+diagnostic=ignore compare 'Bash invalid return unwinds only function' bash '' -c 'f() { return bad; echo forbidden; }; f || printf "caught:%s\n" "$?"; echo after'
+for mode in bash sh dash moonwater; do
+        compare 'signed whitespace loop count' "$mode" '' -c 'for a in first second; do for b in inner other; do printf "%s:%s\n" "$a" "$b"; break "  +2  "; done; done'
+done
+printf '%s\n' 'f() { return 1 2; echo forbidden >> "$RESULT"; }; f; echo forbidden >> "$RESULT"' 'echo recovered >> "$RESULT"' > "$work/input"
+output_kind=effect diagnostic=ignore compare 'interactive return error recovers at next input' bash '' --noprofile --norc -i
 
 section ""
 printf '  total        %s of %s\n' "$pass" "$((pass + fail))"

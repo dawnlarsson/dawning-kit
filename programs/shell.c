@@ -302,9 +302,7 @@ static bool shell_startup_file()
 
         if (!*path)
                 return true;
-        do
-                handle = system_open_at(AT_FDCWD, path, FILE_READ);
-        while (handle == -4);
+        handle = shell_source_direct(path);
         if (handle < 0)
         {
                 if (handle != -2 && handle != -20)
@@ -530,10 +528,7 @@ b32 main()
            Source-open failures do not run an installed EXIT trap. */
         if (script_file && !command)
         {
-                do
-                        input = system_open_at(AT_FDCWD, shell_script_name,
-                                               FILE_READ);
-                while (input == -4);
+                input = shell_source_direct(shell_script_name);
                 if (input < 0)
                 {
                         string_format(log_error, "sh: %s: cannot open\n",

@@ -250,6 +250,32 @@ printf '<%s>\n' "$(printf x; \
 printf y)"
 CASE
 
+bash_script_case "substitution heredoc paren" <<'CASE'
+value=$(cat <<EOF
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+bash_script_case "quoted paren delimiter" <<'CASE'
+value=$(cat <<'END)'
+body)
+END)
+)
+printf '<%s>\n' "$value"
+CASE
+
+bash_script_case "multiple substitution heredocs" <<'CASE'
+value=$(cat <<FIRST <<SECOND
+first)
+FIRST
+second)
+SECOND
+)
+printf '<%s>\n' "$value"
+CASE
+
 subject_expected "sh policy unaffected" '<one>
 ' <<'CASE'
 shopt -u interactive_comments
@@ -296,6 +322,31 @@ cat <<EOF
 one \
 EOF
 EOF
+CASE
+
+dash_case "substitution heredoc paren" <<'CASE'
+value=$(cat <<EOF
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+dash_case "stripped heredoc paren" <<'CASE'
+value=$(cat <<-EOF
+	)
+	EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+dash_case "joined body paren" <<'CASE'
+value=$(cat <<EOF
+one \
+)
+EOF
+)
+printf '<%s>\n' "$value"
 CASE
 
 section "bounds"

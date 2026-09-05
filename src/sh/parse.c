@@ -561,10 +561,12 @@ PURE string_address parse_here_open()
         return here_names + here_documents[here_filled].delimiter;
 }
 
-bool parse_here_line(string_address line)
+static bool parse_here_take_span(string_address line, positive length,
+                                 bool keep)
 {
         here_document address_to document;
-        positive length;
+        string_address delimiter;
+        positive delimiter_length;
         bool continues = false;
 
         if (here_filled >= here_wanted)
@@ -582,19 +584,24 @@ bool parse_here_line(string_address line)
         document = here_documents + here_filled;
 
         if (document->strip)
-                line += string_span_of_set(line, "\t");
+                while (length && string_is(line, '\t'))
+                {
+                        line++;
+                        length--;
+                }
+
+        delimiter = here_names + document->delimiter;
+        delimiter_length = string_length(delimiter);
 
         /* Delimiter recognition belongs beside continuation state.  A line
            joined to its predecessor cannot terminate the document, even if
            that physical line consists only of the delimiter. */
-        if (!document->continued &&
-            !string_compare(line, here_names + document->delimiter))
+        if (!document->continued && length == delimiter_length &&
+            !memory_compare(line, delimiter, length))
         {
                 parse_here_close();
                 return true;
         }
-
-        length = string_length(line);
 
         if (!document->quoted && length)
         {
@@ -606,6 +613,15 @@ bool parse_here_line(string_address line)
                 continues = ((length - slash) & 1) != 0;
                 if (continues)
                         length--;
+        }
+
+        /* Boundary discovery needs exactly the same delimiter and physical
+           continuation decisions, but not a second copy of body bytes that
+           the real nested parser will collect later. */
+        if (!keep)
+        {
+                document->continued = continues;
+                return true;
         }
 
         if (!document->length)
@@ -636,6 +652,11 @@ bool parse_here_line(string_address line)
         document->continued = continues;
 
         return true;
+}
+
+bool parse_here_line(string_address line)
+{
+        return parse_here_take_span(line, string_length(line), true);
 }
 
 fn parse_here_close()
@@ -748,8 +769,28 @@ static fn parse_token_newline(parse_token address_to into,
         into->line = (b32)shell_line_number;
 }
 
-// Register a here-document as soon as its complete token line is available,
-// whether that line came from source or from an alias replacement.
+/* One lexer/parser-independent delimiter view.  Both ordinary parser tokens
+   and the substitution boundary scanner reduce to these three values before
+   quote removal and <<- policy are decided here. */
+static bool parse_here_words(string_address delimiter, bool joined,
+                             string_address next)
+{
+        bool strip = false;
+
+        if (delimiter && joined && string_is(delimiter, '-'))
+        {
+                strip = true;
+                delimiter++;
+
+                if (!string_get(delimiter))
+                        delimiter = next;
+        }
+
+        return !delimiter || parse_here_register(delimiter, strip);
+}
+
+// Register a here-document as soon as its complete parser-token line is
+// available, whether that line came from source or from an alias replacement.
 static bool parse_here_at(b32 at)
 {
         b32 word = at + 1;
@@ -758,25 +799,48 @@ static bool parse_here_at(b32 at)
                     parse_tokens[word].kind == PT_WORD
                 ? parse_tokens[word].text
                 : null;
-        bool strip = false;
+        string_address next =
+            word + 1 < (b32)parse_token_count &&
+                    parse_tokens[word + 1].kind == PT_WORD
+                ? parse_tokens[word + 1].text
+                : null;
+        bool joined = delimiter && parse_tokens[word].joined;
 
-        if (delimiter && parse_tokens[word].joined &&
-            string_is(delimiter, '-'))
+        return parse_here_words(delimiter, joined, next);
+}
+
+/* The same registration directly from the fresh lexer frame used only for
+   command-substitution boundary discovery. */
+static bool parse_here_lexed(b32 count)
+{
+        for (b32 at = 0; at < count; at++)
         {
-                strip = true;
-                delimiter++;
+                b32 word;
+                string_address delimiter;
+                string_address next;
+                bool joined;
 
-                if (!string_get(delimiter))
-                {
-                        word++;
-                        delimiter = word < (b32)parse_token_count &&
-                                            parse_tokens[word].kind == PT_WORD
-                                        ? parse_tokens[word].text
-                                        : null;
-                }
+                if (lex_tokens[at].kind != LEX_OPERATOR ||
+                    lex_tokens[at].op != OP_DLESS)
+                        continue;
+
+                word = at + 1;
+                delimiter = word < count && lex_tokens[word].kind == LEX_WORD
+                                ? lex_tokens[word].text
+                                : null;
+                next = word + 1 < count &&
+                               lex_tokens[word + 1].kind == LEX_WORD
+                           ? lex_tokens[word + 1].text
+                           : null;
+                joined = delimiter &&
+                         lex_tokens[word].at ==
+                             lex_tokens[at].at + lex_tokens[at].length;
+
+                if (!parse_here_words(delimiter, joined, next))
+                        return false;
         }
 
-        return !delimiter || parse_here_register(delimiter, strip);
+        return true;
 }
 
 /*
@@ -856,6 +920,103 @@ bool parse_feed(string_address line)
         parse_token_count++;
 
         return true;
+}
+
+/* A bounded physical header copied for the ordinary lexer.  Short headers
+   stay on the stack; a generated long one grows through the same shell room
+   primitive as every other unbounded parser input. */
+static p8 address_to parse_here_scan_line(
+    string_address start, positive length, p8 address_to local_line,
+    positive local_room, p8 address_to address_to mapped,
+    positive address_to mapped_room)
+{
+        p8 address_to into = local_line;
+
+        if (length == positive_max)
+                return null;
+
+        if (length + 1 > local_room)
+        {
+                if (!shell_room((address_any address_to)mapped, mapped_room,
+                                length + 1, 1))
+                        return null;
+
+                into = address_to mapped;
+        }
+
+        memory_copy_end(into, start, length);
+        return into;
+}
+
+/*
+        Past the here-document bodies introduced by one physical command line.
+
+        lex_nesting calls this only after seeing an unquoted << candidate in a
+        command substitution.  A nested lexer/parser frame then runs the exact
+        normal token-to-delimiter path above; body lines use the same quoted,
+        <<- and backslash-newline decisions as parse_here_line without retaining
+        a speculative body copy.  The returned address is the source byte after
+        the final delimiter line, or the terminating null when input ended in a
+        body.  Null itself means allocation/token failure.
+*/
+static string_address parse_here_skip_bodies(string_address line,
+                                              string_address newline)
+{
+        p8 local_line[1024];
+        p8 address_to mapped = null;
+        positive mapped_room = 0;
+        p8 address_to copy;
+        string_address answer = null;
+        string_address at = newline + 1;
+        lex_frame frame;
+        bool substitution = expand_in_substitution;
+        b32 count;
+
+        copy = parse_here_scan_line(line, (positive)(newline - line),
+                                    local_line, sizeof(local_line),
+                                    address_of mapped,
+                                    address_of mapped_room);
+        if (!copy)
+                goto done;
+
+        lex_nest_enter(address_of frame);
+
+        /* This line is command-substitution source even when its containing
+           source is interactive and interactive_comments is disabled. */
+        expand_in_substitution = true;
+        here_filled = here_wanted;
+        count = lex_line(copy);
+
+        if (count < 0 || !parse_here_lexed(count))
+                goto leave;
+
+        while (parse_here_open())
+        {
+                string_address line_end = string_first_of_or_end(at, '\n');
+
+                if (!parse_here_take_span(at, (positive)(line_end - at),
+                                          false))
+                        goto leave;
+
+                if (!string_get(line_end))
+                {
+                        at = line_end;
+                        break;
+                }
+
+                at = line_end + 1;
+        }
+
+        answer = at;
+
+leave:
+        expand_in_substitution = substitution;
+        lex_nest_leave(address_of frame);
+done:
+        if (mapped)
+                memory_free(mapped, mapped_room);
+
+        return answer;
 }
 
 static b32 parse_node_new(b32 kind)

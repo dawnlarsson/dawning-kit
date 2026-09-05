@@ -71,6 +71,7 @@ typedef struct
 } shell_array_item;
 
 PURE p8 shell_variable_attributes(const_string name, positive length);
+PURE p8 shell_array_attributes(const_string name, positive length);
 PURE bool shell_variable_exported(const_string name, positive length);
 bool shell_variable_attribute_set(const_string name, positive length,
                                   p8 set, p8 clear);
@@ -1363,7 +1364,7 @@ static COLD string_address expand_absent_value(string_address name,
                 return env_get_hashed_span(name, answer.y, answer.x,
                                            value_length);
 
-        if (shell_variable_attributes(name, answer.y) &
+        if (shell_array_attributes(name, answer.y) &
             SHELL_ARRAY_ASSOCIATIVE)
                 return shell_array_get(name, answer.y, "0", 1, value_length);
 
@@ -4636,7 +4637,7 @@ static COLD string_address expand_subscript_key(string_address base,
         if (expand_failed || !key)
                 return null;
 
-        if (shell_variable_attributes(base, base_length) &
+        if (shell_array_attributes(base, base_length) &
             SHELL_ARRAY_ASSOCIATIVE)
         {
                 address_to key_length = string_length(key);

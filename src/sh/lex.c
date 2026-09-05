@@ -356,8 +356,11 @@ static CONST inline INLINE bool lex_extended_head(p8 value)
 }
 
 static string_address lex_nested_at(string_address at);
-static __attribute__((noinline)) string_address lex_nesting(string_address at);
+static __attribute__((noinline)) string_address
+lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
+static string_address parse_here_skip_bodies(string_address line,
+                                              string_address newline);
 
 /* The expander enforces this same ceiling when it later evaluates the nested
    words.  The earlier syntax walk must not be the unbounded recursive path. */
@@ -494,7 +497,7 @@ static b32 lex_skip_held(string_address address_to at)
 // One Bash arithmetic command token. Keeping its interior whole prevents the
 // shell operators inside ((...)) -- notably ;, &&, < and > -- from becoming
 // command-language tokens before the arithmetic parser sees them.
-static PURE string_address lex_arithmetic_end(string_address start)
+static string_address lex_arithmetic_end(string_address start)
 {
         string_address at = start + 2;
         positive depth = 0;
@@ -528,7 +531,7 @@ static PURE string_address lex_arithmetic_end(string_address start)
 // A Bash [[...]] condition is one command-language token. Its own &&, ||,
 // parentheses, < and > belong to the conditional grammar, while the same
 // bytes after the closing ]] belong to the shell grammar again.
-static PURE string_address lex_conditional_end(string_address start)
+static string_address lex_conditional_end(string_address start)
 {
         string_address at = start + 2;
 
@@ -592,7 +595,7 @@ static string_address lex_nested_at(string_address at)
         no partner, or a trailing backslash -- which is not the same as an
         unclosed quote and the caller reading a line wants to tell them apart.
 */
-static PURE string_address lex_quote_end(string_address at, p8 quote)
+static string_address lex_quote_end(string_address at, p8 quote)
 {
         string_address step = at;
 
@@ -640,12 +643,13 @@ static PURE string_address lex_quote_end(string_address at, p8 quote)
         started when there is no closing byte at all -- an unfinished one is the
         parser's to complain about, the same as an unfinished quote.
 */
-static PURE string_address lex_nesting_at(string_address at, positive nesting)
+static string_address lex_nesting_at(string_address at, positive nesting)
 {
         p8 open = string_get(at);
         p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
         positive depth = 0;
         string_address step = at;
+        string_address line = at + 1;
         /* ${...} and $((...)) have their own # operators. Command and process
            substitutions contain shell commands, so a fresh # hides every
            delimiter through the newline just as it does in the outer lexer.
@@ -655,6 +659,7 @@ static PURE string_address lex_nesting_at(string_address at, positive nesting)
         bool commands = open == '(' && !string_is(at + 1, '(');
         bool fresh = commands;
         bool comment = false;
+        bool maybe_here = false;
 
         if (nesting >= EXPAND_DEPTH)
                 return at;
@@ -665,13 +670,26 @@ static PURE string_address lex_nesting_at(string_address at, positive nesting)
 
                 if (comment)
                 {
-                        step++;
-
                         if (c == '\n')
                         {
+                                string_address after = step + 1;
+
+                                if (maybe_here)
+                                {
+                                        after = parse_here_skip_bodies(line,
+                                                                        step);
+                                        if (!after)
+                                                return at;
+                                }
+
+                                step = after;
                                 comment = false;
                                 fresh = true;
+                                maybe_here = false;
+                                line = step;
                         }
+                        else
+                                step++;
 
                         continue;
                 }
@@ -774,6 +792,28 @@ static PURE string_address lex_nesting_at(string_address at, positive nesting)
                         continue;
                 }
 
+                if (commands && c == '\n')
+                {
+                        string_address after = step + 1;
+
+                        if (maybe_here)
+                        {
+                                after = parse_here_skip_bodies(line, step);
+                                if (!after)
+                                        return at;
+                        }
+
+                        step = after;
+                        fresh = true;
+                        maybe_here = false;
+                        line = step;
+                        continue;
+                }
+
+                if (commands && c == '<' && string_is(step + 1, '<') &&
+                    string_not(step + 2, '<'))
+                        maybe_here = true;
+
                 // A backtick pair has the same byte at both ends, so it
                 // opens on the first one and closes on the next.
                 if (open == close)
@@ -798,7 +838,7 @@ static PURE string_address lex_nesting_at(string_address at, positive nesting)
         return at;
 }
 
-static PURE __attribute__((noinline)) string_address
+static __attribute__((noinline)) string_address
 lex_nesting(string_address at)
 {
         return lex_nesting_at(at, 0);
@@ -988,7 +1028,7 @@ static PURE bool lex_assignment_head(string_address text, positive length)
 /* Find the closing bracket whose following bytes prove this is an assignment.
    Reuse the lexer's quote/substitution walker so a `]` held inside either one
    cannot close the subscript. */
-static PURE string_address lex_assignment_subscript_end(string_address at)
+static string_address lex_assignment_subscript_end(string_address at)
 {
         string_address step = at;
         positive depth = 1;

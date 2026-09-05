@@ -185,6 +185,35 @@ compare bash 'set serializes assigned empty arrays' \
 compare bash 'set omits unassigned declared arrays' \
         'declare -a a; set | grep "^a="'
 
+group nameref-array
+
+compare bash 'nameref indexed element views' \
+        'a=([2]=x); declare -n n=a; printf "<%s>:%s:<%s>\n" "${n[2]}" "${#n[@]}" "${!n[@]}"'
+compare bash 'nameref indexed element writes' \
+        'a=([2]=x); declare -n n=a; n[4]=y; declare -p a n'
+compare bash 'nameref associative element access' \
+        'declare -A m=([x]=a); declare -n n=m; n[y]=b; printf "<%s>|<%s>:%s\n" "${n[x]}" "${n[y]}" "${#n[@]}"'
+compare bash 'nameref element unset' \
+        'a=([2]=x [4]=y); declare -n n=a; unset '\''n[2]'\''; declare -p a n'
+compare bash 'nameref target unset' \
+        'a=([2]=x); declare -n n=a; unset n; declare -p n; declare -p a'
+compare bash 'unset n keeps nameref target' \
+        'a=([2]=x); declare -n n=a; unset -n n; declare -p a; declare -p n'
+compare bash 'nameref compound replacement' \
+        'a=([2]=x); declare -n n=a; n=(y z); declare -p a n'
+compare bash 'nameref compound append' \
+        'a=([2]=x); declare -n n=a; n+=(y z); declare -p a n'
+compare bash 'readonly nameref writes target' \
+        'a=old; declare -rn n=a; n=new; printf "%s:%s:%s\n" "$?" "$a" "$n"'
+compare bash 'readonly scalar target status' \
+        'readonly a=old; declare -n n=a; n=new; printf after'
+compare bash 'readonly array target status' \
+        'declare -ar a=([0]=old); declare -n n=a; n[2]=new; printf after'
+compare bash 'readonly target unset status' \
+        'declare -ar a=([2]=x); declare -n n=a; unset '\''n[2]'\''; printf "status:%s\n" "$?"'
+compare bash 'chained array nameref' \
+        'a=([2]=x); declare -n m=a; declare -n n=m; n[4]=y; printf "<%s>:%s\n" "${n[4]}" "${#n[@]}"'
+
 section ""
 total=$((pass + fail))
 echo

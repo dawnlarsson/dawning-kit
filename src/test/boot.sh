@@ -115,6 +115,17 @@ echo late > /tmp/onecmd-late
 ONECMD
 /bin/bash -t /tmp/onecmd
 [ ! -e /tmp/onecmd-late ] && printf 'dne-dmceno\n' | rev
+/bin/bash -c 'f() { return -1; }; f; printf "return-%s\n" "$?"'
+/bin/dash -c 'trap '\''printf "dot-exit-%s\n" "$?"'\'' EXIT; . /tmp/missing-dot-file' 2>/dev/null
+/bin/bash -c 'a=([2]=ready); declare -n n=a; printf "nameref-%s\n" "${n[2]}"'
+cat > /tmp/nested-here <<'NESTED_HERE'
+value=$(cat <<EOF
+)
+EOF
+)
+printf 'here-%s\n' "$value"
+NESTED_HERE
+/bin/dash /tmp/nested-here
 /bin/mountpoint -q / && printf 'storage-root\n'
 printf 'storage-target-%s\n' "$(/usr/bin/findmnt -n -r -o TARGET -T /)"
 mointor.sh 1 3 2> /tmp/monitor.err
@@ -197,6 +208,10 @@ says 'bash shebang policy' 'shell-gap-ready'
 says 'BASH_ENV startup'    'startup-ready'
 says 'onecmd first line'   'onecmd-63'
 says 'onecmd stopped'      'onecmd-end'
+says 'Bash signed return'  'return-255'
+says 'dash source failure trap' 'dot-exit-2'
+says 'Bash nameref array'  'nameref-ready'
+says 'nested heredoc boundary' 'here-)'
 says 'root is mounted'     'storage-root'
 says 'findmnt linked'      'storage-target-/'
 says 'monitor ran'         '0monitor'
