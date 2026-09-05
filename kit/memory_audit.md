@@ -118,3 +118,13 @@ passed 95 native AArch64 Linux checks and 87 lifted Darwin fallback checks.
 The final Arch shell/expand/builtin suites passed 3372/3372 with default signal
 dispositions (SSH-inherited ignored signals otherwise distort trap fixtures),
 and the build/document kit passed 59/59.
+
+The native ARM Linux VM's full shell/expand/builtin comparison is **not fully
+green**: it has 23 existing reference mismatches with Ubuntu's dash
+0.5.12-9ubuntu1 and bash 5.2.32-1ubuntu1.1 (Arch uses dash 0.5.13.4-1 and bash
+5.3.15-1). A writable-tree control from `dc28f20` with the new tests passed
+3373/3397; the candidate passed 3374/3397. Their output diff contains only the
+fixed RSS regression (control retained 54068 KiB); every other mismatch is
+identical. An initial read-only host-mounted run also broke a mkdir-based
+fixture, so it was replaced by the writable-tree comparison. The VM was
+returned to its previously stopped state after testing.
