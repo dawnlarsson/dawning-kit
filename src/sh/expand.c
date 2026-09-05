@@ -87,6 +87,13 @@ bool shell_array_set(const_string name, positive length, const_string key,
 bool shell_array_forget(const_string name, positive length,
                         const_string key, positive key_length);
 bool shell_array_clear(const_string name, positive length);
+bool shell_reference_element(const_string name, positive length,
+                             const_string address_to base,
+                             positive address_to base_length,
+                             const_string address_to subscript,
+                             positive address_to subscript_length);
+string_address shell_reference_element_value(
+    const_string name, positive length, positive address_to value_length);
 bool shell_frames_wanted(const_string name, positive length);
 bool shell_array_words(const_string name, positive length,
                        string_address address_to words, positive count);
@@ -1358,6 +1365,14 @@ static COLD string_address expand_absent_value(string_address name,
 
                 return shell_array_get(name, base_length, key, key_length,
                                        value_length);
+        }
+
+        {
+                string_address reference = shell_reference_element_value(
+                    name, answer.y, value_length);
+
+                if (reference)
+                        return reference;
         }
 
         if (shell_frames_wanted(name, answer.y))
@@ -3420,7 +3435,8 @@ static string_address expand_process(string_address step, p8 mark)
 {
         bool reading = string_is(step, '<');
         string_address inner = step + 2;
-        string_address stop = expand_paren_end(inner);
+        string_address after = lex_nesting(step + 1);
+        string_address stop = after == step + 1 ? null : after - 1;
         p8 address_to text;
         positive length;
         b32 channel[2];

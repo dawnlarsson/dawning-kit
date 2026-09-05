@@ -118,6 +118,10 @@ ONECMD
 /bin/bash -c 'f() { return -1; }; f; printf "return-%s\n" "$?"'
 /bin/dash -c 'trap '\''printf "dot-exit-%s\n" "$?"'\'' EXIT; . /tmp/missing-dot-file' 2>/dev/null
 /bin/bash -c 'a=([2]=ready); declare -n n=a; printf "nameref-%s\n" "${n[2]}"'
+/bin/bash -c 'a=([2]=old); declare -n n="a[2]"; n=ready; printf "element-ref-%s\n" "${a[2]}"'
+/bin/bash -c 'set -k; f() { printf "keyword-%s-%s\n" "$MWKEY" "$*"; }; f one MWKEY=ready two'
+/bin/bash -c 'X=old; X=temporary :; printf "prefix-kept-%s\n" "$X"; X=ready export X; printf "prefix-export-%s\n" "$X"'
+/bin/bash -pc 'case $- in *p*) printf "privileged-%s\n" ready;; esac; set +p; case $- in *p*) :;; *) printf "privileged-%s\n" dropped;; esac'
 cat > /tmp/nested-here <<'NESTED_HERE'
 value=$(cat <<EOF
 )
@@ -211,6 +215,12 @@ says 'onecmd stopped'      'onecmd-end'
 says 'Bash signed return'  'return-255'
 says 'dash source failure trap' 'dot-exit-2'
 says 'Bash nameref array'  'nameref-ready'
+says 'Bash element nameref' 'element-ref-ready'
+says 'Bash keyword assignments' 'keyword-ready-one two'
+says 'Bash prefix lifetime' 'prefix-kept-old'
+says 'Bash prefix export'  'prefix-export-ready'
+says 'Bash privileged mode' 'privileged-ready'
+says 'Bash privileged reset' 'privileged-dropped'
 says 'nested heredoc boundary' 'here-)'
 says 'root is mounted'     'storage-root'
 says 'findmnt linked'      'storage-target-/'

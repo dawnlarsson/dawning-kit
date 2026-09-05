@@ -3407,6 +3407,10 @@ expected 'Issue8 intrinsic fc history editing' '' 0 'fc -l'
 expected 'fc -l says nothing in a script' 'end|' 0 'fc -l; echo end'
 expected 'history says nothing in a script' 'end|' 0 'history; echo end'
 expected 'history -c is content in a script' '0|' 0 'history -c; echo $?'
+bash_answer 'noninteractive histexpand stays literal' \
+        'set -H; printf "<%s>\n" "!!"'
+bash_answer 'histexpand option and flag toggle together' \
+        'set -H; case $- in *H*) echo on;; esac; set +o histexpand; case $- in *H*) echo bad;; *) echo off;; esac'
 expected 'fc with no history refuses' '' 1 'fc'
 expected 'fc -s with no history refuses' '' 1 'fc -s'
 expected 'fc rejects an unknown option' '' 2 'fc -Z'
@@ -3591,10 +3595,10 @@ group set-option-index
 bash_set_option_inventory supported \
         allexport emacs errexit ignoreeof monitor noclobber noglob nolog \
         notify nounset pipefail verbose vi xtrace braceexpand errtrace \
-        functrace hashall history noexec onecmd physical
+        functrace hashall history noexec onecmd physical keyword privileged histexpand \
+        interactive-comments
 bash_set_option_inventory remaining \
-        histexpand interactive-comments keyword posix \
-        privileged
+        posix
 
 group shopt-option-index
 bash_shopt_inventory supported \

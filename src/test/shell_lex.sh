@@ -276,6 +276,43 @@ SECOND
 printf '<%s>\n' "$value"
 CASE
 
+bash_script_case "split substitution heredoc operator" <<'CASE'
+value=$(cat <\
+<EOF
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+bash_script_case "split substitution heredoc delimiter" <<'CASE'
+value=$(cat <<E\
+OF
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+bash_script_case "multiple split substitution heredocs" <<'CASE'
+value=$(cat <\
+<FIRST <<SEC\
+OND
+first)
+FIRST
+second)
+SECOND
+)
+printf '<%s>\n' "$value"
+CASE
+
+bash_script_case "process substitution heredoc paren" <<'CASE'
+cat <(cat <<EOF
+)
+EOF
+)
+CASE
+
 subject_expected "sh policy unaffected" '<one>
 ' <<'CASE'
 shopt -u interactive_comments
@@ -343,6 +380,24 @@ CASE
 dash_case "joined body paren" <<'CASE'
 value=$(cat <<EOF
 one \
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+dash_case "split substitution heredoc operator" <<'CASE'
+value=$(cat <\
+<EOF
+)
+EOF
+)
+printf '<%s>\n' "$value"
+CASE
+
+dash_case "split substitution heredoc delimiter" <<'CASE'
+value=$(cat <<E\
+OF
 )
 EOF
 )

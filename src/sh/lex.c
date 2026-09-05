@@ -373,6 +373,28 @@ static CONST inline INLINE bool lex_is_space(p8 value)
         return value == ' ' || value == '\t' || value == '\n';
 }
 
+/* Whether this unquoted < can be one half of << after line continuation has
+   removed its bytes.  The full lexer remains the authority: a false positive
+   only asks the parser-owned scanner and a here-string still registers no
+   document. */
+static PURE bool lex_dless_candidate(string_address line, string_address at)
+{
+        string_address before = at;
+        positive distance = (positive)(at - line);
+
+        if (string_is(at + 1, '<') && string_not(at + 2, '<'))
+                return true;
+
+        while (distance >= 2 && string_is(before - 1, '\n') &&
+               string_is(before - 2, '\\'))
+        {
+                before -= 2;
+                distance -= 2;
+        }
+
+        return distance && string_is(before - 1, '<');
+}
+
 /*
         Whether a # standing where a word could begin starts a comment.
 
@@ -810,8 +832,7 @@ static string_address lex_nesting_at(string_address at, positive nesting)
                         continue;
                 }
 
-                if (commands && c == '<' && string_is(step + 1, '<') &&
-                    string_not(step + 2, '<'))
+                if (commands && c == '<' && lex_dless_candidate(line, step))
                         maybe_here = true;
 
                 // A backtick pair has the same byte at both ends, so it

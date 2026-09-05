@@ -54,6 +54,11 @@ fn shell_input_end();
 bool exec_function_here_hashed(string_address name, positive2 named);
 bool exec_function_unset(string_address name);
 static bool exec_line_aborted();
+static bool exec_assignment_promote(const_string name, positive length);
+static bool env_attribute_target_span(const_string name, positive length,
+                                      const_string address_to target,
+                                      positive address_to target_length,
+                                      positive address_to target_index);
 static bool exec_source_stop(b32 address_to startup_status);
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
@@ -987,21 +992,47 @@ static fn env_mark_restore(string_address name, bool enabled, bool export_mark)
 #define env_declare_restore(name, enabled)                                  \
         env_mark_restore((name), (enabled), false)
 
-static bool env_export_mark_span(const_string name, positive length)
+static bool env_export_mark_span_mode(const_string name, positive length,
+                                      bool direct)
 {
-        env_variable address_to entry = env_export_take(name, length);
+        const_string target = name;
+        positive target_length = length;
+        positive target_index = shell_var_count;
+        env_variable address_to entry;
+
+        if (!direct &&
+            !env_attribute_target_span(name, length, address_of target,
+                                       address_of target_length,
+                                       address_of target_index))
+                return false;
+
+        entry = target_index < shell_var_count
+                    ? shell_vars + target_index
+                    : env_export_take(target, target_length);
 
         if (!entry)
                 return false;
 
         entry->permanent = true;
+        if (entry->temporary)
+                exec_assignment_promote(name, length);
         shell_envp_dirty = true;
         return true;
+}
+
+static bool env_export_mark_span(const_string name, positive length)
+{
+        return env_export_mark_span_mode(name, length, false);
 }
 
 static bool env_export_mark(string_address name)
 {
         return env_export_mark_span(name, string_length(name));
+}
+
+static bool env_export_mark_direct(string_address name)
+{
+        return env_export_mark_span_mode(name, string_length(name), true);
 }
 
 #define env_export_restore(name, enabled)                                   \
@@ -1026,12 +1057,22 @@ static bool env_export_temporary(string_address assignment)
 {
         positive length = (positive)(string_first_of_or_end(assignment, '=') -
                                      assignment);
+        const_string target = assignment;
+        positive target_length = length;
+        positive target_index;
         env_variable address_to entry;
 
         if (env_assignment_element(assignment, length))
                 return true;
 
-        entry = env_export_take(assignment, length);
+        if (!env_attribute_target_span(
+                assignment, length, address_of target,
+                address_of target_length, address_of target_index))
+                return false;
+
+        entry = target_index < shell_var_count
+                    ? shell_vars + target_index
+                    : env_export_take(target, target_length);
 
         if (!entry)
                 return false;
@@ -1045,12 +1086,17 @@ static fn env_export_release(string_address assignment)
 {
         positive length = (positive)(string_first_of_or_end(assignment, '=') -
                                      assignment);
-        positive found;
+        const_string target = assignment;
+        positive target_length = length;
+        positive found = shell_var_count;
 
         if (env_assignment_element(assignment, length))
                 return;
 
-        found = env_find_span(assignment, length);
+        if (!env_attribute_target_span(
+                assignment, length, address_of target,
+                address_of target_length, address_of found))
+                return;
 
         if (found >= shell_var_count)
                 return;
@@ -1106,9 +1152,6 @@ static bool env_assign_hashed_span(const_string name, positive name_len,
                                    positive hash, const_string value);
 static bool env_write(const_string name, const_string value, bool assignment);
 
-// A nameref that names itself, or a ring of them, is a name with no variable
-// behind it rather than a shell that never answers.
-static positive env_nameref_depth;
 PURE string_address env_get(const_string name);
 bool env_set(const_string name, const_string value);
 bool env_assign(const_string name, const_string value);
@@ -1291,10 +1334,40 @@ typedef struct
         positive length;
         positive hash;
         positive index;
+        const_string subscript;
+        positive subscript_length;
+        bool element;
         bool valid;
 } env_reference;
 
-static COLD PURE positive env_reference_follow(
+static PURE bool env_reference_element_span(
+    const_string name, positive length, positive address_to base_length,
+    const_string address_to subscript, positive address_to subscript_length)
+{
+        positive open = 0;
+
+        if (length < 3 || string_get(name + length - 1) != ']' ||
+            !expand_name_character(string_get(name)) ||
+            byte_is_digit(string_get(name)))
+                return false;
+
+        while (open < length && string_get(name + open) != '[')
+        {
+                if (!expand_name_character(string_get(name + open)))
+                        return false;
+                open++;
+        }
+
+        if (!open || open >= length - 1)
+                return false;
+
+        address_to base_length = open;
+        address_to subscript = name + open + 1;
+        address_to subscript_length = length - open - 2;
+        return true;
+}
+
+static COLD positive env_reference_follow(
     positive index, env_reference address_to absent)
 {
         for (positive step = 0; step < 16; step++)
@@ -1303,8 +1376,33 @@ static COLD PURE positive env_reference_follow(
                 const_string name =
                     variable->text + variable->name_length + 1;
                 positive length = variable->value_length;
-                positive hash = env_name_hash(name, length);
-                positive next = env_find_hashed_span(name, length, hash);
+                positive base_length;
+                const_string subscript;
+                positive subscript_length;
+                positive hash;
+                positive next;
+
+                if (env_reference_element_span(
+                        name, length, address_of base_length,
+                        address_of subscript, address_of subscript_length))
+                {
+                        if (absent)
+                        {
+                                absent->name = name;
+                                absent->length = base_length;
+                                absent->hash = env_name_hash(name, base_length);
+                                absent->index = env_find_hashed_span(
+                                    name, base_length, absent->hash);
+                                absent->subscript = subscript;
+                                absent->subscript_length = subscript_length;
+                                absent->element = true;
+                        }
+
+                        return absent ? absent->index : shell_var_count;
+                }
+
+                hash = env_name_hash(name, length);
+                next = env_find_hashed_span(name, length, hash);
 
                 if (next >= shell_var_count)
                 {
@@ -1343,7 +1441,8 @@ static COLD PURE env_reference env_reference_hashed(const_string name,
                                                      positive length,
                                                      positive hash)
 {
-        env_reference answer = {name, length, hash, shell_var_count, true};
+        env_reference answer = {name, length, hash, shell_var_count,
+                                null, 0, false, true};
 
         answer.index = env_find_hashed_span(name, length, hash);
 
@@ -1354,7 +1453,7 @@ static COLD PURE env_reference env_reference_hashed(const_string name,
                 answer.index =
                     env_reference_follow(answer.index, address_of answer);
 
-                if (answer.index < shell_var_count)
+                if (!answer.element && answer.index < shell_var_count)
                 {
                         answer.name = shell_vars[answer.index].text;
                         answer.length = shell_vars[answer.index].name_length;
@@ -1370,6 +1469,37 @@ static COLD PURE env_reference env_reference_span(const_string name,
 {
         return env_reference_hashed(name, length,
                                     env_name_hash(name, length));
+}
+
+/* Export and readonly name the variable visible through an ordinary nameref.
+   Keep element-bound references on their own record here: Bash gives those a
+   separate invalid-identifier policy, and treating their containing array as
+   an ordinary scalar target would silently mark the wrong object. */
+static bool env_attribute_target_span(
+    const_string name, positive length, const_string address_to target,
+    positive address_to target_length, positive address_to target_index)
+{
+        env_reference resolved = env_reference_span(name, length);
+
+        if (!resolved.valid)
+                return false;
+
+        if (!resolved.element)
+        {
+                address_to target = resolved.name;
+                address_to target_length = resolved.length;
+                if (target_index)
+                        address_to target_index = resolved.index;
+        }
+        else
+        {
+                address_to target = name;
+                address_to target_length = length;
+                if (target_index)
+                        address_to target_index = env_find_span(name, length);
+        }
+
+        return true;
 }
 
 string_address env_get_hashed_span(const_string name, positive length,
@@ -1531,17 +1661,32 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         if ((attributes & SHELL_ARRAY_NAMEREF) &&
             env_variable_has_value(shell_vars + idx))
         {
-                bool answer;
+                env_reference resolved = env_reference_hashed(
+                    name, name_len, shell_vars[idx].hash);
 
-                if (env_nameref_depth >= 16)
+                if (!resolved.valid)
                         return 2;
 
-                env_nameref_depth++;
-                answer = env_write(shell_vars[idx].text + name_len + 1, value,
-                                   assignment);
-                env_nameref_depth--;
+                if (resolved.element)
+                {
+                        positive key_length;
+                        string_address key = shell_expand_subscript(
+                            (string_address)resolved.name, resolved.length,
+                            (string_address)resolved.subscript,
+                            resolved.subscript_length, address_of key_length);
 
-                return answer ? 1 : 2;
+                        return key && shell_array_set(
+                                          resolved.name, resolved.length, key,
+                                          key_length, value, false)
+                                   ? 1
+                                   : 2;
+                }
+
+                return env_write_hashed_span(
+                           resolved.name, resolved.length, resolved.hash,
+                           value, assignment)
+                           ? 1
+                           : 2;
         }
 
         if (attributes & ENV_ATTRIBUTE_VALUE)
@@ -1747,7 +1892,8 @@ COLD PURE p8 shell_array_attributes(const_string name, positive length)
 {
         env_reference resolved = env_reference_span(name, length);
 
-        return resolved.valid && resolved.index < shell_var_count
+        return resolved.valid && !resolved.element &&
+                       resolved.index < shell_var_count
                    ? shell_vars[resolved.index].attributes
                    : 0;
 }
@@ -1758,12 +1904,57 @@ COLD bool shell_reference_resolve(const_string name, positive length,
 {
         env_reference resolved = env_reference_span(name, length);
 
-        if (!resolved.valid)
+        if (!resolved.valid || resolved.element)
                 return false;
 
         address_to resolved_name = resolved.name;
         address_to resolved_length = resolved.length;
         return true;
+}
+
+COLD bool shell_reference_element(
+    const_string name, positive length, const_string address_to base,
+    positive address_to base_length, const_string address_to subscript,
+    positive address_to subscript_length)
+{
+        env_reference resolved = env_reference_span(name, length);
+
+        if (!resolved.valid || !resolved.element)
+                return false;
+
+        if (base)
+                address_to base = resolved.name;
+        if (base_length)
+                address_to base_length = resolved.length;
+        if (subscript)
+                address_to subscript = resolved.subscript;
+        if (subscript_length)
+                address_to subscript_length = resolved.subscript_length;
+        return true;
+}
+
+COLD string_address shell_reference_element_value(
+    const_string name, positive length, positive address_to value_length)
+{
+        const_string base;
+        const_string subscript;
+        positive base_length;
+        positive subscript_length;
+        positive key_length;
+        string_address key;
+
+        if (!shell_reference_element(
+                name, length, address_of base, address_of base_length,
+                address_of subscript, address_of subscript_length))
+                return null;
+
+        key = shell_expand_subscript(
+            (string_address)base, base_length, (string_address)subscript,
+            subscript_length, address_of key_length);
+
+        return key ? shell_array_get(base, base_length, key, key_length,
+                                     value_length)
+                   : null;
 }
 
 PURE bool env_assignment_readonly_hashed_span(const_string name,
@@ -1872,10 +2063,34 @@ COLD bool shell_variable_attribute_set(const_string name, positive length, p8 se
         return true;
 }
 
+static bool readonly_add_mode(string_address name, positive length,
+                              bool direct)
+{
+        const_string target = name;
+        positive target_length = length;
+
+        if (!direct &&
+            !env_attribute_target_span(name, length, address_of target,
+                                       address_of target_length,
+                                       null))
+                return false;
+
+        if (!shell_variable_attribute_set(target, target_length,
+                                          SHELL_ARRAY_READONLY, 0))
+                return false;
+        if (exec_assignment_promote(name, length))
+                return env_export_mark_span(name, length);
+        return true;
+}
+
 static bool readonly_add(string_address name, positive length)
 {
-        return shell_variable_attribute_set(name, length,
-                                            SHELL_ARRAY_READONLY, 0);
+        return readonly_add_mode(name, length, false);
+}
+
+static bool readonly_add_direct(string_address name, positive length)
+{
+        return readonly_add_mode(name, length, true);
 }
 
 static COLD env_reference shell_array_reference(const_string name,
@@ -1897,7 +2112,8 @@ COLD positive shell_array_length(const_string name, positive length)
         env_reference resolved = shell_array_reference(name, length, true);
         env_variable address_to variable;
 
-        if (!resolved.valid || resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element ||
+            resolved.index >= shell_var_count)
                 return 0;
 
         variable = shell_vars + resolved.index;
@@ -1913,7 +2129,8 @@ COLD PURE positive shell_array_highest(const_string name, positive length)
         env_reference resolved = env_reference_span(name, length);
         array_table address_to table;
 
-        if (!resolved.valid || resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element ||
+            resolved.index >= shell_var_count)
                 return 0;
 
         table = array_table_of(shell_vars + resolved.index);
@@ -1929,7 +2146,8 @@ COLD positive shell_array_items(const_string name, positive length,
         array_table address_to table;
         positive count = 0;
 
-        if (!resolved.valid || resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element ||
+            resolved.index >= shell_var_count)
                 return 0;
 
         variable = shell_vars + resolved.index;
@@ -1942,7 +2160,8 @@ COLD positive shell_array_items(const_string name, positive length,
                         items[count].index = 0;
                         items[count].key = null;
                         items[count].key_length = 0;
-                        items[count].value = variable->text + length + 1;
+                        items[count].value =
+                            variable->text + resolved.length + 1;
                         items[count].value_length = variable->value_length;
                 }
 
@@ -1978,7 +2197,8 @@ COLD string_address shell_array_get(const_string name, positive length,
         array_table address_to table;
         positive at;
 
-        if (!resolved.valid || resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element ||
+            resolved.index >= shell_var_count)
                 return null;
 
         variable = shell_vars + resolved.index;
@@ -2095,6 +2315,8 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
         positive at;
 
         if (!resolved.valid)
+                return true;
+        if (resolved.element)
                 return false;
 
         name = resolved.name;
@@ -2170,7 +2392,7 @@ COLD bool shell_array_clear(const_string name, positive length)
         env_variable address_to variable;
         array_table address_to table;
 
-        if (!resolved.valid)
+        if (!resolved.valid || resolved.element)
                 return false;
 
         if (resolved.index >= shell_var_count)
@@ -2285,8 +2507,10 @@ static COLD bool shell_status_array_numbers(const_string name, positive length,
         return true;
 }
 
-COLD bool shell_array_forget(const_string name, positive length, const_string key,
-                        positive key_length)
+static COLD bool shell_array_forget_mode(const_string name, positive length,
+                                         const_string key,
+                                         positive key_length,
+                                         bool allow_readonly)
 {
         env_reference resolved = env_reference_span(name, length);
         env_variable address_to variable;
@@ -2294,7 +2518,9 @@ COLD bool shell_array_forget(const_string name, positive length, const_string ke
         positive at;
 
         if (!resolved.valid)
-                return false;
+                return true;
+        if (resolved.element)
+                return true;
 
         if (resolved.index >= shell_var_count)
                 return true;
@@ -2303,7 +2529,8 @@ COLD bool shell_array_forget(const_string name, positive length, const_string ke
         length = resolved.length;
         variable = shell_vars + resolved.index;
 
-        if (variable->attributes & SHELL_ARRAY_READONLY)
+        if (!allow_readonly &&
+            (variable->attributes & SHELL_ARRAY_READONLY))
                 return false;
 
         table = array_table_of(variable);
@@ -2664,6 +2891,28 @@ COLD bool shell_dynamic_wanted(const_string name, positive length)
                 shell_dynamic_dirstack();
 
         return true;
+}
+
+COLD bool shell_array_forget(const_string name, positive length,
+                             const_string key, positive key_length)
+{
+        return shell_array_forget_mode(name, length, key, key_length, false);
+}
+
+/* Bash permits `unset n` when n itself names one array element, even when
+   the containing array is readonly.  Direct `unset a[key]` still reaches the
+   ordinary wrapper above and refuses the mutation. */
+static COLD bool shell_reference_element_forget(env_reference resolved)
+{
+        positive key_length;
+        string_address key = shell_expand_subscript(
+            (string_address)resolved.name, resolved.length,
+            (string_address)resolved.subscript, resolved.subscript_length,
+            address_of key_length);
+
+        return key && shell_array_forget_mode(
+                          resolved.name, resolved.length, key, key_length,
+                          true);
 }
 
 positive shell_subshell_depth;
@@ -3256,6 +3505,8 @@ bool shell_cd_try(string_address candidate, bool physical,
         along CDPATH first, and a hit there is said out loud because the script
         did not name the place it landed.
 */
+static PURE bool shell_privileged_on();
+
 bool shell_cd_walk(bool physical, bool address_to say,
                    bool address_to physical_named,
                    bool address_to variables_set)
@@ -3272,7 +3523,13 @@ bool shell_cd_walk(bool physical, bool address_to say,
                 (shell_cd_target[2] == end || shell_cd_target[2] == '/')))))
         {
                 p8 search[1024];
-                string_address value = env_get("CDPATH");
+                /* Bash leaves inherited CDPATH text visible in privileged
+                   mode but does not let cd interpret it until set +p. Keep
+                   the value in the shared environment engine and gate only
+                   its special consumer. */
+                string_address value = shell_privileged_on()
+                                           ? null
+                                           : env_get("CDPATH");
 
                 if (value && string_get(value))
                 {
@@ -4388,6 +4645,10 @@ static shell_option shell_extra_options[] = {
     {"hashall", 'h'},
     {"physical", 'P'},
     {"onecmd", 't'},
+    {"keyword", 'k'},
+    {"privileged", 'p'},
+    {"histexpand", 'H'},
+    {"interactive-comments", 0},
     {null, 0},
 };
 
@@ -4398,12 +4659,23 @@ static shell_option shell_extra_options[] = {
 #define SHELL_EXTRA_HASHALL 4
 #define SHELL_EXTRA_PHYSICAL 5
 #define SHELL_EXTRA_ONECMD 6
+#define SHELL_EXTRA_KEYWORD 7
+#define SHELL_EXTRA_PRIVILEGED 8
+#define SHELL_EXTRA_HISTEXPAND 9
+#define SHELL_EXTRA_INTERACTIVE_COMMENTS 10
+
+/* Startup +/-H is parsed before interactivity is known.  Remember an explicit
+   choice so the interactive Bash default does not overwrite it later. */
+static bool shell_histexpand_told;
 
 static positive shell_extra_state = ((positive)1 << SHELL_EXTRA_BRACEEXPAND) |
                                     ((positive)1 << SHELL_EXTRA_HASHALL);
 
 static PURE bool shell_extra_on(positive which)
 {
+        if (which == SHELL_EXTRA_INTERACTIVE_COMMENTS)
+                return (shell_shopt_state &
+                        SHELL_SHOPT(INTERACTIVE_COMMENTS)) != 0;
         return (shell_extra_state & ((positive)1 << which)) != 0;
 }
 
@@ -4425,6 +4697,83 @@ PURE bool shell_onecmd_on()
 }
 
 #define shell_hashall_on() shell_extra_on(SHELL_EXTRA_HASHALL)
+#define shell_keyword_on() shell_extra_on(SHELL_EXTRA_KEYWORD)
+
+/*
+        Bash privilege mode is process state, not an option-shaped promise.
+
+        Keep the real IDs captured at entry: once set +p has reset effective
+        and saved IDs, a later set -p may describe the mode but must not regain
+        the entry identity. Group credentials go first so resetting the uid
+        cannot take away the capability needed to reset the gid.
+*/
+static p32 shell_real_uid, shell_real_gid;
+static bool shell_privilege_known;
+static bool shell_privilege_resettable;
+static bool shell_privilege_mismatched;
+static bool shell_startup_privileged;
+
+static COLD DEAD_END fn shell_privilege_failure(string_address operation)
+{
+        string_format(log_error, "bash: cannot %s process privileges\n",
+                      operation);
+        log_flush();
+        system_call_1(syscall(exit_group), 1);
+        __builtin_unreachable();
+}
+
+static fn shell_privilege_prepare()
+{
+        p32 uid[3], gid[3];
+
+        if (shell_privilege_known)
+                return;
+
+        if (system_call_3(syscall(getresuid), (positive)uid,
+                          (positive)(uid + 1), (positive)(uid + 2)) < 0 ||
+            system_call_3(syscall(getresgid), (positive)gid,
+                          (positive)(gid + 1), (positive)(gid + 2)) < 0)
+                shell_privilege_failure((string_address)"read");
+
+        shell_real_uid = uid[0];
+        shell_real_gid = gid[0];
+        shell_privilege_mismatched = uid[0] != uid[1] || gid[0] != gid[1];
+        shell_privilege_resettable = uid[0] != uid[1] || uid[0] != uid[2] ||
+                                     gid[0] != gid[1] || gid[0] != gid[2];
+        shell_privilege_known = true;
+}
+
+static fn shell_privilege_drop()
+{
+        shell_privilege_prepare();
+
+        if (!shell_privilege_resettable)
+                return;
+
+        if (system_call_3(syscall(setresgid), shell_real_gid, shell_real_gid,
+                          shell_real_gid) < 0 ||
+            system_call_3(syscall(setresuid), shell_real_uid, shell_real_uid,
+                          shell_real_uid) < 0)
+                shell_privilege_failure((string_address)"drop");
+
+        shell_privilege_resettable = false;
+}
+
+static PURE bool shell_privileged_on()
+{
+        return shell_extra_on(SHELL_EXTRA_PRIVILEGED);
+}
+
+/* Called after invocation options have reached the shared option table. */
+static fn shell_privilege_started()
+{
+        shell_privilege_prepare();
+        shell_startup_privileged =
+            shell_privilege_mismatched || shell_privileged_on();
+
+        if (shell_privilege_mismatched && !shell_privileged_on())
+                shell_privilege_drop();
+}
 
 static bool shell_extra_told(string_address word, bool on)
 {
@@ -4435,12 +4784,35 @@ static bool shell_extra_told(string_address word, bool on)
         if (index >= SHELL_EXTRA_OPTIONS)
                 return false;
 
+        if (index == SHELL_EXTRA_INTERACTIVE_COMMENTS)
+        {
+                if (on)
+                        shell_shopt_state |=
+                            SHELL_SHOPT(INTERACTIVE_COMMENTS);
+                else
+                        shell_shopt_state &=
+                            ~SHELL_SHOPT(INTERACTIVE_COMMENTS);
+                return true;
+        }
+
+        if (index == SHELL_EXTRA_PRIVILEGED && !on)
+                shell_privilege_drop();
+
+        if (index == SHELL_EXTRA_HISTEXPAND)
+                shell_histexpand_told = true;
+
         if (on)
                 shell_extra_state |= (positive)1 << index;
         else
                 shell_extra_state &= ~((positive)1 << index);
 
         return true;
+}
+
+PURE bool shell_histexpand_on()
+{
+        return shell_bash_compat && shell_is_interactive &&
+               shell_extra_on(SHELL_EXTRA_HISTEXPAND);
 }
 
 static bool shell_extra_letter(p8 letter, bool on)
@@ -4588,6 +4960,9 @@ fn shell_options_started(bool interactive, b32 monitor)
         if (interactive)
                 shell_options |= SHELL_FLAG('i');
 
+        if (shell_bash_compat && interactive && !shell_histexpand_told)
+                shell_extra_state |= (positive)1 << SHELL_EXTRA_HISTEXPAND;
+
         // Defer the one monitor side effect until interactive identity is
         // known. Parsing -m earlier would mark job control initialized before
         // it could acquire the terminal; an explicit +m overrides the default.
@@ -4625,10 +5000,11 @@ fn shell_options_listed(writer write, bool as_commands)
                    stored bit implemented their behavior. */
                 static const string_address names[] = {
                     "allexport", "braceexpand", "emacs", "errexit",
-                    "errtrace", "functrace", "hashall", "history", "ignoreeof",
+                    "errtrace", "functrace", "hashall", "history", "histexpand",
+                    "ignoreeof", "interactive-comments", "keyword",
                     "monitor", "noclobber", "noexec", "noglob", "nolog",
                     "notify", "nounset", "onecmd", "physical", "pipefail",
-                    "verbose", "vi", "xtrace"
+                    "privileged", "verbose", "vi", "xtrace"
                 };
 
                 for (positive at = 0; at < array_count(names); at++)
@@ -5270,7 +5646,8 @@ COLD fn shell_unset(writer write, string_address input)
                                 return;
                         }
 
-                        if (resolved.index < shell_var_count &&
+                        if (!resolved.element &&
+                            resolved.index < shell_var_count &&
                             (shell_vars[resolved.index].attributes &
                              SHELL_ARRAY_READONLY))
                         {
@@ -5280,8 +5657,17 @@ COLD fn shell_unset(writer write, string_address input)
                                 return;
                         }
 
-                        env_unset_span((string_address)resolved.name,
-                                       resolved.length);
+                        if (resolved.element)
+                        {
+                                if (!shell_reference_element_forget(resolved))
+                                {
+                                        shell_answer(1);
+                                        return;
+                                }
+                        }
+                        else
+                                env_unset_span((string_address)resolved.name,
+                                               resolved.length);
                 }
 
                 index++;
@@ -6054,20 +6440,55 @@ static COLD fn shell_declare_listed(writer write, string_address name,
         write("\n", 1);
 }
 
+/* `declare -n n=value` changes what n names; an ordinary `n=value` follows
+   n.  Keep that distinction at the declaration boundary and let the common
+   environment writer do the actual cell growth/copy. */
+static bool shell_declare_binding(string_address name, positive length,
+                                  positive hash, string_address value)
+{
+        positive found = env_find_hashed_span(name, length, hash);
+        p8 attributes;
+        bool answer;
+
+        if (found >= shell_var_count)
+                return false;
+
+        attributes = shell_vars[found].attributes;
+        shell_vars[found].attributes &= (p8)~SHELL_ARRAY_NAMEREF;
+        answer = env_assign_hashed_span(name, length, hash, value);
+        shell_vars[found].attributes = attributes;
+        return answer;
+}
+
 static bool shell_declare_assign(string_address name, string_address value,
-                                 bool append)
+                                 bool append, bool bind_reference)
 {
         shell_mark held;
         p8 address_to joined;
         string_address old;
+        positive2 named = string_hash_33_length(name);
         positive old_length;
         positive add_length;
         bool answer;
 
         if (!append)
-                return env_assign(name, value);
+                return bind_reference
+                           ? shell_declare_binding(name, named.y, named.x,
+                                                   value)
+                           : env_assign_hashed_span(name, named.y, named.x,
+                                                    value);
 
-        old = env_get(name);
+        if (bind_reference)
+        {
+                positive found = env_find_hashed_span(name, named.y, named.x);
+
+                old = found < shell_var_count &&
+                              env_variable_has_value(shell_vars + found)
+                          ? shell_vars[found].text + named.y + 1
+                          : null;
+        }
+        else
+                old = env_get_hashed_span(name, named.y, named.x, null);
         old_length = old ? string_length(old) : 0;
         add_length = string_length(value);
 
@@ -6087,7 +6508,9 @@ static bool shell_declare_assign(string_address name, string_address value,
         if (old_length)
                 memory_copy(joined, old, old_length);
         memory_copy_end(joined + old_length, value, add_length);
-        answer = env_assign(name, joined);
+        answer = bind_reference
+                     ? shell_declare_binding(name, named.y, named.x, joined)
+                     : env_assign_hashed_span(name, named.y, named.x, joined);
         shell_store_rewind(address_of expand_store, held);
         return answer;
 }
@@ -6178,7 +6601,11 @@ COLD fn shell_local(writer write, string_address input)
                                 failed = true;
                         }
                 }
-                else if (mark && !shell_declare_assign(word, mark + 1, append))
+                else if (mark &&
+                         !shell_declare_assign(
+                             word, mark + 1, append,
+                             (state.attributes_set &
+                              SHELL_ARRAY_NAMEREF) != 0))
                 {
                         // A readonly name is the usual reason and reads
                         // nothing like running out of room.
@@ -6197,13 +6624,13 @@ COLD fn shell_local(writer write, string_address input)
                 if (!failed && (state.clear & DECLARE_EXPORT))
                         env_export_restore(word, false);
                 if (!failed && (state.set & DECLARE_EXPORT) &&
-                    !env_export_mark(word))
+                    !env_export_mark_direct(word))
                 {
                         shell_no_room("local");
                         failed = true;
                 }
                 if (!failed && (state.set & DECLARE_READONLY) &&
-                    !readonly_add(word, length))
+                    !readonly_add_direct(word, length))
                 {
                         shell_no_room("local");
                         failed = true;
@@ -6411,16 +6838,26 @@ static fn shell_declare(writer write, string_address input)
                                                    append))
                                 goto no_room;
                 }
-                else if (mark ? !shell_declare_assign(word, mark + 1, append)
+                else if (mark ? !shell_declare_assign(
+                                    word, mark + 1, append,
+                                    (state.attributes_set &
+                                     SHELL_ARRAY_NAMEREF) != 0)
                               : !env_declare(word, length))
                         goto no_room;
 
                 if (state.clear & DECLARE_EXPORT)
                         env_export_restore(word, false);
-                if ((state.set & DECLARE_EXPORT) && !env_export_mark(word))
+                if ((state.set & DECLARE_EXPORT) &&
+                    !(scoped ||
+                              (state.attributes_set & SHELL_ARRAY_NAMEREF)
+                          ? env_export_mark_direct(word)
+                          : env_export_mark(word)))
                         failed = true;
                 if ((state.set & DECLARE_READONLY) &&
-                    !readonly_add(word, length))
+                    !(scoped ||
+                              (state.attributes_set & SHELL_ARRAY_NAMEREF)
+                          ? readonly_add_direct(word, length)
+                          : readonly_add(word, length)))
                         failed = true;
 
         next:

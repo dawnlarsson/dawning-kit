@@ -809,40 +809,6 @@ static bool parse_here_at(b32 at)
         return parse_here_words(delimiter, joined, next);
 }
 
-/* The same registration directly from the fresh lexer frame used only for
-   command-substitution boundary discovery. */
-static bool parse_here_lexed(b32 count)
-{
-        for (b32 at = 0; at < count; at++)
-        {
-                b32 word;
-                string_address delimiter;
-                string_address next;
-                bool joined;
-
-                if (lex_tokens[at].kind != LEX_OPERATOR ||
-                    lex_tokens[at].op != OP_DLESS)
-                        continue;
-
-                word = at + 1;
-                delimiter = word < count && lex_tokens[word].kind == LEX_WORD
-                                ? lex_tokens[word].text
-                                : null;
-                next = word + 1 < count &&
-                               lex_tokens[word + 1].kind == LEX_WORD
-                           ? lex_tokens[word + 1].text
-                           : null;
-                joined = delimiter &&
-                         lex_tokens[word].at ==
-                             lex_tokens[at].at + lex_tokens[at].length;
-
-                if (!parse_here_words(delimiter, joined, next))
-                        return false;
-        }
-
-        return true;
-}
-
 /*
         A line of source, appended to whatever is already waiting.
 
@@ -966,29 +932,48 @@ static string_address parse_here_skip_bodies(string_address line,
         p8 address_to mapped = null;
         positive mapped_room = 0;
         p8 address_to copy;
+        p8 address_to held_pending = parse_pending;
+        positive held_pending_room = parse_pending_room;
+        positive held_pending_used = parse_pending_used;
         string_address answer = null;
         string_address at = newline + 1;
+        string_address header = line;
         lex_frame frame;
         bool substitution = expand_in_substitution;
-        b32 count;
 
-        copy = parse_here_scan_line(line, (positive)(newline - line),
-                                    local_line, sizeof(local_line),
-                                    address_of mapped,
-                                    address_of mapped_room);
-        if (!copy)
-                goto done;
-
+        /* parse_feed's continuation buffer can already hold the containing
+           multiline word.  Give this speculative logical header independent
+           storage so joining it cannot overwrite the source being scanned. */
+        parse_pending = null;
+        parse_pending_room = 0;
+        parse_pending_used = 0;
         lex_nest_enter(address_of frame);
 
         /* This line is command-substitution source even when its containing
            source is interactive and interactive_comments is disabled. */
         expand_in_substitution = true;
         here_filled = here_wanted;
-        count = lex_line(copy);
 
-        if (count < 0 || !parse_here_lexed(count))
-                goto leave;
+        /* Feed every physical piece through the ordinary continuation path.
+           It removes backslash-newline before tokenization, so both halves of
+           << and of its delimiter meet exactly as they do in normal input. */
+        while (true)
+        {
+                string_address header_end =
+                    string_first_of_or_end(header, '\n');
+
+                copy = parse_here_scan_line(
+                    header, (positive)(header_end - header), local_line,
+                    sizeof(local_line), address_of mapped,
+                    address_of mapped_room);
+                if (!copy || !parse_feed(copy))
+                        goto leave;
+
+                if (header_end == newline)
+                        break;
+
+                header = header_end + 1;
+        }
 
         while (parse_here_open())
         {
@@ -1012,7 +997,12 @@ static string_address parse_here_skip_bodies(string_address line,
 leave:
         expand_in_substitution = substitution;
         lex_nest_leave(address_of frame);
-done:
+        if (parse_pending)
+                memory_free(parse_pending, parse_pending_room);
+
+        parse_pending = held_pending;
+        parse_pending_room = held_pending_room;
+        parse_pending_used = held_pending_used;
         if (mapped)
                 memory_free(mapped, mapped_room);
 

@@ -214,6 +214,64 @@ compare bash 'readonly target unset status' \
 compare bash 'chained array nameref' \
         'a=([2]=x); declare -n m=a; declare -n n=m; n[4]=y; printf "<%s>:%s\n" "${n[4]}" "${#n[@]}"'
 
+group nameref-element
+
+compare bash 'element-bound nameref read' \
+        'a=([2]=x); n="a[2]"; declare -n n; printf "<%s>\n" "$n"'
+compare bash 'element-bound nameref write' \
+        'a=([2]=x); n="a[2]"; declare -n n; n=y; declare -p a n'
+compare bash 'element-bound nameref append' \
+        'a=([2]=x); n="a[2]"; declare -n n; n+=y; declare -p a n'
+compare bash 'element-bound nameref unset' \
+        'a=([2]=x [4]=z); n="a[2]"; declare -n n; unset n; declare -p a n'
+compare bash 'element-bound readonly unset' \
+        'declare -ar a=([2]=x); n="a[2]"; declare -n n; unset n; printf "%s:<%s>\n" "$?" "$n"; declare -p a n'
+compare bash 'element-bound readonly write status' \
+        'declare -ar a=([2]=x); n="a[2]"; declare -n n; n=y; printf after'
+compare bash 'element-bound dynamic index' \
+        'a=([2]=x [3]=y); i=2; n="a[i]"; declare -n n; printf "<%s>" "$n"; i=3; printf ":<%s>\n" "$n"'
+compare bash 'element-bound associative write' \
+        'declare -A m=([x]=old); n="m[x]"; declare -n n; n=new; declare -p m n'
+compare bash 'element-bound rejects another index' \
+        'a=([2]=x); n="a[2]"; declare -n n; n[4]=y; printf after'
+compare bash 'element-bound rejects compound value' \
+        'a=([2]=x); n="a[2]"; declare -n n; n=(y z); printf after'
+compare bash 'repeated nameref declaration rebinds' \
+        'a=x; b=y; declare -n n=a; declare -n n=b; declare -p n; printf "%s:%s\n" "$a" "$b"'
+compare bash 'repeated local nameref rebinds' \
+        'f() { local a=x b=y; local -n n=a; local -n n=b; declare -p n; printf "%s:%s\n" "$a" "$b"; }; f'
+compare bash 'circular nameref element status' \
+        'declare -n a=b; declare -n b=a; a[2]=x; printf "status:%s\n" "$?"'
+compare bash 'self-referential element assignment status' \
+        'n="n[2]"; declare -n n; n=x; printf after'
+compare bash 'nameref target length differs' \
+        'longname=([0]=zero [2]=x); declare -n n=longname; printf "<%s>:%s\n" "${n[*]}" "${#n[@]}"'
+
+group nameref-attributes
+
+compare bash 'export follows nameref target' \
+        'a=old; declare -n n=a; export n; declare -p a n'
+compare bash 'readonly follows nameref target' \
+        'a=old; declare -n n=a; readonly n; declare -p a n'
+compare bash 'declare export follows nameref target' \
+        'a=old; declare -n n=a; declare -x n; declare -p a n'
+compare bash 'declare readonly follows nameref target' \
+        'a=old; declare -n n=a; declare -r n; declare -p a n'
+compare bash 'combined nameref export marks reference' \
+        'a=old; declare -n n=a; declare -xn n; declare -p a n'
+compare bash 'combined nameref readonly marks reference' \
+        'a=old; declare -n n=a; declare -rn n; declare -p a n'
+compare bash 'temporary export follows nameref target' \
+        'a=old; declare -n n=a; n=new /usr/bin/printenv a; declare -p a n'
+compare bash 'explicit reference export does not promote target' \
+        'a=old; declare -n n=a; n=new export n; declare -p a n'
+compare bash 'explicit target export promotes target' \
+        'a=old; declare -n n=a; n=new export a; declare -p a n'
+compare bash 'nested readonly restores prefix attributes' \
+        'X=old; f() { readonly X; }; X=new f; declare -p X; X=x; printf "status:%s\n" "$?"'
+compare bash 'eval readonly restores prefix attributes' \
+        'X=old; X=new eval "readonly X"; declare -p X; X=x; printf "status:%s\n" "$?"'
+
 section ""
 total=$((pass + fail))
 echo

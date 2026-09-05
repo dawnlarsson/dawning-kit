@@ -120,12 +120,23 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
 
                 address_to newline = end;
 
-                // What a person typed, and only that: an eval or a sourced
-                // file is a line this shell wrote for itself.
-                if (shell_is_interactive)
-                        history_remember(text + at);
+                {
+                        string_address ready = text + at;
+                        b32 history_action = HISTORY_EXPAND_RUN;
 
-                run_line(text + at);
+                        // What a person typed, and only that: an eval or a
+                        // sourced file is a line this shell wrote for itself.
+                        if (shell_is_interactive)
+                        {
+                                history_action = history_expand_line(
+                                    ready, address_of ready);
+                                if (history_action >= HISTORY_EXPAND_RUN)
+                                        history_remember(ready);
+                        }
+
+                        if (history_action == HISTORY_EXPAND_RUN)
+                                run_line(ready);
+                }
                 at = (positive)(newline - text) + 1;
 
                 if (!command_string && shell_onecmd_on() &&
@@ -176,7 +187,6 @@ static bool shell_start_options(string_address address_to arguments,
                         at++;
                         continue;
                 }
-
                 on = word[0] == '-';
                 for (string_address letter = word + 1; *letter; letter++)
                 {
@@ -274,18 +284,11 @@ static bool shell_startup_file()
         bool no_room = false;
         bipolar handle, got;
 
-        if (!shell_bash_compat || shell_is_interactive)
+        if (!shell_bash_compat || shell_is_interactive ||
+            shell_startup_privileged)
                 return true;
         value = env_get("BASH_ENV");
         if (!value || !*value)
-                return true;
-
-        /* Never expand attacker-supplied startup text under mismatched IDs.
-           These syscalls stay off the ordinary no-startup entry path. */
-        if (system_call_1(syscall(getuid), 0) !=
-                system_call_1(syscall(geteuid), 0) ||
-            system_call_1(syscall(getgid), 0) !=
-                system_call_1(syscall(getegid), 0))
                 return true;
 
         token_used = 0;
@@ -361,6 +364,11 @@ b32 main()
                 called++;
         shell_bash_compat = called && word_is(called, "bash");
 
+        /* Bash privilege policy is decided from the entry credentials, not
+           from an ID a startup file or command might later change. */
+        if (shell_bash_compat)
+                shell_privilege_prepare();
+
         /*
                 A login shell is one whose zeroth argument begins with a dash.
 
@@ -397,7 +405,7 @@ b32 main()
                 string_address startup = shell_bash_compat
                     ? string_get_environment(environ, "BASH_ENV") : null;
 
-                if ((!startup || !*startup) &&
+                if (!shell_privilege_mismatched && (!startup || !*startup) &&
                     shell_command_literal_status(command,
                                                  address_of literal_status))
                         return literal_status;
@@ -412,11 +420,6 @@ b32 main()
                 shell_script_name = arguments[0];
         }
 
-        /* environ is the live process environment. Ordinarily it is the
-           kernel vector published by the startup shim; clone-and-reentry can
-           deliberately replace it without forging another initial stack. */
-        shell_env_init(environ);
-
         if (!shell_start_options(arguments, process_arguments,
                                  address_of invocation))
         {
@@ -424,6 +427,17 @@ b32 main()
                 return 2;
         }
         command_option = invocation.command;
+
+        /* Startup -p preserves entry IDs. Its absence resets both credentials
+           before the environment can become shell state; either form keeps
+           attacker-controlled startup files suppressed for this invocation. */
+        if (shell_bash_compat)
+                shell_privilege_started();
+
+        /* environ is the live process environment. Ordinarily it is the
+           kernel vector published by the startup shim; clone-and-reentry can
+           deliberately replace it without forging another initial stack. */
+        shell_env_init(environ);
 
         /*
                 sh file [word ...]
@@ -662,12 +676,21 @@ b32 main()
         // Whatever was still in hand when the input ended.
         if (held)
         {
+                string_address ready = shell_buffer;
+                b32 history_action = HISTORY_EXPAND_RUN;
+
                 shell_buffer[held] = end;
 
                 if (shell_is_interactive)
-                        history_remember(shell_buffer);
+                {
+                        history_action = history_expand_line(
+                            shell_buffer, address_of ready);
+                        if (history_action >= HISTORY_EXPAND_RUN)
+                                history_remember(ready);
+                }
 
-                run_line(shell_buffer);
+                if (history_action == HISTORY_EXPAND_RUN)
+                        run_line(ready);
         }
 
 input_finished:
