@@ -17341,6 +17341,9 @@ __asm__(
 address_any memory(positive size);
 fn memory_free(address_any address, positive size);
 CONST positive memory_growth(positive have, positive want, positive first);
+/* Owned mmap-backed movable storage, not an allocator block. Only the used
+   elements must survive growth; unused capacity has no zero-fill contract.
+   Failure leaves the pointer and capacity unchanged. */
 bool memory_reserve(address_any address_to held, positive address_to have,
                     positive used, positive want, positive unit, positive first);
 fn memory_release(address_any address_to held, positive address_to have,
@@ -17402,8 +17405,11 @@ __asm__(
     //
     //       A movable store grows geometrically. Counts are elements and unit
     //       says how wide one is, so the same leaf serves bytes, pointers and
-    //       structures. Allocation is cold; the floor here is one allocation,
-    //       one copy and one release, with overflow refused before any of them.
+    //       structures. Linux grows the owned mapping in its page tables,
+    //       without copying/faulting the old capacity or holding two resident
+    //       copies. The portable allocate/copy/release path remains the
+    //       fallback when remapping is unavailable or refused. Counts and
+    //       multiplication overflow are checked before either path changes it.
     //       Capacity hits are hot enough to stand before the saved-register
     //       frame: one load and compare returns without touching the stack.
     //
@@ -17414,11 +17420,22 @@ __asm__(
     "push %rbp\n   push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n   sub $8, %rsp\n"
     "mov %rdi, %rbx\n   mov %rsi, %r12\n   mov %rdx, %r13\n   mov %r8, %r14\n"
     "mov %rax, %r15\n"
+    "cmp %r15, %r13\n   ja 9f\n"
     "mov %r15, %rdi\n   mov %rcx, %rsi\n   mov %r9, %rdx\n"
     "call memory_growth\n   mov %rax, %r15\n   test %r15, %r15\n   jz 9f\n"
     "test %r14, %r14\n   jz 9f\n   mov %r15, %rax\n   mul %r14\n"
     "test %rdx, %rdx\n   jnz 9f\n"
-    "mov %rax, %rdi\n   call memory\n   mov %rax, %rbp\n"
+    "mov %rax, %rbp\n"
+#if defined(LINUX)
+    "mov (%rbx), %rdi\n   test %rdi, %rdi\n   jz 4f\n"
+    "mov (%r12), %rsi\n   test %rsi, %rsi\n   jz 4f\n   imul %r14, %rsi\n"
+    "mov %rbp, %rdx\n   mov $1, %r10d  # MREMAP_MAYMOVE\n"
+    "mov $" MOONWATER_NUMBER(syscall(mremap)) ", %eax\n   syscall\n"
+    "cmp $-4095, %rax\n   jae 4f\n   test %rax, %rax\n   jz 4f\n"
+    "mov %rax, %rbp\n   jmp 3f\n"
+    "4:\n"
+#endif
+    "mov %rbp, %rdi\n   call memory\n   mov %rax, %rbp\n"
     "test %rbp, %rbp\n   jz 9f\n   cmp $-4095, %rbp\n   jae 9f\n"
     "mov (%rbx), %rsi\n   test %rsi, %rsi\n   jz 3f\n"
     "mov %r13, %rdx\n   imul %r14, %rdx\n   mov %rbp, %rdi\n   call memory_copy\n"
@@ -17478,10 +17495,21 @@ __asm__(
     "stp x23, x24, [sp, #32]\n   stp x25, x30, [sp, #48]\n"
     "mov x19, x0\n   mov x20, x1\n   mov x21, x2\n   mov x22, x4\n"
     "mov x23, x6\n"
+    "cmp x21, x23\n   b.hi 9f\n"
     "mov x0, x23\n   mov x1, x3\n   mov x2, x5\n   bl memory_growth\n"
     "mov x23, x0\n   cbz x23, 9f\n"
     "cbz x22, 9f\n   umulh x6, x23, x22\n   cbnz x6, 9f\n"
-    "mul x25, x23, x22\n   mov x0, x25\n   bl memory\n   mov x24, x0\n"
+    "mul x25, x23, x22\n"
+#if defined(LINUX)
+    "ldr x0, [x19]\n   cbz x0, 4f\n"
+    "ldr x1, [x20]\n   cbz x1, 4f\n   mul x1, x1, x22\n"
+    "mov x2, x25\n   mov x3, #1  // MREMAP_MAYMOVE\n"
+    "mov x8, #" MOONWATER_NUMBER(syscall(mremap)) "\n   svc #0\n"
+    "mov x6, #-4095\n   cmp x0, x6\n   b.hs 4f\n   cbz x0, 4f\n"
+    "mov x24, x0\n   b 3f\n"
+    "4:\n"
+#endif
+    "mov x0, x25\n   bl memory\n   mov x24, x0\n"
     "cbz x24, 9f\n   mov x6, #-4095\n   cmp x24, x6\n   b.hs 9f\n"
     "ldr x1, [x19]\n   cbz x1, 3f\n"
     "mov x0, x24\n   mul x2, x21, x22\n   bl memory_copy\n"
@@ -17540,10 +17568,21 @@ __asm__(
     "sd s4, 32(sp)\n   sd s5, 40(sp)\n   sd ra, 56(sp)\n"
     "mv s0, a0\n   mv s1, a1\n   mv s2, a2\n   mv s3, a4\n"
     "mv s4, t1\n"
+    "bltu s4, s2, 9f\n"
     "mv a0, s4\n   mv a1, a3\n   mv a2, a5\n   call memory_growth\n"
     "mv s4, a0\n   beqz s4, 9f\n"
     "beqz s3, 9f\n   mulhu t0, s4, s3\n   bnez t0, 9f\n"
-    "mul a0, s4, s3\n   call memory\n   mv s5, a0\n"
+    "mul s5, s4, s3\n"
+#if defined(LINUX)
+    "ld a0, 0(s0)\n   beqz a0, 4f\n"
+    "ld a1, 0(s1)\n   beqz a1, 4f\n   mul a1, a1, s3\n"
+    "mv a2, s5\n   li a3, 1  # MREMAP_MAYMOVE\n"
+    "li a7, " MOONWATER_NUMBER(syscall(mremap)) "\n   ecall\n"
+    "li t0, -4095\n   bgeu a0, t0, 4f\n   beqz a0, 4f\n"
+    "mv s5, a0\n   j 3f\n"
+    "4:\n"
+#endif
+    "mv a0, s5\n   call memory\n   mv s5, a0\n"
     "beqz s5, 9f\n   li t0, -4095\n   bgeu s5, t0, 9f\n"
     "ld a1, 0(s0)\n   beqz a1, 3f\n"
     "mv a0, s5\n   mul a2, s2, s3\n   call memory_copy\n"

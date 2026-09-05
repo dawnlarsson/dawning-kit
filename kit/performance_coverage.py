@@ -74,6 +74,10 @@ string_digits_hexadecimal_max string_digits_octal_escape_max
 string_digits_octal_max
 ''', 'paired scalar/assembly timing with bounded parser inputs')
 
+cover('direct_benchmark', 'kit/bench_reserve.c', 'memory_reserve',
+      'fresh-process mapping growth timing and peak resident memory, with '
+      'dense and sparse inputs; hardware/RSS claims require native execution')
+
 cover('direct_benchmark', 'kit/bench_into_padded.c', '''
 positive_into_padded positive_into_pair
 ''', 'paired former-C/assembly timing across padded converter shapes')
@@ -261,7 +265,7 @@ cover('correctness_only', 'src/test/wait_retry.c', '''
 system_read_retry system_wait4_retry system_write_all wait_status_code
 ''', 'focused retry/status correctness and signal-interruption checks')
 cover('correctness_only', 'src/test/native/reserve.c', '''
-memory_growth memory_release memory_reserve
+memory_growth memory_release
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')
 
 

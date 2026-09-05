@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text checksum tools process_utils files storage util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text checksum tools process_utils files storage util term edit kit boot canvas"
 
 describe()
 {
@@ -62,6 +62,7 @@ describe()
         declare)  echo "the standard names, declared, compiled twice and diffed" ;;
         fold)     echo "the constant-size fold we put in the kernel string header" ;;
         allocator) echo "malloc, free, calloc and realloc against glibc's" ;;
+        reserve) echo "movable mappings, growth failures, relocation and sparse-page residency" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
         numbers)  echo "strtod and the integer conversions, in ULP against glibc" ;;
         scan)     echo "scanf's conversions, every one against glibc" ;;
@@ -1942,6 +1943,7 @@ known_one()
 lane_declare()   { freestanding_checks_lane declare src/test/declare.c; }
 lane_fold()      { freestanding_checks_lane fold src/test/fold.c; }
 lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
+lane_reserve()   { freestanding_checks_lane reserve src/test/reserve.c; }
 lane_leaving()   { freestanding_checks_lane leaving src/test/leaving.c; }
 lane_numbers()   { freestanding_checks_lane numbers src/test/number.c; }
 lane_scan()      { freestanding_checks_lane scan src/test/scan.c; }
@@ -1989,14 +1991,19 @@ freestanding_checks_one()
         }
         compiler=$saved
 
-        $runner "$work/$suite.$name" > "$work/$suite.$name.out" 2>&1
-        status=$?
+        if [ "$suite" = reserve ] && [ -n "$runner" ]; then
+                $runner "$work/$suite.$name" --emulated > "$work/$suite.$name.out" 2>&1
+                status=$?
+        else
+                $runner "$work/$suite.$name" > "$work/$suite.$name.out" 2>&1
+                status=$?
+        fi
 
         if [ "$suite" = verify ]; then
                 sed -n '/FAIL/p;/ABSENT/p;/under neither name here/p' \
                         "$work/$suite.$name.out"
         else
-                sed -n '/FAIL/p' "$work/$suite.$name.out"
+                sed -n '/FAIL/p;/NOT RUN/p' "$work/$suite.$name.out"
         fi
 
         line=$(sed -n 's/^\([0-9]*\) checks, \([0-9]*\) failures$/\1 \2/p' \
