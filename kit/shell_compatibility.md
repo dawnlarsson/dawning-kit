@@ -14,6 +14,26 @@ Every catchable inherited signal disposition was reset to default before the
 test launcher execed `/bin/sh`; plain SSH otherwise carries ignored signals
 into trap-related shell tests.
 
+## Shared implementation
+
+The image installs `/bin/sh`, `/bin/dash` and `/bin/bash` as links to `/shell`;
+there is no second interpreter or copied utility implementation. Startup and
+runtime options use the same option table. The default/dash policy does not
+advertise Bash identity or accept the newly added Bash-only option letters.
+
+`lastpipe` reuses the existing stage loop, descriptor save/restore, direct
+external-command spawn path and status vector. Stateful final stages run in
+the parent only when the option is enabled, job control is off, and the
+pipeline is foreground. Deferred `PIPESTATUS` values are materialized through
+the existing array writer; scalar and full-vector updates share readonly
+handling. Pure environment lookups remain free of mutation.
+
+Readonly is now a bit in the existing indexed variable record, replacing the
+separate name array and lifetime arena. The existing combined hash/length
+primitive is reused. `$-` caches the option-state signature, including direct
+scope restoration. No alternate allocator, parser or assembly utility was
+introduced; the library inventory remains 242 shared assembly routines.
+
 ## Hard compatibility suite
 
 `src/test/shell_compat.sh` is the failing gate. It creates only temporary
@@ -57,7 +77,7 @@ so it does not attribute the reduction to one function or claim a general
 shell throughput improvement.
 
 The variable/PIPESTATUS lane independently passed 37/37 focused checks, and
-the combined shell-related lanes passed 3613/3613. Its 100,000-write,
+the final combined shell-related lanes passed 3619/3619. Its 100,000-write,
 nine-run comparison measured one active readonly mark at 908836195 versus
 894436004 instructions (+1.61%), and 64 active marks at 908637043 versus
 1499224193 (-39.4%); the no-mark path was +0.61%. These are bounded integrated
@@ -104,6 +124,24 @@ The current exact `-c :`/`true`/`false` entry remains ahead of environment and
 personality initialization because those literals cannot observe either. Any
 future `BASH_ENV` implementation must revisit that ordering: a startup file
 can install functions or traps that make even a literal command observable.
+
+## Integrated validation and artifact
+
+Production revision `3586546` passed the native shell, shell_compat,
+shell_pipeline, shell_variables, expand, builtin and kit lanes: 3680/3680
+including the 61 build-kit checks. The standard, storage_io, term and probe
+lanes passed another 883/883; storage_io compiled and ran on native x86-64
+and emulated AArch64/RV64. Those cross-architecture checks are not a complete
+cross-architecture shell-language differential.
+
+The x86-64 image rebuilt on `box` as kernel build #437 and passed 45/45 boot
+checks, including both interpreter links and a Bash-shebang `lastpipe` script.
+The KVM Canvas/terminal pixel-and-input lane also passed 25/25.
+The local artifact is `dist/bootx64-shell-pass.efi`, 9327616 bytes, SHA-256
+`4f1dd6e7bc91d83d12130a020701453e391ebf195620883568297734683ef50a`.
+The existing `dist/bootx64.efi` and `dist/bootx64-idle-pass.efi` were preserved.
+The production audit seal contains 3772 C functions and source SHA-256
+`0057239813b864a1df047a37400d4be877a4a0d03963fc7d68d5a5bf16ef0f2b`.
 
 ## Reproduction
 
