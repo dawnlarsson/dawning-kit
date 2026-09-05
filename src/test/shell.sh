@@ -1442,9 +1442,9 @@ bash_answer 'append long' "x=$long_word; x+=\$x; echo \${#x}"
 
 group caller
 #       What caller answers is a line and a source. This shell's source name
-#       is the script's; Bash reading a script on standard input calls it
-#       NULL or names its own binary, so every row here takes the line and
-#       leaves the name to the shell that wrote it.
+#       is the script's; Bash calls an unnamed standard-input or -c source
+#       NULL rather than exposing the interpreter's argv[0] as a source file.
+bash_answer 'caller standard input source' 'f() { caller; }; f'
 bash_answer 'caller line' 'f() { caller | cut -d" " -f1; }
 echo one
 f'
@@ -3702,6 +3702,8 @@ bash_answer 'shopt bare listing' 'shopt | wc -l; shopt | head -1'
 bash_answer 'shopt -s bare lists what is on' 'shopt -s | wc -l'
 bash_answer 'shopt -o over set options' \
         'shopt -qo pipefail; echo $?; shopt -so pipefail; shopt -qo pipefail; echo $?'
+bash_answer 'shopt -o uses shopt listing columns' \
+        'shopt -so pipefail; shopt -o pipefail'
 bash_answer 'shopt -q with no names' 'shopt -q; echo $?'
 bash_answer 'shopt bad name' 'shopt -s nonsense; echo $?'
 bash_answer 'shopt bad name query' 'shopt -q nonsense; echo $?'
@@ -4045,12 +4047,16 @@ bash_answer 'mapfile descriptor' \
 bash_answer 'mapfile print' \
         'p=/tmp/bash-map8.$$; printf "a\n" > "$p"; mapfile -t l < "$p"; declare -p l; rm "$p"'
 
-group remaining
-# A subscript with a blank in it has to be quoted here: the lexer keeps a
-# word together by quoting and nesting, and a bare blank ends the word before
-# anything has seen that it is inside brackets.
-bash_remaining 'ledger unquoted subscript with a blank' '[]|' 0 \
+group arrays
+bash_answer 'ledger unquoted subscript with a blank' \
         'declare -A m; m[a b]=1; echo "[${m[a b]}]"'
+bash_answer 'unquoted subscript nested brackets and append' \
+        'declare -A m; m[a [b] c]=two; m[a [b] c]+=+more; echo "[${m[a [b] c]}]"'
+bash_answer 'unquoted subscript held closing bracket' \
+        'declare -A m; m["a ] b"]=three; echo "[${m["a ] b"]}]"'
+bash_answer 'blank in nonassignment bracket still splits' \
+        'set -f; set -- a[b c] d; printf "<%s>" "$@"; echo'
+group remaining
 bash_answer 'ledger process substitution' 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_answer 'ledger extglob' 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
 bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \

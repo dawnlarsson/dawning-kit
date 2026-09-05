@@ -20,6 +20,7 @@
 #
 set -u
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export root
 cd "$root" || exit 1
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -72,7 +73,7 @@ probe $B 'shopt query' 'shopt -q extglob; echo $?; shopt -s nullglob; shopt -q n
 probe $B 'nullglob' 'shopt -s nullglob; echo /nonexistent/*x; echo end'
 probe $B 'nocaseglob' 'shopt -s nocaseglob; echo /TMP/MW-MERGE/KIT/floor.c'
 probe $B 'pushd popd dirs' 'cd /; pushd /tmp > /dev/null; dirs; popd > /dev/null; pwd'
-probe $B 'type -t' 'type -t cd; type -t ls; f() { :; }; type -t f; type -t if'
+probe $B 'type -t' 'type -t cd; type -t /bin/ls; f() { :; }; type -t f; type -t if'
 probe $B 'command -V' 'command -V cd'
 probe $B 'declare -p' 'declare -i n=5; declare -p n'
 probe $B 'declare -r' 'declare -r r=1; r=2; echo $?'
@@ -83,17 +84,17 @@ probe $B 'assoc arrays' 'declare -A m; m[k]=v; m[j]=w; echo ${m[k]} ${#m[@]}'
 probe $B 'array unset' 'a=(1 2 3); unset a[1]; echo ${a[@]} ${#a[@]}'
 probe $B 'array in for' 'a=("x y" z); for e in "${a[@]}"; do echo "<$e>"; done'
 probe $B 'regex captures' '[[ abc =~ ^(a)(b) ]]; echo ${BASH_REMATCH[0]}:${BASH_REMATCH[2]}'
-probe $B 'extglob' 'shopt -s extglob; case aab in +(a)b) echo yes;; esac'
+probe $B 'extglob' 'shopt -s extglob; eval '\''case aab in +(a)b) echo yes;; esac'\'''
 probe $B 'globstar' 'shopt -s globstar; cd "$root"/kit && echo **/*.py | wc -w'
 probe $B 'process substitution' 'cat <(echo x) <(echo y)'
 probe $B 'coproc' 'coproc C { read x; echo got $x; }; echo hi >&${C[1]}; read y <&${C[0]}; echo $y'
 probe $B 'select' 'echo 2 | select x in a b; do echo $x; break; done'
-probe $B 'time keyword' 'TIMEFORMAT=%R; time : 2>&1 | wc -l'
+probe $B 'time keyword' 'TIMEFORMAT=%R; { time :; } 2>&1 | wc -l'
 probe $B 'mapfile' 'printf "a\nb\n" | { mapfile -t l; echo ${l[1]} ${#l[@]}; }'
-probe $B 'noclobber status' 'set -C; echo a > /tmp/mw-nc.$$; echo b > /tmp/mw-nc.$$; echo $?; rm -f /tmp/mw-nc.$$'
+probe $B 'noclobber status' 'set -C; echo a > /tmp/mw-nc.$$; echo b 2>/dev/null > /tmp/mw-nc.$$; echo $?; rm -f /tmp/mw-nc.$$'
 probe $B 'case fallthrough' 'case a in a) echo one;& b) echo two;; esac; case a in a) echo x;;& a) echo y;; esac'
 probe $B 'trap RETURN DEBUG ERR' 'trap "echo err" ERR; false; f() { :; }; trap "echo ret" RETURN; f'
-probe $B 'shopt -o' 'shopt -so pipefail; set -o | grep pipefail'
+probe $B 'shopt -o' 'shopt -so pipefail; shopt -o pipefail'
 probe $B 'lastpipe' 'shopt -s lastpipe; echo 5 | read v; echo $v'
 probe $B 'exec -a' 'exec -a name sh -c "echo \$0"'
 probe $B 'echo -e -n -E' 'echo -e "a\tb"; echo -n x; echo -E "\n"'
@@ -127,9 +128,9 @@ probe $B 'complete' 'complete -F f g 2>&1; echo $?'
 probe $B 'history' 'history 2>&1 | wc -l'
 probe $B 'fc' 'fc -l 2>&1 | wc -l'
 echo "== POSIX features (against dash)"
-probe $D 'special params' 'set -- a b; echo $# "$*" "$@" $$ $? $-'
+probe $D 'special params' 'set -- a b; echo $# "$*" "$@" $? $-; [ "$$" -gt 1 ]'
 probe $D 'parameter forms' 'unset u; v=x; echo ${u-d} ${u:-d} ${v+s} ${v:+s} ${#v} ${u=e} $u'
-probe $D 'parameter error' 'unset u; echo ${u?msg}'
+probe $D 'parameter error' '(unset u; echo ${u?msg}) 2>/dev/null'
 probe $D 'prefix suffix' 'v=a.b.c; echo ${v#*.} ${v##*.} ${v%.*} ${v%%.*}'
 probe $D 'arith forms' 'echo $((1+2*3)) $((7%3)) $(( (1<<3)|1 )) $((3>2)) $((!0)) $((~0))'
 probe $D 'arith assign' 'x=1; echo $((x+=1)) $x $((y=5)) $y'
@@ -146,7 +147,7 @@ probe $D 'case patterns' 'case abc in a*) echo one;; esac; case x in [!y]) echo 
 probe $D 'loops' 'for i in 1 2; do echo $i; done; i=0; while [ $i -lt 2 ]; do i=$((i+1)); done; until [ $i -ge 4 ]; do i=$((i+1)); done; echo $i'
 probe $D 'break continue levels' 'for i in 1 2; do for j in 1 2; do [ $j = 2 ] && continue 2; echo $i$j; done; done'
 probe $D 'functions and return' 'f() { return 3; }; f; echo $?; g() { echo ${1:-none}; }; g; g a'
-probe $D 'readonly export' 'readonly r=1; r=2 2>/dev/null; echo $?; export e=1; sh -c "echo \$e"'
+probe $D 'readonly export' 'readonly r=1; (r=2) 2>/dev/null; echo $?; export e=1; sh -c "echo \$e"'
 probe $D 'set options' 'set -u; echo ${zz-unset}; set +u; set -f; echo *; set +f; set -a; v=1; sh -c "echo \$v"'
 probe $D 'trap and exit' 'trap "echo bye" EXIT; trap "echo usr" USR1; kill -USR1 $$; exit 3'
 probe $D 'getopts' 'set -- -a -b val c; while getopts ab: o; do echo $o $OPTARG; done; shift $((OPTIND-1)); echo $1'
@@ -177,4 +178,3 @@ x
 XX
 ); echo $v'
 probe $D 'octal escape printf' 'printf "\\101\\n"'
-

@@ -4271,7 +4271,9 @@ static COLD fn shell_shopt_option_said(writer write, positive which,
                 return;
         }
 
-        shell_shopt_padded(write, shell_option_names[which].name, 15, on);
+        /* shopt uses its own twenty-column listing even when -o selects the
+           set-option namespace. `set -o` retains the POSIX/dash layout. */
+        shell_shopt_padded(write, shell_option_names[which].name, 20, on);
 }
 
 COLD fn shell_shopt(writer write, string_address input)

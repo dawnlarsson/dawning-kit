@@ -4249,7 +4249,13 @@ fn shell_caller(writer write, string_address input)
                 write(" ", 1);
         }
 
-        write(shell_script_name, 0);
+        /* Bash calls an unnamed input source NULL. Keep the real path for a
+           named script, while stdin and -c must not expose argv[0] as though
+           it were the file containing the function. */
+        write(string_get(shell_option_flags)
+                  ? (string_address) "NULL"
+                  : shell_script_name,
+              0);
         write("\n", 1);
 
         shell_answer(0);

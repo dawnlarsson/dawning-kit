@@ -202,7 +202,7 @@ fn lex_prepare()
         memory_fill(lex_in_double + 1, 1, STRING_SET_BYTES - 1);
 
         {
-                static const string_address decides = " \t\n|&;<>()'\"\\$`";
+                static const string_address decides = " \t\n|&;<>()['\"\\$`";
                 static const string_address in_double = "\"\\$`";
 
                 for (positive i = 0; decides[i]; i++)
@@ -857,6 +857,47 @@ static PURE bool lex_assignment_head(string_address text, positive length)
         return text[at] == '[' && text[length - 1] == ']' && length - at > 2;
 }
 
+/* Find the closing bracket whose following bytes prove this is an assignment.
+   Reuse the lexer's quote/substitution walker so a `]` held inside either one
+   cannot close the subscript. */
+static PURE string_address lex_assignment_subscript_end(string_address at)
+{
+        string_address step = at;
+        positive depth = 1;
+
+        while (string_get(step) && string_not(step, '\n'))
+        {
+                b32 skipped = lex_skip_held(address_of step);
+
+                if (skipped)
+                        continue;
+
+                if (string_is(step, '['))
+                        depth++;
+                else if (string_is(step, ']'))
+                {
+                        string_address after;
+
+                        if (--depth)
+                        {
+                                step++;
+                                continue;
+                        }
+
+                        after = step + 1;
+
+                        if (string_is(after, '+'))
+                                after++;
+
+                        return string_is(after, '=') ? step + 1 : null;
+                }
+
+                step++;
+        }
+
+        return null;
+}
+
 static b32 lex_word(string_address address_to at)
 {
         string_address step = address_to at;
@@ -878,6 +919,30 @@ static b32 lex_word(string_address address_to at)
                 }
 
                 p8 c = string_get(step);
+
+                /* `[` is a decision byte so the ordinary word loop reaches
+                   this only for bracketed words. A NAME prefix plus a close
+                   followed by = or += makes the complete subscript one piece,
+                   including otherwise separating blanks. */
+                if (c == '[' &&
+                    lex_assignment_head(lex_text + start, lex_used - start))
+                {
+                        string_address stop =
+                            lex_assignment_subscript_end(step + 1);
+
+                        if (stop)
+                        {
+                                run = (positive)(stop - step);
+
+                                if (!lex_room(lex_used + run + 2))
+                                        return false;
+
+                                memory_copy(lex_text + lex_used, step, run);
+                                lex_used += run;
+                                step = stop;
+                                continue;
+                        }
+                }
 
                 if (c == '(' && lex_used > start &&
                     lex_text[lex_used - 1] == '=' &&
