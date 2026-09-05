@@ -527,8 +527,14 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->max_height = max_rows * (unsigned int)canvas_cell_h;
                 pane->grid_columns = columns;
                 pane->grid_rows = rows;
-                log_canvas("window grid %ux%u, ring holds %ux%u\n",
-                           columns, rows, max_columns, max_rows);
+                /*
+                        Say what was allocated, not only the tallest visible
+                        grid.  history is deliberately at least PANE_HISTORY,
+                        so logging max_rows here understated each boot pane by
+                        almost four times and hid about two MiB of live RAM.
+                */
+                log_canvas("window grid %ux%u, ring holds %ux%u (%lu KiB)\n",
+                           columns, rows, stride, history, bytes >> 10);
 
                 page->max_columns = max_columns;
                 page->max_rows = max_rows;

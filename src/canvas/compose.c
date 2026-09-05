@@ -786,8 +786,10 @@ static _Bool output_describe(struct output *output)
         if (!output_map(output, &map))
                 return false;
 
-        log_canvas("scanout %p4cc, %u bytes a row, modifier %llx, %s memory\n",
+        log_canvas("scanout %p4cc, %u bytes a row (%lu KiB), modifier %llx, "
+                   "%s memory\n",
                    &fb->format->format, fb->pitches[0],
+                   ((unsigned long)fb->pitches[0] * output->height) >> 10,
                    (unsigned long long)fb->modifier,
                    map.is_iomem ? "device" : "system");
 

@@ -6,7 +6,11 @@ CONFIG_DMI=y
 CONFIG_DMI_SYSFS=y
 CONFIG_RELAY=y
 CONFIG_AUXDISPLAY=y
-CONFIG_SLAB_MERGE_DEFAULT=n
+# Compatible SLUB caches share their backing slabs.  Keeping every cache
+# separate retained about 0.5 MiB of otherwise empty slab immediately after a
+# 512 MiB Canvas boot (7-boot median). `slab_nomerge` remains available when
+# allocator debugging or cache isolation needs exact cache identities.
+CONFIG_SLAB_MERGE_DEFAULT=y
 
 #
 # CPU
@@ -86,4 +90,3 @@ CONFIG_DRM_FBDEV_EMULATION=y
 CONFIG_FB_MODE_HELPERS=y
 CONFIG_CONSOLE_SYSFB_SIMPLEFB=y
 CONFIG_SYSFB_SIMPLEFB=y
-
