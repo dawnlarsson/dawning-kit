@@ -1070,6 +1070,101 @@ command_answer 'dot sees a long value' \
 command_answer 'local restores a long value' \
         "x=$long_word; f() { local x=short; printf '%s ' \"\$x\"; }; f; printf '%s\n' \"\${#x}\""
 
+# Scratch that crosses the shell's high-water retention threshold is released
+# only at a complete command boundary.  Persistent state lives elsewhere:
+# exercise every state shape most likely to be accidentally tied to parser or
+# expansion storage before and after one large command and its small successor.
+scratch_blob="$work/scratch-blob"
+dd if=/dev/zero bs=1048576 count=2 2>/dev/null |
+        tr '\000' x > "$scratch_blob"
+scratch_large_blob="$work/scratch-large-blob"
+dd if=/dev/zero bs=1048576 count=8 2>/dev/null |
+        tr '\000' x > "$scratch_large_blob"
+printf '%s\n' \
+        'state_source() { printf "source:%s\n" "$kept"; }' \
+        > "$work/scratch-source.sh"
+command_answer 'scratch high water preserves shell state' "
+kept=variable
+alias kept_alias='printf \"alias:%s\\n\" \"\$kept\"'
+kept_function() {
+cat <<INNER
+function:\$kept
+INNER
+}
+trap 'printf \"trap:%s\\n\" \"\$kept\"' USR1
+. '$work/scratch-source.sh'
+eval 'evaluated=\$kept'
+: \"\$(cat '$scratch_blob')\"
+:
+printf 'variable:%s eval:%s\n' \"\$kept\" \"\$evaluated\"
+kept_alias
+kept_function
+state_source
+kill -USR1 \$\$
+"
+
+if [ "$(uname -s)" = Linux ]; then
+        scratch_rss=$(timeout 10 "$subject" -c "
+: \"\$(cat '$scratch_blob')\" \"\$(cat '$scratch_large_blob')\"
+: \"\$(cat '$scratch_large_blob')\"
+:
+while read key value unit; do
+        [ \"\$key\" = VmRSS: ] && { echo \"\$value\"; break; }
+done < /proc/\$\$/status
+")
+
+        case $scratch_rss in
+        ''|*[!0-9]*)
+                lost 'one-off scratch returns high water' \
+                        "invalid RSS $scratch_rss"
+                ;;
+        *)
+                if [ "$scratch_rss" -le 32768 ]; then
+                        won
+                else
+                        lost 'one-off scratch returns high water' \
+                                "RSS remained at $scratch_rss KiB"
+                fi
+                ;;
+        esac
+fi
+
+# A top-level reader is handed physical lines, not complete commands. Grow
+# lexer/parser/expansion capacity past the reclaim threshold with one literal
+# line, then immediately leave a quote and a here-document open across smaller
+# lines. Reclaiming at the physical-line boundary corrupts the state that the
+# following line must finish.
+{
+        printf ': '
+        cat "$scratch_large_blob"
+        cat <<'SCRATCH_LINES'
+
+continued='continued
+line'
+cat <<INNER
+$continued
+INNER
+SCRATCH_LINES
+} > "$work/case.sh"
+
+if run_shell "$reference" "$work/want"; then
+        want_status=0
+else
+        want_status=$?
+fi
+if run_shell "$subject" "$work/got"; then
+        got_status=0
+else
+        got_status=$?
+fi
+if cmp -s "$work/want" "$work/got" &&
+        [ "$want_status" = "$got_status" ]; then
+        won
+else
+        lost 'large scratch before incomplete input' \
+                "want $(shown "$work/want")[$want_status]   got $(shown "$work/got")[$got_status]"
+fi
+
 many_variables=$(awk 'BEGIN { for (i = 0; i < 200; i++) { printf "export V%03d=", i; for (j = 0; j < 80; j++) printf "%d", i % 10; printf ";" } }')
 command_answer 'two hundred exported variables' \
         "$many_variables set | grep '^V[0-9][0-9][0-9]=' | wc -l"

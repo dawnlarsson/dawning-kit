@@ -5911,6 +5911,9 @@ RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
         else
                 result = expand_dollar(step, true);
 
+        if (!expand_failed)
+                shell_scratch_bytes(expand_length);
+
         expand_drop_empty();
         address_to text = expand_text;
         address_to length = expand_failed ? 0 : expand_length;
@@ -6207,6 +6210,10 @@ static bool expand_word_ready(string_address word)
         // aborted result for an allocation failure while emitting fields.
         if (expand_failed)
                 return false;
+
+        /* Observe the completed word once, rather than adding bookkeeping to
+           every byte/run appended by the expansion hot loop. */
+        shell_scratch_bytes(expand_length);
 
         if (!expand_overflow)
                 return true;
@@ -7295,6 +7302,9 @@ RETURNS_NONNULL string_address shell_expand_assignment(string_address word, posi
         expand_begin();
         expand_push_run(word, value_at, MARK_PLAIN);
         expand_into(word + value_at, false, MARK_PLAIN, true);
+
+        if (!expand_failed)
+                shell_scratch_bytes(expand_length);
 
         expand_drop_empty();
         result = expand_keep_bytes(expand_text, expand_length);

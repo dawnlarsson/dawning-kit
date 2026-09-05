@@ -209,8 +209,17 @@ typedef struct
 } shell_store;
 
 #define SHELL_BLOCK 65536
+/* A command which needed more than this keeps its expansion buffers for the
+   next command, so repeated large work remains allocation-free. If the next
+   command uses no more than this much, the old high-water mapping has proved
+   to be a one-off and is returned to the kernel at that command boundary. */
+#define SHELL_SCRATCH_RETAIN (1u << 20)
 
 static bool shell_memory_failed;
+/* Set by a completed exceptional expansion and cleared only when the complete
+   top-level command ends. A compound command may finish on a tiny `:` after
+   doing large work; its final expansion is not its working set. */
+static bool shell_large_request;
 
 static address_any shell_map(positive size)
 {
@@ -238,6 +247,12 @@ static bool shell_room(address_any address_to held, positive address_to have,
         return false;
 }
 
+static inline INLINE fn shell_scratch_bytes(positive want)
+{
+        if (!shell_large_request && want > SHELL_SCRATCH_RETAIN)
+                shell_large_request = true;
+}
+
 // Most growing stores carry their width in their pointed-to type. Keep the
 // cast and sizeof at this floor instead of repeating both at every caller.
 #define shell_array_room(array, room, want)                                  \
@@ -255,30 +270,73 @@ static bool shell_room(address_any address_to held, positive address_to have,
 static p8 address_to shell_store_take(shell_store address_to store, positive room)
 {
         shell_block address_to block;
+        shell_block address_to before;
         positive size;
         p8 address_to bytes;
 
         if (!room)
                 room = 1;
 
-        if (store->here && store->here->used + room <= store->here->size)
+        if (store->here && store->here->used <= store->here->size &&
+            room <= store->here->size - store->here->used)
         {
                 bytes = (p8 address_to)(store->here + 1) + store->here->used;
                 store->here->used += room;
                 return bytes;
         }
 
-        //      A block left over from an earlier line, still big enough.
-        if (store->here && store->here->next && room <= store->here->next->size)
+        /* A block left over from an earlier line, still big enough.  Look
+           through the released tail rather than only at its first block: an
+           earlier large/small allocation order must not make an equally large
+           block later in the chain invisible and map a duplicate beside it. */
+        if (store->here && store->here->next &&
+            room <= store->here->next->size)
         {
                 store->here = store->here->next;
                 store->here->used = room;
                 return (p8 address_to)(store->here + 1);
         }
 
+        if (store->here)
+        {
+                before = store->here->next;
+                block = before ? before->next : null;
+        }
+        else
+        {
+                before = null;
+                block = store->head;
+        }
+
+        while (block && room > block->size)
+        {
+                before = block;
+                block = block->next;
+        }
+
+        if (block)
+        {
+                if (store->here)
+                {
+                        before->next = block->next;
+                        block->next = store->here->next;
+                        store->here->next = block;
+                }
+                else if (block != store->head)
+                {
+                        before->next = block->next;
+                        block->next = store->head;
+                        store->head = block;
+                }
+
+                store->here = block;
+                block->used = room;
+                return (p8 address_to)(block + 1);
+        }
+
         size = memory_growth(0, room, SHELL_BLOCK);
 
-        if (!size)
+        if (!size || size > positive_max - sizeof(shell_block))
         {
                 shell_memory_failed = true;
                 return null;
@@ -316,6 +374,29 @@ static fn shell_store_reset(shell_store address_to store)
 
         if (store->here)
                 store->here->used = 0;
+}
+
+/* Moving expansion arrays use a one-command grace before returning a stale
+   high-water mapping. Chained stores keep every block: their many-small-word
+   aggregate cannot be inferred from any one completed expansion without
+   adding bookkeeping to the allocator hot path. */
+static fn shell_room_relax(address_any address_to held,
+                           positive address_to have, positive active,
+                           positive unit)
+{
+        positive limit;
+
+        if (!unit)
+                return;
+
+        limit = SHELL_SCRATCH_RETAIN / unit;
+
+        if (address_to have <= limit || active > limit)
+                return;
+
+        memory_free(address_to held, address_to have * unit);
+        address_to held = null;
+        address_to have = 0;
 }
 
 /*
@@ -1152,6 +1233,30 @@ bool shell_builtin(string_address arguments, positive2 named)
 #include "parse.c"
 #include "exec.c"
 
+/* The allocations below hold the moving expansion scratch for one top-level
+   command. Small capacities remain the allocation-free steady state. A
+   completed large expansion sets a command-wide grace: a second large
+   command reuses the mappings, while the next small command proves their
+   high-water capacity cold and returns it. Chained word stores and long-lived
+   builtin streams retain their allocations; this boundary must not turn a
+   repeated large-word or large read/printf/mapfile workload into churn. */
+static fn shell_command_scratch_relax()
+{
+        positive array_active = shell_large_request
+                                    ? SHELL_SCRATCH_RETAIN + 1
+                                    : 0;
+
+        /* Completed argv strings are dead even when their chained backing is
+           retained for allocation-free reuse. */
+        shell_expand_reset();
+
+        shell_room_relax((address_any address_to)address_of expand_text,
+                         address_of expand_text_room, array_active, 1);
+        shell_room_relax((address_any address_to)address_of expand_mark,
+                         address_of expand_mark_room, array_active, 1);
+        shell_large_request = false;
+}
+
 /*
         Whether the shell is in the middle of something.
 
@@ -1296,7 +1401,19 @@ fn run_line(string_address line)
                 whatever had landed there instead.
         */
         if (top)
-                shell_expand_reset();
+        {
+                /* A physical line is not necessarily a command boundary. An
+                   open quote, compound command or here-document keeps parser
+                   state for the next line, and its capacity may be much
+                   larger than the live suffix. Only a complete command owns
+                   none of the scratch reclaimed above. Expansion retains the
+                   old per-physical-line reset because nested execution may
+                   have used it even while the outer parse remains open. */
+                if (shell_more)
+                        shell_expand_reset();
+                else
+                        shell_command_scratch_relax();
+        }
 }
 
 /*

@@ -74,6 +74,31 @@ Both binaries used the same new mapping-growth implementation, isolating the
 HTTP ownership change. The server was a separate process and a native wait4
 launcher collected child RSS to avoid fixture/launcher high-water pollution.
 
+## Shell reuse and expansion scratch
+
+The chained store now searches its inactive tail for a suitable block instead
+of allocating a duplicate when only the immediate next block is too small.
+Growth arithmetic is checked before mapping. Only the two moving expansion
+buffers have an adaptive release policy: a completed expansion above 1 MiB
+keeps them warm through the command, including compound commands that end in
+small work. A following small completed command releases exceptional capacity.
+Incomplete physical lines and nested eval/source/trap execution cannot trim
+the outer command's live storage.
+
+The 2/8 MiB command-substitution regression measured retained RSS of 54028
+versus 21252 KiB (-60.7%) after a small successor command. Repeated 8 MiB
+compound commands measured 4867703606 versus 4867703879 instructions and
+46904 versus 46928 faults. A million-iteration small-builtin loop had 0.145%
+more instructions; task-clock variation did not establish a throughput change.
+Five repeated 30000-file globs had equivalent instruction/fault counts.
+
+Arena reclamation, parser-array trimming and long-lived builtin-buffer
+trimming were deliberately deferred. Inferring aggregate arena demand from
+individual short words would make repeated large globs remap their tails.
+The retained expansion-buffer policy observes completed expansions, not a
+universal transient high-water mark; unusual large-intermediate/small-result
+expansions still need separate profiling before any no-churn claim.
+
 ## Coverage limits
 
 The assembly inventory still has 242 shared routines: this pass improves an
@@ -81,3 +106,15 @@ existing primitive rather than duplicating tuned utilities. The performance
 manifest now has 60 isolated benchmark anchors; the other 182 routines remain
 performance-unproven. A benchmark anchor alone is not a hardware-floor proof.
 No total-system RAM or kernel-boot performance claim follows from these tests.
+Remaining measurement work includes booted-image idle/process RSS, kernel slab
+usage and Canvas/graphics residency, plus a throughput-safe allocator cold-page
+policy. Those costs have not been established by this component pass.
+
+Validation on `box`: the standard, allocator, reserve, stream, spool, net,
+tools, files, storage, util, term, writer and slurp lanes passed 1340351 checks.
+The verify/exact/known assembly and constant-folding lanes passed 289880107
+checks across native x86-64 and emulated AArch64/RV64. Mapping semantics also
+passed 95 native AArch64 Linux checks and 87 lifted Darwin fallback checks.
+The final Arch shell/expand/builtin suites passed 3372/3372 with default signal
+dispositions (SSH-inherited ignored signals otherwise distort trap fixtures),
+and the build/document kit passed 59/59.
