@@ -98,6 +98,11 @@ printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
 printf 'blkid-link-%s\n' "$(readlink /sbin/blkid | rev)"
 printf 'bash-link-%s\n' "$(readlink /bin/bash | rev)"
 printf 'dash-link-%s\n' "$(readlink /bin/dash | rev)"
+printf 'coreutils-link-%s\n' "$(readlink /bin/cat | rev)"
+printf 'env-link-%s\n' "$(readlink /usr/bin/env | rev)"
+printf '%s\n' '#!/usr/bin/env bash' 'printf "env-script-%s\n" ready' > /tmp/env-entry
+chmod +x /tmp/env-entry
+/tmp/env-entry
 cat > /tmp/bash-entry <<'BASH_ENTRY'
 #!/bin/bash
 set -eu
@@ -222,6 +227,9 @@ says 'mount linked'        'mount-link-llehs/..'
 says 'blkid linked'        'blkid-link-llehs/..'
 says 'bash linked'         'bash-link-llehs/..'
 says 'dash linked'         'dash-link-llehs/..'
+says 'coreutils conventional link' 'coreutils-link-llehs/..'
+says 'env conventional link' 'env-link-llehs/..'
+says 'env shebang execution' 'env-script-ready'
 says 'bash shebang policy' 'shell-gap-ready'
 says 'BASH_ENV startup'    'startup-ready'
 says 'onecmd first line'   'onecmd-63'

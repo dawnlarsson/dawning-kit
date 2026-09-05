@@ -521,9 +521,10 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 }
 
                 shell_conventional_names() {
-                        awk -F '[(),[:space:]]+' \
-                            '$2 == "UTIL_BIN"  { print "bin",  $3 }
-                             $2 == "UTIL_SBIN" { print "sbin", $3 }' \
+                        awk -F '[(),[:space:]]+' -v util="$moon_util_linux" \
+                            '$2 == "GENERAL" { print "bin", $3 }
+                             util && $2 == "UTIL_BIN"  { print "bin",  $3 }
+                             util && $2 == "UTIL_SBIN" { print "sbin", $3 }' \
                             src/sh/tools.inc
                 }
 
@@ -590,16 +591,15 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                                         die "linking $utility"
                         done
 
-                        if [ "$moon_util_linux" -eq 1 ]; then
-                                # Conventional util-linux locations for scripts
-                                # which use absolute paths.
-                                shell_conventional_names |
-                                while read -r directory utility; do
-                                        ln -sf "../$applet_binary" \
-                                                "fs/$directory/$utility" ||
-                                                die "linking /$directory/$utility"
-                                done
-                        fi
+                        # Conventional paths for absolute commands and
+                        # /usr/bin/env shebangs. The registry selects enabled
+                        # categories; every alias shares the same binary.
+                        shell_conventional_names |
+                        while read -r directory utility; do
+                                ln -sf "../$applet_binary" \
+                                        "fs/$directory/$utility" ||
+                                        die "linking /$directory/$utility"
+                        done
                 fi
 
         label KERNEL BUILD
