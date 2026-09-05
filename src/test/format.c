@@ -1100,6 +1100,23 @@ static fn bounded(void)
         answered = snprintf(null, 0, (string_address) "%100000000d", 7);
         check("a count-only wide field returns its exact width",
               answered == 100000000);
+
+        {
+                bipolar at_63 = snprintf(poison, 4,
+                                         (string_address) "%63d", 7);
+                bipolar at_64 = snprintf(poison, 4,
+                                         (string_address) "%64d", 7);
+                bipolar at_65 = snprintf(poison, 4,
+                                         (string_address) "%65d", 7);
+                bipolar at_66 = snprintf(poison, 4,
+                                         (string_address) "%66d", 7);
+
+                check("padding agrees across the retained-run cutoff",
+                      at_63 == 63 && at_64 == 64 && at_65 == 65 &&
+                          at_66 == 66 &&
+                          poison[0] == ' ' && poison[1] == ' ' &&
+                          poison[2] == ' ' && poison[3] == end);
+        }
 }
 
 /*

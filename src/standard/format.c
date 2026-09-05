@@ -300,7 +300,7 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
            iterations.  Copy the resident prefix once and account for the
            requested run once; sprintf keeps the ordinary full write because
            its advertised capacity is the complete addressable buffer. */
-        if (!sink->streaming && !sink->downstream)
+        if (count > sizeof(block) && !sink->streaming && !sink->downstream)
         {
                 positive room = !is_null(sink->buffer) &&
                                         sink->used < sink->capacity
