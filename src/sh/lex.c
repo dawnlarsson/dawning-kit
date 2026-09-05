@@ -179,6 +179,11 @@ static b8 lex_operator[STRING_SET_BYTES];
 static b8 lex_in_double[STRING_SET_BYTES];
 static b32 lex_ready;
 
+/* expand.c is included later in this translation unit.  Its substitution
+   child parses a fresh, non-interactive shell source even when the containing
+   shell was interactive, which is material to comment policy. */
+static bool expand_in_substitution;
+
 fn lex_prepare()
 {
         if (lex_ready)
@@ -359,6 +364,23 @@ static string_address lex_quote_end(string_address at, p8 quote);
 static CONST inline INLINE bool lex_is_space(p8 value)
 {
         return value == ' ' || value == '\t' || value == '\n';
+}
+
+/*
+        Whether a # standing where a word could begin starts a comment.
+
+        interactive_comments is deliberately narrower than the lexer: Bash
+        consults it only while reading interactively.  A script still has
+        comments after `shopt -u interactive_comments`, and the sh/dash
+        personalities keep their existing always-on comment grammar.  Keep
+        the test at the two rare fresh-# sites rather than in lex_ordinary,
+        so an ordinary word pays no extra classification or branch.
+*/
+static inline INLINE bool lex_comments_on()
+{
+        return !shell_bash_compat || !shell_is_interactive ||
+               expand_in_substitution ||
+               shell_shopt_on(INTERACTIVE_COMMENTS);
 }
 
 /*
@@ -620,10 +642,41 @@ static PURE string_address lex_nesting(string_address at)
         p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
         positive depth = 0;
         string_address step = at;
+        /* ${...} and $((...)) have their own # operators. Command and process
+           substitutions contain shell commands, so a fresh # hides every
+           delimiter through the newline just as it does in the outer lexer.
+           Legacy backticks are different: Bash finds their raw closing tick
+           before parsing the extracted command, so a comment does not hide
+           that delimiter. */
+        bool commands = open == '(' && !string_is(at + 1, '(');
+        bool fresh = commands;
+        bool comment = false;
 
         while (string_get(step))
         {
                 p8 c = string_get(step);
+
+                if (comment)
+                {
+                        step++;
+
+                        if (c == '\n')
+                        {
+                                comment = false;
+                                fresh = true;
+                        }
+
+                        continue;
+                }
+
+                /* A command substitution is parsed as non-interactive input,
+                   including while its containing line is interactive. */
+                if (commands && fresh && c == '#')
+                {
+                        comment = true;
+                        step++;
+                        continue;
+                }
 
                 if (c == '$' && string_is(step + 1, '\''))
                 {
@@ -633,12 +686,14 @@ static PURE string_address lex_nesting(string_address at)
                                 return at;
 
                         step = stop + 1;
+                        fresh = false;
                         continue;
                 }
 
                 if (c == '\\' && string_get(step + 1))
                 {
                         step += 2;
+                        fresh = false;
                         continue;
                 }
 
@@ -656,6 +711,49 @@ static PURE string_address lex_nesting(string_address at)
                         if (string_get(step))
                                 step++;
 
+                        fresh = false;
+                        continue;
+                }
+
+                /* A nested substitution is one word piece in this command.
+                   Walk it independently so its comment state and closing
+                   delimiter cannot leak into the containing word. */
+                if (c == '$' &&
+                    (string_is(step + 1, '(') || string_is(step + 1, '{')))
+                {
+                        string_address inner = step + 1;
+                        string_address stop = lex_nesting(inner);
+
+                        if (stop == inner)
+                                return at;
+
+                        step = stop;
+                        fresh = false;
+                        continue;
+                }
+
+                if ((c == '<' || c == '>') && string_is(step + 1, '('))
+                {
+                        string_address inner = step + 1;
+                        string_address stop = lex_nesting(inner);
+
+                        if (stop == inner)
+                                return at;
+
+                        step = stop;
+                        fresh = false;
+                        continue;
+                }
+
+                if (c == '`' && open != '`')
+                {
+                        string_address stop = lex_nesting(step);
+
+                        if (stop == step)
+                                return at;
+
+                        step = stop;
+                        fresh = false;
                         continue;
                 }
 
@@ -675,6 +773,9 @@ static PURE string_address lex_nesting(string_address at)
 
                 if (!depth)
                         return step;
+
+                if (commands)
+                        fresh = lex_is_space(c) || lex_operator[c];
         }
 
         return at;
@@ -725,7 +826,7 @@ b32 lex_unfinished(string_address line)
                         continue;
                 }
 
-                if (c == '#' && fresh)
+                if (c == '#' && fresh && lex_comments_on())
                         return LEX_COMPLETE;
 
                 if (lex_blank[c] || lex_operator[c])
@@ -800,10 +901,17 @@ b32 lex_unfinished(string_address line)
                         continue;
                 }
 
-                if (lex_nested_at(step))
                 {
                         string_address inner = lex_nested_at(step);
-                        string_address stop = lex_nesting(inner);
+                        string_address stop;
+
+                        if (!inner)
+                        {
+                                step++;
+                                continue;
+                        }
+
+                        stop = lex_nesting(inner);
 
                         if (stop == inner)
                                 return LEX_OPEN;
@@ -1119,7 +1227,7 @@ HOT b32 lex_line(string_address line)
                         break;
 
                 // A comment only begins where a word could have.
-                if (string_get(step) == '#')
+                if (string_get(step) == '#' && lex_comments_on())
                         break;
 
                 lex_at = (positive)(step - line);

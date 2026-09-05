@@ -2113,6 +2113,37 @@ COLD bool shell_array_numbers(const_string name, positive length,
         return true;
 }
 
+/* Bash's PIPESTATUS keeps a sole explicitly selected nonzero subscript as
+   the slot for the next status. A vector continues at indexes one onward;
+   index one naturally overwrites a selected index one. Everything else is
+   the ordinary replacing array writer above. */
+static COLD bool shell_status_array_numbers(const_string name, positive length,
+                                             bipolar address_to values,
+                                             positive count)
+{
+        shell_array_item item;
+        p8 key[32];
+        p8 number[32];
+
+        if (!count || shell_array_length(name, length) != 1 ||
+            shell_array_items(name, length, address_of item, 1) != 1 ||
+            item.key || !item.index)
+                return shell_array_numbers(name, length, values, count);
+
+        for (positive at = 0; at < count; at++)
+        {
+                positive index = at ? at : item.index;
+
+                number[bipolar_into_string(number, values[at])] = end;
+                if (!shell_array_set(name, length, key,
+                                     positive_into_string(key, index), number,
+                                     false))
+                        return false;
+        }
+
+        return true;
+}
+
 COLD bool shell_array_forget(const_string name, positive length, const_string key,
                         positive key_length)
 {
@@ -2881,6 +2912,7 @@ static bool shell_names_sorted(writer write, b32 mark,
 static p8 shell_directory_assignment[SHELL_DIRECTORY_MAX + 4];
 p8 address_to shell_directory = shell_directory_assignment + 4;
 static p8 shell_directory_was[SHELL_DIRECTORY_MAX];
+static PURE bool shell_physical_on();
 
 bool shell_here(p8 address_to into, positive room)
 {
@@ -3000,20 +3032,31 @@ static PURE b32 read_set_failed_status(string_address name)
 
 bool shell_directory_moved(string_address logical)
 {
+        bool old_set;
+        bool current_set;
+
         string_copy_max_end(shell_directory_was, shell_directory,
                             sizeof(shell_directory_was) - 1);
 
         string_copy_max_end(shell_directory, logical, SHELL_DIRECTORY_MAX - 1);
 
-        return shell_cd_variable("OLDPWD", shell_directory_was) &&
-               shell_cd_variable("PWD", shell_directory);
+        /* Bash updates PWD even when readonly OLDPWD rejects its assignment;
+           dash retains its historical short circuit. The directory has
+           already changed in either case. */
+        old_set = shell_cd_variable("OLDPWD", shell_directory_was);
+        current_set = (old_set || shell_bash_compat)
+                          ? shell_cd_variable("PWD", shell_directory)
+                          : false;
+
+        return old_set && current_set;
 }
 
 static p8 shell_cd_target[4096];
 
 bool shell_cd_try(string_address candidate, bool physical,
                   bool address_to physical_named,
-                  bool address_to variables_set)
+                  bool address_to variables_set,
+                  string_address unnamed)
 {
         p8 wanted[4096];
 
@@ -3025,7 +3068,20 @@ bool shell_cd_try(string_address candidate, bool physical,
         if (system_change_directory(wanted))
                 return false;
 
-        address_to physical_named = !physical || shell_here(wanted, sizeof(wanted));
+        if (physical && !shell_here(wanted, sizeof(wanted)))
+        {
+                /* Bash permits `cd -P` without -e when getcwd cannot name an
+                   otherwise successful chdir. Retain the requested spelling
+                   as PWD; -e decides whether that unnamed success is an
+                   error. shell_here clears its destination on failure. */
+                if (shell_bash_compat)
+                        string_copy_max_end(wanted,
+                                            unnamed ? unnamed : candidate,
+                                            sizeof(wanted) - 1);
+                address_to physical_named = false;
+        }
+        else
+                address_to physical_named = true;
 
         address_to variables_set = shell_directory_moved(wanted);
 
@@ -3048,7 +3104,7 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
         if (shell_cd_target[0] == '/')
                 return shell_cd_try(shell_cd_target, physical, physical_named,
-                                    variables_set);
+                                    variables_set, null);
 
         if (!(shell_cd_target[0] == '.' &&
               (shell_cd_target[1] == end || shell_cd_target[1] == '/' ||
@@ -3101,10 +3157,16 @@ bool shell_cd_walk(bool physical, bool address_to say,
 
                                 if (shell_cd_try(base, physical,
                                                  physical_named,
-                                                 variables_set))
+                                                 variables_set, null))
                                 {
                                         if (walk.length)
+                                        {
                                                 address_to say = true;
+                                                /* cd says the CDPATH spelling,
+                                                   not getcwd's physical answer. */
+                                                string_copy_end(shell_cd_target,
+                                                                base);
+                                        }
 
                                         return true;
                                 }
@@ -3112,17 +3174,25 @@ bool shell_cd_walk(bool physical, bool address_to say,
                 }
         }
 
-        path_join(candidate, sizeof(candidate), shell_directory,
-                  shell_cd_target);
+        if (!path_walk_join(candidate, sizeof(candidate), shell_directory,
+                            string_length(shell_directory), shell_cd_target,
+                            ""))
+                return false;
 
-        return shell_cd_try(candidate, physical, physical_named,
-                            variables_set);
+        return shell_cd_try(physical ? shell_cd_target : candidate, physical,
+                            physical_named, variables_set,
+                            physical ? candidate : null);
+}
+
+static PURE b32 shell_cd_failed_status()
+{
+        return shell_bash_compat ? 1 : 2;
 }
 
 COLD fn shell_cd(writer write, string_address input)
 {
         positive index = 1;
-        bool physical = false;
+        bool physical = shell_physical_on();
         bool error_if_unnamed = false;
         bool physical_named = true;
         bool variables_set = true;
@@ -3131,8 +3201,15 @@ COLD fn shell_cd(writer write, string_address input)
 
         if (!shell_directory_holds())
         {
-                shell_here(shell_directory, SHELL_DIRECTORY_MAX);
-                env_assign("PWD", shell_directory);
+                /* A removed current directory makes getcwd fail. Keep the
+                   last valid logical spelling in that case: relative cd and
+                   Bash's non-exact `cd -P` still operate from it. */
+                if (shell_here(shell_directory_was,
+                               sizeof(shell_directory_was)))
+                {
+                        string_copy_end(shell_directory, shell_directory_was);
+                        env_assign("PWD", shell_directory);
+                }
         }
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
@@ -3181,12 +3258,20 @@ COLD fn shell_cd(writer write, string_address input)
                 name = env_get("HOME");
 
                 if (!name || !string_get(name))
+                {
+                        if (shell_bash_compat)
+                        {
+                                shell_diagnostic("cd: HOME not set\n", 0);
+                                return shell_answer(1);
+                        }
+
                         return shell_answer(0);
+                }
         }
         else if (!string_get(name))
         {
                 shell_diagnostic("cd: empty directory\n", 0);
-                return shell_answer(2);
+                return shell_answer(shell_cd_failed_status());
         }
         else if (word_is(name, "-"))
         {
@@ -3194,28 +3279,43 @@ COLD fn shell_cd(writer write, string_address input)
                 say = true;
 
                 if (!name)
+                {
+                        if (shell_bash_compat)
+                        {
+                                shell_diagnostic("cd: OLDPWD not set\n", 0);
+                                return shell_answer(1);
+                        }
+
                         name = shell_directory;
+                }
         }
 
         // On a copy: both HOME and OLDPWD point into env_storage, which the
         // first env_set below is free to move out from under them.
-        string_copy_max_end(shell_cd_target, name, sizeof(shell_cd_target) - 1);
+        if (string_length(name) >= sizeof(shell_cd_target))
+        {
+                shell_answer(shell_cd_failed_status());
+                return string_format(shell_diagnostic,
+                                     "cd: directory name too long\n");
+        }
+
+        string_copy_end(shell_cd_target, name);
 
         if (!shell_cd_walk(physical, address_of say,
                            address_of physical_named,
                            address_of variables_set))
         {
-                shell_answer(2);
+                shell_answer(shell_cd_failed_status());
 
                 return string_format(shell_diagnostic, "cd: can't cd to %s\n",
                                      shell_cd_target);
         }
 
         if (!variables_set)
-                return shell_answer(2);
+                return shell_answer(shell_cd_failed_status());
 
         if (say)
-                string_format(write, "%s\n", shell_directory);
+                string_format(write, "%s\n", shell_cd_target);
 
         shell_answer(error_if_unnamed && physical && !physical_named ? 1 : 0);
 }
@@ -3459,7 +3559,7 @@ static COLD bool shell_dirstack_move(string_address where)
         bool variables_set = true;
 
         return shell_cd_try(where, false, address_of physical_named,
-                            address_of variables_set);
+                            address_of variables_set, null);
 }
 
 COLD fn shell_pushd(writer write, string_address input)
@@ -3888,14 +3988,59 @@ STORAGE_ADAPTER(findfs, storage_findfs_run)
 COLD fn shell_pwd(writer write, string_address input)
 {
         p8 out_buffer[4096];
-        bool physical = shell_argc > 1 && word_is(shell_argv[1], "-P");
+        positive index = 1;
+        bool physical = shell_physical_on();
+
+        (void)input;
+
+        while (index < shell_argc && string_is(shell_argv[index], '-') &&
+               string_get(shell_argv[index] + 1))
+        {
+                string_address option = shell_argv[index] + 1;
+
+                if (word_is(shell_argv[index], "--"))
+                        break;
+
+                while (string_get(option))
+                {
+                        p8 letter = string_get(option++);
+
+                        if (letter == 'L')
+                                physical = false;
+                        else if (letter == 'P')
+                                physical = true;
+                        else
+                        {
+                                string_format(shell_diagnostic,
+                                              "pwd: bad option: -%c\n", letter);
+                                return shell_answer(2);
+                        }
+                }
+
+                index++;
+        }
 
         if (!physical && shell_directory_holds())
-                return string_format(write, "%s\n", shell_directory);
+        {
+                string_format(write, "%s\n", shell_directory);
+                return shell_answer(0);
+        }
 
-        shell_here(out_buffer, sizeof(out_buffer));
+        if (!shell_here(out_buffer, sizeof(out_buffer)))
+        {
+                shell_diagnostic("pwd: cannot determine current directory\n", 0);
+
+                if (shell_bash_compat)
+                        return shell_answer(1);
+
+                /* dash diagnoses a failed physical lookup but retains its
+                   historical success status and empty output. */
+                write("\n", 1);
+                return shell_answer(0);
+        }
 
         string_format(write, "%s\n", out_buffer);
+        shell_answer(0);
 }
 
 fn shell_trap_exit();
@@ -4073,6 +4218,8 @@ static shell_option shell_extra_options[] = {
     {"history", 0},
     {"braceexpand", 'B'},
     {"hashall", 'h'},
+    {"physical", 'P'},
+    {"onecmd", 't'},
     {null, 0},
 };
 
@@ -4081,6 +4228,8 @@ static shell_option shell_extra_options[] = {
 #define SHELL_EXTRA_FUNCTRACE 1
 #define SHELL_EXTRA_BRACEEXPAND 3
 #define SHELL_EXTRA_HASHALL 4
+#define SHELL_EXTRA_PHYSICAL 5
+#define SHELL_EXTRA_ONECMD 6
 
 static positive shell_extra_state = ((positive)1 << SHELL_EXTRA_BRACEEXPAND) |
                                     ((positive)1 << SHELL_EXTRA_HASHALL);
@@ -4093,6 +4242,16 @@ static PURE bool shell_extra_on(positive which)
 PURE bool shell_braceexpand_on()
 {
         return shell_extra_on(SHELL_EXTRA_BRACEEXPAND);
+}
+
+static PURE bool shell_physical_on()
+{
+        return shell_bash_compat && shell_extra_on(SHELL_EXTRA_PHYSICAL);
+}
+
+PURE bool shell_onecmd_on()
+{
+        return shell_bash_compat && shell_extra_on(SHELL_EXTRA_ONECMD);
 }
 
 #define shell_hashall_on() shell_extra_on(SHELL_EXTRA_HASHALL)
@@ -4298,7 +4457,8 @@ fn shell_options_listed(writer write, bool as_commands)
                     "allexport", "braceexpand", "emacs", "errexit",
                     "errtrace", "functrace", "hashall", "history", "ignoreeof",
                     "monitor", "noclobber", "noexec", "noglob", "nolog",
-                    "notify", "nounset", "pipefail", "verbose", "vi", "xtrace"
+                    "notify", "nounset", "onecmd", "physical", "pipefail",
+                    "verbose", "vi", "xtrace"
                 };
 
                 for (positive at = 0; at < array_count(names); at++)
@@ -4423,21 +4583,19 @@ static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
         shell_shopt_padded(write, shell_shopt_names[which], 20, on);
 }
 
-static COLD fn shell_shopt_option_said(writer write, positive which,
-                                  bool as_commands)
+static COLD fn shell_shopt_option_said(writer write, string_address name,
+                                       bool on, bool as_commands)
 {
-        bool on = shell_option_on(which);
-
         if (as_commands)
         {
                 write(on ? "set -o " : "set +o ", 7);
-                string_format(write, "%s\n", shell_option_names[which].name);
+                string_format(write, "%s\n", name);
                 return;
         }
 
         /* shopt uses its own twenty-column listing even when -o selects the
            set-option namespace. `set -o` retains the POSIX/dash layout. */
-        shell_shopt_padded(write, shell_option_names[which].name, 20, on);
+        shell_shopt_padded(write, name, 20, on);
 }
 
 COLD fn shell_shopt(writer write, string_address input)
@@ -4521,11 +4679,28 @@ COLD fn shell_shopt(writer write, string_address input)
                                 continue;
 
                         if (set_options)
-                                shell_shopt_option_said(write, at,
-                                                        as_commands);
+                                shell_shopt_option_said(
+                                    write, shell_option_names[at].name, on,
+                                    as_commands);
                         else
                                 shell_shopt_said(write, at, as_commands);
                 }
+
+                /* Bash's letter-only options live in the same set namespace
+                   even though dash must not see them. Keep shopt -o a view of
+                   that existing state rather than a second registry. */
+                if (set_options && shell_bash_compat)
+                        for (positive at = 0; at < SHELL_EXTRA_OPTIONS; at++)
+                        {
+                                bool on = shell_extra_on(at);
+
+                                if ((set && !on) || (unset && on))
+                                        continue;
+
+                                shell_shopt_option_said(
+                                    write, shell_extra_options[at].name, on,
+                                    as_commands);
+                        }
 
                 return shell_answer(quiet && !all_on ? 1 : 0);
         }
@@ -4533,15 +4708,27 @@ COLD fn shell_shopt(writer write, string_address input)
         while (index < shell_argc)
         {
                 string_address name = shell_argv[index++];
-                positive which = set_options
-                                   ? string_table_find(
-                                         name, shell_option_names,
-                                         sizeof(shell_option_names[0]),
-                                         SHELL_OPTION_NAMES)
-                                   : shell_shopt_find(name);
+                positive which;
+                positive extra = SHELL_EXTRA_OPTIONS;
+
+                if (set_options)
+                {
+                        which = string_table_find(
+                            name, shell_option_names,
+                            sizeof(shell_option_names[0]), SHELL_OPTION_NAMES);
+
+                        if (which >= SHELL_OPTION_NAMES && shell_bash_compat)
+                                extra = string_table_find(
+                                    name, shell_extra_options,
+                                    sizeof(shell_extra_options[0]),
+                                    SHELL_EXTRA_OPTIONS);
+                }
+                else
+                        which = shell_shopt_find(name);
 
                 if (which >= (set_options ? SHELL_OPTION_NAMES
-                                          : SHELL_SHOPT_NAMES))
+                                          : SHELL_SHOPT_NAMES) &&
+                    extra >= SHELL_EXTRA_OPTIONS)
                 {
                         string_format(shell_diagnostic,
                                       "shopt: %s: invalid shell option name\n",
@@ -4553,7 +4740,12 @@ COLD fn shell_shopt(writer write, string_address input)
                 if (set || unset)
                 {
                         if (set_options)
-                                shell_option_told(which, set);
+                        {
+                                if (which < SHELL_OPTION_NAMES)
+                                        shell_option_told(which, set);
+                                else
+                                        shell_extra_told(name, set);
+                        }
                         else if (set)
                                 shell_shopt_state |= (positive)1 << which;
                         else
@@ -4563,14 +4755,20 @@ COLD fn shell_shopt(writer write, string_address input)
                 }
 
                 all_on = all_on &&
-                         (set_options ? shell_option_on(which)
+                         (set_options ? (which < SHELL_OPTION_NAMES
+                                            ? shell_option_on(which)
+                                            : shell_extra_on(extra))
                                       : shell_shopt_index_on(which));
 
                 if (quiet)
                         continue;
 
                 if (set_options)
-                        shell_shopt_option_said(write, which, as_commands);
+                        shell_shopt_option_said(
+                            write, name,
+                            which < SHELL_OPTION_NAMES ? shell_option_on(which)
+                                                       : shell_extra_on(extra),
+                            as_commands);
                 else
                         shell_shopt_said(write, which, as_commands);
         }
@@ -4581,19 +4779,41 @@ COLD fn shell_shopt(writer write, string_address input)
         shell_answer(set || unset ? 0 : (all_on ? 0 : 1));
 }
 
+static COLD fn shell_declare_elements(writer write, string_address name,
+                                      positive length, bool keyed);
+
 // A bare set is the variables as lines the shell could be fed: sorted, and
-// the value quoted, which is what the reference shell prints and what a
-// script that saves its state to a file is counting on.
+// scalar values quoted. Arrays use declare's existing reconstructible element
+// serializer; treating their scalar slot as the whole value silently dropped
+// every nonzero or keyed element.
 static fn shell_set_written(writer write, string_address name,
                             positive length, b32 mark)
 {
         shell_pipe_status_wanted(name, length);
         positive found = env_find_span(name, length);
+        p8 attributes;
 
         (void)mark;
 
-        if (found >= shell_var_count ||
-            !env_variable_has_value(shell_vars + found))
+        if (found >= shell_var_count)
+                return;
+
+        attributes = shell_vars[found].attributes;
+
+        if (attributes & SHELL_ARRAY_EITHER)
+        {
+                if (!(attributes & SHELL_ARRAY_ASSIGNED))
+                        return;
+
+                write(name, length);
+                shell_declare_elements(
+                    write, name, length,
+                    (attributes & SHELL_ARRAY_ASSOCIATIVE) != 0);
+                write("\n", 1);
+                return;
+        }
+
+        if (!env_variable_has_value(shell_vars + found))
                 return;
 
         write(name, length);
@@ -9809,9 +10029,8 @@ static b32 shell_tool_call(positive which)
         is an ordinary shell after all. Nothing is forked: this process is the
         invocation, and it is about to end.
 */
-b32 shell_tool_as_called()
+static b32 shell_tool_named(string_address name)
 {
-        string_address name = shell_tool_name(program_argument(0));
         positive which;
 
         if (!name)
@@ -9827,7 +10046,8 @@ b32 shell_tool_as_called()
              string_is(name + 4, 'l') && !string_get(name + 5)) ||
             (string_is(name, 'b') && string_is(name + 1, 'a') &&
              string_is(name + 2, 's') && string_is(name + 3, 'h') &&
-             !string_get(name + 4)))
+             !string_get(name + 4)) ||
+            word_is(name, "dash") || word_is(name, "moonwater"))
                 return -1;
 
         /* One lookup in a process is cheaper than constructing the reusable
@@ -9840,6 +10060,11 @@ b32 shell_tool_as_called()
                 return -1;
 
         return shell_tool_call(which);
+}
+
+b32 shell_tool_as_called()
+{
+        return shell_tool_named(shell_tool_name(program_argument(0)));
 }
 
 fn shell_tool_list(writer write)
@@ -10137,6 +10362,28 @@ static bipolar shell_source_read(bipolar handle,
         return (bipolar)used;
 }
 
+static fn shell_source_execute(p8 address_to text, positive filled)
+{
+        lex_frame frame;
+        positive at = 0;
+
+        lex_nest_enter(address_of frame);
+        while (at < filled)
+        {
+                p8 address_to newline = (p8 address_to)memory_first_of(
+                    text + at, '\n', filled - at);
+                positive stop = newline ? (positive)(newline - text) : filled;
+
+                text[stop] = end;
+                run_line(text + at);
+                if (exec_source_stop())
+                        break;
+                at = stop + 1;
+        }
+        shell_input_end();
+        lex_nest_leave(address_of frame);
+}
+
 COLD fn shell_dot(writer write, string_address input)
 {
         p8 address_to found = null;
@@ -10146,7 +10393,6 @@ COLD fn shell_dot(writer write, string_address input)
         string_address path;
         bipolar got;
         positive filled;
-        positive at = 0;
         bool no_room = false;
         bipolar handle;
 
@@ -10246,30 +10492,7 @@ COLD fn shell_dot(writer write, string_address input)
                 }
         }
 
-        {
-                lex_frame frame;
-
-                lex_nest_enter(address_of frame);
-
-                while (at < filled)
-                {
-                        p8 address_to newline = (p8 address_to)memory_first_of(
-                            source_text + at, '\n', filled - at);
-                        positive stop = newline ? (positive)(newline - source_text) : filled;
-
-                        source_text[stop] = end;
-                        run_line(source_text + at);
-
-                        if (exec_source_stop())
-                                break;
-
-                        at = stop + 1;
-                }
-
-                shell_input_end();
-
-                lex_nest_leave(address_of frame);
-        }
+        shell_source_execute(source_text, filled);
 
         memory_free(source_text, source_room);
 

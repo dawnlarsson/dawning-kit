@@ -3194,7 +3194,8 @@ static fn expand_run(string_address command, bool quoted)
 static string_address expand_command(string_address step, bool quoted)
 {
         string_address inner = step + 2;
-        string_address stop = expand_paren_end(inner);
+        string_address after = lex_nesting(step + 1);
+        string_address stop = after == step + 1 ? null : after - 1;
         p8 address_to text;
         positive length;
 
@@ -3230,17 +3231,10 @@ static string_address expand_backtick(string_address step, bool quoted)
         p8 address_to text;
         positive length = 0;
         positive room;
-        string_address look = step + 1;
+        string_address after = lex_nesting(step);
+        string_address look = after == step ? null : after - 1;
 
-        while (string_get(look) && string_not(look, '`'))
-        {
-                if (string_is(look, '\\') && string_get(look + 1))
-                        look++;
-
-                look++;
-        }
-
-        if (!string_get(look))
+        if (!look)
         {
                 expand_push('`', MARK_PLAIN);
                 return step + 1;
@@ -3259,7 +3253,7 @@ static string_address expand_backtick(string_address step, bool quoted)
 
         step++;
 
-        while (string_get(step) && string_not(step, '`'))
+        while (step < look)
         {
                 // Inside backticks a backslash only hides the next byte when
                 // that byte is one that backticks care about.
@@ -3276,12 +3270,9 @@ static string_address expand_backtick(string_address step, bool quoted)
 
         text[length] = end;
 
-        if (string_get(step))
-                step++;
-
         expand_run(text, quoted);
 
-        return step;
+        return after;
 }
 
 /*
@@ -5906,7 +5897,7 @@ static string_address expand_dollar(string_address step, bool quoted)
         unsupported braced operators. Its bytes are copied into the command's
         existing token arena, where the literal runs around it already live.
 */
-RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
+RETURNS_NONNULL string_address shell_expand_document_part(string_address step,
                                         string_address address_to text,
                                         positive address_to length,
                                         bool address_to overflow)
@@ -5918,7 +5909,9 @@ RETURNS_NONNULL string_address shell_expand_here_dollar(string_address step,
         // Dollar-single-quotes have no quoting role in a here-document body;
         // like a single quote there, the bytes are literal.  Return only the
         // dollar and let the here-body walker copy the following quote/run.
-        if (string_is(step + 1, '\''))
+        if (string_is(step, '`'))
+                result = expand_backtick(step, true);
+        else if (string_is(step + 1, '\''))
         {
                 expand_push('$', MARK_QUOTED);
                 result = step + 1;
@@ -6183,6 +6176,80 @@ static string_address expand_tilde(string_address step, bool assignment)
         expand_push_string(home, MARK_QUOTED);
 
         return step + 1;
+}
+
+/* Here bodies and startup filenames share expansion without quote removal,
+   field splitting or globbing. Emit literal runs straight to the caller's
+   existing store; a large here body must not acquire a second whole-body
+   expansion/mark buffer just to share its dollar/backtick grammar. */
+static bool shell_expand_document(writer write, string_address body,
+                                   positive length, bool startup)
+{
+        static b8 plain[STRING_SET_BYTES];
+        static bool ready;
+        positive at = 0;
+
+        if (!ready)
+        {
+                memory_fill(plain + 1, 1, STRING_SET_BYTES - 1);
+                plain['\\'] = plain['$'] = plain['`'] = 0;
+                ready = true;
+        }
+
+        expand_begin();
+        if (startup && length && body[0] == '~')
+        {
+                at = (positive)(expand_tilde(body, false) - body);
+                if (expand_length)
+                        write(expand_text, expand_length);
+        }
+
+        while (at < length && !expand_failed)
+        {
+                positive run = string_span_max(body + at, length - at, plain);
+                p8 value = body[at];
+
+                if (run)
+                {
+                        write(body + at, run);
+                        at += run;
+                        continue;
+                }
+
+                if (value == '\\' && at + 1 < length)
+                {
+                        p8 next = body[at + 1];
+                        if (next == '\n')
+                        {
+                                at += 2;
+                                continue;
+                        }
+                        if (next == '$' || next == '`' || next == '\\')
+                        {
+                                write(body + at + 1, 1);
+                                at += 2;
+                                continue;
+                        }
+                }
+
+                if (value == '$' || value == '`')
+                {
+                        string_address text;
+                        positive filled;
+                        bool overflow;
+                        at = (positive)(shell_expand_document_part(
+                            body + at, address_of text, address_of filled,
+                            address_of overflow) - body);
+                        if (expand_failed || overflow)
+                                return false;
+                        write(text, filled);
+                        continue;
+                }
+
+                write(body + at++, 1);
+        }
+
+        return !expand_failed && !expand_overflow;
 }
 
 static fn expand_word(string_address word)

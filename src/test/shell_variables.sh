@@ -161,6 +161,29 @@ compare bash 'prefix sees absent pending' \
         ':; printf "<%s>\n" ${!PIPESTATUS*}'
 compare bash 'set includes absent pending' \
         ':; set | grep -q "^PIPESTATUS="; printf "%s\n" "$?"'
+compare bash 'selected PIPESTATUS subscript' \
+        'PIPESTATUS[4]=9; declare -p PIPESTATUS'
+compare bash 'selected subscript tracks simple status' \
+        'PIPESTATUS[4]=9; false; declare -p PIPESTATUS'
+compare bash 'selected subscript receives pipeline head' \
+        'PIPESTATUS[4]=9; false | true; declare -p PIPESTATUS'
+compare bash 'selected pipeline subscript collision' \
+        'PIPESTATUS[1]=9; false | true; declare -p PIPESTATUS'
+compare bash 'existing vector resets indexed write' \
+        'false | true; PIPESTATUS[4]=9; declare -p PIPESTATUS'
+compare bash 'selected readonly PIPESTATUS refreshes' \
+        'PIPESTATUS[4]=9; readonly PIPESTATUS; false | true; declare -p PIPESTATUS'
+
+group serialization
+
+compare bash 'set serializes sparse indexed arrays' \
+        'a=([2]="x y" [4]=""); set | grep "^a="'
+compare bash 'set serializes associative arrays' \
+        'declare -A m=([x]="a b"); set | grep "^m="'
+compare bash 'set serializes assigned empty arrays' \
+        'a=(); set | grep "^a="'
+compare bash 'set omits unassigned declared arrays' \
+        'declare -a a; set | grep "^a="'
 
 section ""
 total=$((pass + fail))

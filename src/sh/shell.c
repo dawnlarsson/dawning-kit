@@ -1304,12 +1304,7 @@ static fn run_line_inner(string_address line)
                 return;
 
         if (waiting)
-        {
-                if (!string_compare(line, waiting))
-                        parse_here_close();
-                else
-                        parse_here_line(line);
-        }
+                parse_here_line(line);
         else if (!parse_feed(line))
         {
                 string_format(exec_error, "Command line too long\n");

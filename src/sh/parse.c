@@ -233,6 +233,10 @@ typedef struct
         // <<- rather than <<, which takes the leading tabs off every line of
         // the body and off the line that ends it.
         b32 strip;
+        // An unquoted trailing backslash removes its physical newline.  The
+        // next physical line is body text even when it spells the delimiter,
+        // because the logical line has not begun there.
+        b32 continued;
         b32 overflow;
 } here_document;
 
@@ -305,7 +309,11 @@ fn parse_nest_enter()
 
         address_to frame = parse_context;
 
-        parse_node_base = parse_node_used;
+        /* Node zero is the parser's absent-child sentinel.  A nested source
+           can be the first source this process parses (BASH_ENV is one), so
+           the live low-water mark has not necessarily been initialized by
+           parse_program yet. */
+        parse_node_base = parse_node_used ? parse_node_used : 1;
         parse_word_base = parse_word_used;
         parse_redirect_base = parse_redirect_used;
         parse_token_base = parse_token_count;
@@ -557,6 +565,7 @@ bool parse_here_line(string_address line)
 {
         here_document address_to document;
         positive length;
+        bool continues = false;
 
         if (here_filled >= here_wanted)
                 return false;
@@ -573,17 +582,31 @@ bool parse_here_line(string_address line)
         document = here_documents + here_filled;
 
         if (document->strip)
-        {
                 line += string_span_of_set(line, "\t");
 
-                if (!string_compare(line, here_names + document->delimiter))
-                {
-                        parse_here_close();
-                        return true;
-                }
+        /* Delimiter recognition belongs beside continuation state.  A line
+           joined to its predecessor cannot terminate the document, even if
+           that physical line consists only of the delimiter. */
+        if (!document->continued &&
+            !string_compare(line, here_names + document->delimiter))
+        {
+                parse_here_close();
+                return true;
         }
 
         length = string_length(line);
+
+        if (!document->quoted && length)
+        {
+                positive slash = length;
+
+                while (slash && string_is(line + slash - 1, '\\'))
+                        slash--;
+
+                continues = ((length - slash) & 1) != 0;
+                if (continues)
+                        length--;
+        }
 
         if (!document->length)
                 document->body = here_used;
@@ -604,9 +627,13 @@ bool parse_here_line(string_address line)
 
         memory_copy(here_text + here_used, line, length);
         here_used += length;
-        here_text[here_used++] = '\n';
+
+        if (!continues)
+                here_text[here_used++] = '\n';
+
         here_text[here_used] = end;
         document->length = here_used - document->body;
+        document->continued = continues;
 
         return true;
 }

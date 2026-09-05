@@ -3591,9 +3591,9 @@ group set-option-index
 bash_set_option_inventory supported \
         allexport emacs errexit ignoreeof monitor noclobber noglob nolog \
         notify nounset pipefail verbose vi xtrace braceexpand errtrace \
-        functrace hashall history noexec
+        functrace hashall history noexec onecmd physical
 bash_set_option_inventory remaining \
-        histexpand interactive-comments keyword onecmd physical posix \
+        histexpand interactive-comments keyword posix \
         privileged
 
 group shopt-option-index

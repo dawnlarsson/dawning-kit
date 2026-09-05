@@ -95,7 +95,8 @@ static bool shell_start_parameters(string_address address_to arguments,
         return shell_parameters_set(shell_argv, count);
 }
 
-static positive shell_run_complete_lines(p8 address_to text, positive length)
+static positive shell_run_complete_lines(p8 address_to text, positive length,
+                                         bool command_string)
 {
         positive at = 0;
 
@@ -126,6 +127,10 @@ static positive shell_run_complete_lines(p8 address_to text, positive length)
 
                 run_line(text + at);
                 at = (positive)(newline - text) + 1;
+
+                if (!command_string && shell_onecmd_on() &&
+                    !shell_reading_more())
+                        return at;
         }
 
         return at;
@@ -166,8 +171,8 @@ static bool shell_start_options(string_address address_to arguments,
                 if (shell_bash_compat &&
                     (word_is(word, "--noprofile") || word_is(word, "--norc")))
                 {
-                        /* These opt out of startup files, which this entry
-                           does not currently load. */
+                        /* These opt out of interactive/login files, not the
+                           noninteractive BASH_ENV file. */
                         at++;
                         continue;
                 }
@@ -257,6 +262,69 @@ static bool shell_start_options(string_address address_to arguments,
         return true;
 }
 
+/* Only an explicitly supplied BASH_ENV has startup work here. No PATH search
+   and no synthesized dot command: filename expansion and sourced-file parsing
+   share the existing document expander and source reader. */
+static bool shell_startup_file()
+{
+        string_address value;
+        string_address path;
+        p8 address_to text = null;
+        positive room = 0;
+        bool no_room = false;
+        bipolar handle, got;
+
+        if (!shell_bash_compat || shell_is_interactive)
+                return true;
+        value = env_get("BASH_ENV");
+        if (!value || !*value)
+                return true;
+
+        /* Never expand attacker-supplied startup text under mismatched IDs.
+           These syscalls stay off the ordinary no-startup entry path. */
+        if (system_call_1(syscall(getuid), 0) !=
+                system_call_1(syscall(geteuid), 0) ||
+            system_call_1(syscall(getgid), 0) !=
+                system_call_1(syscall(getegid), 0))
+                return true;
+
+        token_used = 0;
+        token_overflow = false;
+        if (!shell_expand_document(token_push_bytes, value,
+                                   string_length(value), true))
+                return false;
+        token_push(end);
+        if (token_overflow)
+                return false;
+        path = token_storage;
+
+        if (!*path)
+                return true;
+        do
+                handle = system_open_at(AT_FDCWD, path, FILE_READ);
+        while (handle == -4);
+        if (handle < 0)
+        {
+                if (handle != -2 && handle != -20)
+                        string_format(log_error, "%s: cannot read startup file\n", path);
+                return true;
+        }
+        got = shell_source_read(handle, address_of text, address_of room,
+                                address_of no_room);
+        if (got < 0)
+        {
+                string_format(log_error, "%s: cannot read startup file\n", path);
+                memory_free(text, room);
+                return !no_room;
+        }
+
+        shell_source_execute(text, (positive)got);
+        memory_free(text, room);
+        // Startup's return status is not the status of the first user command.
+        shell_status = 0;
+        return true;
+}
+
 b32 main()
 {
         b32 interactive;
@@ -266,6 +334,7 @@ b32 main()
         string_address command = null;
         string_address address_to arguments;
         positive process_arguments;
+        string_address called = shell_tool_name(program_argument(0));
 
         /*
                 One binary, forty names.
@@ -276,7 +345,7 @@ b32 main()
                 name that is not a tool's, it is a shell.
         */
         {
-                b32 answered = shell_tool_as_called();
+                b32 answered = shell_tool_named(called);
 
                 if (answered >= 0)
                 {
@@ -287,6 +356,12 @@ b32 main()
 
         process_arguments = (positive)program_argument_count();
         arguments = program_argument_list();
+
+        // The multicall dispatch already found the basename. Reuse it for
+        // personality instead of scanning the path again after the fast exit.
+        if (called && *called == '-')
+                called++;
+        shell_bash_compat = called && word_is(called, "bash");
 
         /*
                 A login shell is one whose zeroth argument begins with a dash.
@@ -321,22 +396,21 @@ b32 main()
         {
                 b32 literal_status = 0;
 
-                if (shell_command_literal_status(command,
+                string_address startup = shell_bash_compat
+                    ? string_get_environment(environ, "BASH_ENV") : null;
+
+                if ((!startup || !*startup) &&
+                    shell_command_literal_status(command,
                                                  address_of literal_status))
                         return literal_status;
         }
 
-        /* A literal status command above cannot observe its personality.
-           Keep name scanning and the general option parser off that entry
-           path, just as environment and parameter allocation stay off it. */
+        /* Environment/parameter allocation and the option parser remain off
+           the no-startup literal path. Startup functions and traps, however,
+           can change even `false` or `:`, so they must run first. */
         shell_invocation invocation = {0};
         if (process_arguments && arguments[0])
         {
-                string_address called = string_last_of(arguments[0], '/');
-                called = called ? called + 1 : arguments[0];
-                if (*called == '-')
-                        called++;
-                shell_bash_compat = word_is(called, "bash");
                 shell_script_name = arguments[0];
         }
 
@@ -454,6 +528,14 @@ b32 main()
                 shell_option_told(SHELL_OPTION_MONITOR, false);
         history_start();
 
+        if (!shell_startup_file())
+        {
+                if (script_file && !command)
+                        system_close(input);
+                log_flush();
+                return shell_status ? shell_status : 1;
+        }
+
         /*
                 Whatever arrived, split into lines, with the last one held back
                 if it has no newline yet.
@@ -503,7 +585,7 @@ b32 main()
 
                         {
                                 positive at = shell_run_complete_lines(
-                                    held_command, length);
+                                    held_command, length, true);
 
                                 if (at < length)
                                         run_line(held_command + at);
@@ -549,7 +631,13 @@ b32 main()
                         break;
 
                 total = held + (positive)got;
-                at = shell_run_complete_lines(shell_buffer, total);
+                at = shell_run_complete_lines(shell_buffer, total, false);
+
+                if (at && shell_onecmd_on() && !shell_reading_more())
+                {
+                        held = 0;
+                        break;
+                }
 
                 held = total - at;
 

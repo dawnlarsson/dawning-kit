@@ -3389,82 +3389,10 @@ static fn exec_redirect_diagnostic_restore(b32 mark)
 static positive exec_here_expand(string_address body, positive length,
                                  string_address address_to out)
 {
-        // Every byte that means nothing in a body. The run from one that
-        // does to the next is one copy rather than a decision per byte.
-        static b8 plain[STRING_SET_BYTES];
-        static bool plain_ready;
         positive start = token_used;
-        positive at = 0;
 
-        if (!plain_ready)
-        {
-                memory_fill(plain + 1, 1, STRING_SET_BYTES - 1);
-                plain['\\'] = 0;
-                plain['$'] = 0;
-                plain_ready = true;
-        }
-
-        while (at < length)
-        {
-                p8 value = string_get(body + at);
-                positive run = string_span_max(body + at, length - at, plain);
-
-                if (run)
-                {
-                        token_push_bytes(body + at, run);
-                        at += run;
-                        continue;
-                }
-
-                if (value == '\\' && at + 1 < length)
-                {
-                        p8 next = string_get(body + at + 1);
-
-                        // A backslash carries the three bytes that would
-                        // otherwise expand, and takes a newline out with
-                        // itself: an unquoted body joins lines the way the
-                        // command language does, and the pair used to stay
-                        // in the body as two bytes.
-                        if (next == '\n')
-                        {
-                                at += 2;
-                                continue;
-                        }
-
-                        if (next == '$' || next == '`' || next == '\\')
-                        {
-                                token_push(next);
-                                at += 2;
-                                continue;
-                        }
-                }
-
-                if (value == '$')
-                {
-                        string_address expanded;
-                        positive expanded_length;
-                        bool expanded_overflow;
-
-                        at = (positive)(shell_expand_here_dollar(
-                                            body + at, address_of expanded,
-                                            address_of expanded_length,
-                                            address_of expanded_overflow) -
-                                        body);
-
-                        if (exec_line_aborted())
-                                break;
-
-                        if (expanded_overflow)
-                                token_overflow = true;
-
-                        token_push_bytes(expanded, expanded_length);
-
-                        continue;
-                }
-
-                token_push(value);
-                at++;
-        }
+        if (!shell_expand_document(token_push_bytes, body, length, false))
+                token_overflow |= expand_overflow;
 
         address_to out = token_storage + start;
 
@@ -7902,7 +7830,7 @@ static fn exec_pipe_status_publish(bipolar address_to values, positive count)
                 shell_variable_attribute_set("PIPESTATUS", 10, 0,
                                              SHELL_ARRAY_READONLY);
 
-        shell_array_numbers("PIPESTATUS", 10, values, count);
+        shell_status_array_numbers("PIPESTATUS", 10, values, count);
 
         if (locked)
                 shell_variable_attribute_set("PIPESTATUS", 10,

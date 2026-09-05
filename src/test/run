@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_pipeline shell_variables expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_pipeline shell_variables shell_startup shell_paths shell_lex expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -88,6 +88,9 @@ describe()
         shell_compat) echo "invocation policies, startup flags and adversarial language cases against dash and Bash" ;;
         shell_pipeline) echo "lastpipe, PIPESTATUS lifetime, descriptor restoration and noexec" ;;
         shell_variables) echo "scoped readonly attributes and resource-limit policies against dash and Bash" ;;
+        shell_startup) echo "BASH_ENV and one-command input against Bash, preserving dash identity" ;;
+        shell_paths) echo "logical/physical directory policy and readonly PWD against Bash and dash" ;;
+        shell_lex) echo "comment, nested substitution and heredoc boundaries against Bash and dash" ;;
         text)     echo "the text utilities against the system's, listed and generated" ;;
         checksum) echo "POSIX CRC and optional kernel checksum aliases against GNU coreutils" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
@@ -2294,6 +2297,24 @@ lane_shell_variables()
 {
         need_shell || return 1
         sh src/test/shell_variables.sh "$shell_binary"
+}
+
+lane_shell_startup()
+{
+        need_shell || return 1
+        sh src/test/shell_startup.sh "$shell_binary"
+}
+
+lane_shell_paths()
+{
+        need_shell || return 1
+        sh src/test/shell_paths.sh "$shell_binary"
+}
+
+lane_shell_lex()
+{
+        need_shell || return 1
+        sh src/test/shell_lex.sh "$shell_binary"
 }
 
 lane_builtin()
