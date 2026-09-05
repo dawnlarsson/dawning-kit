@@ -1071,6 +1071,35 @@ static fn bounded(void)
                                              room[0] == '0' && room[1] == '.' &&
                                              room[2] == '1' && room[56] == '5' &&
                                              room[1001] == '0');
+
+        //      The grammar carries int-sized fields.  Refusing an oversized
+        //      literal is both glibc's answer and what keeps a wrapped width
+        //      from silently turning back into a small, valid request.
+        errno = 0;
+        answered = snprintf(poison, sizeof(poison),
+                            (string_address) "%18446744073709551616d", 7);
+        check("a native-word-overflowing width is refused",
+              answered == -1 && errno == EOVERFLOW && poison[0] == end);
+
+        errno = 0;
+        answered = snprintf(poison, sizeof(poison),
+                            (string_address) "%.2147483648d", 7);
+        check("a precision above int is refused",
+              answered == -1 && errno == EOVERFLOW && poison[0] == end);
+
+        //      Counting a truncated padding run is constant work after the
+        //      resident prefix has been written, even when the answer itself
+        //      is too large once the surrounding literal is included.
+        errno = 0;
+        answered = snprintf(poison, 4,
+                            (string_address) "x%2147483647d", 7);
+        check("an unrepresentable total keeps the bounded prefix",
+              answered == -1 && errno == EOVERFLOW && poison[0] == 'x' &&
+                  poison[1] == ' ' && poison[2] == ' ' && poison[3] == end);
+
+        answered = snprintf(null, 0, (string_address) "%100000000d", 7);
+        check("a count-only wide field returns its exact width",
+              answered == 100000000);
 }
 
 /*
@@ -1268,6 +1297,32 @@ static fn streams(void)
                              "puts adds one\n"
                              "fputs does not\n"
                              "z\n") == 0);
+
+        //      stderr is unbuffered, so a closed descriptor forces the
+        //      formatter's write path to observe the failure immediately.
+        saved = (bipolar)system_call_1(syscall(dup), 2);
+
+        if (saved < 0)
+        {
+                check("standard error saved for a failed write", false);
+        }
+        else
+        {
+                bipolar answered;
+
+                system_call_1(syscall(close), 2);
+                answered = fprintf(format_error,
+                                   (string_address) "this cannot be written");
+                system_call_3(syscall(dup3), (positive)saved, 2, 0);
+                system_call_1(syscall(close), (positive)saved);
+
+#ifdef STANDARD_MODERN_C_STANDARD_STREAM
+                clearerr(format_error);
+#endif
+
+                check("fprintf reports an immediate stream failure",
+                      answered == -1);
+        }
 }
 
 b32 main(void)

@@ -216,7 +216,30 @@ typedef struct
         writer downstream;
         format_stream stream;
         bool streaming;
+        bool failed;
 } format_sink;
+
+#ifndef EOVERFLOW
+#define EOVERFLOW 75
+#endif
+
+/* printf's answer is an int even where a native word is wider.  Counting in
+   the native word keeps the common emit path branch-free; the one bounded
+   padding shortcut below checks its addition, and this final seam rejects an
+   answer C cannot represent. */
+static inline INLINE bipolar format_answer(format_sink address_to sink)
+{
+        if (sink->failed)
+                return -1;
+
+        if (sink->counted > (positive)b32_max)
+        {
+                errno = EOVERFLOW;
+                return -1;
+        }
+
+        return (bipolar)sink->counted;
+}
 
 static fn format_emit(format_sink address_to sink, address_any data,
                       positive length)
@@ -226,11 +249,15 @@ static fn format_emit(format_sink address_to sink, address_any data,
         if (length == 0)
                 return;
 
+        if (sink->streaming && sink->failed)
+                return;
+
         sink->counted += length;
 
         if (sink->streaming)
         {
-                format_stream_write(sink->stream, data, length);
+                if (format_stream_write(sink->stream, data, length) != length)
+                        sink->failed = true;
                 return;
         }
 
@@ -264,8 +291,43 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
         p8 block[64];
         positive part;
 
-        if (count == 0)
+        if (count == 0 || (sink->streaming && sink->failed))
                 return;
+
+        /* A bounded buffer stops accepting bytes at capacity, but snprintf
+           must still count the whole field.  Filling sixty-four byte blocks
+           after that point made a count-only "%100000000d" walk 1,562,500
+           iterations.  Copy the resident prefix once and account for the
+           requested run once; sprintf keeps the ordinary full write because
+           its advertised capacity is the complete addressable buffer. */
+        if (!sink->streaming && !sink->downstream)
+        {
+                positive room = !is_null(sink->buffer) &&
+                                        sink->used < sink->capacity
+                                    ? sink->capacity - sink->used
+                                    : 0;
+
+                /* Keep the measured short-field path below when every byte
+                   fits.  This arm is for truncation: it avoids work only for
+                   the suffix the destination cannot retain. */
+                if (count > room)
+                {
+                        if (room)
+                        {
+                                memory_fill(sink->buffer + sink->used, byte,
+                                            room);
+                                sink->used += room;
+                        }
+
+                        if (__builtin_add_overflow(sink->counted, count,
+                                                   address_of sink->counted))
+                        {
+                                sink->failed = true;
+                                errno = EOVERFLOW;
+                        }
+                        return;
+                }
+        }
 
         //      The whole block, not the part this call needs: sizeof is a
         //      literal, so the umbrella's specializer folds it to straight
@@ -273,7 +335,7 @@ static fn format_fill(format_sink address_to sink, p8 byte, positive count)
         //      routine and padding is nearly always a handful of bytes.
         memory_fill(block, byte, sizeof(block));
 
-        while (count)
+        while (count && !sink->failed)
         {
                 part = count < sizeof(block) ? count : sizeof(block);
                 format_emit(sink, block, part);
@@ -1396,7 +1458,7 @@ static fn format_run(format_sink address_to sink, string_address format,
                 return;
         }
 
-        while (string_get(at))
+        while (!sink->failed && string_get(at))
         {
                 string_address start = at;
                 format_spec spec;
@@ -1458,11 +1520,20 @@ static fn format_run(format_sink address_to sink, string_address format,
                 }
                 else
                 {
-                        while (byte_is_digit(string_get(at)))
+                        if (byte_is_digit(string_get(at)))
                         {
-                                spec.width = spec.width * 10 +
-                                             (positive)(string_get(at) - '0');
-                                at++;
+                                positive width;
+
+                                if (!string_digits_checked(address_of at, 10,
+                                                           address_of width) ||
+                                    width > (positive)b32_max)
+                                {
+                                        sink->failed = true;
+                                        errno = EOVERFLOW;
+                                        return;
+                                }
+
+                                spec.width = width;
                         }
                 }
 
@@ -1484,12 +1555,21 @@ static fn format_run(format_sink address_to sink, string_address format,
                         }
                         else
                         {
-                                while (byte_is_digit(string_get(at)))
+                                if (byte_is_digit(string_get(at)))
                                 {
-                                        spec.precision =
-                                            spec.precision * 10 +
-                                            (bipolar)(string_get(at) - '0');
-                                        at++;
+                                        positive precision;
+
+                                        if (!string_digits_checked(
+                                                address_of at, 10,
+                                                address_of precision) ||
+                                            precision > (positive)b32_max)
+                                        {
+                                                sink->failed = true;
+                                                errno = EOVERFLOW;
+                                                return;
+                                        }
+
+                                        spec.precision = (bipolar)precision;
                                 }
                         }
                 }
@@ -1729,7 +1809,7 @@ static bipolar format_to_writer(writer write, string_address format, ...)
         format_run(address_of sink, format, list);
         var_list_end(list);
 
-        return (bipolar)sink.counted;
+        return format_answer(address_of sink);
 }
 
 static bipolar vfprintf(format_stream stream, string_address format,
@@ -1741,7 +1821,7 @@ static bipolar vfprintf(format_stream stream, string_address format,
         sink.streaming = true;
         format_run(address_of sink, format, list);
 
-        return (bipolar)sink.counted;
+        return format_answer(address_of sink);
 }
 
 static bipolar vprintf(string_address format, var_args list)
@@ -1771,7 +1851,7 @@ static bipolar vsnprintf(p8 address_to into, positive size, string_address forma
         if (size)
                 into[sink.used] = end;
 
-        return (bipolar)sink.counted;
+        return format_answer(address_of sink);
 }
 
 static bipolar vsprintf(p8 address_to into, string_address format, var_args list)
@@ -1784,7 +1864,7 @@ static bipolar vsprintf(p8 address_to into, string_address format, var_args list
         format_run(address_of sink, format, list);
         into[sink.used] = end;
 
-        return (bipolar)sink.counted;
+        return format_answer(address_of sink);
 }
 
 var_list_entry(printf, bipolar, (string_address format, ...), format,
