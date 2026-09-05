@@ -97,6 +97,8 @@ compare bash 'nested declare readonly' \
         'x=global; outer() { local x=outer; inner; x=changed; printf "<%s>\n" "$x"; }; inner() { declare -r x=inner; declare -p x; }; outer; printf "<%s>\n" "$x"'
 compare bash 'readonly read status' \
         'r=old; f() { local -r r=keep; printf new | read r; printf "%s:%s\n" "$?" "$r"; }; f'
+compare bash 'local unset restores outer value' \
+        'x=outer; f() { local x=inner; unset x; printf "[%s]" "${x-gone}"; }; f; printf "|%s|\n" "$x"'
 
 section identity
 group basename
@@ -271,6 +273,8 @@ compare bash 'nested readonly restores prefix attributes' \
         'X=old; f() { readonly X; }; X=new f; declare -p X; X=x; printf "status:%s\n" "$?"'
 compare bash 'eval readonly restores prefix attributes' \
         'X=old; X=new eval "readonly X"; declare -p X; X=x; printf "status:%s\n" "$?"'
+compare bash 'scoped nameref rebind unwinds through prefix' \
+        'a=old; b=bee; declare -n n=a; f() { declare -n n=b; }; n=new f; declare -p a b n'
 
 section ""
 total=$((pass + fail))

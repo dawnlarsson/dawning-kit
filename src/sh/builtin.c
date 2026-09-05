@@ -59,6 +59,8 @@ static bool env_attribute_target_span(const_string name, positive length,
                                       const_string address_to target,
                                       positive address_to target_length,
                                       positive address_to target_index);
+static bool shell_declare_binding(string_address name, positive length,
+                                  positive hash, string_address value);
 static bool exec_source_stop(b32 address_to startup_status);
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
@@ -5828,15 +5830,14 @@ fn shell_local_leave()
                 saved = local_table[at].attributes;
                 current = shell_variable_attributes(name, length);
 
-                /* The live readonly mark belongs to the scope being left.
-                   Remove it before the ordinary value/array restoration, then
-                   restore the complete saved attribute byte below. Internal
-                   unwind is the one operation allowed to cross this guard. */
-                if (current & SHELL_ARRAY_READONLY)
+                /* Restore the complete kind before the value. In particular,
+                   a live local nameref must not redirect the saved binding
+                   into its target while this frame is being unwound. */
+                if (current != saved)
                 {
-                        shell_variable_attribute_set(name, length, 0,
-                                                     SHELL_ARRAY_READONLY);
-                        current &= (p8)~SHELL_ARRAY_READONLY;
+                        shell_variable_attribute_set(name, length, saved,
+                                                     (p8)~saved);
+                        current = saved;
                 }
 
                 /*
@@ -5850,8 +5851,6 @@ fn shell_local_leave()
                     (current & SHELL_ARRAY_EITHER))
                 {
                         shell_array_clear(name, length);
-                        shell_variable_attribute_set(name, length, saved,
-                                                     (p8)~saved);
 
                         for (positive one = 0;
                              one < local_table[at].element_count; one++)
@@ -5875,15 +5874,9 @@ fn shell_local_leave()
                         env_unset(name);
                 else
                 {
-                        env_set(name, name + length + 1);
-
-                        // What the function declared about the name goes
-                        // with the function, so a global that was a plain
-                        // string is one again.
-                        if (saved || shell_variable_attributes(name, length))
-                                shell_variable_attribute_set(name, length,
-                                                             saved,
-                                                             (p8)~saved);
+                        shell_declare_binding(
+                            name, length, env_name_hash(name, length),
+                            name + length + 1);
                 }
 
                 for (positive one = 0; one < local_table[at].element_count;
@@ -6451,7 +6444,7 @@ static bool shell_declare_binding(string_address name, positive length,
         bool answer;
 
         if (found >= shell_var_count)
-                return false;
+                return env_assign_hashed_span(name, length, hash, value);
 
         attributes = shell_vars[found].attributes;
         shell_vars[found].attributes &= (p8)~SHELL_ARRAY_NAMEREF;

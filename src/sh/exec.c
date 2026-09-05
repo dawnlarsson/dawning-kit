@@ -6214,6 +6214,7 @@ static b32 exec_simple(b32 index)
         b32 status;
         b32 at;
         bool bare_exec;
+        bool assignments_only;
         shell_words arguments;
 
         //      argv grows with the line. A command's words are whatever the
@@ -6324,6 +6325,7 @@ static b32 exec_simple(b32 index)
                 goto fail;
         }
 
+        assignments_only = first == count;
         for (at = 0; at < leading && !exec_line_aborted(); at++)
         {
                 b32 word_index = EXEC_WORD(at);
@@ -6362,6 +6364,12 @@ static b32 exec_simple(b32 index)
                 goto fail;
         }
 
+        /* With no command, these writes are already the final assignment.
+           Keep the rollback snapshots for expansion failure, but do not
+           restore and reapply successful values (or evaluate indices again).
+           The original assignment words retain append syntax for tracing. */
+        if (assignments_only)
+                expanded_count = 0;
         exec_put_back(expanded_kept, expanded_count);
         expanded_count = 0;
 
@@ -6434,7 +6442,7 @@ static b32 exec_simple(b32 index)
                 }
         }
 
-        for (at = 0; at < first; at++)
+        for (at = 0; !assignments_only && at < first; at++)
                 if (!exec_assign(shell_argv + at,
                                  parse_word_name_lengths[EXEC_WORD(at)],
                                  parse_word_name_hashes[EXEC_WORD(at)],

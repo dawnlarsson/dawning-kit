@@ -169,7 +169,13 @@ output_kind=effect diagnostic=ignore compare 'interactive return error recovers 
 section assignments
 group ordering
 : > "$work/input"
+compare 'assignment-only append retains joined value' bash '' -c 'X=old; X+=new Y=$X; printf "%s:%s\n" "$X" "$Y"'
+compare 'assignment-only append trace preserves syntax' bash '' -c 'X=old; set -x; X+=new'
+compare 'assignment-only compound append preserves elements' bash '' -c 'a=(one two); a+=(three four); printf "<%s>\n" "${a[@]}"'
+compare 'assignment-only nameref writes target once' bash '' -c 'a=old; declare -n n=a; n+=new; printf "%s:%s\n" "$a" "$n"'
 for mode in bash dash; do
+        compare 'empty command expansion leaves assignments' "$mode" '' -c 'unset absent; X=old; X=new $absent; printf "%s\n" "$X"'
+        compare 'assignment-only status follows last substitution' "$mode" '' -c 'X=$(exit 7) Y=$(exit 3); printf "%s:<%s>:<%s>\n" "$?" "$X" "$Y"'
         compare 'arguments expand before prefix substitutions' "$mode" '' -c 'X=$(echo assignment >&2; echo one) printf "%s\n" "$(echo argument >&2; echo two)"'
         compare 'prefix substitutions see earlier prefix values' "$mode" '' -c 'X=old; X=new Y=$X /bin/sh -c '\''printf "%s:%s\n" "$X" "$Y"'\''; printf "after:%s:%s\n" "$X" "${Y-unset}"'
         compare 'prefix special builtin lifetime' "$mode" '' -c 'X=old; X=new :; printf "after:%s\n" "$X"'
