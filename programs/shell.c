@@ -131,6 +131,123 @@ static positive shell_run_complete_lines(p8 address_to text, positive length)
         return at;
 }
 
+typedef struct
+{
+        positive next;
+        bool command;
+        bool from_stdin;
+        b32 interactive;
+} shell_invocation;
+
+/* The command-line grammar locates the source and operands, while set's
+   existing option adapter owns option state. No command string is synthesized
+   and argv bytes never pass through expansion to become startup options. */
+static bool shell_start_options(string_address address_to arguments,
+                                positive count, shell_invocation *invocation)
+{
+        positive at = 1;
+
+        invocation->interactive = -1;
+        while (at < count)
+        {
+                string_address word = arguments[at];
+                bool on;
+
+                if (word_is(word, "--") || word_is(word, "-"))
+                {
+                        at++;
+                        break;
+                }
+                if ((word[0] != '-' && word[0] != '+') || !word[1])
+                        break;
+
+                if (shell_bash_compat &&
+                    (word_is(word, "--noprofile") || word_is(word, "--norc")))
+                {
+                        /* These opt out of startup files, which this entry
+                           does not currently load. */
+                        at++;
+                        continue;
+                }
+
+                on = word[0] == '-';
+                for (string_address letter = word + 1; *letter; letter++)
+                {
+                        p8 value = *letter;
+
+                        if (value == 'c')
+                                invocation->command = true;
+                        else if (value == 'l' && shell_bash_compat)
+                        {
+                                if (on)
+                                        shell_shopt_state |=
+                                            SHELL_SHOPT(LOGIN_SHELL);
+                                else
+                                        shell_shopt_state &=
+                                            ~SHELL_SHOPT(LOGIN_SHELL);
+                        }
+                        else if (value == 'o')
+                        {
+                                if (at + 1 == count)
+                                        shell_options_listed(log, !on);
+                                else if (!shell_option_named(arguments[++at],
+                                                             on))
+                                {
+                                        string_format(log_error,
+                                                      "sh: invalid option: %s\n",
+                                                      arguments[at]);
+                                        return false;
+                                }
+                        }
+                        else if (value == 'O' && shell_bash_compat)
+                        {
+                                if (at + 1 == count)
+                                        for (positive item = 0;
+                                             item < SHELL_SHOPT_NAMES; item++)
+                                                shell_shopt_said(log, item,
+                                                                 !on);
+                                else
+                                {
+                                        positive item =
+                                            shell_shopt_find(arguments[++at]);
+
+                                        if (item >= SHELL_SHOPT_NAMES)
+                                        {
+                                                string_format(
+                                                    log_error,
+                                                    "sh: invalid shell option: %s\n",
+                                                    arguments[at]);
+                                                return false;
+                                        }
+                                        if (on)
+                                                shell_shopt_state |=
+                                                    (positive)1 << item;
+                                        else
+                                                shell_shopt_state &=
+                                                    ~((positive)1 << item);
+                                }
+                        }
+                        else if (!shell_option_letter_told(value, on))
+                        {
+                                p8 said[2] = {value, end};
+                                string_format(log_error,
+                                              "sh: invalid option: %s%s\n",
+                                              on ? "-" : "+", said);
+                                return false;
+                        }
+
+                        if (value == 's')
+                                invocation->from_stdin = on;
+                        else if (value == 'i')
+                                invocation->interactive = on;
+                }
+                at++;
+        }
+
+        invocation->next = at;
+        return true;
+}
+
 b32 main()
 {
         b32 interactive;
@@ -200,10 +317,32 @@ b32 main()
                         return literal_status;
         }
 
+        /* A literal status command above cannot observe its personality.
+           Keep name scanning and the general option parser off that entry
+           path, just as environment and parameter allocation stay off it. */
+        shell_invocation invocation = {0};
+        if (process_arguments && arguments[0])
+        {
+                string_address called = string_last_of(arguments[0], '/');
+                called = called ? called + 1 : arguments[0];
+                if (*called == '-')
+                        called++;
+                shell_bash_compat = word_is(called, "bash");
+                shell_script_name = arguments[0];
+        }
+
         /* environ is the live process environment. Ordinarily it is the
            kernel vector published by the startup shim; clone-and-reentry can
            deliberately replace it without forging another initial stack. */
         shell_env_init(environ);
+
+        if (!shell_start_options(arguments, process_arguments,
+                                 address_of invocation))
+        {
+                log_flush();
+                return 2;
+        }
+        command_option = invocation.command;
 
         /*
                 sh file [word ...]
@@ -235,15 +374,18 @@ b32 main()
         */
         if (command_option)
         {
-                positive count = process_arguments > 3 ? process_arguments - 4 : 0;
+                positive first = invocation.next;
+                positive count = process_arguments > first + 1
+                                     ? process_arguments - first - 2 : 0;
 
-                if (process_arguments < 3)
+                if (first >= process_arguments)
                 {
                         log_error("sh: -c wants a command\n", 0);
                         return 2;
                 }
 
-                if (!shell_start_parameters(arguments, 4, count))
+                command = arguments[first];
+                if (!shell_start_parameters(arguments, first + 2, count))
                 {
                         log_error("sh: no room for arguments\n", 0);
                         return 1;
@@ -253,15 +395,17 @@ b32 main()
                 //      dash does is use the path it was invoked as. That is
                 //      more use than the word "sh" when a message has to say
                 //      where it came from.
-                shell_script_name = process_arguments > 3 ? arguments[3]
+                shell_script_name = process_arguments > first + 1
+                                                          ? arguments[first + 1]
                                                           : arguments[0];
                 shell_option_flags = (string_address) "c";
                 script_file = true;
         }
-        else if (process_arguments > 1)
+        else if (!invocation.from_stdin && invocation.next < process_arguments)
         {
-                string_address script = arguments[1];
-                positive count = process_arguments - 2;
+                positive first = invocation.next;
+                string_address script = arguments[first];
+                positive count = process_arguments - first - 1;
                 bipolar handle = system_open_at(AT_FDCWD, script, FILE_READ);
 
                 if (handle < 0)
@@ -270,7 +414,7 @@ b32 main()
                         return 2;
                 }
 
-                if (!shell_start_parameters(arguments, 2, count))
+                if (!shell_start_parameters(arguments, first + 1, count))
                 {
                         system_close(handle);
                         log_error("sh: no room for arguments\n", 0);
@@ -282,8 +426,17 @@ b32 main()
                 input = handle;
                 script_file = true;
         }
+        else if (invocation.next < process_arguments &&
+                 !shell_start_parameters(arguments, invocation.next,
+                                          process_arguments - invocation.next))
+        {
+                log_error("sh: no room for arguments\n", 0);
+                return 1;
+        }
 
-        interactive = shell_is_interactive = !script_file && shell_interactive();
+        interactive = shell_is_interactive = invocation.interactive >= 0
+                          ? invocation.interactive
+                          : (!script_file && shell_interactive());
         shell_options_started(interactive);
         history_start();
 

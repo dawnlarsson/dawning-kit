@@ -177,57 +177,6 @@ positive shell_options;
 #define SHELL_FLAG(letter) ((positive)1 << ((letter) - 'a'))
 
 /*
-        Names an assignment may no longer touch. Held apart from the values so
-        that readonly can be spoken about a name that has none yet.
-*/
-static shell_store readonly_storage;
-static string_address address_to readonly_name;
-static positive readonly_room;
-static positive readonly_count;
-
-PURE bool env_readonly(const_string name)
-{
-        return readonly_count &&
-               string_table_find((string_address)name, readonly_name,
-                                 sizeof(readonly_name[0]), readonly_count) <
-                   readonly_count;
-}
-
-/* A name inside a larger word -- the array of an element -- asked about
-   without a terminated copy of it being made first. */
-static PURE bool env_readonly_span(const_string name, positive length)
-{
-        for (positive at = 0; at < readonly_count; at++)
-                if (string_length(readonly_name[at]) == length &&
-                    !memory_compare(readonly_name[at], (address_any)name,
-                                    length))
-                        return true;
-
-        return false;
-}
-
-static bool readonly_add(string_address name, positive length)
-{
-        string_address kept;
-
-        if (env_readonly(name))
-                return true;
-
-        if (!shell_array_room(readonly_name, readonly_room, readonly_count + 1))
-                return false;
-
-        kept = shell_store_take(address_of readonly_storage, length + 1);
-
-        if (!kept)
-                return false;
-
-        memory_copy_end(kept, name, length);
-        readonly_name[readonly_count++] = kept;
-
-        return true;
-}
-
-/*
         Shell variables and the environment handed to execve.
 
         The vector may move: every user reaches it by index.  An entry may
@@ -282,6 +231,10 @@ typedef struct
 static env_variable address_to shell_vars;
 static positive shell_vars_room;
 static positive shell_var_count;
+// Fast negative answer for the overwhelmingly common shell with no readonly
+// declarations. The names themselves remain in the indexed variable table;
+// this is only a count, not a second registry.
+static positive readonly_count;
 
 /*
         The pointer vector above is the form execve and the utilities need,
@@ -820,6 +773,9 @@ static fn env_variable_drop(positive index)
         positive left = shell_var_count - index - 1;
         env_variable dropped = shell_vars[index];
 
+        if (dropped.attributes & SHELL_ARRAY_READONLY)
+                readonly_count--;
+
         // Every path remembered was an answer about a PATH that is now gone,
         // the same as when it is assigned over.
         if (dropped.name_length == 4 &&
@@ -1208,6 +1164,7 @@ fn shell_env_init(string_address address_to process_environment)
                         env_cell_drop(shell_vars[at].text);
 
         shell_var_count = 0;
+        readonly_count = 0;
         shell_envp_dirty = true;
         env_index_slots = 0;
         env_index_tombstones = 0;
@@ -1526,9 +1483,9 @@ static COLD b32 env_write_attributed(positive idx, const_string name,
         return 0;
 }
 
-static bool env_write_hashed_span(const_string name, positive name_len,
-                                  positive hash, const_string value,
-                                  bool assignment)
+static bool env_write_found_span(const_string name, positive name_len,
+                                 positive hash, positive idx,
+                                 const_string value, bool assignment)
 {
         bool allexport = assignment && (shell_options & SHELL_FLAG('a'));
 
@@ -1538,8 +1495,6 @@ static bool env_write_hashed_span(const_string name, positive name_len,
         // Every path remembered was an answer about the old PATH.
         if (name_len == 4 && memory_is_4(name, 'P', 'A', 'T', 'H'))
                 hash_forget();
-
-        positive idx = env_find_hashed_span(name, name_len, hash);
 
         // RANDOM and SECONDS have nowhere to be written, so an assignment to
         // one moves the state behind it and stores nothing. Asked only where
@@ -1552,6 +1507,9 @@ static bool env_write_hashed_span(const_string name, positive name_len,
         // is stored, and every one of them is out of line.
         if (idx < shell_var_count && shell_vars[idx].attributes)
         {
+                if (shell_vars[idx].attributes & SHELL_ARRAY_READONLY)
+                        return false;
+
                 b32 done = env_write_attributed(idx, name, name_len, value,
                                                 assignment,
                                                 address_of value);
@@ -1628,16 +1586,32 @@ static bool env_write_hashed_span(const_string name, positive name_len,
         return true;
 }
 
+static bool env_write_hashed_span(const_string name, positive name_len,
+                                  positive hash, const_string value,
+                                  bool assignment)
+{
+        positive idx;
+
+        if (!name || !value)
+                return false;
+
+        idx = env_find_hashed_span(name, name_len, hash);
+        return env_write_found_span(name, name_len, hash, idx, value,
+                                    assignment);
+}
+
 static bool env_write(const_string name, const_string value, bool assignment)
 {
         positive2 answer;
+        positive idx;
 
-        if (!name || !value || env_readonly(name))
+        if (!name || !value)
                 return false;
 
         answer = string_hash_33_length(env_reading(name));
-        return env_write_hashed_span(name, answer.y, answer.x, value,
-                                     assignment);
+        idx = env_find_hashed_span(name, answer.y, answer.x);
+        return env_write_found_span(name, answer.y, answer.x, idx, value,
+                                    assignment);
 }
 
 bool env_set(const_string name, const_string value)
@@ -1683,13 +1657,50 @@ COLD PURE p8 shell_variable_attributes(const_string name, positive length)
         return found < shell_var_count ? shell_vars[found].attributes : 0;
 }
 
+PURE bool env_readonly_hashed_span(const_string name, positive length,
+                                   positive hash)
+{
+        positive found;
+
+        if (!name || !readonly_count)
+                return false;
+
+        found = env_find_hashed_span(name, length, hash);
+        return found < shell_var_count &&
+               (shell_vars[found].attributes &
+                SHELL_ARRAY_READONLY) != 0;
+}
+
+PURE bool env_readonly(const_string name)
+{
+        positive2 named;
+
+        if (!name || !readonly_count)
+                return false;
+
+        named = string_hash_33_length(env_reading(name));
+        return env_readonly_hashed_span(name, named.y, named.x);
+}
+
+/* A name inside a larger word -- the array of an element -- asked about
+   without a terminated copy of it being made first. */
+static PURE bool env_readonly_span(const_string name, positive length)
+{
+        return env_readonly_hashed_span(name, length,
+                                        env_name_hash(name, length));
+}
+
 COLD bool shell_variable_attribute_set(const_string name, positive length, p8 set,
                                   p8 clear)
 {
         env_variable address_to variable = env_export_take(name, length);
+        bool was_readonly;
+        bool now_readonly;
 
         if (!variable)
                 return false;
+
+        was_readonly = (variable->attributes & SHELL_ARRAY_READONLY) != 0;
 
         if (set & SHELL_ARRAY_EITHER)
         {
@@ -1716,7 +1727,18 @@ COLD bool shell_variable_attribute_set(const_string name, positive length, p8 se
             (p8)((variable->attributes & (p8)~clear) | set);
         variable->declared = true;
 
+        now_readonly = (variable->attributes & SHELL_ARRAY_READONLY) != 0;
+        if (was_readonly != now_readonly)
+                readonly_count = now_readonly ? readonly_count + 1
+                                              : readonly_count - 1;
+
         return true;
+}
+
+static bool readonly_add(string_address name, positive length)
+{
+        return shell_variable_attribute_set(name, length,
+                                            SHELL_ARRAY_READONLY, 0);
 }
 
 COLD positive shell_array_length(const_string name, positive length)
@@ -2412,6 +2434,7 @@ COLD bool shell_dynamic_wanted(const_string name, positive length)
         positive which;
 
         if (length == 13 &&
+            shell_bash_compat &&
             !memory_compare((address_any)name, "BASH_VERSINFO", 13))
                 which = SHELL_DYNAMIC_VERSINFO;
         else if (length == 6 && !memory_compare((address_any)name, "GROUPS", 6))
@@ -2540,7 +2563,8 @@ COLD string_address shell_dynamic_value(const_string name, positive length,
                 break;
 
         case 12:
-                if (!memory_compare((address_any)text, "BASH_VERSION", 12))
+                if (shell_bash_compat &&
+                    !memory_compare((address_any)text, "BASH_VERSION", 12))
                         return shell_dynamic_said("5.3.15(1)-release",
                                                   value_length);
 
@@ -2700,7 +2724,10 @@ static fn shell_readonly_refused(string_address name, positive length)
 {
         shell_diagnostic(name, length);
         shell_diagnostic(": is read only\n", 0);
-        expand_fatal();
+        if (shell_bash_compat)
+                expand_fatal_status(1);
+        else
+                expand_fatal();
 }
 
 static bool shell_valid_name(string_address name, positive length)
@@ -2942,6 +2969,11 @@ SHELL_ASSIGNER(shell_cd_variable, "cd: %s: is read only\n",
                "cd: cannot assign %s\n")
 SHELL_ASSIGNER(read_set, "read: %s is readonly\n", "read: no room for %s\n")
 #undef SHELL_ASSIGNER
+
+static PURE b32 read_set_failed_status(string_address name)
+{
+        return shell_bash_compat && env_readonly(name) ? 1 : 2;
+}
 
 bool shell_directory_moved(string_address logical)
 {
@@ -4016,19 +4048,31 @@ static shell_option shell_extra_options[] = {
     {"errtrace", 'E'},
     {"functrace", 'T'},
     {"history", 0},
+    {"braceexpand", 'B'},
+    {"hashall", 'h'},
     {null, 0},
 };
 
 #define SHELL_EXTRA_OPTIONS (array_count(shell_extra_options) - 1)
 #define SHELL_EXTRA_ERRTRACE 0
 #define SHELL_EXTRA_FUNCTRACE 1
+#define SHELL_EXTRA_BRACEEXPAND 3
+#define SHELL_EXTRA_HASHALL 4
 
-static positive shell_extra_state;
+static positive shell_extra_state = ((positive)1 << SHELL_EXTRA_BRACEEXPAND) |
+                                    ((positive)1 << SHELL_EXTRA_HASHALL);
 
 static PURE bool shell_extra_on(positive which)
 {
         return (shell_extra_state & ((positive)1 << which)) != 0;
 }
+
+PURE bool shell_braceexpand_on()
+{
+        return shell_extra_on(SHELL_EXTRA_BRACEEXPAND);
+}
+
+#define shell_hashall_on() shell_extra_on(SHELL_EXTRA_HASHALL)
 
 static bool shell_extra_told(string_address word, bool on)
 {
@@ -4058,7 +4102,7 @@ static bool shell_extra_letter(p8 letter, bool on)
 }
 
 #define SHELL_OPTION_NAMES \
-        (array_count(shell_option_names))
+        (array_count(shell_option_names) - 1)
 #define SHELL_OPTION_MONITOR 4
 #define SHELL_OPTION_NOCLOBBER 11
 #define SHELL_OPTION_PIPEFAIL 16
@@ -4100,6 +4144,19 @@ fn shell_option_told(positive index, bool on)
                 shell_options_named &= ~((positive)1 << index);
 }
 
+/* Startup and set use the same option table and side effects. */
+static bool shell_option_letter_told(p8 letter, bool on)
+{
+        for (positive option = 0; option < SHELL_OPTION_NAMES; option++)
+                if (shell_option_names[option].value == letter)
+                {
+                        shell_option_told(option, on);
+                        return true;
+                }
+
+        return shell_extra_letter(letter, on);
+}
+
 /*
         The option letters as they are now, not as the process began.
 
@@ -4111,8 +4168,10 @@ fn shell_option_told(positive index, bool on)
 */
 RETURNS_NONNULL string_address shell_flags_current()
 {
-        static p8 flags[16];
-        static p8 order[] = "ubaCvxsiImfne";
+        static p8 flags[32];
+        string_address order = shell_bash_compat
+                                   ? (string_address) "abefhiklmnptuvxBCEHPT"
+                                   : (string_address) "ubaCvxsiImfne";
         positive into = 0;
 
         for (positive at = 0; string_get(order + at); at++)
@@ -4126,6 +4185,20 @@ RETURNS_NONNULL string_address shell_flags_current()
 
                 if (index < SHELL_OPTION_NAMES && shell_option_on(index))
                         flags[into++] = letter;
+                else if (shell_bash_compat)
+                        for (positive extra = 0; extra < SHELL_EXTRA_OPTIONS;
+                             extra++)
+                                if (shell_extra_options[extra].value == letter &&
+                                    shell_extra_on(extra))
+                                        flags[into++] = letter;
+        }
+
+        if (shell_bash_compat)
+        {
+                if (string_first_of(shell_option_flags, 'c'))
+                        flags[into++] = 'c';
+                if (shell_options & SHELL_FLAG('s'))
+                        flags[into++] = 's';
         }
 
         flags[into] = end;
@@ -4170,6 +4243,52 @@ fn shell_options_started(bool interactive)
 fn shell_options_listed(writer write, bool as_commands)
 {
         positive index = 0;
+
+        if (shell_bash_compat)
+        {
+                /* A policy view over the existing state, not a second option
+                   registry. Unsupported options are not advertised as if a
+                   stored bit implemented their behavior. */
+                static const string_address names[] = {
+                    "allexport", "braceexpand", "emacs", "errexit",
+                    "errtrace", "functrace", "hashall", "history", "ignoreeof",
+                    "monitor", "noclobber", "noexec", "noglob", "nolog",
+                    "notify", "nounset", "pipefail", "verbose", "vi", "xtrace"
+                };
+
+                for (positive at = 0; at < array_count(names); at++)
+                {
+                        positive option = string_table_find(
+                            names[at], shell_option_names,
+                            sizeof(shell_option_names[0]), SHELL_OPTION_NAMES);
+                        bool on;
+
+                        if (option < SHELL_OPTION_NAMES)
+                                on = shell_option_on(option);
+                        else
+                        {
+                                option = string_table_find(
+                                    names[at], shell_extra_options,
+                                    sizeof(shell_extra_options[0]),
+                                    SHELL_EXTRA_OPTIONS);
+                                on = option < SHELL_EXTRA_OPTIONS &&
+                                     shell_extra_on(option);
+                        }
+
+                        if (as_commands)
+                        {
+                                write(on ? "set -o " : "set +o ", 7);
+                                string_format(write, "%s\n", names[at]);
+                        }
+                        else
+                        {
+                                string_to_field(write, names[at], 14, ' ', true);
+                                write("\t", 1);
+                                string_format(write, "%s\n", on ? "on" : "off");
+                        }
+                }
+                return;
+        }
 
         if (!as_commands)
                 string_format(write, "Current option settings\n");
@@ -4505,18 +4624,7 @@ COLD fn shell_set(writer write, string_address input)
                                         continue;
                                 }
 
-                                positive option;
-
-                                for (option = 0; option < SHELL_OPTION_NAMES;
-                                     option++)
-                                        if (shell_option_names[option].value == value)
-                                                break;
-
-                                if (option < SHELL_OPTION_NAMES)
-                                        shell_option_told(option, on);
-                                else if (shell_extra_letter(value, on))
-                                        ;
-                                else
+                                if (!shell_option_letter_told(value, on))
                                 {
                                         p8 said[2] = {value, end};
 
@@ -4820,11 +4928,24 @@ fn shell_local_leave()
                 string_address name;
                 positive length;
                 p8 saved;
+                p8 current;
 
                 at--;
                 name = local_table[at].text;
                 length = local_table[at].name_length;
                 saved = local_table[at].attributes;
+                current = shell_variable_attributes(name, length);
+
+                /* The live readonly mark belongs to the scope being left.
+                   Remove it before the ordinary value/array restoration, then
+                   restore the complete saved attribute byte below. Internal
+                   unwind is the one operation allowed to cross this guard. */
+                if (current & SHELL_ARRAY_READONLY)
+                {
+                        shell_variable_attribute_set(name, length, 0,
+                                                     SHELL_ARRAY_READONLY);
+                        current &= (p8)~SHELL_ARRAY_READONLY;
+                }
 
                 /*
                         An array is put back element by element, because the
@@ -4834,8 +4955,7 @@ fn shell_local_leave()
                         which is the same clear with nothing to put back.
                 */
                 if ((saved & SHELL_ARRAY_EITHER) ||
-                    (shell_variable_attributes(name, length) &
-                     SHELL_ARRAY_EITHER))
+                    (current & SHELL_ARRAY_EITHER))
                 {
                         shell_array_clear(name, length);
                         shell_variable_attribute_set(name, length, saved,
@@ -5307,8 +5427,9 @@ static bool shell_declare_print_one(writer write, string_address name,
 
         The names are copied out first because the vector holds NAME=VALUE
         and the writer will want to look the name up, which wants it on its
-        own. A readonly name with no value is not in the vector at all and is
-        added from its own table, so readonly -p can list it.
+        own. An unset readonly declaration is a variable record with no value,
+        so it naturally takes this same path instead of needing a second name
+        registry.
 */
 static bool shell_names_sorted(writer write, b32 mark,
                                shell_name_writer written)
@@ -5317,15 +5438,14 @@ static bool shell_names_sorted(writer write, b32 mark,
         shell_mark held = shell_store_mark(address_of expand_store);
         string_address address_to names;
 
-        if (readonly_count > positive_max - count ||
-            count + readonly_count > positive_max / sizeof(names[0]))
+        if (count > positive_max / sizeof(names[0]))
                 return false;
 
         names = (string_address address_to)shell_store_take(
             address_of expand_store,
-            (count + readonly_count) * sizeof(names[0]));
+            count * sizeof(names[0]));
 
-        if (!names && count + readonly_count)
+        if (!names && count)
                 goto failed;
 
         count = 0;
@@ -5341,14 +5461,6 @@ static bool shell_names_sorted(writer write, b32 mark,
 
                 memory_copy_end(name, shell_vars[at].text, length);
                 names[count++] = name;
-        }
-
-        for (positive at = 0; at < readonly_count; at++)
-        {
-                positive length = string_length(readonly_name[at]);
-
-                if (env_find_span(readonly_name[at], length) >= shell_var_count)
-                        names[count++] = readonly_name[at];
         }
 
         if (!expand_sort_names(names, count))
@@ -5491,6 +5603,7 @@ COLD fn shell_local(writer write, string_address input)
                                        : string_length(word);
                 p8 delimiter = mark ? string_get(name_end) : 0;
                 bool compound = mark && string_is(mark + 1, '(');
+                bool readonly;
 
                 if (!shell_valid_name(word, length))
                 {
@@ -5502,6 +5615,22 @@ COLD fn shell_local(writer write, string_address input)
 
                 if (mark)
                         address_to name_end = end;
+
+                readonly = env_readonly(word);
+
+                // A readonly visible through dynamic scope cannot be hidden
+                // by a local declaration. This check precedes attribute and
+                // value changes so a failed local is exactly a failed local.
+                if (readonly)
+                {
+                        string_format(shell_diagnostic,
+                                      "local: %s: readonly variable\n", word);
+                        shell_answer(shell_bash_compat ? 1 : 2);
+                        failed = true;
+                        if (mark)
+                                address_to name_end = delimiter;
+                        break;
+                }
 
                 if (local_remember(word) < 0)
                 {
@@ -5546,6 +5675,21 @@ COLD fn shell_local(writer write, string_address input)
                         else
                                 shell_no_room("local");
 
+                        failed = true;
+                }
+
+                if (!failed && (state.clear & DECLARE_EXPORT))
+                        env_export_restore(word, false);
+                if (!failed && (state.set & DECLARE_EXPORT) &&
+                    !env_export_mark(word))
+                {
+                        shell_no_room("local");
+                        failed = true;
+                }
+                if (!failed && (state.set & DECLARE_READONLY) &&
+                    !readonly_add(word, length))
+                {
+                        shell_no_room("local");
                         failed = true;
                 }
 
@@ -5699,18 +5843,6 @@ static fn shell_declare(writer write, string_address input)
                 {
                         string_format(shell_diagnostic,
                                       "%s: %s: readonly variable\n",
-                                      shell_argv[0], word);
-                        failed = true;
-                        goto next;
-                }
-
-                /* readonly_name is process-global today. Marking a dynamic
-                   local there would make the attribute survive the function,
-                   which is worse than refusing the unsupported scoped form. */
-                if (scoped && (state.set & DECLARE_READONLY))
-                {
-                        string_format(shell_diagnostic,
-                                      "%s: %s: local readonly unsupported\n",
                                       shell_argv[0], word);
                         failed = true;
                         goto next;
@@ -7575,7 +7707,7 @@ COLD fn shell_read(writer write, string_address input)
                 if (env_readonly("REPLY"))
                 {
                         shell_diagnostic("read: REPLY is readonly\n", 0);
-                        return shell_answer(2);
+                        return shell_answer(shell_bash_compat ? 1 : 2);
                 }
         }
         else
@@ -7699,7 +7831,7 @@ COLD fn shell_read(writer write, string_address input)
         if (!array_name && names >= shell_argc)
         {
                 if (!read_set("REPLY", read_line))
-                        return shell_answer(2);
+                        return shell_answer(read_set_failed_status("REPLY"));
 
                 return shell_answer(failed ? 2 : ended ? 1 : 0);
         }
@@ -7714,7 +7846,8 @@ COLD fn shell_read(writer write, string_address input)
         if (exact)
         {
                 if (!array_name && !read_set(shell_argv[names], read_line))
-                        return shell_answer(2);
+                        return shell_answer(
+                            read_set_failed_status(shell_argv[names]));
 
                 if (array_name)
                 {
@@ -7729,7 +7862,9 @@ COLD fn shell_read(writer write, string_address input)
                         for (positive name = names + 1; name < shell_argc;
                              name++)
                                 if (!read_set(shell_argv[name], ""))
-                                        return shell_answer(2);
+                                        return shell_answer(
+                                            read_set_failed_status(
+                                                shell_argv[name]));
 
                 return shell_answer(failed ? 2
                                            : (ended && read_length < limit) ? 1
@@ -7854,7 +7989,8 @@ COLD fn shell_read(writer write, string_address input)
 
                         read_line[stop] = end;
                         if (!read_set(shell_argv[names], read_line + begin))
-                                return shell_answer(2);
+                                return shell_answer(
+                                    read_set_failed_status(shell_argv[names]));
 
                         at = read_length;
                         names++;
@@ -7889,7 +8025,8 @@ COLD fn shell_read(writer write, string_address input)
                 }
 
                 if (!read_set(shell_argv[names], read_line + begin))
-                        return shell_answer(2);
+                        return shell_answer(
+                            read_set_failed_status(shell_argv[names]));
 
                 names++;
         }
@@ -10627,6 +10764,12 @@ fn shell_hash(writer write, string_address input)
         p8 address_to found = null;
         positive found_room = 0;
 
+        if (!shell_hashall_on())
+        {
+                shell_diagnostic("hash: hashing disabled\n", 0);
+                return shell_answer(1);
+        }
+
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
         {
@@ -10802,7 +10945,8 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
         }
 
         {
-                string_address known = use_hash ? hash_find(name) : null;
+                string_address known = use_hash && shell_hashall_on()
+                                           ? hash_find(name) : null;
 
                 if (known)
                 {
@@ -10832,7 +10976,7 @@ static b32 shell_find_in_path_mode(string_address name, p8 address_to into,
 
                 // Remembered only as the executor's answer: a query asks
                 // with access 0 and may name a file nobody could run.
-                if (use_hash && access == ACCESS_EXECUTE)
+                if (use_hash && shell_hashall_on() && access == ACCESS_EXECUTE)
                         hash_remember(name, into);
 
                 return true;
@@ -10869,7 +11013,8 @@ static bipolar shell_find_in_path_alloc_mode(string_address name,
 
                 wanted = name_length + 1;
         }
-        else if (!fixed_path && (known = hash_find(name)))
+        else if (!fixed_path && shell_hashall_on() &&
+                 (known = hash_find(name)))
         {
                 positive known_length = string_length(known);
 
@@ -11404,25 +11549,26 @@ fn shell_which(writer write, string_address input)
 typedef struct
 {
         string_address name;
+        string_address bash_line;
         p8 letter;
         p8 resource;
         positive step;
 } shell_limit;
 
 static shell_limit shell_limits[] = {
-    {"time(seconds)", 't', 0, 1},
-    {"file(blocks)", 'f', 1, 512},
-    {"data(kbytes)", 'd', 2, 1024},
-    {"stack(kbytes)", 's', 3, 1024},
-    {"coredump(blocks)", 'c', 4, 512},
-    {"memory(kbytes)", 'm', 5, 1024},
-    {"locked memory(kbytes)", 'l', 8, 1024},
-    {"process", 'p', 6, 1},
-    {"nofiles", 'n', 7, 1},
-    {"vmemory(kbytes)", 'v', 9, 1024},
-    {"locks", 'w', 10, 1},
-    {"rtprio", 'r', 14, 1},
-    {null, 0, 0, 0},
+    {"time(seconds)", null, 't', 0, 1},
+    {"file(blocks)", null, 'f', 1, 512},
+    {"data(kbytes)", null, 'd', 2, 1024},
+    {"stack(kbytes)", null, 's', 3, 1024},
+    {"coredump(blocks)", null, 'c', 4, 512},
+    {"memory(kbytes)", null, 'm', 5, 1024},
+    {"locked memory(kbytes)", null, 'l', 8, 1024},
+    {"process", null, 'p', 6, 1},
+    {"nofiles", null, 'n', 7, 1},
+    {"vmemory(kbytes)", null, 'v', 9, 1024},
+    {"locks", null, 'w', 10, 1},
+    {"rtprio", null, 'r', 14, 1},
+    {null, null, 0, 0, 0},
 };
 
 /*
@@ -11439,24 +11585,70 @@ static shell_limit shell_limits[] = {
         rather than quietly standing for some other limit.
 */
 #define SHELL_LIMIT_NONE 255
+#define SHELL_LIMIT_PIPE 254
 
+static shell_limit shell_extra_limits[] = {
+    {"nice", null, 'e', 13, 1},
+    {"sigpending", null, 'i', 11, 1},
+    {"msgqueue(bytes)", null, 'q', 12, 1},
+    {"processes", null, 'u', 6, 1},
+    {"locks", null, 'x', 10, 1},
+    {"rttime", null, 'R', 15, 1},
+    {"kqueues", null, 'k', SHELL_LIMIT_NONE, 1},
+    {"pipesize", null, 'P', SHELL_LIMIT_NONE, 1},
+    {"threads", null, 'T', SHELL_LIMIT_NONE, 1},
+    {null, null, 0, 0, 0},
+};
+
+/* Bash's Linux surface has a different -p resource and 1024-byte -c/-f
+   scales. The exact left sides also make `ulimit -a` useful to scripts that
+   consume Bash's stable report, while the compact dash table above stays
+   byte-for-byte unchanged outside Bash compatibility mode. */
 static shell_limit shell_bash_limits[] = {
-    {"nice", 'e', 13, 1},
-    {"sigpending", 'i', 11, 1},
-    {"msgqueue(bytes)", 'q', 12, 1},
-    {"processes", 'u', 6, 1},
-    {"locks", 'x', 10, 1},
-    {"rttime", 'R', 15, 1},
-    {"kqueues", 'k', SHELL_LIMIT_NONE, 1},
-    {"pipesize", 'P', SHELL_LIMIT_NONE, 1},
-    {"threads", 'T', SHELL_LIMIT_NONE, 1},
-    {null, 0, 0, 0},
+    {"real-time non-blocking time",
+     "real-time non-blocking time  (microseconds, -R) ", 'R', 15, 1},
+    {"core file size", "core file size              (blocks, -c) ",
+     'c', 4, 1024},
+    {"data seg size", "data seg size               (kbytes, -d) ",
+     'd', 2, 1024},
+    {"scheduling priority", "scheduling priority                 (-e) ",
+     'e', 13, 1},
+    {"file size", "file size                   (blocks, -f) ",
+     'f', 1, 1024},
+    {"pending signals", "pending signals                     (-i) ",
+     'i', 11, 1},
+    {"max locked memory", "max locked memory           (kbytes, -l) ",
+     'l', 8, 1024},
+    {"max memory size", "max memory size             (kbytes, -m) ",
+     'm', 5, 1024},
+    {"open files", "open files                          (-n) ",
+     'n', 7, 1},
+    {"pipe size", "pipe size                (512 bytes, -p) ",
+     'p', SHELL_LIMIT_PIPE, 512},
+    {"POSIX message queues", "POSIX message queues         (bytes, -q) ",
+     'q', 12, 1},
+    {"real-time priority", "real-time priority                  (-r) ",
+     'r', 14, 1},
+    {"stack size", "stack size                  (kbytes, -s) ",
+     's', 3, 1024},
+    {"cpu time", "cpu time                   (seconds, -t) ",
+     't', 0, 1},
+    {"max user processes", "max user processes                  (-u) ",
+     'u', 6, 1},
+    {"virtual memory", "virtual memory              (kbytes, -v) ",
+     'v', 9, 1024},
+    {"file locks", "file locks                          (-x) ",
+     'x', 10, 1},
+    {null, null, 0, 0, 0},
 };
 
 fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
 {
         ul_limit_pair pair;
         p64 value;
+
+        if (limit->resource == SHELL_LIMIT_PIPE)
+                return string_format(write, "8\n");
 
         if (ul_prlimit(0, limit->resource, null, address_of pair) < 0)
                 return string_format(write, "unlimited\n");
@@ -11470,16 +11662,22 @@ fn shell_limit_said(writer write, shell_limit address_to limit, bool hard)
         write("\n", 1);
 }
 
-fn shell_limit_listed(writer write)
+fn shell_limit_listed(writer write, bool bash, bool hard)
 {
-        shell_limit address_to limit = shell_limits;
+        shell_limit address_to limit = bash ? shell_bash_limits : shell_limits;
 
         while (limit->name)
         {
-                string_to_field(write, limit->name, 20, ' ', true);
+                if (bash)
+                        write(limit->bash_line,
+                              string_length(limit->bash_line));
+                else
+                {
+                        string_to_field(write, limit->name, 20, ' ', true);
+                        write(" ", 1);
+                }
 
-                write(" ", 1);
-                shell_limit_said(write, limit, false);
+                shell_limit_said(write, limit, hard);
                 limit++;
         }
 }
@@ -11520,17 +11718,28 @@ fn shell_ulimit(writer write, string_address input)
                                 continue;
                         }
 
-                        limit = shell_limits;
-
-                        while (limit->name && limit->letter != which)
-                                limit++;
-
-                        if (!limit->name)
+                        if (shell_bash_compat)
                         {
                                 limit = shell_bash_limits;
 
                                 while (limit->name && limit->letter != which)
                                         limit++;
+                        }
+                        else
+                        {
+                                limit = shell_limits;
+
+                                while (limit->name && limit->letter != which)
+                                        limit++;
+
+                                if (!limit->name)
+                                {
+                                        limit = shell_extra_limits;
+
+                                        while (limit->name &&
+                                               limit->letter != which)
+                                                limit++;
+                                }
                         }
 
                         if (!limit->name)
@@ -11554,7 +11763,7 @@ fn shell_ulimit(writer write, string_address input)
 
         if (listed)
         {
-                shell_limit_listed(write);
+                shell_limit_listed(write, shell_bash_compat, hard);
 
                 return shell_answer(0);
         }
@@ -11562,7 +11771,8 @@ fn shell_ulimit(writer write, string_address input)
         // No resource named is the file size, which is what every shell means
         // by a bare ulimit.
         if (!chosen)
-                chosen = shell_limits + 1;
+                chosen = shell_bash_compat ? shell_bash_limits + 4
+                                           : shell_limits + 1;
 
         if (index >= shell_argc)
         {
@@ -11575,19 +11785,36 @@ fn shell_ulimit(writer write, string_address input)
                 ul_limit_pair pair;
                 p64 value;
 
+                if (chosen->resource == SHELL_LIMIT_PIPE)
+                {
+                        string_format(shell_diagnostic,
+                                      "ulimit: pipe size: cannot modify limit\n");
+                        return shell_answer(shell_bash_compat ? 1 : 2);
+                }
+
                 if (ul_prlimit(0, chosen->resource, null, address_of pair) < 0)
                         return shell_answer(1);
 
                 if (word_is(shell_argv[index], "unlimited"))
                         value = UL_LIMIT_INFINITE;
+                else if (shell_bash_compat &&
+                         word_is(shell_argv[index], "soft"))
+                        value = pair.soft;
+                else if (shell_bash_compat &&
+                         word_is(shell_argv[index], "hard"))
+                        value = pair.hard;
                 else
                 {
                         bool good;
                         bipolar asked = shell_signed(shell_argv[index], address_of good);
 
-                        if (!good)
+                        if (!good ||
+                            (shell_bash_compat &&
+                             (asked < 0 ||
+                              (positive)asked >
+                                  (UL_LIMIT_INFINITE - 1) / chosen->step)))
                         {
-                                shell_answer(2);
+                                shell_answer(shell_bash_compat ? 1 : 2);
 
                                 return string_format(shell_diagnostic,
                                                      "ulimit: bad number %s\n",
@@ -11607,7 +11834,7 @@ fn shell_ulimit(writer write, string_address input)
 
                 if (ul_prlimit(0, chosen->resource, address_of pair, null) < 0)
                 {
-                        shell_answer(2);
+                        shell_answer(shell_bash_compat ? 1 : 2);
 
                         return string_format(shell_diagnostic,
                                              "ulimit: error setting limit\n");

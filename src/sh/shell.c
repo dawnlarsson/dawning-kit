@@ -165,6 +165,11 @@ fn shell_catch(b32 number)
 // things of a shell that has just been told to do something impossible.
 b32 shell_is_interactive;
 
+/* One implementation, two conflicting shell policies. The standalone entry
+   selects Bash policy only when invoked as bash; sh/dash and embedded callers
+   retain Moonwater's existing dash-compatible defaults. */
+bool shell_bash_compat;
+
 // Whether output that can carry colour does. An interface that draws its own
 // screen turns it off while it holds the terminal.
 bool shell_styles = true;
@@ -627,6 +632,7 @@ COLD bool shell_dynamic_wanted(const_string name, positive length);
 extern positive shell_subshell_depth;
 
 fn shell_last_argument_set(string_address word);
+PURE bool shell_braceexpand_on();
 
 //      One function's name out of the executor's table, for compgen. The
 //      table is in exec.c, which is included last.
@@ -1336,6 +1342,7 @@ static fn run_line_inner(string_address line)
                 return;
         }
 
+        if (!(shell_options & SHELL_FLAG('n')) || shell_is_interactive)
         {
                 bool held_tail = shell_tail_command;
 

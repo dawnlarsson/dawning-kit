@@ -96,6 +96,17 @@ printf 'alias-%s\n' "$(readlink /mointor.sh | rev)"
 printf 'path-%s\n' "$(readlink /bin/monitor.sh | rev)"
 printf 'mount-link-%s\n' "$(readlink /bin/mount | rev)"
 printf 'blkid-link-%s\n' "$(readlink /sbin/blkid | rev)"
+printf 'bash-link-%s\n' "$(readlink /bin/bash | rev)"
+printf 'dash-link-%s\n' "$(readlink /bin/dash | rev)"
+cat > /tmp/bash-entry <<'BASH_ENTRY'
+#!/bin/bash
+set -eu
+shopt -s lastpipe
+printf 'ready\n' | read value
+printf 'shell-gap-%s\n' "$value"
+BASH_ENTRY
+chmod +x /tmp/bash-entry
+/tmp/bash-entry
 /bin/mountpoint -q / && printf 'storage-root\n'
 printf 'storage-target-%s\n' "$(/usr/bin/findmnt -n -r -o TARGET -T /)"
 mointor.sh 1 3 2> /tmp/monitor.err
@@ -172,6 +183,9 @@ says 'mointor alias'       'alias-hs.rotinom'
 says 'monitor linked'      'path-hs.rotinom/..'
 says 'mount linked'        'mount-link-llehs/..'
 says 'blkid linked'        'blkid-link-llehs/..'
+says 'bash linked'         'bash-link-llehs/..'
+says 'dash linked'         'dash-link-llehs/..'
+says 'bash shebang policy' 'shell-gap-ready'
 says 'root is mounted'     'storage-root'
 says 'findmnt linked'      'storage-target-/'
 says 'monitor ran'         '0monitor'

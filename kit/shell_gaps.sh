@@ -10,11 +10,11 @@
 #       family against dash, because those are the two the test lanes pin
 #       against and disagreeing with either is the thing worth seeing.
 #
-#       This is a map and not a test. src/test/shell.sh is the test: every gap
-#       closed there moves a row out of bash_remaining or posix_remaining and
-#       into the supported surface, and the harness refuses to let a closed
-#       row stay in the ledger. Run this to decide what to work on next, run
-#       the lane to know whether it works.
+#       This is a map and not a test. src/test/shell.sh and
+#       src/test/shell_compat.sh are the gates: supported behavior belongs in
+#       an exact case there, while unsupported policy remains visible here.
+#       Run this to decide what to work on next, run the lanes to know whether
+#       the supported surface still works.
 #
 #       With no path, programs/shell.c is built into a temporary binary.
 #
@@ -33,14 +33,132 @@ if [ -z "$OURS" ]; then
                 -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
                 -o "$OURS" programs/shell.c || exit 1
 fi
+
+[ -x "$OURS" ] || { echo "no shell at $OURS" >&2; exit 1; }
+case $OURS in
+/*) ;;
+*) OURS=$(CDPATH= cd -- "$(dirname -- "$OURS")" && pwd)/$(basename -- "$OURS") ;;
+esac
+
+# Invocation name is shell policy. Keep one binary, but ask Bash questions
+# through a bash-named link and POSIX/dash questions through all three names
+# the distribution exposes for that policy. A caller-supplied filename must
+# not accidentally select the family merely because it happens to be `bash`.
+mkdir "$work/names" || exit 1
+ln -s "$OURS" "$work/names/bash" || exit 1
+ln -s "$OURS" "$work/names/sh" || exit 1
+ln -s "$OURS" "$work/names/dash" || exit 1
+ln -s "$OURS" "$work/names/moonwater" || exit 1
+
 probe() {
         ref=$1; name=$2; script=$3
         want=$($ref -c "$script" 2>&1; echo "[$?]")
-        got=$($OURS -c "$script" 2>&1; echo "[$?]")
-        if [ "$want" = "$got" ]; then echo "  ok    $name"; else printf '  GAP   %-34s want %s  got %s\n' "$name" "$(printf %s "$want" | tr '\n' '|' | cut -c1-60)" "$(printf %s "$got" | tr '\n' '|' | cut -c1-60)"; fi
+        missed=false
+
+        if [ "$ref" = "$B" ]; then
+                candidates="bash:$work/names/bash"
+        else
+                candidates="moonwater:$work/names/moonwater sh:$work/names/sh dash:$work/names/dash"
+        fi
+
+        for candidate in $candidates; do
+                mode=${candidate%%:*}
+                shell=${candidate#*:}
+                got=$($shell -c "$script" 2>&1; echo "[$?]")
+                if [ "$want" != "$got" ]; then
+                        missed=true
+                        printf '  GAP   %-34s want %s  got %s\n' \
+                                "$name [$mode]" \
+                                "$(printf %s "$want" | tr '\n' '|' | cut -c1-60)" \
+                                "$(printf %s "$got" | tr '\n' '|' | cut -c1-60)"
+                fi
+        done
+
+        [ "$missed" = true ] || echo "  ok    $name"
+}
+probe_start() {
+        ref=$1; name=$2; input=$3
+        shift 3
+        if [ "${probe_stderr:-compare}" = ignore ]; then
+                want=$(printf '%s' "$input" | "$ref" "$@" 2>/dev/null; echo "[$?]")
+        else
+                want=$(printf '%s' "$input" | "$ref" "$@" 2>&1; echo "[$?]")
+        fi
+        missed=false
+
+        if [ "$ref" = "$B" ]; then
+                candidates="bash:$work/names/bash"
+        else
+                candidates="moonwater:$work/names/moonwater sh:$work/names/sh dash:$work/names/dash"
+        fi
+
+        for candidate in $candidates; do
+                mode=${candidate%%:*}
+                shell=${candidate#*:}
+                if [ "${probe_stderr:-compare}" = ignore ]; then
+                        got=$(printf '%s' "$input" | "$shell" "$@" 2>/dev/null; echo "[$?]")
+                else
+                        got=$(printf '%s' "$input" | "$shell" "$@" 2>&1; echo "[$?]")
+                fi
+                if [ "$want" != "$got" ]; then
+                        missed=true
+                        printf '  GAP   %-34s want %s  got %s\n' \
+                                "$name [$mode]" \
+                                "$(printf %s "$want" | tr '\n' '|' | cut -c1-60)" \
+                                "$(printf %s "$got" | tr '\n' '|' | cut -c1-60)"
+                fi
+        done
+
+        [ "$missed" = true ] || echo "  ok    $name"
 }
 B=/bin/bash; D=dash
 echo "== bash features"
+
+probe_start $B 'startup combined -ec' '' -ec 'printf "before\n"; false; echo after'
+probe_start $B 'startup pipefail' '' -o pipefail -c 'false | true; echo $?'
+probe_start $B 'startup stdin -s' 'printf "%s:%s\n" "$1" "$2"
+' -s -- one two
+probe_start $B 'startup noexec' '' -n -c 'echo must-not-run'
+
+# These are explicit ledger rows, not parser feature claims. They remain here
+# until their named option changes the documented behavior, even when a
+# similarly named shopt bit can already be listed or toggled.
+probe $B 'set histexpand' 'set -H; case $- in *H*) echo on;; *) echo off;; esac'
+probe $B 'set keyword assignments' 'set -k; /bin/sh -c '\''echo ${MWKEY-no}'\'' MWKEY=yes'
+probe $B 'set physical' 'set -P; case $- in *P*) echo on;; *) echo off;; esac'
+probe $B 'set posix mode' 'set -o posix; set -o posix'
+probe $B 'set privileged' 'set -p; case $- in *p*) echo on;; *) echo off;; esac'
+probe_start $B 'startup onecmd' 'echo one
+echo two
+' -t
+
+# Interactive diagnostics contain job-control and prompt text determined by
+# the controlling terminal. Suppress only that channel; stdout and status are
+# still exact, and the second physical line proves comments became words.
+probe_stderr=ignore
+probe_start $B 'interactive_comments behavior' '' --noprofile --norc -ic 'shopt -u interactive_comments
+printf "<%s>\n" one # two'
+probe_stderr=compare
+
+# Noninteractive Bash reads this controlled file before its command string.
+# Never point the probe at the caller's actual startup files.
+if [ "${BASH_ENV+x}" = x ]; then
+        bash_env_was_set=true
+        bash_env_was=$BASH_ENV
+else
+        bash_env_was_set=false
+        bash_env_was=
+fi
+printf 'echo bash-env-startup\n' > "$work/bash-env"
+BASH_ENV=$work/bash-env
+export BASH_ENV
+probe_start $B 'BASH_ENV startup file' '' -c ':'
+if [ "$bash_env_was_set" = true ]; then
+        BASH_ENV=$bash_env_was
+        export BASH_ENV
+else
+        unset BASH_ENV
+fi
 
 probe $B 'brace list' 'echo {a,b}{1,2}'
 probe $B 'brace range' 'echo {1..5} {a..e} {01..03} {5..1..2}'
@@ -66,6 +184,7 @@ probe $B 'RANDOM set' '[ -n "$RANDOM" ] && echo yes'
 probe $B 'SECONDS LINENO' 'echo $SECONDS $LINENO'
 probe $B 'EPOCHSECONDS' '[ "$EPOCHSECONDS" -gt 1000000 ] && echo yes'
 probe $B 'PIPESTATUS' 'false | true; echo ${PIPESTATUS[0]} ${PIPESTATUS[1]}'
+probe $B 'PIPESTATUS reset' 'false | true; s=$?; echo "$s:${PIPESTATUS[0]}:${PIPESTATUS[1]}"'
 probe $B 'FUNCNAME' 'f() { echo $FUNCNAME; }; f'
 probe $B 'caller' 'f() { caller; }; f'
 probe $B 'BASH_VERSION set' '[ -n "$BASH_VERSION" ] && echo yes'
@@ -96,6 +215,7 @@ probe $B 'case fallthrough' 'case a in a) echo one;& b) echo two;; esac; case a 
 probe $B 'trap RETURN DEBUG ERR' 'trap "echo err" ERR; false; f() { :; }; trap "echo ret" RETURN; f'
 probe $B 'shopt -o' 'shopt -so pipefail; shopt -o pipefail'
 probe $B 'lastpipe' 'shopt -s lastpipe; echo 5 | read v; echo $v'
+probe $B 'lastpipe status and state' 'shopt -s lastpipe; set +m; v=old; printf "new\n" | read v; s=$?; echo "$v:$s"'
 probe $B 'exec -a' 'exec -a name sh -c "echo \$0"'
 probe $B 'echo -e -n -E' 'echo -e "a\tb"; echo -n x; echo -E "\n"'
 probe $B 'test == and [[' '[ a == a ] && echo yes; [[ a == a ]] && echo yes'
@@ -127,7 +247,18 @@ probe $B 'compgen' 'compgen -A function | wc -l'
 probe $B 'complete' 'complete -F f g 2>&1; echo $?'
 probe $B 'history' 'history 2>&1 | wc -l'
 probe $B 'fc' 'fc -l 2>&1 | wc -l'
+probe $B 'local readonly lifetime' 'x=outer; f() { local -r x=inner; echo "$x"; }; f; x=changed; echo "$x:$?"'
+probe $B 'IFS mixed edges' 'IFS=" :"; v="  a:: b : "; set -- $v; printf "%s" "$#"; printf "<%s>" "$@"; echo'
+probe $B 'quoted at splice' 'set --; for x in pre"$@"post; do printf "<%s>" "$x"; done; echo; set -- "" x; for x in pre"$@"post; do printf "<%s>" "$x"; done; echo'
+probe $B 'nested heredoc parse' 'v=$(cat <<-EOF
+	one $((1+1))
+	EOF
+); printf "<%s>\n" "$v"'
 echo "== POSIX features (against dash)"
+probe_start $D 'startup combined -ec' '' -ec 'printf "before\n"; false; echo after'
+probe_start $D 'startup stdin -s' 'printf "%s:%s\n" "$1" "$2"
+' -s -- one two
+probe_start $D 'startup noexec' '' -n -c 'echo must-not-run'
 probe $D 'special params' 'set -- a b; echo $# "$*" "$@" $? $-; [ "$$" -gt 1 ]'
 probe $D 'parameter forms' 'unset u; v=x; echo ${u-d} ${u:-d} ${v+s} ${v:+s} ${#v} ${u=e} $u'
 probe $D 'parameter error' '(unset u; echo ${u?msg}) 2>/dev/null'
@@ -178,3 +309,10 @@ x
 XX
 ); echo $v'
 probe $D 'octal escape printf' 'printf "\\101\\n"'
+probe $D 'IFS mixed edges' 'IFS=" :"; v="  a:: b : "; set -- $v; printf "%s" "$#"; printf "<%s>" "$@"; echo'
+probe $D 'quoted at splice' 'set --; for x in pre"$@"post; do printf "<%s>" "$x"; done; echo; set -- "" x; for x in pre"$@"post; do printf "<%s>" "$x"; done; echo'
+probe $D 'assignment does not split' 'v="x y *"; a=$v; printf "<%s>\n" "$a"'
+probe $D 'nested heredoc parse' 'v=$(cat <<-EOF
+	one $((1+1))
+	EOF
+); printf "<%s>\n" "$v"'

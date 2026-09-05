@@ -2,6 +2,29 @@
 
 # Comparisons shared by the shell-language suites. Each lane supplies
 # run_both, shown, won and lost so its execution setup and display stay local.
+shell_compare_bash_begin()
+{
+        held_reference=$reference
+        held_subject=$subject
+        reference=/bin/bash
+
+        if [ -z "${bash_subject:-}" ]; then
+                case $subject in
+                /*) bash_target=$subject ;;
+                *) bash_target=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+                esac
+                bash_subject=$work/bash
+                ln -s "$bash_target" "$bash_subject" || return 1
+        fi
+        subject=$bash_subject
+}
+
+shell_compare_bash_end()
+{
+        reference=$held_reference
+        subject=$held_subject
+}
+
 check()
 {
         name=$1
@@ -42,10 +65,9 @@ bash_answer()
                 return 0
         }
 
-        held_reference=$reference
-        reference=/bin/bash
+        shell_compare_bash_begin || return 1
         run_both "$@"
-        reference=$held_reference
+        shell_compare_bash_end
 
         if cmp -s "$work/want" "$work/got" &&
                 [ "$want_status" = "$got_status" ]; then

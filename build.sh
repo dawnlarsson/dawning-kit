@@ -547,7 +547,10 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         # Scripts need a real interpreter path: /shell is the
                         # image's binary, but a #!/bin/sh shebang is resolved
                         # by the kernel before the shell gets any say.
-                        ln -sf ../shell fs/bin/sh || die "linking /bin/sh"
+                        for interpreter in sh dash bash; do
+                                ln -sf ../shell "fs/bin/$interpreter" ||
+                                        die "linking /bin/$interpreter"
+                        done
                         ln -sf ../bin fs/usr/bin || die "linking /usr/bin"
                         ln -sf ../sbin fs/usr/sbin || die "linking /usr/sbin"
                         for utility in $(shell_system_names); do

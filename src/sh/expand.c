@@ -54,6 +54,11 @@ bool env_assign(const_string name, const_string value);
 // element list and `m=()` prints an empty one, and nothing else tells them
 // apart once both hold nothing.
 #define SHELL_ARRAY_ASSIGNED 64
+// Readonly is a property of the dynamically visible variable, not of the
+// process-lifetime spelling of its name. Keeping it in the same spare byte as
+// the other declaration attributes lets a function local save and restore it
+// without a second scope table or another lookup on every assignment.
+#define SHELL_ARRAY_READONLY 128
 
 typedef struct
 {
@@ -1652,7 +1657,7 @@ static fn expand_push_named_trim_one(string_address name, positive name_length,
                 {
                         string_format(expand_complain,
                                       "%s: parameter not set\n", name);
-                        expand_fatal();
+                        expand_fatal_status(shell_bash_compat ? 1 : 2);
                 }
 
                 return;
@@ -3536,7 +3541,8 @@ static COLD fn expand_fatal()
 // two, and this is the one spelling of that choice.
 static COLD fn expand_fatal_mode(b32 parameter_mode)
 {
-        if (parameter_mode & EXPAND_PARAMETER_INDIRECT)
+        if (shell_bash_compat ||
+            (parameter_mode & EXPAND_PARAMETER_INDIRECT))
                 expand_fatal_status(1);
         else
                 expand_fatal();
@@ -7006,6 +7012,15 @@ static positive expand_brace_number_text(p8 address_to out, bipolar value,
 static positive shell_expand_braces(string_address word,
                                     shell_words address_to out);
 
+static positive shell_expand_without_braces(string_address word,
+                                             shell_words address_to out)
+{
+        if (!expand_word_ready(word))
+                return out->count;
+
+        return expand_split(out);
+}
+
 static positive expand_brace_made(string_address word,
                                   string_address open,
                                   string_address close,
@@ -7237,10 +7252,7 @@ static positive shell_expand_braces(string_address word,
                 return out->count;
         }
 
-        if (!expand_word_ready(word))
-                return out->count;
-
-        return expand_split(out);
+        return shell_expand_without_braces(word, out);
 }
 
 /*
@@ -7254,7 +7266,9 @@ static positive shell_expand_braces(string_address word,
 */
 positive shell_expand_fields(string_address word, shell_words address_to out)
 {
-        positive count = shell_expand_braces(word, out);
+        positive count = shell_braceexpand_on()
+                             ? shell_expand_braces(word, out)
+                             : shell_expand_without_braces(word, out);
 
         if (expand_overflow)
         {

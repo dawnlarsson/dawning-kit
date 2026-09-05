@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_pipeline shell_variables expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -85,6 +85,9 @@ describe()
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
         shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
+        shell_compat) echo "invocation policies, startup flags and adversarial language cases against dash and Bash" ;;
+        shell_pipeline) echo "lastpipe, PIPESTATUS lifetime, descriptor restoration and noexec" ;;
+        shell_variables) echo "scoped readonly attributes and resource-limit policies against dash and Bash" ;;
         text)     echo "the text utilities against the system's, listed and generated" ;;
         checksum) echo "POSIX CRC and optional kernel checksum aliases against GNU coreutils" ;;
         files)    echo "the file utilities against coreutils, by output and by effect" ;;
@@ -2273,6 +2276,24 @@ lane_expand()
         need_shell || return 1
 
         sh src/test/expand.sh "$farm"
+}
+
+lane_shell_compat()
+{
+        need_shell || return 1
+        sh src/test/shell_compat.sh "$shell_binary"
+}
+
+lane_shell_pipeline()
+{
+        need_shell || return 1
+        sh src/test/shell_pipeline.sh "$shell_binary"
+}
+
+lane_shell_variables()
+{
+        need_shell || return 1
+        sh src/test/shell_variables.sh "$shell_binary"
 }
 
 lane_builtin()

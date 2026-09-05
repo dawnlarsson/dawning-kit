@@ -103,10 +103,9 @@ bash_remaining()
                 return 0
         }
 
-        held_reference=$reference
-        reference=/bin/bash
+        shell_compare_bash_begin || return 1
         run_both "$@"
-        reference=$held_reference
+        shell_compare_bash_end
         got_ours=$(shown "$work/got")
 
         if [ "$got_ours" != "$recorded" ] ||
@@ -3591,10 +3590,10 @@ bash_answer 'ledger keyword time' 'PATH=; TIMEFORMAT=%0R; time :'
 group set-option-index
 bash_set_option_inventory supported \
         allexport emacs errexit ignoreeof monitor noclobber noglob nolog \
-        notify nounset pipefail verbose vi xtrace
+        notify nounset pipefail verbose vi xtrace braceexpand errtrace \
+        functrace hashall history noexec
 bash_set_option_inventory remaining \
-        braceexpand errtrace functrace hashall histexpand history \
-        interactive-comments keyword noexec onecmd physical posix \
+        histexpand interactive-comments keyword onecmd physical posix \
         privileged
 
 group shopt-option-index
@@ -4059,11 +4058,11 @@ bash_answer 'blank in nonassignment bracket still splits' \
 group remaining
 bash_answer 'ledger process substitution' 'x=$(cat <(printf x)); printf "<%s>\n" "$x"'
 bash_answer 'ledger extglob' 'shopt -s extglob; eval '\''case aa in +(a)) echo yes;; esac'\'''
-bash_remaining 'ledger declare local readonly' '1:<outer>|outer|' 0 \
+bash_answer 'ledger declare local readonly' \
         'x=outer; f() { declare -r x=local; printf "%s:<%s>|" "$?" "$x"; }; f; echo "$x"'
-bash_remaining 'ledger readonly dynamic local status' '' 2 \
+bash_answer 'ledger readonly dynamic local status' \
         'readonly x=G; f() { local x=L; x=M; echo "$?:$x"; }; f; echo "$x"'
-bash_remaining 'ledger noclobber status' '2|' 0 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
+bash_answer 'ledger noclobber status' 'p=/tmp/bash-noclobber.$$; echo a > "$p"; set -C; echo b > "$p"; s=$?; rm -f "$p"; echo "$s"'
 
 #
 #       What the shell has no answer for at all.

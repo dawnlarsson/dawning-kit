@@ -152,10 +152,9 @@ bash_check()
                 return 0
         }
 
-        held_reference=$reference
-        reference=/bin/bash
+        shell_compare_bash_begin || return 1
         run_both "$@"
-        reference=$held_reference
+        shell_compare_bash_end
 
         if cmp -s "$work/want" "$work/got"; then
                 won

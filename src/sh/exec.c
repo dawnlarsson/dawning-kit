@@ -39,10 +39,13 @@ static b32 exec_function_depth;
         shell.
 */
 #define SHELL_ERREXIT ((positive)1 << ('e' - 'a'))
+#define SHELL_NOEXEC ((positive)1 << ('n' - 'a'))
 
 static bool exec_tested;
 static bool exec_forked;
 static bool exec_asynchronous;
+static bool exec_pipe_status_pending;
+static b32 exec_pipe_status_value;
 
 /*
         Which line the command now running was written on.
@@ -3671,11 +3674,19 @@ static bool exec_redirect_apply(b32 index)
         parse_node address_to node = parse_nodes + index;
         b32 at;
 
-        exec_redirect_status = 0;
+        /* Bash makes a failed redirection an ordinary failure and continues
+           a non-interactive list; dash treats the language error as status
+           two. Keep the policy at the one shared redirect boundary: every
+           open, dup, save and here-document failure below reaches it. */
+        exec_redirect_status = shell_bash_compat ? 1 : 2;
 
         for (at = 0; at < node->redirect_count; at++)
         {
                 parse_redirect address_to want = parse_redirects + node->redirect + at;
+
+                /* A successful prior here-document records zero. Restore the
+                   policy before beginning the next independent redirect. */
+                exec_redirect_status = shell_bash_compat ? 1 : 2;
                 // A here-document's word is its delimiter, which only ever
                 // has its quotes taken off: nothing in it runs, in POSIX or
                 // in dash, and the body was matched against it when the
@@ -3798,10 +3809,6 @@ static bool exec_redirect_apply(b32 index)
 
                 if (opened < 0)
                 {
-                        // A redirection is part of the shell language, not a
-                        // command reporting an ordinary false result. dash
-                        // uses status two for an open/duplication failure.
-                        exec_redirect_status = 2;
                         exec_redirect_diagnostic_restore(redirect_mark);
                         string_format(exec_error, "Cannot redirect: %s\n", target);
                         return false;
@@ -3842,7 +3849,6 @@ static bool exec_redirect_apply(b32 index)
                         if (system_duplicate(opened, want->fd, 0) < 0)
                         {
                                 system_close(opened);
-                                exec_redirect_status = 2;
                                 exec_redirect_diagnostic_restore(redirect_mark);
                                 string_format(exec_error,
                                               "Cannot redirect descriptor: %p\n",
@@ -4645,11 +4651,11 @@ static bool exec_assign(string_address address_to word_at,
         {
                 positive length = string_length(mark + 1);
 
-                if (env_readonly(word))
+                if (env_readonly_hashed_span(word, name_length, name_hash))
                 {
                         string_format(exec_error, "%s: is read only\n", word);
                         address_to name_end = append ? '+' : '=';
-                        expand_fatal();
+                        expand_fatal_mode(0);
                         return false;
                 }
 
@@ -4673,7 +4679,9 @@ static bool exec_assign(string_address address_to word_at,
         if (subscript)
                 address_to subscript = end;
 
-        if (env_readonly(word))
+        if (env_readonly_hashed_span(
+                word, base_length,
+                subscript ? memory_hash_33(word, base_length) : name_hash))
         {
                 string_format(exec_error, "%s: is read only\n", word);
 
@@ -4681,7 +4689,7 @@ static bool exec_assign(string_address address_to word_at,
                         address_to subscript = '[';
 
                 address_to name_end = append ? '+' : '=';
-                expand_fatal();
+                expand_fatal_mode(0);
                 return false;
         }
 
@@ -7300,11 +7308,16 @@ static bipolar exec_spawn_node(b32 index, bool background)
 /*
         A pipeline.
 
-        Every stage gets a process of its own, because a builtin on either end
-        of a pipe has to have its own fd 1 and its own fd 0. The parent closes
-        both ends of every pipe it made before it waits: a write end still open
-        here is an end of file the reader never sees, and the whole shell
-        stops.
+        Ordinarily every stage gets a process of its own, because a builtin on
+        either end of a pipe has to have its own fd 1 and fd 0. Bash lastpipe
+        is the deliberate exception: without job control, an explicitly
+        enabled final builtin/function/compound command runs here so that its
+        state survives. The same stage loop and status vector serve both
+        policies; an eligible external final stage keeps the direct spawn path.
+
+        The parent closes both ends of every pipe it made before it waits: a
+        write end still open here is an end of file the reader never sees, and
+        the whole shell stops.
 */
 /*
         A stage that can be spawned rather than forked, and its pid.
@@ -7522,6 +7535,11 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         positive at;
         bool spawn_failed = false;
         bool monitor = job_monitor();
+        bool lastpipe = !background && !monitor &&
+                        shell_shopt_on(LASTPIPE);
+        bool lastpipe_ran = false;
+        b32 lastpipe_status = 0;
+        b32 lastpipe_mark = exec_save_count;
         bipolar group = 0;
 
         if (count > positive_max / sizeof(children[0]) ||
@@ -7529,6 +7547,25 @@ static b32 exec_pipe(b32 first, positive count, bool background,
         {
                 string_format(exec_error, "No room for pipeline\n");
                 return 2;
+        }
+
+        /* Save before making a pipe: when the shell arrived with fd 0 closed,
+           pipe may legitimately allocate that number. Saving at the final
+           stage would then preserve the pipe instead of the original closed
+           state. The save is CLOEXEC and so costs spawned stages no lifetime. */
+        if (lastpipe)
+        {
+                b32 final = first;
+
+                while (parse_nodes[final].next)
+                        final = parse_nodes[final].next;
+
+                if (!exec_save_fd(0, parse_nodes + final))
+                {
+                        memory_free(children,
+                                    children_room * sizeof(children[0]));
+                        return 2;
+                }
         }
 
         while (child && started < count)
@@ -7562,6 +7599,43 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                            ? -1
                            : exec_stage_spawn(child, upstream,
                                               last ? -1 : ends[1]);
+
+                /* A final command which was not an eligible literal external
+                   is exactly the stateful lastpipe case. Run it before waiting
+                   so a producer cannot fill the pipe against an idle reader.
+                   Keep the caller's tested state: ! and conditional lists
+                   suppress -e inside their pipeline, while an untested final
+                   compound command must still stop at its first failing
+                   simple command. Tail exec is suppressed because the shell
+                   has pipeline bookkeeping left to do when the stage returns. */
+                if (made < 0 && last && lastpipe)
+                {
+                        bool tail = shell_tail_command;
+
+                        if (upstream >= 0 && upstream != 0)
+                        {
+                                if (system_duplicate(upstream, 0, 0) < 0)
+                                {
+                                        system_close(upstream);
+                                        upstream = -1;
+                                        lastpipe_status = 2;
+                                        lastpipe_ran = true;
+                                        string_format(exec_error,
+                                                      "Cannot connect pipeline\n");
+                                        break;
+                                }
+
+                                system_close(upstream);
+                        }
+
+                        upstream = -1;
+                        shell_tail_command = false;
+                        lastpipe_status = exec_node(child);
+                        shell_tail_command = tail;
+                        lastpipe_ran = true;
+                        child = parse_nodes[child].next;
+                        break;
+                }
 
                 if (made < 0)
                         made = shell_clone();
@@ -7646,6 +7720,9 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 child = parse_nodes[child].next;
         }
 
+        if (lastpipe)
+                exec_redirect_restore(lastpipe_mark);
+
         if (upstream >= 0)
                 system_close(upstream);
 
@@ -7722,6 +7799,18 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 children[at] = got;
         }
 
+        /* The parent-run stage has no pid to wait for, but it is still the
+           rightmost logical stage and gets the final slot of PIPESTATUS. */
+        if (lastpipe_ran)
+        {
+                children[started] = lastpipe_status;
+                started++;
+                status = lastpipe_status;
+
+                if (lastpipe_status)
+                        rightmost_failure = lastpipe_status;
+        }
+
         if (monitor)
                 job_terminal_give(job_shell_group);
 
@@ -7751,6 +7840,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 return 128 + (b32)stopped_by;
         }
 
+        exec_pipe_status_pending = false;
         shell_array_numbers("PIPESTATUS", 10, children, started);
 
         if (rightmost_failure && pipefail)
@@ -7785,6 +7875,28 @@ static positive exec_pipeline_count(b32 first)
         }
 
         return count;
+}
+
+/* A simple command always replaces Bash's PIPESTATUS, but almost no command
+   reads it. Keep the one integer in registers/data until an environment or
+   array reader actually asks; that reader calls the public materializer
+   below. A real pipeline publishes its already-built vector directly. */
+fn exec_pipe_status_wanted()
+{
+        bipolar value;
+
+        if (!exec_pipe_status_pending)
+                return;
+
+        exec_pipe_status_pending = false;
+        value = exec_pipe_status_value;
+        shell_array_numbers("PIPESTATUS", 10, address_of value, 1);
+}
+
+static fn exec_pipe_status_one(b32 status)
+{
+        exec_pipe_status_value = status;
+        exec_pipe_status_pending = true;
 }
 
 /*
@@ -8243,6 +8355,12 @@ static b32 exec_list(b32 index)
 */
 static b32 exec_node(b32 index)
 {
+        /* -n still parses the entire physical program before it gets here.
+           Once a command in that program enables it, later sibling nodes are
+           skipped as Bash and dash skip the rest of the already parsed list. */
+        if (!shell_is_interactive && (shell_options & SHELL_NOEXEC))
+                return shell_status;
+
         b32 status = exec_node_kind(index);
 
         /* Signals are rare and node boundaries are not. Keep the volatile
@@ -8304,6 +8422,17 @@ static b32 exec_node_kind(b32 index)
                         shell_substitutions_close(substitutions);
 
                 shell_status = status;
+
+                /* Bash exposes a pipeline vector only until the next simple
+                   command. Expansion of that command has already read the old
+                   vector; publishing its one answer here gives assignments
+                   and commands the same lifetime rule. Do this before ERR and
+                   EXIT traps so they see the failing command's answer. The
+                   pipeline overwrites the transient value after a returning
+                   parent-run lastpipe stage. */
+                if (shell_bash_compat)
+                        exec_pipe_status_one(status);
+
                 exec_errexit(status);
 
                 return status;
