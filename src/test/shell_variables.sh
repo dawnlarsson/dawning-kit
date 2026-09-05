@@ -149,6 +149,10 @@ compare bash_child 'export -n follows nameref target' \
         'target=secret; export target; declare -n ref=target; export -n ref; "$1" -c '\''printf "<%s>\n" "${target-unset}"'\'''
 compare bash_child 'exported function reaches Bash child' \
         'f(){ printf "child:<%s>\n" "$1"; }; export -f f; "$1" -c '\''f "$1"'\'' child value'
+for literal in ':' true false; do
+        compare bash_child "imported $literal overrides literal startup shortcut" \
+                'env '\''BASH_FUNC_'"$literal"'%%=() { printf "override\n"; return 7; }'\'' "$1" -c '\'' '"$literal"' # comment'\''; printf "status:%s\n" "$?"'
+done
 compare bash_child 'exported function reaches Moonwater child' \
         'f(){ for x in a b; do case $x in a) printf A;; *) printf B;; esac; done; }; export -f f; "$1" -c '\''f; echo'\'''
 compare bash_child 'exported direct compound bodies are wrapped' \

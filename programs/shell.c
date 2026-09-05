@@ -3,7 +3,8 @@
 #include "../src/sh/shell.c"
 
 /*
-        A complete -c program which cannot create shell state or observe it.
+        A complete -c program which needs no state once the caller has ruled
+        out inherited startup work and function overrides.
 
         Comments are only recognised after blanks/newlines because reaching
         this routine already means no word has begun.  `:#text` is therefore
@@ -50,8 +51,8 @@ static bool shell_command_literal_status(string_address command,
                         continue;
                 }
 
-                /* Exact literal true/false have no expansion, assignment,
-                   redirection or inherited state to observe.  They can take
+                /* Exact literal true/false have no expansion, assignment or
+                   redirection. After the caller excludes startup work they take
                    the same entry floor as colon; operands deliberately fall
                    through because expanding one may have side effects. */
                 if (!command_seen && step[0] == 't' && step[1] == 'r' &&
@@ -423,13 +424,35 @@ b32 main()
         {
                 b32 literal_status = 0;
 
-                string_address startup = shell_bash_compat
-                    ? string_get_environment(environ, "BASH_ENV") : null;
-
-                if (!shell_privilege_mismatched && (!startup || !*startup) &&
+                if (!shell_privilege_mismatched &&
                     shell_command_literal_status(command,
                                                  address_of literal_status))
-                        return literal_status;
+                {
+                        bool observable = false;
+
+                        // An imported function can override even :, true or
+                        // false. Fold its transport check into the startup
+                        // environment walk; ordinary sh/dash and nonliteral
+                        // commands do not pay for that walk.
+                        if (shell_bash_compat)
+                                for (positive at = 0; environ && environ[at]; at++)
+                                {
+                                        string_address entry = environ[at];
+
+                                        if (*entry != 'B')
+                                                continue;
+                                        if (env_function_assignment(entry) ||
+                                            (!string_compare_max(entry, "BASH_ENV=", 9) &&
+                                             entry[9]))
+                                        {
+                                                observable = true;
+                                                break;
+                                        }
+                                }
+
+                        if (!observable)
+                                return literal_status;
+                }
         }
 
         /* Environment/parameter allocation and the option parser remain off
