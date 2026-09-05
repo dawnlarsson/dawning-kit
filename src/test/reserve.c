@@ -21,7 +21,7 @@ static fn reserve_boundaries(void)
         address_any before = held;
         check("capacity hit", memory_reserve(address_of held, address_of have,
               used, have, sizeof(positive), 64) && held == before);
-        check("used beyond capacity is refused", !memory_reserve(
+        check("growth with used beyond capacity is refused", !memory_reserve(
               address_of held, address_of have, have + 1, have + 1,
               sizeof(positive), 64));
         check("invalid count leaves owner alone", held == before && have == 64);
