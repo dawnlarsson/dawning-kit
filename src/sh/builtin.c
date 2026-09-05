@@ -54,7 +54,7 @@ fn shell_input_end();
 bool exec_function_here_hashed(string_address name, positive2 named);
 bool exec_function_unset(string_address name);
 static bool exec_line_aborted();
-static bool exec_source_stop();
+static bool exec_source_stop(b32 address_to startup_status);
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
 fn shell_execute_command();
@@ -3032,9 +3032,6 @@ static PURE b32 read_set_failed_status(string_address name)
 
 bool shell_directory_moved(string_address logical)
 {
-        bool old_set;
-        bool current_set;
-
         string_copy_max_end(shell_directory_was, shell_directory,
                             sizeof(shell_directory_was) - 1);
 
@@ -3043,12 +3040,13 @@ bool shell_directory_moved(string_address logical)
         /* Bash updates PWD even when readonly OLDPWD rejects its assignment;
            dash retains its historical short circuit. The directory has
            already changed in either case. */
-        old_set = shell_cd_variable("OLDPWD", shell_directory_was);
-        current_set = (old_set || shell_bash_compat)
-                          ? shell_cd_variable("PWD", shell_directory)
-                          : false;
+        if (shell_cd_variable("OLDPWD", shell_directory_was))
+                return shell_cd_variable("PWD", shell_directory);
 
-        return old_set && current_set;
+        if (shell_bash_compat)
+                shell_cd_variable("PWD", shell_directory);
+
+        return false;
 }
 
 static p8 shell_cd_target[4096];
@@ -3174,7 +3172,12 @@ bool shell_cd_walk(bool physical, bool address_to say,
                 }
         }
 
-        if (!path_walk_join(candidate, sizeof(candidate), shell_directory,
+        /* path_join is the tuned ordinary path. Only its maximum-length
+           answer is ambiguous between an exact fit and truncation, so send
+           that cold boundary through the shared checked walker. */
+        if (path_join(candidate, sizeof(candidate), shell_directory,
+                      shell_cd_target) == sizeof(candidate) - 1 &&
+            !path_walk_join(candidate, sizeof(candidate), shell_directory,
                             string_length(shell_directory), shell_cd_target,
                             ""))
                 return false;
@@ -3292,14 +3295,17 @@ COLD fn shell_cd(writer write, string_address input)
 
         // On a copy: both HOME and OLDPWD point into env_storage, which the
         // first env_set below is free to move out from under them.
-        if (string_length(name) >= sizeof(shell_cd_target))
         {
-                shell_answer(shell_cd_failed_status());
-                return string_format(shell_diagnostic,
-                                     "cd: directory name too long\n");
-        }
+                string_address copied = string_copy_max_end(
+                    shell_cd_target, name, sizeof(shell_cd_target) - 1);
 
-        string_copy_end(shell_cd_target, name);
+                if (string_get(name + (copied - shell_cd_target)))
+                {
+                        shell_answer(shell_cd_failed_status());
+                        return string_format(shell_diagnostic,
+                                             "cd: directory name too long\n");
+                }
+        }
 
         if (!shell_cd_walk(physical, address_of say,
                            address_of physical_named,
@@ -4246,12 +4252,14 @@ PURE bool shell_braceexpand_on()
 
 static PURE bool shell_physical_on()
 {
-        return shell_bash_compat && shell_extra_on(SHELL_EXTRA_PHYSICAL);
+        /* Only Bash-gated setters can turn this extra bit on. Avoid a second
+           identity test on every cd and pwd. */
+        return shell_extra_on(SHELL_EXTRA_PHYSICAL);
 }
 
 PURE bool shell_onecmd_on()
 {
-        return shell_bash_compat && shell_extra_on(SHELL_EXTRA_ONECMD);
+        return shell_extra_on(SHELL_EXTRA_ONECMD);
 }
 
 #define shell_hashall_on() shell_extra_on(SHELL_EXTRA_HASHALL)
@@ -10362,7 +10370,7 @@ static bipolar shell_source_read(bipolar handle,
         return (bipolar)used;
 }
 
-static fn shell_source_execute(p8 address_to text, positive filled)
+static fn shell_source_execute(p8 address_to text, positive filled, bool startup)
 {
         lex_frame frame;
         positive at = 0;
@@ -10376,7 +10384,7 @@ static fn shell_source_execute(p8 address_to text, positive filled)
 
                 text[stop] = end;
                 run_line(text + at);
-                if (exec_source_stop())
+                if (exec_source_stop(startup ? address_of shell_status : null))
                         break;
                 at = stop + 1;
         }
@@ -10492,7 +10500,7 @@ COLD fn shell_dot(writer write, string_address input)
                 }
         }
 
-        shell_source_execute(source_text, filled);
+        shell_source_execute(source_text, filled, false);
 
         memory_free(source_text, source_room);
 

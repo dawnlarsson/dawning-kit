@@ -20,6 +20,8 @@ printf '%s\n' 'printf "literal-name\n"' > "$work/start file"
 cp "$work/start file" "$work/start*"
 cp "$work/start file" "$work/\"quoted\""
 cp "$work/start file" "$work/\x"
+cp "$work/start file" "$work/file1"
+cp "$work/start file" "$work/\$FILE"
 cp "$work/start file" "$work/home/start"
 cp "$work/start file" "$work/search/only-in-path"
 printf '%s\n' 'printf "start\n"' 'return 7' 'echo forbidden' > "$work/return"
@@ -28,6 +30,9 @@ printf '%s\n' 'echo startup' 'exit 7' > "$work/exit"
 printf '%s\n' 'set -e' 'false' 'echo forbidden' > "$work/errexit"
 printf '%s\n' 'printf "body:%s:%s\n" "${value-unset}" "$?"' > "$work/body"
 printf '%s\n' 'set -- replaced args' 'value=changed' > "$work/parameters"
+printf '%s\n' 'cd "$ROOT"' > "$work/cd"
+printf '%s\n' 'printf "source-status:%s\n" "$?"' 'false' > "$work/status"
+printf '%s\n' 'false; return 7; echo forbidden' > "$work/return-after-false"
 : > "$work/input"
 
 capture()
@@ -67,16 +72,27 @@ compare 'literal quote bytes' bash "$work/\"quoted\"" -c ':'
 compare 'literal backslash bytes' bash "$work/\x" -c ':'
 compare 'parameter path' bash '$ROOT/start file' -c ':'
 compare 'command path' bash '$(printf "%s/start file" "$ROOT")' -c ':'
+compare 'backtick path' bash '`printf "%s/start file" "$ROOT"`' -c ':'
+compare 'arithmetic path' bash '$ROOT/file$((1))' -c ':'
+compare 'escaped dollar path' bash '$ROOT/\$FILE' -c ':'
+compare 'empty expansion carries substitution status' bash '$(exit 7)' -c ''
+compare 'missing expanded file carries status' bash '$(exit 7)/missing' -c 'printf "body-status:%s\n" "$?"'
+compare 'source restores expansion status' bash '$(printf "%s/status" "$ROOT"; exit 7)' -c 'printf "body-status:%s\n" "$?"'
 compare 'tilde path' bash '~/start' -c ':'
 compare 'no PATH lookup' bash only-in-path -c 'echo body'
 compare 'missing path ignored' bash "$work/missing" -c 'echo body'
 compare 'empty path ignored' bash '' -c 'echo body'
 compare 'return boundary' bash "$work/return" -c 'printf "body:%s\n" "$?"'
+compare 'startup return preserves prior simple status' bash "$work/return-after-false" -c 'printf "body:%s\n" "$?"'
 compare 'literal fast path observes functions' bash "$work/functions" -c false
 compare 'literal fast path observes EXIT trap' bash "$work/functions" -c ':'
 compare 'startup exit' bash "$work/exit" -c ':'
 compare 'startup errexit' bash "$work/errexit" -c ':'
 compare 'source changes parameters' bash "$work/parameters" -c 'printf "%s:%s:%s\n" "$value" "$#" "$*"' named original
+compare 'startup cd precedes script open' bash "$work/cd" ./body
+diagnostic=ignore compare 'startup precedes missing script' bash "$work/start file" "$work/missing"
+diagnostic=ignore compare 'startup precedes directory rejection' bash "$work/start file" "$work/home"
+diagnostic=ignore compare 'missing script does not run EXIT trap' bash "$work/functions" "$work/missing"
 compare 'noprofile does not disable BASH_ENV' bash "$work/start file" --noprofile -c ':'
 compare 'norc does not disable BASH_ENV' bash "$work/start file" --norc -c ':'
 compare 'noexec skips startup execution' bash "$work/start file" -n -c ':'

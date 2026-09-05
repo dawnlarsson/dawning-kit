@@ -290,9 +290,11 @@ static bool shell_startup_file()
 
         token_used = 0;
         token_overflow = false;
+        shell_substitution_status = shell_status;
         if (!shell_expand_document(token_push_bytes, value,
                                    string_length(value), true))
                 return false;
+        shell_status = shell_substitution_status;
         token_push(end);
         if (token_overflow)
                 return false;
@@ -318,10 +320,8 @@ static bool shell_startup_file()
                 return !no_room;
         }
 
-        shell_source_execute(text, (positive)got);
+        shell_source_execute(text, (positive)got, true);
         memory_free(text, room);
-        // Startup's return status is not the status of the first user command.
-        shell_status = 0;
         return true;
 }
 
@@ -491,24 +491,15 @@ b32 main()
                 positive first = invocation.next;
                 string_address script = arguments[first];
                 positive count = process_arguments - first - 1;
-                bipolar handle = system_open_at(AT_FDCWD, script, FILE_READ);
-
-                if (handle < 0)
-                {
-                        string_format(log_error, "sh: %s: cannot open\n", script);
-                        return 2;
-                }
 
                 if (!shell_start_parameters(arguments, first + 1, count))
                 {
-                        system_close(handle);
                         log_error("sh: no room for arguments\n", 0);
                         return 1;
                 }
 
                 shell_script_name = script;
                 shell_option_flags = (string_address) "";
-                input = handle;
                 script_file = true;
         }
         else if (invocation.next < process_arguments &&
@@ -530,10 +521,26 @@ b32 main()
 
         if (!shell_startup_file())
         {
-                if (script_file && !command)
-                        system_close(input);
                 log_flush();
                 return shell_status ? shell_status : 1;
+        }
+
+        /* Startup files may change directory. Bash opens the named script
+           afterwards, while $0 and its parameters were available to startup.
+           Source-open failures do not run an installed EXIT trap. */
+        if (script_file && !command)
+        {
+                do
+                        input = system_open_at(AT_FDCWD, shell_script_name,
+                                               FILE_READ);
+                while (input == -4);
+                if (input < 0)
+                {
+                        string_format(log_error, "sh: %s: cannot open\n",
+                                      shell_script_name);
+                        log_flush();
+                        return shell_bash_compat ? (input == -2 ? 127 : 126) : 2;
+                }
         }
 
         /*
@@ -627,6 +634,14 @@ b32 main()
                 got = system_read_once(input, shell_buffer + held,
                                        shell_buffer_room - 1 - held);
 
+                if (got < 0 && script_file && shell_bash_compat)
+                {
+                        string_format(log_error, "sh: %s: cannot read\n",
+                                      shell_script_name);
+                        system_close(input);
+                        log_flush();
+                        return 126;
+                }
                 if (got <= 0)
                         break;
 

@@ -356,8 +356,12 @@ static CONST inline INLINE bool lex_extended_head(p8 value)
 }
 
 static string_address lex_nested_at(string_address at);
-static string_address lex_nesting(string_address at);
+static __attribute__((noinline)) string_address lex_nesting(string_address at);
 static string_address lex_quote_end(string_address at, p8 quote);
+
+/* The expander enforces this same ceiling when it later evaluates the nested
+   words.  The earlier syntax walk must not be the unbounded recursive path. */
+#define EXPAND_DEPTH 64
 
 // The three bytes that separate words and lines. Asked in five places, which
 // used to be five spellings of the same three comparisons.
@@ -636,7 +640,7 @@ static PURE string_address lex_quote_end(string_address at, p8 quote)
         started when there is no closing byte at all -- an unfinished one is the
         parser's to complain about, the same as an unfinished quote.
 */
-static PURE string_address lex_nesting(string_address at)
+static PURE string_address lex_nesting_at(string_address at, positive nesting)
 {
         p8 open = string_get(at);
         p8 close = open == '(' ? ')' : open == '{' ? '}' : open;
@@ -651,6 +655,9 @@ static PURE string_address lex_nesting(string_address at)
         bool commands = open == '(' && !string_is(at + 1, '(');
         bool fresh = commands;
         bool comment = false;
+
+        if (nesting >= EXPAND_DEPTH)
+                return at;
 
         while (string_get(step))
         {
@@ -692,8 +699,15 @@ static PURE string_address lex_nesting(string_address at)
 
                 if (c == '\\' && string_get(step + 1))
                 {
+                        p8 carried = string_get(step + 1);
+
                         step += 2;
-                        fresh = false;
+
+                        /* Backslash-newline removes both bytes.  It does not
+                           begin a word and therefore preserves whether # was
+                           fresh on the physical line before it. */
+                        if (carried != '\n')
+                                fresh = false;
                         continue;
                 }
 
@@ -722,7 +736,8 @@ static PURE string_address lex_nesting(string_address at)
                     (string_is(step + 1, '(') || string_is(step + 1, '{')))
                 {
                         string_address inner = step + 1;
-                        string_address stop = lex_nesting(inner);
+                        string_address stop =
+                            lex_nesting_at(inner, nesting + 1);
 
                         if (stop == inner)
                                 return at;
@@ -735,7 +750,8 @@ static PURE string_address lex_nesting(string_address at)
                 if ((c == '<' || c == '>') && string_is(step + 1, '('))
                 {
                         string_address inner = step + 1;
-                        string_address stop = lex_nesting(inner);
+                        string_address stop =
+                            lex_nesting_at(inner, nesting + 1);
 
                         if (stop == inner)
                                 return at;
@@ -747,7 +763,8 @@ static PURE string_address lex_nesting(string_address at)
 
                 if (c == '`' && open != '`')
                 {
-                        string_address stop = lex_nesting(step);
+                        string_address stop =
+                            lex_nesting_at(step, nesting + 1);
 
                         if (stop == step)
                                 return at;
@@ -781,6 +798,12 @@ static PURE string_address lex_nesting(string_address at)
         return at;
 }
 
+static PURE __attribute__((noinline)) string_address
+lex_nesting(string_address at)
+{
+        return lex_nesting_at(at, 0);
+}
+
 /*
         Whether the line is all of the line.
 
@@ -805,6 +828,7 @@ b32 lex_unfinished(string_address line)
         // A # is a comment only where a word could have started, which is the
         // same rule lex_line uses -- echo a#b is one word and not half of one.
         bool fresh = true;
+        bool comments = lex_comments_on();
 
         lex_prepare();
 
@@ -826,8 +850,11 @@ b32 lex_unfinished(string_address line)
                         continue;
                 }
 
-                if (c == '#' && fresh && lex_comments_on())
-                        return LEX_COMPLETE;
+                if (c == '#' && fresh)
+                {
+                        if (comments)
+                                return LEX_COMPLETE;
+                }
 
                 if (lex_blank[c] || lex_operator[c])
                 {
@@ -901,17 +928,10 @@ b32 lex_unfinished(string_address line)
                         continue;
                 }
 
+                if (lex_nested_at(step))
                 {
                         string_address inner = lex_nested_at(step);
-                        string_address stop;
-
-                        if (!inner)
-                        {
-                                step++;
-                                continue;
-                        }
-
-                        stop = lex_nesting(inner);
+                        string_address stop = lex_nesting(inner);
 
                         if (stop == inner)
                                 return LEX_OPEN;
@@ -1211,6 +1231,7 @@ static b32 lex_word(string_address address_to at)
 HOT b32 lex_line(string_address line)
 {
         string_address step = line;
+        bool comments = lex_comments_on();
 
         lex_prepare();
         lex_count = 0;
@@ -1227,8 +1248,11 @@ HOT b32 lex_line(string_address line)
                         break;
 
                 // A comment only begins where a word could have.
-                if (string_get(step) == '#' && lex_comments_on())
-                        break;
+                if (string_get(step) == '#')
+                {
+                        if (comments)
+                                break;
+                }
 
                 lex_at = (positive)(step - line);
 

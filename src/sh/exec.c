@@ -46,6 +46,7 @@ static bool exec_forked;
 static bool exec_asynchronous;
 static bool exec_pipe_status_pending;
 static b32 exec_pipe_status_value;
+static b32 exec_return_previous;
 
 /*
         Which line the command now running was written on.
@@ -125,13 +126,17 @@ static PURE bool exec_line_aborted()
         line, exec_program reset the signal, and every command after the
         control builtin ran anyway.
 */
-static bool exec_source_stop()
+static bool exec_source_stop(b32 address_to startup_status)
 {
         if (!exec_signal)
                 return false;
 
         if (exec_signal == EXEC_SIGNAL_RETURN)
+        {
+                if (startup_status)
+                        *startup_status = exec_return_previous;
                 exec_signal = EXEC_SIGNAL_NONE;
+        }
 
         return true;
 }
@@ -5145,6 +5150,7 @@ bool exec_control_builtin(string_address name, bool run)
         if (!run)
                 return true;
 
+        exec_return_previous = shell_status;
         if (shell_argc > 1 &&
             !exec_control_number(shell_argv[1], true, address_of shell_status))
         {

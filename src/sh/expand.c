@@ -130,7 +130,6 @@ extern positive shell_options;
 */
 b32 shell_substitution_status;
 
-#define EXPAND_DEPTH 64
 #define EXPAND_LOCAL_NAME 128
 #define EXPAND_LOCAL_TEXT 1024
 
@@ -6196,15 +6195,19 @@ static bool shell_expand_document(writer write, string_address body,
                 ready = true;
         }
 
-        expand_begin();
         if (startup && length && body[0] == '~')
         {
+                expand_begin();
                 at = (positive)(expand_tilde(body, false) - body);
                 if (expand_length)
                         write(expand_text, expand_length);
+                if (expand_failed || expand_overflow)
+                        return false;
         }
 
-        while (at < length && !expand_failed)
+        // A literal body never needs the expansion/mark stores initialized.
+        // Each real dollar/backtick piece initializes its own scratch below.
+        while (at < length)
         {
                 positive run = string_span_max(body + at, length - at, plain);
                 p8 value = body[at];
@@ -6249,7 +6252,7 @@ static bool shell_expand_document(writer write, string_address body,
                 write(body + at++, 1);
         }
 
-        return !expand_failed && !expand_overflow;
+        return true;
 }
 
 static fn expand_word(string_address word)

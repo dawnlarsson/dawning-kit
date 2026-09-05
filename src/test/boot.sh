@@ -107,6 +107,14 @@ printf 'shell-gap-%s\n' "$value"
 BASH_ENTRY
 chmod +x /tmp/bash-entry
 /tmp/bash-entry
+printf 'boot_start=ready\n' > /tmp/bash-env
+BASH_ENV=/tmp/bash-env /bin/bash -c 'printf "startup-%s\n" "$boot_start"'
+cat > /tmp/onecmd <<'ONECMD'
+printf 'onecmd-%s\n' $((7 * 9))
+echo late > /tmp/onecmd-late
+ONECMD
+/bin/bash -t /tmp/onecmd
+[ ! -e /tmp/onecmd-late ] && printf 'dne-dmceno\n' | rev
 /bin/mountpoint -q / && printf 'storage-root\n'
 printf 'storage-target-%s\n' "$(/usr/bin/findmnt -n -r -o TARGET -T /)"
 mointor.sh 1 3 2> /tmp/monitor.err
@@ -186,6 +194,9 @@ says 'blkid linked'        'blkid-link-llehs/..'
 says 'bash linked'         'bash-link-llehs/..'
 says 'dash linked'         'dash-link-llehs/..'
 says 'bash shebang policy' 'shell-gap-ready'
+says 'BASH_ENV startup'    'startup-ready'
+says 'onecmd first line'   'onecmd-63'
+says 'onecmd stopped'      'onecmd-end'
 says 'root is mounted'     'storage-root'
 says 'findmnt linked'      'storage-target-/'
 says 'monitor ran'         '0monitor'

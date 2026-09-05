@@ -143,10 +143,13 @@ case_compare 'Bash final redirect pipeline status' "$B" "$MB" \
         'set -o pipefail; true | cat < /no/moonwater-pipeline/input 2>/dev/null; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"'
 case_compare 'Bash left redirect pipeline status' "$B" "$MB" \
         'set -o pipefail; cat < /no/moonwater-pipeline/input 2>/dev/null | true; printf "%s:%s:%s\n" "$?" "${PIPESTATUS[0]}" "${PIPESTATUS[1]}"'
+# A writer racing a failed reader may legitimately finish or receive SIGPIPE.
+# Keep redirect-state checks deterministic, and make readonly's writer survive
+# that signal so its deliberately ignored write error always has status zero.
 case_compare 'lastpipe redirect failure state' "$B" "$MB" \
-        'set +m; shopt -s lastpipe; value=old; printf new | read value < /no/moonwater-pipeline/input 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
+        'set +m; shopt -s lastpipe; value=old; true | read value < /no/moonwater-pipeline/input 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
 case_compare 'lastpipe readonly builtin status' "$B" "$MB" \
-        'set +m; shopt -s lastpipe; readonly value=old; printf new | read value 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
+        'set +m; shopt -s lastpipe; readonly value=old; (trap "" PIPE; printf new 2>/dev/null; :) | read value 2>/dev/null; printf "%s:%s:%s\n" "$?" "$value" "${PIPESTATUS[*]}"'
 case_compare 'dash redirect failure status' "$D" "$M" \
         ': >/no/moonwater-pipeline/target 2>/dev/null'
 case_compare 'dynamic noexec skips successors' "$B" "$MB" \

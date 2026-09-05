@@ -244,6 +244,12 @@ bash_script_case "arithmetic hash is not comment" <<'CASE'
 printf '<%s>\n' "$((16#10))"
 CASE
 
+bash_script_case "substitution continued comment" <<'CASE'
+printf '<%s>\n' "$(printf x; \
+# ignored close )
+printf y)"
+CASE
+
 subject_expected "sh policy unaffected" '<one>
 ' <<'CASE'
 shopt -u interactive_comments
@@ -291,6 +297,23 @@ one \
 EOF
 EOF
 CASE
+
+section "bounds"
+group "nesting"
+
+deep='printf x'
+depth=0
+while [ "$depth" -lt 70 ]; do
+        deep='$('"$deep"')'
+        depth=$((depth + 1))
+done
+capture_command "$work/names/bash" got ": $deep"
+if [ "$got_status" -eq 2 ]; then
+        won
+else
+        lost "recursive substitution cap" \
+                "wanted bounded status 2, got $got_status: $(shown "$work/got.err")"
+fi
 
 section
 printf '  shell lex     %s of %s checks\n' "$pass" "$((pass + fail))"
