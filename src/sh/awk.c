@@ -1513,6 +1513,16 @@ static fn awk_field_from_piece(awk_value address_to field,
 
 static fn awk_split_record()
 {
+        // This record is authoritative again. A separator retained from a
+        // field-authored preceding record must not affect this one.
+        if (awk_record_separator)
+        {
+                awk_text address_to prior = awk_record_separator;
+
+                awk_record_separator = null;
+                awk_text_drop(prior);
+        }
+
         positive separator_length;
         string_address separator = awk_separator(awk_where_fs, address_of separator_length);
         awk_text address_to record = awk_to_text(address_of awk_fields[0]);
@@ -4575,6 +4585,29 @@ static awk_text address_to awk_subscript_key(awk_node address_to list, b32 count
         return awk_builder_text(address_of build);
 }
 
+static fn awk_target_field_locate(awk_node address_to node,
+                                  awk_target address_to into)
+{
+        into->kind = LV_FIELD;
+        into->field = node->sub ? node->index
+                                : awk_whole(awk_eval_number(node->a));
+        into->index = node->sub;
+
+        if (into->field < 0)
+                awk_fatal(null, "attempt to assign to a field before the first");
+}
+
+static fn awk_target_field_prepare(awk_target address_to into)
+{
+        if (into->field > awk_nf)
+                awk_field_grow(into->field);
+
+        // sub(/^ /, "") after $1 = "" works on the record the fields now
+        // spell, not the one that was read.
+        if (into->field == 0 && awk_record_stale)
+                awk_record_rebuild();
+}
+
 static fn awk_target_of(awk_node address_to node, awk_target address_to into)
 {
         into->field = -1;
@@ -4591,39 +4624,43 @@ static fn awk_target_of(awk_node address_to node, awk_target address_to into)
                 return;
 
         case N_FIELD:
-        {
-                into->kind = LV_FIELD;
-                into->field = node->sub ? node->index
-                                        : awk_whole(awk_eval_number(node->a));
-                into->index = node->sub;
-
-                if (into->field < 0)
-                        awk_fatal(null, "attempt to assign to a field before the first");
-
-                if (into->field > awk_nf)
-                        awk_field_grow(into->field);
-
-                // sub(/^ /, "") after $1 = "" works on the record the fields
-                // now spell, not the one that was read.
-                if (into->field == 0 && awk_record_stale)
-                        awk_record_rebuild();
-
+                awk_target_field_locate(node, into);
+                awk_target_field_prepare(into);
                 return;
-        }
 
         case N_SUBSCRIPT:
         {
-                awk_text address_to key = awk_subscript_key(node->a, node->count);
-
                 into->kind = LV_ELEMENT;
-                into->entry = awk_array_place(awk_cell_array(awk_cell_of(node->index)),
-                                              key->text, key->length);
+                awk_text address_to key = awk_subscript_key(node->a, node->count);
+                into->cell = awk_cell_of(node->index);
+                awk_array address_to array = awk_cell_array(into->cell);
+
+                into->entry = awk_array_place(array, key->text, key->length);
                 awk_text_drop(key);
+
                 return;
         }
         }
 
         awk_fatal(null, "not something that can be assigned to");
+}
+
+static bool awk_target_of_sub(awk_node address_to node, awk_target address_to into)
+{
+        if (node->kind != N_FIELD)
+        {
+                awk_target_of(node, into);
+                return false;
+        }
+
+        awk_target_field_locate(node, into);
+
+        // Extending fields that already spell the record must make a later
+        // $0 include the new empty fields even when sub() finds no match.
+        bool rebuild_on_miss = into->field > awk_nf && awk_record_separator;
+
+        awk_target_field_prepare(into);
+        return rebuild_on_miss;
 }
 
 static awk_value address_to awk_target_slot(awk_target address_to which)
@@ -4676,15 +4713,16 @@ static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
                 return;
         }
 
-        awk_target_of(node->a, address_of target);
-
-        decimal left = awk_to_number(awk_target_slot(address_of target));
-
         awk_eval(node->b, address_of right);
 
         decimal value = awk_to_number(address_of right);
-
         awk_value_done(address_of right);
+
+        // Compound assignment follows the reference's right-before-left
+        // order too: the RHS may change the field number or array key used by
+        // the target expression before that expression is evaluated.
+        awk_target_of(node->a, address_of target);
+        decimal left = awk_to_number(awk_target_slot(address_of target));
 
         switch (node->sub)
         {
@@ -5303,6 +5341,20 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         case B_SUB:
         case B_GSUB:
         {
+                regex_program address_to program = null;
+                awk_text address_to pattern = null;
+
+                // GNU awk evaluates sub()/gsub() arguments in pattern,
+                // replacement, destination order. Delay compiling a dynamic
+                // pattern until the other two have finished: either can
+                // compile another expression and wind the shared regex cache.
+                if (first->kind == N_REGEX && first->program)
+                        program = first->program;
+                else if (first->kind == N_REGEX)
+                        pattern = awk_text_hold(first->text);
+                else
+                        pattern = awk_eval_text(first);
+
                 awk_text address_to with = awk_eval_text(second);
                 awk_target target;
                 awk_node address_to where = third;
@@ -5313,15 +5365,15 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 {
                         memory_fill(address_of holder, 0, sizeof(awk_node));
                         holder.kind = N_FIELD;
-                        holder.a = awk_node_new(N_NUMBER);
+                        holder.sub = 1;
+                        holder.index = 0;
                         where = address_of holder;
                 }
 
-                awk_target_of(where, address_of target);
+                bool rebuild_on_miss = awk_target_of_sub(where, address_of target);
 
-                // Last, because everything above can evaluate an expression
-                // and an expression can compile a pattern of its own.
-                regex_program address_to program = awk_program_of(first);
+                if (!program)
+                        program = awk_regex_dynamic(pattern);
 
                 awk_text address_to subject = awk_text_hold(awk_to_text(awk_target_slot(address_of target)));
                 awk_text address_to made = awk_replace(subject, program, with, node->index == B_GSUB,
@@ -5333,10 +5385,18 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                         awk_target_written(address_of target);
                 }
                 else
+                {
                         awk_text_drop(made);
+
+                        // Merely selecting a field beyond NF extends NF in
+                        // this lvalue context, even when nothing matched.
+                        if (rebuild_on_miss)
+                                awk_field_written(target.field);
+                }
 
                 awk_text_drop(subject);
                 awk_text_drop(with);
+                awk_text_drop(pattern);
                 awk_set_number(out, (decimal)count);
                 return;
         }

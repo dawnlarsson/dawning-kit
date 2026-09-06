@@ -436,8 +436,9 @@ large_copy_stress() {
 }
 
 # A zero result in the middle of a stat-proven data extent is premature EOF,
-# not a successful short copy.  Inject each transfer floor independently;
-# this stays optional on hosts without a usable ptrace/strace setup.
+# not a successful short copy.  An output close can carry a delayed writeback
+# failure too. Inject each independently; this stays optional on hosts without
+# a usable ptrace/strace setup.
 copy_short_extent_stress() {
         if ! command -v strace >/dev/null 2>&1 ||
            ! strace -qq -o "$work/cp-strace-probe" -e trace=none true \
@@ -445,12 +446,27 @@ copy_short_extent_stress() {
            ! strace -qq -o "$work/cp-inject-probe" \
                 -e inject=copy_file_range:retval=0:when=1 \
                 -e trace=copy_file_range true 2>/dev/null; then
-                echo '  cp       short EOF: strace/ptrace unavailable, three injection cases did not run'
+                echo '  cp       transfer failures: strace/ptrace unavailable, four injection cases did not run'
                 return
         fi
 
         dd if=/dev/urandom of="$work/cp-short-source" bs=1M count=1 \
                 status=none 2>/dev/null
+
+        if strace -qq -o "$work/cp-close-error.trace" \
+             -e inject=close:error=EIO:when=2 -e trace=close \
+             "$binaries/cp" "$work/cp-short-source" \
+             "$work/cp-close-error" 2>/dev/null; then
+                injected_status=0
+        else
+                injected_status=$?
+        fi
+        if [ "$injected_status" -ne 0 ] &&
+           grep -q 'close(.* = -1 EIO' "$work/cp-close-error.trace"; then
+                report ok
+        else
+                report bad 'output close failure' 'delayed write error was accepted'
+        fi
 
         if ! strace -qq -o "$work/cp-extent-probe.trace" \
                 -e trace=copy_file_range \

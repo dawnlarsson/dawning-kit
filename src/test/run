@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -65,6 +65,7 @@ describe()
         reserve) echo "movable mappings, growth failures, relocation and sparse-page residency" ;;
         utf8) echo "bounded UTF-8 character traversal, malformed bytes and guard pages on three machines" ;;
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
+        table) echo "shared table escaping, field widths and multiline boundaries on three machines" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
         numbers)  echo "strtod and the integer conversions, in ULP against glibc" ;;
         scan)     echo "scanf's conversions, every one against glibc" ;;
@@ -1960,6 +1961,7 @@ lane_allocator() { freestanding_checks_lane allocator src/test/allocator.c; }
 lane_reserve()   { freestanding_checks_lane reserve src/test/reserve.c; }
 lane_utf8()      { freestanding_checks_lane utf8 src/test/utf8.c; }
 lane_hex()       { freestanding_checks_lane hex src/test/hex.c; }
+lane_table()     { freestanding_checks_lane table src/test/table.c; }
 lane_storage_io() { freestanding_checks_lane storage_io src/test/storage_io.c; }
 lane_leaving()   { freestanding_checks_lane leaving src/test/leaving.c; }
 lane_numbers()   { freestanding_checks_lane numbers src/test/number.c; }

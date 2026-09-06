@@ -124,6 +124,8 @@ for name in tool_names:
 
 cases = [
     ("cat", "cat", (str(data),), None),
+    ("cat-number", "cat", ("-n", str(data)), None),
+    ("cat-visible", "cat", ("-v", str(data)), None),
     ("wc-lines", "wc", ("-l", str(data)), None),
     ("grep-count", "grep", ("-c", "needle", str(data)), None),
     ("cut-field", "cut", ("-d:", "-f2", str(data)), None),

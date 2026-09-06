@@ -641,6 +641,8 @@ compare 'nil max and invalid UUIDs' uuidparse \
         '"$TOOL" 00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff bad'
 compare 'JSON valid and invalid rows' uuidparse \
         '"$TOOL" -J bad 550e8400-e29b-41d4-a716-446655440000'
+compare 'JSON missing type is null' uuidparse \
+        '"$TOOL" -J 00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff'
 compare 'JSON projection' uuidparse \
         '"$TOOL" -J -o TYPE,UUID 550e8400-e29b-41d4-a716-446655440000'
 subject 'unknown column rejected' uuidparse \

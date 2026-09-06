@@ -62,6 +62,7 @@ printf 'a\nb\n\n\nc\nd\n\ne\n' > "$work/paragraphs"
 printf '10.0\n010\n1e2\n+3\n abc \n\n0x10\n3.\n' > "$work/looks"
 printf '+inf\n-inf\n+nan\n-nan\n+INF\n-NaN\n +inf \n+inf5\n+infinity\n-nan(1)\n+in\ninf\nnan\n' > "$work/words"
 printf 'x\n' > "$work/one"
+printf 'a b\nc   d\n' > "$work/field-authority"
 : > "$work/empty"
 
 case_start()
@@ -283,6 +284,12 @@ compare 'increment' /dev/null 'BEGIN{x=5; print x++, x, ++x, x, x--, x, --x, x}'
 compare 'increment string' /dev/null 'BEGIN{x="5"; x++; print x; y="a"; y++; print y}'
 compare 'increment field' "$work/grid" '{i=1; print $i++, i, $1}'
 compare 'assignment operators' /dev/null 'BEGIN{x=10; x-=1; x*=2; x/=3; x%=4; x^=2; print x}'
+compare 'compound reads after rhs' /dev/null \
+        'BEGIN{x=1; print (x += (x=2)), x}'
+compare 'compound field after nf rhs' /dev/null \
+        'BEGIN{$0="1 2 3"; $3 += (NF=1); print NF, "[" $0 "]", "[" $3 "]"}'
+compare 'compound record after field rhs' /dev/null \
+        'BEGIN{$0="1 2 3"; $0 += ($1=2); print NF, "[" $0 "]", "[" $1 "]"}'
 compare 'chained assignment' /dev/null 'BEGIN{x = y = 3; print x, y}'
 compare 'ternary' /dev/null 'BEGIN{print 1?"a":"b", 0?"a":"b"}'
 compare 'ternary nested' /dev/null 'BEGIN{x=2; print x==1?"one":x==2?"two":"many"}'
@@ -362,6 +369,14 @@ compare 'reading creates' /dev/null 'BEGIN{x = a["k"]; print length(a), ("k" in 
 compare 'delete one' /dev/null 'BEGIN{a[1];a[2]; delete a[1]; print length(a), (1 in a), (2 in a)}'
 compare 'delete all' /dev/null 'BEGIN{a[1];a[2];a[3]; delete a; print length(a)}'
 compare 'delete in a loop' /dev/null 'BEGIN{a[1];a[2];a[3]; for(k in a) delete a[k]; print length(a)}'
+compare 'compound array key once' /dev/null \
+        'BEGIN{a[1]=1; i=1; print (a[i++] += (a[1]=2)), a[1], i}'
+compare 'compound array key after rhs' /dev/null \
+        'BEGIN{i="x"; a["x"]=1; print (a[i] += (i="y")), a["x"], i}'
+compare 'compound deleted target' /dev/null \
+        'function zap(){delete a[1]; return 2} BEGIN{a[1]=1; print (a[1] += zap()), a[1]}'
+compare 'compound reinserted target' /dev/null \
+        'function zap(){delete a[1]; a[1]=9; return 2} BEGIN{a[1]=1; print (a[1] += zap()), a[1]}'
 compare 'subsep' /dev/null 'BEGIN{a[1,2]="x"; for(k in a){split(k,p,SUBSEP); print p[1], p[2]}}'
 compare 'in with parentheses' /dev/null 'BEGIN{a[1,2]=1; print ((1,2) in a), ((1,3) in a)}'
 compare 'subsep by hand' /dev/null 'BEGIN{a[1,2]=1; print ((1 SUBSEP 2) in a)}'
@@ -413,6 +428,26 @@ compare 'gsub anchored' /dev/null 'BEGIN{s="aaa"; n=gsub(/^a/,"X",s); print n, s
 compare 'sub on the record' "$work/grid" '{sub(/1/,"X"); print}'
 compare 'gsub on a field' "$work/colons" -F: '{gsub(/e/,"E",$2); print; print NF}'
 compare 'gsub on an element' /dev/null 'BEGIN{a[1]="xyx"; gsub(/x/,"z",a[1]); print a[1]}'
+compare 'sub target changed by pattern' /dev/null \
+        'function p(){delete a[1]; a[1]="abc"; return "a"} BEGIN{a[1]="abc"; print sub(p(),"X",a[1]), a[1]}'
+compare 'sub argument order' /dev/null \
+        'function k(){print "K";return "x"} function p(){print "P";return "a"} function r(){print "R";return "X"} BEGIN{a["x"]="abc";print sub(p(),r(),a[k()]),a["x"]}'
+compare 'sub pattern changes nested key' /dev/null \
+        'function p(){delete a["key"];delete a["target"];a["target"]="abc";return "a"} BEGIN{a["key"]="target";a["target"]="old";print sub(p(),"X",a[a["key"]]),a["target"]}'
+compare 'sub held pattern survives cache wrap' /dev/null \
+        'function p(){return "a"} function r(i){for(i=0;i<8;i++)("x"~("r"i));return "X"} function k(i){for(i=0;i<8;i++)("x"~("k"i));return "x"} BEGIN{a["x"]="abc";print sub(p(),r(),a[k()]),a["x"]}'
+compare 'sub no match grows field' /dev/null \
+        'function p(){NF=1;return "2"} BEGIN{$0="1 2 3";print sub(p(),"X",$3),NF,"["$0"]","["$3"]"}'
+compare 'sub no match grows dynamic field' /dev/null \
+        'function field(){n++;return 3} function p(){NF=1;return "a"} BEGIN{$0="a b abc";print sub(p(),"X",$(field())),n,NF,"["$0"]"}'
+compare 'sub target index shrinks nf' /dev/null \
+        'function field(){NF=1;return 3} BEGIN{$0="1 2 3";print sub("z","X",$(field())),NF,"["$0"]"}'
+compare 'sub no match preserves input record' /dev/null \
+        'BEGIN{$0="a   b";q=NF;n=sub(/z/,"x",$3);print q,n,NF,"["$0"]"}'
+compare 'sub field authority is record local' "$work/field-authority" \
+        'NR==1{$1=$1;next} {n=sub(/z/,"X",$3);print n,NF,"["$0"]"}'
+compare 'sub default target reuse' /dev/null \
+        'BEGIN{$0="x";for(i=0;i<10000;i++)sub(/z/,"Z");print $0}'
 compare 'match' /dev/null 'BEGIN{print match("hello",/l+/), RSTART, RLENGTH}'
 compare 'match failing' /dev/null 'BEGIN{print match("hello",/z/), RSTART, RLENGTH}'
 compare 'match longest' /dev/null 'BEGIN{print match("aaa",/a*/), RSTART, RLENGTH}'

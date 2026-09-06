@@ -528,6 +528,44 @@ static const p8 byte_simple_escapes[256] = {
 
 #define byte_simple_escape(value) byte_simple_escapes[(p8)(value)]
 
+/* JSON byte-string policy shared by UUID output and util-linux tables.
+   Controls use the exact \u00xx spelling expected by those interfaces;
+   printable spans cross the writer once, not once per byte. */
+static fn writer_json_string(writer output, string_address value)
+{
+        string_address start = value;
+        output("\"", 1);
+
+        while (*value)
+        {
+                p8 byte = *value;
+                if (byte >= ' ' && byte != '"' && byte != '\\')
+                {
+                        value++;
+                        continue;
+                }
+
+                if (value > start)
+                        output(start, (positive)(value - start));
+                if (byte == '"' || byte == '\\')
+                {
+                        p8 escaped[2] = {'\\', byte};
+                        output(escaped, sizeof(escaped));
+                }
+                else
+                {
+                        p8 escaped[6] = {'\\', 'u', '0', '0'};
+                        memory_into_hex(escaped + 4, address_of byte, 1);
+                        output(escaped, sizeof(escaped));
+                }
+                value++;
+                start = value;
+        }
+        if (value > start)
+                output(start, (positive)(value - start));
+        output("\"", 1);
+}
+
 /* Regex, glob and tr share the [:name:] submachine.  A null limit means the
    surrounding string's terminator is the bound. */
 static PURE inline INLINE string_address byte_class_end(string_address text,

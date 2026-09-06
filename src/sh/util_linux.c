@@ -3765,67 +3765,26 @@ static string_address ul_lsns_table_field(address_any row, p8 column,
         return ul_lsns_field((ul_lsns_entry address_to)row, column, scratch);
 }
 
-/* libsmartcols' raw mode protects field separators.  Process arguments may
-   also contain literal controls or backslashes, so keep every record on one
-   unambiguous physical line instead of escaping spaces alone. */
-static fn ul_lsns_raw(string_address text)
+static PURE positive ul_table_line_count(string_address text)
 {
-        static const p8 hex[] = "0123456789abcdef";
-
-        while (string_get(text))
-        {
-                p8 byte = string_get(text++);
-
-                if (byte > ' ' && byte < 0x7f && byte != '\\')
-                        log(text - 1, 1);
-                else
-                {
-                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
-                                         hex[byte & 15]};
-                        log(escaped, sizeof(escaped));
-                }
-        }
-}
-
-/* Normal smartcols output leaves separators readable but still quotes bytes
-   that could manufacture a second physical row. */
-static PURE positive ul_lsns_safe_length(string_address text)
-{
-        positive length = 0;
-
-        while (string_get(text))
-        {
-                p8 byte = string_get(text++);
-                length += byte < ' ' || byte == 0x7f ? 4 : 1;
-        }
-        return length;
-}
-
-static PURE positive ul_table_line_count(string_address text,
-                                         bool multiline)
-{
-        positive count = 1;
-        if (multiline)
-                while (string_get(text))
-                        if (string_get(text++) == '\n')
-                                count++;
-        return count;
+        return memory_count(text, string_length(text), '\n') + 1;
 }
 
 static string_address ul_table_line(string_address text, positive wanted,
                                     positive address_to length)
 {
         while (wanted && string_get(text))
-                if (string_get(text++) == '\n')
-                        wanted--;
+        {
+                text = string_first_of_or_end(text, '\n');
+                if (string_get(text))
+                        text++, wanted--;
+        }
         if (wanted)
         {
                 address_to length = 0;
                 return (string_address)"";
         }
-        string_address stop = text;
-        while (string_get(stop) && string_get(stop) != '\n')
-                stop++;
+        string_address stop = string_first_of_or_end(text, '\n');
         address_to length = (positive)(stop - text);
         return text;
 }
@@ -3844,54 +3803,42 @@ static PURE positive ul_lsns_safe_span_length(string_address text,
 
 static PURE positive ul_table_safe_width(string_address text, bool multiline)
 {
-        if (!multiline)
-                return ul_lsns_safe_length(text);
         positive width = 0;
-        positive lines = ul_table_line_count(text, true);
-        for (positive line = 0; line < lines; line++)
+        // Advance from the previous line instead of repeatedly walking from
+        // the start. Bounded and NUL-terminated fields share one width policy.
+        for (;;)
         {
-                positive bytes;
-                string_address part = ul_table_line(text, line,
-                                                     address_of bytes);
-                width = max(width, ul_lsns_safe_span_length(part, bytes));
+                string_address stop = multiline
+                    ? string_first_of_or_end(text, '\n')
+                    : text + string_length(text);
+                width = max(width, ul_lsns_safe_span_length(
+                                       text, (positive)(stop - text)));
+                if (!*stop)
+                        break;
+                text = stop + 1;
         }
         return width;
 }
 
-static fn ul_lsns_safe(string_address text)
-{
-        static const p8 hex[] = "0123456789abcdef";
-
-        while (string_get(text))
-        {
-                p8 byte = string_get(text++);
-
-                if (byte >= ' ' && byte != 0x7f)
-                        log(text - 1, 1);
-                else
-                {
-                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
-                                         hex[byte & 15]};
-                        log(escaped, sizeof(escaped));
-                }
-        }
-}
-
+/* Normal smartcols output preserves spaces/high bytes and escapes controls;
+   raw mode instead reuses storage_write_hex_escaped's stricter field policy. */
 static fn ul_lsns_safe_span(string_address text, positive bytes)
 {
-        static const p8 hex[] = "0123456789abcdef";
+        positive start = 0;
         for (positive i = 0; i < bytes; i++)
         {
                 p8 byte = string_get(text + i);
                 if (byte >= ' ' && byte != 0x7f)
-                        log(text + i, 1);
-                else
-                {
-                        p8 escaped[4] = {'\\', 'x', hex[byte >> 4],
-                                         hex[byte & 15]};
-                        log(escaped, sizeof(escaped));
-                }
+                        continue;
+                if (i > start)
+                        log(text + start, i - start);
+                p8 escaped[4] = {'\\', 'x'};
+                memory_into_hex(escaped + 2, address_of byte, 1);
+                log(escaped, sizeof(escaped));
+                start = i + 1;
         }
+        if (bytes > start)
+                log(text + start, bytes - start);
 }
 
 static fn ul_lsns_safe_span_field(string_address text, positive bytes,
@@ -3904,44 +3851,6 @@ static fn ul_lsns_safe_span_field(string_address text, positive bytes,
         ul_lsns_safe_span(text, bytes);
         if (left)
                 writer_fill(log, padding, ' ');
-}
-
-static fn ul_lsns_safe_field(string_address text, positive width, bool left)
-{
-        positive length = ul_lsns_safe_length(text);
-        positive padding = width > length ? width - length : 0;
-
-        if (!left)
-                writer_fill(log, padding, ' ');
-        ul_lsns_safe(text);
-        if (left)
-                writer_fill(log, padding, ' ');
-}
-
-static fn ul_lsns_json_string(string_address text)
-{
-        static const p8 hex[] = "0123456789abcdef";
-
-        log("\"", 1);
-        while (string_get(text))
-        {
-                p8 byte = string_get(text++);
-
-                if (byte == '"' || byte == '\\')
-                {
-                        p8 escaped[2] = {'\\', byte};
-                        log(escaped, sizeof(escaped));
-                }
-                else if (byte < ' ')
-                {
-                        p8 escaped[6] = {'\\', 'u', '0', '0',
-                                         hex[byte >> 4], hex[byte & 15]};
-                        log(escaped, sizeof(escaped));
-                }
-                else
-                        log(text - 1, 1);
-        }
-        log("\"", 1);
 }
 
 static fn ul_table_json(string_address name, address_any rows,
@@ -3985,7 +3894,7 @@ static fn ul_table_json(string_address name, address_any rows,
                                  json == UL_TABLE_NULL_NUMBER)
                                 log(value, string_length(value));
                         else
-                                ul_lsns_json_string(value);
+                                writer_json_string(log, value);
                 }
                 log("\n      }", 8);
         }
@@ -4054,7 +3963,7 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                         continue;
                                 p8 scratch[96];
                                 positive have = ul_table_line_count(
-                                    field_of(entry, column, scratch), true);
+                                    field_of(entry, column, scratch));
                                 lines = max(lines, have);
                         }
 
@@ -4081,7 +3990,8 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                 if (field)
                                         log(" ", 1);
                                 if (raw)
-                                        ul_lsns_raw(value);
+                                        storage_write_hex_escaped(log, value,
+                                                                  true, false);
                                 else
                                 {
                                         bool number =
@@ -9347,7 +9257,7 @@ static fn ul_wipefs_parsable(ul_wipefs_work address_to work,
 
                         if (field)
                                 log(",", 1);
-                        ul_lsns_raw(value);
+                        storage_write_hex_escaped(log, value, true, false);
                 }
                 log("\n", 1);
         }
@@ -12686,7 +12596,7 @@ static fn ul_lsblk_json_scalar(ul_lsblk_device address_to device, p8 column)
         else if (kind == UL_TABLE_NUMBER || kind == UL_TABLE_NULL_NUMBER)
                 log(value, string_length(value));
         else
-                ul_lsns_json_string(value);
+                writer_json_string(log, value);
 }
 
 static positive ul_lsblk_json_row(positive row, p8 address_to columns,
@@ -12708,7 +12618,7 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                         for (positive m = 0; m < device->mount_count; m++)
                         {
                                 if (m) log(",", 1);
-                                ul_lsns_json_string(device->mountpoints[m]);
+                                writer_json_string(log, device->mountpoints[m]);
                         }
                         log("]", 1);
                 }

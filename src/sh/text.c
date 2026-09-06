@@ -5151,6 +5151,10 @@ static positive cat_line_number;
 static bool cat_blank_before;
 static bool cat_at_line_start;
 
+/* Bytes cat -v writes unchanged.  The structural newline and tab paths stay
+   outside this set, as do every control/high byte text_visible expands. */
+static const b8 cat_visible_span[256] = {[32 ... 126] = 1};
+
 static fn cat_number()
 {
         // Six wide and right aligned, then a tab, which is what GNU does and
@@ -5172,6 +5176,23 @@ static fn cat_number()
         cat_line_number++;
 }
 
+/* Shared state transition for a byte at the start of a physical line.
+   False means the newline belongs to an already-emitted blank run. */
+static inline INLINE bool cat_line_start(bool blank)
+{
+        if ((cat_flags & CAT_SQUEEZE) && blank && cat_blank_before)
+                return false;
+
+        cat_blank_before = blank;
+
+        if ((cat_flags & CAT_NUMBER_FULL) ? !blank
+                                          : (cat_flags & CAT_NUMBER))
+                cat_number();
+
+        cat_at_line_start = false;
+        return true;
+}
+
 // A byte as -v spells it: control characters as ^X, the high half as M- and
 // then the same rule again. Tab and newline are touched separately by -T.
 static fn cat_walked()
@@ -5180,6 +5201,45 @@ static fn cat_walked()
 
         while (text_fill())
         {
+                /* Numbering and blank squeezing only care where newlines
+                   are.  Keep the byte walker for visible/tab/end
+                   transformations, but move an untouched record span at a
+                   time for the common -n/-b/-s paths. */
+                if (!(cat_flags & (CAT_ENDS | CAT_TABS | CAT_SHOW)))
+                {
+                        while (text_input.position < text_input.filled)
+                        {
+                                p8 address_to at =
+                                    text_input.buffer + text_input.position;
+                                positive left =
+                                    text_input.filled - text_input.position;
+                                p8 address_to newline =
+                                    memory_first_of(at, '\n', left);
+                                bool blank = newline == at;
+
+                                if (cat_at_line_start)
+                                {
+                                        if (!cat_line_start(blank))
+                                        {
+                                                text_input.position++;
+                                                continue;
+                                        }
+                                }
+
+                                positive take = newline
+                                                    ? (positive)(newline - at) + 1
+                                                    : left;
+
+                                text_put(at, take);
+                                text_input.position += take;
+
+                                if (newline)
+                                        cat_at_line_start = true;
+                        }
+
+                        continue;
+                }
+
                 while (text_input.position < text_input.filled)
                 {
                         p8 value = text_input.buffer[text_input.position++];
@@ -5189,18 +5249,23 @@ static fn cat_walked()
                                 bool blank = value == '\n';
 
                                 // -s: any run of blank lines becomes one.
-                                if ((cat_flags & CAT_SQUEEZE) && blank &&
-                                    cat_blank_before)
+                                if (!cat_line_start(blank))
                                         continue;
+                        }
 
-                                cat_blank_before = blank;
+                        if ((cat_flags & CAT_SHOW) &&
+                            cat_visible_span[value])
+                        {
+                                p8 address_to start = text_input.buffer +
+                                                      text_input.position - 1;
+                                positive run = string_span_max(
+                                    start,
+                                    text_input.filled - text_input.position + 1,
+                                    cat_visible_span);
 
-                                if ((cat_flags & CAT_NUMBER_FULL) ? !blank
-                                                                  : (cat_flags &
-                                                                     CAT_NUMBER))
-                                        cat_number();
-
-                                cat_at_line_start = false;
+                                text_put(start, run);
+                                text_input.position += run - 1;
+                                continue;
                         }
 
                         if (value == '\n')

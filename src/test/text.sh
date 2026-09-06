@@ -75,6 +75,11 @@ printf '\n' >> "$work/cut_wide"
 head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
 printf ' y\n' >> "$work/wc_boundary"
 
+# cat's numbered/squeezed and visible walkers carry line state across reader
+# refills while emitting ordinary printable spans in bulk.
+head -c 65535 /dev/zero | tr '\0' x > "$work/cat_refill"
+printf '\n\n\nend\t\001\377\n' >> "$work/cat_refill"
+
 # tr compacts delete/squeeze blocks in place.  Put a retained byte on both
 # sides of a refill and a squeezed run across it, so neither path can lose
 # state at the reader boundary.
@@ -2278,6 +2283,9 @@ compare 'cat all'        cat d   -A
 compare 'cat squeeze'    cat s   -s
 compare 'cat number squeeze' cat s -ns
 compare 'cat show ends'  cat a   -e
+compare 'cat refill number squeeze' cat cat_refill -ns
+compare 'cat refill visible' cat cat_refill -v
+compare 'cat refill all' cat cat_refill -A
 compare 'cat two'        cat -   "$work/a" "$work/b"
 compare 'cat missing'    cat -   "$work/nosuch"
 compare 'cat empty'      cat -   "$work/empty"

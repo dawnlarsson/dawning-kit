@@ -2764,21 +2764,77 @@ static bool file_copy_range_fallback(bipolar result)
                result == -ERROR_NOT_SUPPORTED;
 }
 
-static bool file_copy_buffered(bipolar in, bipolar out)
+/* Copy through the current descriptor positions.  cp uses the open-ended
+   form; split gives an exact length and carries the two capability bits
+   across output pieces so each unavailable kernel floor is tried once. */
+static inline INLINE bool file_copy_stream(
+    bipolar in, bipolar out, p64 length, bool bounded,
+    bool address_to range_copy, bool address_to send_copy)
 {
-        while (1)
+        while ((!bounded || length) && address_to range_copy)
         {
+                positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
+                                   ? FILE_KERNEL_COPY_SIZE : (positive)length;
+                bipolar copied = file_copy_range_once(in, null, out, null, ask);
+
+                if (copied > 0)
+                {
+                        if (bounded)
+                                length -= (positive)copied;
+                        continue;
+                }
+                if (!copied)
+                        return !bounded;
+                if (copied == -4)
+                        continue;
+                if (!file_copy_range_fallback(copied))
+                        return false;
+
+                address_to range_copy = false;
+        }
+
+        while ((!bounded || length) && address_to send_copy)
+        {
+                positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
+                                   ? FILE_KERNEL_COPY_SIZE : (positive)length;
+                bipolar copied = file_send_range_once(in, null, out, ask);
+
+                if (copied > 0)
+                {
+                        if (bounded)
+                                length -= (positive)copied;
+                        continue;
+                }
+                if (!copied)
+                        return !bounded;
+                if (copied == -4)
+                        continue;
+                if (!file_copy_range_fallback(copied))
+                        return false;
+
+                address_to send_copy = false;
+        }
+
+        while (!bounded || length)
+        {
+                positive ask = !bounded || length > sizeof(file_transfer)
+                                   ? sizeof(file_transfer) : (positive)length;
                 bipolar taken = system_read_retry((positive)in, file_transfer,
-                                                   sizeof(file_transfer));
+                                                   ask);
 
                 if (taken < 0)
                         return false;
                 if (!taken)
-                        return true;
+                        return !bounded;
                 if (system_write_all((positive)out, file_transfer,
                                      (positive)taken) != (positive)taken)
                         return false;
+
+                if (bounded)
+                        length -= (positive)taken;
         }
+
+        return true;
 }
 
 /* Copy one known data extent. A capability miss switches every later extent
@@ -2950,59 +3006,15 @@ static bool file_copy_contents_open(bipolar from_directory, string_address from,
         {
                 bool range_copy = true;
                 bool send_copy = true;
-
-                while (1)
-                {
-                        bipolar copied = file_copy_range_once(
-                            in, null, out, null, FILE_KERNEL_COPY_SIZE);
-
-                        if (copied > 0)
-                                continue;
-                        if (!copied)
-                        {
-                                complete = true;
-                                break;
-                        }
-                        if (copied == -4)
-                                continue;
-                        if (file_copy_range_fallback(copied))
-                        {
-                                range_copy = false;
-                                break;
-                        }
-
-                        break;
-                }
-
-                while (!complete && !range_copy && send_copy)
-                {
-                        bipolar copied = file_send_range_once(
-                            in, null, out, FILE_KERNEL_COPY_SIZE);
-
-                        if (copied > 0)
-                                continue;
-                        if (!copied)
-                        {
-                                complete = true;
-                                break;
-                        }
-                        if (copied == -4)
-                                continue;
-                        if (file_copy_range_fallback(copied))
-                        {
-                                send_copy = false;
-                                break;
-                        }
-
-                        break;
-                }
-
-                if (!complete && !range_copy && !send_copy)
-                        complete = file_copy_buffered(in, out);
+                complete = file_copy_stream(in, out, 0, false,
+                                            address_of range_copy,
+                                            address_of send_copy);
         }
 
         system_close(in);
-        system_close(out);
+
+        if (system_close(out) < 0)
+                complete = false;
 
         return complete;
 }
@@ -10736,72 +10748,6 @@ static bool split_output_close(split_output address_to output)
         return true;
 }
 
-/* Exactly one known-size byte piece.  The capability booleans persist across
-   output files so an EXDEV or unsupported result is paid only once. */
-static bool split_copy_piece(bipolar in, bipolar out, positive length,
-                             bool address_to range_copy,
-                             bool address_to send_copy)
-{
-        while (length && address_to range_copy)
-        {
-                positive ask = length > FILE_KERNEL_COPY_SIZE
-                                   ? FILE_KERNEL_COPY_SIZE : length;
-                bipolar copied = file_copy_range_once(in, null, out, null, ask);
-
-                if (copied > 0)
-                {
-                        length -= (positive)copied;
-                        continue;
-                }
-                if (copied == -4)
-                        continue;
-                if (copied < 0 && file_copy_range_fallback(copied))
-                {
-                        address_to range_copy = false;
-                        break;
-                }
-                return false;
-        }
-
-        while (length && address_to send_copy)
-        {
-                positive ask = length > FILE_KERNEL_COPY_SIZE
-                                   ? FILE_KERNEL_COPY_SIZE : length;
-                bipolar copied = file_send_range_once(in, null, out, ask);
-
-                if (copied > 0)
-                {
-                        length -= (positive)copied;
-                        continue;
-                }
-                if (copied == -4)
-                        continue;
-                if (copied < 0 && file_copy_range_fallback(copied))
-                {
-                        address_to send_copy = false;
-                        break;
-                }
-                return false;
-        }
-
-        while (length)
-        {
-                positive ask = length < sizeof(file_transfer)
-                                   ? length : sizeof(file_transfer);
-                bipolar taken = system_read_retry((positive)in, file_transfer,
-                                                   ask);
-
-                if (taken <= 0)
-                        return false;
-                if (system_write_all((positive)out, file_transfer,
-                                     (positive)taken) != (positive)taken)
-                        return false;
-                length -= (positive)taken;
-        }
-
-        return true;
-}
-
 static bool split_regular_bytes(bipolar in, p64 length, positive piece,
                                 split_output address_to output)
 {
@@ -10813,7 +10759,7 @@ static bool split_regular_bytes(bipolar in, p64 length, positive piece,
                 positive here = length < (p64)piece ? (positive)length : piece;
 
                 if (!split_output_open(output) ||
-                    !split_copy_piece(in, output->handle, here,
+                    !file_copy_stream(in, output->handle, here, true,
                                       address_of range_copy,
                                       address_of send_copy))
                 {
@@ -11072,7 +11018,7 @@ static bool split_distribute_regular(bipolar in, p64 length, positive chunks,
                 positive here = (positive)ordinary + (positive)(i < extra);
 
                 if (!split_output_open(output) ||
-                    (here && !split_copy_piece(in, output->handle, here,
+                    (here && !file_copy_stream(in, output->handle, here, true,
                                                address_of range_copy,
                                                address_of send_copy)) ||
                     !split_output_close(output))

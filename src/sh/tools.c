@@ -6297,30 +6297,6 @@ static string_address tools_uuid_cell(tools_uuid_record address_to record,
         return record->time;
 }
 
-static fn tools_uuid_json_string(string_address value)
-{
-        text_put_character('"');
-        while (string_get(value))
-        {
-                p8 byte = string_get(value++);
-                if (byte == '"' || byte == '\\')
-                {
-                        text_put_character('\\');
-                        text_put_character(byte);
-                }
-                else if (byte < ' ')
-                {
-                        p8 escaped[6] = {'\\', 'u', '0', '0',
-                                         storage_hex_digit(byte >> 4, false),
-                                         storage_hex_digit(byte & 15, false)};
-                        text_put(escaped, sizeof(escaped));
-                }
-                else
-                        text_put_character(byte);
-        }
-        text_put_character('"');
-}
-
 static fn tools_uuid_safe_cell(string_address value)
 {
         while (string_get(value))
@@ -6399,18 +6375,18 @@ static b32 tools_uuidparse()
                                 text_put_string("\": ");
                                 string_address value =
                                     tools_uuid_cell(address_of record, column);
-                                if (column == TOOLS_UUID_COLUMN_TIME &&
+                                if ((column == TOOLS_UUID_COLUMN_TIME ||
+                                     column == TOOLS_UUID_COLUMN_TYPE) &&
                                     record.valid && !string_get(value))
                                         text_put_string("null");
                                 else
-                                        tools_uuid_json_string(value);
+                                        writer_json_string(text_put, value);
                                 text_put_string(at + 1 < column_count
                                                     ? ",\n" : "\n");
                         }
                         text_put_string("      }");
                 }
-                text_put_string(file_operand_count
-                                    ? "\n   ]\n}\n" : "\n   ]\n}\n");
+                text_put_string("\n   ]\n}\n");
                 return text_done(0);
         }
 
