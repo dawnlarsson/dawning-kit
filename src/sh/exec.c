@@ -6991,7 +6991,8 @@ static fn exec_put_back(exec_kept_value address_to kept, b32 count, bool restore
         {
                 if (!restore || kept[count].promoted)
                 {
-                        array_table_release(kept[count].array);
+                        if (kept[count].array)
+                                array_table_release(kept[count].array);
                         continue;
                 }
 
