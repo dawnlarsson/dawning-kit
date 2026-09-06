@@ -5291,6 +5291,21 @@ static bool exec_function_text_list(exec_function_text address_to made,
         return !made->failed;
 }
 
+static bool exec_function_text_loop_body(exec_function_text address_to made,
+                                         parse_node address_to node,
+                                         positive depth)
+{
+        if (!exec_function_text_line(made))
+                return false;
+        exec_function_text_literal(made, "do ");
+        if (!exec_function_text_node(made, node->right, depth + 1))
+                return false;
+        if (!exec_function_text_line(made))
+                return false;
+        exec_function_text_literal(made, "done");
+        return exec_function_text_redirects(made, node);
+}
+
 static bool exec_function_text_node(exec_function_text address_to made,
                                     b32 index, positive depth)
 {
@@ -5393,15 +5408,7 @@ static bool exec_function_text_node(exec_function_text address_to made,
                     6);
                 if (!exec_function_text_node(made, node->left, depth + 1))
                         return false;
-                if (!exec_function_text_line(made))
-                        return false;
-                exec_function_text_literal(made, "do ");
-                if (!exec_function_text_node(made, node->right, depth + 1))
-                        return false;
-                if (!exec_function_text_line(made))
-                        return false;
-                exec_function_text_literal(made, "done");
-                return exec_function_text_redirects(made, node);
+                return exec_function_text_loop_body(made, node, depth);
         }
 
         if (node->kind == NODE_FOR || node->kind == NODE_SELECT ||
@@ -5431,15 +5438,7 @@ static bool exec_function_text_node(exec_function_text address_to made,
                                 }
                         }
                 }
-                if (!exec_function_text_line(made))
-                        return false;
-                exec_function_text_literal(made, "do ");
-                if (!exec_function_text_node(made, node->right, depth + 1))
-                        return false;
-                if (!exec_function_text_line(made))
-                        return false;
-                exec_function_text_literal(made, "done");
-                return exec_function_text_redirects(made, node);
+                return exec_function_text_loop_body(made, node, depth);
         }
 
         if (node->kind == NODE_CASE)
@@ -10767,6 +10766,16 @@ static b32 exec_list(b32 index)
         return status;
 }
 
+static inline INLINE fn exec_expansion_done(shell_mark expanded,
+                                            positive substitutions)
+{
+        shell_store_rewind(address_of expand_store, expanded);
+
+        if (expand_substitutions_ever &&
+            expand_substitutions_count != substitutions)
+                shell_substitutions_close(substitutions);
+}
+
 /*
         Every node ends at a command boundary, which is where a trap that
         arrived is allowed to run. A simple command is the usual one; a
@@ -10835,11 +10844,7 @@ static b32 exec_node_kind(b32 index)
                 expanded = shell_store_mark(address_of expand_store);
 
                 status = exec_simple(index);
-                shell_store_rewind(address_of expand_store, expanded);
-
-                if (expand_substitutions_ever &&
-                    expand_substitutions_count != substitutions)
-                        shell_substitutions_close(substitutions);
+                exec_expansion_done(expanded, substitutions);
 
                 shell_status = status;
 
@@ -10887,11 +10892,7 @@ static b32 exec_node_kind(b32 index)
         if (node->redirect_count && !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
-                shell_store_rewind(address_of expand_store, expanded);
-
-                if (expand_substitutions_ever &&
-                    expand_substitutions_count != substitutions)
-                        shell_substitutions_close(substitutions);
+                exec_expansion_done(expanded, substitutions);
 
                 shell_status = exec_redirect_failed_status();
                 return shell_status;
@@ -10928,11 +10929,7 @@ static b32 exec_node_kind(b32 index)
                 status = exec_node(node->left);
 
         exec_redirect_restore(mark);
-        shell_store_rewind(address_of expand_store, expanded);
-
-        if (expand_substitutions_ever &&
-            expand_substitutions_count != substitutions)
-                shell_substitutions_close(substitutions);
+        exec_expansion_done(expanded, substitutions);
 
         shell_status = status;
 

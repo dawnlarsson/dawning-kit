@@ -1359,33 +1359,10 @@ static string_address ul_limit_headers[] = {
 static bool ul_limit_columns(string_address text, p8 address_to columns,
                              positive address_to count)
 {
-        positive made = 0;
-
-        while (string_get(text))
-        {
-                string_address comma = string_first_of(text, ',');
-                positive length = comma ? (positive)(comma - text)
-                                        : string_length(text);
-                positive found = UL_LIMIT_COLUMNS;
-
-                for (positive at = 0; at < UL_LIMIT_COLUMNS; at++)
-                        if (file_same_word(text, length, ul_limit_headers[at]))
-                        {
-                                found = at;
-                                break;
-                        }
-
-                if (found == UL_LIMIT_COLUMNS || made == UL_LIMIT_COLUMNS)
-                        return false;
-                columns[made++] = (p8)found;
-                text += length;
-                if (!string_get(text))
-                        break;
-                text++;
-        }
-
-        address_to count = made;
-        return made != 0;
+        address_to count = 0;
+        return name_list_select(
+            text, ul_limit_headers, sizeof(ul_limit_headers[0]),
+            UL_LIMIT_COLUMNS, columns, count, UL_LIMIT_COLUMNS, 0);
 }
 
 static positive ul_limit_text(p64 value, p8 address_to into)
@@ -3687,38 +3664,15 @@ static bool ul_table_column_list(
         address_to count = 0;
         if (append)
         {
+                if (default_count > definition_count)
+                        return false;
                 text++;
                 for (positive i = 0; i < default_count; i++)
                         columns[(address_to count)++] = defaults[i];
         }
-
-        while (string_get(text))
-        {
-                string_address comma = string_first_of(text, ',');
-                positive length = comma ? (positive)(comma - text)
-                                        : string_length(text);
-                positive found = definition_count;
-
-                for (positive i = 0; i < definition_count; i++)
-                        if (file_same_word(text, length,
-                                           definitions[i].name))
-                        {
-                                found = i;
-                                break;
-                        }
-
-                if (found == definition_count ||
-                    !ul_table_column_add(columns, count, definition_count,
-                                         (p8)found))
-                        return false;
-
-                text += length;
-                if (!string_get(text))
-                        break;
-                text++;
-        }
-
-        return address_to count != 0;
+        return name_list_select(
+            text, definitions, sizeof(definitions[0]), definition_count,
+            columns, count, definition_count, NAME_LIST_UNIQUE);
 }
 
 static string_address ul_lsns_field(ul_lsns_entry address_to entry,
@@ -4856,28 +4810,6 @@ static const file_long ul_lslocks_longs[] = {
     {null, 0},
 };
 
-static string_address ul_lslocks_word(p8 address_to address_to cursor,
-                                      p8 address_to stop)
-{
-        p8 address_to at = address_to cursor;
-
-        while (at < stop && byte_is_space(*at))
-                at++;
-        if (at == stop)
-        {
-                address_to cursor = at;
-                return null;
-        }
-
-        p8 address_to word = at;
-        while (at < stop && !byte_is_space(*at))
-                at++;
-        if (at < stop)
-                *at++ = end;
-        address_to cursor = at;
-        return word;
-}
-
 static bool ul_lslocks_id(string_address text, positive address_to value)
 {
         string_address at = text;
@@ -4913,15 +4845,15 @@ static bool ul_lslocks_device(string_address text,
         return true;
 }
 
+static const string_address ul_lslocks_kinds[] = {
+    (string_address)"POSIX", (string_address)"FLOCK",
+    (string_address)"OFDLCK",
+};
+
 static b32 ul_lslocks_kind(string_address text)
 {
-        static const string_address kinds[] = {
-            (string_address)"POSIX", (string_address)"FLOCK",
-            (string_address)"OFDLCK",
-        };
-
-        for (positive i = 0; i < array_count(kinds); i++)
-                if (string_equals(text, kinds[i]))
+        for (positive i = 0; i < array_count(ul_lslocks_kinds); i++)
+                if (string_equals(text, ul_lslocks_kinds[i]))
                         return (b32)i;
         return -1;
 }
@@ -5007,10 +4939,6 @@ static fn ul_lslocks_resolve(ul_lslocks_entry address_to lock)
 static string_address ul_lslocks_field(address_any row, p8 column,
                                        p8 address_to scratch)
 {
-        static const string_address kinds[] = {
-            (string_address)"POSIX", (string_address)"FLOCK",
-            (string_address)"OFDLCK",
-        };
         ul_lslocks_entry address_to lock = (ul_lslocks_entry address_to)row;
 
         switch (column)
@@ -5025,7 +4953,7 @@ static string_address ul_lslocks_field(address_any row, p8 column,
                 positive_into_string(scratch, (positive)(p32)lock->pid);
                 return scratch;
         case UL_LOCKS_TYPE:
-                return kinds[lock->type];
+                return ul_lslocks_kinds[lock->type];
         case UL_LOCKS_SIZE:
                 if (!lock->size_known || !lock->size)
                         return (string_address)"";
@@ -5175,33 +5103,24 @@ static b32 util_linux_lslocks()
         p8 address_to cursor = input;
         p8 address_to input_end = input + length;
 
-        while (cursor < input_end)
+        /* text_arena_read_all supplies the sentinel for a final record with
+           no newline; the kernel's lock fields use the shared space/tab
+           grammar consumed by storage_field. */
+        p8 address_to line;
+        while ((line = storage_line_next(address_of cursor, input_end)))
         {
-                p8 address_to line_end = memory_first_of(
-                    cursor, '\n', (positive)(input_end - cursor));
-                if (!line_end)
-                        line_end = input_end;
-                else
-                        *line_end = end;
-
-                p8 address_to at = cursor;
-                string_address id_text = ul_lslocks_word(address_of at,
-                                                         line_end);
-                string_address kind_text = ul_lslocks_word(address_of at,
-                                                           line_end);
+                p8 address_to at = line;
+                string_address id_text = storage_field(address_of at);
+                string_address kind_text = storage_field(address_of at);
                 bool blocked = kind_text && string_equals(kind_text, "->");
                 if (blocked)
-                        kind_text = ul_lslocks_word(address_of at, line_end);
-                string_address scope = ul_lslocks_word(address_of at, line_end);
-                string_address mode = ul_lslocks_word(address_of at, line_end);
-                string_address pid_text = ul_lslocks_word(address_of at,
-                                                          line_end);
-                string_address device = ul_lslocks_word(address_of at,
-                                                        line_end);
-                string_address start_text = ul_lslocks_word(address_of at,
-                                                            line_end);
-                string_address end_text = ul_lslocks_word(address_of at,
-                                                          line_end);
+                        kind_text = storage_field(address_of at);
+                string_address scope = storage_field(address_of at);
+                string_address mode = storage_field(address_of at);
+                string_address pid_text = storage_field(address_of at);
+                string_address device = storage_field(address_of at);
+                string_address start_text = storage_field(address_of at);
+                string_address end_text = storage_field(address_of at);
                 positive id;
                 positive inode;
                 positive start;
@@ -5250,7 +5169,6 @@ static b32 util_linux_lslocks()
                         };
                 }
 
-                cursor = line_end < input_end ? line_end + 1 : input_end;
         }
 
         if (!system_snapshot_take(address_of ul_lslocks_snapshot,
@@ -5390,51 +5308,42 @@ static fn ul_lsfd_release()
                             ul_lsfd_pid_count);
 }
 
-/* fdinfo is deliberately read from the holder already admitted by the shared
-   process snapshot. Parse its three small scalar records in place, without a
-   second proc walker or a per-descriptor general-purpose parser. */
+/* Find the first scalar record with this name. Temporarily terminate only the
+   matching record so the shared checked number parser can be used without
+   changing the buffer between the three independent first-hit queries. */
 static bool ul_lsfd_fdinfo_value(p8 address_to bytes, positive length,
                                  string_address field, positive base,
                                  positive address_to value)
 {
         positive field_length = string_length(field);
-        positive at = 0;
+        p8 address_to cursor = bytes;
+        p8 address_to limit = bytes + length;
 
-        while (at < length)
+        while (cursor < limit)
         {
-                positive finish = at;
+                p8 address_to line = cursor;
+                p8 address_to stop = (p8 address_to)memory_first_of(
+                    line, '\n', (positive)(limit - line));
+                cursor = stop ? stop + 1 : limit;
+                if (!stop)
+                        stop = limit;
 
-                while (finish < length && bytes[finish] != '\n')
-                        finish++;
-                if (finish - at > field_length &&
-                    !memory_compare(bytes + at, field, field_length))
+                if (stop - line > field_length &&
+                    !memory_compare(line, field, field_length))
                 {
-                        positive cursor = at + field_length;
-                        positive made = 0;
-                        bool any = false;
+                        string_address number = line + field_length;
+                        while (number < stop && byte_is_space(*number))
+                                number++;
 
-                        while (cursor < finish && byte_is_space(bytes[cursor]))
-                                cursor++;
-                        while (cursor < finish)
-                        {
-                                positive digit = digit_known(bytes[cursor], base);
-
-                                if (digit >= base ||
-                                    made > (positive_max - digit) / base)
-                                        return false;
-                                made = made * base + digit;
-                                any = true;
-                                cursor++;
-                        }
-
-                        if (any)
-                        {
-                                address_to value = made;
-                                return true;
-                        }
-                        return false;
+                        p8 saved = *stop;
+                        *stop = end;
+                        string_address parsed = number;
+                        bool okay = string_digits_checked(
+                                        address_of parsed, base, value) &&
+                                    parsed == stop;
+                        *stop = saved;
+                        return okay;
                 }
-                at = finish < length ? finish + 1 : length;
         }
         return false;
 }
@@ -5442,15 +5351,17 @@ static bool ul_lsfd_fdinfo_value(p8 address_to bytes, positive length,
 static fn ul_lsfd_fdinfo(ul_lsfd_entry address_to descriptor)
 {
         p8 path[FILE_PATH_MAX];
-        p8 bytes[1024];
+        p8 bytes[1025];
 
         system_process_path(path, descriptor->process->pid, "fdinfo", "");
         positive at = string_length(path);
         positive_into_string(path + at, descriptor->fd);
 
-        bipolar got = file_slurp_once_at(AT_FDCWD, path, bytes, sizeof(bytes));
+        bipolar got = file_slurp_once_at(AT_FDCWD, path, bytes,
+                                         sizeof(bytes) - 1);
         if (got <= 0)
                 return;
+        bytes[got] = end;
 
         positive value;
         if (ul_lsfd_fdinfo_value(bytes, (positive)got, "flags:", 8,
@@ -12191,21 +12102,20 @@ static fn ul_lsblk_identity(ul_lsblk_device address_to device,
         if (got > 0)
         {
                 text[got] = end;
-                p8 address_to line = text;
+                p8 address_to cursor = text;
                 p8 address_to limit = text + got;
-                while (line < limit)
+                p8 address_to line;
+                while ((line = storage_line_next(address_of cursor, limit)))
                 {
-                        p8 address_to newline = (p8 address_to)memory_first_of(
-                            line, '\n', (positive)(limit - line));
-                        p8 address_to stop = newline ? newline : limit;
+                        p8 address_to stop = cursor;
+                        if (stop > line && !stop[-1])
+                                stop--;
                         if (stop > line + 3 && line[0] == 'E' && line[1] == ':')
                         {
                                 p8 address_to equal = (p8 address_to)memory_first_of(
                                     line + 2, '=', (positive)(stop - line - 2));
                                 if (equal)
                                 {
-                                        p8 saved = *stop;
-                                        *stop = end;
                                         string_address value = equal + 1;
                                         positive length = (positive)(equal - line - 2);
 #define UL_LSBLK_UDEV(key, member)                                           \
@@ -12225,10 +12135,8 @@ static fn ul_lsblk_identity(ul_lsblk_device address_to device,
                                         UL_LSBLK_UDEV("ID_SERIAL_SHORT", serial)
                                                 (void)value;
 #undef UL_LSBLK_UDEV
-                                        *stop = saved;
                                 }
                         }
-                        line = newline ? newline + 1 : limit;
                 }
         }
 

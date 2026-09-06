@@ -2018,6 +2018,8 @@ check 'command v miss'  'command -v nosuchthing 2>/dev/null; echo $?'
 check 'command p finds'  'PATH= command -pv sh | /bin/sed '\''s|.*/||'\'''
 check 'command p runs'   'PATH= command -p sh -c '\''echo ok'\'''
 check 'command v empty' 'command -v '\''\'' >/dev/null 2>&1; echo $?'
+answer 'command invalid option' 'command -x true 2>/dev/null; echo $?'
+bash_answer 'bash command invalid option' 'command -x true 2>/dev/null; echo $?'
 check 'type empty'      'type '\''\'' >/dev/null 2>&1; echo $?'
 check 'hash empty'      'hash '\''\'' >/dev/null 2>&1; echo $?'
 
@@ -4027,6 +4029,10 @@ bash_answer 'declare case attributes' \
         'declare -l l=ABC; declare -u u=abc; echo "$l" "$u"; declare -p l u'
 bash_answer 'declare nameref writes through' \
         'target=value; declare -n ref=target; ref=changed; echo "$target"'
+# This pins propagation of our existing resolution failure; GNU Bash accepts
+# the assignment after warning, so it is deliberately not a parity assertion.
+expected 'declare compound rejects a circular nameref' '2|' 0 \
+        'declare -n a=b; declare -n b=a; declare "a=(x)"; printf "%s\n" "$?"'
 bash_answer 'local nameref writes through' \
         'f(){ local -n r=$1; r=changed; }; v=orig; f v; echo "$v"'
 bash_answer 'declare readonly refuses an assignment' \

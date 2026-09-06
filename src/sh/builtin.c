@@ -955,14 +955,6 @@ static env_variable address_to env_export_take(const_string name,
                                       env_name_hash(name, length));
 }
 
-static PURE bool env_export_active_span(const_string name, positive length)
-{
-        positive found = env_find_span(name, length);
-
-        return found < shell_var_count && (shell_vars[found].permanent ||
-                                           shell_vars[found].temporary);
-}
-
 /*
         The value, the export state and the kind of one name, in one probe.
 
@@ -2234,14 +2226,6 @@ PURE bool env_readonly(const_string name)
 
         named = string_hash_33_length(env_reading(name));
         return env_readonly_hashed_span(name, named.y, named.x);
-}
-
-/* A name inside a larger word -- the array of an element -- asked about
-   without a terminated copy of it being made first. */
-static PURE bool env_readonly_span(const_string name, positive length)
-{
-        return env_readonly_hashed_span(name, length,
-                                        env_name_hash(name, length));
 }
 
 COLD bool shell_variable_attribute_set(const_string name, positive length, p8 set,
@@ -7004,6 +6988,29 @@ static bool shell_declare_assign(string_address name, string_address value,
         return answer;
 }
 
+// local and declare have different scope and failure policy, but write a
+// value with the same scalar/compound/append machinery once that policy has
+// accepted the name.
+static b32 shell_declare_value(string_address name, positive length,
+                               string_address mark, bool append,
+                               bool bind_reference, bool declare_empty)
+{
+        if (!mark)
+                return !declare_empty || env_declare(name, length);
+
+        if (string_is(mark + 1, '('))
+        {
+                positive body = string_length(mark + 1);
+
+                return shell_compound_assign(name, length, mark + 2,
+                                             body > 2 ? body - 2 : 0,
+                                             append)
+                           ? 1 : -1;
+        }
+
+        return shell_declare_assign(name, mark + 1, append, bind_reference);
+}
+
 /* `declare -F` is metadata, not body serialization. Named queries retain the
    operand order Bash uses; the no-operand inventory is sorted through the
    same pointer sorter as variable/function completion. */
@@ -7145,7 +7152,6 @@ COLD fn shell_local(writer write, string_address input)
                 positive length = mark ? (positive)(name_end - word)
                                        : string_length(word);
                 p8 delimiter = mark ? string_get(name_end) : 0;
-                bool compound = mark && string_is(mark + 1, '(');
                 bool readonly;
 
                 if (!shell_valid_name(word, length))
@@ -7198,36 +7204,33 @@ COLD fn shell_local(writer write, string_address input)
                         shell_no_room("local");
                         failed = true;
                 }
-                else if (mark && compound)
+                else
                 {
-                        positive body = string_length(mark + 1);
+                        b32 stored = shell_declare_value(
+                            word, length, mark, append,
+                            (state.attributes_set & SHELL_ARRAY_NAMEREF) != 0,
+                            false);
 
-                        if (!shell_compound_assign(word, length, mark + 2,
-                                                   body > 2 ? body - 2 : 0,
-                                                   append))
+                        if (stored < 0)
                         {
                                 shell_no_room("local");
                                 failed = true;
                         }
-                }
-                else if (mark &&
-                         !shell_declare_assign(
-                             word, mark + 1, append,
-                             (state.attributes_set &
-                              SHELL_ARRAY_NAMEREF) != 0))
-                {
-                        // A readonly name is the usual reason and reads
-                        // nothing like running out of room.
-                        if (env_readonly(word))
+                        else if (!stored)
                         {
-                                shell_diagnostic(word, length);
-                                shell_diagnostic(": is read only\n", 0);
-                                shell_answer(2);
-                        }
-                        else
-                                shell_no_room("local");
+                                // A readonly name is the usual reason and
+                                // reads nothing like running out of room.
+                                if (env_readonly(word))
+                                {
+                                        shell_diagnostic(word, length);
+                                        shell_diagnostic(": is read only\n", 0);
+                                        shell_answer(2);
+                                }
+                                else
+                                        shell_no_room("local");
 
-                        failed = true;
+                                failed = true;
+                        }
                 }
 
                 if (!failed && (state.clear & DECLARE_EXPORT))
@@ -7389,7 +7392,6 @@ static fn shell_declare(writer write, string_address input)
                 bool scoped = local_depth && !(state.set & DECLARE_GLOBAL);
                 shell_local_entry address_to saved_global = null;
                 p8 delimiter = mark ? string_get(name_end) : 0;
-                bool compound = mark && string_is(mark + 1, '(');
                 p8 held_attributes;
                 bool readonly;
 
@@ -7510,20 +7512,10 @@ static fn shell_declare(writer write, string_address input)
                         shell_readonly_refused(word, length);
                         return;
                 }
-                else if (mark && compound)
-                {
-                        positive body = string_length(mark + 1);
-
-                        if (!shell_compound_assign(word, length, mark + 2,
-                                                   body > 2 ? body - 2 : 0,
-                                                   append))
-                                goto no_room;
-                }
-                else if (mark ? !shell_declare_assign(
-                                    word, mark + 1, append,
-                                    (state.attributes_set &
-                                     SHELL_ARRAY_NAMEREF) != 0)
-                              : !env_declare(word, length))
+                else if (shell_declare_value(
+                             word, length, mark, append,
+                             (state.attributes_set & SHELL_ARRAY_NAMEREF) != 0,
+                             true) <= 0)
                         goto no_room;
 
                 if (state.clear & DECLARE_EXPORT)
@@ -13132,6 +13124,21 @@ static COLD PURE bool shell_alias_visible(string_address name)
         return shell_shopt_on(EXPAND_ALIASES) && alias_lookup(name) != null;
 }
 
+#define SHELL_KIND_NAME 0
+#define SHELL_KIND_TERSE 1
+#define SHELL_KIND_LONG 2
+
+static COLD fn shell_command_kind_written(writer write, string_address name,
+                                          string_address kind, b32 style)
+{
+        if (style == SHELL_KIND_TERSE)
+                string_format(write, "%s\n", kind);
+        else if (style == SHELL_KIND_LONG)
+                string_format(write, "%s is a shell %s\n", name, kind);
+        else
+                string_format(write, "%s\n", name);
+}
+
 /*
         type: what a name would run.
 
@@ -13142,7 +13149,8 @@ static COLD PURE bool shell_alias_visible(string_address name)
 */
 COLD fn shell_type(writer write, string_address input)
 {
-        b32 index = 1;
+        shell_option_walk walk = {1};
+        positive index;
         b32 bad = 0;
         bool terse = false;
         bool every = false;
@@ -13151,48 +13159,34 @@ COLD fn shell_type(writer write, string_address input)
         bool no_functions = false;
         p8 address_to found = null;
         positive found_room = 0;
+        p8 which;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 't')
+                        terse = true;
+                else if (which == 'a')
+                        every = true;
+                else if (which == 'p')
+                        path_only = true;
+                else if (which == 'P')
                 {
-                        index++;
-                        break;
+                        path_only = true;
+                        force_path = true;
                 }
-
-                while (string_get(letter))
+                else if (which == 'f')
+                        no_functions = true;
+                else
                 {
-                        p8 which = string_get(letter++);
+                        p8 said[2] = {which, end};
 
-                        if (which == 't')
-                                terse = true;
-                        else if (which == 'a')
-                                every = true;
-                        else if (which == 'p')
-                                path_only = true;
-                        else if (which == 'P')
-                        {
-                                path_only = true;
-                                force_path = true;
-                        }
-                        else if (which == 'f')
-                                no_functions = true;
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "type: -%s: invalid option\n",
-                                              said);
-                                return shell_answer(2);
-                        }
+                        string_format(shell_diagnostic,
+                                      "type: -%s: invalid option\n", said);
+                        return shell_answer(2);
                 }
-
-                index++;
         }
+
+        index = walk.index;
 
         if (index >= shell_argc)
                 return shell_answer(0);
@@ -13235,10 +13229,9 @@ COLD fn shell_type(writer write, string_address input)
 
                         if (keyword)
                         {
-                                string_format(write,
-                                              terse ? "keyword\n"
-                                                    : "%s is a shell keyword\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"keyword",
+                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
                                 any = true;
 
                                 if (!every)
@@ -13247,10 +13240,9 @@ COLD fn shell_type(writer write, string_address input)
 
                         if (special)
                         {
-                                string_format(write,
-                                              terse ? "builtin\n"
-                                                    : "%s is a shell builtin\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"builtin",
+                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
                                 any = true;
 
                                 if (!every)
@@ -13259,10 +13251,9 @@ COLD fn shell_type(writer write, string_address input)
 
                         if (function)
                         {
-                                string_format(write,
-                                              terse ? "function\n"
-                                                    : "%s is a shell function\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"function",
+                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
                                 any = true;
 
                                 if (!every)
@@ -13271,10 +13262,9 @@ COLD fn shell_type(writer write, string_address input)
 
                         if (builtin && !special)
                         {
-                                string_format(write,
-                                              terse ? "builtin\n"
-                                                    : "%s is a shell builtin\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"builtin",
+                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
                                 any = true;
 
                                 if (!every)
@@ -13333,41 +13323,34 @@ COLD fn shell_type(writer write, string_address input)
 */
 fn shell_command_builtin(writer write, string_address input)
 {
-        b32 index = 1;
+        shell_option_walk walk = {1};
+        positive index;
         bool only_say = false;
         bool at_length = false;
         bool standard_path = false;
+        p8 option;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of option))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (string_is(letter, '-') && !string_get(letter + 1))
+                if (option == 'v')
+                        only_say = true;
+                else if (option == 'V')
                 {
-                        index++;
-                        break;
+                        only_say = true;
+                        at_length = true;
                 }
-
-                while (string_get(letter))
+                else if (option == 'p')
+                        standard_path = true;
+                else
                 {
-                        if (string_get(letter) == 'v')
-                                only_say = true;
-                        else if (string_get(letter) == 'V')
-                        {
-                                only_say = true;
-                                at_length = true;
-                        }
-                        else if (string_get(letter) == 'p')
-                                standard_path = true;
-                        else
-                                break;
-
-                        letter++;
+                        string_format(shell_diagnostic,
+                                      "command: -%c: invalid option\n",
+                                      option);
+                        return shell_answer(2);
                 }
-
-                index++;
         }
+
+        index = walk.index;
 
         if (index >= shell_argc)
                 return shell_answer(0);
@@ -13391,11 +13374,9 @@ fn shell_command_builtin(writer write, string_address input)
                         // say so rather than call it missing.
                         if (shell_keyword_here(name))
                         {
-                                string_format(write,
-                                              at_length
-                                                ? "%s is a shell keyword\n"
-                                                : "%s\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"keyword",
+                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
                                 any = true;
                                 continue;
                         }
@@ -13418,22 +13399,18 @@ fn shell_command_builtin(writer write, string_address input)
                         if (special &&
                             shell_command_builtin_here(name, named))
                         {
-                                string_format(write,
-                                              at_length
-                                                ? "%s is a shell builtin\n"
-                                                : "%s\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"builtin",
+                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
                                 any = true;
                                 continue;
                         }
 
                         if (exec_function_here_hashed(name, named))
                         {
-                                string_format(write,
-                                              at_length
-                                                ? "%s is a shell function\n"
-                                                : "%s\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"function",
+                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
                                 any = true;
                                 continue;
                         }
@@ -13441,11 +13418,9 @@ fn shell_command_builtin(writer write, string_address input)
                         if (!special &&
                             shell_command_builtin_here(name, named))
                         {
-                                string_format(write,
-                                              at_length
-                                                ? "%s is a shell builtin\n"
-                                                : "%s\n",
-                                              name);
+                                shell_command_kind_written(
+                                    write, name, (string_address)"builtin",
+                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
                                 any = true;
                                 continue;
                         }

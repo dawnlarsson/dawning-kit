@@ -566,6 +566,74 @@ static fn writer_json_string(writer output, string_address value)
         output("\"", 1);
 }
 
+/* Select byte indexes from a comma-separated list of named records.  Every
+   schema keeps its name pointer first; stride lets tables retain the rest of
+   their private shape.  The caller may seed a default prefix before an
+   append-form list and chooses the few syntax policies that differ. */
+#define NAME_LIST_CASE_SENSITIVE 1
+#define NAME_LIST_UNIQUE 2
+#define NAME_LIST_REJECT_TRAILING 4
+static COLD bool name_list_select(
+    string_address text, const void address_to definitions, positive stride,
+    positive definition_count, p8 address_to selected,
+    positive address_to selected_count, positive maximum, p8 policy)
+{
+        if (definition_count > 256 || stride < sizeof(string_address) ||
+            address_to selected_count > maximum)
+                return false;
+
+        while (*text)
+        {
+                string_address comma = string_first_of(text, ',');
+                positive length = comma ? (positive)(comma - text)
+                                        : string_length(text);
+                positive found = definition_count;
+
+                for (positive i = 0; i < definition_count; i++)
+                {
+                        string_address name = memory_load_unaligned(
+                            string_address,
+                            (const p8 address_to)definitions + i * stride);
+
+                        if (string_length(name) == length &&
+                            !(policy & NAME_LIST_CASE_SENSITIVE
+                                  ? memory_compare(name, text, length)
+                                  : memory_compare_ascii_case(name, text,
+                                                              length)))
+                        {
+                                found = i;
+                                break;
+                        }
+                }
+
+                if (found == definition_count)
+                        return false;
+
+                bool add = true;
+                if (policy & NAME_LIST_UNIQUE)
+                        for (positive i = 0; i < address_to selected_count; i++)
+                                if (selected[i] == (p8)found)
+                                {
+                                        add = false;
+                                        break;
+                                }
+                if (add)
+                {
+                        if (address_to selected_count == maximum)
+                                return false;
+                        selected[(address_to selected_count)++] = (p8)found;
+                }
+
+                if (!comma)
+                        break;
+                text = comma + 1;
+                if (!*text && (policy & NAME_LIST_REJECT_TRAILING))
+                        return false;
+        }
+
+        return address_to selected_count != 0;
+}
+
 /* Regex, glob and tr share the [:name:] submachine.  A null limit means the
    surrounding string's terminator is the bound. */
 static PURE inline INLINE string_address byte_class_end(string_address text,

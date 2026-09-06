@@ -6250,39 +6250,11 @@ static const string_address tools_uuid_column_names[] = {
 static bool tools_uuid_columns(string_address text, p8 address_to columns,
                                positive address_to count)
 {
-        positive used = 0;
-        while (string_get(text))
-        {
-                string_address comma = string_first_of(text, ',');
-                positive length = comma ? (positive)(comma - text)
-                                        : string_length(text);
-                bool found = false;
-
-                for (positive at = 0; at < array_count(tools_uuid_column_names);
-                     at++)
-                        if (string_length(tools_uuid_column_names[at]) == length &&
-                            !string_compare_max(tools_uuid_column_names[at], text,
-                                                length))
-                        {
-                                if (used == 32)
-                                        return false;
-                                columns[used++] = (p8)at;
-                                found = true;
-                                break;
-                        }
-
-                if (!found)
-                        return false;
-                text += length;
-                if (!comma)
-                        break;
-                text++;
-                if (!string_get(text))
-                        return false;
-        }
-
-        address_to count = used;
-        return used != 0;
+        address_to count = 0;
+        return name_list_select(
+            text, tools_uuid_column_names, sizeof(tools_uuid_column_names[0]),
+            array_count(tools_uuid_column_names), columns, count, 32,
+            NAME_LIST_CASE_SENSITIVE | NAME_LIST_REJECT_TRAILING);
 }
 
 static string_address tools_uuid_cell(tools_uuid_record address_to record,

@@ -870,6 +870,11 @@ compare 'paired disorder checked' join - --check-order "$work/relation_unordered
 compare 'disorder with unpaired' join - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
 compare 'zero records'       join - -z "$work/join_zero_left" "$work/join_zero_right"
 compare 'refill duplicate'   join - "$work/join_wide_left" "$work/join_wide_right"
+compare 'auto duplicate products' join - -o auto "$work/join_left" "$work/join_right"
+compare 'auto missing sides' join - -o auto -a1 -a2 -e EMPTY "$work/join_left" "$work/join_right"
+compare 'auto nonfirst keys' join - -o auto -t: -1 2 -2 2 -a1 -a2 "$work/join_field_left" "$work/join_field_right"
+compare 'auto header width'  join - -o auto --header -a1 -a2 -e EMPTY "$work/join_header_left" "$work/join_header_right"
+compare 'auto zero records' join - -o auto -z -a1 -a2 "$work/join_zero_left" "$work/join_zero_right"
 
 case_start grep
 compare 'literal'        grep a  alpha

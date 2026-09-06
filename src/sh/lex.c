@@ -1192,6 +1192,20 @@ static string_address lex_assignment_subscript_end(string_address at)
         return null;
 }
 
+static inline INLINE bool lex_word_nested(string_address address_to at,
+                                          string_address stop)
+{
+        positive run = (positive)(stop - address_to at);
+
+        if (!lex_room(lex_used + run + 2))
+                return false;
+
+        memory_copy(lex_text + lex_used, address_to at, run);
+        lex_used += run;
+        address_to at = stop;
+        return true;
+}
+
 static b32 lex_word(string_address address_to at)
 {
         string_address step = address_to at;
@@ -1226,14 +1240,9 @@ static b32 lex_word(string_address address_to at)
 
                         if (stop)
                         {
-                                run = (positive)(stop - step);
-
-                                if (!lex_room(lex_used + run + 2))
+                                if (!lex_word_nested(address_of step, stop))
                                         return false;
 
-                                memory_copy(lex_text + lex_used, step, run);
-                                lex_used += run;
-                                step = stop;
                                 continue;
                         }
                 }
@@ -1247,14 +1256,9 @@ static b32 lex_word(string_address address_to at)
 
                         if (stop > step)
                         {
-                                run = (positive)(stop - step);
-
-                                if (!lex_room(lex_used + run + 2))
+                                if (!lex_word_nested(address_of step, stop))
                                         return false;
 
-                                memory_copy(lex_text + lex_used, step, run);
-                                lex_used += run;
-                                step = stop;
                                 continue;
                         }
                 }
@@ -1273,14 +1277,9 @@ static b32 lex_word(string_address address_to at)
 
                         if (stop > step)
                         {
-                                run = (positive)(stop - step);
-
-                                if (!lex_room(lex_used + run + 2))
+                                if (!lex_word_nested(address_of step, stop))
                                         return false;
 
-                                memory_copy(lex_text + lex_used, step, run);
-                                lex_used += run;
-                                step = stop;
                                 continue;
                         }
                 }
@@ -1294,14 +1293,9 @@ static b32 lex_word(string_address address_to at)
 
                         if (stop > step + 1)
                         {
-                                run = (positive)(stop - step);
-
-                                if (!lex_room(lex_used + run + 2))
+                                if (!lex_word_nested(address_of step, stop))
                                         return false;
 
-                                memory_copy(lex_text + lex_used, step, run);
-                                lex_used += run;
-                                step = stop;
                                 continue;
                         }
                 }

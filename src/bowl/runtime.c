@@ -111,6 +111,23 @@ static bool bowl_root_path(p8 address_to into, positive room,
         return true;
 }
 
+static bool bowl_name(string_address name, bool plus)
+{
+        if (!name || !*name || string_equals(name, ".") ||
+            string_equals(name, ".."))
+                return false;
+
+        while (*name)
+        {
+                if (!byte_is_alnum(*name) && *name != '-' && *name != '_' &&
+                    *name != '.' && !(plus && *name == '+'))
+                        return false;
+                name++;
+        }
+
+        return true;
+}
+
 /* A named root has exactly the form /bowls/NAME. */
 static bool bowl_named_root(string_address root)
 {
@@ -126,36 +143,12 @@ static bool bowl_named_root(string_address root)
                 return false;
 
         name = root + prefix;
-        if (string_equals(name, "bin") || string_equals(name, ".") ||
-            string_equals(name, ".."))
-                return false;
-
-        while (*name)
-        {
-                if (!byte_is_alnum(*name) && *name != '-' && *name != '_' &&
-                    *name != '.')
-                        return false;
-                name++;
-        }
-
-        return true;
+        return !string_equals(name, "bin") && bowl_name(name, false);
 }
 
 static bool bowl_command_name(string_address name)
 {
-        if (!name || !*name || string_equals(name, ".") ||
-            string_equals(name, ".."))
-                return false;
-
-        while (*name)
-        {
-                if (!byte_is_alnum(*name) && *name != '-' && *name != '_' &&
-                    *name != '.' && *name != '+')
-                        return false;
-                name++;
-        }
-
-        return true;
+        return bowl_name(name, true);
 }
 
 /*
@@ -344,13 +337,12 @@ static bool bowl_launcher(string_address encoded, p8 address_to root,
         path twice stacks the old root there, where it can be detached without
         requiring a writable put_old directory inside the distribution.
 */
+static bipolar bowl_system_populate();
+
 static bipolar bowl_system_enter(string_address root)
 {
+        p8 name[64];
         bipolar failed;
-
-        failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
-        if (failed)
-                return failed;
 
         failed = system_mount(root, root, 0, MS_BIND | MS_REC, 0);
         if (failed)
@@ -368,7 +360,17 @@ static bipolar bowl_system_enter(string_address root)
         if (failed)
                 return failed;
 
-        return system_change_directory("/");
+        failed = system_change_directory("/");
+        if (failed)
+                return failed;
+
+        failed = bowl_system_populate();
+        if (failed)
+                return failed;
+
+        path_tail_copy(name, sizeof(name), root);
+        return system_call_2(syscall(sethostname), (positive)name,
+                             string_length((string_address)name));
 }
 
 static bipolar bowl_system_populate()
@@ -404,10 +406,6 @@ static bipolar bowl_fast_enter(string_address root)
 {
         p8 source[BOWL_PATH_LIMIT];
         bipolar failed;
-
-        failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
-        if (failed)
-                return failed;
 
         for (positive i = 0; bowl_fast_layers[i].path; i++)
         {
@@ -453,6 +451,15 @@ static bipolar bowl_execute(bipolar native_shell,
         return system_execute(program, arguments, environment);
 }
 
+static b32 bowl_launch_failed(bipolar native_shell, string_address what,
+                              bipolar failed)
+{
+        if (native_shell >= 0)
+                system_close(native_shell);
+        bowl_fail(what, failed);
+        return 1;
+}
+
 static DEAD_END fn bowl_inside(string_address root,
                                string_address program,
                                string_address address_to arguments,
@@ -461,25 +468,10 @@ static DEAD_END fn bowl_inside(string_address root,
 {
         bipolar failed;
 
-        if (system_profile)
-        {
-                p8 name[64];
-
-                failed = bowl_system_enter(root);
-                if (!failed)
-                {
-                        failed = bowl_system_populate();
-                        if (!failed)
-                        {
-                                path_tail_copy(name, sizeof(name), root);
-                                failed = system_call_2(
-                                    syscall(sethostname), (positive)name,
-                                    string_length((string_address)name));
-                        }
-                }
-        }
-        else
-                failed = bowl_fast_enter(root);
+        failed = system_mount(0, "/", 0, MS_REC | MS_PRIVATE, 0);
+        if (!failed)
+                failed = system_profile ? bowl_system_enter(root)
+                                        : bowl_fast_enter(root);
 
         if (failed)
         {
@@ -521,10 +513,9 @@ static b32 bowl_launch(string_address root, string_address program,
                 native_shell = system_open_at(AT_FDCWD, BOWL_NATIVE_SHELL,
                                               FILE_READ | O_CLOEXEC);
                 if (native_shell < 0)
-                {
-                        bowl_fail(BOWL_NATIVE_SHELL, native_shell);
-                        return 1;
-                }
+                        return bowl_launch_failed(native_shell,
+                                                  BOWL_NATIVE_SHELL,
+                                                  native_shell);
 
                 program = BOWL_NATIVE_SHELL;
                 arguments = native_arguments;
@@ -534,12 +525,9 @@ static b32 bowl_launch(string_address root, string_address program,
         {
                 failed = system_call_1(syscall(unshare), CLONE_NEWNS);
                 if (failed)
-                {
-                        if (native_shell >= 0)
-                                system_close(native_shell);
-                        bowl_fail("cannot make a mount view", failed);
-                        return 1;
-                }
+                        return bowl_launch_failed(native_shell,
+                                                  "cannot make a mount view",
+                                                  failed);
 
                 /* Success never returns: this process becomes the command. */
                 bowl_inside(root, program, arguments, environment,
@@ -550,22 +538,13 @@ static b32 bowl_launch(string_address root, string_address program,
                                                      CLONE_NEWIPC | CLONE_NEWPID);
 
         if (failed)
-        {
-                if (native_shell >= 0)
-                        system_close(native_shell);
-                bowl_fail("cannot make system views", failed);
-                return 1;
-        }
+                return bowl_launch_failed(native_shell,
+                                          "cannot make system views", failed);
 
         /* CLONE_NEWPID places the next child, not this caller, in the view. */
         child = system_fork();
         if (child < 0)
-        {
-                if (native_shell >= 0)
-                        system_close(native_shell);
-                bowl_fail("cannot start", child);
-                return 1;
-        }
+                return bowl_launch_failed(native_shell, "cannot start", child);
 
         if (child == 0)
                 bowl_inside(root, program, arguments, environment,

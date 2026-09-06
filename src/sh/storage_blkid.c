@@ -166,21 +166,6 @@ static bipolar storage_write(bipolar handle, p8 address_to bytes,
         return (bipolar)used;
 }
 
-static fn storage_text(p8 address_to into, positive room,
-                       positive address_to length, string_address text)
-{
-        string_address end_at;
-
-        if (!room)
-        {
-                address_to length = 0;
-                return;
-        }
-
-        end_at = string_copy_max_end(into, text, room - 1);
-        address_to length = (positive)(end_at - into);
-}
-
 static fn storage_trimmed(p8 address_to into, positive room,
                           positive address_to length,
                           p8 address_to source, positive size,
@@ -245,8 +230,9 @@ static fn storage_hex_padded(p8 address_to into, positive value,
 static fn storage_set_type(storage_identity address_to identity,
                            string_address type)
 {
-        storage_text(identity->type, sizeof(identity->type),
-                     address_of identity->type_length, type);
+        p8 address_to stop = string_copy_max_end(
+            identity->type, type, sizeof(identity->type) - 1);
+        identity->type_length = (positive)(stop - identity->type);
 }
 
 static fn storage_set_uuid(storage_identity address_to identity,

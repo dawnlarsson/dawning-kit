@@ -637,6 +637,14 @@ compare 'known RFC time UUID' uuidparse \
         'TZ=UTC0 "$TOOL" -n -r 6ba7b810-9dad-11d1-80b4-00c04fd430c8'
 compare 'reordered output columns' uuidparse \
         '"$TOOL" -n -o TYPE,UUID 550e8400-e29b-41d4-a716-446655440000'
+compare 'repeated output columns' uuidparse \
+        '"$TOOL" -n -o UUID,UUID 550e8400-e29b-41d4-a716-446655440000'
+subject 'lowercase output column rejected' uuidparse \
+        '! "$TOOL" -n -o uuid 550e8400-e29b-41d4-a716-446655440000'
+subject 'empty output columns rejected' uuidparse \
+        'for columns in ,UUID UUID,,TYPE UUID,; do if "$TOOL" -n -o "$columns" 550e8400-e29b-41d4-a716-446655440000; then exit 1; fi; done'
+subject '32 output columns bounded exactly' uuidparse \
+        'columns=UUID; i=1; while [ "$i" -lt 32 ]; do columns=$columns,UUID; i=$((i + 1)); done; "$TOOL" -n -o "$columns" 550e8400-e29b-41d4-a716-446655440000 >/dev/null || exit; columns=$columns,UUID; if "$TOOL" -n -o "$columns" 550e8400-e29b-41d4-a716-446655440000; then exit 1; fi'
 compare 'nil max and invalid UUIDs' uuidparse \
         '"$TOOL" 00000000-0000-0000-0000-000000000000 ffffffff-ffff-ffff-ffff-ffffffffffff bad'
 compare 'JSON valid and invalid rows' uuidparse \

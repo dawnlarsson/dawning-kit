@@ -496,7 +496,7 @@ static const storage_column_descriptor storage_column_table[] = {
 
 typedef struct
 {
-        enum storage_column columns[STORAGE_COLUMN_MAX];
+        p8 columns[STORAGE_COLUMN_MAX];
         positive count;
         string_address operand;
         string_address source;
@@ -572,36 +572,11 @@ static PURE bool storage_mount_options_match(storage_mount address_to mount,
 static bool storage_columns(string_address list,
                             storage_findmnt_options address_to options)
 {
-        string_address cursor = list;
-        string_address at;
-        positive length;
-
         options->count = 0;
-
-        while ((at = storage_comma_next(address_of cursor, address_of length)))
-        {
-                positive column;
-
-                for (column = 0; column < STORAGE_COLUMN_MAX; column++)
-                {
-                        const storage_column_descriptor address_to descriptor =
-                            storage_column_table + column;
-
-                        if (file_same_word(at, length, descriptor->name))
-                                break;
-                }
-
-                if (column == STORAGE_COLUMN_MAX)
-                        return false;
-
-                if (options->count == STORAGE_COLUMN_MAX)
-                        return false;
-
-                options->columns[options->count++] =
-                    (enum storage_column)column;
-        }
-
-        return options->count != 0;
+        return name_list_select(
+            list, storage_column_table, sizeof(storage_column_table[0]),
+            STORAGE_COLUMN_MAX, options->columns, address_of options->count,
+            STORAGE_COLUMN_MAX, 0);
 }
 
 #define storage_column_name(column) storage_column_table[(column)].name

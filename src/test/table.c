@@ -58,6 +58,118 @@ static p8 table_hex_digit(p8 nibble)
         return nibble < 10 ? '0' + nibble : 'a' + nibble - 10;
 }
 
+static fn name_list_checks(void)
+{
+        typedef struct
+        {
+                string_address name;
+                positive payload;
+        } named;
+        static const named definitions[] = {
+            {(string_address)"alpha", 11},
+            {(string_address)"Beta", 22},
+            {(string_address)"gamma", 33},
+        };
+        p8 selected[4];
+        positive count = 0;
+
+        check("name list case fold and trailing comma",
+              name_list_select((string_address)"ALPHA,beta,", definitions,
+                               sizeof(definitions[0]),
+                               array_count(definitions), selected,
+                               address_of count, array_count(selected), 0) &&
+              count == 2 && selected[0] == 0 && selected[1] == 1);
+
+        count = 0;
+        check("name list duplicates retained",
+              name_list_select((string_address)"alpha,alpha", definitions,
+                               sizeof(definitions[0]),
+                               array_count(definitions), selected,
+                               address_of count, array_count(selected), 0) &&
+              count == 2 && selected[0] == 0 && selected[1] == 0);
+
+        selected[0] = 0;
+        count = 1;
+        check("name list unique seeded prefix",
+              name_list_select((string_address)"ALPHA,gamma", definitions,
+                               sizeof(definitions[0]),
+                               array_count(definitions), selected,
+                               address_of count, array_count(selected),
+                               NAME_LIST_UNIQUE) &&
+              count == 2 && selected[0] == 0 && selected[1] == 2);
+
+        count = 0;
+        check("name list exact case",
+              !name_list_select((string_address)"ALPHA", definitions,
+                                sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, array_count(selected),
+                                NAME_LIST_CASE_SENSITIVE));
+
+        count = 0;
+        check("name list strict trailing comma",
+              !name_list_select((string_address)"alpha,", definitions,
+                                sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, array_count(selected),
+                                NAME_LIST_REJECT_TRAILING));
+
+        count = 0;
+        check("name list capacity bound",
+              !name_list_select((string_address)"alpha,Beta", definitions,
+                                sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, 1, 0));
+
+        selected[0] = 0;
+        count = 1;
+        check("name list full unique prefix",
+              name_list_select((string_address)"alpha", definitions,
+                               sizeof(definitions[0]),
+                               array_count(definitions), selected,
+                               address_of count, 1, NAME_LIST_UNIQUE) &&
+              count == 1 &&
+              !name_list_select((string_address)"Beta", definitions,
+                                sizeof(definitions[0]),
+                                array_count(definitions), selected,
+                                address_of count, 1, NAME_LIST_UNIQUE));
+
+        named wide[256];
+        for (positive i = 0; i < array_count(wide); i++)
+                wide[i] = (named){(string_address)"other", i};
+        wide[255].name = (string_address)"last";
+        count = 0;
+        check("name list byte index boundary",
+              name_list_select((string_address)"last", wide, sizeof(wide[0]),
+                               array_count(wide), selected,
+                               address_of count, array_count(selected), 0) &&
+              count == 1 && selected[0] == 255);
+        count = 0;
+        check("name list excessive definitions",
+              !name_list_select((string_address)"last", wide,
+                                sizeof(wide[0]), 257, selected,
+                                address_of count, array_count(selected), 0));
+
+        p8 lock_fields[] = "  1\tPOSIX\vowner";
+        p8 address_to field_at = lock_fields;
+        string_address id = storage_field(address_of field_at);
+        string_address kind = storage_field(address_of field_at);
+        check("kernel field grammar is space and tab",
+              string_equals(id, "1") &&
+              string_equals(kind, "POSIX\vowner"));
+
+        p8 records[] = "first\nlast";
+        p8 address_to record_at = records;
+        p8 address_to record_limit = records + sizeof(records) - 1;
+        string_address first = storage_line_next(address_of record_at,
+                                                 record_limit);
+        string_address last = storage_line_next(address_of record_at,
+                                                record_limit);
+        check("kernel final line uses owned sentinel",
+              string_equals(first, "first") && string_equals(last, "last") &&
+              !storage_line_next(address_of record_at, record_limit));
+}
+
 static fn table_checks(void)
 {
         p8 bytes[1030], expected[8192];
@@ -182,6 +294,7 @@ static fn table_checks(void)
 
 b32 main(void)
 {
+        name_list_checks();
         table_checks();
 #ifdef TABLE_BENCHMARK
         if (!failures)

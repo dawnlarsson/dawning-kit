@@ -4624,43 +4624,6 @@ static fn join_emit(p8 address_to left, positive left_length,
                                        present, empty, output_separator);
                 }
         }
-        else if (join_output_auto)
-        {
-                p8 address_to value = null;
-                positive length = 0;
-                bool present = left && join_field_at(
-                    left, left_length, join_key[0], separated, separator,
-                    address_of value, address_of length);
-
-                if (!present && right)
-                        present = join_field_at(
-                            right, right_length, join_key[1], separated,
-                            separator, address_of value, address_of length);
-
-                join_put_field(address_of first, value, length, present,
-                               empty, output_separator);
-
-                for (positive side = 0; side < 2; side++)
-                {
-                        p8 address_to line = side ? right : left;
-                        positive line_length = side ? right_length : left_length;
-                        positive fields = side ? auto_right : auto_left;
-
-                        for (positive field = 0; field < fields; field++)
-                        {
-                                if (field == join_key[side])
-                                        continue;
-
-                                present = line && join_field_at(
-                                    line, line_length, field, separated,
-                                    separator, address_of value,
-                                    address_of length);
-                                join_put_field(address_of first, value, length,
-                                               present, empty,
-                                               output_separator);
-                        }
-                }
-        }
         else
         {
                 p8 address_to value = null;
@@ -4677,14 +4640,38 @@ static fn join_emit(p8 address_to left, positive left_length,
                 join_put_field(address_of first, value, length, present,
                                empty, output_separator);
 
-                if (left)
-                        join_put_nonkeys(address_of first, left, left_length,
-                                         join_key[0], separated, separator,
-                                         output_separator);
-                if (right)
-                        join_put_nonkeys(address_of first, right, right_length,
-                                         join_key[1], separated, separator,
-                                         output_separator);
+                if (join_output_auto)
+                        for (positive side = 0; side < 2; side++)
+                        {
+                                p8 address_to line = side ? right : left;
+                                positive line_length = side ? right_length : left_length;
+                                positive fields = side ? auto_right : auto_left;
+
+                                for (positive field = 0; field < fields; field++)
+                                {
+                                        if (field == join_key[side])
+                                                continue;
+
+                                        present = line && join_field_at(
+                                            line, line_length, field, separated,
+                                            separator, address_of value,
+                                            address_of length);
+                                        join_put_field(address_of first, value, length,
+                                                       present, empty,
+                                                       output_separator);
+                                }
+                        }
+                else
+                {
+                        if (left)
+                                join_put_nonkeys(address_of first, left, left_length,
+                                                 join_key[0], separated, separator,
+                                                 output_separator);
+                        if (right)
+                                join_put_nonkeys(address_of first, right, right_length,
+                                                 join_key[1], separated, separator,
+                                                 output_separator);
+                }
         }
 
         text_put_character(delimiter);
@@ -6440,80 +6427,6 @@ static bool text_count_option(string_address said, p8 marked,
         return false;
 }
 
-static b32 text_head()
-{
-        file_taking taking = {
-            .program = (string_address) "head",
-            .allowed = (string_address) "cnqvz",
-            .valued = (string_address) "cn",
-            .longs = head_longs,
-            .operand = text_file_add,
-            // head -5 is head -n 5, and the digits are the count.
-            .digits = 'n',
-        };
-
-        text_begin("head");
-
-        if (!file_take(address_of taking))
-                return text_done(1);
-
-        if (!text_files_ready())
-                return text_done(1);
-
-        positive count = 10;
-        bool by_bytes = taking.last == 'c';
-        bool from_end = false;
-        bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
-        bool loud = (taking.flags & FILE_FLAG('v')) != 0;
-        string_address said = file_option_value(address_of taking,
-                                                by_bytes ? 'c' : 'n');
-
-        if (taking.flags & FILE_FLAG('z'))
-                text_delimiter = '\0';
-
-        // A count written with a minus names what to leave off the end rather
-        // than what to take from the front. A plus is an explicit ordinary
-        // count for head, unlike tail where it means a starting position.
-        if (!text_count_option(said, '-', address_of from_end, address_of count))
-                return text_done(1);
-
-        b32 inputs = text_input_count();
-        bool headers = (text_files_count > 1 || loud) && !quiet;
-
-        for (b32 i = 0; i < inputs; i++)
-        {
-                if (!text_open(text_file_name(i)))
-                        continue;
-
-                if (headers)
-                        text_banner(i, i == 0);
-
-                if (from_end)
-                {
-                        text_head_short(count, by_bytes);
-                        text_close();
-                        continue;
-                }
-
-                if (by_bytes)
-                        text_stream_count(count);
-                else
-                {
-                        positive done = 0;
-
-                        while (done < count && text_line_next())
-                        {
-                                text_put_line();
-                                done++;
-                        }
-                }
-
-                text_close();
-        }
-
-        return text_done(text_status);
-}
-
 /*
         The long spellings tail answers to.
 
@@ -6545,22 +6458,24 @@ static const file_long tail_longs[] = {
     {null, 0},
 };
 
-static b32 text_tail()
+/* Shared option/operand lifetime; the constant tool choice leaves each
+   scanner specialized, including head's early stop and tail's reverse scan. */
+static inline INLINE b32 text_head_tail(bool tail)
 {
         file_taking taking = {
-            .program = (string_address) "tail",
+            .program = tail ? (string_address)"tail" : (string_address)"head",
             // -f waits for more to be written, which is a wait this does not
             // do: the file is read to its end and that is where GNU would
             // still be sitting. -s is how long it would have waited.
-            .allowed = (string_address) "cfnqsvz",
-            .valued = (string_address) "Pcns",
-            .optional = (string_address) "F",
-            .longs = tail_longs,
+            .allowed = tail ? (string_address)"cfnqsvz" : (string_address)"cnqvz",
+            .valued = tail ? (string_address)"Pcns" : (string_address)"cn",
+            .optional = tail ? (string_address)"F" : null,
+            .longs = tail ? tail_longs : head_longs,
             .operand = text_file_add,
             .digits = 'n',
         };
 
-        text_begin("tail");
+        text_begin(taking.program);
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -6570,7 +6485,7 @@ static b32 text_tail()
 
         positive count = 10;
         bool by_bytes = taking.last == 'c';
-        bool from_start = false;
+        bool marked = false;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
         string_address said = file_option_value(address_of taking,
@@ -6579,7 +6494,7 @@ static b32 text_tail()
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
-        if (!text_count_option(said, '+', address_of from_start,
+        if (!text_count_option(said, tail ? '+' : '-', address_of marked,
                                address_of count))
                 return text_done(1);
 
@@ -6594,11 +6509,30 @@ static b32 text_tail()
                 if (headers)
                         text_banner(i, i == 0);
 
+                if (!tail)
+                {
+                        if (marked)
+                                text_head_short(count, by_bytes);
+                        else if (by_bytes)
+                                text_stream_count(count);
+                        else
+                        {
+                                positive done = 0;
+                                while (done < count && text_line_next())
+                                {
+                                        text_put_line();
+                                        done++;
+                                }
+                        }
+                        text_close();
+                        continue;
+                }
+
                 text_lines_count = 0;
                 text_arena_used = text_lines ? TEXT_LINES_MAX * sizeof(text_slice) : 0;
 
                 positive size = 0;
-                bool seekable = !from_start &&
+                bool seekable = !marked &&
                                 text_regular_size(text_input.handle, address_of size);
 
                 if (seekable)
@@ -6627,7 +6561,7 @@ static b32 text_tail()
                         if (!held)
                                 return text_done(1);
 
-                        if (from_start)
+                        if (marked)
                         {
                                 positive skip = count ? count - 1 : 0;
 
@@ -6641,7 +6575,7 @@ static b32 text_tail()
                                 text_put(held + have - take, take);
                         }
                 }
-                else if (from_start)
+                else if (marked)
                 {
                         positive seen = 0;
 
@@ -6669,6 +6603,9 @@ static b32 text_tail()
 
         return text_done(text_status);
 }
+
+static b32 text_head() { return text_head_tail(false); }
+static b32 text_tail() { return text_head_tail(true); }
 
 /*
         The long spellings tee answers to.
@@ -7524,19 +7461,21 @@ static const file_long unexpand_longs[] = {
     {null, 0},
 };
 
-static b32 text_expand()
+/* Both names feed the same tab machine; only their option policy differs. */
+static inline INLINE b32 text_tabs(bool unexpand)
 {
         file_taking taking = {
-            .program = (string_address) "expand",
-            .allowed = (string_address) "it",
+            .program = unexpand ? (string_address)"unexpand"
+                                : (string_address)"expand",
+            .allowed = unexpand ? (string_address)"at" : (string_address)"it",
             .valued = (string_address) "t",
-            .longs = expand_longs,
+            .longs = unexpand ? unexpand_longs : expand_longs,
             .operand = text_file_add,
             .seen = text_tab_seen,
             .digits = 'T',
         };
 
-        text_begin("expand");
+        text_begin(taking.program);
         text_tab_reset();
 
         if (!file_take(address_of taking) || !text_files_ready())
@@ -7553,47 +7492,20 @@ static b32 text_expand()
         }
 
         text_tab_finish_options();
-        text_tab_transform(false, (taking.flags & FILE_FLAG('i')) != 0);
-        return text_done(text_status);
-}
-
-static b32 text_unexpand()
-{
-        file_taking taking = {
-            .program = (string_address) "unexpand",
-            .allowed = (string_address) "at",
-            .valued = (string_address) "t",
-            .longs = unexpand_longs,
-            .operand = text_file_add,
-            .seen = text_tab_seen,
-            .digits = 'T',
-        };
-
-        text_begin("unexpand");
-        text_tab_reset();
-
-        if (!file_take(address_of taking) || !text_files_ready())
-                return text_done(1);
-
-        if (taking.flags & FILE_FLAG('T'))
+        bool initial_only = (taking.flags & FILE_FLAG('i')) != 0;
+        if (unexpand)
         {
-                if (text_tab_option_seen)
-                        return text_refuse(null,
-                                           "cannot mix -N and --tabs syntax", 1);
-
-                if (!text_tab_parse(file_option_value(address_of taking, 'T')))
-                        return text_done(1);
+                bool first = (taking.flags & FILE_FLAG('f')) != 0;
+                bool all = !first && ((taking.flags & FILE_FLAG('a')) ||
+                                      text_tab_option_seen);
+                initial_only = !all;
         }
-
-        text_tab_finish_options();
-
-        bool first = (taking.flags & FILE_FLAG('f')) != 0;
-        bool all = !first && ((taking.flags & FILE_FLAG('a')) ||
-                              text_tab_option_seen);
-
-        text_tab_transform(true, !all);
+        text_tab_transform(unexpand, initial_only);
         return text_done(text_status);
 }
+
+static b32 text_expand() { return text_tabs(false); }
+static b32 text_unexpand() { return text_tabs(true); }
 
 /*
         Paragraph filling.

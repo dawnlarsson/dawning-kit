@@ -515,9 +515,7 @@ struct spawn_work
         unsigned int argc;
         bool shell_fallback;
         bool path_owned;
-        struct file *input;
-        struct file *output;
-        struct file *error;
+        struct file *stdio[3];
 };
 
 static void spawn_strings_put(struct spawn_strings *strings)
@@ -528,12 +526,12 @@ static void spawn_strings_put(struct spawn_strings *strings)
 
 static void spawn_free(struct spawn_work *work)
 {
-        if (work->error)
-                fput(work->error);
-        if (work->output)
-                fput(work->output);
-        if (work->input)
-                fput(work->input);
+        if (work->stdio[2])
+                fput(work->stdio[2]);
+        if (work->stdio[1])
+                fput(work->stdio[1]);
+        if (work->stdio[0])
+                fput(work->stdio[0]);
         spawn_strings_put(work->environment);
         spawn_strings_put(work->arguments);
         if (work->path_owned)
@@ -625,9 +623,9 @@ static int spawn_enter(void *data)
         /* Without the close-on-exec flag, so these three outlive the load
            while every other descriptor the caller happened to hold does
            not. A pipeline's other ends are among those. */
-        if ((work->input && replace_fd(0, work->input, 0)) ||
-            (work->output && replace_fd(1, work->output, 0)) ||
-            (work->error && replace_fd(2, work->error, 0)))
+        if ((work->stdio[0] && replace_fd(0, work->stdio[0], 0)) ||
+            (work->stdio[1] && replace_fd(1, work->stdio[1], 0)) ||
+            (work->stdio[2] && replace_fd(2, work->stdio[2], 0)))
         {
                 ret = -EBADF;
                 goto finished;
@@ -784,19 +782,9 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         if (!work)
                 return -ENOMEM;
 
-        if (input >= 0 && !(work->input = fget(input)))
-        {
-                ret = -EBADF;
-                goto fail;
-        }
-
-        if (output >= 0 && !(work->output = fget(output)))
-        {
-                ret = -EBADF;
-                goto fail;
-        }
-
-        if (error >= 0 && !(work->error = fget(error)))
+        if ((input >= 0 && !(work->stdio[0] = fget(input))) ||
+            (output >= 0 && !(work->stdio[1] = fget(output))) ||
+            (error >= 0 && !(work->stdio[2] = fget(error))))
         {
                 ret = -EBADF;
                 goto fail;
