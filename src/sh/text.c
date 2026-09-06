@@ -14366,6 +14366,7 @@ static b32 text_uniq()
 static p8 grep_pattern[GREP_PATTERN_MAX];
 static positive grep_pattern_length;
 static bool grep_pattern_any;
+static bool grep_pattern_empty;
 // How many groups the patterns joined so far have opened, which is what a
 // backreference in the next one has to be counted past.
 static positive grep_pattern_groups;
@@ -14480,6 +14481,9 @@ static fn grep_pattern_add(string_address text, positive length, bool fixed, boo
         {
                 if (at != length && text[at] != '\n')
                         continue;
+
+                if (at == from)
+                        grep_pattern_empty = true;
 
                 if (grep_pattern_any)
                 {
@@ -14597,10 +14601,6 @@ static p8 grep_literal[REGEX_LITERAL_MAX];
 static positive grep_literal_length;
 static bool grep_literal_icase;
 static positive2 grep_literal_anchors;
-
-// Whole-file counting trades copies for clean file-backed residency. Keep the
-// transient working set explicit; larger files retain the bounded reader.
-#define GREP_MAP_MAX (64u << 20)
 
 static fn grep_literal_keep()
 {
@@ -15455,6 +15455,7 @@ static b32 text_grep()
         grep_pattern_broken = false;
         grep_pattern_length = 0;
         grep_pattern_any = false;
+        grep_pattern_empty = false;
         grep_pattern_groups = 0;
         grep_include = null;
         grep_exclude = null;
@@ -15678,6 +15679,14 @@ static b32 text_grep()
         if (limit == 0 || (never && !invert))
                 return text_done(1);
 
+        /* GNU resolves an explicit empty pattern under -v before opening an
+           input. In count mode that means no "0" line is printed at all.
+           Keep -w/-x and file-listing priority on their normal paths: their
+           wrapping or output policy changes the question. */
+        if (grep_pattern_empty && invert && counting && !whole_line &&
+            !whole_word && !listing && !listing_without)
+                return text_done(1);
+
         // Nothing named and no -r is the one way standard input is read;
         // -r with nothing named walks the working directory instead.
         bool from_stdin = !text_files_count && !grep_recursive;
@@ -15805,77 +15814,8 @@ static b32 text_grep()
                                        !listing_without && !quiet;
                 bool fused_counting = direct_counting && !icase &&
                                       limit == TEXT_UNSET;
-                bool counted_mapped = false;
 
-                /* A named regular file was opened at offset zero and has a
-                   stable size snapshot. Dense matches and records longer
-                   than a refill benefit from letting the same record-aware
-                   core see one mapped span. Sparse short records do not: the
-                   page-table faults cost more than the reader's kernel copy.
-                   One normal refill distinguishes those shapes and remains
-                   ready for the fallback path. mmap failure, small files,
-                   dynamic pseudo files and standard input retain the reader.
-                   As with every file-backed mapping, a concurrent destructive
-                   truncate can SIGBUS; grep does not promise a coherent view
-                   of a file being changed underneath it. */
-                if (fused_counting && name)
-                {
-                        positive size = 0;
-
-                        if (text_regular_size(text_input.handle,
-                                              address_of size) &&
-                            size > TEXT_READ_MAX && size <= GREP_MAP_MAX &&
-                            text_fill())
-                        {
-                                p8 address_to sample = text_input.buffer +
-                                                       text_input.position;
-                                positive left = text_input.filled -
-                                                text_input.position;
-                                p8 address_to last = memory_last_of(
-                                    sample, text_delimiter, left);
-                                positive sample_matches = 0;
-
-                                if (last)
-                                {
-                                        positive take =
-                                            (positive)(last - sample) + 1;
-
-                                        sample_matches =
-                                            memory_count_records_with_prepared(
-                                                sample, take, grep_literal,
-                                                grep_literal_length,
-                                                grep_literal_anchors.x,
-                                                grep_literal_anchors.y,
-                                                text_delimiter);
-                                }
-
-                                if (!last || sample_matches >= 16)
-                                {
-                                        bipolar mapped = system_call_6(
-                                            syscall(mmap), 0, size,
-                                            FILE_PROTECT_READ, FILE_MAP_PRIVATE,
-                                            text_input.handle, 0);
-
-                                        if ((positive)mapped < (positive)-4095)
-                                        {
-                                                matches =
-                                                    memory_count_records_with_prepared(
-                                                        (p8 address_to)mapped,
-                                                        size, grep_literal,
-                                                        grep_literal_length,
-                                                        grep_literal_anchors.x,
-                                                        grep_literal_anchors.y,
-                                                        text_delimiter);
-                                                found_any = found_any || matches;
-                                                memory_free((address_any)mapped,
-                                                            size);
-                                                counted_mapped = true;
-                                        }
-                                }
-                        }
-                }
-
-                while (!counted_mapped)
+                for (;;)
                 {
                         // The line skipping stopped on holds the fixed string
                         // already, and asking the machine again would be the
@@ -16043,7 +15983,24 @@ static b32 text_grep()
 
                                         if (stop == begin)
                                         {
-                                                from = begin + 1;
+                                                /* -w's wrapper consumes a
+                                                   nonword byte on both sides.
+                                                   When its inner pattern is
+                                                   empty, the right separator
+                                                   is also the only possible
+                                                   left separator for a word
+                                                   immediately after it. Let
+                                                   the next search reuse that
+                                                   byte instead of stepping
+                                                   over it. */
+                                                positive next =
+                                                    grep_match_slot &&
+                                                            whole_stop > begin
+                                                        ? whole_stop - 1
+                                                        : begin + 1;
+
+                                                from = next > from ? next
+                                                                   : from + 1;
                                                 continue;
                                         }
 

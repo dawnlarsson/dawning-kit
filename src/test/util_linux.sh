@@ -2284,8 +2284,13 @@ subject 'persistent mode rejected' lsns \
         '"$TOOL" -P >/dev/null 2>&1; [ "$?" -ne 0 ]'
 
 if unshare -Urn /bin/true >/dev/null 2>&1; then
-        compare 'isolated user and net namespace' lsns \
-                'unshare -Urn /bin/sh -c '\''"$1" -p $$ -n -r -o TYPE'\'' sh "$TOOL"'
+        # Namespace inode numbers are recycled globally.  Compare both tools
+        # in one namespace: separate unshare calls can legitimately receive a
+        # different user/net inode ordering while both still sort correctly.
+        reference=$(command -v lsns || true)
+        subject 'isolated user and net namespace' lsns \
+                'unshare -Urn /bin/sh -c '\''"$1" -p $$ -n -r -o TYPE > "$3/lsns.want"; want=$?; "$2" -p $$ -n -r -o TYPE > "$3/lsns.got"; got=$?; [ "$want" = "$got" ] && cmp -s "$3/lsns.want" "$3/lsns.got"'\'' sh "$1" "$TOOL" "$2"' \
+                sh "$reference" "$work"
         subject 'isolated namespace inode is distinct' lsns \
                 'parent=$(stat -Lc %i /proc/$$/ns/net); export TOOL parent; unshare -Urn /bin/sh -c '\''now=$(stat -Lc %i /proc/$$/ns/net); [ "$now" != "$parent" ] && "$TOOL" -t net -p $$ -n -r -o NS,TYPE | grep -q "^$now net$"'\'''
 fi

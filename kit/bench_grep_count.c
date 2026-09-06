@@ -244,7 +244,8 @@ static bool boundaries(void)
         return true;
 }
 
-/* Both ends of the exact span meet an inaccessible page.  The three shapes
+/* Each end of the exact span is placed against an inaccessible page in turn.
+   The three shapes
    cover an absent sparse anchor, one match in nearly every short record and
    a final record without a delimiter; the model remains byte-at-a-time and
    independent of both optimized searches. */

@@ -2116,6 +2116,7 @@ awk 'BEGIN { for (i = 0; i < 65531; i++) printf "x"; printf "needle" }' > "$work
 awk 'BEGIN { for (i = 0; i < 12000; i++) printf "needle%c", 0 }' > "$work/grep_mapped_zero"
 printf '%s' "$(cat "$work/sparse")" > "$work/nonl"
 printf 'needle\nzzz\n' > "$work/plist"
+printf '%s\n' '- a' '--b' 'x - a' 'plain a' 'a-b' '-x' '-z' '-ab' > "$work/grep_word_optional"
 
 #       Two options that answer the same question, in both orders.
 #
@@ -2153,10 +2154,14 @@ compare 'count miss'     grep sparse  -c zzzz
 compare 'empty file then e' grep sparse -F -f "$work/grep_empty_patterns" -e needle
 compare 'empty then pattern file' grep sparse -F -f "$work/grep_empty_patterns" -f "$work/grep_one_pattern"
 compare 'max zero inverted' grep sparse -F -v -m0 needle
-compare 'mapped dense named' grep - -Fc needle "$work/grep_mapped_dense"
-compare 'mapped long named' grep - -Fc needle "$work/grep_mapped_long"
-compare 'mapped refill edge' grep - -Fc needle "$work/grep_refill_edge"
-compare 'mapped zero named' grep - -zFc needle "$work/grep_mapped_zero"
+compare 'inverted empty count' grep sparse -F -v -c -n -e ''
+compare 'word optional only' grep grep_word_optional -E -w -o 'a?'
+compare 'word star only' grep grep_word_optional -E -w -o 'a*'
+compare 'word optional many' grep grep_word_optional -E -w -o -e 'a?' -e 'b?'
+compare 'dense named count' grep - -Fc needle "$work/grep_mapped_dense"
+compare 'long named count' grep - -Fc needle "$work/grep_mapped_long"
+compare 'refill edge named' grep - -Fc needle "$work/grep_refill_edge"
+compare 'zero named count' grep - -zFc needle "$work/grep_mapped_zero"
 compare 'dense standard input' grep grep_mapped_dense -Fc needle
 compare 'numbered'       grep sparse  -n needle
 compare 'byte offset'    grep sparse  -b needle
