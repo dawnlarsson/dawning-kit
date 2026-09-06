@@ -629,6 +629,7 @@ typedef struct
         positive room;
         positive count;
         b32 next_free;
+        p32 references;
 } array_table;
 
 static array_table address_to array_tables;
@@ -652,6 +653,7 @@ static COLD b32 array_table_take()
                 array_table_free = array_tables[slot - 1].next_free;
                 array_tables[slot - 1].count = 0;
                 array_tables[slot - 1].next_free = 0;
+                array_tables[slot - 1].references = 1;
                 return slot;
         }
 
@@ -661,7 +663,7 @@ static COLD b32 array_table_take()
                 return 0;
 
         slot = (b32)(array_table_count + 1);
-        array_tables[array_table_count] = (array_table){0};
+        array_tables[array_table_count] = (array_table){.references = 1};
         array_table_count++;
 
         return slot;
@@ -683,6 +685,8 @@ static COLD fn array_table_release(b32 slot)
                 return;
 
         table = array_tables + (slot - 1);
+        if (--table->references)
+                return;
 
         for (positive at = 0; at < table->count; at++)
                 env_cell_drop(table->element[at].text);
@@ -690,6 +694,53 @@ static COLD fn array_table_release(b32 slot)
         table->count = 0;
         table->next_free = array_table_free;
         array_table_free = slot;
+}
+
+/* Scope snapshots own the table, not a second serialization of its keys.
+   Only a write to a shared table copies cells; hiding/replacing an array
+   and restoring a scope are constant-time ownership changes. */
+static b32 array_table_hold(b32 slot)
+{
+        if (slot && array_tables[slot - 1].references == p32_max)
+                return -1;
+        if (slot)
+                array_tables[slot - 1].references++;
+        return slot;
+}
+
+static COLD bool array_table_edit(env_variable address_to variable, bool clear)
+{
+        b32 old = variable->array;
+        if (!old || array_tables[old - 1].references == 1)
+                return true;
+        b32 slot = array_table_take();
+        if (!slot)
+                return false;
+        array_table address_to from = array_tables + old - 1;
+        array_table address_to to = array_tables + slot - 1;
+        if (!clear)
+        {
+                if (!shell_array_room(to->element, to->room, from->count))
+                        goto failed;
+                for (positive at = 0; at < from->count; at++)
+                {
+                        array_element item = from->element[at];
+                        positive bytes = item.key_length + (item.key_length != 0) +
+                                         item.value_length + 1;
+                        env_cell address_to cell = env_cell_take(bytes);
+                        if (!cell)
+                                goto failed;
+                        memory_copy_apart(cell + 1, item.text, bytes);
+                        item.text = (string_address)(cell + 1);
+                        to->element[to->count++] = item;
+                }
+        }
+        variable->array = slot;
+        array_table_release(old);
+        return true;
+failed:
+        array_table_release(slot);
+        return false;
 }
 
 /*
@@ -963,7 +1014,8 @@ static env_variable address_to env_export_take(const_string name,
         for every assignment prefix on every command line.
 */
 string_address env_saved_state(const_string name, positive length,
-                               bool address_to exported, p8 address_to kind)
+                               bool address_to exported, p8 address_to kind,
+                               b32 address_to array)
 {
         positive found = env_find_span(name, length);
 
@@ -971,12 +1023,14 @@ string_address env_saved_state(const_string name, positive length,
         {
                 address_to exported = false;
                 address_to kind = 0;
+                address_to array = 0;
                 return null;
         }
 
         address_to exported = shell_vars[found].permanent ||
                               shell_vars[found].temporary != 0;
         address_to kind = shell_vars[found].attributes;
+        address_to array = shell_vars[found].array;
 
         if (!env_variable_has_value(shell_vars + found))
                 return null;
@@ -2566,6 +2620,8 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
 
         variable->declared = true;
         variable->attributes |= SHELL_ARRAY_ASSIGNED;
+        if (!array_table_edit(variable, false))
+                return false;
         table = array_table_of(variable);
 
         if (keyed)
@@ -2615,6 +2671,8 @@ COLD bool shell_array_clear(const_string name, positive length)
         if (variable->attributes & SHELL_ARRAY_READONLY)
                 return false;
 
+        if (!array_table_edit(variable, true))
+                return false;
         table = array_table_of(variable);
 
         for (positive at = 0; table && at < table->count; at++)
@@ -2755,7 +2813,11 @@ static COLD bool shell_array_forget_mode(const_string name, positive length,
                     key_length);
 
                 if (at < table->count)
-                        array_element_forget(table, at);
+                {
+                        if (!array_table_edit(variable, false))
+                                return false;
+                        array_element_forget(array_table_of(variable), at);
+                }
 
                 return true;
         }
@@ -2803,7 +2865,11 @@ static COLD bool shell_array_forget_mode(const_string name, positive length,
                 at = array_place(table, index);
 
                 if (at < table->count && table->element[at].key == index)
-                        array_element_forget(table, at);
+                {
+                        if (!array_table_edit(variable, false))
+                                return false;
+                        array_element_forget(array_table_of(variable), at);
+                }
 
                 return true;
         }
@@ -3499,6 +3565,16 @@ static bool shell_option_letter(shell_option_walk address_to walk,
 
                 walk->rest = word + 1;
         }
+}
+
+static string_address shell_option_argument(shell_option_walk address_to walk)
+{
+        string_address value = walk->rest;
+        if (!value || !*value)
+                value = ++walk->index < shell_argc ? shell_argv[walk->index] : null;
+        walk->rest = null;
+        walk->index++;
+        return value;
 }
 
 // The one walk over every name the shell holds, in order. It lives with
@@ -4813,6 +4889,52 @@ fn env_unset(string_address name)
         env_unset_span(name, string_length(env_reading(name)));
 }
 
+/* Restore stored bytes, not a new assignment: integer and nameref attributes
+   must not evaluate them again. The retained array reference is consumed on
+   every path, including allocation failure. */
+static bool env_value_restore(string_address name, positive length,
+                              string_address value, p8 attributes, b32 array)
+{
+        if (!value && !attributes)
+        {
+                env_unset_span(name, length);
+                array_table_release(array);
+                return true;
+        }
+        positive hash = env_name_hash(name, length);
+        env_variable address_to variable = env_export_take_hashed(name, length, hash);
+        if (!variable)
+        {
+                array_table_release(array);
+                return false;
+        }
+        p8 current = variable->attributes;
+        variable->attributes = 0;
+        bool written = env_write_found_span(name, length, hash,
+                                            (positive)(variable - shell_vars),
+                                            value ? value : (string_address)"", false);
+        variable->attributes = current;
+        if (!written)
+        {
+                array_table_release(array);
+                return false;
+        }
+        if ((current ^ attributes) & SHELL_ARRAY_READONLY)
+                readonly_count = attributes & SHELL_ARRAY_READONLY
+                                     ? readonly_count + 1 : readonly_count - 1;
+        array_table_release(variable->array);
+        variable->array = array;
+        variable->attributes = attributes;
+        if (!value)
+                variable->text[length] = end;
+        shell_envp_dirty = true;
+        if (value)
+                env_write_noted(name, length, true);
+        else
+                env_unset_noted(name, length);
+        return true;
+}
+
 bool env_set_number(string_address name, positive value)
 {
         p8 text[24];
@@ -6038,22 +6160,8 @@ typedef struct
         // local has to come back as the array it was and not as the string
         // its element zero happened to be.
         p8 attributes;
-        positive element_from;
-        positive element_count;
+        b32 array;
 } shell_local_entry;
-
-// One saved element: the key, a nul, then the value. Both are terminated
-// because putting the array back names each element, and the live cells are
-// gone by then.
-typedef struct
-{
-        string_address text;
-        positive key_length;
-} local_element;
-
-static local_element address_to local_elements;
-static positive local_element_room;
-static positive local_element_count;
 
 static shell_local_entry address_to local_table;
 static positive local_room;
@@ -6111,66 +6219,6 @@ static COLD bool local_hide_saved(string_address name, positive length,
         return true;
 }
 
-static COLD bool local_keep_array(shell_local_entry address_to entry,
-                             string_address name, positive length)
-{
-        positive count = shell_array_length(name, length);
-        shell_mark held = shell_store_mark(address_of expand_store);
-        shell_array_item address_to items;
-        p8 written[32];
-        bool answer = true;
-
-        if (!count)
-                return true;
-
-        items = (shell_array_item address_to)shell_store_take(
-            address_of expand_store, count * sizeof(items[0]));
-
-        if (!items || !shell_array_room(local_elements, local_element_room,
-                                        local_element_count + count))
-        {
-                shell_store_rewind(address_of expand_store, held);
-                return false;
-        }
-
-        shell_array_items(name, length, items, count);
-
-        for (positive at = 0; at < count; at++)
-        {
-                string_address key = items[at].key;
-                positive key_length = items[at].key_length;
-                env_cell address_to cell;
-
-                if (!key)
-                {
-                        key_length = bipolar_into_string(
-                            written, (bipolar)items[at].index);
-                        key = written;
-                }
-
-                cell = env_cell_take(key_length +
-                                     items[at].value_length + 2);
-
-                if (!cell)
-                {
-                        answer = false;
-                        break;
-                }
-
-                memory_copy_end((p8 address_to)(cell + 1), key, key_length);
-                memory_copy_end((p8 address_to)(cell + 1) + key_length + 1,
-                                items[at].value, items[at].value_length);
-                local_elements[local_element_count].text =
-                    (string_address)(cell + 1);
-                local_elements[local_element_count].key_length = key_length;
-                local_element_count++;
-                entry->element_count++;
-        }
-
-        shell_store_rewind(address_of expand_store, held);
-
-        return answer;
-}
 
 bool shell_local_enter()
 {
@@ -6188,86 +6236,19 @@ bool shell_local_enter()
 
 fn shell_local_leave()
 {
-        positive at;
-
         if (!local_depth)
                 return;
-
         local_depth--;
-
-        at = local_count;
-
-        // Backwards, so that a name saved twice ends on the value it had
-        // before the first of them.
+        positive at = local_count;
         while (at > local_from[local_depth])
         {
-                string_address name;
-                positive length;
-                p8 saved;
-                p8 current;
-
-                at--;
-                name = local_table[at].text;
-                length = local_table[at].name_length;
-                saved = local_table[at].attributes;
-                current = shell_variable_attributes(name, length);
-
-                /* Restore the complete kind before the value. In particular,
-                   a live local nameref must not redirect the saved binding
-                   into its target while this frame is being unwound. */
-                if (current != saved)
-                {
-                        shell_variable_attribute_set(name, length, saved,
-                                                     (p8)~saved);
-                        current = saved;
-                }
-
-                /*
-                        An array is put back element by element, because the
-                        clear in front of that is what makes leaving the
-                        function a replacement rather than a merge. A name
-                        that was not an array cannot be left as one either,
-                        which is the same clear with nothing to put back.
-                */
-                if ((saved & SHELL_ARRAY_EITHER) ||
-                    (current & SHELL_ARRAY_EITHER))
-                {
-                        shell_array_clear(name, length);
-
-                        for (positive one = 0;
-                             one < local_table[at].element_count; one++)
-                        {
-                                local_element address_to kept =
-                                    local_elements +
-                                    local_table[at].element_from + one;
-
-                                shell_array_set(name, length, kept->text,
-                                                kept->key_length,
-                                                kept->text +
-                                                    kept->key_length + 1,
-                                                false);
-                        }
-
-                        if (!(saved & SHELL_ARRAY_EITHER) &&
-                            !local_table[at].present)
-                                env_unset(name);
-                }
-                else if (!local_table[at].present)
-                        env_unset(name);
-                else
-                {
-                        shell_declare_binding(
-                            name, length, env_name_hash(name, length),
-                            name + length + 1);
-                }
-
-                for (positive one = 0; one < local_table[at].element_count;
-                     one++)
-                        env_cell_drop(
-                            local_elements[local_table[at].element_from + one]
-                                .text);
-
-                local_element_count = local_table[at].element_from;
+                shell_local_entry address_to entry = local_table + --at;
+                string_address name = entry->text;
+                positive length = entry->name_length;
+                env_value_restore(name, length,
+                                  entry->present ? name + length + 1 : null,
+                                  entry->attributes, entry->array);
+                entry->array = 0;
 
                 env_export_restore(name, local_table[at].exported);
                 env_declare_restore(name, local_table[at].declared);
@@ -6350,8 +6331,6 @@ static b32 local_remember(string_address name)
             variable && env_variable_has_value(variable);
         local_table[local_count].attributes =
             variable ? variable->attributes : 0;
-        local_table[local_count].element_from = local_element_count;
-        local_table[local_count].element_count = 0;
 
         if (local_table[local_count].present)
                 value_length = variable->value_length;
@@ -6379,10 +6358,6 @@ static b32 local_remember(string_address name)
         local_table[local_count].name_length = name_length;
         local_table[local_count].value_length = value_length;
 
-        if ((local_table[local_count].attributes & SHELL_ARRAY_EITHER) &&
-            !local_keep_array(local_table + local_count, name, name_length))
-                return -1;
-
         if (local_table[local_count].present)
                 memory_copy_end(local_table[local_count].text + name_length + 1,
                                 variable->text + name_length + 1,
@@ -6399,6 +6374,10 @@ static b32 local_remember(string_address name)
                 shell_getopts_parameters_changed();
         }
 
+        local_table[local_count].array =
+            array_table_hold(variable ? variable->array : 0);
+        if (local_table[local_count].array < 0)
+                return -1;
         local_count++;
 
         return 1;
@@ -9351,6 +9330,56 @@ static fn read_echo_back(b32 descriptor, edit_terminal_modes address_to held)
 static string_address address_to read_words;
 static positive read_words_room;
 
+/* One IFS boundary for read's array and scalar destinations. The final
+   scalar keeps the unsplit remainder, except a lone terminal delimiter. */
+static string_address read_field(string_address ifs, positive address_to cursor,
+                                  bool remainder)
+{
+        positive at = *cursor;
+        while (at < read_length && read_blank(ifs, at))
+                at++;
+        *cursor = read_length;
+        if (at == read_length)
+                return null;
+        positive begin = at;
+        if (remainder)
+        {
+                positive stop = read_length;
+                while (stop > begin && read_blank(ifs, stop - 1))
+                        stop--;
+                if (stop > begin && read_separates(ifs, stop - 1) &&
+                    !read_blank(ifs, stop - 1))
+                {
+                        positive separator = begin;
+                        while (separator + 1 < stop &&
+                               (!read_separates(ifs, separator) ||
+                                read_blank(ifs, separator)))
+                                separator++;
+                        if (separator + 1 == stop)
+                                stop--;
+                }
+                read_line[stop] = end;
+        }
+        else
+        {
+                while (at < read_length && !read_separates(ifs, at))
+                        at++;
+                positive after = at;
+                while (after < read_length && read_blank(ifs, after))
+                        after++;
+                if (after < read_length && read_separates(ifs, after))
+                {
+                        after++;
+                        while (after < read_length && read_blank(ifs, after))
+                                after++;
+                }
+                // Classify the separator before replacing it with NUL.
+                read_line[at] = end;
+                *cursor = after;
+        }
+        return read_line + begin;
+}
+
 COLD fn shell_read(writer write, string_address input)
 {
         bool raw = false;
@@ -9383,141 +9412,96 @@ COLD fn shell_read(writer write, string_address input)
                 return shell_answer(2);
         }
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_not(shell_argv[index] + 1, end))
+        shell_option_walk options = {.index = 1};
+        p8 which;
+        while (shell_option_letter(address_of options, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 'r' || which == 's' || which == 'e')
                 {
-                        index++;
-                        break;
+                        raw |= which == 'r';
+                        hidden |= which == 's';
+                        continue;
                 }
-
-                while (string_get(letter))
+                p8 said[2] = {which, end};
+                if (!string_first_of("pnNdtaui", which))
                 {
-                        p8 which = string_get(letter);
-                        string_address value = null;
-
-                        // -s turns the terminal's echo off and -e asks
-                        // for line editing; neither takes a value, and on a
-                        // pipe neither has anything to do.
-                        if (which == 'r' || which == 's' || which == 'e')
+                        string_format(shell_diagnostic, "read: bad option: -%s\n", said);
+                        return shell_answer(2);
+                }
+                string_address value = shell_option_argument(address_of options);
+                if (!value)
+                {
+                        string_format(shell_diagnostic, "read: option -%s wants a value\n", said);
+                        return shell_answer(2);
+                }
+                if (which == 'a')
+                {
+                        if (!shell_valid_name(value,
+                                              string_length(value)))
                         {
-                                raw = raw || which == 'r';
-                                hidden = hidden || which == 's';
-                                letter++;
-                                continue;
-                        }
-
-                        if (which != 'p' && which != 'n' && which != 'N' &&
-                            which != 'd' && which != 't' && which != 'a' &&
-                            which != 'u' && which != 'i')
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "read: bad option: -%s\n", said);
+                                string_format(
+                                    shell_diagnostic,
+                                    "read: bad variable name: %s\n",
+                                    value);
                                 return shell_answer(2);
                         }
 
-                        // The rest of the word if there is any, and the next
-                        // word if there is not.
-                        if (string_get(letter + 1))
-                        {
-                                value = letter + 1;
-                                letter += string_length(letter + 1) + 1;
-                        }
-                        else if (index + 1 < shell_argc)
-                        {
-                                value = shell_argv[++index];
-                                letter++;
-                        }
-                        else
-                        {
-                                letter++;
-                        }
-
-                        if (!value)
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "read: option -%s wants a value\n",
-                                              said);
-                                return shell_answer(2);
-                        }
-
-                        if (which == 'a')
-                        {
-                                if (!shell_valid_name(value,
-                                                      string_length(value)))
-                                {
-                                        string_format(
-                                            shell_diagnostic,
-                                            "read: bad variable name: %s\n",
-                                            value);
-                                        return shell_answer(2);
-                                }
-
-                                array_name = value;
-                        }
-                        else if (which == 'p')
-                                shell_diagnostic(value, 0);
-                        else if (which == 'i')
-                        {
-                                // The editor would put it in front of what is
-                                // typed. Nothing is typed down a pipe, so the
-                                // option is taken and its value is not.
-                        }
-                        else if (which == 'u')
-                        {
-                                positive asked;
-
-                                if (!read_nonnegative(value, b32_max,
-                                                      address_of asked))
-                                {
-                                        string_format(shell_diagnostic,
-                                                      "read: bad descriptor: %s\n",
-                                                      value);
-                                        return shell_answer(1);
-                                }
-
-                                descriptor = (b32)asked;
-                        }
-                        else if (which == 'n' || which == 'N')
-                        {
-                                positive asked;
-
-                                if (!read_nonnegative(value, positive_max,
-                                                      address_of asked))
-                                {
-                                        string_format(shell_diagnostic,
-                                                      "read: bad count: %s\n", value);
-                                        return shell_answer(1);
-                                }
-
-                                limited = true;
-                                exact = which == 'N';
-                                limit = asked;
-                        }
-                        else if (which == 'd')
-                                stop_at = string_get(value);
-                        else
-                        {
-                                if (!read_timeout(value, address_of timeout))
-                                {
-                                        string_format(shell_diagnostic,
-                                                      "read: bad timeout: %s\n", value);
-                                        return shell_answer(1);
-                                }
-
-                                timed = true;
-                        }
+                        array_name = value;
                 }
+                else if (which == 'p')
+                        shell_diagnostic(value, 0);
+                else if (which == 'i')
+                {
+                        // The editor would put it in front of what is
+                        // typed. Nothing is typed down a pipe, so the
+                        // option is taken and its value is not.
+                }
+                else if (which == 'u')
+                {
+                        positive asked;
 
-                index++;
+                        if (!read_nonnegative(value, b32_max,
+                                              address_of asked))
+                        {
+                                string_format(shell_diagnostic,
+                                              "read: bad descriptor: %s\n",
+                                              value);
+                                return shell_answer(1);
+                        }
+
+                        descriptor = (b32)asked;
+                }
+                else if (which == 'n' || which == 'N')
+                {
+                        positive asked;
+
+                        if (!read_nonnegative(value, positive_max,
+                                              address_of asked))
+                        {
+                                string_format(shell_diagnostic,
+                                              "read: bad count: %s\n", value);
+                                return shell_answer(1);
+                        }
+
+                        limited = true;
+                        exact = which == 'N';
+                        limit = asked;
+                }
+                else if (which == 'd')
+                        stop_at = string_get(value);
+                else
+                {
+                        if (!read_timeout(value, address_of timeout))
+                        {
+                                string_format(shell_diagnostic,
+                                              "read: bad timeout: %s\n", value);
+                                return shell_answer(1);
+                        }
+
+                        timed = true;
+                }
         }
+        index = options.index;
 
         names = index;
 
@@ -9573,6 +9557,7 @@ COLD fn shell_read(writer write, string_address input)
         if (hidden)
                 quieted = read_echo_off(descriptor, address_of quiet_held);
 
+        bool escaped = false;
         while (!(limited && read_length >= limit))
         {
                 p8 value;
@@ -9605,45 +9590,21 @@ COLD fn shell_read(writer write, string_address input)
                         break;
                 }
 
-                // -N counts bytes and nothing else: neither the delimiter
-                // nor a backslash ends or joins anything.
-                if (!exact && value == stop_at)
+                if (!escaped && !exact && value == stop_at)
                         break;
-
-                if (!exact && !raw && value == '\\')
+                if (!raw && !escaped && value == '\\')
                 {
-                        p8 next;
-
-                        if (timed &&
-                            !read_waited(descriptor, address_of deadline))
-                        {
-                                timed_out = true;
-                                ended = true;
-                                break;
-                        }
-
-                        got = system_read_once(descriptor, address_of next, 1);
-
-                        if (got != 1)
-                        {
-                                if (got < 0)
-                                        failed = true;
-                                else
-                                        ended = true;
-                                break;
-                        }
-
-                        // A backslash before the delimiter joins the two lines.
-                        if (next == stop_at)
-                                continue;
-
-                        read_literal[read_length] = 1;
-                        read_line[read_length++] = next;
+                        escaped = true;
                         continue;
                 }
-
-                read_literal[read_length] = 0;
+                if (escaped && value == '\n')
+                {
+                        escaped = false;
+                        continue;
+                }
+                read_literal[read_length] = escaped;
                 read_line[read_length++] = value;
+                escaped = false;
         }
 
         read_line[read_length] = end;
@@ -9734,160 +9695,29 @@ COLD fn shell_read(writer write, string_address input)
                 }
         }
 
-        /*
-                read -a takes the whole line as fields of one array, so the
-                names loop below never runs. The cutting is the same cutting:
-                a blank run is one boundary and a delimiter that is not blank
-                is a boundary of its own.
-        */
         if (array_name)
         {
                 positive count = 0;
-
-                while (at < read_length)
+                string_address field;
+                while ((field = read_field(ifs, address_of at, false)))
                 {
-                        positive begin;
-
-                        while (at < read_length && read_blank(ifs, at))
-                                at++;
-
-                        if (at >= read_length)
-                                break;
-
-                        begin = at;
-
-                        while (at < read_length && !read_separates(ifs, at))
-                                at++;
-
-                        if (!shell_array_room(read_words, read_words_room,
-                                              count + 1))
-                        {
-                                shell_diagnostic("read: no room\n", 0);
-                                return shell_answer(2);
-                        }
-
-                        read_words[count++] = read_line + begin;
-
-                        if (at < read_length)
-                        {
-                                positive after = at;
-
-                                while (after < read_length &&
-                                       read_blank(ifs, after))
-                                        after++;
-
-                                if (after < read_length &&
-                                    read_separates(ifs, after))
-                                {
-                                        after++;
-
-                                        while (after < read_length &&
-                                               read_blank(ifs, after))
-                                                after++;
-                                }
-
-                                read_line[at] = end;
-                                at = after;
-                        }
+                        if (!shell_array_room(read_words, read_words_room, count + 1))
+                                return shell_no_room("read");
+                        read_words[count++] = field;
                 }
-
                 if (!shell_array_words(array_name, string_length(array_name),
                                        read_words, count))
-                {
-                        shell_diagnostic("read: no room\n", 0);
-                        return shell_answer(2);
-                }
-
-                return shell_answer(read_result(failed, ended, timed_out));
+                        return shell_no_room("read");
         }
-
-        while (names < shell_argc)
-        {
-                positive begin;
-
-                while (at < read_length && read_blank(ifs, at))
-                        at++;
-
-                begin = at;
-
-                /*
-                        The last name takes everything that is left, delimiters
-                        and all, which is what makes "read line" read a line.
-                        Only the blanks at the end come off: a delimiter that
-                        is not one is part of what was said.
-                */
-                if (names + 1 == shell_argc)
+        else
+                while (names < shell_argc)
                 {
-                        positive stop = read_length;
-
-                        while (stop > begin && read_blank(ifs, stop - 1))
-                                stop--;
-
-                        /* One final non-blank IFS byte terminates the last
-                           field; it is not part of that field. Two of them
-                           already describe an additional empty field, and
-                           Bash/dash retain the remainder verbatim when the
-                           last destination has to absorb it (a:: -> a:: for
-                           one name, but a: -> a). Check for an earlier
-                           non-blank separator only on this uncommon terminal
-                           shape, leaving the ordinary one-name line unscanned. */
-                        if (stop > begin && read_separates(ifs, stop - 1) &&
-                            !read_blank(ifs, stop - 1))
-                        {
-                                positive separator = begin;
-
-                                while (separator + 1 < stop &&
-                                       (!read_separates(ifs, separator) ||
-                                        read_blank(ifs, separator)))
-                                        separator++;
-
-                                if (separator + 1 == stop)
-                                        stop--;
-                        }
-
-                        read_line[stop] = end;
-                        if (!read_set(shell_argv[names], read_line + begin))
-                                return shell_answer(
-                                    read_set_failed_status(shell_argv[names]));
-
-                        at = read_length;
+                        string_address field = read_field(ifs, address_of at,
+                                                           names + 1 == shell_argc);
+                        if (!read_set(shell_argv[names], field ? field : (string_address)""))
+                                return shell_answer(read_set_failed_status(shell_argv[names]));
                         names++;
-                        continue;
                 }
-
-                while (at < read_length && !read_separates(ifs, at))
-                        at++;
-
-                if (at < read_length)
-                {
-                        positive after = at;
-
-                        while (after < read_length && read_blank(ifs, after))
-                                after++;
-
-                        // One that is not a blank ends the field on its own,
-                        // and the blanks either side of it belong to it.
-                        if (after < read_length && read_separates(ifs, after))
-                        {
-                                after++;
-
-                                while (after < read_length && read_blank(ifs, after))
-                                        after++;
-                        }
-
-                        // Only now: the byte at the cut is what said where the
-                        // field ended, and reading it back as a terminator
-                        // made every separator look like a blank.
-                        read_line[at] = end;
-                        at = after;
-                }
-
-                if (!read_set(shell_argv[names], read_line + begin))
-                        return shell_answer(
-                            read_set_failed_status(shell_argv[names]));
-
-                names++;
-        }
 
         shell_answer(read_result(failed, ended, timed_out));
 }
@@ -9927,91 +9757,57 @@ COLD fn shell_mapfile(writer write, string_address input)
 
         (void)input;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_not(shell_argv[index] + 1, end))
+        shell_option_walk options = {.index = 1};
+        p8 which;
+        while (shell_option_letter(address_of options, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 't')
                 {
-                        index++;
-                        break;
+                        trim = true;
+                        continue;
+                }
+                p8 said[2] = {which, end};
+                if (!string_first_of("nsOdu", which))
+                {
+                        string_format(shell_diagnostic, "%s: bad option: -%s\n",
+                                      shell_argv[0], said);
+                        return shell_answer(2);
+                }
+                string_address value = shell_option_argument(address_of options);
+                if (!value)
+                {
+                        string_format(shell_diagnostic, "%s: option -%s wants a value\n",
+                                      shell_argv[0], said);
+                        return shell_answer(2);
+                }
+                bool good;
+                bipolar asked;
+                if (which == 'd')
+                {
+                        delimiter = string_get(value);
+                        continue;
                 }
 
-                while (string_get(letter))
+                asked = shell_signed(value, address_of good);
+
+                if (!good || asked < 0)
                 {
-                        p8 which = string_get(letter);
-                        string_address value = null;
-                        bool good;
-                        bipolar asked;
-
-                        if (which == 't')
-                        {
-                                trim = true;
-                                letter++;
-                                continue;
-                        }
-
-                        if (which != 'n' && which != 's' && which != 'O' &&
-                            which != 'd' && which != 'u')
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "%s: bad option: -%s\n",
-                                              shell_argv[0], said);
-                                return shell_answer(2);
-                        }
-
-                        if (string_get(letter + 1))
-                        {
-                                value = letter + 1;
-                                letter += string_length(letter + 1) + 1;
-                        }
-                        else if (index + 1 < shell_argc)
-                        {
-                                value = shell_argv[++index];
-                                letter++;
-                        }
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(
-                                    shell_diagnostic,
-                                    "%s: option -%s wants a value\n",
-                                    shell_argv[0], said);
-                                return shell_answer(2);
-                        }
-
-                        if (which == 'd')
-                        {
-                                delimiter = string_get(value);
-                                continue;
-                        }
-
-                        asked = shell_signed(value, address_of good);
-
-                        if (!good || asked < 0)
-                        {
-                                string_format(shell_diagnostic,
-                                              "%s: %s: bad number\n",
-                                              shell_argv[0], value);
-                                return shell_answer(2);
-                        }
-
-                        if (which == 'n')
-                                wanted = (positive)asked;
-                        else if (which == 's')
-                                skip = (positive)asked;
-                        else if (which == 'O')
-                                origin = (positive)asked;
-                        else
-                                from = (b32)asked;
+                        string_format(shell_diagnostic,
+                                      "%s: %s: bad number\n",
+                                      shell_argv[0], value);
+                        return shell_answer(2);
                 }
 
-                index++;
+                if (which == 'n')
+                        wanted = (positive)asked;
+                else if (which == 's')
+                        skip = (positive)asked;
+                else if (which == 'O')
+                        origin = (positive)asked;
+                else
+                        from = (b32)asked;
         }
+        index = options.index;
 
         if (index < shell_argc)
                 name = shell_argv[index++];

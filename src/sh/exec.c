@@ -6790,12 +6790,6 @@ static COLD bool exec_special_error_fatal(string_address command,
 */
 typedef struct
 {
-        string_address text;
-        positive key_length;
-} exec_kept_element;
-
-typedef struct
-{
         string_address name;
         positive name_length;
         // How much of the name is the array, when the name is an element.
@@ -6810,9 +6804,7 @@ typedef struct
                 every element it wrote behind it.
         */
         p8 attributes;
-        bool compound;
-        exec_kept_element address_to elements;
-        positive element_count;
+        b32 array;
 } exec_kept_value;
 
 static exec_kept_value address_to exec_promotable;
@@ -6835,63 +6827,6 @@ static bool exec_assignment_promote(const_string name, positive length)
                         found = true;
                 }
         return found;
-}
-
-static COLD bool exec_keep_array(exec_kept_value address_to kept)
-{
-        positive count = shell_array_length(kept->name, kept->name_length);
-        shell_array_item address_to items;
-        shell_mark held = shell_store_mark(address_of exec_store);
-        p8 written[32];
-
-        kept->elements = null;
-        kept->element_count = 0;
-
-        if (!count)
-                return true;
-
-        items = (shell_array_item address_to)shell_store_take(
-            address_of exec_store, count * sizeof(items[0]));
-        kept->elements = (exec_kept_element address_to)shell_store_take(
-            address_of exec_store, count * sizeof(kept->elements[0]));
-
-        if (!items || !kept->elements)
-        {
-                shell_store_rewind(address_of exec_store, held);
-                return false;
-        }
-
-        shell_array_items(kept->name, kept->name_length, items, count);
-
-        for (positive at = 0; at < count; at++)
-        {
-                string_address key = items[at].key;
-                positive key_length = items[at].key_length;
-                p8 address_to into;
-
-                if (!key)
-                {
-                        key_length = bipolar_into_string(
-                            written, (bipolar)items[at].index);
-                        key = written;
-                }
-
-                into = shell_store_take(address_of exec_store,
-                                        key_length + items[at].value_length + 2);
-
-                if (!into)
-                        return false;
-
-                memory_copy_end(into, key, key_length);
-                memory_copy_end(into + key_length + 1, items[at].value,
-                                items[at].value_length);
-                kept->elements[at].text = into;
-                kept->elements[at].key_length = key_length;
-        }
-
-        kept->element_count = count;
-
-        return true;
 }
 
 static COLD bool exec_keep_element(exec_kept_value address_to kept,
@@ -6924,9 +6859,7 @@ static COLD bool exec_keep_element(exec_kept_value address_to kept,
         kept->exported = false;
         kept->value = null;
         kept->attributes = shell_array_attributes(base, base_length);
-        kept->compound = false;
-        kept->elements = null;
-        kept->element_count = 0;
+        kept->array = 0;
 
         value = shell_array_get(kept->name, base_length, key, key_length,
                                 null);
@@ -6943,7 +6876,6 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 {
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
         bool append;
-        bool compound;
         string_address bracket;
         string_address value;
 
@@ -6952,9 +6884,6 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
         if (append)
                 length--;
-
-        compound = string_is(word + length + append, '=') &&
-                   string_is(word + length + append + 1, '(');
 
         bracket = string_first_of(word, '[');
 
@@ -6975,7 +6904,7 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                     length - (positive)(bracket - word) - 2);
 
         value = env_saved_state(word, length, address_of kept->exported,
-                                address_of kept->attributes);
+                                address_of kept->attributes, address_of kept->array);
 
         /* The common case stays the original one-probe save. A nameref alone
            takes the cold second probe needed to save the target that the
@@ -7007,7 +6936,7 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                 length = resolved_length;
                 value = env_saved_state(word, length,
                                         address_of kept->exported,
-                                        address_of kept->attributes);
+                                        address_of kept->attributes, address_of kept->array);
         }
 
         kept->name = shell_store_take(address_of exec_store, length + 1);
@@ -7018,24 +6947,17 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
         string_copy_max_end(kept->name, word, length);
         kept->name_length = length;
         kept->base_length = 0;
-        kept->elements = null;
-        kept->element_count = 0;
-        // Whether the value about to be written is a list. Nothing else says
-        // that a scalar restore would leave elements standing behind it.
-        kept->compound = compound;
 
         kept->value = null;
 
-        if ((kept->attributes & SHELL_ARRAY_EITHER) &&
-            !exec_keep_array(kept))
-                return false;
-
-        if (!value)
-                return true;
-
-        kept->value = exec_arena_copy(value);
-
-        return kept->value != exec_nothing;
+        if (value)
+        {
+                kept->value = exec_arena_copy(value);
+                if (kept->value == exec_nothing)
+                        return false;
+        }
+        kept->array = array_table_hold(kept->array);
+        return kept->array >= 0;
 }
 
 static COLD bool exec_put_back_attributes(exec_kept_value address_to kept)
@@ -7063,22 +6985,20 @@ static COLD bool exec_put_back_attributes(exec_kept_value address_to kept)
                    (p8)~kept->attributes);
 }
 
-static fn exec_put_back(exec_kept_value address_to kept, b32 count)
+static fn exec_put_back(exec_kept_value address_to kept, b32 count, bool restore)
 {
         while (count--)
         {
-                if (kept[count].promoted)
+                if (!restore || kept[count].promoted)
+                {
+                        array_table_release(kept[count].array);
                         continue;
-
-                /* A declaration reached while the prefix was active belongs
-                   to that command as surely as its value does. Restore the
-                   complete saved byte before writing the old value, so a
-                   newly-added readonly bit cannot refuse the restoration. */
-                if (!exec_put_back_attributes(kept + count))
-                        continue;
+                }
 
                 if (kept[count].base_length)
                 {
+                        if (!exec_put_back_attributes(kept + count))
+                                continue;
                         positive base = kept[count].base_length;
                         string_address key = kept[count].name + base + 1;
                         positive key_length =
@@ -7095,53 +7015,9 @@ static fn exec_put_back(exec_kept_value address_to kept, b32 count)
                         continue;
                 }
 
-                /*
-                        A name that was not an array cannot be left as one:
-                        a compound assignment in front of a command wrote
-                        elements that putting a scalar value back would not
-                        reach. A name that was one is put back element by
-                        element, because the clear that precedes it is what
-                        makes replacing an array a replacement.
-                */
-                if ((kept[count].attributes & SHELL_ARRAY_EITHER) ||
-                    (kept[count].compound &&
-                     (shell_variable_attributes(kept[count].name,
-                                                kept[count].name_length) &
-                      SHELL_ARRAY_EITHER)))
-                {
-                        shell_array_clear(kept[count].name,
-                                          kept[count].name_length);
-                }
-
-                // A name that was an array is left as one, empty or not.
-                // Unsetting it here would take its kind with it and the next
-                // assignment would read its subscripts the other way.
-                if (kept[count].attributes & SHELL_ARRAY_EITHER)
-                {
-                        for (positive at = 0; at < kept[count].element_count;
-                             at++)
-                        {
-                                exec_kept_element address_to one =
-                                    kept[count].elements + at;
-
-                                shell_array_set(kept[count].name,
-                                                kept[count].name_length,
-                                                one->text, one->key_length,
-                                                one->text + one->key_length + 1,
-                                                false);
-                        }
-
-                        env_export_restore(kept[count].name,
-                                           kept[count].exported);
-                        continue;
-                }
-
-                if (kept[count].value)
-                        env_set(kept[count].name, kept[count].value);
-                else
-                        env_unset_span(kept[count].name,
-                                       kept[count].name_length);
-
+                env_value_restore(kept[count].name, kept[count].name_length,
+                                  kept[count].value, kept[count].attributes,
+                                  kept[count].array);
                 env_export_restore(kept[count].name, kept[count].exported);
         }
 }
@@ -7844,9 +7720,7 @@ static b32 exec_simple(b32 index)
            Keep the rollback snapshots for expansion failure, but do not
            restore and reapply successful values (or evaluate indices again).
            The original assignment words retain append syntax for tracing. */
-        if (assignments_only)
-                expanded_count = 0;
-        exec_put_back(expanded_kept, expanded_count);
+        exec_put_back(expanded_kept, expanded_count, !assignments_only);
         expanded_count = 0;
 
         //      An empty command line never entered the loop, so the table
@@ -8069,7 +7943,7 @@ static b32 exec_simple(b32 index)
         }
 
         exec_release_assignments(assignments, temporary_count);
-        exec_put_back(kept, kept_count);
+        exec_put_back(kept, kept_count, true);
         shell_store_rewind(address_of exec_store, arena_mark);
 
         if (fatal)
@@ -8085,8 +7959,8 @@ static b32 exec_simple(b32 index)
         */
 fail:
         exec_release_assignments(assignments, temporary_count);
-        exec_put_back(kept, kept_count);
-        exec_put_back(expanded_kept, expanded_count);
+        exec_put_back(kept, kept_count, true);
+        exec_put_back(expanded_kept, expanded_count, true);
         shell_store_rewind(address_of exec_store, arena_mark);
         shell_status = status;
 

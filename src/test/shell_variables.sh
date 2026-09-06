@@ -444,6 +444,32 @@ compare bash 'eval readonly restores prefix attributes' \
 compare bash 'scoped nameref rebind unwinds through prefix' \
         'a=old; b=bee; declare -n n=a; f() { declare -n n=b; }; n=new f; declare -p a b n'
 
+group scope-snapshots
+for declaration in 'declare -a a' 'declare -A a' 'declare -i a' 'declare -n a'; do
+        compare bash "unassigned scope $declaration" \
+                "$declaration; f() { local a=inside; }; f; declare -p a"
+done
+for kind in indexed associative; do
+        if [ "$kind" = indexed ]; then
+                initial='a=([0]=zero [2]="two words" [31]="v=31" [500]="")'
+                key=2
+                removed=31
+        else
+                initial='declare -A a=([0]=zero [red]="two words" [green]="v=31" [500]="")'
+                key=red
+                removed=green
+        fi
+        for change in "a[$key]=changed" "a[$key]+=tail" "unset 'a[$removed]'" \
+                      'a=()' 'unset a' 'a[700]=added' 'readonly a'; do
+                compare bash "prefix snapshot $kind $change" \
+                        "$initial; f() { $change; }; a=prefix f; printf '<%s>:<%s>:<%s>:<%s>:<%s>\n' \"\${#a[@]}\" \"\${a[700]}\" \"\${a[0]}\" \"\${a[$key]}\" \"\${a[$removed]}\""
+        done
+done
+compare bash 'nested table relocation and scope ownership' \
+        'a=([0]=zero [2]=two); f() { local a=(inner nested); g; declare -p a; }; g() { local a; for ((i=0;i<200;i++)); do declare -a "v$i=(x y)"; done; }; for ((r=0;r<10;r++)); do f; done; declare -p a'
+compare bash 'prefix assignment adoption releases saved arrays' \
+        'a=([2]=two); for ((i=0;i<100;i++)); do a=next export a; done; declare -p a; unset a; a=([3]=three); declare -p a'
+
 section ""
 total=$((pass + fail))
 echo

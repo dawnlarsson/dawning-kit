@@ -1073,6 +1073,19 @@ compare 'null data long' sed zeros --null-data 's/a/A/'
 compare 'null data number' sed zeros -z -n '='
 compare 'null data last' sed zeros -z '$d'
 
+# Exercise each store after either exchange or substitution has changed its
+# physical backing, including an unterminated record and embedded NUL data.
+for first in h H g G x 's/a/expanded/g' 'N;D'; do
+        for second in h H g G x 's/a/A/g'; do
+                for fixture in a h zeros; do
+                        compare "space transitions $fixture $first/$second" \
+                                sed "$fixture" -n "$first;$second;p"
+                done
+                compare "NUL space transitions $first/$second" \
+                        sed zeros -z -n "$first;$second;p"
+        done
+done
+
 case_start cut
 compare 'field one'      cut b  -d: -f1
 compare 'field two'      cut b  -d: -f2

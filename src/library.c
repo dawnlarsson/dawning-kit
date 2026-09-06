@@ -15433,7 +15433,7 @@ positive string_digits_hexadecimal_escape_max(string_address source,
                                               positive address_to used);
 positive string_digits_base_max(string_address source, positive bound,
                                 positive base, positive address_to used);
-PURE positive string_table_find(string_address name, address_any table,
+PURE positive string_table_find(string_address name, const address_any table,
                                 positive stride, positive count);
 address_any memory_fill(address_any destination, b8 value, positive size);
 fn memory_fill_u32(address_any destination, positive count, unsigned int value);

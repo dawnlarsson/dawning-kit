@@ -16382,15 +16382,22 @@ static bool sed_broken;
 // A script that cannot be parsed is one, and a label nothing defines is four.
 static b32 sed_broken_status = 1;
 
-static p8 sed_space[TEXT_LINE_MAX];
-static positive sed_space_length;
-static p8 sed_work[TEXT_LINE_MAX];
-static p8 sed_hold[TEXT_LINE_MAX];
-static positive sed_hold_length;
+/* The three stores keep their distinct roles by pointer. Exchange and a
+   completed substitution publish a store; neither copies a whole line back. */
+static p8 sed_buffers[3][TEXT_LINE_MAX];
+typedef struct
+{
+        p8 address_to bytes;
+        positive length;
+        bool ended;
+} sed_buffer;
+static sed_buffer sed_pattern = {sed_buffers[0], 0, true};
+static sed_buffer sed_holding = {sed_buffers[2], 0, true};
+static p8 address_to sed_work = sed_buffers[1];
 static positive sed_number;
 static bool sed_quiet;
 static bool sed_last;
-static bool sed_space_ended;
+static bool sed_output_unterminated;
 
 #define sed_script_put(character)                                            \
         fixed_store_byte(sed_script, sed_script_length, sed_broken, character)
@@ -16507,7 +16514,7 @@ static bool sed_work_byte(positive address_to have, p8 value);
 
 static bool sed_space_fits(positive have, positive more)
 {
-        if (more <= TEXT_LINE_MAX - have)
+        if (have <= TEXT_LINE_MAX && more <= TEXT_LINE_MAX - have)
                 return true;
 
         if (!sed_space_full)
@@ -16523,6 +16530,20 @@ static bool sed_work_byte(positive address_to have, p8 value)
                 return false;
 
         sed_work[(address_to have)++] = value;
+        return true;
+}
+
+static bool sed_transfer(sed_buffer address_to into,
+                         const sed_buffer address_to from, bool append)
+{
+        positive start = append ? into->length + 1 : 0;
+        if (!sed_space_fits(start, from->length))
+                return false;
+        if (append)
+                into->bytes[start - 1] = text_delimiter;
+        memory_copy_apart(into->bytes + start, from->bytes, from->length);
+        into->length = start + from->length;
+        into->ended = from->ended;
         return true;
 }
 
@@ -17187,7 +17208,7 @@ static bool sed_address_matches(p8 type, positive line, b32 which, positive step
                         return false;
 
                 regex_select(sed_programs + sed_recent);
-                return regex_search(sed_space, sed_space_length, 0);
+                return regex_search(sed_pattern.bytes, sed_pattern.length, 0);
         }
 
         return false;
@@ -17258,10 +17279,26 @@ static bool sed_selects(sed_command address_to command)
         return command->negate ? !answer : answer;
 }
 
+static fn sed_output_start()
+{
+        if (sed_output_unterminated)
+                text_put_character(text_delimiter);
+        sed_output_unterminated = false;
+}
+
+static fn sed_output(p8 address_to bytes, positive length, bool ended)
+{
+        sed_output_start();
+        text_put(bytes, length);
+        if (ended)
+                text_put_character(text_delimiter);
+        else
+                sed_output_unterminated = length != 0;
+}
+
 static fn sed_put_space()
 {
-        text_put(sed_space, sed_space_length);
-        text_put_character(text_delimiter);
+        sed_output(sed_pattern.bytes, sed_pattern.length, sed_pattern.ended);
 }
 
 // /dev/stdout is sed's own output, and a second descriptor onto it would put
@@ -17273,11 +17310,7 @@ static fn sed_write_space(b32 which)
 
         if (string_equals(name, "/dev/stdout"))
         {
-                text_put(sed_space, sed_space_length);
-
-                if (sed_space_ended)
-                        text_put_character(text_delimiter);
-
+                sed_put_space();
                 return;
         }
 
@@ -17293,15 +17326,15 @@ static fn sed_write_space(b32 which)
                 }
         }
 
-        if (system_write_all((positive)sed_files[which].handle, sed_space,
-                             sed_space_length) != sed_space_length)
+        if (system_write_all((positive)sed_files[which].handle, sed_pattern.bytes,
+                             sed_pattern.length) != sed_pattern.length)
         {
                 sed_io_failed = true;
                 return;
         }
 
         // A last line that came without one does not leave with one.
-        if (sed_space_ended)
+        if (sed_pattern.ended)
                 if (system_write_all((positive)sed_files[which].handle,
                                      address_of mark, 1) != 1)
                         sed_io_failed = true;
@@ -17317,6 +17350,7 @@ static fn sed_put_file(string_address name)
         if (handle < 0)
                 return;
 
+        bool first = true;
         for (;;)
         {
                 bipolar got = system_read_retry((positive)handle, window,
@@ -17325,7 +17359,11 @@ static fn sed_put_file(string_address name)
                 if (got <= 0)
                         break;
 
+                if (first)
+                        sed_output_start();
                 text_put(window, (positive)got);
+                sed_output_unterminated = window[got - 1] != text_delimiter;
+                first = false;
         }
 
         system_close(handle);
@@ -17345,9 +17383,9 @@ static bool sed_substitute(sed_command address_to command)
 
         regex_select(sed_programs + sed_recent);
 
-        while (at <= sed_space_length)
+        while (at <= sed_pattern.length)
         {
-                if (!regex_search_longest(sed_space, sed_space_length, at))
+                if (!regex_search_longest(sed_pattern.bytes, sed_pattern.length, at))
                         break;
 
                 positive from = regex_slots[0];
@@ -17356,20 +17394,20 @@ static bool sed_substitute(sed_command address_to command)
                 if (!sed_space_fits(have, from - at))
                         return false;
 
-                memory_copy(sed_work + have, sed_space + at, from - at);
+                memory_copy(sed_work + have, sed_pattern.bytes + at, from - at);
                 have += from - at;
 
                 // An empty match sitting where the last one ended is not a
                 // second match: s/a*/X/g over "aaa" is one X, not two.
                 if (from == to && from == after_last)
                 {
-                        if (from >= sed_space_length)
+                        if (from >= sed_pattern.length)
                         {
                                 at = from;
                                 break;
                         }
 
-                        if (!sed_work_byte(address_of have, sed_space[from]))
+                        if (!sed_work_byte(address_of have, sed_pattern.bytes[from]))
                                         return false;
                         at = from + 1;
                         continue;
@@ -17429,7 +17467,7 @@ static bool sed_substitute(sed_command address_to command)
                                 if (!sed_space_fits(have, copy_to - copy_from))
                                         return false;
 
-                                memory_copy(sed_work + have, sed_space + copy_from,
+                                memory_copy(sed_work + have, sed_pattern.bytes + copy_from,
                                             copy_to - copy_from);
                                 have += copy_to - copy_from;
                         }
@@ -17441,7 +17479,7 @@ static bool sed_substitute(sed_command address_to command)
                         if (!sed_space_fits(have, to - from))
                                 return false;
 
-                        memory_copy(sed_work + have, sed_space + from, to - from);
+                        memory_copy(sed_work + have, sed_pattern.bytes + from, to - from);
                         have += to - from;
                 }
 
@@ -17452,8 +17490,8 @@ static bool sed_substitute(sed_command address_to command)
 
                 if (to == from)
                 {
-                        if (from < sed_space_length)
-                                if (!sed_work_byte(address_of have, sed_space[from]))
+                        if (from < sed_pattern.length)
+                                if (!sed_work_byte(address_of have, sed_pattern.bytes[from]))
                                         return false;
 
                         at = from + 1;
@@ -17470,17 +17508,19 @@ static bool sed_substitute(sed_command address_to command)
         if (!changed)
                 return false;
 
-        if (at < sed_space_length)
+        if (at < sed_pattern.length)
         {
-                if (!sed_space_fits(have, sed_space_length - at))
+                if (!sed_space_fits(have, sed_pattern.length - at))
                         return false;
 
-                memory_copy(sed_work + have, sed_space + at, sed_space_length - at);
-                have += sed_space_length - at;
+                memory_copy(sed_work + have, sed_pattern.bytes + at, sed_pattern.length - at);
+                have += sed_pattern.length - at;
         }
 
-        memory_copy(sed_space, sed_work, have);
-        sed_space_length = have;
+        p8 address_to previous = sed_pattern.bytes;
+        sed_pattern.bytes = sed_work;
+        sed_work = previous;
+        sed_pattern.length = have;
         return true;
 }
 
@@ -17680,6 +17720,7 @@ static b32 text_sed()
                         }
 
                         text_out_to((positive)written);
+                        sed_output_unterminated = false;
                 }
 
                 // -s, and -i with it, makes every file its own input: the line
@@ -17695,9 +17736,9 @@ static b32 text_sed()
 
                 while (text_line_next())
                 {
-                        memory_copy(sed_space, text_line, text_line_length);
-                        sed_space_length = text_line_length;
-                        sed_space_ended = text_line_ended;
+                        memory_copy(sed_pattern.bytes, text_line, text_line_length);
+                        sed_pattern.length = text_line_length;
+                        sed_pattern.ended = text_line_ended;
                         sed_number++;
                         sed_last = sed_input_ends(i, inputs);
 
@@ -17729,301 +17770,158 @@ static b32 text_sed()
 
                                 pc++;
 
-                                if (kind == '{')
-                                        continue;
-
-                                if (kind == 's')
+                                switch (kind)
                                 {
-                                        bool did = sed_substitute(command);
-
-                                        if (sed_space_full)
+                                case 's':
+                                        if (sed_substitute(command))
                                         {
-                                                leaving = 4;
-                                                dropped = true;
-                                                break;
+                                                sed_replaced = true;
+                                                if (command->printing)
+                                                        sed_put_space();
+                                                if (command->writer >= 0)
+                                                        sed_write_space(command->writer);
                                         }
-
-                                        if (!did)
-                                                continue;
-
-                                        sed_replaced = true;
-
-                                        if (command->printing)
-                                                sed_put_space();
-
-                                        if (command->writer >= 0)
-                                                sed_write_space(command->writer);
-
-                                        continue;
-                                }
-
-                                if (kind == 'w')
-                                {
+                                        if (sed_space_full)
+                                                goto space_full;
+                                        break;
+                                case 'w':
                                         sed_write_space(command->writer);
-                                        continue;
-                                }
-
-                                if (kind == 'r')
-                                {
+                                        break;
+                                case 'r':
+                                case 'a':
                                         if (append_count < SED_APPENDS_MAX)
                                         {
-                                                append_kind[append_count] = 'r';
+                                                append_kind[append_count] = kind;
                                                 append_which[append_count++] = command->text;
                                         }
-
-                                        continue;
-                                }
-
-                                if (kind == ':')
-                                        continue;
-
-                                // t and T ask whether a substitution has taken
-                                // since the line was read, and asking is what
-                                // clears the answer.
-                                if (kind == 'b' || kind == 't' || kind == 'T')
-                                {
-                                        bool take = kind == 'b' ||
-                                                    (kind == 't') == sed_replaced;
-
+                                        break;
+                                case 'b':
+                                case 't':
+                                case 'T':
+                                        if (kind == 'b' || (kind == 't') == sed_replaced)
+                                                pc = (b32)command->which;
                                         if (kind != 'b')
                                                 sed_replaced = false;
-
-                                        if (take)
-                                                pc = (b32)command->which;
-
-                                        continue;
-                                }
-
-                                if (kind == 'y')
-                                {
-                                        memory_translate(sed_space, sed_space_length,
+                                        break;
+                                case 'y':
+                                        memory_translate(sed_pattern.bytes, sed_pattern.length,
                                                          sed_maps[command->map]);
-
-                                        continue;
-                                }
-
-                                if (kind == 'p')
-                                {
+                                        break;
+                                case 'p':
                                         sed_put_space();
-                                        continue;
-                                }
-
-                                if (kind == 'P')
+                                        break;
+                                case 'P':
+                                case 'D':
                                 {
-                                        p8 address_to newline =
-                                            memory_first_of(sed_space, '\n',
-                                                            sed_space_length);
+                                        p8 address_to newline = memory_first_of(
+                                            sed_pattern.bytes, text_delimiter, sed_pattern.length);
                                         positive stop = newline
-                                                              ? (positive)(newline - sed_space)
-                                                              : sed_space_length;
-
-                                        text_put(sed_space, stop);
-
-                                        if (newline)
-                                                text_put_character('\n');
-                                        else if (sed_space_ended)
-                                                text_put_character(text_delimiter);
-                                        continue;
+                                            ? (positive)(newline - sed_pattern.bytes)
+                                            : sed_pattern.length;
+                                        if (kind == 'P')
+                                        {
+                                                sed_output(sed_pattern.bytes, stop,
+                                                           newline || sed_pattern.ended);
+                                        }
+                                        else
+                                        {
+                                                if (!newline)
+                                                        goto drop_cycle;
+                                                sed_pattern.length -= stop + 1;
+                                                memory_copy(sed_pattern.bytes, sed_pattern.bytes + stop + 1,
+                                                            sed_pattern.length);
+                                                pc = 0;
+                                        }
+                                        break;
                                 }
-
-                                if (kind == '=')
-                                {
+                                case '=':
+                                        sed_output_start();
                                         positive_to_string(text_put, sed_number);
                                         text_put_character(text_delimiter);
-                                        continue;
-                                }
-
-                                if (kind == 'd')
-                                {
-                                        dropped = true;
                                         break;
-                                }
-
-                                if (kind == 'D')
-                                {
-                                        p8 address_to newline =
-                                            memory_first_of(sed_space, '\n',
-                                                            sed_space_length);
-                                        positive stop = newline
-                                                              ? (positive)(newline - sed_space)
-                                                              : sed_space_length;
-
-                                        if (stop >= sed_space_length)
-                                        {
-                                                dropped = true;
-                                                break;
-                                        }
-
-                                        memory_copy(sed_work, sed_space + stop + 1,
-                                                    sed_space_length - stop - 1);
-                                        sed_space_length -= stop + 1;
-                                        memory_copy(sed_space, sed_work, sed_space_length);
-                                        pc = 0;
-                                        continue;
-                                }
-
-                                if (kind == 'q' || kind == 'Q')
-                                {
+                                case 'q':
+                                case 'Q':
                                         leaving = (b32)command->which;
                                         dropped = kind == 'Q';
-                                        break;
-                                }
-
-                                if (kind == 'F')
-                                {
-                                        text_put_string(name ? name
-                                                             : (string_address) "-");
+                                        goto cycle_done;
+                                case 'F':
+                                        sed_output_start();
+                                        text_put_string(name ? name : (string_address) "-");
                                         text_put_character('\n');
-                                        continue;
-                                }
-
-                                if (kind == 'n')
-                                {
-                                        if (!sed_quiet)
-                                                sed_put_space();
-
-                                        if (!text_line_next())
+                                        break;
+                                case 'n':
+                                case 'N':
+                                        if (kind == 'n')
                                         {
-                                                dropped = true;
-                                                break;
+                                                if (!sed_quiet)
+                                                        sed_put_space();
+                                                if (!text_line_next())
+                                                        goto drop_cycle;
+                                                sed_replaced = false;
                                         }
-
-                                        memory_copy(sed_space, text_line, text_line_length);
-                                        sed_space_length = text_line_length;
-                                        sed_space_ended = text_line_ended;
-                                        sed_number++;
-                                        sed_replaced = false;
-                                        sed_last = sed_input_ends(i, inputs);
-                                        continue;
-                                }
-
-                                if (kind == 'N')
-                                {
-                                        if (!sed_line_across(address_of i, inputs))
+                                        else if (!sed_line_across(address_of i, inputs))
                                         {
                                                 sed_last = true;
-                                                break;
+                                                goto cycle_done;
                                         }
-
-                                        if (!sed_space_fits(sed_space_length,
-                                                            text_line_length + 1))
-                                        {
-                                                leaving = 4;
-                                                dropped = true;
-                                                break;
-                                        }
-
-                                        sed_space[sed_space_length++] = '\n';
-                                        memory_copy(sed_space + sed_space_length, text_line,
-                                                    text_line_length);
-                                        sed_space_length += text_line_length;
-                                        sed_space_ended = text_line_ended;
+                                        sed_buffer input = {text_line, text_line_length,
+                                                            text_line_ended};
+                                        if (!sed_transfer(address_of sed_pattern, address_of input,
+                                                          kind == 'N'))
+                                                goto space_full;
                                         sed_number++;
                                         sed_last = sed_input_ends(i, inputs);
-                                        continue;
-                                }
-
-                                if (kind == 'h' || kind == 'H')
+                                        break;
+                                case 'h':
+                                case 'H':
+                                case 'g':
+                                case 'G':
                                 {
-                                        if (kind == 'H' &&
-                                            !sed_space_fits(sed_hold_length,
-                                                            sed_space_length + 1))
-                                        {
-                                                leaving = 4;
-                                                dropped = true;
-                                                break;
-                                        }
-
-                                        if (kind == 'H')
-                                                sed_hold[sed_hold_length++] = '\n';
-                                        else
-                                                sed_hold_length = 0;
-
-                                        memory_copy(sed_hold + sed_hold_length, sed_space,
-                                                    sed_space_length);
-                                        sed_hold_length += sed_space_length;
-                                        continue;
-                                }
-
-                                if (kind == 'g' || kind == 'G')
-                                {
-                                        if (kind == 'G' &&
-                                            !sed_space_fits(sed_space_length,
-                                                            sed_hold_length + 1))
-                                        {
-                                                leaving = 4;
-                                                dropped = true;
-                                                break;
-                                        }
-
-                                        if (kind == 'g')
-                                                sed_space_length = 0;
-                                        else
-                                                sed_space[sed_space_length++] = '\n';
-
-                                        memory_copy(sed_space + sed_space_length, sed_hold,
-                                                    sed_hold_length);
-                                        sed_space_length += sed_hold_length;
-                                        continue;
-                                }
-
-                                if (kind == 'x')
-                                {
-                                        memory_copy(sed_work, sed_space, sed_space_length);
-                                        memory_copy(sed_space, sed_hold, sed_hold_length);
-                                        memory_copy(sed_hold, sed_work, sed_space_length);
-
-                                        positive swap = sed_space_length;
-
-                                        sed_space_length = sed_hold_length;
-                                        sed_hold_length = swap;
-                                        continue;
-                                }
-
-                                if (kind == 'i')
-                                {
-                                        text_put_string(sed_text + command->text);
-                                        text_put_character('\n');
-                                        continue;
-                                }
-
-                                if (kind == 'a')
-                                {
-                                        if (append_count < SED_APPENDS_MAX)
-                                        {
-                                                append_kind[append_count] = 'a';
-                                                append_which[append_count++] = command->text;
-                                        }
-
-                                        continue;
-                                }
-
-                                if (kind == 'c')
-                                {
-                                        // A range prints its replacement once,
-                                        // when the range closes.
-                                        if (command->second_type == SED_ADDRESS_NONE ||
-                                            !command->active)
-                                        {
-                                                text_put_string(sed_text + command->text);
-                                                text_put_character('\n');
-                                        }
-
-                                        dropped = true;
+                                        bool holding = kind == 'h' || kind == 'H';
+                                        if (!sed_transfer(holding ? address_of sed_holding
+                                                                  : address_of sed_pattern,
+                                                          holding ? address_of sed_pattern
+                                                                  : address_of sed_holding,
+                                                          kind == 'H' || kind == 'G'))
+                                                goto space_full;
                                         break;
                                 }
+                                case 'x':
+                                {
+                                        sed_buffer swap = sed_pattern;
+                                        sed_pattern = sed_holding;
+                                        sed_holding = swap;
+                                        break;
+                                }
+                                case 'i':
+                                case 'c':
+                                        // A range replaces once, when it closes.
+                                        if (kind == 'i' || command->second_type == SED_ADDRESS_NONE ||
+                                            !command->active)
+                                        {
+                                                sed_output_start();
+                                                text_put_string(sed_text + command->text);
+                                                text_put_character(text_delimiter);
+                                        }
+                                        if (kind == 'i')
+                                                break;
+                                        // Fall through: replacement ends this cycle.
+                                case 'd':
+                                        goto drop_cycle;
+                                }
                         }
+                        goto cycle_done;
+space_full:
+                        leaving = 4;
+drop_cycle:
+                        dropped = true;
+cycle_done:
 
                         if (sed_failed || sed_io_failed)
                                 break;
 
                         if (!sed_quiet && !dropped)
-                        {
-                                text_put(sed_space, sed_space_length);
-
-                                if (sed_space_ended || leaving >= 0)
-                                        text_put_character(text_delimiter);
-                        }
+                                sed_put_space();
 
                         for (b32 c = 0; c < append_count; c++)
                         {
@@ -18033,6 +17931,7 @@ static b32 text_sed()
                                         continue;
                                 }
 
+                                sed_output_start();
                                 text_put_string(sed_text + append_which[c]);
                                 text_put_character('\n');
                         }

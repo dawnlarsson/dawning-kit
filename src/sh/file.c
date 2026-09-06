@@ -5248,27 +5248,20 @@ static bool find_pattern_holds(find_node address_to node, string_address text,
                            : memory_compare(pattern, text, wanted) == 0;
 }
 
-/*
-        The predicates that take no value: the word, the node kind it makes,
-        and which of the walk's switches it throws on the way past. find_is is
-        an exact compare, so no row shadows another and the order here is the
-        order they were written in.
-
-        A switch is thrown where the word stands rather than where the
-        expression holds, which is how find has always let -depth and -xdev be
-        written in the middle of one.
-*/
+/* Decode a predicate once. Walk options take effect while parsing, even in
+   a branch that will not be evaluated; value grammar stays with its opcode. */
 #define FIND_SETS_DEEPEST 1
 #define FIND_SETS_ONE_SYSTEM 2
 #define FIND_SETS_FOLLOW 4
 #define FIND_SETS_ACTION 8
+#define FIND_TAKES_VALUE 16
 
 static const struct
 {
         string_address name;
         p8 kind;
         p8 sets;
-} find_plain[] = {
+} find_predicates[] = {
     {(string_address) "-depth", 'v', FIND_SETS_DEEPEST},
     {(string_address) "-xdev", 'v', FIND_SETS_ONE_SYSTEM},
     {(string_address) "-mount", 'v', FIND_SETS_ONE_SYSTEM},
@@ -5283,7 +5276,32 @@ static const struct
     {(string_address) "-empty", 'y', 0},
     {(string_address) "-nouser", 'U', 0},
     {(string_address) "-nogroup", 'G', 0},
-    {null, 0, 0},
+    {"-exec", 'x', FIND_SETS_ACTION},
+    {"-maxdepth", '>', FIND_TAKES_VALUE},
+    {"-mindepth", '<', FIND_TAKES_VALUE},
+    {"-name", 'n', FIND_TAKES_VALUE},
+    {"-iname", 'N', FIND_TAKES_VALUE},
+    {"-path", 'p', FIND_TAKES_VALUE},
+    {"-wholename", 'p', FIND_TAKES_VALUE},
+    {"-ipath", 'P', FIND_TAKES_VALUE},
+    {"-lname", 'L', FIND_TAKES_VALUE},
+    {"-type", 't', FIND_TAKES_VALUE},
+    {"-perm", 'm', FIND_TAKES_VALUE},
+    {"-size", 'z', FIND_TAKES_VALUE},
+    {"-links", 'k', FIND_TAKES_VALUE},
+    {"-inum", 'i', FIND_TAKES_VALUE},
+    {"-mtime", 'T', FIND_TAKES_VALUE},
+    {"-atime", 'T', FIND_TAKES_VALUE},
+    {"-ctime", 'T', FIND_TAKES_VALUE},
+    {"-mmin", 'T', FIND_TAKES_VALUE},
+    {"-amin", 'T', FIND_TAKES_VALUE},
+    {"-cmin", 'T', FIND_TAKES_VALUE},
+    {"-user", 'u', FIND_TAKES_VALUE},
+    {"-uid", 'u', FIND_TAKES_VALUE},
+    {"-group", 'g', FIND_TAKES_VALUE},
+    {"-gid", 'g', FIND_TAKES_VALUE},
+    {"-newer", 'w', FIND_TAKES_VALUE},
+    {"-newermt", 'w', FIND_TAKES_VALUE},
 };
 
 static b32 find_parse_or();
@@ -5347,322 +5365,147 @@ static b32 find_parse_primary()
 
         find_at++;
 
-        // The options that say how the walk goes rather than what holds. Each
-        // is true wherever it stands, which is how find has always let them
-        // be written in the middle of an expression.
-        if (find_is(word, (string_address) "-maxdepth") ||
-            find_is(word, (string_address) "-mindepth"))
+        positive selected = string_table_find(
+            word, find_predicates, sizeof(find_predicates[0]),
+            array_count(find_predicates));
+        if (selected == array_count(find_predicates))
         {
-                string_address value = find_value(word);
+                string_format(file_fail, "find: unknown predicate: %s\n", word);
+                find_bad = true;
+                return -1;
+        }
 
-                if (!value)
-                        return -1;
+        p8 sets = find_predicates[selected].sets;
+        string_address value = sets & FIND_TAKES_VALUE ? find_value(word) : null;
+        if ((sets & FIND_TAKES_VALUE) && !value)
+                return -1;
+        b32 index = find_make(find_predicates[selected].kind);
+        if (index < 0)
+                return -1;
+        find_node address_to node = find_nodes + index;
 
-                if (string_is(word + 2, 'a'))
+        find_deepest |= (sets & FIND_SETS_DEEPEST) != 0;
+        find_one_system |= (sets & FIND_SETS_ONE_SYSTEM) != 0;
+        find_follow |= (sets & FIND_SETS_FOLLOW) != 0;
+        find_has_action |= (sets & FIND_SETS_ACTION) != 0;
+
+        switch (node->kind)
+        {
+        case '>':
+        case '<':
+                if (node->kind == '>')
                         find_maximum = string_digits(value, null);
                 else
                         find_minimum = string_digits(value, null);
+                node->kind = 'v';
+                break;
 
-                return find_make('v');
-        }
-
-        for (positive i = 0; find_plain[i].name; i++)
-        {
-                if (!find_is(word, find_plain[i].name))
-                        continue;
-
-                if (find_plain[i].sets & FIND_SETS_DEEPEST)
-                        find_deepest = true;
-
-                if (find_plain[i].sets & FIND_SETS_ONE_SYSTEM)
-                        find_one_system = true;
-
-                if (find_plain[i].sets & FIND_SETS_FOLLOW)
-                        find_follow = true;
-
-                if (find_plain[i].sets & FIND_SETS_ACTION)
-                        find_has_action = true;
-
-                return find_make(find_plain[i].kind);
-        }
-
-        if (find_is(word, (string_address) "-exec"))
-        {
-                b32 node = find_make('x');
-
-                if (node < 0)
-                        return -1;
-
-                find_nodes[node].number = (b64)find_at;
-
-                while (find_at < find_count &&
-                       !find_is(find_word(), (string_address) ";") &&
-                       !find_is(find_word(), (string_address) "+"))
+        case 'x':
+                node->number = (b64)find_at;
+                while (find_at < find_count && !find_is(find_word(), ";") &&
+                       !find_is(find_word(), "+"))
                         find_at++;
-
                 if (find_at >= find_count)
                 {
                         file_fail("find: -exec has no ending ; or +\n", 0);
-                        find_bad = true;
-                        return -1;
+                        goto bad;
                 }
-
-                bool many = find_is(find_word(), (string_address) "+");
-
-                find_nodes[node].extra = (b64)find_at;
-                find_nodes[node].comparison = many ? '+' : ';';
+                node->extra = (b64)find_at;
+                node->comparison = find_is(find_word(), "+") ? '+' : ';';
                 find_at++;
-
-                if (many)
+                if (node->comparison == '+')
                 {
-                        // The + form appends the names where the {} stands,
-                        // so the {} has to be the last word of the template
-                        // and nowhere else.
-                        if (find_nodes[node].extra == find_nodes[node].number ||
-                            !find_is(program_argument((b32)(find_nodes[node].extra - 1)),
-                                     (string_address) "{}"))
+                        if (node->extra == node->number ||
+                            !find_is(program_argument((b32)(node->extra - 1)), "{}"))
                         {
                                 file_fail("find: -exec ... + needs {} just before the +\n", 0);
-                                find_bad = true;
-                                return -1;
+                                goto bad;
                         }
-
-                        find_nodes[node].extra--;
-
+                        node->extra--;
                         if (!array_store_reserve(
                                 find_batches, find_batch_room, find_batch_have,
                                 find_batch_have + 1, 2))
                         {
                                 shell_memory_failed = true;
                                 file_fail("find: out of memory while reading -exec\n", 0);
-                                find_bad = true;
-                                return -1;
+                                goto bad;
                         }
-
-                        memory_fill(address_of find_batches[find_batch_have], 0,
-                                    sizeof(find_batch));
-                        find_batches[find_batch_have].node = node;
-                        find_nodes[node].unit = (b32)find_batch_have++;
+                        find_batches[find_batch_have] = (find_batch){.node = index};
+                        node->unit = (b32)find_batch_have++;
                 }
+                break;
 
-                find_has_action = true;
+        case 'n':
+        case 'N':
+        case 'p':
+        case 'P':
+        case 'L':
+                // Fold invariant patterns once, not on every visited entry.
+                if (node->kind == 'N' || node->kind == 'P')
+                        find_lowered(value, (p8 address_to)value);
+                node->text = value;
+                find_pattern_prepare(node);
+                break;
 
-                return node;
-        }
+        case 't':
+                node->number = string_get(value);
+                break;
 
-        if (find_is(word, (string_address) "-name") ||
-            find_is(word, (string_address) "-iname") ||
-            find_is(word, (string_address) "-path") ||
-            find_is(word, (string_address) "-wholename") ||
-            find_is(word, (string_address) "-ipath") ||
-            find_is(word, (string_address) "-lname"))
+        case 'm':
         {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                p8 kind = find_is(word, (string_address) "-name")    ? 'n'
-                          : find_is(word, (string_address) "-iname") ? 'N'
-                          : find_is(word, (string_address) "-ipath") ? 'P'
-                          : find_is(word, (string_address) "-lname") ? 'L'
-                                                                     : 'p';
-
-                b32 node = find_make(kind);
-
-                if (node >= 0)
-                {
-                        // The expression is built once and tested for every
-                        // directory entry. Case-insensitive patterns are
-                        // invariant, so fold their private argv string here
-                        // instead of copying and folding it on every visit.
-                        if (kind == 'N' || kind == 'P')
-                                find_lowered(value, (p8 address_to)value);
-
-                        find_nodes[node].text = value;
-                        find_pattern_prepare(address_of find_nodes[node]);
-                }
-
-                return node;
-        }
-
-        if (find_is(word, (string_address) "-type"))
-        {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                b32 node = find_make('t');
-
-                if (node >= 0)
-                        find_nodes[node].number = string_get(value);
-
-                return node;
-        }
-
-        if (find_is(word, (string_address) "-perm"))
-        {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                p8 how = ' ';
-
+                node->comparison = ' ';
                 if (string_is(value, '-') || string_is(value, '/'))
-                {
-                        how = string_get(value);
-                        value++;
-                }
-
-                positive mode = 0;
-
+                        node->comparison = string_get(value++);
+                positive mode;
                 if (!file_mode_of(value, 0, false, address_of mode))
                 {
                         string_format(file_fail, "find: invalid mode %s\n", value);
-                        find_bad = true;
-                        return -1;
+                        goto bad;
                 }
-
-                b32 node = find_make('m');
-
-                if (node >= 0)
-                {
-                        find_nodes[node].number = (b64)mode;
-                        find_nodes[node].comparison = how;
-                }
-
-                return node;
+                node->number = (b64)mode;
+                break;
         }
-
-        if (find_is(word, (string_address) "-size"))
+        case 'z':
+        case 'k':
+        case 'i':
+        case 'T':
         {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                b32 node = find_make('z');
-
-                if (node < 0)
-                        return -1;
-
-                p8 how;
-                string_address step = find_marked(value, address_of how);
                 positive taken;
-
-                find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)string_digits(step, address_of taken);
-                step += taken;
-
-                find_nodes[node].unit = string_get(step) ? string_get(step) : 'b';
-
-                return node;
+                value = find_marked(value, address_of node->comparison);
+                node->number = (b64)string_digits(value, address_of taken);
+                if (node->kind == 'z')
+                        node->unit = value[taken] ? value[taken] : 'b';
+                if (node->kind == 'T')
+                {
+                        node->unit = word[1];
+                        node->extra = word[2] == 't' ? 86400 : 60;
+                }
+                break;
         }
-
-        if (find_is(word, (string_address) "-links") ||
-            find_is(word, (string_address) "-inum"))
+        case 'g':
+        case 'u':
         {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                b32 node = find_make(find_is(word, (string_address) "-links") ? 'k' : 'i');
-
-                if (node < 0)
-                        return -1;
-
-                p8 how;
-                string_address step = find_marked(value, address_of how);
-
-                find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)string_digits(step, null);
-
-                return node;
-        }
-
-        if (find_is(word, (string_address) "-mtime") ||
-            find_is(word, (string_address) "-atime") ||
-            find_is(word, (string_address) "-ctime") ||
-            find_is(word, (string_address) "-mmin") ||
-            find_is(word, (string_address) "-amin") ||
-            find_is(word, (string_address) "-cmin"))
-        {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                b32 node = find_make('T');
-
-                if (node < 0)
-                        return -1;
-
-                p8 how;
-                string_address step = find_marked(value, address_of how);
-
-                find_nodes[node].comparison = how;
-                find_nodes[node].number = (b64)string_digits(step, null);
-                find_nodes[node].unit = string_get(word + 1);
-                find_nodes[node].extra = string_is(word + 2, 't') ? 86400 : 60;
-
-                return node;
-        }
-
-        if (find_is(word, (string_address) "-user") ||
-            find_is(word, (string_address) "-uid") ||
-            find_is(word, (string_address) "-group") ||
-            find_is(word, (string_address) "-gid"))
-        {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                bool group = string_is(word + 1, 'g');
+                bool group = node->kind == 'g';
                 positive number;
                 bipolar who = string_digits_exact(value, address_of number)
                                   ? (bipolar)number
                                   : (group ? file_group_id(value) : file_user_id(value));
-
                 if (who < 0)
                 {
                         string_format(file_fail, "find: '%s' is not the name of a known %s\n",
-                                      value,
-                                      group ? (string_address) "group"
-                                            : (string_address) "user");
-                        find_bad = true;
-                        return -1;
+                                      value, group ? "group" : "user");
+                        goto bad;
                 }
-
-                b32 node = find_make(group ? 'g' : 'u');
-
-                if (node >= 0)
-                        find_nodes[node].number = (b64)who;
-
-                return node;
+                node->number = (b64)who;
+                break;
         }
-
-        if (find_is(word, (string_address) "-newer") ||
-            find_is(word, (string_address) "-newermt"))
-        {
-                string_address value = find_value(word);
-
-                if (!value)
-                        return -1;
-
-                b64 when;
-                b64 exact = 0;
-
-                if (find_is(word, (string_address) "-newermt"))
+        case 'w':
+                if (find_is(word, "-newermt"))
                 {
-                        if (!file_moment_read(value, find_moment, address_of when))
+                        if (!file_moment_read(value, find_moment, address_of node->number))
                         {
                                 string_format(file_fail, "find: invalid date '%s'\n", value);
-                                find_bad = true;
-                                return -1;
+                                goto bad;
                         }
                 }
                 else
@@ -5670,33 +5513,21 @@ static b32 find_parse_primary()
                         file_facts facts;
                         bipolar looked = file_look_code(AT_FDCWD, value, 0,
                                                         address_of facts);
-
                         if (looked < 0)
                         {
                                 string_format(file_fail, "find: '%s': %s\n", value,
                                               file_reason(looked));
-                                find_bad = true;
-                                return -1;
+                                goto bad;
                         }
-
-                        when = facts.modified.seconds;
-                        exact = facts.modified.nanoseconds;
+                        node->number = facts.modified.seconds;
+                        node->extra = facts.modified.nanoseconds;
                 }
-
-                b32 node = find_make('w');
-
-                if (node >= 0)
-                {
-                        find_nodes[node].number = when;
-                        find_nodes[node].extra = exact;
-                }
-
-                return node;
+                break;
         }
+        return index;
 
-        string_format(file_fail, "find: unknown predicate: %s\n", word);
+bad:
         find_bad = true;
-
         return -1;
 }
 

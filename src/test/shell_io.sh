@@ -166,6 +166,32 @@ for pair in bash dash; do
                 'printf "%s" "a::b::" | { IFS=: read a b c; printf "<%s>:<%s>:<%s>\n" "$a" "$b" "$c"; }'
 done
 
+# Vary delimiter classes, empty fields, escapes, destination arity, and EOF
+# independently: these exercise different transitions in the shared splitter.
+for pair in bash dash; do
+        if [ "$pair" = bash ]; then reference=$B; candidate=$MB; else reference=$D; candidate=$M; fi
+        for data in '' ' a : b ' 'a::' 'a:\:b:' 'a\: b' ': :end:'; do
+                for separators in '' ' ' ':' ' :'; do
+                        for option in '' '-r'; do
+                                for names in 'a' 'a b' 'a b c'; do
+                                        case_compare "IFS matrix $pair $separators/$option/$names/$data" \
+                                                "$reference" "$candidate" \
+                                                "printf '%s' '$data' | { IFS='$separators' read $option $names; printf '%s:<%s>:<%s>:<%s>\n' \"\$?\" \"\$a\" \"\$b\" \"\$c\"; }"
+                                done
+                                [ "$pair" != bash ] || case_compare "array IFS matrix $separators/$option/$data" "$B" "$MB" \
+                                        "printf '%s' '$data' | { IFS='$separators' read $option -a a; printf '%s:<%s>\n' \"\$?\" \"\${#a[@]}\"; printf '<%s>\n' \"\${a[@]}\"; }"
+                        done
+                done
+        done
+done
+
+for data in 'a\\:b:tail' 'a\\\nb:tail' 'a:b\nrest' '\\' ''; do
+        for option in '-n2' '-N2' '-rn2' '-rN2' '-d:' '-rd:'; do
+                case_compare "read byte transitions $option/$data" "$B" "$MB" \
+                        "printf '%b' '$data' | { read $option a b; printf '%s:<%s>:<%s>\n' \"\$?\" \"\$a\" \"\$b\"; }"
+        done
+done
+
 section ""
 printf '  %-12s %s of %s\n' total "$pass" "$((pass + fail))"
 [ "$fail" -eq 0 ]
