@@ -2803,7 +2803,7 @@ static bool file_copy_extent(bipolar in, bipolar out, p64 start,
                         continue;
                 }
                 if (!copied)
-                        return true;
+                        return false;
                 if (copied == -4)
                         continue;
                 if (!file_copy_range_fallback(copied))
@@ -2831,7 +2831,7 @@ static bool file_copy_extent(bipolar in, bipolar out, p64 start,
                                 continue;
                         }
                         if (!copied)
-                                return true;
+                                return false;
                         if (copied == -4)
                                 continue;
                         if (!file_copy_range_fallback(copied))
@@ -2858,7 +2858,7 @@ static bool file_copy_extent(bipolar in, bipolar out, p64 start,
                 if (taken < 0)
                         return false;
                 if (!taken)
-                        return true;
+                        return false;
                 if (system_write_all((positive)out, file_transfer,
                                      (positive)taken) != (positive)taken)
                         return false;

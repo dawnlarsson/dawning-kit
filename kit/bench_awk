@@ -5,8 +5,9 @@
 #           sh kit/bench_awk [path-to-moonwater-multicall]
 #
 #       Inputs are generated once and outputs must agree before timing. The
-#       cases separate field arithmetic, repeated short-key lookup, unique
-#       long-key insertion/growth, and builtin case conversion.
+#       cases separate field discovery without value copies, field arithmetic,
+#       repeated short-key lookup, unique long-key insertion/growth, and
+#       builtin case conversion.
 #
 set -eu
 
@@ -93,6 +94,7 @@ with case.open("w", encoding="ascii") as out:
         out.write(f"AbCdEfGhIjKlMnOpQrStUvWxYz-{i:06d}\n")
 
 cases = (
+    ("field count", fields, "-F:", "{ s += NF } END { print s }"),
     ("field arithmetic", fields, "-F:", "{ s += $2 } END { print s }"),
     ("short-key lookup", short, "{ a[$1]++ } END { for (k in a) s += a[k]; print s }"),
     ("long-key insert", long, "{ a[$1] = NR } END { print length(a) }"),

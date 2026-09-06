@@ -13270,16 +13270,23 @@ static p8 text_list[TEXT_LIST_MAX];
 static p8 text_list_begins[TEXT_LIST_MAX];
 
 static positive text_list_open;
+static bool text_list_single;
+static positive text_list_single_first;
+static positive text_list_single_last;
 
 static bool text_list_parse(string_address spec)
 {
         positive at = 0;
+        positive pieces = 0;
+
+        text_list_single = spec[0] != '\0';
 
         while (spec[at])
         {
                 positive taken;
                 positive first = string_digits(spec + at, address_of taken);
                 bool have_first = taken != 0;
+                bool open = false;
 
                 at += taken;
 
@@ -13294,6 +13301,9 @@ static bool text_list_parse(string_address spec)
                         have_last = taken != 0;
                         at += taken;
 
+                        if (!have_first && !have_last)
+                                return false;
+
                         if (!have_first)
                                 first = 1;
 
@@ -13302,8 +13312,11 @@ static bool text_list_parse(string_address spec)
                                 if (!text_list_open || first < text_list_open)
                                         text_list_open = first;
 
+                                open = true;
                                 last = first;
                         }
+                        else if (last < first)
+                                return false;
                 }
                 else
                 {
@@ -13315,6 +13328,14 @@ static bool text_list_parse(string_address spec)
 
                 if (!first)
                         return false;
+
+                if (!pieces++)
+                {
+                        text_list_single_first = first;
+                        text_list_single_last = open ? TEXT_UNSET : last;
+                }
+                else
+                        text_list_single = false;
 
                 if (first < TEXT_LIST_MAX)
                 {
@@ -13332,6 +13353,10 @@ static bool text_list_parse(string_address spec)
                 if (spec[at] == ',')
                 {
                         at++;
+
+                        if (!spec[at])
+                                return false;
+
                         continue;
                 }
 
@@ -13339,7 +13364,7 @@ static bool text_list_parse(string_address spec)
                         return false;
         }
 
-        return true;
+        return pieces != 0;
 }
 
 static bool text_list_has(positive which)
@@ -13489,6 +13514,44 @@ static b32 text_cut()
 
                         if (by_character)
                         {
+                                /* One range is one or two contiguous spans,
+                                   not a membership question for every byte.
+                                   Keep the bitmap loop for lists and for a
+                                   complemented custom delimiter, whose two
+                                   selected spans need a separator between
+                                   them. */
+                                if (text_list_single &&
+                                    (!complement || !separator))
+                                {
+                                        positive from =
+                                            min(text_list_single_first - 1,
+                                                line_length);
+                                        positive through =
+                                            text_list_single_last == TEXT_UNSET
+                                                ? line_length
+                                                : min(text_list_single_last,
+                                                      line_length);
+
+                                        if (through < from)
+                                        {
+                                                if (complement)
+                                                        text_put(line,
+                                                                 line_length);
+                                        }
+                                        else if (complement)
+                                        {
+                                                text_put(line, from);
+                                                text_put(line + through,
+                                                         line_length - through);
+                                        }
+                                        else if (through > from)
+                                                text_put(line + from,
+                                                         through - from);
+
+                                        text_put_character(text_delimiter);
+                                        continue;
+                                }
+
                                 bool wrote = false;
                                 bool ran = false;
 
@@ -13981,21 +14044,38 @@ static b32 text_tr()
                         continue;
                 }
 
-                for (positive c = 0; c < left; c++)
+                positive kept = 0;
+
+                if (remove && !squeeze)
                 {
-                        p8 character = at[c];
+                        for (positive c = 0; c < left; c++)
+                        {
+                                p8 character = at[c];
 
-                        if (remove && in_first[character])
-                                continue;
-
-                        p8 out = remove ? character : mapped[character];
-
-                        if (squeeze && squeezed[out] && (b32)out == last_written)
-                                continue;
-
-                        text_put_character(out);
-                        last_written = out;
+                                if (!in_first[character])
+                                        at[kept++] = character;
+                        }
                 }
+                else
+                {
+                        for (positive c = 0; c < left; c++)
+                        {
+                                p8 character = at[c];
+
+                                if (remove && in_first[character])
+                                        continue;
+
+                                p8 out = remove ? character : mapped[character];
+
+                                if (squeezed[out] && (b32)out == last_written)
+                                        continue;
+
+                                at[kept++] = out;
+                                last_written = out;
+                        }
+                }
+
+                text_put(at, kept);
 
                 text_input.position = text_input.filled;
         }

@@ -20,6 +20,7 @@ baseline) source_file=kit/bench.c ;;
 floor)   source_file=kit/floor.c ;;
 numbers) source_file=kit/bench_numbers.c ;;
 bases)   source_file=kit/bench_bases.c ;;
+hex)     source_file=kit/bench_hex.c ;;
 padded)  source_file=kit/bench_padded.c ;;
 input-bases) source_file=kit/bench_parse_bases.c ;;
 fields)  source_file=kit/bench_into_padded.c ;;

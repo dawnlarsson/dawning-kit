@@ -519,16 +519,8 @@ static fn checksum_check_filename_put(string_address name)
 
 static fn checksum_hex_put(p8 address_to digest, positive length)
 {
-        static p8 alphabet[] = "0123456789abcdef";
         p8 text[128];
-
-        for (positive i = 0; i < length; i++)
-        {
-                text[i * 2] = alphabet[digest[i] >> 4];
-                text[i * 2 + 1] = alphabet[digest[i] & 15];
-        }
-
-        text_put(text, length * 2);
+        text_put(text, memory_into_hex(text, digest, length));
 }
 
 static fn checksum_line_put(p8 address_to digest, positive length,

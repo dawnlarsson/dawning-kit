@@ -435,6 +435,84 @@ large_copy_stress() {
         fi
 }
 
+# A zero result in the middle of a stat-proven data extent is premature EOF,
+# not a successful short copy.  Inject each transfer floor independently;
+# this stays optional on hosts without a usable ptrace/strace setup.
+copy_short_extent_stress() {
+        if ! command -v strace >/dev/null 2>&1 ||
+           ! strace -qq -o "$work/cp-strace-probe" -e trace=none true \
+                2>/dev/null ||
+           ! strace -qq -o "$work/cp-inject-probe" \
+                -e inject=copy_file_range:retval=0:when=1 \
+                -e trace=copy_file_range true 2>/dev/null; then
+                echo '  cp       short EOF: strace/ptrace unavailable, three injection cases did not run'
+                return
+        fi
+
+        dd if=/dev/urandom of="$work/cp-short-source" bs=1M count=1 \
+                status=none 2>/dev/null
+
+        if ! strace -qq -o "$work/cp-extent-probe.trace" \
+                -e trace=copy_file_range \
+                "$binaries/cp" "$work/cp-short-source" \
+                "$work/cp-extent-probe" 2>/dev/null ||
+           ! grep -q '^copy_file_range([^,]*, \[' "$work/cp-extent-probe.trace"; then
+                echo '  cp       short EOF: filesystem has no extent copy path, three injection cases did not run'
+                return
+        fi
+
+        if strace -qq -o "$work/cp-short-range.trace" \
+             -e inject=copy_file_range:retval=0:when=1 \
+             -e trace=copy_file_range \
+             "$binaries/cp" "$work/cp-short-source" \
+             "$work/cp-short-range" 2>/dev/null; then
+                injected_status=0
+        else
+                injected_status=$?
+        fi
+        if [ "$injected_status" -ne 0 ] &&
+           grep -q 'copy_file_range(.* = 0' "$work/cp-short-range.trace"; then
+                report ok
+        else
+                report bad 'short copy_file_range' 'premature EOF was accepted'
+        fi
+
+        if strace -qq -o "$work/cp-short-send.trace" \
+             -e inject=copy_file_range:error=EINVAL:when=1 \
+             -e inject=sendfile:retval=0:when=1 \
+             -e trace=copy_file_range,sendfile \
+             "$binaries/cp" "$work/cp-short-source" \
+             "$work/cp-short-send" 2>/dev/null; then
+                injected_status=0
+        else
+                injected_status=$?
+        fi
+        if [ "$injected_status" -ne 0 ] &&
+           grep -q 'sendfile(.* = 0' "$work/cp-short-send.trace"; then
+                report ok
+        else
+                report bad 'short sendfile' 'premature EOF was accepted'
+        fi
+
+        if strace -qq -o "$work/cp-short-read.trace" \
+             -e inject=copy_file_range:error=EINVAL:when=1 \
+             -e inject=sendfile:error=EINVAL:when=1 \
+             -e inject=read:retval=0:when=1 \
+             -e trace=copy_file_range,sendfile,read \
+             "$binaries/cp" "$work/cp-short-source" \
+             "$work/cp-short-read" 2>/dev/null; then
+                injected_status=0
+        else
+                injected_status=$?
+        fi
+        if [ "$injected_status" -ne 0 ] &&
+           grep -q 'read(.* = 0' "$work/cp-short-read.trace"; then
+                report ok
+        else
+                report bad 'short buffered read' 'premature EOF was accepted'
+        fi
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -2028,6 +2106,7 @@ rejected 'suppress offset rejected' csplit --suppress-matched "$fixture/alpha" '
 
 group cp
 large_copy_stress
+copy_short_extent_stress
 effect 'file'           cp '$TOOL tree/one copy'
 effect 'over file'      cp '$TOOL tree/one plain'
 effect 'into directory' cp '$TOOL plain tree/'

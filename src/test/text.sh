@@ -75,6 +75,14 @@ printf '\n' >> "$work/cut_wide"
 head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
 printf ' y\n' >> "$work/wc_boundary"
 
+# tr compacts delete/squeeze blocks in place.  Put a retained byte on both
+# sides of a refill and a squeezed run across it, so neither path can lose
+# state at the reader boundary.
+head -c 65535 /dev/zero | tr '\0' a > "$work/tr_refill"
+printf 'b' >> "$work/tr_refill"
+head -c 65537 /dev/zero | tr '\0' a >> "$work/tr_refill"
+printf 'c\n' >> "$work/tr_refill"
+
 # uniq's zero-copy record view has to release a buffer-backed line before the
 # next refill. Exercise a delimiter in the final byte of a read, a line one
 # byte wider than a read, duplicates on both sides, and the same shape with a
@@ -1068,6 +1076,9 @@ compare 'long unknown'   cut a  --nosuchflag -c1
 compare 'null data'      cut zpairs -z -d: -f2
 compare 'null data chars' cut zpairs -z -c1
 compare 'null data long' cut zpairs --zero-terminated -d: -f1
+compare 'descending range' cut a -c5-2
+compare 'empty list'       cut a -c ''
+compare 'trailing comma'   cut a -c 1,
 
 case_start tr
 compare 'translate'      tr a  a-z A-Z
@@ -1088,6 +1099,8 @@ compare 'long complement' tr a --complement a-y X
 compare 'long delete'    tr a  --delete ab
 compare 'long squeeze'   tr a  --squeeze-repeats an
 compare 'long truncate'  tr a  --truncate-set1 abc xy
+compare 'delete refill'  tr tr_refill -d a
+compare 'squeeze refill' tr tr_refill -s a
 compare 'extra operand'  tr a  -d a A
 compare 'missing second' tr a  a
 compare 'three operands' tr a  -s a b c

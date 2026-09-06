@@ -960,6 +960,26 @@ compare 'od named format printable' od -A x -t az -v "$work/dump-short"
 compare 'od characters printable' od -A x -t cz -v "$work/dump-short"
 compare 'od named integer sizes' od -An -t dC -t uS -t xI -t oL "$work/dump-short"
 compare 'od named size in one word' od -An -t xSxI "$work/dump-short"
+# All final-row lengths, every byte value and mixed-format alignment exercise
+# the shared bulk encoder without sharing its expected-output implementation.
+dump_byte=0
+while [ "$dump_byte" -lt 256 ]; do
+        printf "\\$(printf '%03o' "$dump_byte")"
+        dump_byte=$((dump_byte + 1))
+done > "$work/dump-all-bytes"
+dump_length=0
+while [ "$dump_length" -le 33 ]; do
+        compare "od hex tail $dump_length" od -A x -N "$dump_length" -t x1z -v "$work/dump-all-bytes"
+        compare "od mixed hex tail $dump_length" od -A n -N "$dump_length" -t x1 -t d8 -v "$work/dump-all-bytes"
+        if command -v hexdump > /dev/null 2>&1; then
+                compare "hexdump hex tail $dump_length" hexdump -Cv -n "$dump_length" "$work/dump-all-bytes"
+        fi
+        dump_length=$((dump_length + 1))
+done
+compare 'od hex all bytes' od -An -t x1z -v "$work/dump-all-bytes"
+if command -v hexdump > /dev/null 2>&1; then
+        compare 'hexdump hex all bytes' hexdump -Cv "$work/dump-all-bytes"
+fi
 # A directory opens and then refuses to be read, and the reference has no
 # offset to close a dump it never began.
 compare 'od unreadable input' od "$work/dump-directory"
@@ -1098,6 +1118,23 @@ compare_diff_full 'output write failure' "$work/a" "$work/b"
 
 compare_diff 'brief differ'    -q "$work/a" "$work/b"
 compare_diff 'brief same'      -q "$work/a" "$work/a2"
+compare_diff 'brief no newline' -q "$work/nonl" "$work/nonl2"
+compare_diff 'brief ignore case' -qi "$work/a" "$work/case"
+compare_diff 'brief ignore space' -qw "$work/a" "$work/spaced"
+compare_diff 'brief strip carriage' -q --strip-trailing-cr \
+        "$work/crlf" "$work/trailing2"
+
+# The changed first line leaves a tail longer than diff's transfer block.
+# Its byte-for-byte answer proves that the blockwise suffix scan stops on the
+# same line boundary as the scalar definition it replaces.
+awk 'BEGIN {
+        print "left"
+        for (i = 0; i < 4096; i++)
+                print "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+}' > "$work/tail1"
+sed '1s/left/right/' "$work/tail1" > "$work/tail2"
+compare_diff 'long common tail' "$work/tail1" "$work/tail2"
+compare_diff 'brief long common tail' -q "$work/tail1" "$work/tail2"
 
 compare_diff 'ignore case'     -i "$work/a" "$work/case"
 compare_diff 'ignore case off' "$work/a" "$work/case"

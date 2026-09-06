@@ -64,6 +64,9 @@ cover('direct_benchmark', 'kit/bench_bases.c', '''
 positive_into_base
 ''', 'paired scalar/assembly timing across bases and value widths')
 
+cover('direct_benchmark', 'kit/bench_hex.c', 'memory_into_hex',
+      'paired former-C/assembly timing over byte tails, dump rows and large spans')
+
 cover('direct_benchmark', 'kit/bench_padded.c', '''
 positive_to_padded
 ''', 'paired former-C/assembly timing across field shapes')

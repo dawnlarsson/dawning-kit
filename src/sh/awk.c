@@ -620,7 +620,11 @@ enum
         // been cached beside it since: still a number to a comparison and
         // to a test, where a value assigned to a field and read back after
         // the record was rebuilt used to turn into a string.
-        AWK_NUMERIC = 32
+        AWK_NUMERIC = 32,
+        // The splitter has recorded this field's span in awk_pieces, but no
+        // operation has needed its separately-owned value yet. Most awk
+        // programs touch only a few fields, so defer their copies until then.
+        AWK_FIELD_PENDING = 64
 };
 
 typedef struct
@@ -1279,6 +1283,10 @@ typedef struct
 static awk_piece address_to awk_pieces;
 static positive awk_piece_count;
 static positive awk_piece_room;
+// Constant fields named by the parsed program. A computed field needs the
+// original eager policy; otherwise fields not named here can remain spans.
+static positive awk_fields_fixed;
+static bool awk_fields_computed;
 
 static HOT fn awk_piece_add(positive start, positive length)
 {
@@ -1490,6 +1498,19 @@ static bool awk_paragraph_mode()
         return length == 0;
 }
 
+static fn awk_field_from_piece(awk_value address_to field,
+                               awk_text address_to record, awk_piece piece)
+{
+        // A one-field record already is the exact immutable string wanted by
+        // $1. Sharing it avoids an allocation and copy; assigning either
+        // value still replaces only that value.
+        if (!piece.start && piece.length == record->length)
+                awk_set_input(field, awk_text_hold(record));
+        else
+                awk_set_input_bytes(field, record->text + piece.start,
+                                    piece.length);
+}
+
 static fn awk_split_record()
 {
         positive separator_length;
@@ -1501,10 +1522,26 @@ static fn awk_split_record()
 
         awk_fields_reserve(awk_piece_count + 1);
 
+        bool eager = awk_fields_computed;
+
+        if (!eager && awk_piece_count <= 63)
+        {
+                positive all = awk_piece_count == 63
+                                   ? positive_max - 1
+                                   : (((positive)1 << (awk_piece_count + 1)) - 2);
+
+                eager = (awk_fields_fixed & all) == all;
+        }
+
         for (positive i = 0; i < awk_piece_count; i++)
-                awk_set_input_bytes(address_of awk_fields[i + 1],
-                                    record->text + awk_pieces[i].start,
-                                    awk_pieces[i].length);
+        {
+                awk_value address_to field = address_of awk_fields[i + 1];
+
+                if (eager || (i < 63 && (awk_fields_fixed & ((positive)2 << i))))
+                        awk_field_from_piece(field, record, awk_pieces[i]);
+                else
+                        awk_value_set(field, null, 0, AWK_FIELD_PENDING);
+        }
 
         for (positive i = awk_piece_count + 1; i <= (positive)awk_nf; i++)
                 awk_value_clear(address_of awk_fields[i]);
@@ -1514,6 +1551,8 @@ static fn awk_split_record()
         awk_record_stale = false;
 }
 
+static awk_value address_to awk_field(b32 which);
+
 static fn awk_record_rebuild()
 {
         string_address separator = awk_record_separator ? awk_record_separator->text
@@ -1522,14 +1561,14 @@ static fn awk_record_rebuild()
         positive total = 0;
 
         for (b32 i = 1; i <= awk_nf; i++)
-                total += awk_to_text(address_of awk_fields[i])->length + length;
+                total += awk_to_text(awk_field(i))->length + length;
 
         awk_text address_to made = awk_text_room(total ? total : 1);
         positive at = 0;
 
         for (b32 i = 1; i <= awk_nf; i++)
         {
-                awk_text address_to piece = awk_to_text(address_of awk_fields[i]);
+                awk_text address_to piece = awk_to_text(awk_field(i));
 
                 if (i > 1)
                 {
@@ -1575,7 +1614,24 @@ static awk_value address_to awk_field(b32 which)
                 return address_of awk_field_nothing;
         }
 
-        return address_of awk_fields[which];
+        awk_value address_to field = address_of awk_fields[which];
+
+        if (field->state & AWK_FIELD_PENDING)
+        {
+                awk_piece piece = awk_pieces[which - 1];
+                awk_text address_to record = awk_to_text(address_of awk_fields[0]);
+
+                awk_field_from_piece(field, record, piece);
+        }
+
+        return field;
+}
+
+static fn awk_fields_materialize()
+{
+        for (b32 i = 1; i <= awk_nf; i++)
+                if (awk_fields[i].state & AWK_FIELD_PENDING)
+                        awk_field(i);
 }
 
 static fn awk_field_grow(b32 want)
@@ -3508,6 +3564,23 @@ static awk_node address_to awk_primary()
                 awk_next_token();
                 node = awk_node_new(N_FIELD);
                 node->a = awk_primary();
+
+                if (node->a->kind == N_NUMBER &&
+                    node->a->number == awk_truncate(node->a->number) &&
+                    node->a->number >= 0 && node->a->number < 64)
+                {
+                        b32 field = (b32)node->a->number;
+
+                        if (field)
+                        {
+                                awk_fields_fixed |= (positive)1 << field;
+                                node->sub = 1;
+                                node->index = field;
+                        }
+                }
+                else
+                        awk_fields_computed = true;
+
                 return node;
 
         case T_PLUS_PLUS:
@@ -4520,7 +4593,9 @@ static fn awk_target_of(awk_node address_to node, awk_target address_to into)
         case N_FIELD:
         {
                 into->kind = LV_FIELD;
-                into->field = awk_whole(awk_eval_number(node->a));
+                into->field = node->sub ? node->index
+                                        : awk_whole(awk_eval_number(node->a));
+                into->index = node->sub;
 
                 if (into->field < 0)
                         awk_fatal(null, "attempt to assign to a field before the first");
@@ -4556,8 +4631,10 @@ static awk_value address_to awk_target_slot(awk_target address_to which)
         switch (which->kind)
         {
         case LV_FIELD:
-                awk_fields_reserve((positive)which->field + 1);
-                return address_of awk_fields[which->field];
+                if (which->index && which->field > 0 && which->field <= awk_nf)
+                        return address_of awk_fields[which->field];
+
+                return awk_field(which->field);
 
         case LV_ELEMENT:
                 return address_of which->entry->value;
@@ -4694,7 +4771,10 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                 return;
 
         case N_FIELD:
-                awk_value_copy(out, awk_field(awk_whole(awk_eval_number(node->a))));
+                if (node->sub && node->index > 0 && node->index <= awk_nf)
+                        awk_value_copy(out, address_of awk_fields[node->index]);
+                else
+                        awk_value_copy(out, awk_field(awk_whole(awk_eval_number(node->a))));
                 return;
 
         case N_SUBSCRIPT:
@@ -5196,6 +5276,9 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 }
 
                 awk_array_empty(array);
+                // split() shares the piece scratch with record splitting.
+                // Keep any lazy current-record fields before replacing it.
+                awk_fields_materialize();
                 awk_split_pieces(text->text, text->length, separator, separator_length, false,
                                  pattern);
 

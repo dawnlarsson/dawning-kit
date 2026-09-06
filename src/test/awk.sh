@@ -202,6 +202,14 @@ compare 'fs tab escape' "$work/spaced" -F'\t' '{print NF}'
 compare 'fs literal space' "$work/spaced" -F' ' '{print NF}'
 compare 'fs changed midway' "$work/colons" '{FS=":"} {print $1}'
 compare 'fs multi char' "$work/words" -F'ta' '{print NF}'
+compare 'fields survive split scratch' "$work/grid" \
+        '{split("a:b:c:d", parts, ":"); print $1, $2, $3}'
+compare 'whole field copy on write' "$work/letters" \
+        '{$1 = $1 "!"; print $0, $1}'
+compare 'pending siblings rebuild record' "$work/grid" \
+        '{$1 = "X"; split("a:b:c", parts, ":"); print $0, $2, NF}'
+compare 'split separator writes field' "$work/grid" \
+        '{split("x:y", parts, ($1 = ":")); print NF, $0, $1, $2, parts[2]}'
 compare 'nr and fnr' "$work/letters" '{print NR, FNR}'
 compare 'filename' "$work/one" '{print FILENAME}' "$work/one" "$work/one"
 compare 'fnr per file' "$work/one" '{print FILENAME, FNR, NR}' "$work/one" "$work/one"

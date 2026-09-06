@@ -322,6 +322,10 @@ cover('folds_already', 'count', 'memory_utf8_span',
       'and input bytes remain runtime, so a separate decoder would duplicate '
       'validation without removing its decisions')
 
+cover('folds_already', 'size', 'memory_into_hex',
+      'production dump/checksum spans carry runtime lengths; fixed expansions '
+      'would duplicate bounded scalar/vector conversion with no constant caller')
+
 # These shapes make a synthetic constant-call benchmark smaller, but no
 # production caller presents the required constant. Keeping their macro and
 # helper machinery would therefore add source without changing an image.

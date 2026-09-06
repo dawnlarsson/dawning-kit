@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        243 routines (234 public, 9 local), 243 of them on all three.
+        244 routines (235 public, 9 local), 244 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -171,6 +171,7 @@
           memory_frob                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
           memory_hash_33                 public  yes     yes     yes
+          memory_into_hex                public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
@@ -5156,6 +5157,49 @@ __asm__(
     ASM_SECTION
 #endif
 
+    /* Encode a bounded byte span without numeric conversion or division.
+       SSE2 interleaves the high/low ASCII nibbles sixteen bytes at a time;
+       the kernel and the exact tail use only scalar registers. */
+    ASM_FUNC(memory_into_hex)
+    "lea (%rdx,%rdx), %rax\n"
+#ifndef KERNEL_MODE
+    "cmp $16, %rdx\n   jb .Lmemory_hex_x64_tail\n"
+    "movdqa .Lmemory_hex_x64_mask(%rip), %xmm2\n"
+    "movdqa .Lmemory_hex_x64_nine(%rip), %xmm3\n"
+    "movdqa .Lmemory_hex_x64_zero(%rip), %xmm4\n"
+    "movdqa .Lmemory_hex_x64_alpha(%rip), %xmm5\n"
+    ".balign 16\n.Lmemory_hex_x64_16:\n"
+    "movdqu (%rsi), %xmm0\n   movdqa %xmm0, %xmm1\n"
+    "psrlw $4, %xmm0\n   pand %xmm2, %xmm0\n   pand %xmm2, %xmm1\n"
+    "movdqa %xmm0, %xmm6\n   movdqa %xmm1, %xmm7\n"
+    "pcmpgtb %xmm3, %xmm6\n   pcmpgtb %xmm3, %xmm7\n"
+    "pand %xmm5, %xmm6\n   pand %xmm5, %xmm7\n"
+    "paddb %xmm4, %xmm0\n   paddb %xmm4, %xmm1\n"
+    "paddb %xmm6, %xmm0\n   paddb %xmm7, %xmm1\n"
+    "movdqa %xmm0, %xmm6\n   punpcklbw %xmm1, %xmm0\n"
+    "punpckhbw %xmm1, %xmm6\n   movdqu %xmm0, (%rdi)\n"
+    "movdqu %xmm6, 16(%rdi)\n   add $16, %rsi\n   add $32, %rdi\n"
+    "sub $16, %rdx\n   cmp $16, %rdx\n   jae .Lmemory_hex_x64_16\n"
+#endif
+    ".Lmemory_hex_x64_tail:\n   test %rdx, %rdx\n"
+    "jz .Lmemory_hex_x64_done\n   lea .Lmemory_hex_x64_digits(%rip), %r8\n"
+    ".Lmemory_hex_x64_one:\n   movzbl (%rsi), %ecx\n"
+    "mov %ecx, %r9d\n   shr $4, %ecx\n   and $15, %r9d\n"
+    "movzbl (%r8,%rcx), %ecx\n   movzbl (%r8,%r9), %r9d\n"
+    "mov %cl, (%rdi)\n   mov %r9b, 1(%rdi)\n"
+    "inc %rsi\n   add $2, %rdi\n   dec %rdx\n   jnz .Lmemory_hex_x64_one\n"
+    ".Lmemory_hex_x64_done:\n" ASM_RET
+    ASM_END(memory_into_hex)
+    ".section .rodata\n"
+    ".Lmemory_hex_x64_digits:\n   .ascii \"0123456789abcdef\"\n"
+#ifndef KERNEL_MODE
+    ".balign 16\n.Lmemory_hex_x64_mask:\n   .fill 16,1,15\n"
+    ".Lmemory_hex_x64_nine:\n   .fill 16,1,9\n"
+    ".Lmemory_hex_x64_zero:\n   .fill 16,1,48\n"
+    ".Lmemory_hex_x64_alpha:\n   .fill 16,1,39\n"
+#endif
+    ASM_SECTION
+
     /* The System V checksum's inner operation is a byte sum modulo 2^32.
        SSE2's psadbw widens before adding, so sixteen bytes retire without
        overflow in the lanes; only the low 32 bits of their final sum are the
@@ -9571,6 +9615,33 @@ __asm__(
     ASM_RET
     ASM_END(memory_to_upper_ascii)
 
+    ASM_FUNC(memory_into_hex)
+    "mov x3, x0\n   lsl x0, x2, #1\n"
+    "cbz x2, .Lmemory_hex_arm64_done\n"
+    "adrp x4, .Lmemory_hex_arm64_digits\n"
+    "add x4, x4, :lo12:.Lmemory_hex_arm64_digits\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #16\n   b.lo .Lmemory_hex_arm64_one\n"
+    "ldr q3, [x4]\n   movi v4.16b, #15\n"
+    ".balign 16\n.Lmemory_hex_arm64_16:\n"
+    "ldr q2, [x1], #16\n   ushr v0.16b, v2.16b, #4\n"
+    "and v1.16b, v2.16b, v4.16b\n"
+    "tbl v0.16b, {v3.16b}, v0.16b\n   tbl v1.16b, {v3.16b}, v1.16b\n"
+    "st2 {v0.16b, v1.16b}, [x3], #32\n"
+    "sub x2, x2, #16\n   cmp x2, #16\n   b.hs .Lmemory_hex_arm64_16\n"
+    "cbz x2, .Lmemory_hex_arm64_done\n"
+#endif
+    ".Lmemory_hex_arm64_one:\n   ldrb w5, [x1], #1\n"
+    "lsr w6, w5, #4\n   and w5, w5, #15\n"
+    "ldrb w6, [x4, x6]\n   ldrb w5, [x4, x5]\n"
+    "strb w6, [x3]\n   strb w5, [x3, #1]\n   add x3, x3, #2\n"
+    "subs x2, x2, #1\n   b.ne .Lmemory_hex_arm64_one\n"
+    ".Lmemory_hex_arm64_done:\n" ASM_RET
+    ASM_END(memory_into_hex)
+    ".section .rodata\n   .balign 16\n"
+    ".Lmemory_hex_arm64_digits:\n   .ascii \"0123456789abcdef\"\n"
+    ASM_SECTION
+
     /* Keep the sum in four 32-bit vector lanes instead of crossing into the
        scalar register file every sixteen bytes. Pairwise widening prevents
        byte overflow; lane and final horizontal addition both wrap modulo
@@ -12966,6 +13037,24 @@ __asm__(
 #undef RV_ASCII_CASE_FOUR
 #undef RV_ASCII_CASE_ONE
 
+    /* Byte loads and stores keep this encoder valid for arbitrary alignment
+       on the baseline RV64 target, without requiring Zbb or vectors. */
+    ASM_FUNC(memory_into_hex)
+    "mv t0, a0\n   slli a0, a2, 1\n   beqz a2, .Lmemory_hex_rv_done\n"
+    "lla t1, .Lmemory_hex_rv_digits\n"
+    ".balign 16\n.Lmemory_hex_rv_one:\n   lbu t2, 0(a1)\n"
+    "srli t3, t2, 4\n   andi t2, t2, 15\n"
+    "add t3, t3, t1\n   add t2, t2, t1\n"
+    "lbu t3, 0(t3)\n   lbu t2, 0(t2)\n"
+    "sb t3, 0(t0)\n   sb t2, 1(t0)\n"
+    "addi a1, a1, 1\n   addi t0, t0, 2\n   addi a2, a2, -1\n"
+    "bnez a2, .Lmemory_hex_rv_one\n"
+    ".Lmemory_hex_rv_done:\n" ASM_RET
+    ASM_END(memory_into_hex)
+    ".section .rodata\n.Lmemory_hex_rv_digits:\n"
+    ".ascii \"0123456789abcdef\"\n"
+    ASM_SECTION
+
     /* Baseline RV64 has no vector extension and does not promise unaligned
        word loads. Peel to eight-byte alignment, add byte pairs into four
        halfword lanes, then use the required M extension as a horizontal sum:
@@ -15314,6 +15403,11 @@ address_any memory_fill_64(address_any destination, positive value,
 PURE positive memory_common_prefix(address_any one, address_any two, positive size);
 PURE positive memory_hash_33(address_any block, positive size);
 PURE p32 memory_sum_bytes(address_any block, positive size);
+// Writes exactly 2*size lowercase hex bytes, without a terminator, and returns
+// that length. Source and destination must not overlap; size must fit when
+// doubled. Zero size permits null pointers. Both spans may be unaligned.
+positive memory_into_hex(address_any destination, address_any source,
+                          positive size);
 PURE p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);

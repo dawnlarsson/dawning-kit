@@ -7630,6 +7630,7 @@ static b32 tools_dd(void)
 #define DUMP_CHARACTER 1
 #define DUMP_CANONICAL 2
 #define DUMP_NAMED 3
+#define DUMP_HEX_BYTES 4
 
 typedef struct
 {
@@ -7671,7 +7672,8 @@ static fn dump_add_integer(positive base, positive size, positive width,
         }
 
         dump_arguments.format[dump_arguments.count++] = (dump_format){
-            .kind = DUMP_INTEGER,
+            .kind = base == 16 && size == 1 && width == 2 && zero && !signed_value
+                        ? DUMP_HEX_BYTES : DUMP_INTEGER,
             .base = (p8)base,
             .size = (p8)size,
             .width = (p8)width,
@@ -8083,6 +8085,8 @@ static fn dump_canonical_line(p8 address_to bytes, positive length,
                               positive address)
 {
         p8 line[96];
+        p8 hex[DUMP_BLOCK * 2];
+        memory_into_hex(hex, bytes, length);
         positive made = dump_address(line, address, 16, 8);
 
         line[made++] = ' ';
@@ -8095,8 +8099,8 @@ static fn dump_canonical_line(p8 address_to bytes, positive length,
 
                 if (at < length)
                 {
-                        made += dump_unsigned_field(line + made, bytes[at], 16,
-                                                    2, '0');
+                        line[made++] = hex[at * 2];
+                        line[made++] = hex[at * 2 + 1];
                         line[made++] = ' ';
                 }
                 else
@@ -8163,7 +8167,21 @@ static fn dump_regular_line(dump_format address_to format,
         else if (!dump_arguments.address_none)
                 made += dump_pad(line, dump_arguments.address_width, ' ');
 
-        for (positive field = 0; field < fields; field++)
+        // Select the byte-span encoder once per row, leaving the generic
+        // integer/character field loop unchanged for all other formats.
+        if (format->kind == DUMP_HEX_BYTES)
+        {
+                p8 hex[DUMP_BLOCK * 2];
+                memory_into_hex(hex, bytes, length);
+
+                for (positive field = 0; field < fields; field++)
+                {
+                        made += dump_pad(line + made, gap, ' ');
+                        line[made++] = hex[field * 2];
+                        line[made++] = hex[field * 2 + 1];
+                }
+        }
+        else for (positive field = 0; field < fields; field++)
         {
                 made += dump_pad(line + made, gap, ' ');
 
@@ -9778,6 +9796,34 @@ static fn diff_identical_output(string_address left, string_address right)
                 diff_announce("Files ", left, right, " are identical\n");
 }
 
+/* Prove a long identical tail a transfer block at a time.  A mismatch leaves
+   at most one block for the byte walk, preserving the exact suffix length
+   without teaching diff another comparison primitive. */
+static PURE positive diff_common_suffix(p8 address_to one, positive one_size,
+                                        p8 address_to two, positive two_size,
+                                        positive limit)
+{
+        positive same = 0;
+
+        while (limit - same >= FILE_TRANSFER_SIZE)
+        {
+                positive one_at = one_size - same - FILE_TRANSFER_SIZE;
+                positive two_at = two_size - same - FILE_TRANSFER_SIZE;
+
+                if (memory_compare(one + one_at, two + two_at,
+                                   FILE_TRANSFER_SIZE))
+                        break;
+
+                same += FILE_TRANSFER_SIZE;
+        }
+
+        while (same < limit && one[one_size - same - 1] ==
+                                   two[two_size - same - 1])
+                same++;
+
+        return same;
+}
+
 // One pair of files -----------------------------------------
 
 static b32 diff_pair(string_address left, string_address right)
@@ -9791,6 +9837,25 @@ static b32 diff_pair(string_address left, string_address right)
         if (!diff_slurp(a, left, diff_new_file || diff_new_file_left) ||
             !diff_slurp(b, right, diff_new_file))
                 return 2;
+
+        /* Brief output needs only an equality proof.  When no option changes
+           how bytes compare, do that proof with the shared wide comparator
+           instead of building the line classes and edit script merely to
+           discard them.  The incomplete bit distinguishes a real trailing
+           newline from the sentinel diff_slurp appended. */
+        if (diff_brief && !diff_icase && diff_space == DIFF_SPACE_NONE &&
+            !diff_blank_lines && !diff_trailing && !diff_tabs)
+        {
+                if (a->size == b->size && a->incomplete == b->incomplete &&
+                    !memory_compare(a->base, b->base, a->size))
+                {
+                        diff_identical_output(left, right);
+                        return 0;
+                }
+
+                diff_announce("Files ", left, right, " differ\n");
+                return 1;
+        }
 
         // Whether either file looks like something to diff by lines at all.
         if (!diff_text &&
@@ -9864,11 +9929,11 @@ static b32 diff_pair(string_address left, string_address right)
 
         if (a->incomplete == b->incomplete)
         {
-                positive tail = 0;
-
-                while (tail < a->size - bytes && tail < b->size - bytes &&
-                       a->base[a->size - 1 - tail] == b->base[b->size - 1 - tail])
-                        tail++;
+                positive tail_a = a->size - bytes;
+                positive tail_b = b->size - bytes;
+                positive tail = diff_common_suffix(
+                    a->base, a->size, b->base, b->size,
+                    tail_a < tail_b ? tail_a : tail_b);
 
                 positive stop_a = a->size - tail;
                 positive stop_b = b->size - tail;
