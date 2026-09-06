@@ -15055,7 +15055,6 @@ static bool cp_linked(string_address source, string_address destination)
                         string_format(file_fail,
                                       "cp: %s: can make relative symbolic links only in current directory\n",
                                       destination);
-                        cp_status = 1;
                         return false;
                 }
 
@@ -15068,7 +15067,6 @@ static bool cp_linked(string_address source, string_address destination)
         {
                 string_format(file_fail, "cp: cannot create link '%s': %s\n",
                               destination, file_reason(done));
-                cp_status = 1;
                 return false;
         }
 
@@ -15091,7 +15089,6 @@ static bool cp_one(string_address source, string_address destination, positive d
         {
                 string_format(file_fail, "cp: cannot stat '%s': %s\n", source,
                               file_reason(looked));
-                cp_status = 1;
                 return false;
         }
 
@@ -15105,7 +15102,6 @@ static bool cp_one(string_address source, string_address destination, positive d
         {
                 string_format(file_fail, "cp: '%s' and '%s' are the same file\n", source,
                               destination);
-                cp_status = 1;
                 return false;
         }
 
@@ -15122,7 +15118,6 @@ static bool cp_one(string_address source, string_address destination, positive d
                         string_format(file_fail,
                                       "cp: cannot copy a directory, '%s', into itself, '%s'\n",
                                       source, destination);
-                        cp_status = 1;
                         return false;
                 }
         }
@@ -15138,23 +15133,17 @@ static bool cp_one(string_address source, string_address destination, positive d
                 p8 target[FILE_PATH_MAX];
 
                 if (file_link_text(source, target, FILE_PATH_MAX) < 0)
-                {
-                        cp_status = 1;
                         return false;
-                }
 
                 system_remove_at(AT_FDCWD, destination, 0);
 
                 if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
                 {
                         string_format(file_fail, "cp: cannot create link '%s'\n", destination);
-                        cp_status = 1;
                         return false;
                 }
 
-                cp_keep(destination, address_of facts);
-                cp_said(source, destination);
-                return true;
+                goto copied;
         }
 
         // -r copies a tree, and a pipe or a device in a tree is part of its
@@ -15166,14 +15155,9 @@ static bool cp_one(string_address source, string_address destination, positive d
                 system_remove_at(AT_FDCWD, destination, 0);
 
                 if (!file_make_alike((string_address) "cp", destination, address_of facts))
-                {
-                        cp_status = 1;
                         return false;
-                }
 
-                cp_keep(destination, address_of facts);
-                cp_said(source, destination);
-                return true;
+                goto copied;
         }
 
         if (kind != MODE_DIRECTORY)
@@ -15182,47 +15166,34 @@ static bool cp_one(string_address source, string_address destination, positive d
                 // umask, and a destination that was already there keeps the
                 // mode it had: both are what the reference cp leaves, and -p
                 // is what asks for the source's mode whole.
-                if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
-                                        facts.mode & 07777))
+                bool copied = file_copy_contents(
+                    AT_FDCWD, source, AT_FDCWD, destination, facts.mode & 07777);
+                if (!copied && cp_force)
                 {
-                        // -f is for a destination that cannot be written to
-                        // but can be replaced, which is what an unwritable
-                        // file in a writable directory is.
-                        if (!cp_force)
-                        {
-                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
-                                cp_status = 1;
-                                return false;
-                        }
-
+                        // -f retries by replacing an unwritable destination.
                         system_remove_at(AT_FDCWD, destination, 0);
-
-                        if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
-                                                facts.mode & 07777))
-                        {
-                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
-                                cp_status = 1;
-                                return false;
-                        }
+                        copied = file_copy_contents(
+                            AT_FDCWD, source, AT_FDCWD, destination, facts.mode & 07777);
+                }
+                if (!copied)
+                {
+                        string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                        return false;
                 }
 
-                cp_keep(destination, address_of facts);
-                cp_said(source, destination);
-                return true;
+                goto copied;
         }
 
         if (!cp_recursive)
         {
                 string_format(file_fail, "cp: -r not specified; omitting directory '%s'\n",
                               source);
-                cp_status = 1;
                 return false;
         }
 
         if (depth == 0)
         {
                 string_format(file_fail, "cp: '%s' is nested too deep\n", source);
-                cp_status = 1;
                 return false;
         }
 
@@ -15236,7 +15207,6 @@ static bool cp_one(string_address source, string_address destination, positive d
         {
                 string_format(file_fail, "cp: cannot create directory '%s': %s\n",
                               destination, file_reason(made));
-                cp_status = 1;
                 return false;
         }
 
@@ -15246,7 +15216,6 @@ static bool cp_one(string_address source, string_address destination, positive d
         {
                 string_format(file_fail, "cp: cannot read directory '%s': %s\n", source,
                               file_reason(walk.handle));
-                cp_status = 1;
                 return false;
         }
 
@@ -15266,11 +15235,7 @@ static bool cp_one(string_address source, string_address destination, positive d
 
         file_walk_close(address_of walk);
 
-        if (skipped)
-        {
-                cp_status = 1;
-                complete = false;
-        }
+        complete &= !skipped;
 
         // A directory that was already there keeps its mode, as a file does;
         // one made here gets the source's under the umask, unless -p wants
@@ -15282,6 +15247,11 @@ static bool cp_one(string_address source, string_address destination, positive d
                                       facts.mode & 07777 & ~cp_umask);
 
         return complete;
+
+copied:
+        cp_keep(destination, address_of facts);
+        cp_said(source, destination);
+        return true;
 }
 
 // cp_one carries the walk depth and whether the name was written on the
@@ -15289,7 +15259,8 @@ static bool cp_one(string_address source, string_address destination, positive d
 // pair it hands over is a named one at full depth.
 static fn cp_pair(string_address source, string_address destination)
 {
-        cp_one(source, destination, FILE_MAX_DEPTH, true);
+        if (!cp_one(source, destination, FILE_MAX_DEPTH, true))
+                cp_status = 1;
 }
 
 static const file_long cp_longs[] = {

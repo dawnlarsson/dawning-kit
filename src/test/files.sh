@@ -2197,6 +2197,10 @@ effect 'not an option'  cp '$TOOL -W tree/one copy'
 effect 'both targets'   cp '$TOOL -T -t tree tree/one'
 effect 'same file'      cp '$TOOL tree/one tree/one'
 effect 'same hard link' cp 'ln tree/one alias; $TOOL tree/one alias'
+effect 'mixed missing and valid sources' cp '$TOOL missing tree/one tree/deep/'
+effect 'recursive failure retains successful siblings' cp 'ln -s /nowhere tree/missing; $TOOL -rL tree copied'
+effect 'failed force retry' cp '$TOOL -f tree/one nowhere/copied'
+effect 'hardlink failure retains later operand' cp '$TOOL -l missing plain tree/'
 
 group install
 effect 'default executable' install '$TOOL tree/one made'

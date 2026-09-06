@@ -12859,17 +12859,11 @@ static b32 tools_fincore_main()
         p8 columns[TOOLS_FINCORE_COLUMNS];
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
-        if (output)
-        {
-                if (!ul_table_column_list(
-                        output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
-                        defaults, array_count(defaults), columns,
-                        address_of column_count))
-                        return ul_bad_usage("fincore", "unknown output column");
-        }
-        else
-                for (positive i = 0; i < array_count(defaults); i++)
-                        columns[column_count++] = defaults[i];
+        if (!ul_table_column_list(
+                output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
+                defaults, array_count(defaults), columns,
+                address_of column_count))
+                return ul_bad_usage("fincore", "unknown output column");
 
         text_begin("fincore");
         text_arena_used = 0;
@@ -12900,17 +12894,10 @@ static b32 tools_fincore_main()
         tools_fincore_columns[TOOLS_FINCORE_SIZE].json = tools_fincore_bytes
             ? UL_TABLE_NUMBER : UL_TABLE_STRING;
 
-        if (taking.flags & FILE_FLAG('J'))
-                ul_table_json("fincore", rows, sizeof(*rows), count,
-                              tools_fincore_columns, columns, column_count,
-                              tools_fincore_field);
-        else
-                ul_table_out(rows, sizeof(*rows), count,
-                             tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
-                             columns, column_count,
-                             !(taking.flags & FILE_FLAG('n')),
-                             (taking.flags & FILE_FLAG('r')) != 0,
-                             tools_fincore_field);
+        ul_table(taking.flags & FILE_FLAG('J') ? "fincore" : null,
+                 rows, count, tools_fincore_columns, columns, column_count,
+                 !(taking.flags & FILE_FLAG('n')),
+                 (taking.flags & FILE_FLAG('r')) != 0, tools_fincore_field);
         log_flush();
         return failed ? text_done(1) : 0;
 }

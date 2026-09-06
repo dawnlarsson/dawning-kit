@@ -2551,42 +2551,12 @@ static fn text_file_add(b32 which)
         if (text_files_failed)
                 return;
 
-        if (text_files_count >= text_files_room)
+        if (text_files_count == positive_max ||
+            !array_store_reserve(text_files, text_files_room, text_files_count,
+                                  text_files_count + 1, 64))
         {
-                if (text_files_room > positive_max / 2)
-                {
-                        text_files_failed = true;
-                        return;
-                }
-
-                positive room = text_files_room ? text_files_room * 2 : 64;
-
-                if (room > positive_max / sizeof(b32))
-                {
-                        text_files_failed = true;
-                        return;
-                }
-
-                positive mapped = (positive)memory(room * sizeof(b32));
-
-                if (!mapped || mapped >= (positive)-4095)
-                {
-                        text_files_failed = true;
-                        return;
-                }
-
-                b32 address_to grown = (b32 address_to)mapped;
-
-                if (text_files_count)
-                        memory_copy_apart(grown, text_files,
-                                         text_files_count * sizeof(b32));
-
-                if (text_files)
-                        system_call_2(syscall(munmap), (positive)text_files,
-                                      text_files_room * sizeof(b32));
-
-                text_files = grown;
-                text_files_room = room;
+                text_files_failed = true;
+                return;
         }
 
         text_files[text_files_count++] = which;

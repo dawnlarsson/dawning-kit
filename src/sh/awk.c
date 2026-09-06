@@ -1222,27 +1222,16 @@ static fn awk_fields_reserve(positive want)
         if (want < awk_fields_room)
                 return;
 
-        positive need = want + 1;
-        positive room = need ? memory_growth(awk_fields_room, need, 64) : 0;
-
-        if (!room)
+        positive before = awk_fields_room;
+        positive bytes = before * sizeof(awk_value);
+        if (want >= positive_max / sizeof(awk_value) ||
+            !memory_resize_reserve(address_of awk_fields, address_of bytes,
+                                    (want + 1) * sizeof(awk_value),
+                                    64 * sizeof(awk_value)))
                 awk_out_of_memory();
-
-        awk_value address_to made = (awk_value address_to)awk_take(room * sizeof(awk_value));
-
-        for (positive i = 0; i < room; i++)
-        {
-                made[i].text = null;
-                made[i].number = 0;
-                made[i].state = AWK_UNSET;
-        }
-
-        memory_copy_apart(made, awk_fields,
-                         awk_fields_room * sizeof(awk_value));
-
-        memory_give(awk_fields);
-        awk_fields = made;
-        awk_fields_room = room;
+        awk_fields_room = bytes / sizeof(awk_value);
+        for (positive i = before; i < awk_fields_room; i++)
+                awk_fields[i] = (awk_value){.state = AWK_UNSET};
 }
 
 static string_address awk_separator(b32 which, positive address_to length)
@@ -1675,28 +1664,6 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
         return made;
 }
 
-static fn awk_reader_room(awk_reader address_to which, positive want)
-{
-        if (want <= which->room)
-                return;
-
-        positive room = memory_growth(which->room, want, AWK_READ_CHUNK * 2);
-
-        if (!room)
-                awk_out_of_memory();
-
-        p8 address_to made = (p8 address_to)awk_take(room);
-
-        if (which->filled > which->at)
-                memory_copy_apart(made, which->data + which->at, which->filled - which->at);
-
-        which->filled -= which->at;
-        which->at = 0;
-        memory_give(which->data);
-        which->data = made;
-        which->room = room;
-}
-
 static bool awk_reader_fill(awk_reader address_to which)
 {
         if (which->ended)
@@ -1713,7 +1680,11 @@ static bool awk_reader_fill(awk_reader address_to which)
                 which->at = 0;
         }
 
-        awk_reader_room(which, which->filled + AWK_READ_CHUNK + 1);
+        if (which->filled > positive_max - AWK_READ_CHUNK - 1 ||
+            !memory_resize_reserve(address_of which->data, address_of which->room,
+                                    which->filled + AWK_READ_CHUNK + 1,
+                                    AWK_READ_CHUNK * 2))
+                awk_out_of_memory();
 
         bipolar got = system_read_retry((positive)which->handle,
                                         which->data + which->filled,

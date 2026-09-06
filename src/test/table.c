@@ -45,12 +45,8 @@ static p8 table_selected[] = {0};
 static fn table_render(string_address value, positive mode)
 {
         table_reset();
-        if (mode == 2)
-                ul_table_json("test", address_of value, sizeof(value), 1,
-                              table_columns, table_selected, 1, table_field);
-        else
-                ul_table_out(address_of value, sizeof(value), 1, table_columns,
-                             1, table_selected, 1, true, mode == 1, table_field);
+        ul_table(mode == 2 ? "test" : null, address_of value, 1,
+                 table_columns, table_selected, 1, true, mode == 1, table_field);
 }
 
 static p8 table_hex_digit(p8 nibble)
@@ -60,6 +56,17 @@ static p8 table_hex_digit(p8 nibble)
 
 static fn name_list_checks(void)
 {
+        p8 columns[1] = {0xa5};
+        positive have = 99;
+        check("table defaults without an output option",
+              ul_table_column_list(null, table_columns, 1, table_selected, 1,
+                                   columns, address_of have) && have == 1 && !columns[0]);
+        check("table defaults stay bounded",
+              !ul_table_column_list(null, table_columns, 0, table_selected, 1,
+                                    columns, address_of have) && !have);
+        check("table append keeps defaults and removes duplicates",
+              ul_table_column_list("+VALUE,value", table_columns, 1, table_selected, 1,
+                                   columns, address_of have) && have == 1 && !columns[0]);
         typedef struct
         {
                 string_address name;

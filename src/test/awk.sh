@@ -658,6 +658,15 @@ compare 'record assignment in end' "$work/grid" 'END{$0="a b"; print NF}'
 compare 'ofs changed between' "$work/grid" '{OFS="-"; $1=$1; OFS="+"; print}'
 compare 'empty fs field by field' "$work/one" -F'' '{print NF}'
 compare 'many fields' /dev/null 'BEGIN{for(i=1;i<=100;i++) s = s i " "; $0 = s; print NF, $50, $100}'
+for fields in 63 64 65 127 128 129 1023 1024 1025 8193; do
+        compare "field growth and retained values $fields" /dev/null -v n="$fields" \
+                'BEGIN{$1="held"; $n="tail"; print NF,$1,$n,"["$(n-1)"]"; NF=1; NF=n+1; print NF,$1,"["$n"]","["$(n+1)"]"}'
+done
+for bytes in 65535 65536 65537 131071 131072 131073 524289; do
+        awk -v n="$bytes" 'BEGIN{print "lead"; printf "%*s\ntail",n,"x"}' > "$work/growing-record"
+        compare "reader growth with retained tail $bytes" "$work/growing-record" \
+                '{print NR,length($0),substr($0,1,4),substr($0,length($0))}'
+done
 compare 'array passed empty' /dev/null 'function f(a){return length(a)} BEGIN{print f(x), length(x)}'
 compare 'array grown in a call' /dev/null 'function f(a,n,i){for(i=1;i<=n;i++)a[i]=i} BEGIN{f(z,5); print length(z), z[3]}'
 compare 'local array is fresh' /dev/null 'function f(k,  a){a[k]=1; return length(a)} BEGIN{print f(1) f(2) f(3)}'

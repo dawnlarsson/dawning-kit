@@ -3627,16 +3627,18 @@ static bool ul_table_column_list(
     positive definition_count, const p8 address_to defaults,
     positive default_count, p8 address_to columns, positive address_to count)
 {
-        bool append = string_is(text, '+');
+        bool append = text && string_is(text, '+');
 
         address_to count = 0;
-        if (append)
+        if (!text || append)
         {
                 if (default_count > definition_count)
                         return false;
+                memory_copy_apart(columns, (address_any)defaults, default_count);
+                address_to count = default_count;
+                if (!text)
+                        return true;
                 text++;
-                for (positive i = 0; i < default_count; i++)
-                        columns[(address_to count)++] = defaults[i];
         }
         return name_list_select(
             text, definitions, sizeof(definitions[0]), definition_count,
@@ -3941,6 +3943,29 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                 }
         }
 }
+
+/* A nullable JSON name selects the existing renderer. Typed callers derive
+   both strides here, rather than repeating two complete output calls. */
+static fn ul_table_print(string_address json_name, address_any rows,
+                         positive row_size, positive count,
+                         const ul_table_column address_to definitions,
+                         positive definition_count, p8 address_to columns,
+                         positive column_count, bool headings, bool raw,
+                         ul_table_field field_of)
+{
+        if (json_name)
+                ul_table_json(json_name, rows, row_size, count, definitions,
+                              columns, column_count, field_of);
+        else
+                ul_table_out(rows, row_size, count, definitions,
+                             definition_count, columns, column_count,
+                             headings, raw, field_of);
+}
+
+#define ul_table(name, rows, count, definitions, columns, selected, headings, raw, field) \
+        ul_table_print(name, rows, sizeof((rows)[0]), count, definitions,     \
+                       array_count(definitions), columns, selected,          \
+                       headings, raw, field)
 
 // lsclocks --------------------------------------------------------
 
@@ -4453,20 +4478,10 @@ static b32 util_linux_lsclocks()
                                     rows[at].definition.offset_name, "monotonic")
                                     ? monotonic : boottime;
 
-        if ((taking.flags & FILE_FLAG('r')))
-                ul_table_out(rows, sizeof(*rows), count, ul_lsclock_columns,
-                             UL_LSCLOCK_COLUMNS, columns, column_count,
-                             !(taking.flags & FILE_FLAG('n')), true,
-                             ul_lsclock_field);
-        else if (taking.flags & FILE_FLAG('J'))
-                ul_table_json("clocks", rows, sizeof(*rows), count,
-                              ul_lsclock_columns, columns, column_count,
-                              ul_lsclock_field);
-        else
-                ul_table_out(rows, sizeof(*rows), count, ul_lsclock_columns,
-                             UL_LSCLOCK_COLUMNS, columns, column_count,
-                             !(taking.flags & FILE_FLAG('n')), false,
-                             ul_lsclock_field);
+        bool raw = (taking.flags & FILE_FLAG('r')) != 0;
+        ul_table(!raw && (taking.flags & FILE_FLAG('J')) ? "clocks" : null,
+                 rows, count, ul_lsclock_columns, columns, column_count,
+                 !(taking.flags & FILE_FLAG('n')), raw, ul_lsclock_field);
         return text_done(0);
 }
 
@@ -4541,28 +4556,12 @@ static b32 util_linux_lsns()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (output)
-        {
-                const p8 address_to initial = inode_selected
-                    ? inode_defaults : defaults;
-                positive initial_count = inode_selected
-                    ? array_count(inode_defaults) : array_count(defaults);
-
-                if (!ul_table_column_list(
-                        output, ul_lsns_columns, UL_LSNS_COLUMNS, initial,
-                        initial_count, columns, address_of column_count))
-                        return ul_bad_usage("lsns", "unknown output column");
-        }
-        else if (inode_selected)
-        {
-                columns[column_count++] = UL_LSNS_PID;
-                columns[column_count++] = UL_LSNS_PPID;
-                columns[column_count++] = UL_LSNS_USER;
-                columns[column_count++] = UL_LSNS_COMMAND;
-        }
-        else
-                for (positive i = 0; i < array_count(defaults); i++)
-                        columns[column_count++] = defaults[i];
+        if (!ul_table_column_list(
+                output, ul_lsns_columns, UL_LSNS_COLUMNS,
+                inode_selected ? inode_defaults : defaults,
+                inode_selected ? array_count(inode_defaults) : array_count(defaults),
+                columns, address_of column_count))
+                return ul_bad_usage("lsns", "unknown output column");
 
         text_begin("lsns");
         text_arena_used = 0;
@@ -4690,17 +4689,10 @@ static b32 util_linux_lsns()
                 return 1;
         }
 
-        if (taking.flags & FILE_FLAG('J'))
-                ul_table_json("namespaces", entries, sizeof(*entries), groups,
-                              ul_lsns_columns, columns, column_count,
-                              ul_lsns_table_field);
-        else
-                ul_table_out(entries, sizeof(*entries), groups,
-                             ul_lsns_columns, UL_LSNS_COLUMNS, columns,
-                             column_count,
-                             !(taking.flags & FILE_FLAG('n')),
-                             (taking.flags & FILE_FLAG('r')) != 0,
-                             ul_lsns_table_field);
+        ul_table(taking.flags & FILE_FLAG('J') ? "namespaces" : null,
+                 entries, groups, ul_lsns_columns, columns, column_count,
+                 !(taking.flags & FILE_FLAG('n')),
+                 (taking.flags & FILE_FLAG('r')) != 0, ul_lsns_table_field);
 
         log_flush();
         return 0;
@@ -5031,17 +5023,10 @@ static b32 util_linux_lslocks()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (output)
-        {
-                if (!ul_table_column_list(
-                        output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
-                        array_count(defaults), columns,
-                        address_of column_count))
-                        return ul_bad_usage("lslocks", "unknown output column");
-        }
-        else
-                for (positive i = 0; i < array_count(defaults); i++)
-                        columns[column_count++] = defaults[i];
+        if (!ul_table_column_list(
+                output, ul_lslocks_columns, UL_LOCKS_COLUMNS, defaults,
+                array_count(defaults), columns, address_of column_count))
+                return ul_bad_usage("lslocks", "unknown output column");
 
         for (positive i = 0; i < column_count; i++)
                 if (columns[i] == UL_LOCKS_HOLDERS)
@@ -5166,17 +5151,10 @@ static b32 util_linux_lslocks()
         ul_lslocks_columns[UL_LOCKS_SIZE].json = ul_lslocks_bytes
             ? UL_TABLE_NULL_NUMBER : UL_TABLE_NULL_STRING;
 
-        if (taking.flags & FILE_FLAG('J'))
-                ul_table_json("locks", locks, sizeof(*locks), shown,
-                              ul_lslocks_columns, columns, column_count,
-                              ul_lslocks_field);
-        else
-                ul_table_out(locks, sizeof(*locks), shown,
-                             ul_lslocks_columns, UL_LOCKS_COLUMNS, columns,
-                             column_count,
-                             !(taking.flags & FILE_FLAG('n')),
-                             (taking.flags & FILE_FLAG('r')) != 0,
-                             ul_lslocks_field);
+        ul_table(taking.flags & FILE_FLAG('J') ? "locks" : null,
+                 locks, shown, ul_lslocks_columns, columns, column_count,
+                 !(taking.flags & FILE_FLAG('n')),
+                 (taking.flags & FILE_FLAG('r')) != 0, ul_lslocks_field);
 
         log_flush();
         return read_failed ? 1 : 0;
@@ -5596,17 +5574,10 @@ static b32 util_linux_lsfd()
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
 
-        if (output)
-        {
-                if (!ul_table_column_list(
-                        output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
-                        array_count(defaults), columns,
-                        address_of column_count))
-                        return ul_bad_usage("lsfd", "unknown output column");
-        }
-        else
-                for (positive i = 0; i < array_count(defaults); i++)
-                        columns[column_count++] = defaults[i];
+        if (!ul_table_column_list(
+                output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
+                array_count(defaults), columns, address_of column_count))
+                return ul_bad_usage("lsfd", "unknown output column");
 
         text_begin("lsfd");
         text_arena_used = 0;
@@ -5661,17 +5632,11 @@ static b32 util_linux_lsfd()
 
         if (!failed)
         {
-                if (taking.flags & FILE_FLAG('J'))
-                        ul_table_json("lsfd", rows, sizeof(*rows),
-                                      ul_lsfd_entry_count, ul_lsfd_columns,
-                                      columns, column_count, ul_lsfd_field);
-                else
-                        ul_table_out(rows, sizeof(*rows), ul_lsfd_entry_count,
-                                     ul_lsfd_columns, UL_LSFD_COLUMNS, columns,
-                                     column_count,
-                                     !(taking.flags & FILE_FLAG('n')),
-                                     (taking.flags & FILE_FLAG('r')) != 0,
-                                     ul_lsfd_field);
+                ul_table(taking.flags & FILE_FLAG('J') ? "lsfd" : null,
+                         rows, ul_lsfd_entry_count, ul_lsfd_columns,
+                         columns, column_count,
+                         !(taking.flags & FILE_FLAG('n')),
+                         (taking.flags & FILE_FLAG('r')) != 0, ul_lsfd_field);
                 log_flush();
         }
 
@@ -9302,30 +9267,21 @@ static b32 util_linux_wipefs()
                 positive column_count = 0;
                 string_address selected = file_option_value(address_of taking, 'O');
 
-                if (selected && !ul_table_column_list(
+                if (!ul_table_column_list(
                         selected, ul_wipefs_columns, UL_WIPEFS_COLUMNS,
                         base, base_count, columns, address_of column_count))
                         return ul_bad_usage(
                             "wipefs", "unknown or unsupported output column");
-                if (!selected)
-                        for (positive at = 0; at < base_count; at++)
-                                columns[column_count++] = base[at];
 
                 if (parsable)
                         ul_wipefs_parsable(address_of work, columns,
                                           column_count);
-                else if (taking.flags & FILE_FLAG('J'))
-                        ul_table_json("signatures", work.rows,
-                                      sizeof(work.rows[0]), work.count,
-                                      ul_wipefs_columns, columns,
-                                      column_count, ul_wipefs_field);
                 else
-                        ul_table_out(work.rows, sizeof(work.rows[0]),
-                                     work.count, ul_wipefs_columns,
-                                     UL_WIPEFS_COLUMNS, columns,
-                                     column_count,
-                                     !(taking.flags & FILE_FLAG('i')),
-                                     false, ul_wipefs_field);
+                        ul_table(taking.flags & FILE_FLAG('J') ? "signatures" : null,
+                                 work.rows, work.count, ul_wipefs_columns,
+                                 columns, column_count,
+                                 !(taking.flags & FILE_FLAG('i')),
+                                 false, ul_wipefs_field);
         }
 
         log_flush();
@@ -10583,14 +10539,8 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
         }
 
         p8 columns[] = {0, 1};
-        if (json)
-                ul_table_json("lscpu", items, sizeof(*items), count,
-                              ul_lscpu_summary_columns, columns, 2,
-                              ul_lscpu_summary_field);
-        else
-                ul_table_out(items, sizeof(*items), count,
-                             ul_lscpu_summary_columns, 2, columns, 2,
-                             false, false, ul_lscpu_summary_field);
+        ul_table(json ? "lscpu" : null, items, count, ul_lscpu_summary_columns,
+                 columns, array_count(columns), false, false, ul_lscpu_summary_field);
 }
 
 enum
@@ -10948,28 +10898,14 @@ static b32 util_linux_lscpu()
                 };
                 p8 columns[UL_LSCPU_C_COLUMNS];
                 positive count = 0;
-                if (selected &&
-                    !ul_table_column_list(selected, ul_lscpu_cache_columns,
+                if (!ul_table_column_list(selected, ul_lscpu_cache_columns,
                                           UL_LSCPU_C_COLUMNS, defaults,
                                           array_count(defaults), columns,
                                           address_of count))
                         return ul_bad_usage("lscpu", "unknown cache column");
-                if (!selected)
-                        for (positive i = 0; i < array_count(defaults); i++)
-                                columns[count++] = defaults[i];
-                if (json)
-                        ul_table_json("caches", ul_lscpu.caches,
-                                      sizeof(ul_lscpu.caches[0]),
-                                      ul_lscpu.cache_count,
-                                      ul_lscpu_cache_columns, columns, count,
-                                      ul_lscpu_cache_field);
-                else
-                        ul_table_out(ul_lscpu.caches,
-                                     sizeof(ul_lscpu.caches[0]),
-                                     ul_lscpu.cache_count,
-                                     ul_lscpu_cache_columns,
-                                     UL_LSCPU_C_COLUMNS, columns, count,
-                                     true, raw, ul_lscpu_cache_field);
+                ul_table(json ? "caches" : null, ul_lscpu.caches,
+                         ul_lscpu.cache_count, ul_lscpu_cache_columns,
+                         columns, count, true, raw, ul_lscpu_cache_field);
         }
         else
         {
@@ -10990,15 +10926,11 @@ static b32 util_linux_lscpu()
                                              : array_count(socket_defaults);
                 p8 columns[UL_LSCPU_COLUMNS];
                 positive count = 0;
-                if (selected &&
-                    !ul_table_column_list(selected, ul_lscpu_columns,
+                if (!ul_table_column_list(selected, ul_lscpu_columns,
                                           UL_LSCPU_COLUMNS, defaults,
                                           default_count, columns,
                                           address_of count))
                         return ul_bad_usage("lscpu", "unknown CPU column");
-                if (!selected)
-                        for (positive i = 0; i < default_count; i++)
-                                columns[count++] = defaults[i];
 
                 if (taking.flags & FILE_FLAG('p'))
                         ul_lscpu_parse(columns, count, !selected, filter);
@@ -11008,17 +10940,9 @@ static b32 util_linux_lscpu()
                         for (positive i = 0; i < ul_lscpu.cpu_count; i++)
                                 if (ul_lscpu_show(ul_lscpu.cpus + i, filter))
                                         ul_lscpu.cpus[shown++] = ul_lscpu.cpus[i];
-                        if (json)
-                                ul_table_json("cpus", ul_lscpu.cpus,
-                                              sizeof(ul_lscpu.cpus[0]), shown,
-                                              ul_lscpu_columns, columns, count,
-                                              ul_lscpu_cpu_field);
-                        else
-                                ul_table_out(ul_lscpu.cpus,
-                                             sizeof(ul_lscpu.cpus[0]), shown,
-                                             ul_lscpu_columns,
-                                             UL_LSCPU_COLUMNS, columns, count,
-                                             true, raw, ul_lscpu_cpu_field);
+                        ul_table(json ? "cpus" : null, ul_lscpu.cpus, shown,
+                                 ul_lscpu_columns, columns, count,
+                                 true, raw, ul_lscpu_cpu_field);
                 }
         }
         log_flush();
@@ -11453,15 +11377,11 @@ static b32 util_linux_lsmem()
         };
         p8 columns[UL_LSMEM_COLUMNS];
         positive column_count = 0;
-        if (selected &&
-            !ul_table_column_list(selected, ul_lsmem_columns,
+        if (!ul_table_column_list(selected, ul_lsmem_columns,
                                   UL_LSMEM_COLUMNS, defaults,
                                   array_count(defaults), columns,
                                   address_of column_count))
                 return ul_bad_usage("lsmem", "unknown output column");
-        if (!selected)
-                for (positive i = 0; i < array_count(defaults); i++)
-                        columns[column_count++] = defaults[i];
 
         positive split = ((positive)1 << UL_LSMEM_STATE) |
                          ((positive)1 << UL_LSMEM_REMOVABLE);
@@ -11514,21 +11434,10 @@ static b32 util_linux_lsmem()
         ul_lsmem_bytes = (taking.flags & FILE_FLAG('b')) != 0;
         bool raw = (taking.flags & FILE_FLAG('r')) != 0;
         if (!summary_only)
-        {
-                if (json)
-                        ul_table_json("memory", ul_lsmem.ranges,
-                                      sizeof(ul_lsmem.ranges[0]),
-                                      ul_lsmem.range_count, ul_lsmem_columns,
-                                      columns, column_count, ul_lsmem_field);
-                else
-                        ul_table_out(ul_lsmem.ranges,
-                                     sizeof(ul_lsmem.ranges[0]),
-                                     ul_lsmem.range_count, ul_lsmem_columns,
-                                     UL_LSMEM_COLUMNS, columns, column_count,
-                                     !(taking.flags & FILE_FLAG('n')),
-                                     raw,
-                                     ul_lsmem_field);
-        }
+                ul_table(json ? "memory" : null, ul_lsmem.ranges,
+                         ul_lsmem.range_count, ul_lsmem_columns,
+                         columns, column_count,
+                         !(taking.flags & FILE_FLAG('n')), raw, ul_lsmem_field);
         if (!summary_never && ((!json && !raw) || summary_always))
         {
                 if (!summary_only)
@@ -12644,15 +12553,11 @@ static b32 util_linux_lsblk()
         p8 columns[UL_LSBLK_COLUMNS];
         positive column_count = 0;
         string_address selected = file_option_value(address_of taking, 'o');
-        if (selected &&
-            !ul_table_column_list(selected, ul_lsblk_columns,
+        if (!ul_table_column_list(selected, ul_lsblk_columns,
                                   UL_LSBLK_COLUMNS, chosen, chosen_count,
                                   columns, address_of column_count))
                 return ul_bad_usage(
                     "lsblk", "unknown or unsupported output column");
-        if (!selected)
-                for (positive i = 0; i < chosen_count; i++)
-                        columns[column_count++] = chosen[i];
 
         bool identity = false;
         bool permissions = false;
@@ -13454,14 +13359,10 @@ static b32 util_linux_lsipc()
             (taking.flags & FILE_FLAG('t')))
                 return ul_bad_usage(
                     "lsipc", "--creator and --time are mutually exclusive");
-        if (output &&
-            !ul_table_column_list(output, ul_ipc_columns, UL_IPC_COLUMNS,
+        if (!ul_table_column_list(output, ul_ipc_columns, UL_IPC_COLUMNS,
                                   defaults, default_count, columns,
                                   address_of column_count))
                 return ul_bad_usage("lsipc", "unknown output column");
-        if (!output)
-                for (positive at = 0; at < default_count; at++)
-                        columns[column_count++] = defaults[at];
         if (taking.flags & FILE_FLAG('c'))
         {
                 static const p8 creators[] = {
@@ -13530,21 +13431,15 @@ static b32 util_linux_lsipc()
         if ((taking.flags & FILE_FLAG('l')) && (json || newline || raw))
                 return ul_bad_usage(
                     "lsipc", "--list is incompatible with structured output");
-        if (json)
-                ul_table_json(type == UL_IPC_MESSAGE ? "messages"
-                              : type == UL_IPC_SHARED ? "sharedmemory"
-                                                      : "semaphores",
-                              ul_ipc.rows, sizeof(ul_ipc.rows[0]),
-                              ul_ipc.count, ul_ipc_columns, columns,
-                              column_count, ul_ipc_field);
-        else if (newline)
+        if (newline)
                 ul_lsipc_newline(columns, column_count);
         else
-                ul_table_out(ul_ipc.rows, sizeof(ul_ipc.rows[0]),
-                             ul_ipc.count, ul_ipc_columns, UL_IPC_COLUMNS,
-                             columns, column_count,
-                             !(taking.flags & FILE_FLAG('H')), raw,
-                             ul_ipc_field);
+                ul_table(!json ? null : type == UL_IPC_MESSAGE ? "messages"
+                                       : type == UL_IPC_SHARED ? "sharedmemory"
+                                                               : "semaphores",
+                         ul_ipc.rows, ul_ipc.count, ul_ipc_columns,
+                         columns, column_count,
+                         !(taking.flags & FILE_FLAG('H')), raw, ul_ipc_field);
         log_flush();
         return have_id && !ul_ipc.count ? 1 : 0;
 }
@@ -14324,28 +14219,16 @@ static b32 util_linux_rfkill()
         p8 columns[UL_RFKILL_COLUMNS];
         positive column_count = 0;
 
-        if (selected && !ul_table_column_list(
+        if (!ul_table_column_list(
                 selected, ul_rfkill_columns, UL_RFKILL_COLUMNS,
                 base, base_count, columns, address_of column_count))
                 return ul_bad_usage(
                     "rfkill", "unknown or unsupported output column");
-        if (!selected)
-                for (positive i = 0; i < base_count; i++)
-                        columns[column_count++] = base[i];
 
-        if (taking.flags & FILE_FLAG('J'))
-                ul_table_json("rfkilldevices", ul_rfkill_views,
-                              sizeof(ul_rfkill_views[0]), view_count,
-                              ul_rfkill_columns, columns, column_count,
-                              ul_rfkill_field);
-        else
-                ul_table_out(ul_rfkill_views,
-                             sizeof(ul_rfkill_views[0]), view_count,
-                             ul_rfkill_columns, UL_RFKILL_COLUMNS,
-                             columns, column_count,
-                             !(taking.flags & FILE_FLAG('n')),
-                             (taking.flags & FILE_FLAG('r')) != 0,
-                             ul_rfkill_field);
+        ul_table(taking.flags & FILE_FLAG('J') ? "rfkilldevices" : null,
+                 ul_rfkill_views, view_count, ul_rfkill_columns,
+                 columns, column_count, !(taking.flags & FILE_FLAG('n')),
+                 (taking.flags & FILE_FLAG('r')) != 0, ul_rfkill_field);
         log_flush();
         return 0;
 }

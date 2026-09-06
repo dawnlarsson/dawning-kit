@@ -5295,6 +5295,22 @@ fn shell_options_started(bool interactive, b32 monitor)
 #define shell_pipefail() shell_named_option(SHELL_OPTION_PIPEFAIL)
 #define shell_noclobber() shell_named_option(SHELL_OPTION_NOCLOBBER)
 
+static COLD fn shell_option_row(writer write, string_address name, bool on,
+                                 string_address command, positive width, p8 separator)
+{
+        if (command)
+        {
+                write(command, string_length(command));
+                string_format(write, "%s\n", name);
+        }
+        else
+        {
+                string_to_field(write, name, width, ' ', true);
+                write(address_of separator, 1);
+                write(on ? "on\n" : "off\n", on ? 3 : 4);
+        }
+}
+
 fn shell_options_listed(writer write, bool as_commands)
 {
         positive index = 0;
@@ -5332,17 +5348,9 @@ fn shell_options_listed(writer write, bool as_commands)
                                      shell_extra_on(option);
                         }
 
-                        if (as_commands)
-                        {
-                                write(on ? "set -o " : "set +o ", 7);
-                                string_format(write, "%s\n", names[at]);
-                        }
-                        else
-                        {
-                                string_to_field(write, names[at], 15, ' ', true);
-                                write("\t", 1);
-                                string_format(write, "%s\n", on ? "on" : "off");
-                        }
+                        shell_option_row(write, names[at], on,
+                                         as_commands ? (on ? "set -o " : "set +o ") : null,
+                                         15, '\t');
                 }
                 return;
         }
@@ -5354,19 +5362,9 @@ fn shell_options_listed(writer write, bool as_commands)
         {
                 bool on = shell_option_on(index);
 
-                if (as_commands)
-                {
-                        write(on ? "set -o " : "set +o ", 7);
-                        string_format(write, "%s\n", shell_option_names[index].name);
-                }
-                else
-                {
-                        string_to_field(write, shell_option_names[index].name,
-                                        15, ' ', true);
-
-                        write(" ", 1);
-                        string_format(write, "%s\n", on ? "on" : "off");
-                }
+                shell_option_row(write, shell_option_names[index].name, on,
+                                 as_commands ? (on ? "set -o " : "set +o ") : null,
+                                 15, ' ');
 
                 index++;
         }
@@ -5407,47 +5405,22 @@ static PURE bool shell_shopt_index_on(positive which)
         return (shell_shopt_state & ((positive)1 << which)) != 0;
 }
 
-static COLD fn shell_shopt_padded(writer write, string_address name,
-                             positive width, bool on)
-{
-        positive length = string_length(name);
-
-        write(name, length);
-
-        while (length++ < width)
-                write(" ", 1);
-
-        write("\t", 1);
-        write(on ? "on\n" : "off\n", on ? 3 : 4);
-}
-
 static COLD fn shell_shopt_said(writer write, positive which, bool as_commands)
 {
         bool on = shell_shopt_index_on(which);
-
-        if (as_commands)
-        {
-                write(on ? "shopt -s " : "shopt -u ", 9);
-                string_format(write, "%s\n", shell_shopt_names[which]);
-                return;
-        }
-
-        shell_shopt_padded(write, shell_shopt_names[which], 20, on);
+        shell_option_row(write, shell_shopt_names[which], on,
+                         as_commands ? (on ? "shopt -s " : "shopt -u ") : null,
+                         20, '\t');
 }
 
 static COLD fn shell_shopt_option_said(writer write, string_address name,
                                        bool on, bool as_commands)
 {
-        if (as_commands)
-        {
-                write(on ? "set -o " : "set +o ", 7);
-                string_format(write, "%s\n", name);
-                return;
-        }
-
         /* shopt uses its own twenty-column listing even when -o selects the
            set-option namespace. `set -o` retains the POSIX/dash layout. */
-        shell_shopt_padded(write, name, 20, on);
+        shell_option_row(write, name, on,
+                         as_commands ? (on ? "set -o " : "set +o ") : null,
+                         20, '\t');
 }
 
 COLD fn shell_shopt(writer write, string_address input)

@@ -6866,211 +6866,103 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
         component[length] = end;
         rest = pattern;
 
-        /*
-                ** stands for however many directories there are, including
-                none, which is the whole of what globstar adds.
+        bool star = length == 2 && component[0] == '*' && component[1] == '*' &&
+                    shell_shopt_on(GLOBSTAR);
 
-                Written as its own walk rather than as a star that may cross a
-                slash: the matcher works on one component at a time and the
-                recursion is what descends, so the pattern after the ** is
-                matched once at every depth and nowhere twice.
-        */
-        if (length == 2 && component[0] == '*' && component[1] == '*' &&
-            shell_shopt_on(GLOBSTAR))
-        {
-                p8 block[2048];
-                bipolar directory;
+        // ** first matches zero directories, then reuses this component at
+        // each child directory. Ordinary patterns consume it exactly once.
+        if (star && string_get(rest))
+                glob_walk(prefix, used, rest + 1, depth + 1);
 
-                // No directories at all: what follows the ** is matched right
-                // where the ** stands.
-                if (string_get(rest))
-                        glob_walk(prefix, used, rest + 1, depth + 1);
-
-                prefix[used] = end;
-
-                directory = system_open_at(AT_FDCWD,
-                                          (used ? prefix : (string_address) "."),
-                                          FILE_READ | O_DIRECTORY);
-
-                if (directory < 0)
-                        return;
-
-                while (!glob_failed)
-                {
-                        bipolar got = system_read_directory(
-                            directory, block, sizeof(block));
-                        p8 address_to step = block;
-
-                        if (got < 0)
-                                glob_failed = true;
-
-                        if (got <= 0)
-                                break;
-
-                        while (step < block + got)
-                        {
-                                struct linux_dirent64 address_to entry =
-                                    (struct linux_dirent64 address_to)step;
-                                string_address named = (string_address)entry->d_name;
-                                positive out = used;
-                                positive run;
-
-                                step += entry->d_reclen;
-
-                                if (named[0] == '.' &&
-                                    (!dotted || named[1] == end ||
-                                     (named[1] == '.' && named[2] == end)))
-                                        continue;
-
-                                run = string_length_max(named, GLOB_PATH - out);
-
-                                if (out + run + 1 >= GLOB_PATH)
-                                {
-                                        glob_failed = true;
-                                        break;
-                                }
-
-                                memory_copy_apart(prefix + out, named, run);
-                                out += run;
-
-                                // A ** with nothing after it is every name
-                                // under here and not only the directories.
-                                if (!string_get(rest))
-                                {
-                                        prefix[out] = end;
-                                        glob_add(prefix);
-                                }
-
-                                // Unknown is worth trying: the open fails on
-                                // anything that is not a directory anyway.
-                                if (entry->d_type == 4 || entry->d_type == 0)
-                                {
-                                        prefix[out] = '/';
-                                        glob_walk(prefix, out + 1, whole,
-                                                  depth + 1);
-                                }
-
-                                if (glob_failed)
-                                        break;
-                        }
-                }
-
-                system_close(directory);
-
-                return;
-        }
-
-        if (!glob_magic(component))
+        if (!star && !glob_magic(component))
         {
                 positive out = used;
-                positive at = 0;
-
-                // The backslashes were only ever there to hide the magic; the
-                // name on disk does not have them.
-                while (at < length)
+                for (positive at = 0; at < length; at++)
                 {
                         if (component[at] == '\\' && at + 1 < length)
                                 at++;
-
                         if (out + 1 >= GLOB_PATH)
                         {
                                 glob_failed = true;
                                 return;
                         }
-
                         prefix[out++] = component[at];
-
-                        at++;
                 }
-
                 glob_walk(prefix, out, rest, depth + 1);
                 return;
         }
 
+        p8 block[2048];
+        prefix[used] = end;
+        bipolar directory = system_open_at(
+            AT_FDCWD, used ? prefix : (string_address)".",
+            FILE_READ | O_DIRECTORY);
+        if (directory < 0)
+                return;
+
+        while (!glob_failed)
         {
-                p8 block[2048];
-                bipolar directory;
+                bipolar got = system_read_directory(directory, block, sizeof(block));
+                if (got < 0)
+                        glob_failed = true;
+                if (got <= 0)
+                        break;
 
-                prefix[used] = end;
-
-                directory = system_open_at(AT_FDCWD,
-                                          (used ? prefix : (string_address) "."),
-                                          FILE_READ | O_DIRECTORY);
-
-                if (directory < 0)
-                        return;
-
-                while (1)
+                for (p8 address_to step = block; step < block + got && !glob_failed;)
                 {
-                        bipolar got = system_read_directory(
-                            directory, block, sizeof(block));
-                        p8 address_to step = block;
+                        struct linux_dirent64 address_to entry =
+                            (struct linux_dirent64 address_to)step;
+                        string_address named = (string_address)entry->d_name;
+                        step += entry->d_reclen;
 
-                        if (got < 0)
+                        if (shell_bash_compat && shell_shopt_on(GLOBSKIPDOTS) &&
+                            file_is_dot(named))
+                                continue;
+                        // Explicit (including escaped) dots are ordinary
+                        // pattern matches. ** never visits . or .., even
+                        // with dotglob; that would recurse back into itself.
+                        if (named[0] == '.' &&
+                            (star || component[component[0] == '\\'] != '.') &&
+                            (!dotted || file_is_dot(named)))
+                                continue;
+                        if (!star && !shell_match_folded(component, named, folded))
+                                continue;
+
+                        positive run = string_length_max(named, GLOB_PATH - used);
+                        positive out = used + run;
+                        // ** also needs a slash for recursive descent.
+                        if (out + (star ? 1 : 0) >= GLOB_PATH)
                         {
                                 glob_failed = true;
                                 break;
                         }
+                        memory_copy_apart(prefix + used, named, run);
 
-                        if (!got)
-                                break;
-
-                        while (step < block + got)
-                        {
-                                struct linux_dirent64 address_to entry =
-                                    (struct linux_dirent64 address_to)step;
-                                string_address named = (string_address)entry->d_name;
-                                positive out = used;
-                                positive at = 0;
-
-                                step += entry->d_reclen;
-
-                                // A leading dot is only ever matched on
-                                // purpose, and an escaped one is on purpose.
-                                // dotglob makes it accidental too, except for
-                                // the two names every directory has.
-                                if (named[0] == '.' &&
-                                    component[component[0] == '\\'] != '.')
-                                {
-                                        if (!dotted)
-                                                continue;
-
-                                        if (named[1] == end ||
-                                            (named[1] == '.' &&
-                                             named[2] == end))
-                                                continue;
-                                }
-
-                                if (!shell_match_folded(component, named,
-                                                        folded))
-                                        continue;
-
-                                positive run = string_length_max(
-                                    named, GLOB_PATH - out);
-
-                                // One byte stays for the terminator, so a name
-                                // that reaches the bound does not fit.
-                                if (out + run >= GLOB_PATH)
-                                {
-                                        glob_failed = true;
-                                        break;
-                                }
-
-                                memory_copy_apart(prefix + out, named, run);
-                                out += run;
-
+                        if (!star)
                                 glob_walk(prefix, out, rest, depth + 1);
-
-                                if (glob_failed)
-                                        break;
+                        else
+                        {
+                                if (!string_get(rest))
+                                {
+                                        prefix[out] = end;
+                                        glob_add(prefix);
+                                }
+                                // Unknown directory types are resolved by
+                                // the recursive open; symlinks are not followed.
+                                bool link_directory = entry->d_type == 10 &&
+                                                      string_equals(rest, "/");
+                                if (entry->d_type == 4 || entry->d_type == 0 ||
+                                    link_directory)
+                                {
+                                        prefix[out] = '/';
+                                        glob_walk(prefix, out + 1,
+                                                  link_directory ? rest + 1 : whole,
+                                                  depth + 1);
+                                }
                         }
-
-                        if (glob_failed)
-                                break;
                 }
-
-                system_close(directory);
         }
+        system_close(directory);
 }
 
 // POSIX asks for the matches in order, and a script that reads a directory
@@ -7141,6 +7033,13 @@ static string_address expand_keep_field(positive at, positive stop)
 
         This is the last place the marks exist: what leaves here is bytes.
 */
+static inline INLINE bool glob_quoted_special(p8 byte)
+{
+        return byte == '*' || byte == '?' || byte == '[' || byte == '\\' ||
+               (shell_extglob_on && (glob_group_head(byte) || byte == '(' ||
+                                     byte == ')' || byte == '|'));
+}
+
 static bool expand_emit(positive at, positive stop, shell_words address_to out)
 {
         p8 address_to pattern;
@@ -7183,8 +7082,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                 room++;
 
                 if (expand_mark[index] == MARK_QUOTED &&
-                    (expand_text[index] == '*' || expand_text[index] == '?' ||
-                     expand_text[index] == '[' || expand_text[index] == '\\'))
+                    glob_quoted_special(expand_text[index]))
                         room++;
         }
 
@@ -7201,17 +7099,19 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
         for (index = at; index < stop; index++)
         {
                 p8 value = expand_text[index];
-                bool special = value == '*' || value == '?' || value == '[';
 
                 if (expand_mark[index] == MARK_EMPTY)
                         continue;
 
                 if (expand_mark[index] == MARK_QUOTED)
                 {
-                        if (special || value == '\\')
+                        if (glob_quoted_special(value))
                                 pattern[used++] = '\\';
                 }
-                else if (value == '*' || value == '?')
+                else if (value == '*' || value == '?' ||
+                         (shell_extglob_on && glob_group_head(value) &&
+                          index + 1 < stop && expand_text[index + 1] == '(' &&
+                          expand_mark[index + 1] != MARK_QUOTED))
                         magic = true;
                 else if (bracket == 0)
                 {
@@ -7249,7 +7149,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
 
                 if (glob_count)
                 {
-                if (!expand_sort_names(glob_result, glob_count))
+                        if (!expand_sort_names(glob_result, glob_count))
                         {
                                 expand_fail_state();
                                 return false;
@@ -7258,6 +7158,9 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                         for (index = 0; index < glob_count; index++)
                         {
                                 string_address name = glob_result[index];
+                                if (shell_shopt_on(GLOBSTAR) && index &&
+                                    !string_compare(name, glob_result[index - 1]))
+                                        continue;
                                 string_address kept = expand_keep_bytes(
                                     name, string_length(name));
 

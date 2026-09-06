@@ -838,6 +838,29 @@ answer 'star from name' "cd $tree; x='*'; printf '[%s]' \$x END; echo"
 answer 'half quoted'    "cd $tree; printf '[%s]' a'*' END; echo"
 answer 'no glob flag'   "cd $tree; set -f; printf '[%s]' * END; echo"
 
+group glob-walk
+walk_tree="$work/glob-walk"
+mkdir -p "$walk_tree/a/b" "$walk_tree/a/.hidden" "$walk_tree/.hidden/b"
+touch "$walk_tree/a/leaf" "$walk_tree/a/b/leaf" "$walk_tree/a/b/UPPER" \
+      "$walk_tree/a/.hidden/leaf" "$walk_tree/.hidden/b/leaf" "$walk_tree/plain" \
+      "$walk_tree/a/@(leaf|b)tail"
+ln -s a "$walk_tree/link"
+bash_answer 'globskipdots can be disabled' \
+        "cd '$walk_tree'; shopt -u globskipdots; printf '<%s>' a/.*; shopt -s globskipdots; printf '<%s>' a/.*"
+bash_answer 'quoted extended-pattern punctuation stays literal' \
+        "cd '$walk_tree'; shopt -s extglob; printf '<%s>' 'a/@(leaf|b)'* 'a/@('*"
+for star in u s; do
+        for dot in u s; do
+                for fold in u s; do
+                        bash_answer "walk star=$star dot=$dot fold=$fold" \
+                                "cd '$walk_tree'; shopt -$star globstar; shopt -$dot dotglob; shopt -$fold nocaseglob; shopt -s extglob
+                                for p in '**' '**/' '**/leaf' '**/upper' '**/b/*' 'a/**/leaf' 'a/**/**/leaf' '*/**/leaf' 'a/*' 'a/.*' 'a/\\.*' 'a/[.]*' 'a/@(leaf|b)' 'nosuch*/leaf'; do
+                                        printf '%s:' \"\$p\"; printf '<%s>' \$p; printf '\n'
+                                done"
+                done
+        done
+done
+
 #
 #       Tilde.
 #
