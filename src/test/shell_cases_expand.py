@@ -410,6 +410,106 @@ def character_glob(rng):
         f"set -- {pattern}; printf '<%s>\\n' \"$@\"")
 
 
+def bracket_match(rng):
+    # ASCII membership, ranges, quoting and class predicates have different
+    # folding rules. Unicode sets/ranges have their own family below; Unicode
+    # class predicates and case mapping need locale tables, not byte folding.
+    # Observe the same generated pattern through both matcher callers.
+    value = rng.choice(("a", "A", "b", "B", "c", "Z", "z", "_", "-", "]",
+                        "|", ")", "aa", ""))
+    pattern = rng.choice(("[!A]", "[^a-c]", "[a-C]", "[B-a]", "[A-z]",
+                          "[[:lower:]]", "[![:upper:]]", "[[:digit:]A]",
+                          "[a-\\c]", "[\\--0]", "[]a]", "[!]]", "[|)]",
+                          "[éΩ]", "[!é]", "[Α-Ω]", "[🌙-🌟]", "*[éΩ]?"))
+    fold = rng.choice(("-s", "-u"))
+    return "bracket-match", ("bash", "posix"), program(
+        f"shopt {fold} nocasematch", "x=" + quote(value), "p=" + quote(pattern),
+        'case "$x" in $p) echo case:yes;; *) echo case:no;; esac',
+        '[[ $x == $p ]]; printf "test:%s\\n" "$?"',
+        '[[ $x != $p ]]; printf "inverse:%s\\n" "$?"')
+
+
+def extended_match(rng):
+    head = rng.choice(("@", "?", "*", "+", "!"))
+    body = rng.choice(("foo|bar", "|foo", "", "[|)]|foo", "[!A]|b",
+                       "[[:lower:]]|z", "[éΩ]|界", "@(a|b)|c", "a|aa"))
+    prefix, suffix = rng.choice((("", ""), ("x", "y"), ("*", "?")))
+    value = rng.choice(("", "FOO", "bar", "A", "B", "c", "|", ")", "é",
+                        "Ω", "界", "aa", "aaaa", "xFOOy", "xy", "xAy"))
+    # Bash accepts an empty subject for *!(a)? (even *!(a)x), discarding
+    # the required suffix. Keep that oracle quirk in the explicit divergence
+    # regression; the differential family checks meaningful suffix matches.
+    if head == "!" and prefix == "*" and not value:
+        prefix = ""
+    if "[:" in body and not value.isascii():
+        value = "A"  # This family covers ASCII predicates, not locale tables.
+    fold = rng.choice(("-s", "-u"))
+    return "extended-match", ("bash", "posix"), program(
+        f"shopt -s extglob; shopt {fold} nocasematch",
+        "x=" + quote(value), "p=" + quote(prefix + head + "(" + body + ")" + suffix),
+        'case "$x" in $p) echo case:yes;; *) echo case:no;; esac',
+        '[[ $x == $p ]]; printf "test:%s\\n" "$?"',
+        'shopt -u extglob; [[ $x == $p ]]; printf "implicit:%s\\n" "$?"')
+
+
+def character_bracket(rng):
+    value = rng.choice(("é", "Ω", "Α", "界", "🌙", "🌟", "éx", "aΩ", "a", ""))
+    pattern = rng.choice(("[éΩ]", "[!éΩ]", "[Α-Ω]", "[🌙-🌟]", "[éΩ]?",
+                          "*[éΩ]", "[!🌙]*", "[aé]", "[\\é-\\ê]"))
+    # Arch dash's pathname matcher rejects multibyte range endpoints although
+    # its case/trim matcher accepts them. Bash supplies the character-range
+    # oracle; retain dash for literal/negated Unicode sets.
+    modes = ("bash", "posix") if "-" in pattern else MODES
+    return "character-bracket", modes, program(
+        "x=" + quote(value), "p=" + quote(pattern),
+        'case "$x" in $p) echo match;; *) echo no;; esac',
+        'printf "<%s>" "${x#$p}" "${x##$p}" "${x%$p}" "${x%%$p}"; echo',
+        ': > u_é; : > u_Ω; : > u_Α; : > u_界; : > u_🌙; : > u_🌟; : > u_a',
+        'set -- u_$p; printf "<%s>\\n" "$@"')
+
+
+def composed_pattern(rng, depth=2):
+    """A bounded grammar, not a fixed menu of complete patterns."""
+    leaves = ("a", "B", "é", "Ω", "?", "*", "[aBé]", "[!Ω]", "")
+    if not depth or rng.randrange(3) == 0:
+        return rng.choice(leaves)
+    if rng.randrange(2):
+        return composed_pattern(rng, depth - 1) + composed_pattern(rng, depth - 1)
+    # Negative groups are varied separately, including their Bash empty-tail
+    # divergence. Nullable positive groups can be composed without that quirk.
+    head = rng.choice(("@", "?", "*", "+"))
+    return head + "(" + "|".join(composed_pattern(rng, depth - 1)
+                                 for _ in range(rng.randrange(1, 4))) + ")"
+
+
+def pattern_composition(rng):
+    value = "".join(rng.choice(("a", "A", "b", "B", "é", "Ω"))
+                    for _ in range(rng.randrange(9)))
+    pattern = composed_pattern(rng)
+    fold = rng.choice(("-s", "-u"))
+    return "pattern-composition", ("bash", "posix"), program(
+        f"shopt -s extglob; shopt {fold} nocasematch",
+        "x=" + quote(value), "p=" + quote(pattern),
+        'case "$x" in $p) echo case:yes;; *) echo case:no;; esac',
+        '[[ $x == $p ]]; printf "test:%s\\n" "$?"')
+
+
+def pattern_replacement(rng):
+    value = rng.choice(("", "FOOfoo", "aBaB", "éΩé", "aéBΩ", "🌙é🌟", "Ω"))
+    pattern = rng.choice(("foo", "a", "B", "?", "[!é]", "[éΩ]", "[a-C]",
+                          "?*", "@(foo|B)", "@()", "+(|a)", "*Ω", "Ω*"))
+    anchor = rng.choice(("", "#", "%"))
+    operation = rng.choice(("/", "//"))
+    replacement = rng.choice(("X", "", "[&]", "xy"))
+    fold = rng.choice(("-s", "-u"))
+    return "pattern-replacement", ("bash", "posix"), program(
+        f"shopt -s extglob; shopt {fold} nocasematch",
+        "x=" + quote(value), "p=" + quote(anchor + pattern),
+        "r=" + quote(replacement),
+        'printf "<%s>\\n" "${x' + operation + '$p/$r}"',
+        'printf "source:<%s>\\n" "$x"')
+
+
 GENERATORS = (
     parameter_default,
     parameter_trim,
@@ -433,6 +533,11 @@ GENERATORS = (
     character_slice,
     character_patterns,
     character_glob,
+    bracket_match,
+    extended_match,
+    character_bracket,
+    pattern_composition,
+    pattern_replacement,
 )
 
 

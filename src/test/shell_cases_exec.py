@@ -106,6 +106,54 @@ def _function_scope(rng):
             f"x={outer}; x={prefix} f; printf 'out:%s:%s\\n' \"$x\" \"$?\"")
 
 
+def _nested_loop_items(rng):
+    """Keep an outer loop's indexed slice live while an inner slice grows."""
+    outer_count = rng.randrange(2, 8)
+    inner_count = rng.randrange(max(outer_count, 9), 18)
+    outer = [f"outer-{at}-" + "o" * rng.choice(VALUE_LENGTHS)
+             for at in range(outer_count)]
+    inner = [f"inner-{at}-" + "i" * rng.choice(VALUE_LENGTHS)
+             for at in range(inner_count)]
+    outer_words = " ".join(outer)
+    inner_words = " ".join(inner)
+    shape = rng.choice(("direct", "function", "positional", "glob",
+                        "for-select", "select-for"))
+
+    if shape == "function":
+        script = (f"inside() {{ for inner in {inner_words}; do :; done; }}\n"
+                  f"for outer in {outer_words}; do inside; "
+                  "printf '<%s>\\n' \"$outer\"; done\n")
+        modes = ("bash", "posix", "dash")
+    elif shape == "positional":
+        script = (f"set -- {outer_words}\nfor outer; do\n"
+                  f"set -- {inner_words}\nfor inner; do :; done\n"
+                  "printf '<%s>\\n' \"$outer\"\ndone\n")
+        modes = ("bash", "posix", "dash")
+    elif shape == "glob":
+        script = (f"for outer in *; do for inner in {inner_words}; do :; done; "
+                  "printf '<%s>\\n' \"$outer\"; done\n")
+        modes = ("bash", "posix", "dash")
+    elif shape == "for-select":
+        script = (f"for outer in {outer_words}; do\n"
+                  f"select inner in {inner_words}; do break; done <<'ANSWER'\n"
+                  "1\nANSWER\nprintf '<%s>\\n' \"$outer\"\ndone\n")
+        modes = ("bash", "posix")
+    elif shape == "select-for":
+        script = (f"select outer in {outer_words}; do\n"
+                  f"for inner in {inner_words}; do :; done\n"
+                  "printf '<%s>\\n' \"$outer\"\n"
+                  "test \"$REPLY\" = 2 && break\ndone <<'ANSWER'\n"
+                  "1\n2\nANSWER\n")
+        modes = ("bash", "posix")
+    else:
+        script = (f"for outer in {outer_words}; do "
+                  f"for inner in {inner_words}; do :; done; "
+                  "printf '<%s>\\n' \"$outer\"; done\n")
+        modes = ("bash", "posix", "dash")
+
+    return "nested-loop-items", modes, script
+
+
 def _function_serialization(rng):
     """Round-trip retained ASTs, varying structure as well as operand bytes."""
     value = rng.choice(("plain", "two words", "quote'and\"slash\\", "é🌙"))
@@ -149,6 +197,69 @@ def _function_heredoc_serialization(rng):
             "".join(bodies) + "}\n"
             "saved=$(declare -f f); status=$?; unset -f f\n"
             "VALUE=after; eval \"$saved\"; f\n"
+            "printf 'status=%s\\n' \"$status\"\n")
+
+
+def _function_control_heredoc_serialization(rng):
+    """Put retained documents across real pipeline/list grammar boundaries."""
+    def header(at):
+        delimiter = f"CONTROL_{at}"
+        if rng.randrange(2):
+            return "<<'" + delimiter + "'", delimiter
+        return "<<" + delimiter, delimiter
+
+    def document(delimiter, body=None):
+        if body is None:
+            body = rng.choice(("", "$VALUE\n", "a\\\nb\n", "a\\\\b\n",
+                               "MOONWATER_FUNCTION_EOF_0\n",
+                               "$(printf made > control-marker)text\n"))
+        return body + delimiter + "\n"
+
+    shape = rng.choice(("pipeline", "andor", "pipeerr", "conditional",
+                        "nested", "group-andor", "while", "for", "case"))
+    first, first_delimiter = header(0)
+    second, second_delimiter = header(1)
+    if shape == "pipeline":
+        body = (f"cat {first} | cat {second}\n" +
+                document(first_delimiter) + document(second_delimiter))
+    elif shape == "andor":
+        body = (f"false && cat {first} || cat {second}\n" +
+                document(first_delimiter) + document(second_delimiter))
+    elif shape == "pipeerr":
+        body = ("{ printf 'err\\n' >&2; cat; } " + first +
+                " |& sed 's/^/seen:/'\n" + document(first_delimiter))
+    elif shape == "conditional":
+        condition = rng.choice(("needle\n", "other\n"))
+        body = (f"if cat {first} | grep -q needle\n" +
+                document(first_delimiter, condition) +
+                f"then cat {second}\n" + document(second_delimiter) +
+                "else printf 'miss\\n'\nfi\n")
+    elif shape == "nested":
+        body = (f"inner() {{ cat {first} | sed 's/^/inner:/'\n" +
+                document(first_delimiter) + "}\ninner\n")
+    elif shape == "group-andor":
+        body = (f"{{ cat {first} | cat\n" +
+                document(first_delimiter) + f"}} && cat {second}\n" +
+                document(second_delimiter))
+    elif shape == "while":
+        body = (f"while grep -q go {first}\n" +
+                document(first_delimiter, "go\n") +
+                f"do cat {second}\n" + document(second_delimiter) +
+                "break\ndone\n")
+    elif shape == "for":
+        body = (f"for x in one two\ndo cat {first}\n" +
+                document(first_delimiter) + "done\n")
+    else:
+        body = (f"case x in\nx) cat {first}\n" +
+                document(first_delimiter) + ";;\nesac\n")
+
+    transport = rng.choice((
+        "saved=$(declare -f f); status=$?; unset -f f\n"
+        "eval \"$saved\"; f\n",
+        "export -f f; status=$?; /bin/bash -c f\n",
+    ))
+    return ("function-control-heredoc-serialization", ("bash", "posix"),
+            "VALUE=expanded\nf() {\n" + body + "}\n" + transport +
             "printf 'status=%s\\n' \"$status\"\n")
 
 
@@ -297,7 +408,9 @@ def _readonly_scope(rng):
 GENERATORS = (_special_prefix, _command_exception, _disabled_special,
               _control_status,
               _errexit_context, _child_exit, _inherited_exit, _rhs_status,
-              _function_scope, _function_serialization, _function_heredoc_serialization,
+              _function_scope, _nested_loop_items, _function_serialization,
+              _function_heredoc_serialization,
+              _function_control_heredoc_serialization,
               _redirect_cardinality, _pipeline_context,
               _subshell_scope, _composed_status, _deep_control, _special_scope,
               _descriptor_order, _readonly_scope)

@@ -14598,6 +14598,10 @@ static positive grep_literal_length;
 static bool grep_literal_icase;
 static positive2 grep_literal_anchors;
 
+// Whole-file counting trades copies for clean file-backed residency. Keep the
+// transient working set explicit; larger files retain the bounded reader.
+#define GREP_MAP_MAX (64u << 20)
+
 static fn grep_literal_keep()
 {
         grep_literal_length = regex_literal_length;
@@ -15475,7 +15479,10 @@ static b32 text_grep()
         positive flags = taking.flags;
         bool extended = grep_extended;
         bool fixed = grep_fixed;
-        bool never = grep_never;
+        // An empty -f contributes no pattern; it does not erase a later -e
+        // or nonempty -f. Keep the early no-input shortcut only when the
+        // complete option stream still supplied nothing to compile.
+        bool never = grep_never && !grep_pattern_any;
         bool have_pattern = grep_said_pattern;
         bool icase = grep_icase;
         bool invert = (flags & FILE_FLAG('v')) != 0;
@@ -15668,7 +15675,7 @@ static b32 text_grep()
         // back in, because nothing is what every line then differs from.
         bool grouped = before || after;
 
-        if ((limit == 0 || never) && !invert)
+        if (limit == 0 || (never && !invert))
                 return text_done(1);
 
         // Nothing named and no -r is the one way standard input is read;
@@ -15798,8 +15805,77 @@ static b32 text_grep()
                                        !listing_without && !quiet;
                 bool fused_counting = direct_counting && !icase &&
                                       limit == TEXT_UNSET;
+                bool counted_mapped = false;
 
-                for (;;)
+                /* A named regular file was opened at offset zero and has a
+                   stable size snapshot. Dense matches and records longer
+                   than a refill benefit from letting the same record-aware
+                   core see one mapped span. Sparse short records do not: the
+                   page-table faults cost more than the reader's kernel copy.
+                   One normal refill distinguishes those shapes and remains
+                   ready for the fallback path. mmap failure, small files,
+                   dynamic pseudo files and standard input retain the reader.
+                   As with every file-backed mapping, a concurrent destructive
+                   truncate can SIGBUS; grep does not promise a coherent view
+                   of a file being changed underneath it. */
+                if (fused_counting && name)
+                {
+                        positive size = 0;
+
+                        if (text_regular_size(text_input.handle,
+                                              address_of size) &&
+                            size > TEXT_READ_MAX && size <= GREP_MAP_MAX &&
+                            text_fill())
+                        {
+                                p8 address_to sample = text_input.buffer +
+                                                       text_input.position;
+                                positive left = text_input.filled -
+                                                text_input.position;
+                                p8 address_to last = memory_last_of(
+                                    sample, text_delimiter, left);
+                                positive sample_matches = 0;
+
+                                if (last)
+                                {
+                                        positive take =
+                                            (positive)(last - sample) + 1;
+
+                                        sample_matches =
+                                            memory_count_records_with_prepared(
+                                                sample, take, grep_literal,
+                                                grep_literal_length,
+                                                grep_literal_anchors.x,
+                                                grep_literal_anchors.y,
+                                                text_delimiter);
+                                }
+
+                                if (!last || sample_matches >= 16)
+                                {
+                                        bipolar mapped = system_call_6(
+                                            syscall(mmap), 0, size,
+                                            FILE_PROTECT_READ, FILE_MAP_PRIVATE,
+                                            text_input.handle, 0);
+
+                                        if ((positive)mapped < (positive)-4095)
+                                        {
+                                                matches =
+                                                    memory_count_records_with_prepared(
+                                                        (p8 address_to)mapped,
+                                                        size, grep_literal,
+                                                        grep_literal_length,
+                                                        grep_literal_anchors.x,
+                                                        grep_literal_anchors.y,
+                                                        text_delimiter);
+                                                found_any = found_any || matches;
+                                                memory_free((address_any)mapped,
+                                                            size);
+                                                counted_mapped = true;
+                                        }
+                                }
+                        }
+                }
+
+                while (!counted_mapped)
                 {
                         // The line skipping stopped on holds the fixed string
                         // already, and asking the machine again would be the

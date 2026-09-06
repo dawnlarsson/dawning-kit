@@ -2110,6 +2110,10 @@ compare 'sed'            sed big    -n '19999p'
 
 awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s %d\n", (i % 500 == 0 ? "needle" : "filler"), i }' > "$work/sparse"
 awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s line %d\n", (i % 3 == 0 ? "FOX" : (i % 3 == 1 ? "Fox" : "fox")), i }' > "$work/mixed"
+awk 'BEGIN { for (i = 0; i < 12000; i++) print "needle dense" }' > "$work/grep_mapped_dense"
+awk 'BEGIN { printf "needle"; for (i = 0; i < 131072; i++) printf "x" }' > "$work/grep_mapped_long"
+awk 'BEGIN { for (i = 0; i < 65531; i++) printf "x"; printf "needle" }' > "$work/grep_refill_edge"
+awk 'BEGIN { for (i = 0; i < 12000; i++) printf "needle%c", 0 }' > "$work/grep_mapped_zero"
 printf '%s' "$(cat "$work/sparse")" > "$work/nonl"
 printf 'needle\nzzz\n' > "$work/plist"
 
@@ -2142,8 +2146,18 @@ compare 'fold width twice'      fold long -w 20 -w 60
 compare 'nl width twice'        nl i   -w 3 -w 6
 
 case_start grepblock
+: > "$work/grep_empty_patterns"
+printf 'needle\n' > "$work/grep_one_pattern"
 compare 'count'          grep sparse  -c needle
 compare 'count miss'     grep sparse  -c zzzz
+compare 'empty file then e' grep sparse -F -f "$work/grep_empty_patterns" -e needle
+compare 'empty then pattern file' grep sparse -F -f "$work/grep_empty_patterns" -f "$work/grep_one_pattern"
+compare 'max zero inverted' grep sparse -F -v -m0 needle
+compare 'mapped dense named' grep - -Fc needle "$work/grep_mapped_dense"
+compare 'mapped long named' grep - -Fc needle "$work/grep_mapped_long"
+compare 'mapped refill edge' grep - -Fc needle "$work/grep_refill_edge"
+compare 'mapped zero named' grep - -zFc needle "$work/grep_mapped_zero"
+compare 'dense standard input' grep grep_mapped_dense -Fc needle
 compare 'numbered'       grep sparse  -n needle
 compare 'byte offset'    grep sparse  -b needle
 compare 'two patterns'   grep sparse  -c -e needle -e filler

@@ -5055,10 +5055,18 @@ b32 exec_function_attributes_hashed(string_address name, positive2 named)
 
 typedef struct
 {
+        p8 redirect;
+        p8 ordinal;
+} exec_function_here;
+
+typedef struct
+{
         p8 address_to address_to text;
         positive address_to room;
         positive used;
         bool failed;
+        exec_function_here pending[PARSE_REDIRECTS];
+        p8 pending_used;
 } exec_function_text;
 
 static fn exec_function_text_add(exec_function_text address_to made,
@@ -5087,6 +5095,7 @@ static fn exec_function_text_add(exec_function_text address_to made,
 
 static bool exec_function_text_node(exec_function_text address_to made,
                                     b32 index, positive depth);
+static bool exec_function_text_line(exec_function_text address_to made);
 
 static bool exec_function_text_body(exec_function_text address_to made,
                                     b32 body, positive depth)
@@ -5097,30 +5106,10 @@ static bool exec_function_text_body(exec_function_text address_to made,
         exec_function_text_literal(made, "{ ");
         if (!exec_function_text_node(made, body, depth + 1))
                 return false;
-        exec_function_text_literal(made, "\n}");
+        if (!exec_function_text_line(made))
+                return false;
+        exec_function_text_literal(made, "}");
         return !made->failed;
-}
-
-static bool exec_function_node_has_here(b32 index, positive depth)
-{
-        if (depth > PARSE_NODES)
-                return true;
-
-        while (index)
-        {
-                parse_node address_to node = parse_nodes + index;
-
-                for (b32 at = 0; at < node->redirect_count; at++)
-                        if (parse_redirects[node->redirect + at].op == OP_DLESS)
-                                return true;
-                if (exec_function_node_has_here(node->left, depth + 1) ||
-                    exec_function_node_has_here(node->right, depth + 1) ||
-                    exec_function_node_has_here(node->extra, depth + 1))
-                        return true;
-                index = node->next;
-        }
-
-        return false;
 }
 
 static positive exec_function_here_delimiter(parse_redirect address_to redirect,
@@ -5162,6 +5151,49 @@ static positive exec_function_here_delimiter(parse_redirect address_to redirect,
         }
 }
 
+/* A here-document belongs to the complete command line, not to the simple
+   command whose redirect names it. Retain redirect references while the
+   existing AST writer emits a pipeline or AND-OR header, then write every
+   body in lexical order at the next real grammar line boundary. */
+static bool exec_function_text_here_flush(exec_function_text address_to made)
+{
+        if (!made->pending_used)
+                return !made->failed;
+
+        exec_function_text_literal(made, "\n");
+        for (b32 at = 0; at < made->pending_used; at++)
+        {
+                exec_function_here address_to pending = made->pending + at;
+                parse_redirect address_to redirect =
+                    parse_redirects + pending->redirect;
+                string_address body =
+                    (redirect->kept ? parse_kept_text : here_text) +
+                    redirect->body;
+                p8 delimiter[64];
+                positive length = exec_function_here_delimiter(
+                    redirect, (positive)pending->ordinal, delimiter);
+
+                exec_function_text_add(made, body, redirect->body_length);
+                if (redirect->body_length &&
+                    body[redirect->body_length - 1] != '\n')
+                        exec_function_text_literal(made, "\n");
+                exec_function_text_add(made, delimiter, length);
+                exec_function_text_literal(made, "\n");
+        }
+
+        made->pending_used = 0;
+        return !made->failed;
+}
+
+static bool exec_function_text_line(exec_function_text address_to made)
+{
+        if (!exec_function_text_here_flush(made))
+                return false;
+        if (!made->used || (address_to made->text)[made->used - 1] != '\n')
+                exec_function_text_literal(made, "\n");
+        return !made->failed;
+}
+
 static bool exec_function_text_redirects(exec_function_text address_to made,
                                          parse_node address_to node)
 {
@@ -5197,51 +5229,29 @@ static bool exec_function_text_redirects(exec_function_text address_to made,
 
                 if (redirect->op == OP_DLESS)
                 {
+                        exec_function_here address_to pending;
                         p8 delimiter[64];
                         positive length = exec_function_here_delimiter(
                             redirect, (positive)at, delimiter);
+
+                        if (made->pending_used >= PARSE_REDIRECTS)
+                        {
+                                made->failed = true;
+                                return false;
+                        }
 
                         if (redirect->raw)
                                 exec_function_text_literal(made, "'");
                         exec_function_text_add(made, delimiter, length);
                         if (redirect->raw)
                                 exec_function_text_literal(made, "'");
+                        pending = made->pending + made->pending_used++;
+                        pending->redirect = node->redirect + at;
+                        pending->ordinal = at;
                 }
                 else
                         exec_function_text_add(made, redirect->text,
                                                redirect->text_length);
-        }
-
-        /* Here-document bodies follow the complete redirection header in
-           lexical order. A generated delimiter is checked against every
-           body line; quoting it exactly preserves the original expansion
-           policy without needing a second delimiter grammar. */
-        bool first_body = true;
-
-        for (b32 at = 0; at < node->redirect_count; at++)
-        {
-                parse_redirect address_to redirect =
-                    parse_redirects + node->redirect + at;
-                string_address body;
-                p8 delimiter[64];
-                positive length;
-
-                if (redirect->op != OP_DLESS)
-                        continue;
-
-                length = exec_function_here_delimiter(
-                    redirect, (positive)at, delimiter);
-                body = (redirect->kept ? parse_kept_text : here_text) +
-                       redirect->body;
-                if (first_body)
-                        exec_function_text_literal(made, "\n");
-                exec_function_text_add(made, body, redirect->body_length);
-                if (redirect->body_length &&
-                    body[redirect->body_length - 1] != '\n')
-                        exec_function_text_literal(made, "\n");
-                exec_function_text_add(made, delimiter, length);
-                exec_function_text_literal(made, "\n");
-                first_body = false;
         }
 
         return !made->failed;
@@ -5273,8 +5283,8 @@ static bool exec_function_text_list(exec_function_text address_to made,
 
                 if (!exec_function_text_node(made, child, depth + 1))
                         return false;
-                if (next)
-                        exec_function_text_literal(made, "\n");
+                if (next && !exec_function_text_line(made))
+                        return false;
                 child = next;
         }
 
@@ -5303,13 +5313,6 @@ static bool exec_function_text_node(exec_function_text address_to made,
 
         if (node->kind == NODE_PIPELINE)
         {
-                /* Here-document bodies follow the whole pipeline header,
-                   not the command whose redirect owns them. The compact
-                   serializer has no pending-body side table, so reject this
-                   narrow form rather than emit a definition that imports as
-                   a different program. */
-                if (exec_function_node_has_here(node->left, depth + 1))
-                        return false;
                 if (node->flags)
                         exec_function_text_literal(made, "! ");
                 for (child = node->left; child; child = parse_nodes[child].next)
@@ -5324,8 +5327,6 @@ static bool exec_function_text_node(exec_function_text address_to made,
 
         if (node->kind == NODE_ANDOR)
         {
-                if (exec_function_node_has_here(node->left, depth + 1))
-                        return false;
                 for (child = node->left; child; child = parse_nodes[child].next)
                 {
                         if (child != node->left)
@@ -5351,9 +5352,11 @@ static bool exec_function_text_node(exec_function_text address_to made,
                                                    : (const_string)"( ", 2);
                 if (!exec_function_text_node(made, node->left, depth + 1))
                         return false;
+                if (!exec_function_text_line(made))
+                        return false;
                 exec_function_text_add(
-                    made, node->kind == NODE_GROUP ? (const_string)"\n}"
-                                                   : (const_string)"\n)", 2);
+                    made, node->kind == NODE_GROUP ? (const_string)"}"
+                                                   : (const_string)")", 1);
                 return exec_function_text_redirects(made, node);
         }
 
@@ -5362,17 +5365,23 @@ static bool exec_function_text_node(exec_function_text address_to made,
                 exec_function_text_literal(made, "if ");
                 if (!exec_function_text_node(made, node->left, depth + 1))
                         return false;
-                exec_function_text_literal(made, "\nthen ");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "then ");
                 if (!exec_function_text_node(made, node->right, depth + 1))
                         return false;
                 if (node->extra)
                 {
-                        exec_function_text_literal(made, "\nelse ");
+                        if (!exec_function_text_line(made))
+                                return false;
+                        exec_function_text_literal(made, "else ");
                         if (!exec_function_text_node(made, node->extra,
                                                      depth + 1))
                                 return false;
                 }
-                exec_function_text_literal(made, "\nfi");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "fi");
                 return exec_function_text_redirects(made, node);
         }
 
@@ -5384,10 +5393,14 @@ static bool exec_function_text_node(exec_function_text address_to made,
                     6);
                 if (!exec_function_text_node(made, node->left, depth + 1))
                         return false;
-                exec_function_text_literal(made, "\ndo ");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "do ");
                 if (!exec_function_text_node(made, node->right, depth + 1))
                         return false;
-                exec_function_text_literal(made, "\ndone");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "done");
                 return exec_function_text_redirects(made, node);
         }
 
@@ -5418,10 +5431,14 @@ static bool exec_function_text_node(exec_function_text address_to made,
                                 }
                         }
                 }
-                exec_function_text_literal(made, "\ndo ");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "do ");
                 if (!exec_function_text_node(made, node->right, depth + 1))
                         return false;
-                exec_function_text_literal(made, "\ndone");
+                if (!exec_function_text_line(made))
+                        return false;
+                exec_function_text_literal(made, "done");
                 return exec_function_text_redirects(made, node);
         }
 
@@ -5447,7 +5464,8 @@ static bool exec_function_text_node(exec_function_text address_to made,
                         if (!exec_function_text_node(made, item->right,
                                                      depth + 1))
                                 return false;
-                        exec_function_text_literal(made, "\n");
+                        if (!exec_function_text_line(made))
+                                return false;
                         exec_function_text_add(
                             made,
                             item->flags == CASE_FALL_THROUGH
@@ -5507,6 +5525,7 @@ static bool exec_function_text_definition(exec_function_text address_to made,
 
         made->used = 0;
         made->failed = false;
+        made->pending_used = 0;
 
         if (environment)
         {
@@ -5525,8 +5544,13 @@ static bool exec_function_text_definition(exec_function_text address_to made,
         if (!exec_function_text_body(made, function->body, 0))
                 return false;
 
-        if (!environment)
-                exec_function_text_literal(made, "\n");
+        if (environment)
+        {
+                if (!exec_function_text_here_flush(made))
+                        return false;
+        }
+        else if (!exec_function_text_line(made))
+                return false;
 
         return !made->failed;
 }
@@ -5534,9 +5558,10 @@ static bool exec_function_text_definition(exec_function_text address_to made,
 static bool exec_function_environment_prepare(positive slot)
 {
         exec_function address_to function = exec_functions + slot;
-        exec_function_text made = {
-            address_of function->environment,
-            address_of function->environment_room, 0, false};
+        exec_function_text made;
+
+        made.text = address_of function->environment;
+        made.room = address_of function->environment_room;
 
         if (function->environment_valid)
                 return true;
@@ -5551,10 +5576,12 @@ bool exec_function_write(writer write, string_address name, b32 filter)
         positive slot = exec_function_slot(name, named);
         p8 address_to text = null;
         positive room = 0;
-        exec_function_text made = {address_of text, address_of room, 0, false};
+        exec_function_text made;
         exec_function address_to function;
         bool answer;
 
+        made.text = address_of text;
+        made.room = address_of room;
         if (slot == positive_max)
                 return false;
         function = exec_functions + slot;
@@ -8173,9 +8200,12 @@ static b32 exec_loop(b32 index, bool until)
 
 //      What a for loop walks over, and the fields one of its words became.
 //      Both live here rather than on the stack so they can grow and be reused
-//      by the next loop instead of being sized for a guess.
+//      by the next loop instead of being sized for a guess. Live nested loops
+//      own indexed slices: growing the pointer table may move it, but no caller
+//      retains a pointer into it and an inner loop cannot overwrite its outer.
 static string_address address_to exec_items;
 static positive exec_items_room;
+static positive exec_items_used;
 
 // An expansion that aborted the line leaves nothing to run: what was taken
 // goes back, and the answer is the status the abort carries.
@@ -8192,7 +8222,7 @@ static b32 exec_aborted(shell_mark mark)
         they do with them afterwards, so the expansion is one function and
         the loop is two.
 */
-static b32 exec_loop_items(parse_node address_to node)
+static b32 exec_loop_items(parse_node address_to node, positive base)
 {
         b32 count = 0;
         b32 at;
@@ -8232,12 +8262,14 @@ static b32 exec_loop_items(parse_node address_to node)
                         {
                                 string_address kept;
 
-                                if (!shell_room((address_any address_to)
+                                if (base > positive_max - (positive)count - 1 ||
+                                    !shell_room((address_any address_to)
                                                     address_of exec_items,
                                                 address_of exec_items_room,
-                                                (positive)count + 1,
+                                                base + (positive)count + 1,
                                                 sizeof(string_address)))
                                 {
+                                        shell_memory_failed = true;
                                         room = false;
                                         break;
                                 }
@@ -8254,7 +8286,7 @@ static b32 exec_loop_items(parse_node address_to node)
                                         break;
                                 }
 
-                                exec_items[count++] = kept;
+                                exec_items[base + (positive)count++] = kept;
                         }
                 }
         }
@@ -8262,10 +8294,16 @@ static b32 exec_loop_items(parse_node address_to node)
         {
                 for (at = 0; at < (b32)shell_parameter_count; at++)
                 {
-                        if (!shell_array_room(exec_items, exec_items_room, (positive)at + 1))
+                        if (base > positive_max - (positive)count - 1 ||
+                            !shell_array_room(exec_items, exec_items_room,
+                                              base + (positive)count + 1))
+                        {
+                                shell_memory_failed = true;
                                 break;
+                        }
 
-                        exec_items[count++] = exec_arena_copy(shell_parameter[at]);
+                        exec_items[base + (positive)count++] =
+                            exec_arena_copy(shell_parameter[at]);
                 }
         }
 
@@ -8297,19 +8335,25 @@ static b32 exec_for(b32 index)
         parse_node address_to node = parse_nodes + index;
         string_address name = parse_words[node->word];
         shell_mark mark = shell_store_mark(address_of exec_store);
+        positive base = exec_items_used;
         b32 count;
         b32 status = 0;
         b32 at;
 
         token_used = 0;
-        count = exec_loop_items(node);
+        count = exec_loop_items(node, base);
 
         if (exec_line_aborted())
+        {
+                exec_items_used = base;
                 return exec_aborted(mark);
+        }
+
+        exec_items_used = base + (positive)count;
 
         for (at = 0; at < count; at++)
         {
-                if (!env_assign(name, exec_items[at]))
+                if (!env_assign(name, exec_items[base + (positive)at]))
                 {
                         status = exec_loop_assignment_error(name);
                         break;
@@ -8323,6 +8367,7 @@ static b32 exec_for(b32 index)
                         break;
         }
 
+        exec_items_used = base;
         shell_store_rewind(address_of exec_store, mark);
 
         return status;
@@ -8437,7 +8482,7 @@ static positive select_width()
         list that would fit on one row is turned on its side and written one
         to a line, which is the shape nearly every menu has.
 */
-static fn select_menu_write(b32 count)
+static fn select_menu_write(positive base, b32 count)
 {
         positive width = select_width();
         positive longest = 0;
@@ -8451,7 +8496,8 @@ static fn select_menu_write(b32 count)
 
         for (at = 0; at < count; at++)
         {
-                positive length = string_length(exec_items[at]);
+                positive length =
+                    string_length(exec_items[base + (positive)at]);
 
                 if (length > longest)
                         longest = length;
@@ -8485,7 +8531,7 @@ static fn select_menu_write(b32 count)
                 {
                         p8 shown[32];
                         positive number = at_column ? numbered : first;
-                        positive length = string_length(exec_items[item]);
+                        positive length = string_length(exec_items[base + item]);
                         positive written =
                             bipolar_into_string(shown, (bipolar)(item + 1));
 
@@ -8495,7 +8541,7 @@ static fn select_menu_write(b32 count)
 
                         if (!exec_built_add(shown, written) ||
                             !exec_built_add((string_address) ") ", 2) ||
-                            !exec_built_add(exec_items[item], length))
+                            !exec_built_add(exec_items[base + item], length))
                                 return;
 
                         item += rows;
@@ -8594,24 +8640,31 @@ static b32 exec_select(b32 index)
         parse_node address_to node = parse_nodes + index;
         string_address name = parse_words[node->word];
         shell_mark mark = shell_store_mark(address_of exec_store);
+        positive base = exec_items_used;
         b32 count;
         b32 status = 0;
 
         token_used = 0;
-        count = exec_loop_items(node);
+        count = exec_loop_items(node, base);
 
         if (exec_line_aborted())
+        {
+                exec_items_used = base;
                 return exec_aborted(mark);
+        }
+
+        exec_items_used = base + (positive)count;
 
         // Nothing to choose from is not a menu nobody answered: no menu is
         // written, the body never runs, and the construct succeeds.
         if (!count)
         {
+                exec_items_used = base;
                 shell_store_rewind(address_of exec_store, mark);
                 return 0;
         }
 
-        select_menu_write(count);
+        select_menu_write(base, count);
 
         while (1)
         {
@@ -8641,7 +8694,7 @@ static b32 exec_select(b32 index)
                 // An empty line asks for the menu again and nothing else.
                 if (!select_reply_used)
                 {
-                        select_menu_write(count);
+                        select_menu_write(base, count);
                         continue;
                 }
 
@@ -8654,7 +8707,7 @@ static b32 exec_select(b32 index)
 
                 chosen = select_choice(count);
 
-                if (!env_assign(name, chosen ? exec_items[chosen - 1]
+                if (!env_assign(name, chosen ? exec_items[base + chosen - 1]
                                              : (string_address) ""))
                 {
                         status = exec_loop_assignment_error(name);
@@ -8669,6 +8722,7 @@ static b32 exec_select(b32 index)
                         break;
         }
 
+        exec_items_used = base;
         shell_store_rewind(address_of exec_store, mark);
 
         return status;
@@ -9346,15 +9400,13 @@ static bool conditional_primary()
                                         ordinary matching does not: it reads
                                         the extended groups whether or not the
                                         option is on, and it folds case under
-                                        nocasematch. The two do not compose --
-                                        the extended matcher has no folded
-                                        path -- so an extended pattern matches
-                                        case-sensitively even under
-                                        nocasematch, which is the one
-                                        combination this does not answer.
+                                        nocasematch. Both modes travel through
+                                        the shared matcher, including groups.
                                 */
                                 value = glob_extended_anywhere(right)
-                                            ? shell_match_extended(right, left)
+                                            ? shell_match_extended(
+                                                  right, left,
+                                                  shell_shopt_on(NOCASEMATCH))
                                             : shell_match_folded(
                                                   right, left,
                                                   shell_shopt_on(NOCASEMATCH));
@@ -9499,7 +9551,9 @@ static b32 exec_case(b32 index)
                         // match is [[ ]]'s, for the same reason case reads
                         // extended groups and folds case.
                         taken = glob_extended_anywhere(pattern)
-                                    ? shell_match_extended(pattern, subject)
+                                    ? shell_match_extended(
+                                          pattern, subject,
+                                          shell_shopt_on(NOCASEMATCH))
                                     : shell_match_folded(
                                           pattern, subject,
                                           shell_shopt_on(NOCASEMATCH));

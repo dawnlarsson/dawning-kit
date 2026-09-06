@@ -16,6 +16,7 @@
 
 #define NOT_INLINED __attribute__((noinline, noclone))
 #define TRIES 9
+#define PAGE 4096
 
 #if defined(__x86_64__)
 #define ROOM (1u << 22)
@@ -243,6 +244,53 @@ static bool boundaries(void)
         return true;
 }
 
+/* Both ends of the exact span meet an inaccessible page.  The three shapes
+   cover an absent sparse anchor, one match in nearly every short record and
+   a final record without a delimiter; the model remains byte-at-a-time and
+   independent of both optimized searches. */
+static bool guarded_boundaries(void)
+{
+        p8 address_to base = (p8 address_to)memory(3 * PAGE);
+
+        if (!base ||
+            system_call_3(syscall(mprotect), (positive)base, PAGE,
+                          FILE_PROTECT_NONE) < 0 ||
+            system_call_3(syscall(mprotect), (positive)(base + 2 * PAGE), PAGE,
+                          FILE_PROTECT_NONE) < 0)
+                return false;
+
+        p8 address_to room = base + PAGE;
+
+        for (positive size = 0; size <= 257; size++)
+                for (positive side = 0; side < 2; side++)
+                        for (positive shape = 0; shape < 3; shape++)
+                        {
+                                p8 address_to data = side ? room + PAGE - size
+                                                          : room;
+
+                                for (positive at = 0; at < size; at++)
+                                        data[at] = shape == 0 ? 'x' :
+                                                   (at % 11 == 10 ? '\n' : 'q');
+
+                                if (shape)
+                                        for (positive at = shape - 1;
+                                             at + 6 <= size; at += 11)
+                                                memory_copy(data + at, needle, 6);
+
+                                if (shape == 2 && size && data[size - 1] == '\n')
+                                        data[size - 1] = 'q';
+
+                                if (fused(data, size) != reference(data, size))
+                                {
+                                        memory_free(base, 3 * PAGE);
+                                        return false;
+                                }
+                        }
+
+        memory_free(base, 3 * PAGE);
+        return true;
+}
+
 b32 main(void)
 {
         moonwater_cpu_detect();
@@ -269,7 +317,8 @@ b32 main(void)
                 return 0;
         }
 
-        if (!boundaries() || repeated(block, ROOM) != fused(block, ROOM))
+        if (!boundaries() || !guarded_boundaries() ||
+            repeated(block, ROOM) != fused(block, ROOM))
         {
                 string_format(log, "grep record count check failed\n");
                 log_flush();

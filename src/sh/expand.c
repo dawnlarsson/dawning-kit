@@ -600,7 +600,7 @@ static bipolar expand_base_number(string_address address_to at, bool address_to 
 }
 
 /*
-        A bracket set: where it ends, and whether a byte is in it.
+        A bracket set: where it ends, and whether a character is in it.
 
         A [ with no ] anywhere after it is a plain [ and not a set at all, which
         is why the end is found first and the membership asked second.
@@ -631,7 +631,38 @@ static PURE string_address expand_set_end(string_address at)
         return string_get(step) ? step : null;
 }
 
-static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
+/* Decode only after the shared bounded scanner has validated the width.
+   Invalid bytes occupy a disjoint range, not the code point of a valid UTF-8
+   character. A null bound means a terminated subject, never a pattern span. */
+static inline INLINE p32 expand_set_character(string_address at, string_address stop,
+                               bool utf8, string_address address_to past)
+{
+        p32 value = *at;
+        positive width = 1;
+        if (utf8 && value >= 0x80)
+        {
+                width = stop ? expand_character_width(at, stop - at)
+                             : expand_character_step(at);
+                if (width == 1)
+                        value += 0x110000;
+                else
+                {
+                        value &= (1u << (7 - width)) - 1;
+                        for (positive i = 1; i < width; i++)
+                                value = (value << 6) | (at[i] & 0x3f);
+                }
+        }
+        address_to past = at + width;
+        return value;
+}
+
+static CONST inline INLINE p32 expand_set_fold(p32 value, bool fold)
+{
+        return fold && value < 0x80 ? byte_to_lower(value) : value;
+}
+
+static PURE inline INLINE bool expand_in_set(string_address at, string_address stop,
+                               p32 value, bool fold, bool utf8)
 {
         string_address step = at + 1;
         bool invert = false;
@@ -643,16 +674,33 @@ static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
                 step++;
         }
 
+        // Literal singleton and plain ASCII range sets are common behind a
+        // star. Resolve them before the generic class/escape decoder; the
+        // same fold operation is applied before complementing either shape.
+        if (stop - step == 1 && *step < 0x80)
+                return invert != (expand_set_fold(value, fold) ==
+                                  expand_set_fold(*step, fold));
+        if (stop - step == 3 && step[1] == '-' &&
+            step[0] != '\\' && step[2] != '\\' &&
+            step[0] < 0x80 && step[2] < 0x80)
+        {
+                p32 member = expand_set_fold(value, fold);
+                return invert != (member >= expand_set_fold(step[0], fold) &&
+                                  member <= expand_set_fold(step[2], fold));
+        }
+
         while (step < stop)
         {
-                p8 low;
+                p32 low;
 
                 {
                         string_address past = byte_class_end(step, null);
 
                         if (past && past <= stop)
                         {
-                                if (byte_class_holds(
+                                // nocasematch folds literal/range members,
+                                // not predicates such as [[:lower:]].
+                                if (value < 0x80 && byte_class_holds(
                                             byte_class_index(step + 2,
                                                              (positive)(past - step - 4)),
                                             value))
@@ -663,29 +711,44 @@ static PURE bool expand_in_set(string_address at, string_address stop, p8 value)
                         }
                 }
 
-                low = string_get(step);
+                if (string_is(step, '\\') && step + 1 < stop)
+                        step++;
+                low = expand_set_character(step, stop, utf8, &step);
+                low = expand_set_fold(low, fold);
 
-                if (low == '\\' && step + 1 < stop)
-                        low = string_get(++step);
-
-                if (step + 2 < stop && string_is(step + 1, '-'))
+                if (step + 1 < stop && string_is(step, '-'))
                 {
-                        p8 high = string_get(step + 2);
+                        step++;
+                        if (string_is(step, '\\') && step + 1 < stop)
+                                step++;
+                        p32 high = expand_set_character(step, stop, utf8, &step);
+                        high = expand_set_fold(high, fold);
+                        p32 member = expand_set_fold(value, fold);
 
-                        if (value >= low && value <= high)
+                        if (member >= low && member <= high)
                                 found = true;
 
-                        step += 3;
                         continue;
                 }
 
-                if (value == low)
+                if (expand_set_fold(value, fold) == low)
                         found = true;
-
-                step++;
         }
 
         return invert ? !found : found;
+}
+
+static inline INLINE positive expand_set_match(string_address pattern, string_address stop,
+                                 string_address text, string_address text_end,
+                                 bool fold)
+{
+        // Every byte of a non-ASCII UTF-8 member is above the ASCII range.
+        // An ASCII subject therefore has identical literal/range membership
+        // on the byte path; avoid locale lookup and decoding in that hot case.
+        bool utf8 = *text >= 0x80 && shell_utf8_on();
+        string_address past;
+        p32 value = expand_set_character(text, text_end, utf8, &past);
+        return expand_in_set(pattern, stop, value, fold, utf8) ? past - text : 0;
 }
 
 /*
@@ -757,6 +820,16 @@ static PURE string_address glob_group_end(string_address at)
                         continue;
                 }
 
+                if (string_is(step, '['))
+                {
+                        string_address close = expand_set_end(step);
+                        if (close)
+                        {
+                                step = close + 1;
+                                continue;
+                        }
+                }
+
                 if (string_is(step, '('))
                         depth++;
                 else if (string_is(step, ')') && !--depth)
@@ -769,11 +842,11 @@ static PURE string_address glob_group_end(string_address at)
 }
 
 static bool glob_bounded(string_address pattern, string_address pattern_end,
-                         string_address text, string_address text_end);
+                         string_address text, string_address text_end, bool fold);
 
 // Whether any one of the alternatives in a group matches the whole run.
 static bool glob_alternatives(string_address body, string_address body_end,
-                              string_address text, string_address text_end)
+                              string_address text, string_address text_end, bool fold)
 {
         string_address start = body;
         string_address at = body;
@@ -787,13 +860,23 @@ static bool glob_alternatives(string_address body, string_address body_end,
                         continue;
                 }
 
+                if (string_is(at, '['))
+                {
+                        string_address close = expand_set_end(at);
+                        if (close && close < body_end)
+                        {
+                                at = close + 1;
+                                continue;
+                        }
+                }
+
                 if (string_is(at, '('))
                         depth++;
                 else if (string_is(at, ')') && depth)
                         depth--;
                 else if (!depth && string_is(at, '|'))
                 {
-                        if (glob_bounded(start, at, text, text_end))
+                        if (glob_bounded(start, at, text, text_end, fold))
                                 return true;
 
                         start = at + 1;
@@ -802,7 +885,7 @@ static bool glob_alternatives(string_address body, string_address body_end,
                 at++;
         }
 
-        return glob_bounded(start, body_end, text, text_end);
+        return glob_bounded(start, body_end, text, text_end, fold);
 }
 
 /*
@@ -819,7 +902,7 @@ static bool glob_alternatives(string_address body, string_address body_end,
 */
 static bool glob_extended(p8 head, string_address body, string_address body_end,
                           string_address rest, string_address pattern_end,
-                          string_address text, string_address text_end)
+                          string_address text, string_address text_end, bool fold)
 {
         string_address at;
         bool utf8 = shell_utf8_on();
@@ -828,8 +911,8 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
         {
                 for (at = text; ;)
                 {
-                        if (glob_bounded(rest, pattern_end, at, text_end) &&
-                            !glob_alternatives(body, body_end, text, at))
+                        if (glob_bounded(rest, pattern_end, at, text_end, fold) &&
+                            !glob_alternatives(body, body_end, text, at, fold))
                                 return true;
                         if (at == text_end)
                                 break;
@@ -841,7 +924,7 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
 
         // None at all, which only these two will take.
         if ((head == '?' || head == '*') &&
-            glob_bounded(rest, pattern_end, text, text_end))
+            glob_bounded(rest, pattern_end, text, text_end, fold))
                 return true;
 
         //      Longest first, which is what a glob answers with, and never an
@@ -850,23 +933,28 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
         for (at = text_end; at > text;
              at = utf8 ? text + expand_character_previous(text, at - text) : at - 1)
         {
-                if (!glob_alternatives(body, body_end, text, at))
+                if (!glob_alternatives(body, body_end, text, at, fold))
                         continue;
 
                 if (head == '@' || head == '?')
                 {
-                        if (glob_bounded(rest, pattern_end, at, text_end))
+                        if (glob_bounded(rest, pattern_end, at, text_end, fold))
                                 return true;
 
                         continue;
                 }
 
                 if (glob_extended('*', body, body_end, rest, pattern_end, at,
-                                  text_end))
+                                  text_end, fold))
                         return true;
         }
 
-        return false;
+        // An explicit empty alternative counts once for @ and +. Check it
+        // after ordinary matches so nonempty successful groups pay nothing
+        // for this edge; never recurse on a zero-width occurrence.
+        return (head == '@' || head == '+') &&
+               glob_alternatives(body, body_end, text, text, fold) &&
+               glob_bounded(rest, pattern_end, text, text_end, fold);
 }
 
 /*
@@ -880,7 +968,7 @@ static bool glob_extended(p8 head, string_address body, string_address body_end,
         first. Nothing without a group in it comes through here.
 */
 static bool glob_bounded(string_address pattern, string_address pattern_end,
-                         string_address text, string_address text_end)
+                         string_address text, string_address text_end, bool fold)
 {
         while (pattern < pattern_end)
         {
@@ -895,7 +983,7 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                                 return glob_extended(want, pattern + 2,
                                                      close - 1, close,
                                                      pattern_end, text,
-                                                     text_end);
+                                                     text_end, fold);
                 }
 
                 if (want == '*')
@@ -910,7 +998,7 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                         while (1)
                         {
                                 if (glob_bounded(pattern, pattern_end, at,
-                                                 text_end))
+                                                 text_end, fold))
                                         return true;
 
                                 if (at == text)
@@ -926,12 +1014,15 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
 
                 if (stop && stop < pattern_end)
                 {
-                        if (text >= text_end ||
-                            !expand_in_set(pattern, stop, string_get(text)))
+                        if (text >= text_end)
+                                return false;
+                        positive width = expand_set_match(pattern, stop, text,
+                                                          text_end, fold);
+                        if (!width)
                                 return false;
 
                         pattern = stop + 1;
-                        text++;
+                        text += width;
                         continue;
                 }
 
@@ -939,7 +1030,10 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                 {
                         want = string_get(++pattern);
 
-                        if (text >= text_end || want != string_get(text))
+                        if (text >= text_end ||
+                            (want != string_get(text) &&
+                             (!fold || byte_to_lower(want) !=
+                                       byte_to_lower(string_get(text)))))
                                 return false;
 
                         pattern++;
@@ -948,7 +1042,9 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                 }
 
                 if (text >= text_end ||
-                    (want != '?' && want != string_get(text)))
+                    (want != '?' && want != string_get(text) &&
+                     (!fold || byte_to_lower(want) !=
+                               byte_to_lower(string_get(text)))))
                         return false;
 
                 pattern++;
@@ -982,7 +1078,7 @@ static inline INLINE bool shell_match_core(string_address pattern,
         //      shell comes through here.
         if (shell_extglob_on && glob_extended_anywhere(pattern))
                 return glob_bounded(pattern, pattern + string_length(pattern),
-                                    text, text + string_length(text));
+                                    text, text + string_length(text), fold);
 
         while (string_get(text))
         {
@@ -1015,18 +1111,12 @@ static inline INLINE bool shell_match_core(string_address pattern,
 
                 if (stop)
                 {
-                        p8 value = string_get(text);
-
-                        if (expand_in_set(pattern, stop, value) ||
-                            (fold && byte_to_lower(value) != value &&
-                             expand_in_set(pattern, stop,
-                                           byte_to_lower(value))) ||
-                            (fold && byte_to_upper(value) != value &&
-                             expand_in_set(pattern, stop,
-                                           byte_to_upper(value))))
+                        positive width = expand_set_match(pattern, stop, text,
+                                                          null, fold);
+                        if (width)
                         {
                                 pattern = stop + 1;
-                                text++;
+                                text += width;
                                 continue;
                         }
                 }
@@ -1108,13 +1198,14 @@ PURE bool shell_match_folded(string_address pattern, string_address text,
 
 // The same match with the extended groups read whether or not the option is
 // on, which is what [[ ]] does with them.
-PURE bool shell_match_extended(string_address pattern, string_address text)
+PURE bool shell_match_extended(string_address pattern, string_address text,
+                                bool fold)
 {
         if (!shell_extglob_on && glob_extended_anywhere(pattern))
                 return glob_bounded(pattern, pattern + string_length(pattern),
-                                    text, text + string_length(text));
+                                    text, text + string_length(text), fold);
 
-        return shell_match(pattern, text);
+        return shell_match_folded(pattern, text, fold);
 }
 
 //      set -- takes as many words as it is given, which after a glob may be
@@ -3998,13 +4089,13 @@ static PURE string_address expand_replace_separator(string_address at)
 //      is our private copy, so terminating one candidate in place avoids a
 //      fresh allocation for every possible match.
 static bool expand_replace_match(p8 address_to source, positive at,
-                                 positive size, string_address pattern)
+                                 positive size, string_address pattern, bool fold)
 {
         p8 held = source[at + size];
         bool matched;
 
         source[at + size] = end;
-        matched = shell_match(pattern, source + at);
+        matched = shell_match_folded(pattern, source + at, fold);
         source[at + size] = held;
 
         return matched;
@@ -4053,7 +4144,7 @@ static fn expand_replace_push(string_address replacement,
 static fn expand_replace_literal(p8 address_to source, positive length,
                                  string_address pattern, positive need,
                                  string_address replacement, p8 anchor,
-                                 bool global, p8 mark)
+                                 bool global, p8 mark, bool fold)
 {
         positive copied = 0;
 
@@ -4061,7 +4152,9 @@ static fn expand_replace_literal(p8 address_to source, positive length,
         {
                 positive where = anchor == '#' ? 0 : length - need;
 
-                if (need <= length && !memory_compare(source + where, pattern, need))
+                if (need <= length && !(fold
+                        ? memory_compare_ascii_case(source + where, pattern, need)
+                        : memory_compare(source + where, pattern, need)))
                 {
                         expand_push_run(source, where, mark);
                         expand_replace_push(replacement, source + where, need,
@@ -4073,13 +4166,15 @@ static fn expand_replace_literal(p8 address_to source, positive length,
                 return;
         }
 
-        positive2 anchors = memory_search_prepare(pattern, need, false);
+        positive2 anchors = memory_search_prepare(pattern, need, fold);
 
         while (copied < length)
         {
-                p8 address_to hit = (p8 address_to)memory_search_prepared(
-                    source + copied, length - copied, pattern, need,
-                    anchors.x, anchors.y);
+                p8 address_to hit = (p8 address_to)(fold
+                    ? memory_search_ascii_case_prepared(source + copied,
+                        length - copied, pattern, need, anchors.x)
+                    : memory_search_prepared(source + copied,
+                        length - copied, pattern, need, anchors.x, anchors.y));
 
                 if (!hit)
                         break;
@@ -4117,6 +4212,7 @@ static fn expand_replace(string_address name, string_address pattern_text,
         positive copied = 0;
         p8 anchor = 0;
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
+        bool fold = shell_shopt_on(NOCASEMATCH);
 
         // This also applies nounset and the special-parameter rules before
         // the value is lifted out of the shared expansion buffer.
@@ -4145,7 +4241,9 @@ static fn expand_replace(string_address name, string_address pattern_text,
         if (expand_failed || !pattern || !replacement)
                 return;
 
-        if (string_is(pattern, '#') || string_is(pattern, '%'))
+        // // selects global replacement, so its leading #/% is a literal
+        // pattern member. Only the single-slash operator admits anchors.
+        if (!global && (string_is(pattern, '#') || string_is(pattern, '%')))
                 anchor = string_get(pattern++);
 
         // An empty pattern does not designate a match in Bash parameter
@@ -4162,6 +4260,16 @@ static fn expand_replace(string_address name, string_address pattern_text,
                         expand_replace_push(replacement, source + length, 0,
                                             mark);
 
+                return;
+        }
+
+        // Bash replaces an empty value for a run of bare stars, but does not
+        // search the terminal empty position for nullable extended groups.
+        // This common all-value form also needs no candidate-cut loop.
+        if (pattern[0] == '*' &&
+            !pattern[string_span_of_set(pattern, "*")])
+        {
+                expand_replace_push(replacement, source, length, mark);
                 return;
         }
 
@@ -4183,12 +4291,18 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 {
                         expand_replace_literal(source, length, pattern, plain,
                                                replacement, anchor, global,
-                                               mark);
+                                               mark, fold);
                         return;
                 }
         }
 
-        while (at <= length)
+        bool utf8 = shell_utf8_on();
+        // Bash's multibyte suffix search includes the terminal empty span;
+        // its byte/ASCII search does not. Keep that observable distinction
+        // without imposing a scan on unanchored or literal replacements.
+        positive starts = length + (anchor == '%' && utf8 &&
+            memory_utf8_span(source, length, positive_max).y < length);
+        while (at < starts)
         {
                 positive begin = at;
                 positive size = 0;
@@ -4197,30 +4311,34 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 if (anchor == '#')
                         begin = 0;
 
-                for (; begin <= length; begin++)
+                for (; begin < starts;)
                 {
                         positive largest = length - begin;
 
-                        if (anchor == '%' && begin < at)
-                                continue;
-
-                        for (size = largest + 1; size;)
+                        for (size = largest;;)
                         {
-                                size--;
-
-                                if (anchor == '%' && begin + size != length)
-                                        continue;
-
                                 if (expand_replace_match(source, begin, size,
-                                                         pattern))
+                                                         pattern, fold))
                                 {
                                         found = true;
                                         break;
                                 }
+                                // A suffix has only one possible end. Other
+                                // candidates shrink by whole characters, not
+                                // truncated UTF-8 prefixes that could match a
+                                // negated set as malformed bytes.
+                                if (!size || anchor == '%')
+                                        break;
+                                size = utf8
+                                    ? expand_character_previous(source + begin, size)
+                                    : size - 1;
                         }
 
-                        if (found || anchor == '#')
+                        if (found || anchor == '#' || begin == length)
                                 break;
+                        begin += utf8
+                            ? expand_character_width(source + begin, length - begin)
+                            : 1;
                 }
 
                 if (!found)
@@ -4240,8 +4358,11 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 // otherwise a global replacement never reaches its end.
                 if (!size && copied < length)
                 {
-                        expand_push(source[copied], mark);
-                        copied++;
+                        positive width = utf8
+                            ? expand_character_width(source + copied, length - copied)
+                            : 1;
+                        expand_push_run(source + copied, width, mark);
+                        copied += width;
                 }
 
                 at = copied;

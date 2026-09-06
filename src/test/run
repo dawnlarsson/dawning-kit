@@ -2321,6 +2321,9 @@ lane_shell_generated()
                         --domain expand --cases 768 --seed 0x55544638 \
                         --family character-length --family character-slice \
                         --family character-patterns --family character-glob \
+                        --family character-bracket --family bracket-match \
+                        --family extended-match \
+                        --family pattern-composition --family pattern-replacement \
                         || generated_status=1
         done
         return "$generated_status"

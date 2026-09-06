@@ -177,12 +177,43 @@ A
 kept
 B
 }; export -f f; "$1" -c f'
+compare bash_child 'pipeline heredocs export to Moonwater child' \
+        'f(){ cat <<A | cat <<B
+ignored
+A
+kept
+B
+}; export -f f; "$1" -c f'
+compare bash_child 'pipeline heredoc delimiters avoid body collisions' \
+        'f(){ cat <<A | cat <<'''B'''
+MOONWATER_FUNCTION_EOF_0
+A
+MOONWATER_FUNCTION_EOF_0
+B
+}; export -f f; "$1" -c f'
+compare bash_child 'AND-OR heredocs retain lexical order and short circuit' \
+        'f(){ false && cat <<A || cat <<B
+unused
+A
+kept
+B
+}; export -f f; "$1" -c f'
+compare bash 'pipeline stderr heredoc exports to GNU Bash child' \
+        'f(){ { printf "err\n" >&2; cat; } <<A |& sed "s/^/seen:/"
+body
+A
+}; export -f f; /bin/bash -c f'
 compare bash_child 'empty exported heredoc stays zero bytes' \
         'f(){ cat <<E
 E
 }; export -f f; "$1" -c f | wc -c'
 compare bash_child 'exported redefinition refreshes child body' \
         'f(){ echo old; }; export -f f; "$1" -c f; f(){ echo new; }; "$1" -c f'
+compare bash_child 'exported pipeline heredoc redefinition refreshes cache' \
+        'f(){ echo old; }; export -f f; "$1" -c f; f(){ cat <<A | cat
+new
+A
+}; "$1" -c f'
 compare bash_child 'export -nf removes function environment mark' \
         'f(){ :; }; export -f f; export -nf f; "$1" -c '\''command -v f >/dev/null 2>&1'\''; printf "%s\n" "$?"'
 compare bash_child 'unset removes exported function cache' \
@@ -197,12 +228,49 @@ compare bash_child 'privileged mode suppresses function import' \
 group serialization
 compare bash 'declare -f body round trips compound grammar' \
         'f(){ for x in a b; do if test "$x" = a; then printf A; else printf B; fi; done; }; text=$(declare -f f); unset -f f; eval "$text"; f; echo'
+compare bash 'declare -f round trips conditional pipeline heredocs' \
+        'f(){ if cat <<A | grep -q yes
+yes
+A
+then cat <<B
+inside
+B
+else echo no
+fi
+}; text=$(declare -f f); unset -f f; eval "$text"; f'
+compare bash 'declare -f pipeline heredoc parses in GNU Bash' \
+        'f(){ false && cat <<A || cat <<B
+unused
+A
+kept
+B
+}; text=$(declare -f f); unset -f f; /bin/bash -c "$text; f"'
 compare bash 'declare -F preserves operand status' \
         'f(){ :; }; declare -F f missing >/dev/null; printf "%s\n" "$?"'
 compare bash 'readonly function listing carries attribute' \
         'f(){ :; }; readonly -f f; case $(readonly -fp) in *"declare -fr f"*) echo yes;; *) echo no;; esac'
 compare bash 'declare function attribute inventory is not silent' \
         'f(){ :; }; export -f f; case $(declare -fx) in *"declare -fx f"*) echo yes;; *) echo no;; esac'
+
+section loops
+group nested-items
+
+compare bash 'nested for retains outer items' \
+        'for outer in O1 O2 O3; do for inner in I1 I2 I3; do :; done; printf "<%s>\n" "$outer"; done'
+compare dash 'dash nested for retains outer items' \
+        'for outer in O1 O2 O3; do for inner in I1 I2 I3; do :; done; printf "<%s>\n" "$outer"; done'
+compare bash 'function loop retains caller loop items' \
+        'inner(){ for item in F1 F2 F3 F4; do :; done; }; for outer in O1 O2 O3; do inner; printf "<%s>\n" "$outer"; done'
+compare bash 'nested select retains outer for items' \
+        'for outer in O1 O2 O3; do select inner in S1 S2 S3; do break; done <<EOF
+1
+EOF
+printf "<%s>\n" "$outer"; done'
+compare bash 'select retains choices across nested for' \
+        'select outer in O1 O2 O3; do for inner in I1 I2 I3; do :; done; printf "<%s>\n" "$outer"; test "$REPLY" = 2 && break; done <<EOF
+1
+2
+EOF'
 
 section ulimit
 group bash

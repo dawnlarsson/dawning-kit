@@ -371,6 +371,14 @@ bash_answer 'long replace all' "x=$long_a; y=\${x//a/bb}; echo \${#y}"
 bash_answer 'replace all with star' 'x=abc; printf "[%s]" "${x//*/X}" END; echo'
 bash_answer 'replace all empty with star' 'x=; printf "[%s]" "${x//*/X}" END; echo'
 bash_answer 'replace all tail star' 'x=abc; printf "[%s]" "${x//b*/X}" END; echo'
+bash_answer 'replacement literal folds through prepared search' \
+        'shopt -s nocasematch; x=FOOfoo; printf "<%s>\n" "${x/foo/X}" "${x//foo/X}" "${x/#foo/X}" "${x/%FOO/X}"'
+bash_answer 'replacement glob folds but trim does not' \
+        'shopt -s nocasematch; x=aBaB; printf "<%s>\n" "${x//[a-b]/X}" "${x#[A-B]}" "${x%[a-b]}"'
+bash_answer 'global replacement does not interpret anchors' \
+        'x=abc; p="#a"; printf "<%s>\n" "${x/#a/X}" "${x//#a/X}" "${x/$p/X}" "${x//$p/X}" "${x//%c/X}"'
+bash_answer 'nullable replacement does not append a terminal match' \
+        'shopt -s extglob; p="@()"; x=abc; printf "<%s>\n" "${x//$p/X}" "${x/%$p/X}"; x=; printf "<%s>\n" "${x/$p/X}" "${x//**/X}"'
 bash_answer 'empty prefix pattern' 'x=abc; printf "[%s]" "${x/#/X}" END; echo'
 bash_answer 'empty suffix pattern' 'x=abc; printf "[%s]" "${x/%/X}" END; echo'
 #       Literal patterns take the bulk search; these keep it honest at the
@@ -800,6 +808,17 @@ answer 'class trims'    'x=abc9; printf "[%s]" ${x%[[:digit:]]} END; echo'
 answer 'escaped bracket in set' 'case "]" in [\]]) echo yes;; *) echo no;; esac'
 answer 'escaped bracket member' 'case a in [\]a]) echo yes;; *) echo no;; esac'
 answer 'escaped bracket by name' 'p="[\]]"; case "]" in $p) echo yes;; *) echo no;; esac'
+answer 'escaped range endpoint' 'p="[a-\c]"; for x in a b c d; do case $x in $p) echo yes;; *) echo no;; esac; done'
+bash_answer 'fold before bracket negation' \
+        'shopt -s nocasematch; for p in "[!A]" "[^a-c]" "[B-a]" "[a-C]" "[A-z]"; do for x in a A b B Z _; do [[ $x == $p ]]; printf "%s:%s:%s\n" "$p" "$x" "$?"; done; done'
+bash_answer 'case predicates keep original character' \
+        'shopt -s nocasematch; for p in "[[:lower:]]" "[![:upper:]]" "[[:lower:]A]"; do for x in a A z Z; do case $x in $p) echo yes;; *) echo no;; esac; done; done'
+bash_answer 'extended patterns inherit folding' \
+        'shopt -s nocasematch; for p in "@(foo|bar)" "!(foo|bar)" "+(foo|bar)" "?([!A]|b)"; do for x in FOO BAR FOObar a B; do [[ $x == $p ]]; printf "%s:%s:%s\n" "$p" "$x" "$?"; done; done'
+bash_answer 'extended groups protect bracket punctuation' \
+        'for p in "@([|)]|foo)" "@([(]|bar)" "+([|)])"; do for x in "|" ")" "(" foo "||"; do [[ $x == $p ]]; printf "%s:%s:%s\n" "$p" "$x" "$?"; done; done'
+bash_answer 'empty extended alternatives terminate' \
+        'for p in "@()" "+()" "@(|a)" "+(|a)" "x+(|a)y"; do for x in "" a aa xy xay; do [[ $x == $p ]]; printf "%s:%s:%s\n" "$p" "$x" "$?"; done; done'
 
 group hidden
 #       A leading dot is not what a star matches, which is the one rule that
@@ -866,11 +885,27 @@ if [ "$(LC_ALL=C.UTF-8 /bin/bash -c 'x=é; printf %s "${#x}"' 2>/dev/null)" = 1 
         bash_answer 'UTF-8 extended pattern repetition' \
                 'LC_ALL=C.UTF-8; shopt -s extglob
 x=éΩ界🌙; for p in "+(?)" "@(?|??)" "!(??)"; do case $x in $p) echo yes;; *) echo no;; esac; printf "<%s>\n" "${x#$p}" "${x%$p}"; done'
+        bash_answer 'UTF-8 bracket members and ranges' \
+                'LC_ALL=C.UTF-8; for p in "[éΩ]" "[!é]" "[Α-Ω]" "[🌙-🌟]" "[\é-\ê]"; do for x in é ê Α Ω 界 🌙 🌟 a; do case $x in $p) echo yes;; *) echo no;; esac; done; done'
+        bash_answer 'UTF-8 bracket trims consume whole characters' \
+                'LC_ALL=C.UTF-8; x=éΩ界🌙; for p in "[éΩ]" "*[界🌙]" "[éΩ]*"; do printf "<%s>\n" "${x#$p}" "${x##$p}" "${x%$p}" "${x%%$p}"; done'
+        bash_answer 'UTF-8 replacement never tests truncated characters' \
+                'LC_ALL=C.UTF-8; x=éΩé; printf "<%s>\n" "${x//[!é]/X}" "${x/#[!é]/X}" "${x/%[!é]/X}" "${x//?/X}"'
+        bash_answer 'UTF-8 zero-width replacement advances one character' \
+                'LC_ALL=C.UTF-8; shopt -s extglob; x=éΩ; p="@()"; printf "<%s>\n" "${x//$p/X}"'
+        bash_answer 'Bash multibyte suffix includes terminal empty span' \
+                'LC_ALL=C.UTF-8; shopt -s extglob; p="@()"; x=abc; printf "<%s>\n" "${x/%$p/X}"; x=éabc; printf "<%s>\n" "${x/%$p/X}"'
 else
         lost 'UTF-8 oracle' 'C.UTF-8 character support is required for character cases'
 fi
 
 section diverges
+
+group extended
+shell_compare_bash_begin
+differs 'required suffix after a negative group cannot match empty' '1|' 0 \
+        'x=; p="*!(a)?"; [[ $x == $p ]]; echo "$?"'
+shell_compare_bash_end
 
 group trim
 #       ${*%pat} and ${@%pat} take the parameters joined and cut the join, so
