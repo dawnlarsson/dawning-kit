@@ -68,6 +68,50 @@
 /* Compile-time array shape, never a separately maintained count. */
 #define array_count(array) (sizeof(array) / sizeof((array)[0]))
 
+/* Exact byte spans may contain NUL. Reuse the bounded architecture scan and
+   return the bound on a miss, including an empty span at a null address. */
+static inline INLINE PURE positive memory_span_without_byte(
+    address_any block, p8 byte, positive size)
+{
+        p8 address_to found = memory_first_of(block, byte, size);
+        return found ? (positive)(found - (p8 address_to)block) : size;
+}
+
+/* One Unicode scalar, with no terminator and no partial writes on failure.
+   Fixed-width byte stores also work at unaligned addresses on the RV floor. */
+static inline INLINE positive memory_utf8_encode(
+    p8 address_to into, positive room, positive scalar)
+{
+        positive size = scalar < 0x80 ? 1 : scalar < 0x800 ? 2
+                                    : scalar < 0x10000 ? 3 : 4;
+
+        if (scalar > 0x10ffff || (scalar >= 0xd800 && scalar <= 0xdfff) ||
+            size > room)
+                return 0;
+
+        if (size == 1)
+                into[0] = (p8)scalar;
+        else if (size == 2)
+        {
+                into[0] = (p8)(0xc0 | (scalar >> 6));
+                into[1] = (p8)(0x80 | (scalar & 0x3f));
+        }
+        else if (size == 3)
+        {
+                into[0] = (p8)(0xe0 | (scalar >> 12));
+                into[1] = (p8)(0x80 | ((scalar >> 6) & 0x3f));
+                into[2] = (p8)(0x80 | (scalar & 0x3f));
+        }
+        else
+        {
+                into[0] = (p8)(0xf0 | (scalar >> 18));
+                into[1] = (p8)(0x80 | ((scalar >> 12) & 0x3f));
+                into[2] = (p8)(0x80 | ((scalar >> 6) & 0x3f));
+                into[3] = (p8)(0x80 | (scalar & 0x3f));
+        }
+        return size;
+}
+
 /* The negative half of a signed range has one extra magnitude. Keeping that
    conversion unsigned until the minimum case is selected avoids overflowing
    the signed type in every parser that accepts the full native range. */
@@ -584,9 +628,8 @@ static COLD bool name_list_select(
 
         while (*text)
         {
-                string_address comma = string_first_of(text, ',');
-                positive length = comma ? (positive)(comma - text)
-                                        : string_length(text);
+                string_address comma = string_first_of_or_end(text, ',');
+                positive length = (positive)(comma - text);
                 positive found = definition_count;
 
                 for (positive i = 0; i < definition_count; i++)
@@ -609,14 +652,9 @@ static COLD bool name_list_select(
                 if (found == definition_count)
                         return false;
 
-                bool add = true;
-                if (policy & NAME_LIST_UNIQUE)
-                        for (positive i = 0; i < address_to selected_count; i++)
-                                if (selected[i] == (p8)found)
-                                {
-                                        add = false;
-                                        break;
-                                }
+                bool add = !(policy & NAME_LIST_UNIQUE) ||
+                           !memory_first_of(selected, (p8)found,
+                                            address_to selected_count);
                 if (add)
                 {
                         if (address_to selected_count == maximum)
@@ -624,7 +662,7 @@ static COLD bool name_list_select(
                         selected[(address_to selected_count)++] = (p8)found;
                 }
 
-                if (!comma)
+                if (!*comma)
                         break;
                 text = comma + 1;
                 if (!*text && (policy & NAME_LIST_REJECT_TRAILING))

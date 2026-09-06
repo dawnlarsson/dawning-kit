@@ -458,6 +458,7 @@ compare 'sqrt' /dev/null 'BEGIN{print sqrt(2), sqrt(0), sqrt(9), sqrt(1e10)}'
 compare 'exp and log' /dev/null 'BEGIN{print exp(1), log(2), exp(0), log(1), exp(-1)}'
 compare 'sin and cos' /dev/null 'BEGIN{print sin(0), cos(0), sin(1), cos(1), sin(3.14159)}'
 compare 'atan2' /dev/null 'BEGIN{print atan2(0,1), atan2(1,1), atan2(1,0), atan2(-1,-1)}'
+compare 'atan2 argument order' /dev/null 'BEGIN{i=0; print atan2(i++,i++),i}'
 compare 'trig further out' /dev/null 'BEGIN{print sin(10), cos(10), sin(-2.5), exp(10), log(1000)}'
 compare 'rand is in range' /dev/null 'BEGIN{srand(1); ok=1; for(i=0;i<100;i++){x=rand(); if (x<0||x>=1) ok=0} print ok}'
 compare 'srand returns the last' /dev/null 'BEGIN{srand(1); print srand(5); print srand(7)}'
@@ -627,6 +628,12 @@ printf 'BEGIN { print x + 1 }\n' > "$work/p2.awk"
 compare 'one file' /dev/null -f "$work/p1.awk" -f "$work/p2.awk"
 printf 'function twice(n) { return n * 2 }\nBEGIN { print twice(21) }\n' > "$work/p3.awk"
 compare 'a function in a file' /dev/null -f "$work/p3.awk"
+for bytes in 0 1 15 16 31 32 63 64 65 4095 4096 4097 65535 65536 65537; do
+        awk -v n="$bytes" 'BEGIN {
+            printf "#%*s\nBEGIN{print 17}#%*s",n,"",n,""
+        }' > "$work/comments.awk"
+        compare "comment span $bytes" /dev/null -f "$work/comments.awk"
+done
 
 case_start more
 compare 'dash v sets fs' "$work/colons" -v 'FS=:' '{print $2}'

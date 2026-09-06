@@ -162,12 +162,7 @@ static decimal awk_scale2(decimal value, b32 power)
                 power += 1000;
         }
 
-        if (power >= -1022)
-                return value * awk_from_bits((positive)(1023 + power) << 52);
-
-        // Subnormal territory, where the exponent field cannot hold it.
-        value *= awk_from_bits((positive)(1023 - 1000) << 52);
-        power += 1000;
+        // Both loops leave power within [-1000, 1000].
         return value * awk_from_bits((positive)(1023 + power) << 52);
 }
 
@@ -213,7 +208,7 @@ static bipolar awk_whole_wide(decimal value)
 
 static decimal awk_truncate(decimal value)
 {
-        if (!awk_is_finite(value) || awk_is_nan(value))
+        if (!awk_is_finite(value))
                 return value;
 
         if (awk_absolute(value) >= 9223372036854775808.0)
@@ -345,7 +340,7 @@ static b32 awk_reduce_quarter(decimal value, decimal address_to rest)
 #define AWK_TRIG(name, at_zero, at_one, at_two, at_three)                    \
 static decimal name(decimal value)                                          \
 {                                                                           \
-        if (awk_is_nan(value) || !awk_is_finite(value))                     \
+        if (!awk_is_finite(value))                                          \
                 return awk_not_a_number;                                    \
         decimal r;                                                          \
         b32 quarter = awk_reduce_quarter(value, address_of r);              \
@@ -743,7 +738,7 @@ static awk_text address_to awk_text_of_number(decimal number, string_address for
 {
         p8 room[512];
 
-        if (!awk_is_finite(number) || awk_is_nan(number))
+        if (!awk_is_finite(number))
         {
                 string_address name = awk_not_finite_name(number);
 
@@ -2341,7 +2336,7 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, positive room,
 {
         address_to negative = value < 0;
 
-        if (!awk_is_finite(value) || awk_is_nan(value))
+        if (!awk_is_finite(value))
         {
                 string_address name = awk_not_finite_name(value);
                 b32 at = (b32)string_length(name);
@@ -2532,10 +2527,9 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 which is not as a number in that base at all.
                         */
                         if (value >= 18446744073709551616.0 ||
-                            value < -9223372036854775808.0 || awk_is_nan(value) ||
-                            !awk_is_finite(value))
+                            value < -9223372036854775808.0 || !awk_is_finite(value))
                         {
-                                if (!awk_is_finite(exact) || awk_is_nan(exact))
+                                if (!awk_is_finite(exact))
                                 {
                                         string_address name = awk_not_finite_name(exact);
 
@@ -2634,7 +2628,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         decimal value = awk_to_number(argument);
                         b32 places = precision < 0 ? 6 : precision;
 
-                        if (!awk_is_finite(value) || awk_is_nan(value))
+                        if (!awk_is_finite(value))
                         {
                                 string_address name = awk_not_finite_name(value);
 
@@ -3053,9 +3047,9 @@ static fn awk_next_token()
 
                 if (awk_source_at < awk_source_length && awk_source[awk_source_at] == '#')
                 {
-                        while (awk_source_at < awk_source_length &&
-                               awk_source[awk_source_at] != '\n')
-                                awk_source_at++;
+                        awk_source_at += memory_span_without_byte(
+                            awk_source + awk_source_at, '\n',
+                            awk_source_length - awk_source_at);
 
                         continue;
                 }
@@ -5438,9 +5432,13 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         case B_COS: awk_set_number(out, awk_cos(awk_eval_number(first))); return;
 
         case B_ATAN2:
-                awk_set_number(out, awk_atan2(awk_eval_number(first),
-                                              awk_eval_number(second)));
+        {
+                decimal rise = awk_eval_number(first);
+                decimal run = awk_eval_number(second);
+
+                awk_set_number(out, awk_atan2(rise, run));
                 return;
+        }
 
         case B_EXP: awk_set_number(out, awk_exp(awk_eval_number(first))); return;
         case B_LOG: awk_set_number(out, awk_log(awk_eval_number(first))); return;

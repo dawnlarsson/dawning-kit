@@ -158,6 +158,8 @@ compare 'grouped input mask' bits \
         '"$TOOL" -l ,00300000,03000000,30000003'
 compare 'bitwise group operations' bits \
         '"$TOOL" -l 0xff "~1-3" "^8-10" "&0-9"'
+compare 'all bitwise truth tables across word boundaries' bits \
+        'for width in 1 2 3 4 31 32 33 63 64 65 127 128 129 8192 131072; do for left in 0x0 0-131071; do for right in 0x0 0-131071; do for operation in "&" "|" "^" "~"; do "$TOOL" -m -w "$width" "$left" "$operation$right" || exit; done; done; done; done'
 compare 'stepped range compression' bits \
         '"$TOOL" -l 0-30:3 40,42,44'
 compare 'width truncation' bits \
@@ -174,12 +176,18 @@ compare 'generated masks lists widths and modes' bits \
         'for mode in -m -g -b -l; do for width in 1 2 31 32 33 64 65 127 128 129 8192; do for input in 0 1 2 31 32 63 64 74 127 128 1024 1,2 1,2,3 0-10:2 0-10:3 2,22,74,79 0xeec2 0x00000000ffffffff ,00300000,03000000,30000003; do "$TOOL" "$mode" -w "$width" "$input" || exit; done; done; done'
 compare 'maximum bounded width' bits \
         '"$TOOL" -w 131072 -l 0,65535,131071,131072'
+compare 'word boundary ranges and clipped nibbles' bits \
+        'for width in 1 3 4 5 31 32 33 63 64 65 127 128 129; do for input in 0-129 1-63 63-64 63-65 64-127 65-129 0-129:2 1-129:3 0x1ffffffffffffffff ,7,ffffffffffffffff; do for mode in -m -g -b -l; do "$TOOL" "$mode" -w "$width" "$input" || exit; done; done; done'
+compare 'range writes preserve earlier partial words' bits \
+        'for width in 63 64 65 127 128 129; do "$TOOL" -l -w "$width" 0,62,64,127,128 1-61 65-126 "~32-96" "^16-111:3" || exit; done'
 subject 'zero and oversized widths reject' bits \
         '! "$TOOL" -w 0 1 >/dev/null 2>&1 && ! "$TOOL" -w 131073 1 >/dev/null 2>&1 && ! "$TOOL" -w 18446744073709551616 1 >/dev/null 2>&1'
 # util-linux 2.42.2 silently turns several malformed lists into an empty or
 # partial mask.  Moonwater deliberately rejects those inputs instead.
 subject 'overflow and malformed groups reject' bits \
         '! "$TOOL" -l 18446744073709551616 >/dev/null 2>&1 && ! "$TOOL" -l none >/dev/null 2>&1 && ! "$TOOL" -l abc >/dev/null 2>&1 && ! "$TOOL" -l 3-1 >/dev/null 2>&1 && ! "$TOOL" -l 1-3:0 >/dev/null 2>&1 && ! "$TOOL" -l 1,,2 >/dev/null 2>&1 && ! "$TOOL" -m 0x_1 >/dev/null 2>&1 && ! "$TOOL" -m ,1,,2 >/dev/null 2>&1'
+subject 'truncated mask still validates every digit and separator' bits \
+        'for input in 0x,1 0x1, 0x1,,2 0xg0000000000000001 0x1000000000000000g ,,1 ,1,,2 ,1,; do if "$TOOL" -w 1 "$input" >/dev/null 2>&1; then exit 1; fi; done'
 
 group block-ioctls
 blockdev_device=$(lsblk -dn -o PATH 2>/dev/null | sed -n '1p')

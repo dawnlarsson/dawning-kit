@@ -1548,17 +1548,12 @@ static fn line_remember()
         // The same command twice running is one entry, which is what makes
         // the up arrow worth pressing after a loop of them.
         if (history_count &&
-            history_length[(history_count - 1) % LINE_HISTORY] == line_length)
-        {
-                const p8 address_to last = history[(history_count - 1) % LINE_HISTORY];
-                positive at = 0;
-
-                while (at < line_length && last[at] == line[at])
-                        at++;
-
-                if (at == line_length)
-                        return;
-        }
+            history_length[(history_count - 1) % LINE_HISTORY] == line_length &&
+            history[(history_count - 1) % LINE_HISTORY][0] == line[0] &&
+            (line_length == 1 ||
+             !memory_compare(history[(history_count - 1) % LINE_HISTORY], line,
+                             line_length)))
+                return;
 
         slot = history_count % LINE_HISTORY;
 

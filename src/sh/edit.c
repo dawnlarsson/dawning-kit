@@ -526,27 +526,28 @@ static fn edit_cursors_sort()
                 edit_cursors[back] = held;
         }
 
-        for (positive at = 1; at < edit_cursor_count;)
+        positive kept = edit_cursor_count ? 1 : 0;
+
+        for (positive at = 1; at < edit_cursor_count; at++)
         {
-                if (edit_cursors[at].line == edit_cursors[at - 1].line &&
-                    edit_cursors[at].column == edit_cursors[at - 1].column)
+                if (edit_cursors[at].line == edit_cursors[kept - 1].line &&
+                    edit_cursors[at].column == edit_cursors[kept - 1].column)
                 {
-                        // The earlier one keeps whichever selection is larger,
-                        // so merging two that were dragging does not silently
-                        // shrink what is selected.
+                        // Keep the first selection at this position. Compact
+                        // once instead of moving the tail for every duplicate.
                         if (edit_cursors[at].selecting &&
-                            !edit_cursors[at - 1].selecting)
-                                edit_cursors[at - 1] = edit_cursors[at];
-
-                        memory_copy(edit_cursors + at, edit_cursors + at + 1,
-                                    (edit_cursor_count - at - 1) *
-                                        sizeof(struct edit_cursor));
-                        edit_cursor_count--;
-                        continue;
+                            !edit_cursors[kept - 1].selecting)
+                                edit_cursors[kept - 1] = edit_cursors[at];
                 }
-
-                at++;
+                else
+                {
+                        if (kept != at)
+                                edit_cursors[kept] = edit_cursors[at];
+                        kept++;
+                }
         }
+
+        edit_cursor_count = kept;
 }
 
 //      Back to one cursor, wherever the first one is. Escape does this, and so
@@ -706,13 +707,10 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
 
         for (positive line = 0; line < made; line++)
         {
-                string_address stop = line < breaks
-                    ? (string_address)memory_first_of(
-                          (address_any)(text + input_at), '\n',
-                          length - input_at)
-                    : null;
-                positive width = stop ? (positive)(stop - (text + input_at))
-                                      : length - input_at;
+                positive width = line < breaks
+                    ? memory_span_without_byte((address_any)(text + input_at),
+                                               '\n', length - input_at)
+                    : length - input_at;
                 positive prefix = line ? 0 : from.column;
                 positive tail = line + 1 == made ? suffix_length : 0;
                 positive room = prefix + width + tail;
@@ -759,7 +757,7 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
                 }
 
                 staged[line].length = at;
-                input_at += width + (stop ? 1 : 0);
+                input_at += width + (width < length - input_at);
         }
 
         after->line = from.line + breaks;
@@ -3707,10 +3705,8 @@ static bool edit_load(string_address text, positive length)
 
         while (at < length)
         {
-                string_address stop = (string_address)memory_first_of(
+                positive width = memory_span_without_byte(
                     (address_any)(text + at), '\n', length - at);
-                positive width = stop ? (positive)(stop - (text + at))
-                                      : length - at;
 
                 if (line && !edit_line_open(line))
                         return false;
@@ -3720,7 +3716,7 @@ static bool edit_load(string_address text, positive length)
                 line++;
                 at += width;
 
-                if (!stop)
+                if (at == length)
                         break;
 
                 at++;
@@ -4100,30 +4096,11 @@ static fn edit_key(positive key)
         //      the letter.
         {
                 p8 built[4];
-                positive length = 0;
+                positive length = memory_utf8_encode(built, sizeof(built),
+                                                       plain);
 
-                if (plain < 0x80)
-                        built[length++] = (p8)plain;
-                else if (plain < 0x800)
-                {
-                        built[length++] = (p8)(0xc0 | (plain >> 6));
-                        built[length++] = (p8)(0x80 | (plain & 0x3f));
-                }
-                else if (plain < 0x10000)
-                {
-                        built[length++] = (p8)(0xe0 | (plain >> 12));
-                        built[length++] = (p8)(0x80 | ((plain >> 6) & 0x3f));
-                        built[length++] = (p8)(0x80 | (plain & 0x3f));
-                }
-                else
-                {
-                        built[length++] = (p8)(0xf0 | (plain >> 18));
-                        built[length++] = (p8)(0x80 | ((plain >> 12) & 0x3f));
-                        built[length++] = (p8)(0x80 | ((plain >> 6) & 0x3f));
-                        built[length++] = (p8)(0x80 | (plain & 0x3f));
-                }
-
-                edit_insert(built, length, EDIT_STEP_TYPING);
+                if (length)
+                        edit_insert(built, length, EDIT_STEP_TYPING);
         }
 }
 

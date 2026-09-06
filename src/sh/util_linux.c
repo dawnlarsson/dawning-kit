@@ -246,60 +246,107 @@ static bool ul_cpu_mask(string_address text, positive address_to set)
         return any;
 }
 
-static bool ul_cpu_list(string_address text, positive address_to set)
+/* Whole interior words use the common fill floor; only stepped ranges need
+   one store per selected bit. The caller has already bounded both endpoints. */
+static fn ul_bit_range_set(positive address_to set, positive first,
+                            positive last, positive step)
+{
+        if (first == last)
+        {
+                set[first / positive_bits] |=
+                    (positive)1 << (first % positive_bits);
+                return;
+        }
+        if (step != 1)
+        {
+                for (;; first += step)
+                {
+                        set[first / positive_bits] |=
+                            (positive)1 << (first % positive_bits);
+                        if (last - first < step)
+                                return;
+                }
+        }
+
+        positive head = first / positive_bits;
+        positive tail = last / positive_bits;
+        positive low = positive_max << (first % positive_bits);
+        positive high = positive_max >>
+                        (positive_bits - 1 - last % positive_bits);
+
+        if (head == tail)
+                set[head] |= low & high;
+        else
+        {
+                set[head] |= low;
+                memory_fill(set + head + 1, 0xff,
+                            (tail - head - 1) * sizeof(*set));
+                set[tail] |= high;
+        }
+}
+
+/* CPU lists reject out-of-range IDs and accept a final comma. bits clips IDs,
+   permits an empty list or final whitespace, and rejects a final comma. */
+static bool ul_bit_list_read(string_address text, positive address_to set,
+                              positive width, bool clipped)
 {
         string_address at = text;
-        bool any = false;
+        if (!string_get(at))
+                return clipped;
 
-        memory_fill(set, 0, UL_CPU_WORDS * sizeof(*set));
-
-        while (string_get(at))
+        for (;;)
         {
                 positive first;
                 positive last;
-                positive stride = 1;
+                positive step = 1;
 
-                if (!string_digits_checked(address_of at, 10, address_of first) ||
-                    first >= UL_CPU_BITS)
+                if (!string_digits_checked(address_of at, 10, address_of first))
                         return false;
-
                 last = first;
                 if (string_is(at, '-'))
                 {
                         at++;
-                        if (!string_digits_checked(address_of at, 10, address_of last) ||
-                            last < first || last >= UL_CPU_BITS)
+                        if (!string_digits_checked(address_of at, 10,
+                                                   address_of last) ||
+                            last < first)
                                 return false;
                 }
-
                 if (string_is(at, ':'))
                 {
                         at++;
                         if (!string_digits_checked(address_of at, 10,
-                                            address_of stride) ||
-                            !stride)
+                                                   address_of step) || !step)
                                 return false;
                 }
-
-                for (positive cpu = first; cpu <= last;)
+                if (last >= width)
                 {
-                        set[cpu / positive_bits] |=
-                            (positive)1 << (cpu % positive_bits);
-                        any = true;
-
-                        if (last - cpu < stride)
-                                break;
-                        cpu += stride;
+                        if (!clipped)
+                                return false;
+                        last = width - 1;
                 }
+                if (first < width)
+                        ul_bit_range_set(set, first, last, step);
 
                 if (!string_get(at))
-                        break;
+                        return true;
+                if (clipped && byte_is_space(string_get(at)))
+                {
+                        while (byte_is_space(string_get(at)))
+                                at++;
+                        return !string_get(at);
+                }
                 if (!string_is(at, ','))
                         return false;
                 at++;
+                if (!string_get(at))
+                        return !clipped;
         }
+}
 
-        return any;
+static bool ul_cpu_list(string_address text, positive address_to set)
+{
+        memory_fill(set, 0, UL_CPU_WORDS * sizeof(*set));
+        return ul_bit_list_read(text, set, UL_CPU_BITS, false);
 }
 
 static bool ul_cpu_set(string_address text, bool list,
@@ -435,11 +482,6 @@ static const file_long ul_bits_longs[] = {
     {null, 0},
 };
 
-static inline fn ul_bits_set(positive address_to set, positive bit)
-{
-        set[bit / positive_bits] |= (positive)1 << (bit % positive_bits);
-}
-
 /* A mask is read from its least-significant nibble, so an arbitrarily long
    input can be validated and truncated without constructing a big integer. */
 static bool ul_bits_mask_read(string_address text,
@@ -452,104 +494,31 @@ static bool ul_bits_mask_read(string_address text,
                 digits += 2;
 
         bool in_group = false;
-        for (string_address at = digits; string_get(at); at++)
-        {
-                if (string_is(at, ','))
-                {
-                        if (!in_group || !string_get(at + 1))
-                                return false;
-                        in_group = false;
-                }
-                else if (ul_hex(string_get(at)) < 0)
-                        return false;
-                else
-                        in_group = true;
-        }
-
         positive nibble = 0;
         positive length = string_length(digits);
         while (length)
         {
                 p8 byte = digits[--length];
                 if (byte == ',')
-                        continue;
-                positive value = (positive)ul_hex(byte);
-                if (nibble < (width + 3) / 4)
                 {
-                        positive first = nibble * 4;
-                        for (positive bit = 0; bit < 4 && first + bit < width;
-                             bit++)
-                                if (value & ((positive)1 << bit))
-                                        ul_bits_set(set, first + bit);
+                        if (!in_group || !length)
+                                return false;
+                        in_group = false;
+                        continue;
                 }
+                b32 value = ul_hex(byte);
+                if (value < 0)
+                        return false;
+                in_group = true;
+                if (nibble < (width + 3) / 4)
+                        set[nibble / (positive_bits / 4)] |=
+                            (positive)value << ((nibble % (positive_bits / 4)) * 4);
                 nibble++;
         }
+        if (width % positive_bits)
+                set[width / positive_bits] &=
+                    ((positive)1 << (width % positive_bits)) - 1;
         return true;
-}
-
-/* cpulist's useful grammar is decimal IDs and FIRST-LAST[:STEP].  Values at
-   or above width are parsed but clipped, which is the documented bits(1)
-   behavior; clipping the endpoint before the loop also prevents a huge range
-   from becoming a huge amount of work. */
-static bool ul_bits_list_read(string_address text,
-                              positive address_to set, positive width)
-{
-        string_address at = text;
-        if (!string_get(at))
-                return true;
-
-        for (;;)
-        {
-                positive first;
-                positive last;
-                positive step = 1;
-
-                if (!string_digits_checked(address_of at, 10,
-                                           address_of first))
-                        return false;
-                last = first;
-                if (string_is(at, '-'))
-                {
-                        at++;
-                        if (!string_digits_checked(address_of at, 10,
-                                                   address_of last) ||
-                            last < first)
-                                return false;
-                }
-                if (string_is(at, ':'))
-                {
-                        at++;
-                        if (!string_digits_checked(address_of at, 10,
-                                                   address_of step) ||
-                            !step)
-                                return false;
-                }
-
-                if (first < width)
-                {
-                        positive clipped = min(last, width - 1);
-                        for (positive bit = first;; bit += step)
-                        {
-                                ul_bits_set(set, bit);
-                                if (clipped - bit < step)
-                                        break;
-                        }
-                }
-
-                if (!string_get(at))
-                        return true;
-                if (byte_is_space(string_get(at)))
-                {
-                        while (byte_is_space(string_get(at)))
-                                at++;
-                        return !string_get(at);
-                }
-                if (!string_is(at, ','))
-                        return false;
-                at++;
-                if (!string_get(at))
-                        return false;
-        }
 }
 
 static bool ul_bits_group(string_address group,
@@ -566,7 +535,7 @@ static bool ul_bits_group(string_address group,
         bool mask = string_is(group, ',') ||
                     (string_is(group, '0') && string_is(group + 1, 'x'));
         if (!(mask ? ul_bits_mask_read(group, scratch, width)
-                   : ul_bits_list_read(group, scratch, width)))
+                   : ul_bit_list_read(group, scratch, width, true)))
         {
                 string_format(file_fail, "bits: invalid bit %s: %s\n",
                               mask ? (string_address)"mask"
@@ -575,17 +544,18 @@ static bool ul_bits_group(string_address group,
                 return false;
         }
 
-        for (positive at = 0; at < words; at++)
+        /* Select once per group; keep the four word loops on one template. */
+#define UL_BITS_APPLY(operator) \
+        for (positive at = 0; at < words; at++) \
+                result[at] operator scratch[at]
+        switch (operation)
         {
-                if (operation == '&')
-                        result[at] &= scratch[at];
-                else if (operation == '^')
-                        result[at] ^= scratch[at];
-                else if (operation == '~')
-                        result[at] &= ~scratch[at];
-                else
-                        result[at] |= scratch[at];
+        case '&': UL_BITS_APPLY(&=); break;
+        case '^': UL_BITS_APPLY(^=); break;
+        case '~': UL_BITS_APPLY(&= ~); break;
+        default: UL_BITS_APPLY(|=); break;
         }
+#undef UL_BITS_APPLY
         return true;
 }
 

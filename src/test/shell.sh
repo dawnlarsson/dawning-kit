@@ -3766,6 +3766,12 @@ bash_answer 'type -a empty PATH keeps a maximum name bounded' \
         'd=$(/usr/bin/mktemp -d /tmp/type-a-long.XXXXXX) || exit; name=$(/usr/bin/printf %0255d 0 | /usr/bin/tr 0 x); : > "$d/$name"; /bin/chmod +x "$d/$name"; cd "$d"; PATH=; type -a "$name" >/dev/null; echo $?; cd /; /bin/rm -rf "$d"'
 bash_answer 'command -V a keyword' 'command -V if; command -V cd'
 bash_answer 'command -v a keyword' 'command -v if; command -v cd'
+bash_answer 'command -v mixed name classes' \
+        'f() { :; }; command -v if cd f /bin/sh definitely_missing; echo $?'
+bash_answer 'command -V mixed nonfunction classes' \
+        'command -V if cd : /bin/sh; echo $?'
+bash_answer 'command query alias precedence' \
+        'shopt -s expand_aliases; alias cd=echo; command -v cd; command -V cd; unalias cd; command -v cd'
 bash_answer 'hash -l and -t' \
         'hash -r; hash -p /bin/sh zzsh; hash -t zzsh; hash -l'
 bash_answer 'hash -d forgets one' \

@@ -13463,21 +13463,15 @@ fn shell_command_builtin(writer write, string_address input)
                         string_address name = shell_argv[index++];
                         positive2 named = string_hash_33_length(name);
                         bool special = exec_special_builtin(name);
+                        string_address kind = null;
                         bipolar located;
 
                         // Before the builtins, because a grammar word is what
                         // the parser sees first and `command -V if` has to
                         // say so rather than call it missing.
                         if (shell_keyword_here(name))
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"keyword",
-                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
-                                any = true;
-                                continue;
-                        }
-
-                        if (shell_alias_visible(name))
+                                kind = (string_address)"keyword";
+                        else if (shell_alias_visible(name))
                         {
                                 if (at_length)
                                         string_format(
@@ -13491,31 +13485,19 @@ fn shell_command_builtin(writer write, string_address input)
                                 any = true;
                                 continue;
                         }
+                        else if (special &&
+                                 shell_command_builtin_here(name, named))
+                                kind = (string_address)"builtin";
+                        else if (exec_function_here_hashed(name, named))
+                                kind = (string_address)"function";
+                        else if (!special &&
+                                 shell_command_builtin_here(name, named))
+                                kind = (string_address)"builtin";
 
-                        if (special &&
-                            shell_command_builtin_here(name, named))
+                        if (kind)
                         {
                                 shell_command_kind_written(
-                                    write, name, (string_address)"builtin",
-                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
-                                any = true;
-                                continue;
-                        }
-
-                        if (exec_function_here_hashed(name, named))
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"function",
-                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
-                                any = true;
-                                continue;
-                        }
-
-                        if (!special &&
-                            shell_command_builtin_here(name, named))
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"builtin",
+                                    write, name, kind,
                                     at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
                                 any = true;
                                 continue;
@@ -13546,13 +13528,8 @@ fn shell_command_builtin(writer write, string_address input)
                                         string_format(write, "%s\n", found);
                                 any = true;
                         }
-                        else
-                        {
-                                if (at_length)
-                                        string_format(write, "%s: not found\n",
-                                                      name);
-
-                        }
+                        else if (at_length)
+                                string_format(write, "%s: not found\n", name);
                 }
 
                 if (found)

@@ -65,6 +65,72 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/test/terminal_fixture.inc"
 static p8 hostile_path[4096];
 
+// Stable coalescing must retain the first selected cursor at each position,
+// including its anchor and preferred display column. Build the oracle by
+// position, independently of the production sort and compaction walks.
+static positive check_cursor_compaction()
+{
+        static const positive sizes[] = {0, 1, 2, 3, 7, 8, 31, 32,
+                                         63, 64, 255, 256};
+        struct edit_cursor original[256];
+        struct edit_cursor expected[256];
+        positive checks = 0;
+
+        if (!edit_cursors_room_for(256))
+                return 0;
+
+        for (positive seed = 0; seed < 24; seed++)
+                for (positive mode = 0; mode < 4; mode++)
+                        for (positive size = 0; size < array_count(sizes); size++)
+                        {
+                                positive count = sizes[size];
+                                positive kept = 0;
+                                p32 random = (p32)seed + 1;
+
+                                memory_zero(original, sizeof(original));
+                                for (positive at = 0; at < count; at++)
+                                {
+                                        random = random * 1664525u + 1013904223u;
+                                        positive key = mode == 0 ? at
+                                            : mode == 1 ? at / 3
+                                            : mode == 2 ? 0 : random % count;
+                                        if (seed & 1)
+                                                key = count - key - 1;
+                                        original[at] = (struct edit_cursor){
+                                            .line = key / 17, .column = key % 17,
+                                            .anchor_line = at, .anchor_column = seed,
+                                            .wanted = random,
+                                            .selecting = (random & (1u << (seed % 8))) != 0};
+                                }
+
+                                for (positive key = 0; key < count; key++)
+                                {
+                                        struct edit_cursor *chosen = null;
+
+                                        for (positive at = 0; at < count; at++)
+                                                if (original[at].line == key / 17 &&
+                                                    original[at].column == key % 17 &&
+                                                    (!chosen || (!chosen->selecting &&
+                                                                 original[at].selecting)))
+                                                        chosen = original + at;
+                                        if (chosen)
+                                                expected[kept++] = *chosen;
+                                }
+
+                                memory_copy_apart(edit_cursors, original,
+                                                  count * sizeof(original[0]));
+                                edit_cursor_count = count;
+                                edit_cursors_sort();
+                                if (edit_cursor_count != kept ||
+                                    memory_compare(edit_cursors, expected,
+                                                   kept * sizeof(expected[0])))
+                                        return checks;
+                                checks++;
+                        }
+
+        return checks;
+}
+
 //      Everything the editor emitted, put through the emulator. The two are
 //      only ever joined here: the editor writes bytes and the terminal turns
 //      them into cells, exactly as they are joined by a pty on a real machine.
@@ -416,6 +482,11 @@ b32 main()
 
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "compaction") == 0)
+                {
+                        say_number(check_cursor_compaction());
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "add") == 0)
                 {
                         positive at = 0;
@@ -681,6 +752,9 @@ same 'past the bottom' '[3 c]'          40 8 text 'a\nb\nc\nd\ne\nf\ng\nh\ni' ke
 
 section cursors
 
+group compaction
+same 'stable generated coalescing' '1152' 40 6 compaction
+
 group two
 same 'both type'       'Xab|Xcd'        40 6 text 'ab\ncd' add 1,0 keys 'X' buffer
 same 'both keep going' 'XYab|XYcd'      40 6 text 'ab\ncd' add 1,0 keys 'XY' buffer
@@ -736,6 +810,8 @@ same 'backspace whole' ''               40 6 keys '\xc3\xa9<bs>' buffer
 same 'overlong ignored' ''               40 6 keys '\xc0\xaf' buffer
 same 'surrogate ignored' ''              40 6 keys '\xed\xa0\x80' buffer
 same 'out of range ignored' ''           40 6 keys '\xf4\x90\x80\x80' buffer
+same 'csi u surrogate ignored' ''         40 6 keys '\e[55296u\e[57343u' buffer
+same 'csi u scalar boundaries' '[1 <d7ff><e000><10ffff>]' 40 6 keys '\e[55295u\e[57344u\e[1114111u' row 0
 
 group paste
 same 'keeps newlines exact' 'a|  b'      40 6 keys '\e[200~a\n  b\e[201~' buffer

@@ -303,36 +303,12 @@ static bool storage_uuid_header(p8 address_to uuid, positive room)
 static bool storage_utf8_add(p8 address_to into, positive room,
                              positive address_to out, positive codepoint)
 {
-        positive need = codepoint < 0x80 ? 1 : codepoint < 0x800 ? 2
-                                       : codepoint < 0x10000 ? 3 : 4;
-
-        if (codepoint > 0x10ffff ||
-            (codepoint >= 0xd800 && codepoint <= 0xdfff) ||
-            !room || *out >= room || need > room - 1 - *out)
+        if (*out >= room)
                 return false;
-
-        if (need == 1)
-                into[(*out)++] = (p8)codepoint;
-        else if (need == 2)
-        {
-                into[(*out)++] = (p8)(0xc0 | (codepoint >> 6));
-                into[(*out)++] = (p8)(0x80 | (codepoint & 0x3f));
-        }
-        else if (need == 3)
-        {
-                into[(*out)++] = (p8)(0xe0 | (codepoint >> 12));
-                into[(*out)++] = (p8)(0x80 | ((codepoint >> 6) & 0x3f));
-                into[(*out)++] = (p8)(0x80 | (codepoint & 0x3f));
-        }
-        else
-        {
-                into[(*out)++] = (p8)(0xf0 | (codepoint >> 18));
-                into[(*out)++] = (p8)(0x80 | ((codepoint >> 12) & 0x3f));
-                into[(*out)++] = (p8)(0x80 | ((codepoint >> 6) & 0x3f));
-                into[(*out)++] = (p8)(0x80 | (codepoint & 0x3f));
-        }
-
-        return true;
+        positive made = memory_utf8_encode(into + *out, room - 1 - *out,
+                                           codepoint);
+        *out += made;
+        return made != 0;
 }
 
 static fn storage_utf16_label(p8 address_to into, positive room,

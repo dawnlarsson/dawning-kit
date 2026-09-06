@@ -202,11 +202,10 @@ static bipolar dns_server_at(string_address path, positive wanted)
         while (at < (positive)got)
         {
                 positive line = at;
-                p8 address_to newline = (p8 address_to)memory_first_of(
+                positive stop = at + memory_span_without_byte(
                     text + at, '\n', (positive)got - at);
-                positive stop = newline ? (positive)(newline - text) : (positive)got;
 
-                at = newline ? stop + 1 : stop;
+                at = stop + (stop < (positive)got);
 
                 if (stop - line < 11)
                         continue;

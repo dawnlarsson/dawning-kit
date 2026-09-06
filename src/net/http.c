@@ -150,11 +150,10 @@ static string_address http_header(p8 address_to bytes, positive size,
         while (at < size)
         {
                 positive line = at;
-                p8 address_to newline = (p8 address_to)memory_first_of(
+                positive stop = at + memory_span_without_byte(
                     bytes + at, '\n', size - at);
-                positive stop = newline ? (positive)(newline - bytes) : size;
 
-                at = newline ? stop + 1 : stop;
+                at = stop + (stop < size);
 
                 if (stop > line && bytes[stop - 1] == '\r')
                         stop--;
@@ -207,13 +206,13 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
                 positive length;
                 string_address number;
                 string_address line_end;
-                p8 address_to newline = (p8 address_to)memory_first_of(
+                positive span = memory_span_without_byte(
                     bytes + read, '\n', size - read);
 
-                if (!newline)
+                if (span == size - read)
                         return HTTP_MALFORMED;
 
-                read = (positive)(newline - bytes);
+                read += span;
 
                 number = (string_address)(bytes + line);
                 line_end = (string_address)(bytes + read);

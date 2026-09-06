@@ -3589,10 +3589,8 @@ static positive history_read(string_address path, positive skip)
 
         while (at < length)
         {
-                positive stop = at;
-
-                while (stop < length && text[stop] != '\n')
-                        stop++;
+                positive stop = at + memory_span_without_byte(
+                    text + at, '\n', length - at);
 
                 if (stop > at && seen++ >= skip)
                         history_hold(text + at, stop - at);
@@ -3997,10 +3995,8 @@ static b32 history_edit(writer write, string_address editor, positive first,
 
                 while (at < text_length)
                 {
-                        positive stop = at;
-
-                        while (stop < text_length && text[stop] != '\n')
-                                stop++;
+                        positive stop = at + memory_span_without_byte(
+                            text + at, '\n', text_length - at);
 
                         text[stop] = end;
 
@@ -5134,8 +5130,8 @@ static positive exec_function_here_delimiter(parse_redirect address_to redirect,
                 {
                         positive start = at;
 
-                        while (at < redirect->body_length && body[at] != '\n')
-                                at++;
+                        at += memory_span_without_byte(
+                            body + at, '\n', redirect->body_length - at);
                         if (at - start == length &&
                             !memory_compare(body + start, delimiter, length))
                         {

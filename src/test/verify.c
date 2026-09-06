@@ -5279,6 +5279,8 @@ fn check_first_of_wide()
 {
         static p8 room[600];
 
+        same("memory_span_without_byte", "null empty span",
+             memory_span_without_byte(null, 0, 0), 0);
         for (positive off = 0; off < 34; off++)
                 for (positive size = 0; size < 140; size++)
                 {
@@ -5289,6 +5291,8 @@ fn check_first_of_wide()
                         same("memory_first_of", "absent over the wide path",
                              (positive)memory_first_of(room + off, 'z', size),
                              (positive)reference_memory_first_of(room + off, 'z', size));
+                        same("memory_span_without_byte", "absent wide span",
+                             memory_span_without_byte(room + off, 'z', size), size);
 
                         // and one to find, at every position it could sit
                         for (positive where = 0; where < size; where++)
@@ -5298,6 +5302,8 @@ fn check_first_of_wide()
                                 same("memory_first_of", "found over the wide path",
                                      (positive)memory_first_of(room + off, 'z', size),
                                      (positive)reference_memory_first_of(room + off, 'z', size));
+                                same("memory_span_without_byte", "found wide span",
+                                     memory_span_without_byte(room + off, 'z', size), where);
 
                                 room[off + where] = 'a';
                         }
@@ -5308,6 +5314,8 @@ fn check_first_of_wide()
                         same("memory_first_of", "one past the bound",
                              (positive)memory_first_of(room + off, 'z', size),
                              (positive)reference_memory_first_of(room + off, 'z', size));
+                        same("memory_span_without_byte", "byte beyond span",
+                             memory_span_without_byte(room + off, 'z', size), size);
 
                         room[off + size] = 'a';
                 }
@@ -7444,11 +7452,15 @@ fn check_first_of_page_end()
                 same("memory_first_of", "page end absent",
                      (positive)memory_first_of(text, 'z', length + 1),
                      (positive)reference_memory_first_of(text, 'z', length + 1));
+                same("memory_span_without_byte", "page end absent",
+                     memory_span_without_byte(text, 'z', length + 1), length + 1);
 
                 address_to last = 'z';
                 same("memory_first_of", "page end last byte",
                      (positive)memory_first_of(text, 'z', length + 1),
                      (positive)reference_memory_first_of(text, 'z', length + 1));
+                same("memory_span_without_byte", "page end last byte",
+                     memory_span_without_byte(text, 'z', length + 1), length);
                 address_to last = 0;
         }
 
