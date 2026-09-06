@@ -426,14 +426,25 @@ subject 'unsupported color mutation rejects' cal \
         '! "$TOOL" --color=always 2 2024'
 
 group pipesz
+# FIONREAD is a snapshot: an ordinary pipeline can query before printf has
+# written. Fill the anonymous pipe synchronously before exec, so both tools
+# inspect the same unread byte instead of racing their producer.
+pipe_input='python3 -c '\''import os,sys
+r,w=os.pipe()
+os.write(w,b"x")
+os.close(w)
+os.dup2(r,0)
+if r != 0: os.close(r)
+os.set_inheritable(0,True)
+os.execv(sys.argv[1],sys.argv[1:])'\'' "$TOOL"'
 compare 'get stdin pipe capacity and unread bytes' pipesz \
-        'printf x | "$TOOL" -g -i'
+        "$pipe_input -g -i"
 compare 'verbose get header' pipesz \
-        'printf x | "$TOOL" -g -i -v'
+        "$pipe_input -g -i -v"
 compare 'numeric descriptor selection' pipesz \
-        'printf x | sh -c '\''"$1" -g -n 0'\'' sh "$TOOL"'
+        "$pipe_input -g -n 0"
 compare 'set survives command handoff' pipesz \
-        'printf x | "$TOOL" -s 4096 -i -- "$TOOL" -g -i'
+        "$pipe_input"' -s 4096 -i -- "$TOOL" -g -i'
 compare 'named fifo selection' pipesz \
         'rm -f "$1"; mkfifo "$1" || exit; exec 9<>"$1"; "$TOOL" -g -f "$1"; answer=$?; exec 9>&-; rm -f "$1"; exit "$answer"' \
         sh "$work/pipesz-fifo"
