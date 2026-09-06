@@ -2740,6 +2740,7 @@ __asm__(
     "22: add $" W ", %rdi\n"                                                  \
     "21: add $" W ", %rdi\n"                                                  \
     "2:  bsf %rax, %rax\n   lea -1(%rdi,%rax), %rdi  # the last byte of the string\n" \
+    "cmp %r10, %rdi\n   jb 26f  # a terminator at the block start: the masked head already answered\n" \
     "movzbl %sil, %ecx\n"                                                     \
     BROADCAST                                                                 \
     "mov %edi, %ecx\n   and $" W "-1, %ecx\n   and $-" W ", %rdi\n"           \
@@ -3338,8 +3339,11 @@ __asm__(
 #else
     "push %rbx\n   mov $1, %eax\n   xor %ecx, %ecx\n   cpuid\n"
     "bt $27, %ecx\n   jnc 9f  # OSXSAVE: nobody is managing the state\n"
+    "bt $28, %ecx\n   jnc 9f  # no AVX register instructions\n"
+    "mov %ecx, %r9d\n"
     "xor %ecx, %ecx\n   xgetbv\n   mov %eax, %r8d\n   and $6, %eax\n   cmp $6, %eax\n"
     "jne 9f  # the kernel does not save both halves of ymm\n"
+    "bt $12, %r9d\n   setc cpu_has_fma(%rip)\n"
     "mov $7, %eax\n   xor %ecx, %ecx\n   cpuid\n   bt $5, %ebx\n"
     "jnc 9f  # no AVX2\n"
     "movb $1, cpu_has_avx2(%rip)\n"
@@ -4283,6 +4287,7 @@ __asm__(
     "movq $32, 32(%rsp)\n"
     "movzbl (%rbp,%r8), %eax\n   vmovd %eax, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
     "movzbl (%rbp,%r9), %eax\n   vmovd %eax, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "vmovd %r11d, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
     /* The AVX2 fallback remains the measured floor on machines without BW;
        AVX-512-capable machines take the sixty-four-candidate lane below. */
     ".Lmemory_records_x64_vector:\n   lea 32(%rbx), %rax\n"
@@ -4296,6 +4301,7 @@ __asm__(
     ".Lmemory_records_x64_avx512_prepare:\n   movq $64, 32(%rsp)\n"
     "movzbl (%rbp,%r8), %eax\n   vpbroadcastb %eax, %zmm1\n"
     "movzbl (%rbp,%r9), %eax\n   vpbroadcastb %eax, %zmm2\n"
+    "vpbroadcastb %r11d, %zmm3\n"
     ".Lmemory_records_x64_avx512:\n   lea 64(%rbx), %rax\n"
     "cmp %r13, %rax\n   ja .Lmemory_records_x64_avx512_tail\n"
     ".Lmemory_records_x64_avx512_load:\n"
@@ -4319,7 +4325,13 @@ __asm__(
     "xor (%rbp), %eax\n   mov 2(%rdi), %edx\n"
     "xor 2(%rbp), %edx\n   or %edx, %eax\n"
     "jne .Lmemory_records_x64_prove\n   jmp .Lmemory_records_x64_proved\n"
-    ".Lmemory_records_x64_prove_many:\n   mov $4, %edx\n"
+    ".Lmemory_records_x64_prove_many:\n   cmp $16, %r12\n"
+    "ja .Lmemory_records_x64_prove_long\n"
+    "mov (%rdi), %rax\n   cmp (%rbp), %rax\n   jne .Lmemory_records_x64_prove\n"
+    "lea -8(%r12), %rdx\n   mov (%rdi,%rdx), %rax\n"
+    "cmp (%rbp,%rdx), %rax\n   je .Lmemory_records_x64_proved\n"
+    "jmp .Lmemory_records_x64_prove\n"
+    ".Lmemory_records_x64_prove_long:\n   mov $4, %edx\n"
     ".Lmemory_records_x64_prove_bytes:\n   cmp %r12, %rdx\n"
     "jae .Lmemory_records_x64_proved\n"
     ".Lmemory_records_x64_prove_byte:\n   movzbl (%rdi,%rdx), %eax\n"
@@ -4327,6 +4339,23 @@ __asm__(
     "inc %rdx\n   cmp %r12, %rdx\n   jb .Lmemory_records_x64_prove_byte\n"
     ".Lmemory_records_x64_proved:\n   inc %r14\n"
     "lea (%rdi,%r12), %rbx\n"
+    /* Dense matches spend more time finding the record end than rejecting
+       anchors. Reuse the selected ISA here, bounded by the exact input end;
+       the retained anchor mask still skips later hits in this same record. */
+    ".Lmemory_records_x64_delimiter_wide:\n"
+    "mov 24(%rsp), %rax\n   sub %rbx, %rax\n"
+    "cmp $64, %rax\n   jb .Lmemory_records_x64_delimiter_32\n"
+    "cmpq $64, 32(%rsp)\n   jne .Lmemory_records_x64_delimiter_32\n"
+    "vpcmpeqb (%rbx), %zmm3, %k3\n   kmovq %k3, %rax\n"
+    "test %rax, %rax\n   jnz .Lmemory_records_x64_delimiter_found\n"
+    "add $64, %rbx\n   jmp .Lmemory_records_x64_delimiter_wide\n"
+    ".Lmemory_records_x64_delimiter_32:\n   cmp $32, %rax\n"
+    "jb .Lmemory_records_x64_to_delimiter\n"
+    "vpcmpeqb (%rbx), %ymm3, %ymm0\n   vpmovmskb %ymm0, %eax\n"
+    "test %eax, %eax\n   jnz .Lmemory_records_x64_delimiter_found\n"
+    "add $32, %rbx\n   jmp .Lmemory_records_x64_delimiter_wide\n"
+    ".Lmemory_records_x64_delimiter_found:\n   bsf %rax, %rax\n"
+    "add %rax, %rbx\n   jmp .Lmemory_records_x64_after_delimiter\n"
     ".Lmemory_records_x64_to_delimiter:\n   cmp 24(%rsp), %rbx\n"
     "jae .Lmemory_records_x64_done_wide\n   mov 16(%rsp), %r11\n"
     "cmpb %r11b, (%rbx)\n   je .Lmemory_records_x64_after_delimiter\n"
@@ -15472,6 +15501,7 @@ p8 address_to memory_copy_end(p8 address_to destination, address_any source,
 #ifndef KERNEL_MODE
 extern p8 cpu_has_avx2;
 extern p8 cpu_has_avx512;
+extern p8 cpu_has_fma;
 
 __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_has_avx2, 1)
@@ -15480,6 +15510,9 @@ __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_has_avx512, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_has_avx512)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_fma, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_fma)
 );
 #endif
 fn moonwater_cpu_detect(void);

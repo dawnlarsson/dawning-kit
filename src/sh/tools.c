@@ -4704,7 +4704,7 @@ static fn numfmt_body_out(p8 address_to number, positive number_length,
                                      ? string_length(numfmt.suffix) : 0;
         positive body = number_length + separator_length + unit_length +
                         suffix_length;
-        positive width = 0;
+        positive width = automatic_width;
         bool left = false;
         positive zero_padding = 0;
 
@@ -4809,58 +4809,79 @@ static fn numfmt_invalid_value(p8 address_to bytes, positive length)
 static bool numfmt_convert(p8 address_to bytes, positive length,
                            positive automatic_width)
 {
-        positive numeric_length = length;
+        p8 address_to original = bytes;
+        positive original_length = length;
+        while (length && (*bytes == ' ' || *bytes == '\t'))
+        {
+                bytes++;
+                length--;
+        }
+        positive stop = length;
 
-        if (numfmt_span_ends(bytes, numeric_length, numfmt.suffix))
-                numeric_length -= string_length(numfmt.suffix);
+        if (numfmt_span_ends(bytes, stop, numfmt.suffix))
+                stop -= string_length(numfmt.suffix);
 
+        // A supplied suffix matches the exact field end, including any
+        // spaces in the suffix itself. Keep the numeric span separate from
+        // its separator, scale and trailing blanks; the checked decimal
+        // parser below still owns whether the number itself is valid.
+        positive numeric_length = stop && bytes[0] == '-';
+        while (numeric_length < stop && byte_is_digit(bytes[numeric_length]))
+                numeric_length++;
+        if (numeric_length < stop && bytes[numeric_length] == '.')
+        {
+                numeric_length++;
+                while (numeric_length < stop && byte_is_digit(bytes[numeric_length]))
+                        numeric_length++;
+        }
+
+        positive tail = numeric_length;
+        positive separator_length = numfmt.unit_separator
+                                        ? string_length(numfmt.unit_separator) : 0;
+        if (separator_length && separator_length <= stop - tail &&
+            !memory_compare(bytes + tail, numfmt.unit_separator, separator_length))
+                tail += separator_length;
+        else if ((!numfmt.unit_separator || separator_length) && tail < stop &&
+                 byte_is_blank(bytes[tail]))
+                tail++;
+
+        // Before a scale, exactly one blank or the explicit separator is
+        // accepted, never both. After it, any run of blanks is harmless.
         positive power = 0;
         positive base = 1;
         positive suffix_bytes = 0;
 
-        if (numfmt.from != NUMFMT_SCALE_NONE && numeric_length)
+        if (numfmt.from != NUMFMT_SCALE_NONE && tail < stop)
         {
-                bool has_i = numeric_length >= 2 &&
-                             bytes[numeric_length - 1] == 'i';
+                bool has_i = tail + 1 < stop && bytes[tail + 1] == 'i';
                 positive candidate = 0;
 
-                if (has_i &&
-                    numfmt_power_letter(bytes[numeric_length - 2],
-                                        address_of candidate) &&
-                    (numfmt.from == NUMFMT_SCALE_AUTO ||
-                     numfmt.from == NUMFMT_SCALE_IEC_I))
+                if (numfmt_power_letter(bytes[tail], address_of candidate) &&
+                    ((has_i && (numfmt.from == NUMFMT_SCALE_AUTO ||
+                                numfmt.from == NUMFMT_SCALE_IEC_I)) ||
+                     (!has_i && numfmt.from != NUMFMT_SCALE_IEC_I)))
                 {
                         power = candidate;
-                        base = 1024;
-                        suffix_bytes = 2;
-                }
-                else if (!has_i &&
-                         numfmt_power_letter(bytes[numeric_length - 1],
-                                             address_of candidate) &&
-                         numfmt.from != NUMFMT_SCALE_IEC_I)
-                {
-                        power = candidate;
-                        base = numfmt.from == NUMFMT_SCALE_IEC ? 1024 : 1000;
-                        suffix_bytes = 1;
+                        base = has_i || numfmt.from == NUMFMT_SCALE_IEC ? 1024 : 1000;
+                        suffix_bytes = has_i ? 2 : 1;
+                        tail += suffix_bytes;
                 }
         }
 
-        numeric_length -= suffix_bytes;
-
-        if (numfmt_span_ends(bytes, numeric_length, numfmt.unit_separator))
-                numeric_length -= string_length(numfmt.unit_separator);
+        while (tail < stop && byte_is_blank(bytes[tail]))
+                tail++;
 
         seq_decimal number;
         positive numerator;
         positive denominator;
 
-        if (!numfmt_decimal(bytes, numeric_length, address_of number) ||
+        if (tail != stop || !numfmt_decimal(bytes, numeric_length, address_of number) ||
             !numfmt_ratio(address_of number, base, power,
                           address_of numerator, address_of denominator))
         {
                 numfmt_invalid_value(bytes, length);
                 if (!numfmt.stop)
-                        text_put(bytes, length);
+                        text_put(original, original_length);
                 return false;
         }
 
@@ -4913,7 +4934,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
         {
                 numfmt_invalid_value(bytes, length);
                 if (!numfmt.stop)
-                        text_put(bytes, length);
+                        text_put(original, original_length);
                 return false;
         }
 
@@ -4967,7 +4988,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
         {
                 numfmt_invalid_value(bytes, length);
                 if (!numfmt.stop)
-                        text_put(bytes, length);
+                        text_put(original, original_length);
                 return false;
         }
 
@@ -5027,32 +5048,50 @@ static fn numfmt_record(p8 address_to bytes, positive length)
         positive at = 0;
         positive field = 0;
 
+        if (!length && text_list_has(1))
+        {
+                numfmt_convert(bytes, 0, 0);
+                return;
+        }
+
         while (at < length)
         {
-                if (bytes[at] == ' ' || bytes[at] == '\t')
-                {
-                        text_put_character(' ');
+                positive prefix = at;
+                while (at < length && (bytes[at] == ' ' || bytes[at] == '\t'))
                         at++;
-                        continue;
-                }
-
                 positive start = at;
+
+                if (at == length)
+                {
+                        if (!field && text_list_has(1))
+                                numfmt_convert(bytes + prefix, length - prefix, 0);
+                        else
+                                text_put(bytes + prefix, length - prefix);
+                        break;
+                }
 
                 while (at < length && bytes[at] != ' ' && bytes[at] != '\t')
                         at++;
 
-                positive size = at - start;
                 field++;
 
                 if (text_list_has(field))
-                        numfmt_convert(bytes + start, size,
-                                       !numfmt.padding && !numfmt.have_format
-                                           ? size : 0);
+                        numfmt_convert(bytes + prefix, at - prefix,
+                                       start && !numfmt.padding
+                                           ? at - prefix : 0);
                 else
-                        text_put(bytes + start, size);
+                        text_put(bytes + prefix, at - prefix);
 
                 if (numfmt.stop)
                         return;
+
+                // One field separator is normalized; additional whitespace
+                // belongs to the next field and its automatic width.
+                if (at < length)
+                {
+                        text_put_character(' ');
+                        at++;
+                }
         }
 }
 
@@ -8562,12 +8601,10 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                         if (allow_missing && handle == -ERROR_NO_ENTRY)
                         {
                                 side->base = (p8 address_to)text_arena_take(16);
-                                side->at = (positive address_to)text_arena_take(2 * sizeof(positive));
 
-                                if (!side->base || !side->at)
+                                if (!side->base)
                                         return false;
 
-                                side->at[0] = 0;
                                 side->missing = true;
 
                                 return true;
@@ -8637,6 +8674,15 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                 side->size = have;
         }
 
+        return true;
+}
+
+/* Byte equality and binary verdicts need no record index. Build it only
+   after those proofs, using the same newline walker for the text matcher. */
+static bool diff_index(diff_side address_to side)
+{
+        p8 address_to start = side->base;
+        positive have = side->size;
         positive lines = memory_count(start, have, '\n');
 
         side->lines = lines;
@@ -8901,6 +8947,16 @@ static bool diff_classify(diff_side address_to side, b32 which)
 
         for (positive i = 0; i < side->count; i++)
         {
+                /* Edits often retain the same record at the same position.
+                   Its already-proven class needs neither another hash nor
+                   a hash-table probe; mismatches retain the common path. */
+                if (which && i < diff_files[0].count &&
+                    diff_same(diff_files, (bipolar)i, side, (bipolar)i))
+                {
+                        side->class[i] = diff_files[0].class[i];
+                        continue;
+                }
+
                 positive hash = diff_hash(side, (bipolar)i);
                 positive slot = hash & (diff_bucket_count - 1);
                 b32 found = -1;
@@ -9786,21 +9842,22 @@ static b32 diff_pair(string_address left, string_address right)
             !diff_slurp(b, right, diff_new_file))
                 return 2;
 
-        /* Brief output needs only an equality proof.  When no option changes
-           how bytes compare, do that proof with the shared wide comparator
-           instead of building the line classes and edit script merely to
-           discard them.  The incomplete bit distinguishes a real trailing
-           newline from the sentinel diff_slurp appended. */
+        positive shortest = a->size < b->size ? a->size : b->size;
+        positive bytes = memory_common_prefix(a->base, b->base, shortest);
+
+        /* Equal bytes remain equal under every supported comparison option.
+           The incomplete bit distinguishes a real newline from the sentinel
+           appended while reading. Keep the prefix for the text matcher too. */
+        if (a->size == b->size && a->incomplete == b->incomplete &&
+            bytes == a->size)
+        {
+                diff_identical_output(left, right);
+                return 0;
+        }
+
         if (diff_brief && !diff_icase && diff_space == DIFF_SPACE_NONE &&
             !diff_blank_lines && !diff_trailing && !diff_tabs)
         {
-                if (a->size == b->size && a->incomplete == b->incomplete &&
-                    !memory_compare(a->base, b->base, a->size))
-                {
-                        diff_identical_output(left, right);
-                        return 0;
-                }
-
                 diff_announce("Files ", left, right, " differ\n");
                 return 1;
         }
@@ -9810,21 +9867,14 @@ static b32 diff_pair(string_address left, string_address right)
             (memory_first_of(a->base, 0, a->size) ||
              memory_first_of(b->base, 0, b->size)))
         {
-                // The newline a file did not end with is in its buffer all
-                // the same, so a file with one and a file without have the
-                // same size here; which of the two each is has to agree too.
-                if (a->size == b->size && a->incomplete == b->incomplete &&
-                    !memory_compare(a->base, b->base, a->size))
-                {
-                        diff_identical_output(left, right);
-                        return 0;
-                }
-
                 diff_announce(diff_brief ? "Files " : "Binary files ", left,
                               right, " differ\n");
 
                 return 1;
         }
+
+        if (!diff_index(a) || !diff_index(b))
+                return 2;
 
         /*
                 The identical head and tail are taken off before anything
@@ -9834,8 +9884,6 @@ static b32 diff_pair(string_address left, string_address right)
         */
         positive horizon = diff_style == DIFF_UNIFIED ? diff_context : 0;
         positive prefix = 0;
-        positive shortest = a->size < b->size ? a->size : b->size;
-        positive bytes = memory_common_prefix(a->base, b->base, shortest);
 
         /*
                 The newline a file did not have is in the buffer anyway, and
@@ -11026,7 +11074,7 @@ static bool ps_list_next(ps_list_cursor address_to list,
 static bool ps_pid_list(string_address list,
                         positive address_to address_to values,
                         positive address_to count, positive address_to room,
-                        bool duplicate_within_operand)
+                        bool pid_selector)
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
@@ -11041,7 +11089,8 @@ static bool ps_pid_list(string_address list,
                 string_address at = item.from;
 
                 if (!string_digits_checked(address_of at, 10, address_of value) ||
-                    !value || (positive)(at - item.from) != item.length)
+                    (!value && pid_selector) ||
+                    (positive)(at - item.from) != item.length)
                         return false;
 
                 /*
@@ -11050,7 +11099,7 @@ static bool ps_pid_list(string_address list,
                         numeric selectors are sets in both shapes.
                 */
                 bool seen = ps_value_has(address_to values,
-                                         duplicate_within_operand
+                                         pid_selector
                                              ? before
                                              : address_to count,
                                          value);
@@ -11320,6 +11369,7 @@ static b32 tools_ps(void)
         bool no_headers = false;
         bool force_headers = false;
         bool reverse = false;
+        bool sorted = false;
 
         text_begin("ps");
         text_arena_used = 0;
@@ -11400,6 +11450,7 @@ static b32 tools_ps(void)
                                 return text_done(1);
                         }
 
+                        sorted = true;
                         continue;
                 }
                 else
@@ -11565,8 +11616,9 @@ static b32 tools_ps(void)
         bool names = wanted & ((positive)1 << PS_FIELD_USER);
         bool owners = filter_owner || names ||
                       (wanted & ((positive)1 << PS_FIELD_UID));
-        if (!system_snapshot_take(address_of ps_snapshot,
-                                  SPARK_SNAPSHOT_PROCESS, owners))
+        if (!system_snapshot_take_selected(
+                address_of ps_snapshot, SPARK_SNAPSHOT_PROCESS, owners,
+                selected_pids, alternate_selectors ? 0 : selected_count))
         {
                 text_error("/proc", "cannot read");
                 return text_done(1);
@@ -11667,6 +11719,9 @@ static b32 tools_ps(void)
 
                 matched = true;
                 ps_detail detail = {0};
+
+                if (sorted)
+                        repeats = 1;
 
                 for (positive repeat = 0; repeat < repeats; repeat++)
                 {

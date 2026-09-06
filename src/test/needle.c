@@ -449,6 +449,45 @@ static void records(void)
                                      (const p8 address_to)"wrong count");
                 }
         }
+
+        /* A proven match may leave its delimiter in a later vector, or no
+           delimiter at all. End every span at an unmapped page: anchor and
+           delimiter SIMD must both respect the same exact bound. */
+        static p8 guard_needle[] = "needle0123456789ABCDEFGH";
+
+        for (positive length = 1; length < sizeof(guard_needle); length++) {
+                anchors = memory_search_prepare(guard_needle, length, false);
+
+                for (positive size = length; size <= 260; size++) {
+                        p8 address_to data = edge - size;
+
+                        for (positive delimiter = 0; delimiter < 2; delimiter++) {
+                                p8 separator = delimiter ? 0 : '\n';
+
+                                for (positive step = 7; step <= 101; step += 23) {
+                                        for (positive i = 0; i < size; i++)
+                                                data[i] = (i + 1) % step ? 'x'
+                                                                         : separator;
+                                        for (positive i = 0; i + length <= size; i += 29) {
+                                                memory_copy(data + i, guard_needle, length);
+                                                if (length > 4 && (i / 29) % 2)
+                                                        data[i + length / 2] = 'x';
+                                        }
+
+                                        positive expected = reference_records(
+                                                data, size, guard_needle, length, separator);
+                                        positive got = memory_count_records_with_prepared(
+                                                data, size, guard_needle, length, anchors.x,
+                                                anchors.y, separator);
+
+                                        checks++;
+                                        if (got != expected)
+                                                fail((const p8 address_to)"record guard", length,
+                                                     size, (const p8 address_to)"wrong count");
+                                }
+                        }
+                }
+        }
 }
 
 /*
@@ -480,8 +519,13 @@ b32 main(void)
         p8 found_avx2 = cpu_has_avx2;
         p8 found_avx512 = cpu_has_avx512;
 
-        for (b32 tier = 0; tier < 2; tier++) {
-                cpu_has_avx2 = tier ? 0 : found_avx2;
+#if X64
+        const b32 tiers = 3;
+#else
+        const b32 tiers = 1;
+#endif
+        for (b32 tier = 0; tier < tiers; tier++) {
+                cpu_has_avx2 = tier == 2 ? 0 : found_avx2;
                 cpu_has_avx512 = tier ? 0 : found_avx512;
 
                 positive before = failures;
@@ -490,8 +534,9 @@ b32 main(void)
                 records();
 
                 string_format(log, "  %s: %p checks, %p failures\n",
-                              tier ? (const p8 address_to)"narrow"
-                                   : (const p8 address_to)"as found",
+                              tier == 2 ? (const p8 address_to)"narrow"
+                                        : tier ? (const p8 address_to)"without AVX-512"
+                                               : (const p8 address_to)"as found",
                               checks, failures - before);
         }
 

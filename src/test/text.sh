@@ -968,6 +968,21 @@ compare 'null data names' grep zeros -z -Z -H a
 compare 'null data context' grep zeros -z -C1 b
 compare 'null data patterns' grep zeros -z -e a -e b
 
+# Mandatory literals are prefilters, never proof of the surrounding regex.
+# Optional/alternate branches must not make a literal mandatory, and capture
+# elision must leave backreferences and output spans unchanged.
+compare 'required suffix count' grep a -Ec '^alpha.*gamma$'
+compare 'required suffix reject' grep a -Ec '^missing.*gamma$'
+compare 'required suffix invert' grep a -Ev '^alpha.*gamma$'
+compare 'required suffix numbered' grep a -Enb '^alpha.*gamma$'
+compare 'required suffix context' grep a -EC1 '^alpha.*gamma$'
+compare 'required suffix folding' grep f -Ei '^hello.*WORLD$'
+compare 'required suffix optional' grep a -E '(alpha.*)?gamma'
+compare 'required suffix alternative' grep a -E 'missing|alpha.*gamma'
+compare 'required literal capture' grep a -Eo '(alpha).*gamma'
+compare 'required literal backref' grep a -E '(a)lph\1.*gamma'
+compare 'required literal null data' grep zeros -zE 'a.*b'
+
 case_start sed
 compare 'substitute'     sed a  's/alpha/ALPHA/'
 compare 'global'         sed a  's/a/A/g'
@@ -2744,6 +2759,22 @@ extended = ["a", "b", "c", ".", "[ab]", "[^a]", "(a)", "(ab)", "[a-c]", "a*",
 
 random.seed(20260827)
 
+# Cross vector and refill edges with both complete and unterminated records.
+# The suffix can occur on a rejected record too: finding it only licenses
+# the VM to run, including captures, anchors and optional branches.
+for edge in (31, 32, 63, 64, 65535, 65536, 65537, 131071):
+    for shift in (0, 5, 15):
+        data = ("x" * (edge - shift) + "\nrow000001 RARE_MATCH\n"
+                "bad RARE_MATCH\nrow000002 RARE_MATCH tail\n"
+                "row000003 RARE_MATCH")
+        for flags in ([], ["-c"], ["-nb"], ["-o"], ["-v"],
+                      ["-C1"], ["--color=always"]):
+            both("grep", ["-E", *flags, '^row[0-9]{6}.*RARE_MATCH$'], data)
+        both("grep", ["-F", "RARE_MATCH"], data)
+        both("grep", ["-Fc", "RARE_MATCH"], data)
+        both("grep", ["-zE", '^row[0-9]{6}.*RARE_MATCH$'],
+             data.replace("\n", "\0"))
+
 for _ in range(rounds):
     pattern = "".join(random.choice(basic) for _ in range(random.randint(1, 3)))
 
@@ -3002,6 +3033,85 @@ for name in names:
 
 os.rmdir(folder)
 
+# A null sink may stop independently opened regular files after selection,
+# but cannot hide errors in later operands or break a stdin pipe producer.
+with tempfile.TemporaryDirectory() as discard_folder:
+    fixtures = {
+        "hit": b"alpha\nbeta\nalpha\n",
+        "miss": b"beta\ngamma\n",
+        "empty": b"",
+        "binary": b"alpha\0beta\n",
+        "tail": b"beta\nalpha",
+        "denied": b"alpha\n",
+    }
+    for name, data in fixtures.items():
+        with open(discard_folder + "/" + name, "wb") as output:
+            output.write(data)
+    os.chmod(discard_folder + "/denied", 0)
+    inputs = [[name] for name in fixtures]
+    inputs += [["hit", "missing"], ["missing", "hit"],
+               ["hit", "denied"], ["denied", "hit"],
+               ["miss", "missing"], ["hit", "."]]
+
+    def compare_discard(arguments):
+        global total, bad
+        answers = []
+        for program in ("grep", ours + "/grep"):
+            result = subprocess.run([program, *arguments],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, timeout=5)
+            answers.append((result.returncode, bool(result.stderr)))
+        total += 1
+        if answers[0] != answers[1]:
+            bad += 1
+            report("grep", "discard " + " ".join(arguments),
+                   answers[0], answers[1], "discarded output")
+
+    for flags in ([], ["-q"], ["-c"], ["-v"], ["-m0"], ["-m1"],
+                  ["-m2", "-c"], ["-a"], ["-o"], ["-n"]):
+        for names in inputs:
+            arguments = [*flags, "alpha", *[discard_folder + "/" + n for n in names]]
+            # This implementation treats input as bytes. GNU's automatic
+            # binary splitting/diagnostics differ under -v and finite -m;
+            # use their shared -a mode for the binary differential matrix.
+            if "binary" in names:
+                arguments.insert(0, "-a")
+            compare_discard(arguments)
+
+    compare_discard(["alpha", discard_folder + "/binary"])
+
+    for flags in ([], ["-c"], ["-v"]):
+        for operand in ([], ["-"]):
+            data = b"alpha\nbeta\n" * 300000
+            answers = []
+            for program in ("grep", ours + "/grep"):
+                child = subprocess.Popen([program, *flags, "alpha", *operand],
+                                         stdin=subprocess.PIPE,
+                                         stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.PIPE)
+                broken = False
+                try:
+                    child.stdin.write(data)
+                    child.stdin.close()
+                except BrokenPipeError:
+                    broken = True
+                errors = child.stderr.read()
+                answers.append((child.wait(timeout=5), broken, bool(errors)))
+            total += 1
+            if answers[0] != answers[1]:
+                bad += 1
+                report("grep", "discard pipe " + " ".join(flags + operand),
+                       answers[0], answers[1], "stream larger than pipe capacity")
+
+    # Preserve our established write-error contract even for the null inode.
+    with open("/dev/null", "rb") as readonly:
+        result = subprocess.run([ours + "/grep", "alpha", discard_folder + "/hit"],
+                                stdout=readonly, stderr=subprocess.PIPE, timeout=5)
+    total += 1
+    if result.returncode != 2:
+        bad += 1
+        report("grep", "read-only null stdout", 2, result.returncode, "write error")
+
 print("\n  %s of %s" % (total - bad, total))
 PYTHON
 
@@ -3024,4 +3134,7 @@ printf '  %-12s %s of %s\n' generated "$made" "$made_total"
 [ -z "${TEST_TALLY:-}" ] ||
         printf 'text-generated %s %s\n' "$made" "$made_total" >> "$TEST_TALLY"
 
-[ "$listed_fail" = 0 ] && [ "$made" = "$made_total" ]
+order_stream=0
+python3 "$(dirname "$0")/text_order_stream.py" "$bin" --capacity || order_stream=1
+
+[ "$listed_fail" = 0 ] && [ "$made" = "$made_total" ] && [ "$order_stream" = 0 ]

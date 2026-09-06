@@ -66,8 +66,8 @@
         differ become the same one and the error comes back zero. A pow built
         on that is quietly wrong rather than obviously wrong. So the file
         turns contraction off for its own extent and puts it back, and every
-        fused operation it actually wants is an explicit call to
-        decimal_multiply_add.
+        fused operation it actually wants goes through math_multiply_add,
+        the inline adapter to the same decimal_multiply_add floor.
 
         WHAT IS NOT HERE
 
@@ -479,10 +479,28 @@ static decimal math_fast_two_sum(decimal first, decimal second, decimal address_
         return sum;
 }
 
+// Keep compensated products in the caller's registers on an FMA3 machine.
+// Calling the public ABI for each residual otherwise spills all live XMM
+// temporaries around a single instruction. The exact software body remains
+// the fallback; the feature byte includes both ISA and OS state support.
+static inline INLINE decimal math_multiply_add(decimal first, decimal second,
+                                               decimal addend)
+{
+#if X64
+        if (cpu_has_fma)
+        {
+                __asm__("vfmadd213sd %2, %1, %0"
+                        : "+x"(first) : "x"(second), "x"(addend));
+                return first;
+        }
+#endif
+        return decimal_multiply_add(first, second, addend);
+}
+
 static decimal math_two_product(decimal first, decimal second, decimal address_to error)
 {
         decimal product = first * second;
-        address_to error = decimal_multiply_add(first, second, -product);
+        address_to error = math_multiply_add(first, second, -product);
         return product;
 }
 
@@ -501,7 +519,7 @@ static decimal math_quotient(decimal numerator, decimal denominator)
 {
         decimal quotient = numerator / denominator;
         return quotient +
-               decimal_multiply_add(-quotient, denominator, numerator) / denominator;
+               math_multiply_add(-quotient, denominator, numerator) / denominator;
 }
 
 /*
@@ -1216,7 +1234,7 @@ static decimal math_log_pieces(decimal value, b32 address_to power,
         //      that s has a low half as exact as the format allows.
         sum = math_fast_two_sum(2.0, offset, address_of sum_error);
         ratio = offset / sum;
-        residual = decimal_multiply_add(-ratio, sum, offset) - ratio * sum_error;
+        residual = math_multiply_add(-ratio, sum, offset) - ratio * sum_error;
         ratio_low = residual / sum;
 
         squared = math_two_product(ratio, ratio, address_of squared_error);
@@ -2241,7 +2259,7 @@ static decimal math_tangent_reduced(decimal reduced, bool cotangent)
         }
 
         quotient = numerator_high / denominator_high;
-        residual = (decimal_multiply_add(-quotient, denominator_high, numerator_high) +
+        residual = (math_multiply_add(-quotient, denominator_high, numerator_high) +
                     numerator_low) -
                    quotient * denominator_low;
         return quotient + residual / denominator_high;
@@ -2386,7 +2404,7 @@ static decimal math_root_residual(decimal root, decimal squared)
 {
         if (root == 0.0)
                 return 0.0;
-        return decimal_multiply_add(-root, root, squared) / (root + root);
+        return math_multiply_add(-root, root, squared) / (root + root);
 }
 
 static decimal arc_sine(decimal value)
@@ -2554,7 +2572,7 @@ static decimal math_arc_tangent_positive(decimal value)
                 working = 1.0 / working;
                 //      The reciprocal's own rounding, kept so it can be
                 //      folded back through the derivative below.
-                working_low = decimal_multiply_add(-working, value, 1.0) / value;
+                working_low = math_multiply_add(-working, value, 1.0) / value;
                 inverted = 1;
         }
 
@@ -2573,7 +2591,7 @@ static decimal math_arc_tangent_positive(decimal value)
                 //      with one rounding rather than two, and the division
                 //      gives its own back.
                 reduced = math_quotient(working - point,
-                                        decimal_multiply_add(working, point, 1.0));
+                                        math_multiply_add(working, point, 1.0));
         }
 
         answer = math_two_sum(math_arc_tangent_head[index],
@@ -2700,7 +2718,7 @@ static decimal arc_tangent_two(decimal rise, decimal run)
                         decimal below = math_magnitude(run);
                         decimal quotient = above / below;
                         decimal quotient_low =
-                                decimal_multiply_add(-quotient, below, above) / below;
+                                math_multiply_add(-quotient, below, above) / below;
 
                         answer = math_arc_tangent_positive(quotient);
                         if (decimal_is_finite(quotient))

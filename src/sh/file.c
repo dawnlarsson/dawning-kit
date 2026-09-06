@@ -7318,10 +7318,32 @@ typedef struct
         bool eligible;
         bool shown;
         bool measured;
+        bool queried;
 } df_sample;
 
 static df_sample address_to df_samples;
 static positive df_sample_room;
+static positive address_to df_order;
+static positive df_order_room;
+
+static fn df_measure(storage_mount address_to mount, df_sample address_to sample)
+{
+        sample->queried = true;
+        file_mount_facts address_to facts = address_of sample->facts;
+        // Autofs queries can mount a filesystem as a side effect.
+        bipolar answer = string_equals(mount->type, "autofs")
+                             ? -ERROR_ACCESS
+                             : system_call_2(syscall(statfs),
+                                             (positive)mount->target,
+                                             (positive)facts);
+        if (answer < 0 && answer != -ERROR_ACCESS)
+        {
+                sample->reason = answer;
+                return;
+        }
+        sample->measured = answer >= 0;
+        sample->eligible = df_all || (sample->measured && facts->blocks);
+}
 
 // The kernel counts in whatever unit the filesystem uses; df has always
 // reported in 1024 byte ones, and rounds a part of one up to a whole. An
@@ -7498,9 +7520,12 @@ static b32 file_df()
 
         bool filtering = first < count;
         positive showing = 0;
+        positive ordered = 0;
 
         if (!array_store_reserve(df_samples, df_sample_room, 0, mounts.count,
-                                 32))
+                                 32) ||
+            (filtering && !array_store_reserve(df_order, df_order_room, 0,
+                                               count - first, 8)))
         {
                 storage_mount_table_release(address_of mounts);
                 file_fail("df: out of memory\n", 0);
@@ -7509,48 +7534,27 @@ static b32 file_df()
 
         memory_fill(df_samples, 0, mounts.count * sizeof(*df_samples));
 
-        for (positive at = 0; at < mounts.count; at++)
+        for (positive at = 0; !filtering && at < mounts.count; at++)
         {
                 storage_mount address_to mount = mounts.entry + at;
                 df_sample address_to sample = df_samples + at;
-                file_mount_facts address_to facts = address_of sample->facts;
-                string_address where = mount->target;
-                string_address type = mount->type;
-
-                /* Asking an autofs mount for its facts would mount it. */
-                bipolar answered = string_compare(type, "autofs") == 0
-                                       ? -ERROR_ACCESS
-                                       : system_call_2(syscall(statfs),
-                                                       (positive)where,
-                                                       (positive)facts);
-
-                if (answered < 0 && answered != -ERROR_ACCESS)
+                df_measure(mount, sample);
+                if (sample->reason)
                 {
                         /* A mount that will not answer statfs is left out of
                            the plain table without a word; only -a, or naming
                            it, makes the failure worth reporting. */
-                        sample->reason = answered;
-
                         if (df_all)
                         {
-                                string_format(file_fail, "df: %s: %s\n", where,
-                                              file_reason(answered));
+                                string_format(file_fail, "df: %s: %s\n", mount->target,
+                                              file_reason(sample->reason));
                                 df_failed = true;
                         }
 
                         continue;
                 }
 
-                sample->measured = answered >= 0;
-
-                if (!sample->measured && !df_all)
-                        continue;
-
-                if (!facts->blocks && !df_all)
-                        continue;
-
-                sample->eligible = true;
-                sample->shown = !filtering;
+                sample->shown = sample->eligible;
         }
 
         /* statx supplies the mount ID directly. Each operand is therefore one
@@ -7584,6 +7588,10 @@ static b32 file_df()
                                         df_sample address_to named =
                                             df_samples + at - 1;
 
+                                        if (!named->queried)
+                                                df_measure(mounts.entry + at - 1,
+                                                            named);
+
                                         if (named->reason)
                                         {
                                                 string_format(
@@ -7593,7 +7601,11 @@ static b32 file_df()
                                                 df_failed = true;
                                         }
                                         else
+                                        {
                                                 named->shown = named->eligible;
+                                                if (named->eligible)
+                                                        df_order[ordered++] = at - 1;
+                                        }
 
                                         break;
                                 }
@@ -7668,13 +7680,16 @@ static b32 file_df()
         log(full_heading, 0);
         log(" Mounted on\n", 0);
 
-        for (positive at = 0; at < mounts.count; at++)
+        for (positive row = 0; row < (filtering ? ordered : mounts.count); row++)
+        {
+                positive at = filtering ? df_order[row] : row;
                 if (df_samples[at].shown)
                         df_row(mounts.entry[at].source,
                                mounts.entry[at].type,
                                mounts.entry[at].target,
                                address_of df_samples[at].facts,
                                df_samples[at].measured);
+        }
 
         storage_mount_table_release(address_of mounts);
         log_flush();
@@ -16729,17 +16744,16 @@ static b32 file_tty()
         separate: it owns the complete signed 64-bit range without making an
         integer pay for decimal scaling.
 */
-static fn seq_write(writer write, bipolar value, positive width)
+static positive seq_into(p8 address_to into, bipolar value, positive width)
 {
         if (value < 0)
         {
-                write("-", 1);
-                positive_to_padded(write, (positive)0 - (positive)value,
-                                   width ? width - 1 : 0, '0', 0);
-                return;
+                into[0] = '-';
+                return 1 + positive_into_padded(into + 1,
+                    (positive)0 - (positive)value, width ? width - 1 : 0, '0');
         }
 
-        positive_to_padded(write, (positive)value, width, '0', 0);
+        return positive_into_padded(into, (positive)value, width, '0');
 }
 
 static positive seq_width(bipolar value)
@@ -17429,15 +17443,43 @@ static b32 file_seq()
         }
 
         bipolar value = first;
-
         bool written = false;
+        p8 block[16384];
+        positive used = 0;
+        positive separator_length = string_length(separator);
+        p8 digits[24];
+        positive length = seq_into(digits, value, width);
+        bool counting = step == 1 && first >= 0;
 
         while (step > 0 ? value <= last : value >= last)
         {
                 if (written)
-                        log(separator, 0);
+                {
+                        if (separator_length > sizeof(block) - used)
+                        {
+                                log(block, used);
+                                used = 0;
+                        }
 
-                seq_write(log, value, width);
+                        if (separator_length > sizeof(block))
+                                log(separator, separator_length);
+                        else if (separator_length == 1)
+                                block[used++] = separator[0];
+                        else
+                        {
+                                memory_copy_apart(block + used, separator, separator_length);
+                                used += separator_length;
+                        }
+                }
+
+                if (length > sizeof(block) - used)
+                {
+                        log(block, used);
+                        used = 0;
+                }
+
+                memory_copy_apart(block + used, digits, length);
+                used += length;
                 written = true;
 
                 if (value == last ||
@@ -17446,12 +17488,33 @@ static b32 file_seq()
                         break;
 
                 value += step;
+
+                if (counting)
+                {
+                        // A unit increment changes only the decimal suffix.
+                        // Carry through the existing digits; widen via the
+                        // shared formatter only at a power of ten.
+                        positive at = length;
+
+                        while (at && digits[at - 1] == '9')
+                                digits[--at] = '0';
+
+                        if (at)
+                                digits[at - 1]++;
+                        else
+                                length = seq_into(digits, value, width);
+                }
+                else
+                        length = seq_into(digits, value, width);
         }
 
         // The separator goes between the numbers; the line still ends the way
         // every other line does.
         if (written)
+        {
+                log(block, used);
                 log("\n", 1);
+        }
 
         log_flush();
 

@@ -7594,6 +7594,23 @@ fn blocks_sweep_strings()
 {
         string_address base = block_aligned_at(block_field);
 
+        /* A terminator at the first byte of a four-vector block leaves the
+           last character in the masked head. Never rescan that head without
+           its lower bound: argv strings can have a slash just before them. */
+        for (positive boundary = 128; boundary <= 256; boundary += 128)
+                for (positive size = 1; size <= 96; size++)
+                {
+                        reference_fill(base, '/', boundary + 64);
+                        string_address text = base + boundary - size;
+                        reference_fill(text, 'x', size);
+                        text[size] = 0;
+                        block_last_case(text, '/');
+                        same("string_last_of", "block boundary head mask",
+                             (positive)string_last_of(text, '/'), 0);
+                        text[size / 2] = '/';
+                        block_last_case(text, '/');
+                }
+
         for (positive offset = 0; offset < 256; offset++)
                 for (positive s = 0; s < BLOCK_SIZE_COUNT; s++)
                 {

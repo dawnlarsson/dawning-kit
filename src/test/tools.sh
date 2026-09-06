@@ -523,6 +523,57 @@ printf 'heading\nsecond\n1000 foo  2000\n1\t2\t3000\n' > "$work/numfmt-feed"
 compare_in 'stdin fields' numfmt "$work/numfmt-feed" --header=2 \
         --field=1,3 --to=iec
 
+# Automatic width belongs to whitespace-prefixed fields, not bare numeric
+# input. A long unpadded first token must shrink when it gains a unit.
+printf '1048576\n 1048576\n\t1048576\n1048576 tail\nx 1048576\n' > "$work/numfmt-feed"
+compare_in 'automatic first-field width' numfmt "$work/numfmt-feed" \
+        --to=iec --invalid=ignore
+compare_in 'automatic later-field width' numfmt "$work/numfmt-feed" \
+        --field=2 --to=iec --invalid=ignore
+compare_in 'explicit width overrides automatic' numfmt "$work/numfmt-feed" \
+        --to=iec --invalid=ignore --padding=9
+printf '  bad\nx \tbad\n \t\nx\t\t1048576\n' > "$work/numfmt-feed"
+compare_in 'invalid and untouched whitespace' numfmt "$work/numfmt-feed" \
+        --field=1,2 --to=iec --invalid=ignore --padding=9
+printf '    1024\n  1048576\n1024\n' > "$work/numfmt-feed"
+for numeric_format in '%.2f' '%0.2f' '[%.2f]' 'X%.2fY' '%06.2f' '%6.2f' '%-6.2f'; do
+        compare_in "format automatic width $numeric_format" numfmt \
+                "$work/numfmt-feed" --to=iec "--format=$numeric_format"
+done
+printf '\n \t\n1024\n' > "$work/numfmt-feed"
+compare_in 'empty selected first field' numfmt "$work/numfmt-feed" --to=iec
+compare_in 'empty unselected first field' numfmt "$work/numfmt-feed" --field=2 --to=iec
+compare_in 'empty ignored first field' numfmt "$work/numfmt-feed" --invalid=ignore --to=iec
+
+printf '1024: 2048 \n1024:\t2048\t\n1024:2048 \t\n1024:bad \n1024: \t\n1024:2048\r\n1024:2048\v\n' > "$work/numfmt-feed"
+for invalid_mode in abort fail warn ignore; do
+        compare_in "explicit field trailing blanks $invalid_mode" numfmt \
+                "$work/numfmt-feed" --delimiter=: --field=2 --to=iec \
+                "--invalid=$invalid_mode"
+done
+compare_in 'trailing blanks with format and padding' numfmt "$work/numfmt-feed" \
+        --delimiter=: --field=2 --to=iec --invalid=ignore '--format=[%.2f]' --padding=9
+printf '2048 \t:x\n2048K \t:x\n2048 K \t:x\n2048  K:x\n2048\t K:x\n2048B :x\n2048 B :x\n2048_B:x\n2048_KB:x\n2048 _KB:x\n' > "$work/numfmt-feed"
+for suffix in B ' B' 'B ' ' '; do
+        compare_in "exact suffix before trailing blanks [$suffix]" numfmt \
+                "$work/numfmt-feed" --delimiter=: --from=auto --to=iec \
+                --invalid=ignore "--suffix=$suffix"
+done
+compare_in 'trailing blanks around scale separator' numfmt "$work/numfmt-feed" \
+        --delimiter=: --from=auto --to=iec --invalid=ignore --suffix=B --unit-separator=_
+for unit_separator in '' ' ' '_' '_ ' ' _' 0 1 '.' '.5' '-' '-2' K Ki i; do
+        for numeric_value in 2048 -2048 2048.25 .5 -.5 0 bad; do
+                printf '%s%sK \t:x\n%s%sKi:x\n%s %sK:x\n%s\tK:x\n%s  K:x\n' \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$numeric_value"
+        done > "$work/numfmt-feed"
+        compare_in "literal scale separator [$unit_separator]" numfmt \
+                "$work/numfmt-feed" --delimiter=: --from=auto --to=iec \
+                --invalid=ignore "--unit-separator=$unit_separator"
+done
+
 printf 'a:1000:c\n::bad\n' > "$work/numfmt-feed"
 compare_in 'explicit delimiter abort' numfmt "$work/numfmt-feed" \
         --delimiter=: --field=2 --to=iec
@@ -1422,6 +1473,8 @@ compare 'missing pid' ps -p 999999999 -o pid
 # gathered order; descending must reverse both selected rows exactly.
 compare 'sort pid' ps -p "1,$long_pid" --sort pid -o pid=
 compare 'sort pid descending' ps -p "1,$long_pid" --sort=-pid -o pid=
+compare 'unordered duplicate and missing pid selection' ps \
+        -p "$long_pid,999999999,1,$long_pid" --sort=-pid -o pid=,ppid=,comm=
 compare 'sort pid keys' ps -p "1,$long_pid" --sort pid,-pid -o pid=
 
 # Give -C a name unique to this suite so another user's sleep cannot enter the
@@ -1465,6 +1518,8 @@ compare 'repeated parent selection' ps --ppid "$parent_pid" \
         --ppid "$parent_pid" -o pid=
 compare 'selector union' ps -p "$long_pid" --ppid "$parent_pid" -o pid=
 compare 'missing parent' ps --ppid 999999999 -o pid
+compare 'parent zero selects parentless processes' ps --ppid 0 -o pid=,ppid=,comm=
+compare 'pid zero remains invalid' ps -p 0 -o pid=
 
 # Unlike -e with -p, procps treats -e with an alternate selector as a union:
 # it is still the all-process full listing. Content races, so pin the two rows

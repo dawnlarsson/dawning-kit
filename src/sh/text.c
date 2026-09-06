@@ -932,6 +932,7 @@ typedef struct
         bool last_known;
         bool anchored;
         bool alternates;
+        bool captures;
         positive slot_used;
         b32 loop_count;
 } regex_state;
@@ -968,6 +969,7 @@ static regex_state regex_context = {
 #define regex_last_known regex_context.last_known
 #define regex_anchored regex_context.anchored
 #define regex_alternates regex_context.alternates
+#define regex_captures regex_context.captures
 #define regex_slot_used regex_context.slot_used
 #define regex_loop_count regex_context.loop_count
 
@@ -2057,6 +2059,7 @@ static bool regex_compile(string_address pattern, bool extended, bool icase,
         regex_broken = false;
         regex_alternates = false;
         regex_pattern = pattern;
+        regex_captures = true;
         regex_pattern_length = string_length(pattern);
         regex_pattern_at = 0;
 
@@ -2203,6 +2206,12 @@ static b32 regex_run_inner(b32 pc, positive sp)
 
                 case REGEX_SAVE:
                 {
+                        if (!regex_captures)
+                        {
+                                pc++;
+                                continue;
+                        }
+
                         positive was = regex_slots[inst->value];
 
                         regex_slots[inst->value] = sp;
@@ -2341,8 +2350,9 @@ static bool regex_gave_up()
 
 static fn regex_clear_state()
 {
-        memory_fill(regex_slots, (b8)-1,
-                    regex_slot_used * sizeof(regex_slots[0]));
+        if (regex_captures)
+                memory_fill(regex_slots, (b8)-1,
+                            regex_slot_used * sizeof(regex_slots[0]));
 
         for (b32 i = 0; i < regex_loop_count; i++)
                 regex_loop_at[regex_loop_list[i]] = 0;
@@ -12403,19 +12413,71 @@ static fn terminal_col_output(terminal_state address_to state)
         {
                 terminal_order = (positive address_to)text_arena_take(
                     state->events * sizeof(positive));
-                positive address_to spare =
-                    (positive address_to)text_arena_take(
-                        state->events * sizeof(positive));
 
-                if (!terminal_order || !spare)
+                if (!terminal_order)
+                {
+                        text_status = 1;
                         return;
+                }
+
+                bool lines_ordered = true;
+                positive longest = 1;
+                positive run = 1;
 
                 for (positive one = 0; one < state->events; one++)
+                {
                         terminal_order[one] = one;
 
-                terminal_order = array_merge_sort(
-                    terminal_order, spare, state->events,
-                    terminal_event_compare);
+                        if (one && terminal_events[one].line <
+                                   terminal_events[one - 1].line)
+                                lines_ordered = false;
+                        run = one && terminal_events[one].line ==
+                                     terminal_events[one - 1].line ? run + 1 : 1;
+                        if (run > longest)
+                                longest = run;
+                }
+
+                positive address_to spare =
+                    (positive address_to)text_arena_take(
+                        (lines_ordered ? longest : state->events) * sizeof(positive));
+
+                if (!spare)
+                {
+                        text_status = 1;
+                        return;
+                }
+
+                if (!lines_ordered)
+                        terminal_order = array_merge_sort(
+                            terminal_order, spare, state->events,
+                            terminal_event_compare);
+                else
+                {
+                        /* Horizontal overstrikes need ordering only within
+                           their line. Reuse the same stable sorter with one
+                           line of scratch; vertical rewinds keep the global
+                           path above and its identical ordering semantics. */
+                        for (positive first = 0; first < state->events;)
+                        {
+                                positive finish = first + 1;
+
+                                while (finish < state->events &&
+                                       terminal_events[finish].line ==
+                                       terminal_events[first].line)
+                                        finish++;
+
+                                positive count = finish - first;
+                                positive address_to ordered = array_merge_sort(
+                                    terminal_order + first, spare, count,
+                                    terminal_event_compare);
+
+                                if (ordered != terminal_order + first)
+                                        memory_copy_apart(terminal_order + first,
+                                                          ordered,
+                                                          count * sizeof(positive));
+                                first = finish;
+                        }
+                }
         }
 
         bipolar base = state->minimum_line < 0 ? state->minimum_line : 0;
@@ -14023,7 +14085,25 @@ static b32 text_tr()
 
                 positive kept = 0;
 
-                if (remove && !squeeze)
+                if (!remove && !second)
+                {
+                        // With no translation, a squeezed run is the input
+                        // byte itself. Skip the run with the bounded hardware
+                        // span instead of repeating the table lookup per byte.
+                        for (positive c = 0; c < left;)
+                        {
+                                p8 character = at[c++];
+
+                                if (!squeezed[character] || (b32)character != last_written)
+                                        at[kept++] = character;
+
+                                last_written = character;
+
+                                if (squeezed[character] && c < left && at[c] == character)
+                                        c += memory_span_byte(at + c, character, left - c);
+                        }
+                }
+                else if (remove && !squeeze)
                 {
                         for (positive c = 0; c < left; c++)
                         {
@@ -14657,6 +14737,7 @@ static bool grep_hold_make(positive lines)
 static p8 grep_literal[REGEX_LITERAL_MAX];
 static positive grep_literal_length;
 static bool grep_literal_icase;
+static bool grep_literal_proves;
 static positive2 grep_literal_anchors;
 
 static fn grep_literal_keep()
@@ -14664,6 +14745,53 @@ static fn grep_literal_keep()
         grep_literal_length = regex_literal_length;
         memory_copy(grep_literal, regex_literal, regex_literal_length);
         grep_literal_anchors = regex_literal_anchors;
+        grep_literal_proves = grep_literal_length != 0;
+}
+
+/* In a branch-free program every plain character instruction is required.
+   Keep its longest consecutive run as a block prefilter, not as a match:
+   anchors, sets and repetitions still go through the existing VM. A split
+   or jump makes this proof insufficient, so those programs stay unchanged. */
+static fn grep_literal_required()
+{
+        if (grep_literal_length)
+                return;
+
+        positive start = 0;
+        positive length = 0;
+
+        for (b32 i = 0; i < regex_length_code; i++)
+        {
+                p8 code = regex_code[i].code;
+
+                if (code == REGEX_SPLIT || code == REGEX_JUMP)
+                        return;
+
+                positive run = 0;
+
+                while (i + (b32)run < regex_length_code &&
+                       regex_code[i + run].code == REGEX_CHAR)
+                        run++;
+
+                if (run > length)
+                {
+                        start = (positive)i;
+                        length = run;
+                }
+
+                if (run)
+                        i += (b32)run - 1;
+        }
+
+        if (length > REGEX_LITERAL_MAX)
+                length = REGEX_LITERAL_MAX;
+
+        for (positive i = 0; i < length; i++)
+                grep_literal[i] = regex_code[start + i].value;
+
+        grep_literal_length = length;
+        grep_literal_anchors = memory_search_prepare(grep_literal, length,
+                                                     regex_icase);
 }
 
 static bool grep_skip(positive address_to lines, positive address_to bytes)
@@ -15485,6 +15613,27 @@ static bool grep_word_is(string_address value, string_address first,
                (third && string_equals(value, third));
 }
 
+/* Discarded output needs only each file's selection status, not its count
+   or formatting. Verify the actual writable device, never its descriptor's
+   spelling. A read-only null descriptor must still reach the write error. */
+static bool grep_output_discarded()
+{
+        file_facts output;
+        file_facts discard;
+
+        if (!text_handle_facts(text_out_handle, address_of output) ||
+            (output.mode & MODE_FORMAT) != MODE_CHARACTER ||
+            output.rdev_major != 1 || output.rdev_minor != 3 ||
+            !file_look_at((string_address) "/dev/null", address_of discard) ||
+            !file_same_identity(address_of output, address_of discard))
+                return false;
+
+        bipolar flags = system_call_3(syscall(fcntl), text_out_handle,
+                                      FILE_F_GETFL, 0);
+
+        return flags >= 0 && (flags & 3) != FILE_READ;
+}
+
 static b32 text_grep()
 {
         file_taking taking = {
@@ -15715,7 +15864,20 @@ static b32 text_grep()
         if (!whole_line && !whole_word)
                 grep_literal_keep();
 
+        grep_literal_required();
         grep_literal_icase = icase;
+
+        /* Boolean selection does not need capture snapshots unless the
+           pattern itself reads them. Output modes that inspect match spans
+           retain the same capture-aware executor as sed and the other tools. */
+        if (!only && !grep_coloring)
+        {
+                regex_captures = false;
+
+                for (b32 pc = 0; pc < regex_length_code; pc++)
+                        if (regex_code[pc].code == REGEX_BACK)
+                                regex_captures = true;
+        }
 
         if (before && !grep_hold_make(before))
                 return text_done(2);
@@ -15747,6 +15909,7 @@ static b32 text_grep()
         // Nothing named and no -r is the one way standard input is read;
         // -r with nothing named walks the working directory instead.
         bool from_stdin = !text_files_count && !grep_recursive;
+        bool discarded = grep_output_discarded();
         bool found_any = false;
         bool shown_any = false;
         b32 trouble = 0;
@@ -15862,15 +16025,28 @@ static b32 text_grep()
 
                 grep_hold_clear();
 
+                /* Only independently opened regular files may stop at a
+                   match. Keep stdin (including '-') and pipe/device inputs
+                   on their draining path so a producer never gains SIGPIPE
+                   merely because the consumer's output was redirected. */
+                file_facts input_facts;
+                bool discard_file = discarded && text_input.opened &&
+                                    text_handle_facts(text_input.handle,
+                                                      address_of input_facts) &&
+                                    (input_facts.mode & MODE_FORMAT) == MODE_FILE;
+
                 // -v wants the lines that do not match and the context flags
                 // want the ones around them, so neither can have any line go
                 // by unread.
                 bool skipping = grep_literal_length && !invert && !before && !after;
-                bool direct_counting = counting && skipping && !whole_line &&
+                bool direct_counting = counting && skipping && grep_literal_proves && !whole_line &&
                                        !whole_word && !listing &&
-                                       !listing_without && !quiet;
+                                       !listing_without && !quiet && !discard_file;
                 bool fused_counting = direct_counting && !icase &&
                                       limit == TEXT_UNSET;
+                bool plain_output = !grouped && !grep_names &&
+                                    !grep_numbered && !grep_offsets &&
+                                    !grep_coloring;
 
                 for (;;)
                 {
@@ -15934,12 +16110,16 @@ static b32 text_grep()
                         {
                                 positive jumped = 0;
 
-                                sure = grep_skip(address_of number, address_of jumped) &&
+                                sure = grep_skip(address_of number, address_of jumped) && grep_literal_proves &&
                                        !whole_line && !whole_word;
                                 offset += jumped;
                         }
 
-                        if (!text_line_next())
+                        p8 address_to line;
+
+                        if (!text_line_view(address_of line,
+                                            address_of text_line_length,
+                                            null, 0, null))
                                 break;
 
                         number++;
@@ -15950,7 +16130,7 @@ static b32 text_grep()
 
                         bool hit = !never &&
                                    ((sure && text_line_length < TEXT_LINE_MAX) ||
-                                    regex_search(text_line, text_line_length, 0));
+                                    regex_search(line, text_line_length, 0));
 
                         if (hit == invert)
                         {
@@ -15960,7 +16140,7 @@ static b32 text_grep()
                                                        address_of split, shown,
                                                        number);
                                         grep_head(shown_name, '-', number, at);
-                                        grep_color_line(text_line, text_line_length,
+                                        grep_color_line(line, text_line_length,
                                                         true, invert);
                                         text_put_character(text_delimiter);
 
@@ -15970,7 +16150,7 @@ static b32 text_grep()
                                 }
                                 else if (before)
                                 {
-                                        if (!grep_hold_put(text_line, text_line_length,
+                                        if (!grep_hold_put(line, text_line_length,
                                                            number))
                                         {
                                                 trouble = 2;
@@ -15993,7 +16173,7 @@ static b32 text_grep()
                                 return text_done(0);
                         }
 
-                        if (listing || listing_without)
+                        if (listing || listing_without || discard_file)
                                 break;
 
                         if (counting)
@@ -16032,7 +16212,7 @@ static b32 text_grep()
                                 positive from = 0;
 
                                 while (from <= text_line_length &&
-                                       regex_search_longest(text_line, text_line_length, from))
+                                       regex_search_longest(line, text_line_length, from))
                                 {
                                         positive whole_stop = regex_slots[1];
                                         positive begin = regex_slots[grep_match_slot];
@@ -16065,7 +16245,7 @@ static b32 text_grep()
                                         {
                                                 grep_head(shown_name, ':', number, at + begin);
                                                 grep_color_field(
-                                                    text_line + begin, stop - begin,
+                                                    line + begin, stop - begin,
                                                     (string_address) "ms",
                                                     (string_address) "01;31");
                                                 text_put_character(text_delimiter);
@@ -16084,12 +16264,17 @@ static b32 text_grep()
                                 continue;
                         }
 
-                        grep_group_gap(grouped, separator, address_of split,
-                                       shown, number);
-                        grep_head(shown_name, ':', number, at);
-                        grep_color_line(text_line, text_line_length, false,
-                                        !invert);
-                        text_put_character(text_delimiter);
+                        if (plain_output)
+                                text_put(line, text_line_length + 1);
+                        else
+                        {
+                                grep_group_gap(grouped, separator, address_of split,
+                                               shown, number);
+                                grep_head(shown_name, ':', number, at);
+                                grep_color_line(line, text_line_length, false,
+                                                !invert);
+                                text_put_character(text_delimiter);
+                        }
 
                         shown = number;
                         shown_any = true;
@@ -18116,106 +18301,112 @@ static positive sort_zero_prefix(p8 address_to text, positive from, positive sto
         return from;
 }
 
-static PURE bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b, positive lb)
+typedef struct
 {
-        positive at_a = 0, at_b = 0;
-        bool minus_a = false, minus_b = false;
+        union
+        {
+                p8 address_to at;
+                positive packed;
+        } integer;
+        p8 address_to fraction;
+        bipolar rank;
+        positive places;
+} sort_number;
 
-        at_a = string_span_max(a, la, string_set_blanks);
-        at_b = string_span_max(b, lb, string_set_blanks);
+// Signed integer width orders magnitudes before any digit comparison. Zero
+// has its own rank, including -0 and -.000; nonzero fractions have width zero.
+static sort_number sort_number_of(p8 address_to text, positive length)
+{
+        positive at = string_span_max(text, length, string_set_blanks);
+        bool minus = at < length && text[at] == '-';
 
         // A leading plus is not a sign here: GNU sort reads +7 as no number
         // at all, which sorts it with the zeros rather than after the sixes.
-        if (at_a < la && a[at_a] == '-')
+        at += minus;
+        positive first = at;
+
+        while (at < length && byte_is_digit(text[at]))
+                at++;
+
+        first = sort_zero_prefix(text, first, at);
+        positive digits = at - first;
+        positive fraction = at;
+
+        if (at < length && text[at] == '.')
         {
-                minus_a = true;
-                at_a++;
+                fraction = ++at;
+
+                while (at < length && byte_is_digit(text[at]))
+                        at++;
+
+                while (at > fraction && text[at - 1] == '0')
+                        at--;
         }
 
-        if (at_b < lb && b[at_b] == '-')
+        positive places = at - fraction;
+        bipolar rank = digits || places ? (bipolar)digits + 1 : 0;
+
+        sort_number number = {.integer.at = text + first,
+                               .fraction = text + fraction,
+                               .rank = minus ? -rank : rank,
+                               .places = places};
+
+        // Equal-width integers fitting one word compare with one native
+        // integer instruction. Longer numbers retain their exact byte view;
+        // no conversion can round or overflow their significant digits.
+        if (digits <= sizeof(positive))
         {
-                minus_b = true;
-                at_b++;
+                number.integer.packed = 0;
+
+                for (positive i = 0; i < digits; i++)
+                        number.integer.packed = (number.integer.packed << 8) |
+                                                text[first + i];
         }
 
-        positive int_a = at_a, int_b = at_b;
+        return number;
+}
 
-        while (at_a < la && byte_is_digit(a[at_a]))
-                at_a++;
+static PURE bipolar sort_compare_parsed(sort_number address_to a,
+                                         sort_number address_to b)
+{
+        if (a->rank != b->rank)
+                return a->rank < b->rank ? -1 : 1;
 
-        while (at_b < lb && byte_is_digit(b[at_b]))
-                at_b++;
-
-        positive int_a_stop = at_a, int_b_stop = at_b;
-        positive frac_a = at_a, frac_a_stop = at_a;
-        positive frac_b = at_b, frac_b_stop = at_b;
-
-        if (at_a < la && a[at_a] == '.')
-        {
-                frac_a = ++at_a;
-
-                while (at_a < la && byte_is_digit(a[at_a]))
-                        at_a++;
-
-                frac_a_stop = at_a;
-        }
-
-        if (at_b < lb && b[at_b] == '.')
-        {
-                frac_b = ++at_b;
-
-                while (at_b < lb && byte_is_digit(b[at_b]))
-                        at_b++;
-
-                frac_b_stop = at_b;
-        }
-
-        int_a = sort_zero_prefix(a, int_a, int_a_stop);
-        int_b = sort_zero_prefix(b, int_b, int_b_stop);
-
-        bool zero_a = int_a == int_a_stop;
-        bool zero_b = int_b == int_b_stop;
-
-        for (positive i = frac_a; zero_a && i < frac_a_stop; i++)
-                if (a[i] != '0')
-                        zero_a = false;
-
-        for (positive i = frac_b; zero_b && i < frac_b_stop; i++)
-                if (b[i] != '0')
-                        zero_b = false;
-
-        if (zero_a && zero_b)
+        if (!a->rank)
                 return 0;
 
-        if (minus_a != minus_b)
-                return minus_a ? -1 : 1;
+        bipolar sign = a->rank < 0 ? -1 : 1;
+        positive digits = (positive)(a->rank * sign - 1);
+        bipolar answer;
 
-        bipolar sign = minus_a ? -1 : 1;
-        positive digits_a = int_a_stop - int_a;
-        positive digits_b = int_b_stop - int_b;
+        if (digits <= sizeof(positive))
+                answer = (a->integer.packed > b->integer.packed) -
+                         (a->integer.packed < b->integer.packed);
+        else
+                answer = memory_compare(a->integer.at, b->integer.at, digits);
 
-        if (digits_a != digits_b)
-                return digits_a < digits_b ? -sign : sign;
-
-        for (positive i = 0; i < digits_a; i++)
-                if (a[int_a + i] != b[int_b + i])
-                        return a[int_a + i] < b[int_b + i] ? -sign : sign;
-
-        positive frac = 0;
-
-        for (;;)
+        if (!answer)
         {
-                p8 one = frac_a + frac < frac_a_stop ? a[frac_a + frac] : '0';
-                p8 two = frac_b + frac < frac_b_stop ? b[frac_b + frac] : '0';
+                positive places = a->places < b->places ? a->places : b->places;
 
-                if (frac_a + frac >= frac_a_stop && frac_b + frac >= frac_b_stop)
-                        return 0;
+                if (places)
+                        answer = memory_compare(a->fraction, b->fraction, places);
 
-                if (one != two)
-                        return one < two ? -sign : sign;
-
-                frac++;
+                // Trailing zeros were trimmed, so an unmatched suffix is
+                // strictly greater than the implicit zero padding.
+                if (!answer && a->places != b->places)
+                        answer = a->places < b->places ? -1 : 1;
         }
+
+        return sign * answer;
+}
+
+static PURE bipolar sort_compare_number(p8 address_to a, positive la, p8 address_to b, positive lb)
+{
+        sort_number one = sort_number_of(a, la);
+        sort_number two = sort_number_of(b, lb);
+
+        return sort_compare_parsed(address_of one, address_of two);
 }
 
 static bool sort_looked_at(p8 character, positive how)
@@ -18584,8 +18775,8 @@ static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, po
 }
 
 /*
-        The first key's bounds, found once per line rather than once per
-        comparison.
+        The first key's bounds, or its exact normalized numeric view, found
+        once per line rather than once per comparison.
 
         Finding where -k3 starts means walking the line counting fields, and a
         merge sort asks about a line some twenty times. Caching only the first
@@ -18593,13 +18784,30 @@ static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, po
 */
 static positive address_to sort_span_from;
 static positive address_to sort_span_to;
+static sort_number address_to sort_numbers;
 
 static PURE HOT bipolar sort_compare_keys(positive left, positive right)
 {
         text_slice address_to a = text_lines + left;
         text_slice address_to b = text_lines + right;
+        b32 first_key = 0;
 
-        for (b32 i = 0; i < sort_key_count; i++)
+        if (sort_numbers)
+        {
+                bipolar answer = sort_compare_parsed(sort_numbers + left,
+                                                     sort_numbers + right);
+                bool reverse = sort_key_count ? sort_keys[0].reverse : sort_reverse;
+
+                if (answer)
+                        return reverse ? -answer : answer;
+
+                if (!sort_key_count)
+                        return 0;
+
+                first_key = 1;
+        }
+
+        for (b32 i = first_key; i < sort_key_count; i++)
         {
                 sort_key address_to key = sort_keys + i;
                 positive from_a, to_a, from_b, to_b;
@@ -19209,7 +19417,40 @@ static b32 text_sort()
         for (positive i = 0; i < text_lines_count; i++)
                 sort_order[i] = i;
 
-        if (sort_key_count)
+        positive address_to head = merging
+            ? (positive address_to)text_arena_take(
+                  ((positive)inputs + 1) * sizeof(positive))
+            : null;
+
+        if (merging && !head)
+                return text_done(2);
+
+        // A cache must not lower the input ceiling. Reserve mandatory merge
+        // heads first, then retain the original comparator/span path when
+        // the larger numeric views do not fit the remaining arena.
+        positive number_bytes = (text_lines_count + 1) * sizeof(sort_number);
+
+        if ((sort_key_count ? sort_keys[0].kind : sort_kind) == 'n' &&
+            number_bytes <= TEXT_ARENA_BYTES - text_arena_used)
+        {
+                sort_numbers = (sort_number address_to)text_arena_take(number_bytes);
+
+                if (!sort_numbers)
+                        return text_done(2);
+
+                for (positive i = 0; i < text_lines_count; i++)
+                {
+                        text_slice address_to line = text_lines + i;
+                        positive from = 0, to = line->length;
+
+                        if (sort_key_count)
+                                sort_key_span(sort_keys, line->at, line->length,
+                                              address_of from, address_of to);
+
+                        sort_numbers[i] = sort_number_of(line->at + from, to - from);
+                }
+        }
+        else if (sort_key_count)
         {
                 sort_span_from = (positive address_to)text_arena_take(
                     (text_lines_count + 1) * sizeof(positive));
@@ -19232,12 +19473,6 @@ static b32 text_sort()
         */
         if (merging)
         {
-                positive address_to head = (positive address_to)text_arena_take(
-                    ((positive)inputs + 1) * sizeof(positive));
-
-                if (!head)
-                        return text_done(2);
-
                 for (b32 r = 0; r < inputs; r++)
                         head[r] = r ? run_stop[r - 1] : 0;
 

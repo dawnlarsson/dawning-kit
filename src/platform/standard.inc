@@ -1548,10 +1548,9 @@ __asm__(
     //
     //      FMA3 is x86-64-v3 and this file builds against v2, so the one
     //      instruction cannot simply be written: the feature byte decides,
-    //      the same byte the string routines read. cpu_has_avx2 stands in for
-    //      "has FMA3" because no shipping part has AVX2 without it, and
-    //      because the XGETBV probe that sets it already checked that the
-    //      operating system enabled the AVX state a VEX encoding needs.
+    //      cpu_has_fma requires the FMA3 bit separately from AVX2, because a
+    //      virtual CPU can expose either feature without the other. The
+    //      detector also checks AVX, OSXSAVE and the enabled XMM/YMM state.
     //
     //      Underneath is the body a machine older than 2013 runs, and it is
     //      in the general registers rather than in double-double arithmetic
@@ -1569,7 +1568,7 @@ __asm__(
     //      with ties to even. This library never changes the mode.
     //
     ASM_FUNC(decimal_multiply_add)
-    ASM_NARROW("cpu_has_avx2", "70f")
+    ASM_NARROW("cpu_has_fma", "70f")
     "vfmadd213sd %xmm2, %xmm1, %xmm0\n"
     ASM_RET
     "70:\n"

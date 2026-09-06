@@ -1681,6 +1681,9 @@ near 'whole table'      "sed 's/[0-9]/X/g'" df
 near 'human'            "sed 's/[0-9]/X/g'" df -h
 near 'root'             "sed 's/[0-9]/X/g'" df /
 near 'a path'           "sed 's/[0-9]/X/g'" df /tmp
+near 'repeated selected mount' "sed 's/[0-9]/X/g'" df -Pi /tmp /tmp/.
+near 'two selected mounts' "sed 's/[0-9]/X/g'" df -Pi / /tmp
+near 'operand order across mounts' "sed 's/[0-9]/X/g'" df -Pi /tmp /
 near 'mount points'     "tail -n +2 | awk '{print \$NF}' | LC_ALL=C sort" df
 near 'inodes'           "sed 's/[0-9]/X/g'" df -i
 near 'inodes of a path' "sed 's/[0-9]/X/g'" df -i /tmp

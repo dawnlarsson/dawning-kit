@@ -450,7 +450,9 @@ static HOT bool system_process_parse(
 }
 
 static HOT bool system_snapshot_processes(system_snapshot address_to sample,
-                                          bool owners)
+                                          bool owners,
+                                          positive address_to selected,
+                                          positive selected_count)
 {
         file_walk walk;
 
@@ -467,6 +469,18 @@ static HOT bool system_snapshot_processes(system_snapshot address_to sample,
         {
                 if (!byte_is_digit(entry->d_name[0]))
                         continue;
+
+                /* Keep procfs' numeric ordering, but do not open unrelated
+                   stat/status files for an explicit PID-only selection. */
+                if (selected_count)
+                {
+                        positive pid = string_digits(entry->d_name, null);
+                        positive at = 0;
+                        while (at < selected_count && selected[at] != pid)
+                                at++;
+                        if (at == selected_count)
+                                continue;
+                }
 
                 p8 path[64];
                 p8 block[8192];
@@ -521,8 +535,9 @@ static HOT bool system_snapshot_processes(system_snapshot address_to sample,
         return true;
 }
 
-static HOT bool system_snapshot_take(system_snapshot address_to sample,
-                                     unsigned int flags, bool process_owners)
+static HOT bool system_snapshot_take_selected(
+    system_snapshot address_to sample, unsigned int flags, bool process_owners,
+    positive address_to selected, positive selected_count)
 {
         unsigned int kernel_flags = flags & SPARK_SNAPSHOT_KERNEL;
         bool accelerated = system_snapshot_accelerated(sample, kernel_flags);
@@ -558,7 +573,8 @@ static HOT bool system_snapshot_take(system_snapshot address_to sample,
             !system_snapshot_network(sample))
                 return false;
         if ((flags & SPARK_SNAPSHOT_PROCESS) &&
-            !system_snapshot_processes(sample, process_owners))
+            !system_snapshot_processes(sample, process_owners, selected,
+                                       selected_count))
                 return false;
 
         sample->header.flags = flags;
@@ -573,4 +589,11 @@ static HOT bool system_snapshot_take(system_snapshot address_to sample,
                 sample->processes = (struct snapshot_process address_to)
                     (sample->records.bytes + sample->header.process_offset);
         return true;
+}
+
+static HOT bool system_snapshot_take(system_snapshot address_to sample,
+                                     unsigned int flags, bool process_owners)
+{
+        return system_snapshot_take_selected(sample, flags, process_owners,
+                                              null, 0);
 }

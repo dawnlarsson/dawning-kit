@@ -116,10 +116,10 @@ static fn awk_text_drop(awk_text address_to which)
 /*
         Arithmetic.
 
-        The freestanding standard layer included above this file supplies the
-        hardware square root and exact modulo used below. Its general
-        transcendental reducers and compensated arithmetic cost 2.7K more
-        linked text than these compact awk routines, so those stay local.
+        The freestanding standard layer supplies the hardware square root,
+        exact modulo and shared transcendental reducers. Its reduced Horner
+        polynomials avoid the division loops formerly duplicated here, and
+        its full-range reducers preserve huge angles and special values.
         The two conversions between a double and its decimal spelling are
         the layer's as well: its printf writes a double's digits exactly and
         its strtod rounds correctly, so printing 1e300 in full comes out as
@@ -146,24 +146,6 @@ static bool awk_is_finite(decimal value)
 static bool awk_negative(decimal value)
 {
         return (awk_bits_of(value) >> 63) != 0;
-}
-
-static decimal awk_scale2(decimal value, b32 power)
-{
-        while (power > 1000)
-        {
-                value *= awk_from_bits((positive)(1023 + 1000) << 52);
-                power -= 1000;
-        }
-
-        while (power < -1000)
-        {
-                value *= awk_from_bits((positive)(1023 - 1000) << 52);
-                power += 1000;
-        }
-
-        // Both loops leave power within [-1000, 1000].
-        return value * awk_from_bits((positive)(1023 + power) << 52);
 }
 
 static decimal awk_absolute(decimal value)
@@ -217,216 +199,9 @@ static decimal awk_truncate(decimal value)
         return (decimal)(bipolar)value;
 }
 
-#define AWK_LN2_HIGH 0.693147180369123816490
-#define AWK_LN2_LOW 1.90821492927058770002e-10
-#define AWK_PI 3.14159265358979311600
-#define AWK_PI_HALF 1.57079632679489655800
-
-static decimal awk_exp(decimal value)
-{
-        if (awk_is_nan(value))
-                return value;
-
-        if (value > 709.782712893384)
-                return awk_infinity;
-
-        if (value < -745.2)
-                return 0;
-
-        decimal scaled = value * 1.44269504088896338700;
-        b32 k = (b32)(scaled < 0 ? scaled - 0.5 : scaled + 0.5);
-        decimal r = value - (decimal)k * AWK_LN2_HIGH - (decimal)k * AWK_LN2_LOW;
-        decimal term = 1;
-        decimal sum = 1;
-
-        for (b32 i = 1; i <= 15; i++)
-        {
-                term *= r / (decimal)i;
-                sum += term;
-        }
-
-        return awk_scale2(sum, k);
-}
-
-static decimal awk_log(decimal value)
-{
-        if (awk_is_nan(value))
-                return value;
-
-        if (value < 0)
-                return awk_not_a_number;
-
-        if (value == 0)
-                return -awk_infinity;
-
-        if (!awk_is_finite(value))
-                return value;
-
-        positive bits = awk_bits_of(value);
-        b32 exponent = (b32)((bits >> 52) & 0x7ff);
-
-        if (!exponent)
-        {
-                value = awk_scale2(value, 200);
-                bits = awk_bits_of(value);
-                exponent = (b32)((bits >> 52) & 0x7ff) - 200;
-        }
-
-        b32 power = exponent - 1023;
-        decimal mantissa = awk_from_bits((bits & (((positive)1 << 52) - 1)) |
-                                         ((positive)1023 << 52));
-
-        if (mantissa > 1.41421356237309514547)
-        {
-                mantissa *= 0.5;
-                power++;
-        }
-
-        decimal s = (mantissa - 1) / (mantissa + 1);
-        decimal square = s * s;
-        decimal term = s;
-        decimal sum = s;
-
-        for (b32 i = 3; i <= 27; i += 2)
-        {
-                term *= square;
-                sum += term / (decimal)i;
-        }
-
-        return 2 * sum + (decimal)power * AWK_LN2_HIGH + (decimal)power * AWK_LN2_LOW;
-}
-
-// Reduced by halves of pi in three pieces, which holds to the last bit out to
-// about a billion and drifts slowly after that.
-#define AWK_PIO2_1 1.57079632673412561417e+00
-#define AWK_PIO2_2 6.07710050650619224932e-11
-#define AWK_PIO2_3 2.02226624879595063154e-21
-
-#define AWK_TRIG_KERNEL(name, seed, first, last)                             \
-static decimal name(decimal r)                                              \
-{                                                                           \
-        decimal square = r * r;                                             \
-        decimal term = (seed);                                              \
-        decimal sum = (seed);                                               \
-        for (b32 i = (first); i <= (last); i += 2)                          \
-        {                                                                   \
-                term *= -square / (decimal)(i * (i - 1));                   \
-                sum += term;                                                \
-        }                                                                   \
-        return sum;                                                         \
-}
-AWK_TRIG_KERNEL(awk_sin_kernel, r, 3, 19)
-AWK_TRIG_KERNEL(awk_cos_kernel, 1, 2, 20)
-#undef AWK_TRIG_KERNEL
-
-static b32 awk_reduce_quarter(decimal value, decimal address_to rest)
-{
-        decimal scaled = value * 0.63661977236758138243;
-        decimal rounded = scaled < 0 ? scaled - 0.5 : scaled + 0.5;
-
-        rounded = awk_truncate(rounded);
-
-        decimal r = value - rounded * AWK_PIO2_1;
-
-        r -= rounded * AWK_PIO2_2;
-        r -= rounded * AWK_PIO2_3;
-        address_to rest = r;
-
-        bipolar quarter = (bipolar)rounded;
-
-        return (b32)(quarter & 3);
-}
-
-#define AWK_TRIG(name, at_zero, at_one, at_two, at_three)                    \
-static decimal name(decimal value)                                          \
-{                                                                           \
-        if (!awk_is_finite(value))                                          \
-                return awk_not_a_number;                                    \
-        decimal r;                                                          \
-        b32 quarter = awk_reduce_quarter(value, address_of r);              \
-        switch (quarter)                                                    \
-        {                                                                   \
-        case 0: return (at_zero);                                           \
-        case 1: return (at_one);                                            \
-        case 2: return (at_two);                                            \
-        }                                                                   \
-        return (at_three);                                                  \
-}
-AWK_TRIG(awk_sin, awk_sin_kernel(r), awk_cos_kernel(r),
-         -awk_sin_kernel(r), -awk_cos_kernel(r))
-AWK_TRIG(awk_cos, awk_cos_kernel(r), -awk_sin_kernel(r),
-         -awk_cos_kernel(r), awk_sin_kernel(r))
-#undef AWK_TRIG
-
-static decimal awk_atan_small(decimal x)
-{
-        decimal square = x * x;
-        decimal term = x;
-        decimal sum = x;
-
-        for (b32 i = 3; i <= 61; i += 2)
-        {
-                term *= -square;
-                sum += term / (decimal)i;
-        }
-
-        return sum;
-}
-
-static decimal awk_atan(decimal x)
-{
-        bool negative = x < 0;
-        decimal value = negative ? -x : x;
-        decimal answer;
-
-        if (awk_is_nan(x))
-                return x;
-
-        if (!awk_is_finite(value))
-                answer = AWK_PI_HALF;
-        else if (value > 1)
-        {
-                decimal inner = 1 / value;
-
-                if (inner > 0.19891236737965800691)
-                        answer = AWK_PI_HALF - (AWK_PI / 8 +
-                                                awk_atan_small((inner - 0.41421356237309503) /
-                                                               (1 + 0.41421356237309503 * inner)));
-                else
-                        answer = AWK_PI_HALF - awk_atan_small(inner);
-        }
-        else if (value > 0.19891236737965800691)
-                answer = AWK_PI / 8 + awk_atan_small((value - 0.41421356237309503) /
-                                                     (1 + 0.41421356237309503 * value));
-        else
-                answer = awk_atan_small(value);
-
-        return negative ? -answer : answer;
-}
-
-static decimal awk_atan2(decimal y, decimal x)
-{
-        if (awk_is_nan(y) || awk_is_nan(x))
-                return awk_not_a_number;
-
-        if (x == 0 && y == 0)
-                return awk_negative(x) ? (awk_negative(y) ? -AWK_PI : AWK_PI)
-                                       : (awk_negative(y) ? -0.0 : 0.0);
-
-        if (x == 0)
-                return y > 0 ? AWK_PI_HALF : -AWK_PI_HALF;
-
-        decimal base = awk_atan(y / x);
-
-        if (x > 0)
-                return base;
-
-        return y >= 0 ? base + AWK_PI : base - AWK_PI;
-}
-
 static decimal awk_power(decimal base, decimal exponent)
 {
-        if (exponent == 0)
+        if (exponent == 0 || base == 1)
                 return 1;
 
         if (awk_is_nan(base) || awk_is_nan(exponent))
@@ -455,13 +230,7 @@ static decimal awk_power(decimal base, decimal exponent)
                 return invert ? 1 / result : result;
         }
 
-        if (base < 0)
-                return awk_not_a_number;
-
-        if (base == 0)
-                return exponent < 0 ? awk_infinity : 0;
-
-        return awk_exp(exponent * awk_log(base));
+        return power(base, exponent);
 }
 
 /*
@@ -832,18 +601,17 @@ static bool awk_numeric_side(awk_value address_to which)
 
 // Below, above, the same, or -- for a value that is not a number at all --
 // none of the three, which is what two says.
+static b32 awk_compare_numbers(decimal a, decimal b)
+{
+        if (a != a || b != b)
+                return 2;
+        return a < b ? -1 : (a > b ? 1 : 0);
+}
+
 static b32 awk_compare(awk_value address_to left, awk_value address_to right)
 {
         if (awk_numeric_side(left) && awk_numeric_side(right))
-        {
-                decimal a = awk_to_number(left);
-                decimal b = awk_to_number(right);
-
-                if (a != a || b != b)
-                        return 2;
-
-                return a < b ? -1 : (a > b ? 1 : 0);
-        }
+                return awk_compare_numbers(awk_to_number(left), awk_to_number(right));
 
         awk_text address_to a = awk_to_text(left);
         awk_text address_to b = awk_to_text(right);
@@ -4535,23 +4303,132 @@ static fn awk_leave(b32 code)
         exit(code & 0xff);
 }
 
-#define AWK_EVALUATOR(name, type, conversion)                                \
-        static type name(awk_node address_to node)                           \
-        {                                                                    \
-                awk_value one;                                               \
-                type value;                                                  \
-                                                                             \
-                awk_value_start(one);                                        \
-                awk_eval(node, address_of one);                              \
-                value = (conversion);                                        \
-                awk_value_done(address_of one);                              \
-                return value;                                                \
+static awk_text address_to awk_eval_text(awk_node address_to node)
+{
+        awk_value one;
+        awk_value_start(one);
+        awk_eval(node, address_of one);
+        awk_text address_to value = awk_text_hold(awk_to_text(address_of one));
+        awk_value_done(address_of one);
+        return value;
+}
+
+static bool awk_eval_compare(awk_node address_to node)
+{
+        b32 order;
+        // A literal RHS cannot mutate the variable while it is borrowed.
+        // Other expressions keep owned snapshots and left-to-right order.
+        if (node->a->kind == N_VARIABLE && node->b->kind == N_NUMBER &&
+            awk_numeric_side(address_of awk_cell_of(node->a->index)->value))
+                order = awk_compare_numbers(
+                    awk_to_number(address_of awk_cell_of(node->a->index)->value),
+                    node->b->number);
+        else
+        {
+                awk_value left;
+                awk_value right;
+                awk_value_start(left);
+                awk_value_start(right);
+                awk_eval(node->a, address_of left);
+                awk_eval(node->b, address_of right);
+                order = awk_compare(address_of left, address_of right);
+                awk_value_done(address_of left);
+                awk_value_done(address_of right);
         }
 
-AWK_EVALUATOR(awk_eval_text, awk_text address_to,
-              awk_text_hold(awk_to_text(address_of one)))
-AWK_EVALUATOR(awk_eval_number, decimal, awk_to_number(address_of one))
-AWK_EVALUATOR(awk_eval_truth, bool, awk_truth(address_of one))
+        switch (node->sub)
+        {
+        case T_LESS: return order == -1;
+        case T_LESS_EQUAL: return order == -1 || order == 0;
+        case T_GREATER: return order == 1;
+        case T_GREATER_EQUAL: return order == 1 || order == 0;
+        case T_EQUAL: return order == 0;
+        default: return order != 0;
+        }
+}
+
+static bool awk_eval_truth(awk_node address_to node)
+{
+        if (node->kind == N_COMPARE)
+                return awk_eval_compare(node);
+        if (node->kind == N_VARIABLE)
+                return awk_truth(address_of awk_cell_of(node->index)->value);
+        if (node->kind == N_NUMBER)
+                return node->number != 0;
+
+        awk_value one;
+        awk_value_start(one);
+        awk_eval(node, address_of one);
+        bool value = awk_truth(address_of one);
+        awk_value_done(address_of one);
+        return value;
+}
+
+static decimal awk_eval_number(awk_node address_to node)
+{
+        // Numeric consumers need no owned values along an arithmetic tree.
+        // Convert in place so input classification is cached on the source,
+        // rather than repeated on a temporary copy on every loop iteration.
+        switch (node->kind)
+        {
+        case N_NUMBER:
+                return node->number;
+        case N_VARIABLE:
+                return awk_to_number(address_of awk_cell_of(node->index)->value);
+        case N_FIELD:
+                if (node->sub && node->index > 0 && node->index <= awk_nf)
+                        return awk_to_number(address_of awk_fields[node->index]);
+                return awk_to_number(awk_field(awk_whole(awk_eval_number(node->a))));
+        case N_NEGATE:
+                return -awk_eval_number(node->a);
+        case N_AFFIRM:
+                return awk_eval_number(node->a);
+        case N_ARITH:
+        {
+                decimal left = awk_eval_number(node->a);
+                decimal right = awk_eval_number(node->b);
+
+                switch (node->sub)
+                {
+                case '+': return left + right;
+                case '-': return left - right;
+                case '*': return left * right;
+                case '/':
+                        if (right == 0)
+                                awk_fatal(null, "division by zero attempted");
+                        return left / right;
+                case '%':
+                        if (right == 0)
+                                awk_fatal(null, "division by zero attempted in %");
+                        return decimal_modulo(left, right);
+                }
+                return awk_power(left, right);
+        }
+        case N_BUILTIN:
+                if (node->index >= B_SIN && node->index <= B_INT)
+                {
+                        decimal first = node->count ? awk_eval_number(node->a) : 0;
+                        switch (node->index)
+                        {
+                        case B_SIN: return sine(first);
+                        case B_COS: return cosine(first);
+                        case B_ATAN2: return atan2(first, awk_eval_number(node->a->next));
+                        case B_EXP: return exponential(first);
+                        case B_LOG: return logarithm(first);
+                        case B_SQRT: return square_root(first);
+                        case B_INT: return awk_truncate(first);
+                        }
+                }
+                break;
+        }
+
+        awk_value one;
+        awk_value_start(one);
+        awk_eval(node, address_of one);
+        decimal value = awk_to_number(address_of one);
+        awk_value_done(address_of one);
+        return value;
+}
 
 // The key a subscript list makes, which is the pieces joined by SUBSEP.
 static awk_text address_to awk_subscript_key(awk_node address_to list, b32 count)
@@ -4692,12 +4569,11 @@ static fn awk_target_written(awk_target address_to which)
 static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
 {
         awk_target target;
-        awk_value right;
-
-        awk_value_start(right);
 
         if (node->sub == T_ASSIGN)
         {
+                awk_value right;
+                awk_value_start(right);
                 awk_eval(node->b, address_of right);
                 awk_target_of(node->a, address_of target);
                 awk_value_copy(awk_target_slot(address_of target), address_of right);
@@ -4707,10 +4583,7 @@ static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
                 return;
         }
 
-        awk_eval(node->b, address_of right);
-
-        decimal value = awk_to_number(address_of right);
-        awk_value_done(address_of right);
+        decimal value = awk_eval_number(node->b);
 
         // Compound assignment follows the reference's right-before-left
         // order too: the RHS may change the field number or array key used by
@@ -4872,32 +4745,8 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
         }
 
         case N_COMPARE:
-        {
-                awk_value left;
-                awk_value right;
-                b32 order;
-
-                awk_value_start(left);
-                awk_value_start(right);
-                awk_eval(node->a, address_of left);
-                awk_eval(node->b, address_of right);
-                order = awk_compare(address_of left, address_of right);
-                awk_value_done(address_of left);
-                awk_value_done(address_of right);
-
-                switch (node->sub)
-                {
-                case T_LESS: order = order == -1; break;
-                case T_LESS_EQUAL: order = order == -1 || order == 0; break;
-                case T_GREATER: order = order == 1; break;
-                case T_GREATER_EQUAL: order = order == 1 || order == 0; break;
-                case T_EQUAL: order = order == 0; break;
-                default: order = order != 0; break;
-                }
-
-                awk_set_number(out, (decimal)order);
+                awk_set_number(out, awk_eval_compare(node) ? 1 : 0);
                 return;
-        }
 
         case N_CONCAT:
         {
@@ -4914,41 +4763,9 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
         }
 
         case N_ARITH:
-        {
-                decimal left = awk_eval_number(node->a);
-                decimal right = awk_eval_number(node->b);
-
-                switch (node->sub)
-                {
-                case '+': awk_set_number(out, left + right); return;
-                case '-': awk_set_number(out, left - right); return;
-                case '*': awk_set_number(out, left * right); return;
-
-                case '/':
-                        if (right == 0)
-                                awk_fatal(null, "division by zero attempted");
-
-                        awk_set_number(out, left / right);
-                        return;
-
-                case '%':
-                        if (right == 0)
-                                awk_fatal(null, "division by zero attempted in %");
-
-                        awk_set_number(out, decimal_modulo(left, right));
-                        return;
-                }
-
-                awk_set_number(out, awk_power(left, right));
-                return;
-        }
-
         case N_NEGATE:
-                awk_set_number(out, -awk_eval_number(node->a));
-                return;
-
         case N_AFFIRM:
-                awk_set_number(out, awk_eval_number(node->a));
+                awk_set_number(out, awk_eval_number(node));
                 return;
 
         case N_STEP:
@@ -5428,24 +5245,14 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 return;
         }
 
-        case B_SIN: awk_set_number(out, awk_sin(awk_eval_number(first))); return;
-        case B_COS: awk_set_number(out, awk_cos(awk_eval_number(first))); return;
-
+        case B_SIN:
+        case B_COS:
         case B_ATAN2:
-        {
-                decimal rise = awk_eval_number(first);
-                decimal run = awk_eval_number(second);
-
-                awk_set_number(out, awk_atan2(rise, run));
-                return;
-        }
-
-        case B_EXP: awk_set_number(out, awk_exp(awk_eval_number(first))); return;
-        case B_LOG: awk_set_number(out, awk_log(awk_eval_number(first))); return;
-        case B_SQRT: awk_set_number(out, square_root(awk_eval_number(first))); return;
-
+        case B_EXP:
+        case B_LOG:
+        case B_SQRT:
         case B_INT:
-                awk_set_number(out, awk_truncate(node->count ? awk_eval_number(first) : 0));
+                awk_set_number(out, awk_eval_number(node));
                 return;
 
         case B_RAND:

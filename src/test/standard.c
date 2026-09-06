@@ -3057,21 +3057,34 @@ test(decimal_multiply_add_matches_exact_products)
 //
 //      x86-64-v2 has no FMA3 -- that is v3 -- so decimal_multiply_add picks
 //      between the one instruction and a long integer-register body from the
-//      same feature byte the string routines use. Nothing on a machine built
+//      separate FMA feature byte. Nothing on a machine built
 //      this decade reaches the second one, which is exactly why it is worth a
 //      test that walks the byte down on purpose and checks the two bodies
-//      agree bit for bit. On a machine that really has no AVX2 both sides are
+//      agree bit for bit. On a machine that really has no FMA both sides are
 //      the same body and this passes without proving anything, which is the
 //      honest outcome there.
 //
 //      The other two architectures have the instruction at their baseline and
 //      have no second body, so there is nothing here for them to run.
 //
+#if X64 && !defined(KERNEL_MODE)
+static bool decimal_multiply_add_paths_agree(decimal x, decimal y, decimal z)
+{
+        p8 saved = cpu_has_fma;
+        decimal wide = decimal_multiply_add(x, y, z);
+        decimal inline_wide = math_multiply_add(x, y, z);
+        cpu_has_fma = 0;
+        decimal narrow = decimal_multiply_add(x, y, z);
+        decimal inline_narrow = math_multiply_add(x, y, z);
+        cpu_has_fma = saved;
+        return decimal_same(narrow, wide) && decimal_same(inline_wide, wide) &&
+               decimal_same(inline_narrow, wide);
+}
+#endif
+
 test(decimal_multiply_add_bodies_agree)
 {
 #if X64 && !defined(KERNEL_MODE)
-        p8 saved = cpu_has_avx2;
-
         for (positive a = 0; a < decimal_interesting_count; a++)
                 for (positive b = 0; b < decimal_interesting_count; b++)
                         for (positive c = 0; c < decimal_interesting_count; c++)
@@ -3080,13 +3093,7 @@ test(decimal_multiply_add_bodies_agree)
                                 decimal y = decimal_from_bits(decimal_interesting[b]);
                                 decimal z = decimal_from_bits(decimal_interesting[c]);
 
-                                cpu_has_avx2 = saved;
-                                decimal wide = decimal_multiply_add(x, y, z);
-                                cpu_has_avx2 = 0;
-                                decimal narrow = decimal_multiply_add(x, y, z);
-                                cpu_has_avx2 = saved;
-
-                                if (!decimal_same(narrow, wide)) return false;
+                                if (!decimal_multiply_add_paths_agree(x, y, z)) return false;
                         }
 
         for (positive i = 0; i < decimal_sweep_count; i++)
@@ -3104,13 +3111,7 @@ test(decimal_multiply_add_bodies_agree)
                                                (p64)(b64)((b32)(i % 5) - 2)) ^ only_the_sign);
                 }
 
-                cpu_has_avx2 = saved;
-                decimal wide = decimal_multiply_add(x, y, z);
-                cpu_has_avx2 = 0;
-                decimal narrow = decimal_multiply_add(x, y, z);
-                cpu_has_avx2 = saved;
-
-                if (!decimal_same(narrow, wide)) return false;
+                if (!decimal_multiply_add_paths_agree(x, y, z)) return false;
         }
 
         // the deep cancellation the sweep cannot reach: a 106 bit product that
@@ -3127,13 +3128,7 @@ test(decimal_multiply_add_bodies_agree)
                         decimal z = decimal_from_bits(
                                 ((((p64)(1023 + scale) << 52) | 2) + (p64)(b64)step) ^ only_the_sign);
 
-                        cpu_has_avx2 = saved;
-                        decimal wide = decimal_multiply_add(x, y, z);
-                        cpu_has_avx2 = 0;
-                        decimal narrow = decimal_multiply_add(x, y, z);
-                        cpu_has_avx2 = saved;
-
-                        if (!decimal_same(narrow, wide)) return false;
+                        if (!decimal_multiply_add_paths_agree(x, y, z)) return false;
                 }
         }
 #endif

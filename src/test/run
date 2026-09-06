@@ -2261,7 +2261,12 @@ lane_checksum()
 {
         need_shell || return 1
 
-        sh src/test/checksum.sh "$farm"
+        checksum_status=0
+        sh src/test/checksum.sh "$farm" || checksum_status=1
+        crc_status=0
+        freestanding_checks_lane checksum_crc src/test/checksum_crc.c || crc_status=$?
+        [ "$checksum_status" = 0 ] || return "$checksum_status"
+        return "$crc_status"
 }
 
 lane_files()

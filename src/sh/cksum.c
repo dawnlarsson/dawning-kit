@@ -20,7 +20,7 @@ static p32 cksum_crc_table[CKSUM_SLICES][256];
 static p32 cksum_crc_shift_power[positive_bits];
 static bool cksum_crc_table_ready;
 #if X64
-/* 0 is unprobed, 1 is unavailable, 2 is ready. A long-lived shell should
+/* 0 is unprobed, 1 is unavailable, 2 is PCLMUL, 3 is VPCLMUL. A shell should
    not serialize itself with CPUID again on every cksum call on an older CPU. */
 static p8 cksum_crc_pclmul_state;
 #endif
@@ -121,7 +121,7 @@ typedef p64 cksum_crc_vector
 typedef long long cksum_crc_vector_signed __attribute__((vector_size(16)));
 typedef char cksum_crc_bytes_signed __attribute__((vector_size(16)));
 
-static bool cksum_crc_has_pclmul()
+static p8 cksum_crc_hardware()
 {
         p32 leaf = 1;
         p32 ebx;
@@ -132,8 +132,19 @@ static bool cksum_crc_has_pclmul()
                          : "+a"(leaf), "=b"(ebx), "+c"(features), "=d"(edx));
         (void)ebx;
         (void)edx;
-        return (features & ((p32)1 << 1)) &&
-               (features & ((p32)1 << 9));
+        if (!(features & ((p32)1 << 1)) || !(features & ((p32)1 << 9)))
+                return 1;
+        if (cpu_has_avx512)
+        {
+                leaf = 7;
+                features = 0;
+                __asm__ volatile("cpuid"
+                                 : "+a"(leaf), "=b"(ebx), "+c"(features),
+                                   "=d"(edx));
+                if (features & ((p32)1 << 10))
+                        return 3;
+        }
+        return 2;
 }
 
 static __attribute__((target("pclmul,ssse3"))) cksum_crc_vector
@@ -211,6 +222,66 @@ cksum_crc_pclmul(p8 address_to bytes, positive length, p32 crc)
         crc = cksum_crc_serial((p8 address_to)address_of first, 16, 0);
         return cksum_crc_serial(bytes, length, crc);
 }
+
+/* The same four polynomial chains as the SSE path, packed into one ZMM.
+   Only the lane width changes; final reduction stays in the shared floor.
+   Dispatch requires both OS-enabled AVX-512 and the separate VPCLMUL bit. */
+typedef p64 cksum_crc_wide
+    __attribute__((vector_size(64), aligned(1), may_alias));
+typedef long long cksum_crc_wide_signed __attribute__((vector_size(64)));
+typedef char cksum_crc_wide_bytes __attribute__((vector_size(64)));
+
+static __attribute__((target("avx512f,avx512bw,vpclmulqdq,pclmul,ssse3"))) p32
+cksum_crc_vpclmul(p8 address_to bytes, positive length, p32 crc)
+{
+        const cksum_crc_wide four = {
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull,
+            0xe6228b11ull, 0x8833794cull, 0xe6228b11ull, 0x8833794cull};
+        const cksum_crc_wide mask = {
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull,
+            0x08090a0b0c0d0e0full, 0x0001020304050607ull};
+        cksum_crc_wide value = {0, (p64)crc << 32, 0, 0, 0, 0, 0, 0};
+        bool first = true;
+
+        do
+        {
+                cksum_crc_wide next = (cksum_crc_wide)
+                    __builtin_ia32_pshufb512_mask(
+                        (cksum_crc_wide_bytes)*(cksum_crc_wide address_to)bytes,
+                        (cksum_crc_wide_bytes)mask,
+                        (cksum_crc_wide_bytes){0}, (p64)-1);
+                if (!first)
+                {
+                        cksum_crc_wide low = (cksum_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (cksum_crc_wide_signed)value,
+                                (cksum_crc_wide_signed)four, 0x00);
+                        cksum_crc_wide high = (cksum_crc_wide)
+                            __builtin_ia32_vpclmulqdq_v8di(
+                                (cksum_crc_wide_signed)value,
+                                (cksum_crc_wide_signed)four, 0x11);
+                        value = low ^ high;
+                }
+                value ^= next;
+                first = false;
+                bytes += 64;
+                length -= 64;
+        } while (length >= 64);
+
+        const cksum_crc_vector one = {0xe8a45605ull, 0xc5b9cd4cull};
+        cksum_crc_vector folded = {value[0], value[1]};
+        folded = cksum_crc_fold(folded, one,
+                                (cksum_crc_vector){value[2], value[3]});
+        folded = cksum_crc_fold(folded, one,
+                                (cksum_crc_vector){value[4], value[5]});
+        folded = cksum_crc_fold(folded, one,
+                                (cksum_crc_vector){value[6], value[7]});
+        folded = cksum_crc_reverse(folded);
+        crc = cksum_crc_serial((p8 address_to)address_of folded, 16, 0);
+        return cksum_crc_serial(bytes, length, crc);
+}
 #endif
 
 static p32 cksum_crc_shift(p32 crc, p64 bytes)
@@ -234,6 +305,8 @@ static HOT __attribute__((noinline)) p32 cksum_crc_block(
     p8 address_to bytes, positive length, p32 crc)
 {
 #if X64
+        if (length >= 128 && cksum_crc_pclmul_state == 3)
+                return cksum_crc_vpclmul(bytes, length, crc);
         if (length >= 128 && cksum_crc_pclmul_state == 2)
                 return cksum_crc_pclmul(bytes, length, crc);
 #endif
@@ -441,7 +514,7 @@ static b32 cksum_main()
         cksum_crc_prepare();
 #if X64
         if (!cksum_crc_pclmul_state)
-                cksum_crc_pclmul_state = cksum_crc_has_pclmul() ? 2 : 1;
+                cksum_crc_pclmul_state = cksum_crc_hardware();
 #endif
 
         bool named = text_files_count != 0;
