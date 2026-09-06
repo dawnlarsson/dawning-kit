@@ -8356,9 +8356,7 @@ static positive printf_kept_used;
 static fn printf_keeper(address_any data, positive length)
 {
         if (length > positive_max - printf_kept_used ||
-            !shell_room((address_any address_to)address_of printf_kept,
-                        address_of printf_kept_room,
-                        printf_kept_used + length, 1))
+            !shell_array_room(printf_kept, printf_kept_room, printf_kept_used + length))
         {
                 if (!printf_cut)
                         shell_diagnostic("printf: no room\n", 0);
@@ -8375,8 +8373,7 @@ static fn printf_keeper(address_any data, positive length)
 static fn printf_holder(address_any data, positive length)
 {
         if (length > positive_max - printf_held ||
-            !shell_room((address_any address_to)address_of printf_hold,
-                        address_of printf_hold_room, printf_held + length, 1))
+            !shell_array_room(printf_hold, printf_hold_room, printf_held + length))
         {
                 if (!printf_cut)
                         shell_diagnostic("printf: no room\n", 0);
@@ -9147,9 +9144,7 @@ fn shell_printf(writer write, string_address input)
 
         if (into)
         {
-                if (!shell_room((address_any address_to)address_of printf_kept,
-                                address_of printf_kept_room,
-                                printf_kept_used + 1, 1))
+                if (!shell_array_room(printf_kept, printf_kept_room, printf_kept_used + 1))
                 {
                         shell_diagnostic("printf: no room\n", 0);
                         return shell_answer(2);
@@ -9751,8 +9746,7 @@ COLD fn shell_read(writer write, string_address input)
                         positive length = string_length(value);
 
                         if (length == positive_max ||
-                            !shell_room((address_any address_to)address_of read_ifs,
-                                        address_of read_ifs_room, length + 1, 1))
+                            !shell_array_room(read_ifs, read_ifs_room, length + 1))
                         {
                                 shell_diagnostic("read: no room\n", 0);
                                 return shell_answer(2);
@@ -10063,8 +10057,7 @@ COLD fn shell_mapfile(writer write, string_address input)
                 bipolar got;
 
                 if (used > positive_max - 4098 ||
-                    !shell_room((address_any address_to)address_of mapfile_text,
-                                address_of mapfile_room, used + 4097, 1))
+                    !shell_array_room(mapfile_text, mapfile_room, used + 4097))
                 {
                         shell_diagnostic("mapfile: no room\n", 0);
                         return shell_answer(2);
@@ -11464,8 +11457,7 @@ COLD fn shell_eval(writer write, string_address input)
 
                 wanted = used + length + 2;
 
-                if (!shell_room((address_any address_to)address_of eval_storage,
-                                address_of eval_room, wanted, 1))
+                if (!shell_array_room(eval_storage, eval_room, wanted))
                 {
                         room = false;
                         break;

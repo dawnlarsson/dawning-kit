@@ -147,8 +147,7 @@ static bool lex_room(positive want)
         if (lex_text_room >= want)
                 return true;
 
-        if (!shell_room((address_any address_to)address_of lex_text,
-                        address_of lex_text_room, want, 1))
+        if (!shell_array_room(lex_text, lex_text_room, want))
                 return false;
 
         if (lex_text == before || !before)

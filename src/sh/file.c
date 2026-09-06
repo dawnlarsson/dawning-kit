@@ -2843,18 +2843,20 @@ static bool file_copy_range_fallback(bipolar result)
                result == -ERROR_NOT_SUPPORTED;
 }
 
-/* Copy through the current descriptor positions.  cp uses the open-ended
-   form; split gives an exact length and carries the two capability bits
-   across output pieces so each unavailable kernel floor is tried once. */
+/* cp and split share the kernel-copy cascade. Sparse extents supply explicit
+   source/destination offsets; streams use the current descriptor positions.
+   Capability bits persist across pieces so each unavailable floor is tried once. */
 static inline INLINE bool file_copy_stream(
     bipolar in, bipolar out, p64 length, bool bounded,
-    bool address_to range_copy, bool address_to send_copy)
+    bool address_to range_copy, bool address_to send_copy,
+    p64 address_to offsets)
 {
         while ((!bounded || length) && address_to range_copy)
         {
                 positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
                                    ? FILE_KERNEL_COPY_SIZE : (positive)length;
-                bipolar copied = file_copy_range_once(in, null, out, null, ask);
+                bipolar copied = file_copy_range_once(
+                    in, offsets, out, offsets ? offsets + 1 : null, ask);
 
                 if (copied > 0)
                 {
@@ -2872,14 +2874,20 @@ static inline INLINE bool file_copy_stream(
                 address_to range_copy = false;
         }
 
+        if ((!bounded || length) && address_to send_copy && offsets &&
+            system_seek(out, offsets[1], FILE_SEEK_SET) < 0)
+                return false;
+
         while ((!bounded || length) && address_to send_copy)
         {
                 positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
                                    ? FILE_KERNEL_COPY_SIZE : (positive)length;
-                bipolar copied = file_send_range_once(in, null, out, ask);
+                bipolar copied = file_send_range_once(in, offsets, out, ask);
 
                 if (copied > 0)
                 {
+                        if (offsets)
+                                offsets[1] += (positive)copied;
                         if (bounded)
                                 length -= (positive)copied;
                         continue;
@@ -2893,6 +2901,11 @@ static inline INLINE bool file_copy_stream(
 
                 address_to send_copy = false;
         }
+
+        if ((!bounded || length) && offsets &&
+            (system_seek(in, offsets[0], FILE_SEEK_SET) < 0 ||
+             system_seek(out, offsets[1], FILE_SEEK_SET) < 0))
+                return false;
 
         while (!bounded || length)
         {
@@ -2922,86 +2935,9 @@ static bool file_copy_extent(bipolar in, bipolar out, p64 start,
                              positive length, bool address_to range_copy,
                              bool address_to send_copy)
 {
-        p64 in_offset = start;
-        p64 out_offset = start;
-
-        while (length && address_to range_copy)
-        {
-                positive chunk = length > FILE_KERNEL_COPY_SIZE
-                                     ? FILE_KERNEL_COPY_SIZE : length;
-                bipolar copied = file_copy_range_once(
-                    in, address_of in_offset, out, address_of out_offset, chunk);
-
-                if (copied > 0)
-                {
-                        length -= (positive)copied;
-                        continue;
-                }
-                if (!copied)
-                        return false;
-                if (copied == -4)
-                        continue;
-                if (!file_copy_range_fallback(copied))
-                        return false;
-
-                address_to range_copy = false;
-        }
-
-        if (length && address_to send_copy)
-        {
-                if (system_seek(out, out_offset, FILE_SEEK_SET) < 0)
-                        return false;
-
-                while (length)
-                {
-                        positive chunk = length > FILE_KERNEL_COPY_SIZE
-                                             ? FILE_KERNEL_COPY_SIZE : length;
-                        bipolar copied = file_send_range_once(
-                            in, address_of in_offset, out, chunk);
-
-                        if (copied > 0)
-                        {
-                                out_offset += (positive)copied;
-                                length -= (positive)copied;
-                                continue;
-                        }
-                        if (!copied)
-                                return false;
-                        if (copied == -4)
-                                continue;
-                        if (!file_copy_range_fallback(copied))
-                                return false;
-
-                        address_to send_copy = false;
-                        break;
-                }
-        }
-
-        if (!length)
-                return true;
-        if (system_seek(in, in_offset, FILE_SEEK_SET) < 0 ||
-            system_seek(out, out_offset, FILE_SEEK_SET) < 0)
-                return false;
-
-        while (length)
-        {
-                positive ask = length < sizeof(file_transfer)
-                                   ? length : sizeof(file_transfer);
-                bipolar taken = system_read_retry((positive)in, file_transfer,
-                                                   ask);
-
-                if (taken < 0)
-                        return false;
-                if (!taken)
-                        return false;
-                if (system_write_all((positive)out, file_transfer,
-                                     (positive)taken) != (positive)taken)
-                        return false;
-
-                length -= (positive)taken;
-        }
-
-        return true;
+        p64 offsets[2] = {start, start};
+        return file_copy_stream(in, out, length, true, range_copy, send_copy,
+                                offsets);
 }
 
 /*
@@ -3087,7 +3023,7 @@ static bool file_copy_contents_open(bipolar from_directory, string_address from,
                 bool send_copy = true;
                 complete = file_copy_stream(in, out, 0, false,
                                             address_of range_copy,
-                                            address_of send_copy);
+                                            address_of send_copy, null);
         }
 
         system_close(in);
@@ -5938,8 +5874,7 @@ static bool find_exec_once(find_node address_to node)
                 needed++;
         }
 
-        if (!shell_room((address_any address_to)address_of find_exec_text,
-                        address_of find_exec_text_room, needed ? needed : 1, 1))
+        if (!shell_array_room(find_exec_text, find_exec_text_room, needed ? needed : 1))
         {
                 file_fail("find: out of memory while expanding -exec arguments\n", 0);
                 find_status = 1;
@@ -10876,7 +10811,7 @@ static bool split_regular_bytes(bipolar in, p64 length, positive piece,
                 if (!split_output_open(output) ||
                     !file_copy_stream(in, output->handle, here, true,
                                       address_of range_copy,
-                                      address_of send_copy))
+                                      address_of send_copy, null))
                 {
                         file_fail("split: read or write error\n", 0);
                         return false;
@@ -11135,7 +11070,7 @@ static bool split_distribute_regular(bipolar in, p64 length, positive chunks,
                 if (!split_output_open(output) ||
                     (here && !file_copy_stream(in, output->handle, here, true,
                                                address_of range_copy,
-                                               address_of send_copy)) ||
+                                               address_of send_copy, null)) ||
                     !split_output_close(output))
                 {
                         file_fail("split: read or write error\n", 0);

@@ -409,8 +409,7 @@ static bool stdbuf_preload(string_address library)
         positive wanted = 11 + old_length + (before ? 1 : 0) +
                           library_length + 1;
 
-        if (!shell_room((address_any address_to)address_of stdbuf_preload_assignment,
-                        address_of stdbuf_preload_room, wanted, 1))
+        if (!shell_array_room(stdbuf_preload_assignment, stdbuf_preload_room, wanted))
                 return false;
 
         memory_copy_apart(stdbuf_preload_assignment,

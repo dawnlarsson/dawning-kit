@@ -83,9 +83,7 @@ static bool shell_command_literal_status(string_address command,
 static bool shell_start_parameters(string_address address_to arguments,
                                    positive first, positive count)
 {
-        if (!shell_room((address_any address_to)address_of shell_argv,
-                        address_of shell_argv_room, count + 1,
-                        sizeof(shell_argv[0])))
+        if (!shell_array_room(shell_argv, shell_argv_room, count + 1))
                 return false;
 
         if (count)
@@ -687,9 +685,7 @@ b32 main()
 
                 //      Room for another read on top of whatever is being
                 //      held back, so a line has no length it cannot reach.
-                if (!shell_room((address_any address_to)address_of shell_buffer,
-                                address_of shell_buffer_room,
-                                held + MAX_INPUT_STEP + 1, 1))
+                if (!shell_array_room(shell_buffer, shell_buffer_room, held + MAX_INPUT_STEP + 1))
                 {
                         log_error("sh: no room to read\n", 0);
                         return 1;

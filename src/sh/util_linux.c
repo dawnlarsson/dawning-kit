@@ -3344,10 +3344,7 @@ static b32 util_linux_setpriv()
                 group_count = 1;
                 for (string_address p = set.group_list; string_get(p); p++)
                         group_count += string_is(p, ',');
-                if (!shell_room(
-                        (address_any address_to)address_of file_id_scratch,
-                        address_of file_id_scratch_room, group_count,
-                        sizeof(file_id_scratch[0])))
+                if (!shell_array_room(file_id_scratch, file_id_scratch_room, group_count))
                         return 127;
                 string_address p = set.group_list;
                 for (positive i = 0; i < group_count; i++)

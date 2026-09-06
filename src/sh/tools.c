@@ -5824,31 +5824,6 @@ static fn tools_uuid_version(tools_uuid address_to uuid, p8 version)
         uuid->bytes[8] = (p8)((uuid->bytes[8] & 0x3f) | 0x80);
 }
 
-static fn tools_uuid_store_16(p8 address_to into, p16 value)
-{
-        into[0] = (p8)(value >> 8);
-        into[1] = (p8)value;
-}
-
-static fn tools_uuid_store_32(p8 address_to into, p32 value)
-{
-        into[0] = (p8)(value >> 24);
-        into[1] = (p8)(value >> 16);
-        into[2] = (p8)(value >> 8);
-        into[3] = (p8)value;
-}
-
-static p16 tools_uuid_load_16(p8 address_to from)
-{
-        return ((p16)from[0] << 8) | from[1];
-}
-
-static p32 tools_uuid_load_32(p8 address_to from)
-{
-        return ((p32)from[0] << 24) | ((p32)from[1] << 16) |
-               ((p32)from[2] << 8) | from[3];
-}
-
 static p64 tools_uuid_gregorian_now(p64 seconds, p64 nanoseconds)
 {
         return seconds * 10000000 + nanoseconds / 100 +
@@ -5858,12 +5833,10 @@ static p64 tools_uuid_gregorian_now(p64 seconds, p64 nanoseconds)
 static fn tools_uuid_time_one(tools_uuid address_to uuid, p64 timestamp,
                               p16 sequence, p8 address_to node)
 {
-        tools_uuid_store_32(uuid->bytes, (p32)timestamp);
-        tools_uuid_store_16(uuid->bytes + 4, (p16)(timestamp >> 32));
-        tools_uuid_store_16(uuid->bytes + 6,
-                            (p16)((timestamp >> 48) & 0x0fff));
-        tools_uuid_store_16(uuid->bytes + 8,
-                            (p16)((sequence & 0x3fff) | 0x8000));
+        network_store_32(uuid->bytes, (p32)timestamp);
+        network_store_16(uuid->bytes + 4, (p16)(timestamp >> 32));
+        network_store_16(uuid->bytes + 6, (p16)((timestamp >> 48) & 0x0fff));
+        network_store_16(uuid->bytes + 8, (p16)((sequence & 0x3fff) | 0x8000));
         memory_copy(uuid->bytes + 10, node, 6);
         tools_uuid_version(uuid, 1);
 }
@@ -5872,10 +5845,9 @@ static fn tools_uuid_time_six(tools_uuid address_to uuid, p64 timestamp,
                               file_random_state address_to random)
 {
         tools_uuid_random_bytes(random, uuid);
-        tools_uuid_store_32(uuid->bytes, (p32)(timestamp >> 28));
-        tools_uuid_store_16(uuid->bytes + 4, (p16)(timestamp >> 12));
-        tools_uuid_store_16(uuid->bytes + 6,
-                            (p16)(timestamp & 0x0fff));
+        network_store_32(uuid->bytes, (p32)(timestamp >> 28));
+        network_store_16(uuid->bytes + 4, (p16)(timestamp >> 12));
+        network_store_16(uuid->bytes + 6, (p16)(timestamp & 0x0fff));
         tools_uuid_version(uuid, 6);
 }
 
@@ -6233,10 +6205,10 @@ static fn tools_uuid_record_read(string_address text,
         positive microseconds;
         if (version == 1)
         {
-                p64 timestamp = tools_uuid_load_32(record->uuid.bytes) |
-                                ((p64)tools_uuid_load_16(
+                p64 timestamp = network_load_32(record->uuid.bytes) |
+                                ((p64)network_load_16(
                                      record->uuid.bytes + 4) << 32) |
-                                ((p64)(tools_uuid_load_16(
+                                ((p64)(network_load_16(
                                       record->uuid.bytes + 6) & 0x0fff) << 48);
                 b64 ticks = (b64)timestamp -
                             (b64)0x01b21dd213814000ULL;
@@ -6252,9 +6224,9 @@ static fn tools_uuid_record_read(string_address text,
         else if (version == 6)
         {
                 p64 timestamp =
-                    ((p64)tools_uuid_load_32(record->uuid.bytes) << 28) |
-                    ((p64)tools_uuid_load_16(record->uuid.bytes + 4) << 12) |
-                    (tools_uuid_load_16(record->uuid.bytes + 6) & 0x0fff);
+                    ((p64)network_load_32(record->uuid.bytes) << 28) |
+                    ((p64)network_load_16(record->uuid.bytes + 4) << 12) |
+                    (network_load_16(record->uuid.bytes + 6) & 0x0fff);
                 b64 ticks = (b64)timestamp -
                             (b64)0x01b21dd213814000ULL;
                 seconds = ticks / 10000000;

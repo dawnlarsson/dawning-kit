@@ -1329,8 +1329,7 @@ positive shell_parameters_save()
         }
 
         if (used == positive_max || mark > positive_max - used - 1 ||
-            !shell_room((address_any address_to)address_of shell_parameter_stack,
-                        address_of shell_parameter_stack_room, mark + used + 1, 1))
+            !shell_array_room(shell_parameter_stack, shell_parameter_stack_room, mark + used + 1))
                 return EXPAND_NO_ROOM;
 
         for (at = 0; at < shell_parameter_count; at++)
@@ -3385,8 +3384,7 @@ static bipolar expand_tool_direct(string_address command, b32 output)
         }
 
         if (!count ||
-            !shell_room((address_any address_to)address_of text,
-                        address_of text_room, string_length(command) + 1, 1) ||
+            !shell_array_room(text, text_room, string_length(command) + 1) ||
             !shell_array_room(expand_tool_argv, expand_tool_argv_room, (positive)count + 1))
                 goto done;
 

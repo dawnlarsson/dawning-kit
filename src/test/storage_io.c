@@ -111,6 +111,43 @@ static fn storage_test_elf(void)
               storage_test_calls == 9 && storage_test_arguments);
 }
 
+static fn storage_test_copy(void)
+{
+        bipolar in = system_call_2(syscall(memfd_create), (positive)"copy-in", 0);
+        bipolar out = system_call_2(syscall(memfd_create), (positive)"copy-out", 0);
+        check("copy fixture descriptors", in >= 0 && out >= 0);
+        if (in < 0 || out < 0)
+                goto done;
+
+        p8 bytes[257], copied[257];
+        for (positive i = 0; i < sizeof(bytes); i++)
+                bytes[i] = (p8)(i * 197 + 1);
+        check("copy fixture offset", system_seek(in, 8192, FILE_SEEK_SET) == 8192);
+        check("copy fixture data", system_write_all(in, bytes, sizeof(bytes)) == sizeof(bytes));
+
+        // Start at unrelated descriptor positions. Each capability setting
+        // must copy the explicit extent, preserving the hole before it.
+        for (positive mode = 0; mode < 3; mode++)
+        {
+                bool range = mode == 0, send = mode < 2;
+                check("copy output reset", system_truncate_handle(out, 0) == 0);
+                check("copy input position", system_seek(in, 5, FILE_SEEK_SET) == 5);
+                check("copy output position", system_seek(out, 7, FILE_SEEK_SET) == 7);
+                check("extent through range/sendfile/buffer", file_copy_extent(
+                    in, out, 8192, sizeof(bytes), address_of range, address_of send));
+                check("copied extent bytes", system_call_4(syscall(pread64), out,
+                    (positive)copied, sizeof(copied), 8192) == sizeof(copied) &&
+                    !memory_compare(bytes, copied, sizeof(bytes)));
+                check("copy preserves preceding hole", system_call_4(
+                    syscall(pread64), out, (positive)copied, 1, 0) == 1 && !copied[0]);
+                check("bounded copy refuses premature EOF", !file_copy_extent(
+                    in, out, 8192 + sizeof(bytes), 1, address_of range, address_of send));
+        }
+done:
+        if (in >= 0) system_close(in);
+        if (out >= 0) system_close(out);
+}
+
 b32 main(void)
 {
         storage_test_read(1, 32);
@@ -118,5 +155,6 @@ b32 main(void)
         storage_test_read(3, 0);
         storage_test_read(4, 7);
         storage_test_elf();
+        storage_test_copy();
         return test_report(null);
 }

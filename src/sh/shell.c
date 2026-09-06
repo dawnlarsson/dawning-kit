@@ -702,8 +702,7 @@ bool token_overflow;
 
 static bool token_room(positive want)
 {
-        return shell_room((address_any address_to)address_of token_storage,
-                          address_of token_storage_room, want, 1);
+        return shell_array_room(token_storage, token_storage_room, want);
 }
 
 // Nothing holds an address inside argv, so it may move as the line grows.
@@ -830,9 +829,7 @@ string_address shell_arguments()
         {
                 positive length = string_length(shell_argv[index]);
 
-                if (!shell_room((address_any address_to)address_of argument_line,
-                                address_of argument_line_room,
-                                used + length + 2, 1))
+                if (!shell_array_room(argument_line, argument_line_room, used + length + 2))
                         break;
 
                 if (used)
@@ -843,8 +840,7 @@ string_address shell_arguments()
                 index++;
         }
 
-        if (!shell_room((address_any address_to)address_of argument_line,
-                        address_of argument_line_room, used + 1, 1))
+        if (!shell_array_room(argument_line, argument_line_room, used + 1))
                 return null;
 
         argument_line[used] = end;
@@ -1491,8 +1487,7 @@ fn run_lines(string_address text)
         length = string_length(text);
 
         if (length == positive_max ||
-            !shell_room((address_any address_to)address_of copy,
-                        address_of room, length + 1, 1))
+            !shell_array_room(copy, room, length + 1))
         {
                 string_format(exec_error, "No room to run lines\n");
                 shell_status = 2;

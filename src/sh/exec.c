@@ -3464,8 +3464,7 @@ static bool history_wanted(string_address text, positive length)
                 string_address stop = string_first_of_or_end(at, ':');
                 positive span = (positive)(stop - at);
 
-                if (!shell_room((address_any address_to)address_of pattern,
-                                address_of pattern_room, span + 1, 1))
+                if (!shell_array_room(pattern, pattern_room, span + 1))
                         break;
 
                 memory_copy_apart(pattern, at, span);
@@ -3520,8 +3519,7 @@ fn history_remember(string_address line)
                 static p8 address_to held;
                 static positive held_room;
 
-                if (!shell_room((address_any address_to)address_of held,
-                                address_of held_room, length + 1, 1))
+                if (!shell_array_room(held, held_room, length + 1))
                         return;
 
                 memory_copy_apart(held, line, length);
@@ -3553,9 +3551,7 @@ static p8 address_to history_slurp(string_address path,
         {
                 bipolar got;
 
-                if (!shell_room((address_any address_to)address_of held,
-                                address_of held_room,
-                                used + HISTORY_SLURP + 1, 1))
+                if (!shell_array_room(held, held_room, used + HISTORY_SLURP + 1))
                         break;
 
                 got = system_read_retry(handle, held + used, HISTORY_SLURP);
@@ -3800,10 +3796,7 @@ fn shell_history(writer write, string_address input)
                                 positive length =
                                     string_length(shell_argv[word]);
 
-                                if (!shell_room(
-                                        (address_any address_to)address_of joined,
-                                        address_of joined_room,
-                                        used + length + 2, 1))
+                                if (!shell_array_room(joined, joined_room, used + length + 2))
                                         return shell_answer(1);
 
                                 if (used)
@@ -3965,8 +3958,7 @@ static b32 history_edit(writer write, string_address editor, positive first,
 
         length = string_length(editor) + string_length(path) + 2;
 
-        if (!shell_room((address_any address_to)address_of command,
-                        address_of command_room, length, 1))
+        if (!shell_array_room(command, command_room, length))
                 return 1;
 
         string_copy(command, editor);
@@ -4183,12 +4175,8 @@ fn shell_fc(writer write, string_address input)
 
                         prefix = (positive)(where - text);
 
-                        if (!shell_room(
-                                (address_any address_to)address_of built,
-                                address_of built_room,
-                                string_length(text) + string_length(new_text) +
-                                    1,
-                                1))
+                        if (!shell_array_room(built, built_room,
+                                              string_length(text) + string_length(new_text) + 1))
                                 return shell_answer(1);
 
                         memory_copy_apart(built, text, prefix);
@@ -5745,11 +5733,8 @@ static b32 exec_define(b32 index)
                 if (slot == exec_function_count)
                 {
                         if (exec_function_count == positive_max ||
-                            !shell_room((address_any address_to)
-                                          address_of exec_functions,
-                                        address_of exec_function_room,
-                                        exec_function_count + 1,
-                                        sizeof(exec_functions[0])))
+                            !shell_array_room(exec_functions, exec_function_room,
+                                              exec_function_count + 1))
                                 return exec_function_no_room(name);
 
                         exec_functions[slot].name = null;
@@ -5768,10 +5753,8 @@ static b32 exec_define(b32 index)
                 }
 
                 if (name_length == positive_max ||
-                    !shell_room((address_any address_to)
-                                  address_of exec_functions[slot].name,
-                                address_of exec_functions[slot].name_room,
-                                name_length + 1, 1))
+                    !shell_array_room(exec_functions[slot].name, exec_functions[slot].name_room,
+                                      name_length + 1))
                         return exec_function_no_room(name);
 
                 string_copy(exec_functions[slot].name, name);
@@ -5887,8 +5870,7 @@ static bool exec_function_import_one(string_address entry)
                 return false;
 
         source_length = name_length + value_length + 1;
-        if (!shell_room((address_any address_to)address_of source,
-                        address_of room, source_length + 1, 1))
+        if (!shell_array_room(source, room, source_length + 1))
                 return false;
 
         memory_copy(source, entry + sizeof(prefix) - 1, name_length);
