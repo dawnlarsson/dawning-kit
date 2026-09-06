@@ -510,6 +510,8 @@ static fn fetching(void)
 */
 static fn fetching_for_real(void)
 {
+        static const positive status_mutations[] = {0, 7, 8, 9, 10, 11, 12};
+        static const positive status_truncations[] = {0, 7, 12, 13};
         socket_address_internet where;
         p32 size = sizeof where;
         bipolar listening;
@@ -567,30 +569,59 @@ static fn fetching_for_real(void)
                                        "Content-Length: 18446744073709551616\r\n"
                                        "\r\n"
                                        "hello";
+                p8 answer_bad_status[] = "HTTP/1.x 200 OK\r\n"
+                                         "Content-Length: 5\r\n"
+                                         "\r\n"
+                                         "hello";
                 string_address answers[] = {
                     (string_address)answer_good,
                     (string_address)answer_short,
                     (string_address)answer_repeated,
                     (string_address)answer_conflicting,
                     (string_address)answer_bad_length,
-                    (string_address)answer_overflow};
+                    (string_address)answer_overflow,
+                    (string_address)answer_bad_status};
                 positive sizes[] = {
                     sizeof(answer_good) - 1,
                     sizeof(answer_short) - 1,
                     sizeof(answer_repeated) - 1,
                     sizeof(answer_conflicting) - 1,
                     sizeof(answer_bad_length) - 1,
-                    sizeof(answer_overflow) - 1};
+                    sizeof(answer_overflow) - 1,
+                    sizeof(answer_bad_status) - 1};
 
-                for (positive at = 0; at < sizeof(answers) / sizeof(answers[0]);
-                     at++)
+                for (positive at = 0;
+                     at < array_count(answers) + array_count(status_mutations) +
+                              array_count(status_truncations); at++)
                 {
+                        p8 mutated[sizeof(answer_good)];
+                        string_address answer;
+                        positive length;
+
+                        if (at < array_count(answers))
+                        {
+                                answer = answers[at];
+                                length = sizes[at];
+                        }
+                        else
+                        {
+                                positive edge = at - array_count(answers);
+                                memory_copy_apart(mutated, answer_good,
+                                                  sizeof(answer_good));
+                                answer = mutated;
+                                length = sizeof(answer_good) - 1;
+                                if (edge < array_count(status_mutations))
+                                        mutated[status_mutations[edge]] = '?';
+                                else
+                                        length = status_truncations[
+                                            edge - array_count(status_mutations)];
+                        }
                         bipolar taken = socket_accept((b32)listening, 0, 0, 0);
 
                         if (taken >= 0)
                         {
                                 socket_receive((b32)taken, said, sizeof said, 0, 0, 0);
-                                system_write_all((positive)taken, answers[at], sizes[at]);
+                                system_write_all((positive)taken, answer, length);
                                 socket_shutdown((b32)taken, SHUT_BOTH);
                                 socket_close((b32)taken);
                         }
@@ -659,6 +690,34 @@ static fn fetching_for_real(void)
                 check("a rejected response leaves the prior body owned",
                       body.used == 11 && body.bytes &&
                       memory_compare(body.bytes, "hello there", 11) == 0);
+
+                status = http_get(HOST_LOOPBACK, port,
+                                  (string_address) "127.0.0.1",
+                                  (string_address) "/", address_of body,
+                                  address_of code);
+                check("a malformed HTTP version is refused",
+                      status == HTTP_MALFORMED);
+
+                /* Independently damage each fixed status-line field, then
+                   cut the reply before and at its smallest parsed boundary.
+                   Every rejected frame must retain the caller's old body. */
+                for (positive edge = 0;
+                     edge < array_count(status_mutations) +
+                                array_count(status_truncations); edge++)
+                {
+                        bipolar expected = HTTP_MALFORMED;
+                        if (edge >= array_count(status_mutations) &&
+                            status_truncations[edge -
+                                               array_count(status_mutations)] < 13)
+                                expected = HTTP_NO_REPLY;
+                        status = http_get(HOST_LOOPBACK, port, "127.0.0.1", "/",
+                                          address_of body, address_of code);
+                        check("a damaged or truncated status line is refused",
+                              status == expected);
+                        check("a refused status line preserves the prior body",
+                              body.used == 11 && body.bytes &&
+                              !memory_compare(body.bytes, "hello there", 11));
+                }
 
                 http_forget(address_of body);
         }
@@ -781,6 +840,77 @@ static fn leasing(void)
                 check("an option longer than the packet is refused",
                       dhcp_read(packet, at, 0xdeadbeef, hardware, address_of lease,
                                 address_of kind) < 0);
+
+                /* A rejected reply must be observationally inert.  A
+                   broadcast socket can receive malformed and irrelevant
+                   packets before the offer meant for it, and fields from
+                   one packet must never become part of another lease. */
+                {
+                        dhcp_lease before = lease;
+
+                        network_store_32(packet + 16, 0x0a000263);
+                        packet[DHCP_HEAD + 4] = DHCP_OPTION_ROUTER;
+                        packet[DHCP_HEAD + 5] = 4;
+                        network_store_32(packet + DHCP_HEAD + 6, 0x0a0002fe);
+
+                        check("a reply without its type is refused",
+                              dhcp_read(packet, DHCP_HEAD + 10, 0xdeadbeef,
+                                        hardware, address_of lease,
+                                        address_of kind) < 0);
+                        check("a rejected reply leaves the lease untouched",
+                              !memory_compare(address_of lease, address_of before,
+                                              sizeof lease));
+                }
+
+                {
+                        positive sparse = DHCP_HEAD + 8;
+
+                        memory_fill(packet, 0, sizeof packet);
+                        packet[0] = 2;
+                        packet[1] = 1;
+                        packet[2] = 6;
+                        network_store_32(packet + 4, 0xdeadbeef);
+                        network_store_32(packet + 16, 0x0a00020f);
+                        memory_copy(packet + 28, hardware, 6);
+                        network_store_32(packet + DHCP_HEAD, DHCP_COOKIE);
+                        packet[DHCP_HEAD + 4] = DHCP_OPTION_TYPE;
+                        packet[DHCP_HEAD + 5] = 1;
+                        packet[DHCP_HEAD + 6] = DHCP_OFFER;
+                        packet[DHCP_HEAD + 7] = DHCP_OPTION_END;
+
+                        check("a sparse offer parses",
+                              dhcp_read(packet, sparse, 0xdeadbeef, hardware,
+                                        address_of lease, address_of kind) == 0);
+                        check("a sparse offer cannot inherit prior options",
+                              lease.address == 0x0a00020f && !lease.mask &&
+                              !lease.router && !lease.nameserver &&
+                              !lease.server && !lease.seconds);
+
+                        lease.mask = 0xffffff00;
+                        lease.router = 0x0a000202;
+                        lease.server = 0x0a000202;
+                        lease.seconds = 3600;
+                        network_store_32(packet + 16, 0);
+                        packet[DHCP_HEAD + 6] = DHCP_ACK;
+
+                        {
+                                dhcp_lease acknowledged = {0};
+
+                                check("a sparse acknowledgement parses",
+                                      dhcp_read(packet, sparse, 0xdeadbeef,
+                                                hardware,
+                                                address_of acknowledged,
+                                                address_of kind) == 0);
+                                dhcp_lease_merge(address_of lease,
+                                                 address_of acknowledged);
+                                check("a sparse acknowledgement keeps its offer",
+                                      lease.address == 0x0a00020f &&
+                                      lease.mask == 0xffffff00 &&
+                                      lease.router == 0x0a000202 &&
+                                      lease.server == 0x0a000202 &&
+                                      lease.seconds == 3600);
+                        }
+                }
         }
 
         /*

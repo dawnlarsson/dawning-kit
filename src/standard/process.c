@@ -1378,6 +1378,13 @@ static string_address realpath(string_address path, string_address into)
                 //      makes "a//b" and "a/b" the same path.
                 if (rest[at] == '/')
                 {
+                        // A slash requires the preceding component to be a
+                        // directory, including a trailing slash or slash-dot.
+                        if (!last_was_directory)
+                        {
+                                errno = ENOTDIR;
+                                return null;
+                        }
                         at++;
                         continue;
                 }
@@ -1394,12 +1401,6 @@ static string_address realpath(string_address path, string_address into)
 
                 if (piece == 2 && rest[at] == '.' && rest[at + 1] == '.')
                 {
-                        if (!last_was_directory)
-                        {
-                                errno = ENOTDIR;
-                                return null;
-                        }
-
                         //      Root's parent is root, which is what the
                         //      kernel does too.
                         if (answer_length > 1)
@@ -1410,12 +1411,6 @@ static string_address realpath(string_address path, string_address into)
 
                         at += piece;
                         continue;
-                }
-
-                if (!last_was_directory)
-                {
-                        errno = ENOTDIR;
-                        return null;
                 }
 
                 {

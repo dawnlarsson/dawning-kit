@@ -727,9 +727,15 @@ same 'csi u redo'      'hi'             40 6 keys 'hi^z\e[122;6u' buffer
 
 group utf8
 same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
+same 'two byte minimum' '[1 <0080>]'    40 6 keys '\xc2\x80' row 0
+same 'three byte minimum' '[1 <0800>]'  40 6 keys '\xe0\xa0\x80' row 0
+same 'four byte minimum' '[1 <10000>]'  40 6 keys '\xf0\x90\x80\x80' row 0
 same 'six hex digits'  '[1 <10ffff>]'   40 6 keys '\xf4\x8f\xbf\xbf' row 0
 same 'one caret step'  '0,2'            40 6 keys '\xc3\xa9' carets
 same 'backspace whole' ''               40 6 keys '\xc3\xa9<bs>' buffer
+same 'overlong ignored' ''               40 6 keys '\xc0\xaf' buffer
+same 'surrogate ignored' ''              40 6 keys '\xed\xa0\x80' buffer
+same 'out of range ignored' ''           40 6 keys '\xf4\x90\x80\x80' buffer
 
 group paste
 same 'keeps newlines exact' 'a|  b'      40 6 keys '\e[200~a\n  b\e[201~' buffer

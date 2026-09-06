@@ -7,6 +7,9 @@ and alias declarations from source with the same comment/string-safe lexer as
 the assembly inventory.  Function-generating macros are listed below because
 their definitions, rather than their expansions, are what raw source contains.
 
+The seal verifies inventory and source integrity only. It does not establish
+manual review coverage, branch coverage, or freedom from defects.
+
     python3 kit/function_audit.py
     python3 kit/function_audit.py --summary
 """
@@ -78,7 +81,7 @@ def audited_sources():
         paths += [path for path in root.rglob('*')
                   if path.suffix in ('.c', '.h', '.inc', '.asm') and
                   'test' not in path.parts]
-    # A parser change must invalidate the proof made by the old parser.
+    # A parser change must invalidate the inventory sealed by the old parser.
     paths += [ROOT / 'kit/function_audit.py',
               ROOT / 'kit/compact/inventory.py']
     return sorted(paths)
@@ -287,13 +290,13 @@ def main():
                  if sealed.get(key) != value]
         if wrong:
             for key in wrong:
-                print('function audit: %s is %s, audited %s' %
+                print('function audit: %s is %s, sealed %s' %
                       (key, current[key], sealed.get(key, 'missing')),
                       file=sys.stderr)
             return 1
         print('function audit: %d C functions, %d library asm routines/%d '
               'architecture bodies/%d aliases, %d Canvas asm routines/%d '
-              'architecture bodies, %d kernel asm bodies; all audited' %
+              'architecture bodies, %d kernel asm bodies; inventory matches seal' %
               (len(definitions), len(library), library_bodies,
                len(library_aliases), len(canvas_names), len(canvas),
                len(kernel)))

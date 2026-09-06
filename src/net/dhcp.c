@@ -177,7 +177,9 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                          p8 address_to hardware, dhcp_lease address_to lease,
                          p8 address_to kind)
 {
+        dhcp_lease parsed = {0};
         positive at = DHCP_HEAD + 4;
+        p8 parsed_kind = 0;
 
         if (size < DHCP_HEAD + 4)
                 return -1;
@@ -194,8 +196,7 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
         if (network_load_32(packet + DHCP_HEAD) != DHCP_COOKIE)
                 return -1;
 
-        lease->address = network_load_32(packet + 16);  // yiaddr
-        address_to kind = 0;
+        parsed.address = network_load_32(packet + 16);  // yiaddr
 
         while (at < size)
         {
@@ -223,27 +224,27 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                 {
                 case DHCP_OPTION_TYPE:
                         if (length == 1)
-                                address_to kind = packet[at + 2];
+                                parsed_kind = packet[at + 2];
                         break;
                 case DHCP_OPTION_MASK:
                         if (length == 4)
-                                lease->mask = network_load_32(packet + at + 2);
+                                parsed.mask = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_ROUTER:
                         if (length >= 4)
-                                lease->router = network_load_32(packet + at + 2);
+                                parsed.router = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_DNS:
                         if (length >= 4)
-                                lease->nameserver = network_load_32(packet + at + 2);
+                                parsed.nameserver = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_SERVER:
                         if (length == 4)
-                                lease->server = network_load_32(packet + at + 2);
+                                parsed.server = network_load_32(packet + at + 2);
                         break;
                 case DHCP_OPTION_LEASE:
                         if (length == 4)
-                                lease->seconds = network_load_32(packet + at + 2);
+                                parsed.seconds = network_load_32(packet + at + 2);
                         break;
                 default:
                         break;
@@ -252,7 +253,13 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                 at += 2 + length;
         }
 
-        return address_to kind ? 0 : -1;
+        if (!parsed_kind)
+                return -1;
+
+        *lease = parsed;
+        address_to kind = parsed_kind;
+
+        return 0;
 }
 
 //      A mask of n leading bits, said as the prefix length a route wants.
@@ -264,6 +271,27 @@ static CONST p8 dhcp_prefix_of(p32 mask)
                     : 32;
 
         return bits ? bits : 24;
+}
+
+/* A DHCPACK is allowed to omit values already supplied by its offer.  Packet
+   parsing itself stays replacement-based so unrelated packets cannot bleed
+   into one another; only the stateful exchange chooses to retain an earlier
+   nonzero field. */
+static fn dhcp_lease_merge(dhcp_lease address_to lease,
+                           const dhcp_lease address_to fresh)
+{
+        if (fresh->address)
+                lease->address = fresh->address;
+        if (fresh->mask)
+                lease->mask = fresh->mask;
+        if (fresh->router)
+                lease->router = fresh->router;
+        if (fresh->nameserver)
+                lease->nameserver = fresh->nameserver;
+        if (fresh->server)
+                lease->server = fresh->server;
+        if (fresh->seconds)
+                lease->seconds = fresh->seconds;
 }
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
@@ -417,15 +445,21 @@ static bipolar dhcp_ask(string_address device, p8 address_to hardware,
 
                         deadline = wait;
 
+                        dhcp_lease answer = {0};
+
                         while (deadline--)
                         {
                                 if (!dhcp_receive(handle, packet, sizeof packet,
-                                                  transaction, hardware, lease,
+                                                  transaction, hardware,
+                                                  address_of answer,
                                                   address_of kind, 0, 250000000))
                                         continue;
 
                                 if (kind == DHCP_ACK || kind == DHCP_NAK)
                                 {
+                                        if (kind == DHCP_ACK)
+                                                dhcp_lease_merge(lease,
+                                                                 address_of answer);
                                         socket_close((b32)handle);
                                         return kind == DHCP_ACK ? DHCP_OK : DHCP_REFUSED;
                                 }
@@ -510,19 +544,7 @@ static bipolar dhcp_renew(string_address device, p8 address_to hardware,
                         //      Keep what the renewal said, including the new
                         //      lease time, but do not lose what it left out:
                         //      an ACK need not repeat every option.
-                        if (fresh.mask)
-                                lease->mask = fresh.mask;
-
-                        if (fresh.router)
-                                lease->router = fresh.router;
-
-                        if (fresh.nameserver)
-                                lease->nameserver = fresh.nameserver;
-
-                        if (fresh.server)
-                                lease->server = fresh.server;
-
-                        lease->seconds = fresh.seconds;
+                        dhcp_lease_merge(lease, address_of fresh);
 
                         socket_close((b32)handle);
 

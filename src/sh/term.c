@@ -392,11 +392,23 @@ static inline INLINE bool terminal_parameters_take(
 {
         if (byte >= '0' && byte <= '9')
         {
+                unsigned int digit = byte - '0';
+                unsigned int address_to value;
+
                 if (!sequence->count)
                         sequence->count = 1;
 
-                sequence->value[sequence->count - 1] =
-                    sequence->value[sequence->count - 1] * 10 + byte - '0';
+                value = address_of sequence->value[sequence->count - 1];
+
+                // CSI parameters have no protocol-level machine-word limit.
+                // Saturation preserves the only useful meaning of a larger
+                // value -- past the edge -- instead of wrapping it to a small
+                // cursor position or erase count.
+                if (address_to value > (~0u - digit) / 10)
+                        address_to value = ~0u;
+                else
+                        address_to value = address_to value * 10 + digit;
+
                 return false;
         }
 

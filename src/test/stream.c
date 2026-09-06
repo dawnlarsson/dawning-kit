@@ -41,8 +41,34 @@ static bool dynamic_buffer_fits_one_shelf(void)
         return fits;
 }
 
+static bool empty_mode_stays_bounded(void)
+{
+        // 64 KiB is a multiple of every supported Linux base page size.
+        positive page = 64 * 1024;
+        p8 address_to bytes = memory(page * 2);
+        if (!bytes || (positive)bytes >= ERROR_WINDOW)
+                return false;
+        if (system_call_3(syscall(mprotect), (positive)(bytes + page), page, 0))
+        {
+                memory_free(bytes, page * 2);
+                return false;
+        }
+
+        p8 address_to mode = bytes + page - 1;
+        *mode = end;
+        errno = 0;
+        stream address_to opened = fopen("/dev/null", mode);
+        bool bounded = !opened && errno == EINVAL;
+        if (opened)
+                fclose(opened);
+        memory_free(bytes, page * 2);
+        return bounded;
+}
+
 b32 main(void)
 {
+        if (!empty_mode_stays_bounded())
+                return 1;
         trace_body();
         bool fits = dynamic_buffer_fits_one_shelf();
 

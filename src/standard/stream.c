@@ -587,8 +587,11 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
         bool exclusive = false;
         bool close_on_exec = false;
 
-        if (mode == null)
+        if (mode == null || mode[0] == end)
+        {
+                errno = EINVAL;
                 return false;
+        }
 
         for (index = 1; mode[index] != end; index++)
         {
@@ -628,7 +631,10 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
                                           STREAM_APPEND;
         }
         else
+        {
+                errno = EINVAL;
                 return false;
+        }
 
         if (exclusive)
                 address_to open_flags |= stream_open_exclusive;

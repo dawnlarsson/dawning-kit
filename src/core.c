@@ -1361,6 +1361,11 @@ static b32 __init start()
 static void __exit exit_module(void)
 {
 #ifdef CONFIG_MOONWATER_CANVAS
+#ifdef CONFIG_MOONWATER_CANVAS_AUTOSTART
+        // A probe that has not found a card owns no DRM client (and therefore
+        // no module reference) to keep this callback's text resident.
+        cancel_delayed_work_sync(&canvas_probe_work);
+#endif
         // Before anything else: printk must stop being pointed at cells that
         // are about to be freed.
         console_stop();

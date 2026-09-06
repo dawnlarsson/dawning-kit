@@ -3155,6 +3155,7 @@ static p8 edit_input_state;
 static terminal_parameters edit_input_csi;
 static positive edit_input_pending;
 static positive edit_input_wanted;
+static positive edit_input_minimum;
 static bool edit_input_alt;
 
 /*
@@ -3522,6 +3523,17 @@ static fn edit_input_byte(p8 byte)
                         return;
 
                 edit_input_state = EDIT_INPUT_GROUND;
+
+                /* Reject overlong encodings, surrogate halves and values
+                   outside Unicode. Otherwise malformed terminal bytes turn
+                   into a different, valid character when the buffer is
+                   written back (C0 AF used to become '/'). */
+                if (edit_input_pending < edit_input_minimum ||
+                    edit_input_pending > 0x10ffff ||
+                    (edit_input_pending >= 0xd800 &&
+                     edit_input_pending <= 0xdfff))
+                        return;
+
                 edit_input_deliver(edit_input_pending);
                 return;
         }
@@ -3558,16 +3570,19 @@ static fn edit_input_byte(p8 byte)
         {
                 edit_input_pending = byte & 0x1f;
                 edit_input_wanted = 1;
+                edit_input_minimum = 0x80;
         }
         else if ((byte & 0xf0) == 0xe0)
         {
                 edit_input_pending = byte & 0x0f;
                 edit_input_wanted = 2;
+                edit_input_minimum = 0x800;
         }
         else if ((byte & 0xf8) == 0xf0)
         {
                 edit_input_pending = byte & 0x07;
                 edit_input_wanted = 3;
+                edit_input_minimum = 0x10000;
         }
         else
                 return;

@@ -13139,6 +13139,93 @@ static COLD fn shell_command_kind_written(writer write, string_address name,
                 string_format(write, "%s\n", name);
 }
 
+/* `type -a` asks for every executable spelling in PATH, not merely the first
+   one the ordinary command lookup returns. Keep that uncommon walk here so
+   the executor and every non--a query retain their indexed first-hit path. */
+static COLD bool shell_type_path_written(writer write, string_address name,
+                                         string_address path, bool terse,
+                                         bool path_only)
+{
+        file_facts facts;
+
+        if (system_access_at(AT_FDCWD, path, ACCESS_EXECUTE) ||
+            !test_facts(path, address_of facts, true) ||
+            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                return false;
+
+        if (terse)
+                string_format(write, "file\n");
+        else if (path_only)
+                string_format(write, "%s\n", path);
+        else
+                string_format(write, "%s is %s\n", name, path);
+
+        return true;
+}
+
+static COLD bipolar shell_type_paths(writer write, string_address name,
+                                     p8 address_to address_to found,
+                                     positive address_to found_room,
+                                     bool terse, bool path_only)
+{
+        string_address value = env_get("PATH");
+        path_walk walk;
+        positive name_length = string_length(name);
+        positive wanted;
+        bipolar count = 0;
+        bool empty = false;
+
+        if (string_first_of(name, '/'))
+                return shell_type_path_written(write, name, name, terse,
+                                               path_only);
+
+        if (!value && shell_bash_compat)
+                return 0;
+        if (!value)
+                value = "/bin:/usr/bin:/";
+        if (name_length > positive_max - 3 ||
+            !shell_path_wanted(value, name_length, address_of wanted))
+                return -1;
+
+        /* An empty PATH component is printed as ./name, which needs one byte
+           beyond the ordinary empty-segment join. The allocator rounds today,
+           but its caller must still state the full bound. */
+        if (wanted < name_length + 3)
+                wanted = name_length + 3;
+        if (!shell_room((address_any address_to)found, found_room, wanted, 1))
+                return -1;
+
+        walk = (path_walk){value, null, 0, false};
+
+        while (path_walk_next(address_of walk))
+        {
+                string_address segment = walk.length
+                                             ? walk.segment
+                                             : (string_address)".";
+                positive segment_length = walk.length ? walk.length : 1;
+
+                /* Bash's all-path iterator treats each adjacent pair of
+                   empty components as one current-directory entry. */
+                if (!walk.length)
+                {
+                        empty = !empty;
+                        if (!empty)
+                                continue;
+                }
+                else
+                        empty = false;
+
+                if (!path_walk_join(*found, *found_room, segment,
+                                    segment_length, name, "") ||
+                    !shell_type_path_written(write, name, *found, terse,
+                                             path_only))
+                        continue;
+                count++;
+        }
+
+        return count;
+}
+
 /*
         type: what a name would run.
 
@@ -13272,8 +13359,14 @@ COLD fn shell_type(writer write, string_address input)
                         }
                 }
 
-                located = shell_find_in_path_query_alloc(name, address_of found,
-                                                         address_of found_room);
+                if (every)
+                        located = shell_type_paths(write, name,
+                                                   address_of found,
+                                                   address_of found_room,
+                                                   terse, path_only);
+                else
+                        located = shell_find_in_path_query_alloc(
+                            name, address_of found, address_of found_room);
 
                 if (located < 0)
                 {
@@ -13284,12 +13377,16 @@ COLD fn shell_type(writer write, string_address input)
 
                 if (located)
                 {
-                        if (terse)
-                                string_format(write, "file\n");
-                        else if (path_only)
-                                string_format(write, "%s\n", found);
-                        else
-                                string_format(write, "%s is %s\n", name, found);
+                        if (!every)
+                        {
+                                if (terse)
+                                        string_format(write, "file\n");
+                                else if (path_only)
+                                        string_format(write, "%s\n", found);
+                                else
+                                        string_format(write, "%s is %s\n",
+                                                      name, found);
+                        }
 
                         any = true;
                         continue;
@@ -13298,15 +13395,14 @@ COLD fn shell_type(writer write, string_address input)
                 if (any)
                         continue;
 
-                // -t, -f and the two path forms say nothing about a name
-                // they have no answer for; the plain form says so out loud.
-                // The three that stay quiet are Bash's own and answer as Bash
-                // does, which is one and not the reference shell's hundred
-                // and twenty-seven.
-                if (!terse && !path_only && !no_functions)
+                // -a, -t, -f and the two path forms say nothing on stdout
+                // about a name they cannot answer; the plain form does. They
+                // answer one rather than the reference shell's historical
+                // hundred and twenty-seven.
+                if (!terse && !path_only && !no_functions && !every)
                         string_format(write, "%s: not found\n", name);
 
-                bad = terse || path_only || no_functions ? 1 : 127;
+                bad = terse || path_only || no_functions || every ? 1 : 127;
         }
 
         if (found)

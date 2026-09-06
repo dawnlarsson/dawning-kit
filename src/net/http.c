@@ -373,19 +373,29 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         socket_close((b32)handle);
         handle = -1;
 
-        if (whole.used < 12)
+        if (whole.used < 13)
         {
                 status = HTTP_NO_REPLY;
                 goto done;
         }
 
-        //      "HTTP/1.x NNN "
-        if (string_compare_max(whole.bytes, (string_address) "HTTP/1.", 7))
+        //      "HTTP/1.x NNN ".  The fixed fields are checked as bytes rather
+        //      than accepting a numeric prefix: a corrupt version or status
+        //      line is framing, not a successful response with code zero.
+        if (string_compare_max(whole.bytes, (string_address) "HTTP/1.", 7) ||
+            whole.bytes[7] < '0' || whole.bytes[7] > '9' ||
+            whole.bytes[8] != ' ' ||
+            whole.bytes[9] < '0' || whole.bytes[9] > '9' ||
+            whole.bytes[10] < '0' || whole.bytes[10] > '9' ||
+            whole.bytes[11] < '0' || whole.bytes[11] > '9' ||
+            (whole.bytes[12] != ' ' && whole.bytes[12] != '\r' &&
+             whole.bytes[12] != '\n'))
                 goto done;
 
         if (code)
-                address_to code = (b32)string_digits_max(
-                    (string_address)(whole.bytes + 9), 3, null);
+                address_to code = (b32)((whole.bytes[9] - '0') * 100 +
+                                        (whole.bytes[10] - '0') * 10 +
+                                        whole.bytes[11] - '0');
 
         header = http_header_end(whole.bytes, whole.used);
 

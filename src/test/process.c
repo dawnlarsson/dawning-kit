@@ -559,6 +559,27 @@ static fn test_realpath(void)
                 is_null(realpath(path, answer)));
         same("realpath dot dot through a file is ENOTDIR", errno, ENOTDIR);
 
+        // A separator requires a directory even when no ordinary component
+        // follows it. Exercise both caller-owned and allocated output, and
+        // the same regular file reached directly or through a symbolic link.
+        static const string_address nondirectory[] = {
+            "one/", "one//", "one/.", "one/./", "one//.//",
+            "pointer/", "pointer//", "pointer/.", "pointer/./",
+        };
+        for (positive i = 0; i < array_count(nondirectory); i++)
+                for (positive owned = 0; owned < 2; owned++)
+                {
+                        test_path(path, nondirectory[i]);
+                        errno = 0;
+                        allocated = realpath(path, owned ? answer : null);
+                        true_is("realpath requires a directory before slash",
+                                is_null(allocated));
+                        same("realpath slash through file is ENOTDIR",
+                             errno, ENOTDIR);
+                        if (!owned)
+                                free(allocated);
+                }
+
         //      A loop of links is ELOOP and not a hang.
         test_path(path, (string_address) "round");
         test_path(wanted, (string_address) "trip");

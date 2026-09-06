@@ -3756,6 +3756,14 @@ bash_answer 'type -p and -P' \
 bash_answer 'type -f looks past a function' \
         'cd() { :; }; type -t cd; type -f -t cd'
 bash_answer 'type -a names every place' 'type -a cd'
+bash_answer 'type -a names every PATH entry' \
+        'PATH=/bin:/usr/bin; type -a sh'
+bash_answer 'type -a omits non-executable PATH entries' \
+        'd=$(/usr/bin/mktemp -d /tmp/type-a.XXXXXX) || exit; : > "$d/x"; PATH=$d; type -a x 2>/dev/null; a=$?; type -a "$d/x" 2>/dev/null; echo "$a $?"; /bin/rm -rf "$d"'
+bash_answer 'type -a omits directories and spells empty PATH' \
+        'd=$(/usr/bin/mktemp -d /tmp/type-a-dir.XXXXXX) || exit; /bin/mkdir "$d/onlydir"; : > "$d/x"; /bin/chmod +x "$d/x"; cd "$d"; PATH=:; type -ap x; type -a onlydir 2>/dev/null; echo $?; cd /; /bin/rm -rf "$d"'
+bash_answer 'type -a empty PATH keeps a maximum name bounded' \
+        'd=$(/usr/bin/mktemp -d /tmp/type-a-long.XXXXXX) || exit; name=$(/usr/bin/printf %0255d 0 | /usr/bin/tr 0 x); : > "$d/$name"; /bin/chmod +x "$d/$name"; cd "$d"; PATH=; type -a "$name" >/dev/null; echo $?; cd /; /bin/rm -rf "$d"'
 bash_answer 'command -V a keyword' 'command -V if; command -V cd'
 bash_answer 'command -v a keyword' 'command -v if; command -v cd'
 bash_answer 'hash -l and -t' \

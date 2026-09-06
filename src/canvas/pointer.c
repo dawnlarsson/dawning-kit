@@ -15,6 +15,7 @@
 */
 
 static struct task_struct *canvas_thread;
+static _Bool pointer_handler_registered;
 
 /*
         How long the processor is allowed to take waking up.
@@ -647,7 +648,14 @@ static void canvas_thread_stop(void)
         if (!canvas_thread)
                 return;
 
-        input_unregister_handler(&pointer_handler);
+        /* Registration can be interrupted before the input core initializes
+           the handler's lists.  Only hand a handler back after the matching
+           registration completed. */
+        if (pointer_handler_registered)
+        {
+                input_unregister_handler(&pointer_handler);
+                pointer_handler_registered = false;
+        }
         cpu_latency_qos_remove_request(&pointer_qos);
 
         desktop.awake = false;
@@ -774,6 +782,8 @@ static void canvas_thread_start(void)
 
         if (input_register_handler(&pointer_handler))
                 log_canvas("could not register the input handler\n");
+        else
+                pointer_handler_registered = true;
 }
 
 // Nanoseconds, for the stats ioctl.

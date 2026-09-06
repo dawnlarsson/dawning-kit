@@ -305,18 +305,20 @@ static bipolar clock_weekday_from_days(bipolar days)
         Returns false when the year does not fit in tm_year, which is an int
         and therefore runs out around the year two billion while a 64-bit
         time_t does not run out until the year three hundred billion. glibc
-        answers a null pointer and EOVERFLOW there; this answers false and its
-        callers turn that into the null pointer. There is no errno in this
-        tree to set.
+        answers a null pointer and EOVERFLOW there; this sets the same error
+        and its callers turn false into their failure result.
 */
 static bool clock_break_down(bipolar seconds, tm address_to broken)
 {
         bipolar days = clock_floor_divide(seconds, CLOCK_SECONDS_PER_DAY);
-        bipolar rest = seconds - days * CLOCK_SECONDS_PER_DAY;
+        bipolar rest = seconds % CLOCK_SECONDS_PER_DAY;
         bipolar year;
         bipolar month;
         bipolar day;
         bipolar year_field;
+
+        if (rest < 0)
+                rest += CLOCK_SECONDS_PER_DAY;
 
         clock_civil_from_days(days, address_of year, address_of month,
                               address_of day);
@@ -324,7 +326,10 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
         year_field = year - 1900;
 
         if (year_field > 2147483647 || year_field < -2147483647 - 1)
+        {
+                errno = EOVERFLOW;
                 return false;
+        }
 
         broken->tm_sec = (b32)(rest % 60);
         broken->tm_min = (b32)((rest / 60) % 60);
@@ -355,8 +360,8 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
 */
 static bipolar clock_read(b32 which, timespec address_to into)
 {
-        return (bipolar)system_call_2(syscall(clock_gettime), (positive)which,
-                                      (positive)into);
+        return error_whole((bipolar)system_call_2(
+            syscall(clock_gettime), (positive)which, (positive)into));
 }
 
 /*
@@ -417,7 +422,7 @@ clock_t clock(void)
 // Linux's negative return to the standard's minus one.
 b32 clock_gettime(clockid_t which, timespec address_to into)
 {
-        return clock_read((b32)which, into) < 0 ? -1 : 0;
+        return (b32)clock_read((b32)which, into);
 }
 
 /* One monotonic nanosecond clock for every polling/backoff state machine in
@@ -434,10 +439,8 @@ static HOT positive clock_monotonic_nanoseconds()
 
 b32 clock_getres(clockid_t which, timespec address_to into)
 {
-        return (bipolar)system_call_2(syscall(clock_getres), (positive)which,
-                                      (positive)into) < 0
-                       ? -1
-                       : 0;
+        return error_whole((bipolar)system_call_2(
+            syscall(clock_getres), (positive)which, (positive)into));
 }
 
 /*
@@ -472,7 +475,11 @@ b32 gettimeofday(timeval address_to into, address_any zone)
 // because the difference of two 64-bit times does not always fit in one.
 CONST decimal difftime(time_t later, time_t earlier)
 {
-        return (decimal)later - (decimal)earlier;
+        // Subtract before rounding. Unsigned magnitudes cover the full
+        // signed time_t span without overflowing or losing nearby seconds.
+        return later >= earlier
+                   ? (decimal)((p64)later - (p64)earlier)
+                   : -(decimal)((p64)earlier - (p64)later);
 }
 
 /*

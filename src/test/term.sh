@@ -523,6 +523,12 @@ same 'cup empty first' '0,4'                     20 5 in '\e[;5H' cursor
 same 'up down'      '2,0'                        20 5 in '\e[5;1H\e[3A\e[1B' cursor
 same 'right left'   '0,3'                        20 5 in '\e[9C\e[6D' cursor
 same 'clamped'      '4,19'                       20 5 in '\e[99;99H' cursor
+#       Parameters are unsigned implementation storage, but the terminal
+#       language is decimal without that ceiling.  More digits must keep
+#       meaning "past the edge", rather than wrapping around to a small
+#       position that overwrites existing text.
+same 'huge column clamps' '[abc    Z]'             8 2 in 'abc\e[4294967297GZ' row 0
+same 'huge move clamps'   '[a      Z]'             8 2 in 'a\e[4294967297CZ' row 0
 #       CHA and VPA, which move on one axis and leave the other alone.
 same 'cha'          '2,6'                        20 5 in '\e[3;3H\e[7G' cursor
 same 'vpa'          '3,2'                        20 5 in '\e[3;3H\e[4d' cursor

@@ -761,7 +761,13 @@ bipolar file_link_text(string_address path, p8 address_to into, positive limit)
         still worked out, so what comes back is an absolute path, but every
         name in it is the name that was written and not what it points at.
 */
-bool file_resolve(string_address path, p8 address_to into, bool follow)
+#define FILE_RESOLVE_DIRECTORIES 1
+#define FILE_RESOLVE_FINAL_MISSING 2
+#define FILE_RESOLVE_MISSING_TAIL 4
+#define FILE_RESOLVE_UNRESOLVED 8
+
+static bool file_resolve_as(string_address path, p8 address_to into,
+                            bool follow, p8 policy)
 {
         p8 rest[FILE_PATH_MAX];
         p8 link[FILE_PATH_MAX];
@@ -769,6 +775,7 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
         positive at = 0;
         positive length = 0;
         positive hops = 0;
+        bool missing_walk = false;
 
         if (string_is(path, end) || string_length(path) >= FILE_PATH_MAX)
                 return false;
@@ -812,10 +819,25 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 positive piece = at - start;
 
                 if (piece == 1 && rest[start] == '.')
+                {
+                        /* A final dot says the preceding component itself
+                           must be a directory.  An interior dot adds no such
+                           constraint to a missing -s path. */
+                        if (missing_walk)
+                        {
+                                string_address after = rest + at;
+                                after += string_span_of_set(after, "/");
+                                if (!*after)
+                                        return false;
+                        }
                         continue;
+                }
 
                 if (piece == 2 && rest[start] == '.' && rest[start + 1] == '.')
                 {
+                        if (missing_walk)
+                                return false;
+
                         while (length > 1 && into[length - 1] != '/')
                                 length--;
 
@@ -835,17 +857,54 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
                 length = (positive)(memory_copy_apart_end(
                     into + length, rest + start, piece) - into);
 
-                if (!follow)
-                        continue;
-
-                bipolar seen = system_read_link_at(
-                    AT_FDCWD, into, link, FILE_PATH_MAX - 1);
+                bipolar seen = follow
+                                   ? system_read_link_at(
+                                         AT_FDCWD, into, link,
+                                         FILE_PATH_MAX - 1)
+                                   : 0;
 
                 if (seen <= 0)
+                {
+                        if ((policy & FILE_RESOLVE_DIRECTORIES) && rest[at])
+                        {
+                                file_facts facts;
+                                bipolar looked = file_look_code(
+                                    AT_FDCWD, into, 0, address_of facts);
+                                bool directory = looked == 0 &&
+                                                 (facts.mode & MODE_FORMAT) ==
+                                                     MODE_DIRECTORY;
+
+                                if (!directory)
+                                {
+                                        if (looked != -ERROR_NO_ENTRY)
+                                                return false;
+
+                                        string_address after = rest + at;
+                                        after += string_span_of_set(after,
+                                                                    "/");
+                                        bool final = !*after;
+                                        if (!(policy &
+                                              FILE_RESOLVE_MISSING_TAIL) &&
+                                            (!(policy &
+                                               FILE_RESOLVE_FINAL_MISSING) ||
+                                             !final))
+                                                return false;
+                                        missing_walk = true;
+                                }
+                                else
+                                        missing_walk = false;
+                        }
                         continue;
+                }
 
                 if (++hops > 40)
+                {
+                        /* -m treats the link at the resolution ceiling like
+                           an absent component and preserves its spelling. */
+                        if (policy & FILE_RESOLVE_UNRESOLVED)
+                                continue;
                         return false;
+                }
 
                 link[seen] = end;
 
@@ -896,6 +955,11 @@ bool file_resolve(string_address path, p8 address_to into, bool follow)
         into[length] = end;
 
         return true;
+}
+
+bool file_resolve(string_address path, p8 address_to into, bool follow)
+{
+        return file_resolve_as(path, into, follow, 0);
 }
 
 bool file_real(string_address path, p8 address_to into)
@@ -9333,7 +9397,14 @@ static b32 file_readlink()
 
                 if (resolve)
                 {
-                        bool valid = file_real(path, answer);
+                        p8 policy = readlink_canonical_option == 'm'
+                                        ? FILE_RESOLVE_UNRESOLVED
+                                    : readlink_canonical_option == 'e'
+                                        ? FILE_RESOLVE_DIRECTORIES
+                                        : FILE_RESOLVE_DIRECTORIES |
+                                              FILE_RESOLVE_FINAL_MISSING;
+                        bool valid = file_resolve_as(path, answer, true,
+                                                     policy);
 
                         if (valid && readlink_canonical_option != 'm')
                         {
@@ -9614,33 +9685,6 @@ static bool realpath_under(string_address directory, string_address path)
         return string_is(path + length, end) || string_is(path + length, '/');
 }
 
-// Whether every component of a path but the last is a directory. -L drops
-// the .. before any of them is followed, and a .. after something that is not
-// a directory is still a path that does not exist.
-static bool realpath_walkable(string_address path)
-{
-        p8 prefix[FILE_PATH_MAX];
-        positive length = 0;
-
-        while (string_get(path + length))
-        {
-                if (!string_is(path + length, '/') || length == 0)
-                {
-                        length++;
-                        continue;
-                }
-
-                string_copy_max_end(prefix, path, length);
-
-                if (!file_is_directory_through(prefix))
-                        return false;
-
-                length++;
-        }
-
-        return true;
-}
-
 /*
         One canonical path said from where another stands: what they share
         dropped, one .. for every step still to climb, and a lone dot when
@@ -9787,10 +9831,13 @@ static b32 file_realpath()
                 if (logical && !written_name)
                 {
                         p8 lexical[FILE_PATH_MAX];
+                        p8 policy = allow_missing
+                                        ? FILE_RESOLVE_UNRESOLVED
+                                        : FILE_RESOLVE_DIRECTORIES |
+                                              FILE_RESOLVE_FINAL_MISSING;
 
-                        if (!realpath_walkable(path) ||
-                            !file_resolve(path, lexical, false) ||
-                            !file_resolve(lexical, answer, true))
+                        if (!file_resolve_as(path, lexical, false, policy) ||
+                            !file_resolve_as(lexical, answer, true, policy))
                         {
                                 if (!quiet)
                                         string_format(file_fail,
@@ -9800,13 +9847,51 @@ static b32 file_realpath()
                                 continue;
                         }
                 }
-                else if (!file_resolve(path, answer, !written_name))
+                else
                 {
-                        if (!quiet)
-                                string_format(file_fail, "realpath: %s: Invalid argument\n", path);
+                        p8 policy = allow_missing
+                                        ? FILE_RESOLVE_UNRESOLVED
+                                    : written_name
+                                        ? FILE_RESOLVE_DIRECTORIES |
+                                              FILE_RESOLVE_MISSING_TAIL
+                                        : FILE_RESOLVE_DIRECTORIES |
+                                              FILE_RESOLVE_FINAL_MISSING;
 
-                        status = 1;
-                        continue;
+                        if (!file_resolve_as(path, answer, !written_name,
+                                             policy))
+                        {
+                                if (!quiet)
+                                        string_format(
+                                            file_fail,
+                                            "realpath: %s: Invalid argument\n",
+                                            path);
+
+                                status = 1;
+                                continue;
+                        }
+                }
+
+                /* -s preserves the spelling of links, but it does not hide
+                   kernel traversal failures.  Default -E alone tolerates
+                   ENOENT; -e still requires the complete referent. */
+                if (written_name && !allow_missing)
+                {
+                        file_facts facts;
+                        bipolar looked = file_look_code(AT_FDCWD, path, 0,
+                                                        address_of facts);
+
+                        if (looked < 0 &&
+                            (realpath_missing_option == 'e' ||
+                             looked != -ERROR_NO_ENTRY))
+                        {
+                                if (!quiet)
+                                        string_format(
+                                            file_fail, "realpath: %s: %s\n",
+                                            path, file_reason(looked));
+
+                                status = 1;
+                                continue;
+                        }
                 }
 
                 path_head_copy(above, FILE_PATH_MAX, answer);

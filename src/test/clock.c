@@ -1455,6 +1455,55 @@ static fn check_live(void)
                     (bipolar)difftime((time_t)3, (time_t)1000000), -999997);
 }
 
+static fn check_failure_and_precision(void)
+{
+        timespec reading;
+        struct tm broken;
+        static const time_t unrepresentable[] = {b64_min, b64_max};
+
+        errno = 0;
+        same_signed("clock_gettime invalid clock", clock_gettime(b32_max, &reading), -1);
+        same_signed("clock_gettime sets errno", errno, EINVAL);
+        errno = 0;
+        same_signed("clock_getres invalid clock", clock_getres(b32_max, &reading), -1);
+        same_signed("clock_getres sets errno", errno, EINVAL);
+        errno = 123;
+        same_signed("clock_gettime succeeds", clock_gettime(CLOCK_REALTIME, &reading), 0);
+        same_signed("clock_gettime preserves success errno", errno, 123);
+
+        for (positive i = 0; i < array_count(unrepresentable); i++)
+        {
+                errno = 0;
+                good("gmtime refuses an unrepresentable year",
+                     !gmtime_r(unrepresentable + i, &broken));
+                same_signed("gmtime reports year overflow", errno, EOVERFLOW);
+        }
+        broken = (struct tm){.tm_year = b32_max, .tm_mon = 12, .tm_mday = 1};
+        errno = 0;
+        same_signed("timegm refuses normalization beyond tm_year", timegm(&broken), -1);
+        same_signed("timegm reports year overflow", errno, EOVERFLOW);
+
+        // Nearby integer timestamps still differ by whole seconds above
+        // double's exact-integer range; rounding them separately loses that.
+        static const time_t gaps[] = {1, 3, 17, 1025};
+        for (positive power = 53; power < 63; power++)
+                for (positive sign = 0; sign < 2; sign++)
+                        for (positive i = 0; i < array_count(gaps); i++)
+                        {
+                                time_t start = (time_t)1 << power;
+                                if (sign)
+                                        start = -start;
+                                good("difftime retains nearby seconds",
+                                     difftime(start + gaps[i], start) == (decimal)gaps[i]);
+                                good("difftime retains nearby negative seconds",
+                                     difftime(start, start + gaps[i]) == -(decimal)gaps[i]);
+                        }
+        good("difftime spans the full signed range",
+             difftime(b64_max, b64_min) == 0x1p64);
+        good("difftime spans the full signed range backwards",
+             difftime(b64_min, b64_max) == -0x1p64);
+}
+
 b32 main(void)
 {
         check_corners();
@@ -1464,6 +1513,7 @@ b32 main(void)
         check_scan();
         check_asctime();
         check_live();
+        check_failure_and_precision();
 
         same((string_address) "every day from 1900 to 2100", clock_test_dense(),
              CLOCK_HASH_DENSE);
