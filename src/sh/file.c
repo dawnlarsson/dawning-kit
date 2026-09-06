@@ -857,19 +857,34 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                 length = (positive)(memory_copy_apart_end(
                     into + length, rest + start, piece) - into);
 
-                bipolar seen = follow
-                                   ? system_read_link_at(
-                                         AT_FDCWD, into, link,
-                                         FILE_PATH_MAX - 1)
-                                   : 0;
+                file_facts facts;
+                bipolar looked = 0;
+                bipolar seen = 0;
+                bool need_directory =
+                    (policy & FILE_RESOLVE_DIRECTORIES) && rest[at];
+
+                /* Strict walks need the component's type anyway. Reuse that
+                   lookup and read link text only for an actual symlink.
+                   Lexical -s/-L walks still validate through the referent;
+                   unconstrained callers retain their readlink-only path. */
+                if (need_directory)
+                {
+                        looked = file_look_code(
+                            AT_FDCWD, into, follow ? AT_SYMLINK_NOFOLLOW : 0,
+                            address_of facts);
+                        if (follow && looked == 0 &&
+                            (facts.mode & MODE_FORMAT) == MODE_LINK)
+                                seen = system_read_link_at(
+                                    AT_FDCWD, into, link, FILE_PATH_MAX - 1);
+                }
+                else if (follow)
+                        seen = system_read_link_at(AT_FDCWD, into, link,
+                                                   FILE_PATH_MAX - 1);
 
                 if (seen <= 0)
                 {
-                        if ((policy & FILE_RESOLVE_DIRECTORIES) && rest[at])
+                        if (need_directory)
                         {
-                                file_facts facts;
-                                bipolar looked = file_look_code(
-                                    AT_FDCWD, into, 0, address_of facts);
                                 bool directory = looked == 0 &&
                                                  (facts.mode & MODE_FORMAT) ==
                                                      MODE_DIRECTORY;
