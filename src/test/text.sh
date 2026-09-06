@@ -842,6 +842,19 @@ compare 'paired disorder checked' comm - --check-order "$work/relation_unordered
 compare 'disorder with unpaired' comm - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
 compare 'zero records'       comm - -z "$work/comm_zero_left" "$work/comm_zero_right"
 compare 'refill record'      comm - "$work/record_wide" "$work/record_wide"
+for record_width in 65534 65535 65536 131071; do
+        head -c "$record_width" /dev/zero | tr '\0' m > "$work/record_edge"
+        printf '\na\nz' >> "$work/record_edge"
+        compare "refill disorder $record_width" comm - --check-order \
+                "$work/record_edge" "$work/record_edge"
+        compare "refill unchecked $record_width" comm - --nocheck-order \
+                "$work/record_edge" "$work/record_edge"
+        compare "refill stdin $record_width" comm record_edge --check-order \
+                - "$work/record_edge"
+        tr '\n' '\0' < "$work/record_edge" > "$work/record_zero_edge"
+        compare "zero refill disorder $record_width" comm - -z --check-order \
+                "$work/record_zero_edge" "$work/record_zero_edge"
+done
 
 case_start paste
 compare 'parallel'           paste - "$work/paste_left" "$work/paste_right"

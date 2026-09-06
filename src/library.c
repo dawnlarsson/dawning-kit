@@ -3526,6 +3526,24 @@ __asm__(
     ASM_FUNC(memory_count_words)
     "xor %eax, %eax\n   and $1, %edx\n   test %rsi, %rsi\n"
     "jz .Lmemory_words_x64_done\n"
+#ifndef KERNEL_MODE
+    "cmp $32, %rsi\n   jb .Lmemory_words_x64_loop\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je .Lmemory_words_x64_loop\n"
+    "mov $32, %ecx\n   vmovd %ecx, %xmm1\n   vpbroadcastb %xmm1, %ymm1\n"
+    "mov $8, %ecx\n   vmovd %ecx, %xmm2\n   vpbroadcastb %xmm2, %ymm2\n"
+    "mov $14, %ecx\n   vmovd %ecx, %xmm3\n   vpbroadcastb %xmm3, %ymm3\n"
+    // Signed range comparisons exclude high bytes: neither negative bytes
+    // nor 0..8 pass the lower bound. Bits mark non-space bytes, so a word
+    // starts exactly where the preceding bit (or incoming state) is clear.
+    ".Lmemory_words_x64_vector:\n   vmovdqu (%rdi), %ymm0\n"
+    "vpcmpgtb %ymm2, %ymm0, %ymm4\n   vpcmpgtb %ymm0, %ymm3, %ymm5\n"
+    "vpand %ymm5, %ymm4, %ymm4\n   vpcmpeqb %ymm1, %ymm0, %ymm5\n"
+    "vpor %ymm5, %ymm4, %ymm4\n   vpmovmskb %ymm4, %ecx\n   not %ecx\n"
+    "lea (%rcx,%rcx), %r8d\n   or %edx, %r8d\n   not %r8d\n   and %ecx, %r8d\n"
+    "popcnt %r8d, %r8d\n   add %r8, %rax\n   shr $31, %ecx\n   mov %ecx, %edx\n"
+    "add $32, %rdi\n   sub $32, %rsi\n   cmp $32, %rsi\n   jae .Lmemory_words_x64_vector\n"
+    "vzeroupper\n   test %rsi, %rsi\n   jz .Lmemory_words_x64_done\n"
+#endif
     ".Lmemory_words_x64_loop:\n   movzbl (%rdi), %ecx\n"
     "cmp $0x20, %cl\n   sete %r8b\n   sub $9, %ecx\n"
     "cmp $4, %ecx\n   setbe %r9b\n   or %r9b, %r8b\n   xor $1, %r8b\n"

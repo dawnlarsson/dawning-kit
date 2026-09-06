@@ -3656,6 +3656,7 @@ static bool text_record_next(text_record_cursor address_to cursor,
 {
         text_reader address_to reader = address_of cursor->reader;
         positive used = 0;
+        p8 address_to found = null;
 
         cursor->record = null;
         cursor->length = 0;
@@ -3669,10 +3670,11 @@ static bool text_record_next(text_record_cursor address_to cursor,
         if (previous && address_to previous)
         {
                 positive left = reader->filled - reader->position;
-                bool complete = left && memory_first_of(
-                    reader->buffer + reader->position, delimiter, left);
+                if (left)
+                        found = memory_first_of(reader->buffer + reader->position,
+                                                delimiter, left);
 
-                if (address_to previous == cursor->spill || !complete)
+                if (address_to previous == cursor->spill || !found)
                         text_record_preserve(previous, previous_length,
                                              previous_storage);
         }
@@ -3684,7 +3686,10 @@ static bool text_record_next(text_record_cursor address_to cursor,
         {
                 p8 address_to at = reader->buffer + reader->position;
                 positive left = reader->filled - reader->position;
-                p8 address_to found = memory_first_of(at, delimiter, left);
+                /* A successful preservation probe also located this record.
+                   Its unread bytes prevent fill from replacing the buffer. */
+                if (!found)
+                        found = memory_first_of(at, delimiter, left);
                 positive take = found ? (positive)(found - at) : left;
 
                 if (!used && found)

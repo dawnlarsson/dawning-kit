@@ -7547,6 +7547,94 @@ static p8 address_to block_mapped(void)
         return block_pages;
 }
 
+static positive2 reference_words(p8 address_to bytes, positive size, bool inside)
+{
+        positive2 result = {.x = 0, .y = inside ? 1 : 0};
+
+        for (positive at = 0; at < size; at++)
+        {
+                p8 byte = bytes[at];
+                bool next = !(byte == 32 || (byte >= 9 && byte <= 13));
+                if (next && !result.y)
+                        result.x++;
+                result.y = next;
+        }
+        return result;
+}
+
+static fn words_case(p8 address_to bytes, positive size, bool inside)
+{
+        positive2 want = reference_words(bytes, size, inside);
+        positive2 got = memory_count_words(bytes, size, inside);
+        same("memory_count_words", "count", got.x, want.x);
+        same("memory_count_words", "outgoing state", got.y, want.y);
+
+        positive split = size / 2;
+        positive2 first = memory_count_words(bytes, split, inside);
+        positive2 rest = memory_count_words(bytes + split, size - split,
+                                            (bool)first.y);
+        same("memory_count_words", "split count", first.x + rest.x, want.x);
+        same("memory_count_words", "split state", rest.y, want.y);
+}
+
+static fn words_sweep()
+{
+        static p8 room[512];
+        static const p8 alphabet[] = {0, 8, 9, 10, 11, 12, 13, 14,
+                                      31, 32, 33, 127, 128, 255};
+
+        // Every byte at every lane, between whitespace and between word bytes.
+        for (positive value = 0; value < 256; value++)
+                for (positive background = 0; background < 2; background++)
+                        for (positive lane = 0; lane < 64; lane++)
+                        {
+                                reference_fill(room, background ? 'x' : ' ', 65);
+                                room[lane] = (p8)value;
+                                words_case(room, 65, false);
+                                words_case(room, 65, true);
+                        }
+
+        for (positive offset = 0; offset < 64; offset++)
+                for (positive size = 0; size <= 257; size++)
+                {
+                        for (positive at = 0; at < sizeof(room); at++)
+                                room[at] = alphabet[(at * 7 + size + offset) %
+                                                    sizeof(alphabet)];
+                        words_case(room + offset, size, false);
+                        words_case(room + offset, size, true);
+                }
+
+        p8 address_to pages = block_mapped();
+        if (!pages)
+                return;
+        p8 address_to edge = pages + (BLOCK_PAGES - 1) * BLOCK_PAGE;
+        for (positive shape = 0; shape < 4; shape++)
+                for (positive size = 0; size <= 1100; size++)
+                {
+                        p8 address_to bytes = edge - size;
+                        for (positive at = 0; at < size; at++)
+                                bytes[at] = shape == 0 ? 9 : shape == 1 ? 128 :
+                                            shape == 2 ? ((at & 1) ? ' ' : 0) :
+                                            (p8)(at * 73 + size);
+                        words_case(bytes, size, false);
+                        words_case(bytes, size, true);
+                }
+}
+
+static fn check_count_words()
+{
+        words_sweep();
+#if X64
+        p8 avx2 = cpu_has_avx2;
+        p8 avx512 = cpu_has_avx512;
+        cpu_has_avx2 = 0;
+        cpu_has_avx512 = 0;
+        words_sweep();
+        cpu_has_avx2 = avx2;
+        cpu_has_avx512 = avx512;
+#endif
+}
+
 static p8 block_field[2048 + 256];
 static p8 block_spare[2048 + 256];
 
@@ -8966,6 +9054,7 @@ b32 main()
         check_fill();
         check_fill_wide();
         check_count();
+        check_count_words();
         check_memory_compare();
 #if RISCV64
         check_riscv_alignment_floor();
