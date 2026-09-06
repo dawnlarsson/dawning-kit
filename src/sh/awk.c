@@ -4585,7 +4585,7 @@ static awk_text address_to awk_subscript_key(awk_node address_to list, b32 count
         return awk_builder_text(address_of build);
 }
 
-static fn awk_target_field_locate(awk_node address_to node,
+static inline INLINE fn awk_target_field_locate(awk_node address_to node,
                                   awk_target address_to into)
 {
         into->kind = LV_FIELD;
@@ -4597,7 +4597,7 @@ static fn awk_target_field_locate(awk_node address_to node,
                 awk_fatal(null, "attempt to assign to a field before the first");
 }
 
-static fn awk_target_field_prepare(awk_target address_to into)
+static inline INLINE fn awk_target_field_prepare(awk_target address_to into)
 {
         if (into->field > awk_nf)
                 awk_field_grow(into->field);
