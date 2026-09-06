@@ -292,10 +292,209 @@ static fn table_checks(void)
               !memory_compare(table_output, empty_json, table_used));
 }
 
+typedef struct
+{
+        p8 column;
+        string_address expected;
+} table_projection;
+
+// Paired benchmarks define TABLE_BASELINE on both revisions so these
+// reference-only call sites do not change the optimizer's decisions.
+#ifndef TABLE_BASELINE
+_Static_assert(sizeof(ul_table_column) == 32, "numeric flag must fit column padding");
+
+static fn table_projection_modes(address_any row,
+    const ul_table_column address_to columns, positive count,
+    p8 address_to selected, positive selected_count, ul_table_field field)
+{
+        ul_table_column callbacks[64];
+        p8 expected[8192];
+        memory_copy_apart(callbacks, (address_any)columns, count * sizeof(columns[0]));
+        for (positive i = 0; i < count; i++)
+                callbacks[i].decimal = false;
+        for (positive mode = 0; mode < 5; mode++)
+        {
+                positive expected_size = 0;
+                for (positive path = 0; path < 2; path++)
+                {
+                        const ul_table_column address_to definitions = path ? columns : callbacks;
+                        table_reset();
+                        if (mode == 4)
+                                ul_table_json("test", row, 0, 1, definitions,
+                                              selected, selected_count, field);
+                        else
+                                ul_table_out(row, 0, 1, definitions, count,
+                                             selected, selected_count, mode & 1,
+                                             mode & 2, field);
+                        check("projection output bound", !table_overflow && table_used <= sizeof(expected));
+                        if (table_overflow || table_used > sizeof(expected))
+                                return;
+                        if (!path)
+                        {
+                                expected_size = table_used;
+                                memory_copy_apart(expected, table_output, table_used);
+                        }
+                        else
+                                check("decimal/escaped exact output",
+                                      table_used == expected_size &&
+                                      !memory_compare(table_output, expected, table_used));
+                }
+        }
+}
+#endif
+
+static fn table_projection_check(string_address name, address_any row,
+                                 const ul_table_column address_to columns,
+                                 positive count, ul_table_field field,
+                                 const table_projection address_to expected,
+                                 positive projection_count)
+{
+        p8 scratch[96], selected[64];
+        for (positive i = 0; i < projection_count; i++)
+        {
+                memory_fill(scratch, 0xa5, sizeof(scratch));
+                selected[i] = expected[i].column;
+                bool same = string_equals(field(row, selected[i], scratch),
+                                           expected[i].expected);
+                if (!same)
+                        string_format(log, "projection %s column=%p\n", name, (positive)selected[i]);
+                check("column projection", same);
+                check("projection scratch bound", scratch[32] == 0xa5);
+        }
+#ifndef TABLE_BASELINE
+        table_projection_modes(row, columns, count, selected, projection_count, field);
+#endif
+#ifdef TABLE_BENCHMARK
+        for (positive mode = 0; mode < 3; mode++)
+        {
+                p64 start = get_cpu_time();
+                for (positive round = 0; round < 16384; round++)
+                {
+                        table_reset();
+                        if (mode == 2)
+                                ul_table_json(name, row, 0, 1, columns,
+                                              selected, projection_count, field);
+                        else
+                                ul_table_out(row, 0, 1, columns, count,
+                                             selected, projection_count, true,
+                                             mode == 1, field);
+                }
+                p64 elapsed = get_cpu_time() - start;
+                string_format(log, "projection %s mode=%p ticks=%p\n",
+                              name, mode, (positive)elapsed);
+        }
+#endif
+}
+
+static fn table_projection_checks(void)
+{
+#ifndef TABLE_BASELINE
+        // Exercise the numeric fast path against escaping, including empty
+        // nullable fields, both alignments, heading escapes and wider padding.
+        static const string_address numbers[] = {
+            "", "0", "1", "4294967295", "18446744073709551615",
+        };
+        p8 selected[] = {0, 0};
+        ul_table_column column = {"number", "N\tUM", 0, false,
+                                   UL_TABLE_STRING, .decimal = true};
+        for (positive i = 0; i < array_count(numbers); i++)
+                for (positive shape = 0; shape < 8; shape++)
+                        for (p8 json = UL_TABLE_STRING; json <= UL_TABLE_NULL_NUMBER; json++)
+                        {
+                                string_address value = numbers[i];
+                                column.width = (shape >> 1) * 10;
+                                column.number = shape & 1;
+                                column.json = json;
+                                table_projection_modes(address_of value,
+                                    address_of column, 1, selected, 2, table_field);
+                        }
+#endif
+        struct snapshot_process process = {
+            .pid = p32_max, .ppid = 1, .uid = 42, .command = "worker",
+        };
+        ul_lsns_entry ns = {.inode = p64_max, .process = address_of process,
+                            .processes = p32_max, .command = "session", .user = "owner"};
+        static const table_projection ns_expected[] = {
+            {UL_LSNS_NS, "18446744073709551615"}, {UL_LSNS_NPROCS, "4294967295"},
+            {UL_LSNS_PID, "4294967295"}, {UL_LSNS_PPID, "1"},
+            {UL_LSNS_COMMAND, "session"}, {UL_LSNS_UID, "42"}, {UL_LSNS_USER, "owner"},
+        };
+        ul_lsfd_entry fd = {.process = address_of process, .user = "owner",
+            .fd = p32_max, .inode = p64_max, .size = (p64)1 << 32,
+            .type = "REG", .name = "a\tb\nc", .deleted = true, .access = 2};
+        static const table_projection fd_expected[] = {
+            {UL_LSFD_COMMAND, "worker"}, {UL_LSFD_PID, "4294967295"},
+            {UL_LSFD_USER, "owner"}, {UL_LSFD_FD, "4294967295"},
+            {UL_LSFD_TYPE, "REG"}, {UL_LSFD_NAME, "a\tb\nc"}, {UL_LSFD_KNAME, "a\tb\nc"},
+            {UL_LSFD_INODE, "18446744073709551615"}, {UL_LSFD_SIZE, "4294967296"},
+            {UL_LSFD_UID, "42"}, {UL_LSFD_DELETED, "1"},
+            {UL_LSFD_MNTID, ""}, {UL_LSFD_POS, ""}, {UL_LSFD_MODE, ""},
+        };
+        ul_lslocks_entry lock = {.inode = p64_max, .start = 1,
+                                 .finish = p64_max, .mandatory = true, .pid = -1};
+        static const table_projection lock_expected[] = {
+            {UL_LOCKS_COMMAND, ""}, {UL_LOCKS_INODE, "18446744073709551615"},
+            {UL_LOCKS_MANDATORY, "1"}, {UL_LOCKS_START, "1"},
+            {UL_LOCKS_END, "18446744073709551615"}, {UL_LOCKS_PATH, ""}, {UL_LOCKS_PID, "-1"},
+        };
+        ul_wipefs_row signature = {.device = "/dev/x", .type = "ext4",
+            .label = "data", .length = 255, .magic = {0xa5, 0x5a, 1, 2, 3, 4, 5, 6},
+            .usage = "filesystem"};
+        static const table_projection signature_expected[] = {
+            {UL_WIPEFS_DEVICE, "/dev/x"}, {UL_WIPEFS_TYPE, "ext4"},
+            {UL_WIPEFS_UUID, ""}, {UL_WIPEFS_LABEL, "data"},
+            {UL_WIPEFS_LENGTH, "255"}, {UL_WIPEFS_USAGE, "filesystem"},
+        };
+        ul_lsblk_device device = {.kname = "disk0", .path = "/dev/disk0", .type = "disk",
+            .mount_text = "m1\nm2", .fstype = "ext4", .fsver = "1.0", .label = "data",
+            .uuid = "fs-uuid", .partuuid = "part-uuid", .partlabel = "part-label",
+            .owner = "root", .group = "disk", .mode = "brw-", .scheduler = "none",
+            .transport = "pcie", .vendor = "vendor", .model = "model", .revision = "rev",
+            .serial = "serial", .hctl = "0:1:2:3",
+            .removable = true, .rotational = true, .alignment = p64_max,
+            .minimum_io = 1, .optimal_io = (positive)1 << 32,
+            .physical_sector = 4096, .logical_sector = 512, .read_ahead = 128};
+        static const table_projection device_expected[] = {
+            {UL_LSBLK_KNAME, "disk0"}, {UL_LSBLK_PATH, "/dev/disk0"},
+            {UL_LSBLK_RM, "1"}, {UL_LSBLK_RO, "0"}, {UL_LSBLK_TYPE, "disk"},
+            {UL_LSBLK_MOUNTPOINTS, "m1\nm2"}, {UL_LSBLK_FSTYPE, "ext4"}, {UL_LSBLK_FSVER, "1.0"},
+            {UL_LSBLK_LABEL, "data"}, {UL_LSBLK_UUID, "fs-uuid"}, {UL_LSBLK_PARTUUID, "part-uuid"},
+            {UL_LSBLK_PARTLABEL, "part-label"}, {UL_LSBLK_OWNER, "root"}, {UL_LSBLK_GROUP, "disk"},
+            {UL_LSBLK_MODE, "brw-"}, {UL_LSBLK_ALIGNMENT, "18446744073709551615"},
+            {UL_LSBLK_MINIO, "1"}, {UL_LSBLK_OPTIO, "4294967296"},
+            {UL_LSBLK_PHYSEC, "4096"}, {UL_LSBLK_LOGSEC, "512"},
+            {UL_LSBLK_ROTA, "1"}, {UL_LSBLK_SCHED, "none"}, {UL_LSBLK_RQSIZE, ""},
+            {UL_LSBLK_RA, "128"}, {UL_LSBLK_TRAN, "pcie"}, {UL_LSBLK_VENDOR, "vendor"},
+            {UL_LSBLK_MODEL, "model"}, {UL_LSBLK_REV, "rev"}, {UL_LSBLK_SERIAL, "serial"}, {UL_LSBLK_HCTL, "0:1:2:3"},
+        };
+        ul_ipc_row ipc = {.id = p64_max, .uid = 42, .gid = 43, .cuid = 44,
+                          .cgid = 45, .count = (positive)1 << 32,
+                          .pid_one = p32_max, .pid_two = 1};
+        static const table_projection ipc_expected[] = {
+            {UL_IPC_ID, "18446744073709551615"}, {UL_IPC_CUID, "44"},
+            {UL_IPC_CGID, "45"}, {UL_IPC_UID, "42"}, {UL_IPC_GID, "43"},
+            {UL_IPC_NATTCH, "4294967296"}, {UL_IPC_MSGS, "4294967296"},
+            {UL_IPC_NSEMS, "4294967296"}, {UL_IPC_CPID, "4294967295"},
+            {UL_IPC_LSPID, "4294967295"}, {UL_IPC_LPID, "1"}, {UL_IPC_LRPID, "1"},
+        };
+#define PROJECTIONS(name, row, columns, field, expected)                     \
+        table_projection_check(name, address_of row, columns,               \
+                               array_count(columns), field, expected,       \
+                               array_count(expected))
+        PROJECTIONS("lsns", ns, ul_lsns_columns, ul_lsns_table_field, ns_expected);
+        PROJECTIONS("lsfd", fd, ul_lsfd_columns, ul_lsfd_field, fd_expected);
+        PROJECTIONS("lslocks", lock, ul_lslocks_columns, ul_lslocks_field, lock_expected);
+        PROJECTIONS("wipefs", signature, ul_wipefs_columns, ul_wipefs_field, signature_expected);
+        PROJECTIONS("lsblk", device, ul_lsblk_columns, ul_lsblk_field, device_expected);
+        PROJECTIONS("ipc", ipc, ul_ipc_columns, ul_ipc_field, ipc_expected);
+#undef PROJECTIONS
+}
+
 b32 main(void)
 {
         name_list_checks();
         table_checks();
+        table_projection_checks();
 #ifdef TABLE_BENCHMARK
         if (!failures)
         {

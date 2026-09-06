@@ -3540,6 +3540,7 @@ typedef struct
         bool number;
         p8 json;
         bool multiline;
+        bool decimal; // Getter returns only decimal digits (no escaping needed).
 } ul_table_column;
 
 #define UL_TABLE_STRING 0
@@ -3549,14 +3550,14 @@ typedef struct
 #define UL_TABLE_NULL_NUMBER 4
 
 static const ul_table_column ul_lsns_columns[] = {
-    {(string_address)"ns", (string_address)"NS", 10, true, UL_TABLE_NUMBER},
+    {(string_address)"ns", (string_address)"NS", 10, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"type", (string_address)"TYPE", 0, false, UL_TABLE_STRING},
     {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_STRING},
-    {(string_address)"nprocs", (string_address)"NPROCS", 5, true, UL_TABLE_NUMBER},
-    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
-    {(string_address)"ppid", (string_address)"PPID", 4, true, UL_TABLE_NUMBER},
+    {(string_address)"nprocs", (string_address)"NPROCS", 5, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"ppid", (string_address)"PPID", 4, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
-    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER},
+    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
 };
 
@@ -3913,9 +3914,14 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
 
                                 if (field)
                                         log(" ", 1);
-                                if (raw)
-                                        storage_write_hex_escaped(log, value,
-                                                                  true, false);
+                                if (__builtin_expect(raw, false))
+                                {
+                                        if (!heading && definitions[column].decimal)
+                                                log(value, 0);
+                                        else
+                                                storage_write_hex_escaped(log, value,
+                                                                          true, false);
+                                }
                                 else
                                 {
                                         bool number =
@@ -4728,12 +4734,12 @@ static ul_table_column ul_lslocks_columns[] = {
     {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
     {(string_address)"type", (string_address)"TYPE", 5, true, UL_TABLE_STRING},
     {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NULL_STRING},
-    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
     {(string_address)"mode", (string_address)"MODE", 5, false, UL_TABLE_STRING},
-    {(string_address)"m", (string_address)"M", 1, true, UL_TABLE_BOOLEAN},
-    {(string_address)"start", (string_address)"START", 5, true, UL_TABLE_NUMBER},
-    {(string_address)"end", (string_address)"END", 3, true, UL_TABLE_NUMBER},
+    {(string_address)"m", (string_address)"M", 1, true, UL_TABLE_BOOLEAN, .decimal = true},
+    {(string_address)"start", (string_address)"START", 5, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"end", (string_address)"END", 3, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_NULL_STRING},
     {(string_address)"blocker", (string_address)"BLOCKER", 7, true, UL_TABLE_NULL_NUMBER},
     {(string_address)"holders", (string_address)"HOLDERS", 0, false, UL_TABLE_NULL_STRING},
@@ -5204,21 +5210,21 @@ enum
 
 static const ul_table_column ul_lsfd_columns[] = {
     {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
-    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
-    {(string_address)"fd", (string_address)"FD", 2, true, UL_TABLE_NUMBER},
+    {(string_address)"fd", (string_address)"FD", 2, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"mode", (string_address)"MODE", 4, false, UL_TABLE_STRING},
     {(string_address)"xmode", (string_address)"XMODE", 6, false, UL_TABLE_STRING},
     {(string_address)"type", (string_address)"TYPE", 5, false, UL_TABLE_STRING},
     {(string_address)"name", (string_address)"NAME", 0, false, UL_TABLE_STRING},
     {(string_address)"kname", (string_address)"KNAME", 0, false, UL_TABLE_STRING},
-    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER},
+    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
     {(string_address)"mntid", (string_address)"MNTID", 5, true, UL_TABLE_NULL_NUMBER},
-    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NUMBER},
+    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"pos", (string_address)"POS", 3, true, UL_TABLE_NULL_NUMBER},
-    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER},
-    {(string_address)"deleted", (string_address)"DELETED", 7, false, UL_TABLE_BOOLEAN},
+    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER, .decimal = true},
+    {(string_address)"deleted", (string_address)"DELETED", 7, false, UL_TABLE_BOOLEAN, .decimal = true},
 };
 
 typedef struct
@@ -11654,9 +11660,9 @@ static const ul_table_column ul_lsblk_columns[] = {
     {"kname", "KNAME", 0, false, UL_TABLE_STRING},
     {"path", "PATH", 0, false, UL_TABLE_STRING},
     {"maj:min", "MAJ:MIN", 0, false, UL_TABLE_STRING},
-    {"rm", "RM", 0, true, UL_TABLE_BOOLEAN},
+    {"rm", "RM", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
     {"size", "SIZE", 4, true, UL_TABLE_STRING},
-    {"ro", "RO", 0, true, UL_TABLE_BOOLEAN},
+    {"ro", "RO", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
     {"type", "TYPE", 0, false, UL_TABLE_STRING},
     {"mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING},
     {"mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true},
@@ -11671,15 +11677,15 @@ static const ul_table_column ul_lsblk_columns[] = {
     {"owner", "OWNER", 0, false, UL_TABLE_NULL_STRING},
     {"group", "GROUP", 0, false, UL_TABLE_NULL_STRING},
     {"mode", "MODE", 0, false, UL_TABLE_NULL_STRING},
-    {"alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER},
-    {"min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER},
-    {"opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER},
-    {"phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER},
-    {"log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER},
-    {"rota", "ROTA", 0, true, UL_TABLE_BOOLEAN},
+    {"alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {"min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {"opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {"phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {"log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true},
+    {"rota", "ROTA", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
     {"sched", "SCHED", 0, false, UL_TABLE_NULL_STRING},
     {"rq-size", "RQ-SIZE", 0, true, UL_TABLE_NULL_NUMBER},
-    {"ra", "RA", 0, true, UL_TABLE_NULL_NUMBER},
+    {"ra", "RA", 0, true, UL_TABLE_NULL_NUMBER, .decimal = true},
     {"wsame", "WSAME", 0, true, UL_TABLE_STRING},
     {"tran", "TRAN", 0, false, UL_TABLE_NULL_STRING},
     {"vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING},
@@ -12932,33 +12938,33 @@ enum
 
 static const ul_table_column ul_ipc_columns[] = {
     {"key", "KEY", 10, false, UL_TABLE_STRING},
-    {"id", "ID", 0, false, UL_TABLE_STRING},
+    {"id", "ID", 0, false, UL_TABLE_STRING, .decimal = true},
     {"perms", "PERMS", 9, true, UL_TABLE_STRING},
     {"owner", "OWNER", 5, true, UL_TABLE_STRING},
-    {"cuid", "CUID", 0, true, UL_TABLE_STRING},
+    {"cuid", "CUID", 0, true, UL_TABLE_STRING, .decimal = true},
     {"cuser", "CUSER", 0, false, UL_TABLE_STRING},
-    {"cgid", "CGID", 0, true, UL_TABLE_STRING},
+    {"cgid", "CGID", 0, true, UL_TABLE_STRING, .decimal = true},
     {"cgroup", "CGROUP", 0, false, UL_TABLE_STRING},
-    {"uid", "UID", 0, true, UL_TABLE_STRING},
+    {"uid", "UID", 0, true, UL_TABLE_STRING, .decimal = true},
     {"user", "USER", 0, false, UL_TABLE_STRING},
-    {"gid", "GID", 0, true, UL_TABLE_STRING},
+    {"gid", "GID", 0, true, UL_TABLE_STRING, .decimal = true},
     {"group", "GROUP", 0, false, UL_TABLE_STRING},
     {"ctime", "CTIME", 5, false, UL_TABLE_STRING},
     {"size", "SIZE", 0, true, UL_TABLE_STRING},
-    {"nattch", "NATTCH", 0, true, UL_TABLE_STRING},
+    {"nattch", "NATTCH", 0, true, UL_TABLE_STRING, .decimal = true},
     {"status", "STATUS", 0, false, UL_TABLE_NULL_STRING},
     {"attach", "ATTACH", 5, false, UL_TABLE_NULL_STRING},
     {"detach", "DETACH", 5, false, UL_TABLE_NULL_STRING},
     {"command", "COMMAND", 0, false, UL_TABLE_NULL_STRING},
-    {"cpid", "CPID", 0, true, UL_TABLE_STRING},
-    {"lpid", "LPID", 0, true, UL_TABLE_STRING},
+    {"cpid", "CPID", 0, true, UL_TABLE_STRING, .decimal = true},
+    {"lpid", "LPID", 0, true, UL_TABLE_STRING, .decimal = true},
     {"usedbytes", "USEDBYTES", 0, true, UL_TABLE_STRING},
-    {"msgs", "MSGS", 0, false, UL_TABLE_STRING},
+    {"msgs", "MSGS", 0, false, UL_TABLE_STRING, .decimal = true},
     {"send", "SEND", 4, false, UL_TABLE_NULL_STRING},
     {"recv", "RECV", 4, false, UL_TABLE_NULL_STRING},
-    {"lspid", "LSPID", 0, true, UL_TABLE_STRING},
-    {"lrpid", "LRPID", 0, true, UL_TABLE_STRING},
-    {"nsems", "NSEMS", 0, true, UL_TABLE_STRING},
+    {"lspid", "LSPID", 0, true, UL_TABLE_STRING, .decimal = true},
+    {"lrpid", "LRPID", 0, true, UL_TABLE_STRING, .decimal = true},
+    {"nsems", "NSEMS", 0, true, UL_TABLE_STRING, .decimal = true},
     {"otime", "OTIME", 5, false, UL_TABLE_NULL_STRING},
 };
 
