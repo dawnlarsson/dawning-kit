@@ -26,13 +26,11 @@ static bool shell_command_literal_status(string_address command,
 
         while (true)
         {
-                while (*step == ' ' || *step == '\t' || *step == '\n')
-                        step++;
+                step += string_span_of_set(step, " \t\n");
 
                 if (*step == '#')
                 {
-                        while (*step && *step != '\n')
-                                step++;
+                        step = string_first_of_or_end(step, '\n');
                         continue;
                 }
 
@@ -42,41 +40,17 @@ static bool shell_command_literal_status(string_address command,
                         return true;
                 }
 
-                if (!command_seen && *step == ':' &&
-                    (!step[1] || step[1] == ' ' || step[1] == '\t' ||
-                     step[1] == '\n'))
-                {
-                        command_seen = true;
-                        step++;
-                        continue;
-                }
-
-                /* Exact literal true/false have no expansion, assignment or
-                   redirection. After the caller excludes startup work they take
-                   the same entry floor as colon; operands deliberately fall
-                   through because expanding one may have side effects. */
-                if (!command_seen && step[0] == 't' && step[1] == 'r' &&
-                    step[2] == 'u' && step[3] == 'e' &&
-                    (!step[4] || step[4] == ' ' || step[4] == '\t' ||
-                     step[4] == '\n'))
-                {
-                        command_seen = true;
-                        step += 4;
-                        continue;
-                }
-
-                if (!command_seen && step[0] == 'f' && step[1] == 'a' &&
-                    step[2] == 'l' && step[3] == 's' && step[4] == 'e' &&
-                    (!step[5] || step[5] == ' ' || step[5] == '\t' ||
-                     step[5] == '\n'))
-                {
-                        command_seen = true;
-                        answer = 1;
-                        step += 5;
-                        continue;
-                }
-
-                return false;
+                if (command_seen)
+                        return false;
+                positive length = *step == ':' ? 1
+                    : !string_compare_max(step, "true", 4) ? 4
+                    : !string_compare_max(step, "false", 5) ? 5 : 0;
+                if (!length || (step[length] && step[length] != ' ' &&
+                                step[length] != '\t' && step[length] != '\n'))
+                        return false;
+                command_seen = true;
+                answer = length == 5;
+                step += length;
         }
 }
 

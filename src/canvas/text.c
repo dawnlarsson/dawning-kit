@@ -59,47 +59,10 @@ static PURE unsigned int text_line_end(const char *text, unsigned int length,
         remaining = length - start;
         scanned = remaining;
 
-        /*
-                The old byte loop walked an entire unwrapped title, and up to
-                one row plus its breaking character for wrapped text. These
-                are bounded byte hunts already provided by library.c on every
-                architecture. Keep the extra character in the wrapped scan:
-                a newline exactly at the boundary wins over the word break,
-                as it did in the loop.
-        */
+        // Include the breaking character: a newline exactly at the column
+        // boundary takes precedence over wrapping at the last space.
         if (wrap && remaining > columns)
                 scanned = columns + 1;
-
-        /*
-                Below sixty four bytes the call setup is more expensive than
-                the hunt. Caller-shaped floor-runner medians put the
-                shared/scalar ratios at 67.91% on RV64, 35.50% on ARM64 and
-                16.65% on x86-64 at sixty four, while RV64 was still 125.14%
-                at thirty two. Keep that crossover here; only the x86-64 row
-                is native timing, so the foreign rows are a conservative gate
-                rather than a hardware-speed claim.
-        */
-        if (scanned < 64)
-        {
-                unsigned int i, last_space = 0;
-
-                for (i = start; i < length; i++)
-                {
-                        if (text[i] == '\n')
-                                return i;
-
-                        if (!wrap)
-                                continue;
-
-                        if (text[i] == ' ')
-                                last_space = i;
-
-                        if (i - start + 1 > columns)
-                                return last_space > start ? last_space : i;
-                }
-
-                return length;
-        }
 
         found = memory_first_of((address_any)(text + start), '\n', scanned);
 
@@ -129,18 +92,12 @@ static PURE unsigned int text_line_count(const char *text, unsigned int length,
 {
         unsigned int start = 0, lines = 0;
 
-        if (!length)
-                return 0;
-
         while (start < length)
         {
                 unsigned int stop = text_line_end(text, length, start, columns, wrap);
 
                 lines++;
                 start = text_line_next(text, length, stop);
-
-                if (stop == length)
-                        break;
         }
 
         return lines;
@@ -192,17 +149,12 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
         if (!wrap)
                 columns = length;
 
-        switch (align & (TEXT_MIDDLE | TEXT_BOTTOM))
+        unsigned int vertical = align & (TEXT_MIDDLE | TEXT_BOTTOM);
+        line_y = y;
+        if (vertical == TEXT_MIDDLE || vertical == TEXT_BOTTOM)
         {
-        case TEXT_MIDDLE:
-                line_y = y + (h - (int)text_line_count(text, length, columns, wrap) * cell_h) / 2;
-                break;
-        case TEXT_BOTTOM:
-                line_y = y + h - (int)text_line_count(text, length, columns, wrap) * cell_h;
-                break;
-        default:
-                line_y = y;
-                break;
+                int space = h - (int)text_line_count(text, length, columns, wrap) * cell_h;
+                line_y += vertical == TEXT_MIDDLE ? space / 2 : space;
         }
 
         while (start < length && line_y < y + h)
@@ -216,45 +168,30 @@ static void text_draw(const struct target *t, int x, int y, int w, int h,
                 // the ones after it start in the right place, but nothing in
                 // it needs looking at glyph by glyph. Repainting under a
                 // cursor is twenty rows of a paragraph that is a hundred.
-                if (line_y + cell_h <= box.clip.y1 || line_y >= box.clip.y2)
+                if (line_y + cell_h > box.clip.y1 && line_y < box.clip.y2)
                 {
-                        line_y += cell_h;
-                        start = text_line_next(text, length, stop);
-
-                        if (stop == length)
+                        switch (align & (TEXT_CENTRE | TEXT_RIGHT))
+                        {
+                        case TEXT_CENTRE:
+                                line_x = x + (w - run * cell_w) / 2;
                                 break;
+                        case TEXT_RIGHT:
+                                line_x = x + w - run * cell_w;
+                                break;
+                        }
 
-                        continue;
-                }
+                        for (i = 0; i < run; i++)
+                        {
+                                int px = line_x + i * cell_w;
 
-                switch (align & (TEXT_CENTRE | TEXT_RIGHT))
-                {
-                case TEXT_CENTRE:
-                        line_x = x + (w - run * cell_w) / 2;
-                        break;
-                case TEXT_RIGHT:
-                        line_x = x + w - run * cell_w;
-                        break;
-                }
-
-                for (i = 0; i < run; i++)
-                {
-                        int px = line_x + i * cell_w;
-
-                        // Nothing to do for a glyph entirely outside the box or
-                        // the damage.
-                        if (px + cell_w <= box.clip.x1 || px >= box.clip.x2)
-                                continue;
-
-                        glyph_draw(&box, px, line_y, scale,
-                                   (unsigned char)text[start + i], colour);
+                                if (px + cell_w > box.clip.x1 && px < box.clip.x2)
+                                        glyph_draw(&box, px, line_y, scale,
+                                                   (unsigned char)text[start + i], colour);
+                        }
                 }
 
                 line_y += cell_h;
                 start = text_line_next(text, length, stop);
-
-                if (stop == length)
-                        break;
         }
 
         canvas_text_ns += ktime_get_ns() - started;

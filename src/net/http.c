@@ -261,7 +261,6 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 {
         http_buffer whole = {0};
         bipolar handle;
-        bipolar got;
         bipolar header;
         bipolar status = HTTP_MALFORMED;
         positive length = 0;
@@ -287,9 +286,6 @@ static bipolar http_get(p32 host, p16 port, string_address name,
         //      ending the connection and there is no keep-alive to unwind.
         //      Host: is sent anyway, because a name-based server needs it and
         //      answers 400 without it whatever the version says.
-        if (!byte_store_reserve(address_of whole, 65536, 65536))
-                goto done;
-
         {
                 p8 request[1024];
                 positive path_length = string_length(path);
@@ -326,32 +322,11 @@ static bipolar http_get(p32 host, p16 port, string_address name,
                 }
         }
 
-        for (;;)
+        if (file_store_read((positive)handle, address_of whole) < 0)
         {
-                if (whole.used > positive_max - 65536)
-                        goto done;
-
-                if (!byte_store_reserve(address_of whole,
-                                        whole.used + 65536, 65536))
-                        goto done;
-
-                got = system_read_retry((positive)handle,
-                                        whole.bytes + whole.used,
-                                        whole.room - whole.used - 1);
-
-                if (got < 0)
-                {
-                        status = HTTP_NO_REPLY;
-                        goto done;
-                }
-
-                if (!got)
-                        break;
-
-                whole.used += (positive)got;
+                status = HTTP_NO_REPLY;
+                goto done;
         }
-
-        whole.bytes[whole.used] = end;
 
         socket_close((b32)handle);
         handle = -1;

@@ -1506,6 +1506,11 @@ static fn check_failure_and_precision(void)
 
 b32 main(void)
 {
+        tm epoch = {0};
+        good("strptime refuses signed epoch overflow",
+             !strptime("9223372036854775808", "%s", &epoch));
+        good("strptime refuses wrapped epoch overflow",
+             !strptime("18446744073709551616", "%s", &epoch));
         check_corners();
         check_format_strings();
         check_format_flags();

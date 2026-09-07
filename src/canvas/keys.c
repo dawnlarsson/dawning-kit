@@ -26,7 +26,15 @@
         and treats 8 as an ordinary character -- so sending 8 echoed as ^H and
         made the line two characters longer for every press.
 */
-static const char key_characters[KEY_TABLE][2] = {
+// Columns are plain character, shifted character, and a modifier bit. Right
+// modifiers use the high nibble so releasing either side preserves the other.
+static const unsigned char key_map[KEY_TABLE][3] = {
+    [KEY_LEFTSHIFT] = {0, 0, WINDOW_KEY_SHIFT},
+    [KEY_RIGHTSHIFT] = {0, 0, WINDOW_KEY_SHIFT << 4},
+    [KEY_LEFTCTRL] = {0, 0, WINDOW_KEY_CONTROL},
+    [KEY_RIGHTCTRL] = {0, 0, WINDOW_KEY_CONTROL << 4},
+    [KEY_LEFTALT] = {0, 0, WINDOW_KEY_ALT},
+    [KEY_RIGHTALT] = {0, 0, WINDOW_KEY_ALT << 4},
     [1] = {27, 27},
     [2] = {'1', '!'},  [3] = {'2', '@'},  [4] = {'3', '#'},
     [5] = {'4', '$'},  [6] = {'5', '%'},  [7] = {'6', '^'},
@@ -55,23 +63,9 @@ static const char key_characters[KEY_TABLE][2] = {
     [83] = {'.', '.'}, [96] = {'\n', '\n'}, [98] = {'/', '/'},
 };
 
-static CONST unsigned int key_modifier(unsigned int code)
-{
-        switch (code)
-        {
-        case KEY_LEFTSHIFT:
-        case KEY_RIGHTSHIFT:
-                return WINDOW_KEY_SHIFT;
-        case KEY_LEFTCTRL:
-        case KEY_RIGHTCTRL:
-                return WINDOW_KEY_CONTROL;
-        case KEY_LEFTALT:
-        case KEY_RIGHTALT:
-                return WINDOW_KEY_ALT;
-        default:
-                return 0;
-        }
-}
+// The input handler owns each device's held bits and the list to combine.
+static unsigned int *keyboard_held(struct input_handle *handle);
+static unsigned int keyboard_modifiers(void);
 
 static CONST unsigned int key_character(unsigned int code, unsigned int modifiers)
 {
@@ -80,7 +74,7 @@ static CONST unsigned int key_character(unsigned int code, unsigned int modifier
         if (code >= KEY_TABLE)
                 return 0;
 
-        c = key_characters[code][!!(modifiers & WINDOW_KEY_SHIFT)];
+        c = key_map[code][!!(modifiers & WINDOW_KEY_SHIFT)];
 
         if (!c)
                 return 0;
@@ -99,20 +93,18 @@ static CONST unsigned int key_character(unsigned int code, unsigned int modifier
         focus is decided under desktop.lock and the window can be freed, so
         this records what happened and the thread hands it over.
 */
-static void keyboard_event(unsigned int code, int value)
+static void keyboard_event(struct input_handle *handle, unsigned int code, int value)
 {
         unsigned int modifiers = (unsigned int)atomic_read(&desktop.modifiers);
-        unsigned int bit = key_modifier(code);
+        unsigned int bit = code < KEY_TABLE ? key_map[code][2] : 0;
         unsigned int head, tail;
         struct window_key key;
 
         if (bit)
         {
-                if (value)
-                        modifiers |= bit;
-                else
-                        modifiers &= ~bit;
-
+                unsigned int *held = keyboard_held(handle);
+                *held = value ? *held | bit : *held & ~bit;
+                modifiers = keyboard_modifiers();
                 atomic_set(&desktop.modifiers, (int)modifiers);
 
                 /*
@@ -123,9 +115,10 @@ static void keyboard_event(unsigned int code, int value)
                         a modifier state that never happened. Keep Alt in the
                         flags of ordinary keys, but consume its own events.
                 */
-                if (bit == WINDOW_KEY_ALT)
+                if (bit & (WINDOW_KEY_ALT | (WINDOW_KEY_ALT << 4)))
                 {
-                        if (!value && atomic_xchg(&desktop.focus_cycling, 0))
+                        if (!(modifiers & WINDOW_KEY_ALT) &&
+                            atomic_xchg(&desktop.focus_cycling, 0))
                         {
                                 atomic_set(&desktop.focus_commit, 1);
                                 canvas_thread_wake();

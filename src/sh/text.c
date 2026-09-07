@@ -7938,12 +7938,14 @@ static bool pr_tab_option(string_address value, p8 address_to character,
 
 static bool pr_signed(string_address value, bipolar address_to into)
 {
-        positive used = 0;
-        bipolar made = string_bipolar(value, address_of used);
-
-        if (!value || !used || value[used])
+        if (!value)
                 return false;
-
+        while (byte_is_space(string_get(value)))
+                value++;
+        bipolar made;
+        if (!file_signed_decimal(value, address_of made) ||
+            made < b32_min || made > b32_max)
+                return false;
         address_to into = made;
         return true;
 }

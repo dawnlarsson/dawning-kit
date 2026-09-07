@@ -2133,15 +2133,9 @@ static bipolar arith_number_of(string_address name, p8 address_to scratch,
                 return 0;
         }
 
-        if (!negative)
-                return magnitude > (positive)bipolar_max
-                           ? bipolar_max
-                           : (bipolar)magnitude;
-
-        if (magnitude == (positive)bipolar_max + 1)
-                return (bipolar)((positive)bipolar_max + 1);
-
-        return -(bipolar)magnitude;
+        return bipolar_from_magnitude(
+            negative ? magnitude : min(magnitude, (positive)bipolar_max),
+            negative);
 }
 
 /*
@@ -2672,155 +2666,52 @@ static bipolar arith_power()
         return arith_power_of(value, arith_power());
 }
 
-// Consume the matched operator, combine its operand, and resume this level.
-// This is a lexical block: continue belongs to the enclosing precedence loop.
-#define ARITH_STEP(width, result) \
-        { arith_at += (width); value = (result); continue; }
-
-static bipolar arith_multiply()
-{
-        bipolar value = arith_power();
-
-        while (1)
-        {
-                arith_space();
-
-                if (string_is(arith_at, '*'))
-                        ARITH_STEP(1, arith_product(value, arith_power()));
-
-                if (string_is(arith_at, '/') || string_is(arith_at, '%'))
-                {
-                        bool remainder = string_is(arith_at, '%');
-
-                        ARITH_STEP(1, arith_divide(value, arith_power(), remainder));
-                }
-
-                return value;
-        }
-}
-
-static bipolar arith_add()
-{
-        bipolar value = arith_multiply();
-
-        while (1)
-        {
-                arith_space();
-
-                if (string_is(arith_at, '+'))
-                        ARITH_STEP(1, arith_addition(value, arith_multiply()));
-
-                if (string_is(arith_at, '-'))
-                        ARITH_STEP(1, arith_subtraction(value, arith_multiply()));
-
-                return value;
-        }
-}
-
-/*
-        The shifts, between the sums and the comparisons.
-
-        There was no level here at all, so 1 << 4 was read as 1 < (< 4) and
-        answered with something that was not sixteen. The comparisons below
-        were already written to step around << and >>, which is what made the
-        gap invisible: they declined to match and nothing else did.
-*/
-static bipolar arith_shift()
-{
-        bipolar value = arith_add();
-
-        while (1)
-        {
-                arith_space();
-
-                if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
-                    !string_is(arith_at + 2, '='))
-                        ARITH_STEP(2, arith_shift_left(value, arith_add()));
-
-                if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
-                    !string_is(arith_at + 2, '='))
-                        ARITH_STEP(2, arith_shift_right(value, arith_add()));
-
-                return value;
-        }
-}
-
-static bipolar arith_compare()
-{
-        bipolar value = arith_shift();
-
-        while (1)
-        {
-                arith_space();
-
-                if (string_is(arith_at, '<') && string_get(arith_at + 1) == '=')
-                        ARITH_STEP(2, value <= arith_shift());
-
-                if (string_is(arith_at, '>') && string_get(arith_at + 1) == '=')
-                        ARITH_STEP(2, value >= arith_shift());
-
-                if (string_is(arith_at, '<') && string_get(arith_at + 1) != '<')
-                        ARITH_STEP(1, value < arith_shift());
-
-                if (string_is(arith_at, '>') && string_get(arith_at + 1) != '>')
-                        ARITH_STEP(1, value > arith_shift());
-
-                return value;
-        }
-}
-
-static bipolar arith_equal()
-{
-        bipolar value = arith_compare();
-
-        while (1)
-        {
-                arith_space();
-
-                if (string_is(arith_at, '=') && string_get(arith_at + 1) == '=')
-                        ARITH_STEP(2, value == arith_compare());
-
-                if (string_is(arith_at, '!') && string_get(arith_at + 1) == '=')
-                        ARITH_STEP(2, value != arith_compare());
-
-                return value;
-        }
-}
-
-#undef ARITH_STEP
-
-/*
-        The bitwise three, in the order POSIX puts them: & binds tighter than
-        ^, which binds tighter than |, and all three are looser than == and
-        tighter than &&. None of them existed, so a & b was read as a and then
-        stopped, quietly, at the ampersand.
-
-        Each declines the doubled form, because && and || are the levels above
-        and reading one here would take half of it.
-*/
-#define ARITH_BIT_LEVEL(name, lower, character, operation, doubled)           \
-        static bipolar name()                                                \
-        {                                                                    \
-                bipolar value = lower();                                     \
-                                                                             \
-                while (1)                                                    \
-                {                                                            \
-                        arith_space();                                       \
-                                                                             \
-                        if (!string_is(arith_at, character) ||               \
-                            ((doubled) &&                                    \
-                             string_is(arith_at + 1, character)) ||          \
-                            string_is(arith_at + 1, '='))                    \
-                                return value;                                \
-                                                                             \
-                        arith_at++;                                          \
-                        value = value operation lower();                     \
-                }                                                            \
+/* Every left-associative arithmetic level has the same cursor loop. Keep
+   the operator grammar and calculation visible to the compiler; only logical
+   levels below change arith_active while parsing their right operand. */
+#define ARITH_LEVEL(name, lower, matches, width, result)                      \
+        static bipolar name()                                               \
+        {                                                                   \
+                bipolar value = lower();                                    \
+                while (true)                                                \
+                {                                                           \
+                        arith_space();                                      \
+                        p8 op = string_get(arith_at);                        \
+                        p8 next = op ? string_get(arith_at + 1) : 0;        \
+                        if (!(matches))                                     \
+                                return value;                               \
+                        arith_at += (width);                                \
+                        bipolar right = lower();                            \
+                        value = (result);                                   \
+                }                                                           \
         }
 
-ARITH_BIT_LEVEL(arith_bit_and, arith_equal, '&', &, true)
-ARITH_BIT_LEVEL(arith_bit_xor, arith_bit_and, '^', ^, false)
-ARITH_BIT_LEVEL(arith_bit_or, arith_bit_xor, '|', |, true)
+ARITH_LEVEL(arith_multiply, arith_power,
+            op == '*' || op == '/' || op == '%', 1,
+            op == '*' ? arith_product(value, right)
+                      : arith_divide(value, right, op == '%'))
+ARITH_LEVEL(arith_add, arith_multiply, op == '+' || op == '-', 1,
+            op == '+' ? arith_addition(value, right)
+                      : arith_subtraction(value, right))
+ARITH_LEVEL(arith_shift, arith_add,
+            (op == '<' || op == '>') && next == op &&
+                !string_is(arith_at + 2, '='), 2,
+            op == '<' ? arith_shift_left(value, right)
+                      : arith_shift_right(value, right))
+ARITH_LEVEL(arith_compare, arith_shift,
+            (op == '<' || op == '>') && next != op, next == '=' ? 2 : 1,
+            op == '<' ? (next == '=' ? value <= right : value < right)
+                      : (next == '=' ? value >= right : value > right))
+ARITH_LEVEL(arith_equal, arith_compare,
+            (op == '=' || op == '!') && next == '=', 2,
+            op == '=' ? value == right : value != right)
+ARITH_LEVEL(arith_bit_and, arith_equal,
+            op == '&' && next != '&' && next != '=', 1, value & right)
+ARITH_LEVEL(arith_bit_xor, arith_bit_and,
+            op == '^' && next != '=', 1, value ^ right)
+ARITH_LEVEL(arith_bit_or, arith_bit_xor,
+            op == '|' && next != '|' && next != '=', 1, value | right)
+#undef ARITH_LEVEL
 
 #define ARITH_LOGICAL_LEVEL(name, lower, byte, wanted, operation)            \
         static bipolar name()                                               \
@@ -3315,15 +3206,13 @@ static string_address expand_command(string_address step, bool quoted)
 
         //      Out of the line's own store, so a substitution inside a
         //      substitution gets its own room rather than sharing one buffer.
-        text = shell_store_take(address_of expand_store, length + 1);
+        text = shell_store_copy(address_of expand_store, inner, length);
 
         if (!text)
         {
                 expand_overflow = true;
                 return stop + 1;
         }
-
-        memory_copy_end(text, inner, length);
 
         expand_run(text, quoted);
 
@@ -3551,15 +3440,13 @@ static string_address expand_process(string_address step, p8 mark)
         }
 
         length = (positive)(stop - inner);
-        text = shell_store_take(address_of expand_store, length + 1);
+        text = shell_store_copy(address_of expand_store, inner, length);
 
         if (!text)
         {
                 expand_overflow = true;
                 return stop + 1;
         }
-
-        memory_copy_end(text, inner, length);
 
         // Whatever this shell has buffered belongs to this shell, and a fork
         // with it still in hand writes all of it a second time.
@@ -3984,7 +3871,8 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 return;
 
         length = expand_length - expansion_start;
-        source = shell_store_take(address_of expand_store, length + 1);
+        source = shell_store_copy(address_of expand_store,
+                                  expand_text + expansion_start, length);
 
         if (!source)
         {
@@ -3993,7 +3881,6 @@ static fn expand_replace(string_address name, string_address pattern_text,
                 return;
         }
 
-        memory_copy_end(source, expand_text + expansion_start, length);
         expand_length = expansion_start;
 
         pattern = expand_capture(pattern_text, false, EXPAND_CAPTURE_PATTERN);
@@ -4726,7 +4613,8 @@ static COLD fn expand_transform(string_address name, string_address word,
         //      Q and E both answer with a different number of bytes than they
         //      were given, so the value comes out of the buffer before
         //      anything is written back into it.
-        held = shell_store_take(address_of expand_store, length + 1);
+        held = shell_store_copy(address_of expand_store,
+                                expand_text + start, length);
 
         if (!held)
         {
@@ -4735,7 +4623,6 @@ static COLD fn expand_transform(string_address name, string_address word,
                 return;
         }
 
-        memory_copy_end(held, expand_text + start, length);
         expand_length = start;
 
         //      Nothing is nothing: an unset name has no bytes to quote, and
@@ -4779,8 +4666,8 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
         {
                 positive length = (positive)(string_first_of(names[at], '=') -
                                                names[at]);
-                p8 address_to kept = shell_store_take(address_of expand_store,
-                                                       length + 1);
+                p8 address_to kept = shell_store_copy(address_of expand_store,
+                                                       names[at], length);
 
                 if (!kept)
                 {
@@ -4788,7 +4675,6 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
                         return;
                 }
 
-                memory_copy_end(kept, names[at], length);
                 names[at] = kept;
         }
 
@@ -4899,20 +4785,8 @@ COLD string_address shell_expand_subscript(string_address name, positive length,
         string_address key = expand_subscript_key(name, length, subscript,
                                                   subscript_length, written,
                                                   key_length);
-        p8 address_to kept;
-
-        if (!key)
-                return null;
-
-        kept = shell_store_take(address_of expand_store,
-                                address_to key_length + 1);
-
-        if (!kept)
-                return null;
-
-        memory_copy_end(kept, key, address_to key_length);
-
-        return kept;
+        return key ? shell_store_copy(address_of expand_store, key,
+                                       address_to key_length) : null;
 }
 
 static COLD string_address expand_subscript_name(string_address base,
@@ -6470,16 +6344,14 @@ static bool expand_sort_names(string_address address_to names, positive count)
 static inline INLINE string_address expand_keep_bytes(string_address text,
                                                        positive length)
 {
-        string_address result = shell_store_take(address_of expand_store,
-                                                 length + 1);
+        string_address result = shell_store_copy(address_of expand_store,
+                                                 text, length);
 
         if (!result)
         {
                 expand_fail_state();
                 return (string_address) "";
         }
-
-        memory_copy_end(result, text, length);
 
         return result;
 }

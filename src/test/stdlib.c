@@ -338,12 +338,22 @@ test(environment_set_then_get)
 
 test(environment_refuses_a_bad_name)
 {
-        fail(setenv(null, text("x"), 1) == -1);
-        fail(setenv(text(""), text("x"), 1) == -1);
-        fail(setenv(text("HAS=EQUALS"), text("x"), 1) == -1);
-        fail(unsetenv(text("HAS=EQUALS")) == -1);
-        fail(unsetenv(text("")) == -1);
-
+        string_address names[] = {null, text(""), text("HAS=EQUALS")};
+        for (positive at = 0; at < array_count(names); at++)
+        {
+                errno = EINTR;
+                fail(setenv(names[at], text("x"), 1) == -1 && errno == EINVAL);
+                errno = EINTR;
+                fail(unsetenv(names[at]) == -1 && errno == EINVAL);
+        }
+        errno = EINTR;
+        fail(putenv(null) == -1 && errno == EINVAL);
+        errno = EINTR;
+        fail(putenv(text("=value")) == -1 && errno == EINVAL);
+        fail(setenv(text("DAWNING_VALID"), text("value"), 1) == 0);
+        errno = EINTR;
+        fail(setenv(text("DAWNING_VALID"), text("ignored"), 0) == 0 && errno == EINTR);
+        fail(unsetenv(text("DAWNING_VALID")) == 0 && errno == EINTR);
         return true;
 }
 
@@ -900,8 +910,17 @@ test(environment_arena_rejects_wrapping_sizes)
         positive left = stdlib_arena_left;
 
         for (positive tail = 0; tail < STDLIB_ARENA_ALIGN; tail++)
-                fail(stdlib_arena_take((positive)-1 - tail) == null);
-        fail(stdlib_arena_take(((positive)1 << 63) + STDLIB_ARENA_ALIGN) == null);
+        {
+                errno = EINTR;
+                fail(stdlib_arena_take((positive)-1 - tail) == null && errno == ENOMEM);
+        }
+        errno = EINTR;
+        fail(stdlib_arena_take(((positive)1 << 63) + STDLIB_ARENA_ALIGN) == null &&
+             errno == ENOMEM);
+        /* This fits the size arithmetic but cannot be mapped on any target;
+           it exercises the raw mmap error path, including under qemu-user. */
+        errno = EINTR;
+        fail(stdlib_arena_take((positive)1 << 62) == null && errno == ENOMEM);
         fail(stdlib_arena_next == next && stdlib_arena_left == left);
         p8 *small = stdlib_arena_take(17);
         fail(small != null && ((positive)small & (STDLIB_ARENA_ALIGN - 1)) == 0);

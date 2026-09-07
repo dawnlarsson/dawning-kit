@@ -188,13 +188,26 @@
                   "m"(*(const p8(address_to)[size])(source))                  \
                 : __VA_ARGS__)
 
+/* Zero and byte fills have the same stores; only their register seed differs. */
 #define KNOWN_FILL_ASM(body, size, back_offset, ...)                          \
-        __asm__("   vmovd %k[val], %%xmm0\n"                                  \
-                "   vpbroadcastb %%xmm0, %%ymm0\n" body "   vzeroupper\n"     \
-                : "=m"(*(p8(address_to)[size])(destination))                  \
-                : [to] "r"(destination), [val] "r"((b32)value),               \
-                  [back] "i"(back_offset)                                     \
-                : __VA_ARGS__)
+        do {                                                                 \
+                if (zero)                                                    \
+                        __asm__("   vpxor %%xmm0, %%xmm0, %%xmm0\n" body    \
+                                "   vzeroupper\n"                           \
+                                : "=m"(*(p8(address_to)[size])(destination)) \
+                                : [to] "r"(destination),                    \
+                                  [back] "i"(back_offset)                     \
+                                : __VA_ARGS__);                              \
+                else                                                         \
+                        __asm__("   vmovd %k[val], %%xmm0\n"                \
+                                "   vpbroadcastb %%xmm0, %%ymm0\n" body     \
+                                "   vzeroupper\n"                           \
+                                : "=m"(*(p8(address_to)[size])(destination)) \
+                                : [to] "r"(destination),                    \
+                                  [val] "r"((b32)value),                      \
+                                  [back] "i"(back_offset)                     \
+                                : __VA_ARGS__);                              \
+        } while (0)
 #endif
 
 /*
@@ -253,7 +266,7 @@ static inline INLINE address_any copy_apart_known(address_any destination,
 }
 
 static inline INLINE address_any fill_known(address_any destination,
-                                            b8 value, positive size)
+                                            b8 value, positive size, bool zero)
 {
 #if KNOWN_WIDE
         if (size > 32 && cpu_has_avx2) {
@@ -2172,45 +2185,10 @@ static inline INLINE b32 known_first_set(b32 value)
 */
 #define KNOWN_UNTIL_MAX 16
 
-#if KNOWN_WIDE
-#define KNOWN_ZERO_ASM(body, size, back_offset, ...)                          \
-        __asm__("   vpxor %%xmm0, %%xmm0, %%xmm0\n" body "   vzeroupper\n"    \
-                : "=m"(*(p8(address_to)[size])(destination))                  \
-                : [to] "r"(destination), [back] "i"(back_offset)              \
-                : __VA_ARGS__)
-#endif
-
-static inline INLINE address_any fill_zero_known(address_any destination,
-                                                 positive size)
-{
-#if KNOWN_WIDE
-        if (size > 32 && cpu_has_avx2) {
-                if (size <= 64)
-                        KNOWN_ZERO_ASM("   vmovdqu %%ymm0, (%[to])\n"
-                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
-                                       size, size - 32, "xmm0");
-                else if (size <= 96)
-                        KNOWN_ZERO_ASM("   vmovdqu %%ymm0, (%[to])\n"
-                                       "   vmovdqu %%ymm0, 32(%[to])\n"
-                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
-                                       size, size - 32, "xmm0");
-                else
-                        KNOWN_ZERO_ASM("   vmovdqu %%ymm0, (%[to])\n"
-                                       "   vmovdqu %%ymm0, 32(%[to])\n"
-                                       "   vmovdqu %%ymm0, 64(%[to])\n"
-                                       "   vmovdqu %%ymm0, %c[back](%[to])\n",
-                                       size, size - 32, "xmm0");
-                return destination;
-        }
-#endif
-        __builtin_memset(destination, 0, size);
-        return destination;
-}
-
 //      bzero: the byte is chosen already, so only the size has to be folded.
 static inline INLINE fn zero_known(address_any destination, positive size)
 {
-        fill_zero_known(destination, size);
+        fill_known(destination, 0, size, true);
 }
 
 //      stpcpy against a source whose length the compiler worked out. The
@@ -2554,9 +2532,8 @@ static inline INLINE address_any copy_until_known(address_any destination,
 
 #define memory_fill(destination, value, size)                                 \
         (__builtin_constant_p(size) && (positive)(size) <= KNOWN_SIZE_MAX     \
-                 ? (__builtin_constant_p(value) && (b8)(value) == 0           \
-                            ? fill_zero_known((destination), (size))          \
-                            : fill_known((destination), (value), (size)))     \
+                 ? fill_known((destination), (value), (size),                \
+                              __builtin_constant_p(value) && (b8)(value) == 0)\
                  : memory_fill((destination), (value), (size)))
 
 #define memory_zero(destination, size)                                        \

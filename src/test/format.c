@@ -1244,6 +1244,8 @@ static fn reasons(void)
               string_compare(strerror(-2), "No such file or directory") == 0);
         check("an unknown code says so",
               string_compare(strerror(4095), "Unknown error") == 0);
+        check("the minimum signed error code stays outside the table",
+              string_compare(strerror(b32_min), "Unknown error") == 0);
 #endif
 }
 

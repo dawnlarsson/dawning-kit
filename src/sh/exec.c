@@ -2371,7 +2371,6 @@ static b32 job_foreground_child(bipolar child, b32 node)
         two ends can ever meet, which is exactly what it is for.
 */
 #define HISTORY_DEFAULT 500
-#define HISTORY_SLURP 65536
 
 static p8 address_to address_to history_text;
 static positive history_text_room;
@@ -3536,38 +3535,13 @@ fn history_remember(string_address line)
 static p8 address_to history_slurp(string_address path,
                                    positive address_to length)
 {
-        static p8 address_to held;
-        static positive held_room;
-        positive used = 0;
-        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ);
+        static byte_store held;
 
-        if (handle < 0)
+        if (!file_store_slurp(path, address_of held))
                 return null;
 
-        for (;;)
-        {
-                bipolar got;
-
-                if (!shell_array_room(held, held_room, used + HISTORY_SLURP + 1))
-                        break;
-
-                got = system_read_retry(handle, held + used, HISTORY_SLURP);
-
-                if (got <= 0)
-                        break;
-
-                used += (positive)got;
-        }
-
-        system_close(handle);
-
-        if (!held)
-                return null;
-
-        held[used] = end;
-        address_to length = used;
-
-        return held;
+        address_to length = held.used;
+        return held.bytes;
 }
 
 static positive history_read(string_address path, positive skip)
@@ -4193,15 +4167,9 @@ fn shell_fc(writer write, string_address input)
 
 static string_address exec_arena_copy(string_address text)
 {
-        positive length = string_length(text) + 1;
-        string_address into = shell_store_take(address_of exec_store, length);
-
-        if (!into)
-                return exec_nothing;
-
-        memory_copy(into, text, length);
-
-        return into;
+        string_address into = shell_store_copy(address_of exec_store, text,
+                                                string_length(text));
+        return into ? into : exec_nothing;
 }
 
 /*
@@ -6375,7 +6343,7 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
                         finish = stop;
 
                 length = (positive)(finish - at);
-                piece = shell_store_take(address_of exec_store, length + 1);
+                piece = shell_store_copy(address_of exec_store, at, length);
 
                 if (!piece)
                 {
@@ -6383,7 +6351,6 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
                         break;
                 }
 
-                memory_copy_end(piece, at, length);
                 at = finish;
 
                 if (string_is(piece, '['))
@@ -8547,7 +8514,8 @@ static b32 exec_cfor(b32 index)
         }
 
         inner_length = length - 4;
-        expressions = shell_store_take(address_of exec_store, inner_length + 1);
+        expressions = shell_store_copy(address_of exec_store, whole + 2,
+                                        inner_length);
 
         if (!expressions)
         {
@@ -8555,7 +8523,6 @@ static b32 exec_cfor(b32 index)
                 goto done;
         }
 
-        memory_copy_end(expressions, whole + 2, inner_length);
         first = exec_cfor_separator(expressions);
 
         if (!string_get(first))
@@ -8642,12 +8609,11 @@ static bool conditional_add(string_address text, positive length)
             !shell_array_room(conditional_word, conditional_word_room, conditional_word_count + 1))
                 return false;
 
-        kept = shell_store_take(address_of exec_store, length + 1);
+        kept = shell_store_copy(address_of exec_store, text, length);
 
         if (!kept)
                 return false;
 
-        memory_copy_end(kept, text, length);
         conditional_word[conditional_word_count++] = kept;
         return true;
 }
@@ -8840,8 +8806,8 @@ static COLD fn conditional_regex_captures(string_address text)
                         continue;
                 }
 
-                made = shell_store_take(address_of expand_store,
-                                        to - from + 1);
+                made = shell_store_copy(address_of expand_store,
+                                        text + from, to - from);
 
                 if (!made)
                 {
@@ -8849,7 +8815,6 @@ static COLD fn conditional_regex_captures(string_address text)
                         return;
                 }
 
-                memory_copy_end(made, text + from, to - from);
                 words[at] = made;
         }
 

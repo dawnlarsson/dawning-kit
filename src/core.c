@@ -172,14 +172,13 @@ static const MountPoints mounts[] = {
     {null, null},
 };
 
-// Spawns are serialised by the caller waiting on each one, so plain counters
-// are accurate enough here and cost nothing.
-static unsigned long stat_spawns;
-static unsigned long stat_task_ns;
-static unsigned long stat_exec_ns;
-static unsigned long stat_loader_ns;
-static unsigned long stat_loads;
-static unsigned long stat_map_ns;
+// Callers and spawned workers update these counters concurrently.
+static atomic_long_t stat_spawns = ATOMIC_LONG_INIT(0);
+static atomic_long_t stat_task_ns = ATOMIC_LONG_INIT(0);
+static atomic_long_t stat_exec_ns = ATOMIC_LONG_INIT(0);
+static atomic_long_t stat_loader_ns = ATOMIC_LONG_INIT(0);
+static atomic_long_t stat_loads = ATOMIC_LONG_INIT(0);
+static atomic_long_t stat_map_ns = ATOMIC_LONG_INIT(0);
 
 static int execute_spark(struct linux_binprm *bprm);
 
@@ -289,8 +288,7 @@ int execute_spark(struct linux_binprm *bprm)
         u64 map_started;
         struct pt_regs *regs;
         const struct header *header;
-        unsigned long text, data, bss, stack_addr, span;
-        unsigned long text_populate, data_populate, bss_populate;
+        unsigned long stack_addr, span, address, populate[3] = {0};
         int ret;
 
         // Everything up to begin_new_exec runs while the old process is still
@@ -304,8 +302,6 @@ int execute_spark(struct linux_binprm *bprm)
 
         loader_started = ktime_get_ns();
         regs = task_pt_regs(current);
-        data = bss = 0;
-        text_populate = data_populate = bss_populate = 0;
 
         if (header->version != SPARK_VERSION)
         {
@@ -376,8 +372,7 @@ int execute_spark(struct linux_binprm *bprm)
         if (ret < 0)
         {
                 log_k_caller("setup_arg_pages failed: %d\n", ret);
-                force_fatal_sig(SIGKILL);
-                return ret;
+                goto fatal;
         }
 
         map_started = ktime_get_ns();
@@ -389,75 +384,49 @@ int execute_spark(struct linux_binprm *bprm)
         //
         // do_mmap does not populate; it reports how much wants populating and
         // the caller does it after dropping the lock.
-        if (mmap_write_lock_killable(current->mm))
+        ret = mmap_write_lock_killable(current->mm);
+        if (ret)
+                goto fatal;
+
+        const unsigned long sizes[] = {
+                header->text_size, header->data_size, header->bss_size
+        };
+        static const char *const regions[] = {"text", "data", "bss"};
+        address = header->base;
+        for (unsigned int i = 0; i < array_count(sizes); i++)
         {
-                force_fatal_sig(SIGKILL);
-                return -EINTR;
-        }
+                if (!sizes[i])
+                        continue;
 
-        text = do_mmap(bprm->file, header->base, header->text_size,
-                       PROT_READ | PROT_EXEC,
-                       MAP_PRIVATE | MAP_FIXED, 0, 0, &text_populate, NULL);
-
-        if (IS_ERR_VALUE(text))
-        {
-                mmap_write_unlock(current->mm);
-                log_k_caller("mapping text failed: %ld\n", (long)text);
-                force_fatal_sig(SIGKILL);
-                return (int)text;
-        }
-
-        if (header->data_size)
-        {
-                data = do_mmap(bprm->file, header->base + header->text_size,
-                               header->data_size,
-                               PROT_READ | PROT_WRITE,
-                               MAP_PRIVATE | MAP_FIXED,
-                               0, header->text_size >> PAGE_SHIFT,
-                               &data_populate, NULL);
-
-                if (IS_ERR_VALUE(data))
+                // Bss is anonymous and already zero. File regions carry their
+                // offset from the image base; all three share one lock scope.
+                unsigned long mapped = do_mmap(i == 2 ? NULL : bprm->file,
+                    address, sizes[i], PROT_READ | (i ? PROT_WRITE : PROT_EXEC),
+                    MAP_PRIVATE | MAP_FIXED | (i == 2 ? MAP_ANONYMOUS : 0),
+                    0, i == 2 ? 0 : (address - header->base) >> PAGE_SHIFT,
+                    &populate[i], NULL);
+                if (IS_ERR_VALUE(mapped))
                 {
                         mmap_write_unlock(current->mm);
-                        log_k_caller("mapping data failed: %ld\n", (long)data);
-                        force_fatal_sig(SIGKILL);
-                        return (int)data;
+                        ret = (int)mapped;
+                        log_k_caller("mapping %s failed: %d\n", regions[i], ret);
+                        goto fatal;
                 }
+                address += sizes[i];
         }
-
-        // bss is anonymous, so it arrives zeroed and there is no tail of a
-        // file backed page to clear by hand.
-        if (header->bss_size)
-        {
-                bss = do_mmap(NULL,
-                              header->base + header->text_size + header->data_size,
-                              header->bss_size,
-                              PROT_READ | PROT_WRITE,
-                              MAP_PRIVATE | MAP_FIXED | MAP_ANONYMOUS,
-                              0, 0, &bss_populate, NULL);
-
-                if (IS_ERR_VALUE(bss))
-                {
-                        mmap_write_unlock(current->mm);
-                        log_k_caller("mapping bss failed: %ld\n", (long)bss);
-                        force_fatal_sig(SIGKILL);
-                        return (int)bss;
-                }
-        }
-
         mmap_write_unlock(current->mm);
 
-        // Populating eagerly was measured to move about 800ns out of page
-        // faults and into here, with no end to end difference at these sizes,
-        // so the regions are left to fault in. The hooks stay because a larger
-        // image may well tip the other way -- do_mmap reports what wants
-        // populating and MAP_POPULATE is all it takes to turn back on.
-        if (text_populate)
-                mm_populate(header->base, text_populate);
-        if (data_populate)
-                mm_populate(header->base + header->text_size, data_populate);
+        // do_mmap reports eager population separately from establishing the
+        // mappings. Keep the same walk for all regions, including anonymous bss.
+        address = header->base;
+        for (unsigned int i = 0; i < array_count(sizes); i++)
+        {
+                if (populate[i])
+                        mm_populate(address, populate[i]);
+                address += sizes[i];
+        }
 
-        stat_map_ns += ktime_get_ns() - map_started;
+        atomic_long_add(ktime_get_ns() - map_started, &stat_map_ns);
 
         current->mm->start_code = header->base;
         current->mm->end_code = header->base + header->text_size;
@@ -473,8 +442,7 @@ int execute_spark(struct linux_binprm *bprm)
         if (ret)
         {
                 log_k_caller("could not lay out the arguments: %d\n", ret);
-                force_fatal_sig(SIGKILL);
-                return ret;
+                goto fatal;
         }
 
 #ifdef CONFIG_X86_64
@@ -512,10 +480,13 @@ int execute_spark(struct linux_binprm *bprm)
         // Everything before this in kernel_execve is the generic prologue:
         // allocating a bprm, opening the file, building a throwaway mm to hold
         // argv and then transplanting its stack. This counter is only our part.
-        stat_loader_ns += ktime_get_ns() - loader_started;
-        stat_loads++;
+        atomic_long_add(ktime_get_ns() - loader_started, &stat_loader_ns);
+        atomic_long_inc(&stat_loads);
 
         return 0;
+fatal:
+        force_fatal_sig(SIGKILL);
+        return ret;
 }
 
 /*
@@ -550,12 +521,9 @@ static void spawn_strings_put(struct spawn_strings *strings)
 
 static void spawn_free(struct spawn_work *work)
 {
-        if (work->stdio[2])
-                fput(work->stdio[2]);
-        if (work->stdio[1])
-                fput(work->stdio[1]);
-        if (work->stdio[0])
-                fput(work->stdio[0]);
+        for (unsigned int i = 0; i < array_count(work->stdio); i++)
+                if (work->stdio[i])
+                        fput(work->stdio[i]);
         spawn_strings_put(work->environment);
         spawn_strings_put(work->arguments);
         if (work->path_owned)
@@ -640,6 +608,8 @@ static int spawn_enter(void *data)
 
         struct spawn_work *work = data;
         static const char *const empty_envp[] = {NULL};
+        const char *const *environment = work->environment
+                ? (const char *const *)work->environment->vector : empty_envp;
         int ret;
 
         spawn_default_signals();
@@ -647,19 +617,13 @@ static int spawn_enter(void *data)
         /* Without the close-on-exec flag, so these three outlive the load
            while every other descriptor the caller happened to hold does
            not. A pipeline's other ends are among those. */
-        if ((work->stdio[0] && replace_fd(0, work->stdio[0], 0)) ||
-            (work->stdio[1] && replace_fd(1, work->stdio[1], 0)) ||
-            (work->stdio[2] && replace_fd(2, work->stdio[2], 0)))
-        {
-                ret = -EBADF;
-                goto finished;
-        }
+        for (unsigned int i = 0; i < array_count(work->stdio); i++)
+                if (work->stdio[i] && (ret = replace_fd(i, work->stdio[i], 0)))
+                        goto finished;
 
         ret = kernel_execve(work->path,
                             (const char *const *)work->arguments->vector,
-                            work->environment
-                              ? (const char *const *)work->environment->vector
-                              : empty_envp);
+                            environment);
 
         /*
          * The shell promises more than execve: ENOEXEC for an executable text
@@ -688,15 +652,13 @@ static int spawn_enter(void *data)
                                           (work->argc - 1) * sizeof(*script_argv));
 
                         ret = kernel_execve(script_argv[0], script_argv,
-                                            work->environment
-                                              ? (const char *const *)work->environment->vector
-                                              : empty_envp);
+                                            environment);
                         kfree(script_argv);
                 }
         }
 
 finished:
-        stat_exec_ns += ktime_get_ns() - started;
+        atomic_long_add(ktime_get_ns() - started, &stat_exec_ns);
 
         // kernel_execve has copied everything it needs by now, so the request
         // can go before anything else touches it.
@@ -761,7 +723,7 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
         for (i = 0; i < count; i++)
         {
                 size_t remaining = (size_t)(block + bytes - walk);
-                size_t length = strnlen(walk, remaining);
+                size_t length = string_length_max(walk, remaining);
 
                 if (length == remaining)
                         goto malformed;
@@ -884,8 +846,8 @@ static long do_spawn(struct file *file, struct spawn __user *request,
         {
                 u64 started = ktime_get_ns();
                 pid = user_mode_thread(spawn_enter, work, SIGCHLD);
-                stat_task_ns += ktime_get_ns() - started;
-                stat_spawns++;
+                atomic_long_add(ktime_get_ns() - started, &stat_task_ns);
+                atomic_long_inc(&stat_spawns);
         }
 
         if (pid < 0)
@@ -905,18 +867,15 @@ fail:
 static long report_stats(struct stats __user *out)
 {
         struct stats stats = {
-            .spawns = stat_spawns,
-            .task_ns = stat_task_ns,
-            .exec_ns = stat_exec_ns,
-            .loader_ns = stat_loader_ns,
-            .loads = stat_loads,
-            .map_ns = stat_map_ns,
+            .spawns = atomic_long_read(&stat_spawns),
+            .task_ns = atomic_long_read(&stat_task_ns),
+            .exec_ns = atomic_long_read(&stat_exec_ns),
+            .loader_ns = atomic_long_read(&stat_loader_ns),
+            .loads = atomic_long_read(&stat_loads),
+            .map_ns = atomic_long_read(&stat_map_ns),
         };
 
-        if (copy_to_user(out, &stats, sizeof(stats)))
-                return -EFAULT;
-
-        return 0;
+        return copy_to_user(out, &stats, sizeof(stats)) ? -EFAULT : 0;
 }
 
 #ifdef CONFIG_MOONWATER_CANVAS
@@ -1109,7 +1068,7 @@ retry:
         build.capacity = capacity;
         build.used = 0;
         build.required = 0;
-        memset(build.data, 0, sizeof(*header));
+        memory_fill(build.data, 0, sizeof(*header));
         header = snapshot_append(&build, sizeof(*header));
 
         header->version = SPARK_SNAPSHOT_VERSION;

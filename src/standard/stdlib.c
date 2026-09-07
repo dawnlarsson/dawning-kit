@@ -111,12 +111,26 @@ typedef struct
 static p8 address_to stdlib_arena_next = null;
 static positive stdlib_arena_left = 0;
 
+/* Standalone users of this family have no errno dependency. With the error
+   family present, every failed environment operation reports its cause. */
+#ifdef STANDARD_MODERN_C_STANDARD_ERROR
+#define stdlib_environment_failure(result) error_whole(result)
+#else
+#define stdlib_environment_failure(result) (-1)
+#endif
+
+static address_any stdlib_arena_failed(void)
+{
+        (fn)stdlib_environment_failure(-ENOMEM);
+        return null;
+}
+
 static address_any stdlib_arena_take(positive size)
 {
         address_any given;
 
         if (size > (positive)-1 - (STDLIB_ARENA_ALIGN - 1))
-                return null;
+                return stdlib_arena_failed();
         size = (size + (STDLIB_ARENA_ALIGN - 1)) & ~(positive)(STDLIB_ARENA_ALIGN - 1);
 
         if (size > stdlib_arena_left)
@@ -125,12 +139,12 @@ static address_any stdlib_arena_take(positive size)
                 p8 address_to block;
 
                 if (want == 0)
-                        return null;
+                        return stdlib_arena_failed();
 
                 block = (p8 address_to)memory(want);
 
                 if (is_null(block) || stdlib_memory_failed(block))
-                        return null;
+                        return stdlib_arena_failed();
 
                 //      Whatever was left of the previous chunk is abandoned.
                 //      It is at most one allocation's worth and chasing it
@@ -234,6 +248,9 @@ static bool stdlib_environment_own(void)
                 while (!is_null(kernel[count]))
                         count++;
 
+        if (count > positive_max / sizeof(string_address) -
+                        STDLIB_ENVIRONMENT_SLACK - 1)
+                return false;
         room = count + STDLIB_ENVIRONMENT_SLACK;
         made = (string_address address_to)stdlib_arena_take((room + 1) *
                                                             sizeof(string_address));
@@ -267,11 +284,15 @@ static bool stdlib_environment_grow(void)
         string_address address_to made;
         positive room;
 
-        if (stdlib_environment_count + 1 <= stdlib_environment_room)
+        if (stdlib_environment_count < stdlib_environment_room)
                 return true;
-
-        room = stdlib_environment_room + stdlib_environment_room / 2 +
-               STDLIB_ENVIRONMENT_SLACK;
+        if (stdlib_environment_count == positive_max)
+                return false;
+        room = memory_growth(stdlib_environment_room,
+                             stdlib_environment_count + 1,
+                             STDLIB_ENVIRONMENT_SLACK);
+        if (!room || room >= positive_max / sizeof(string_address))
+                return false;
         made = (string_address address_to)stdlib_arena_take((room + 1) *
                                                             sizeof(string_address));
 
@@ -382,13 +403,13 @@ b32 setenv(string_address name, string_address value, b32 overwrite)
         p8 address_to entry;
 
         if (!stdlib_environment_name_valid(name, address_of name_length))
-                return -1;
+                return stdlib_environment_failure(-EINVAL);
 
         if (is_null(value))
                 value = (string_address) "";
 
         if (!stdlib_environment_own() || !stdlib_environment_grow())
-                return -1;
+                return stdlib_environment_failure(-ENOMEM);
 
         found = stdlib_environment_find(name, name_length);
 
@@ -396,10 +417,13 @@ b32 setenv(string_address name, string_address value, b32 overwrite)
                 return 0;
 
         value_length = string_length(value);
+        if (name_length > positive_max - 2 ||
+            value_length > positive_max - name_length - 2)
+                return stdlib_environment_failure(-ENOMEM);
         entry = (p8 address_to)stdlib_arena_take(name_length + value_length + 2);
 
         if (is_null(entry))
-                return -1;
+                return stdlib_environment_failure(-ENOMEM);
 
         memory_copy_apart(entry, name, name_length);
         entry[name_length] = '=';
@@ -425,10 +449,10 @@ b32 unsetenv(string_address name)
         positive index = 0;
 
         if (!stdlib_environment_name_valid(name, address_of name_length))
-                return -1;
+                return stdlib_environment_failure(-EINVAL);
 
         if (!stdlib_environment_own())
-                return -1;
+                return stdlib_environment_failure(-ENOMEM);
 
         while (index < stdlib_environment_count)
         {
@@ -476,7 +500,7 @@ b32 putenv(string_address entry)
         bipolar found;
 
         if (is_null(entry))
-                return -1;
+                return stdlib_environment_failure(-EINVAL);
 
         //      The same one scan the name check above uses. Where it stopped
         //      is the key's length and what it stopped on says whether there
@@ -489,10 +513,10 @@ b32 putenv(string_address entry)
         name_length = (positive)(stop - entry);
 
         if (name_length == 0)
-                return -1;
+                return stdlib_environment_failure(-EINVAL);
 
         if (!stdlib_environment_own() || !stdlib_environment_grow())
-                return -1;
+                return stdlib_environment_failure(-ENOMEM);
 
         found = stdlib_environment_find(entry, name_length);
 
@@ -515,13 +539,15 @@ b32 putenv(string_address entry)
 b32 clearenv(void)
 {
         if (!stdlib_environment_own())
-                return -1;
+                return stdlib_environment_failure(-ENOMEM);
 
         stdlib_environment_count = 0;
         stdlib_environment_vector[0] = null;
 
         return 0;
 }
+
+#undef stdlib_environment_failure
 
 /*
         Leaving.

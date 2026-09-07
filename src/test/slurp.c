@@ -340,6 +340,28 @@ static fn slurp_test_regular(string_address path, string_address empty,
         slurp_test_unlink(empty);
 }
 
+static fn slurp_test_store(string_address path)
+{
+        byte_store store = {0};
+        p8 payload[9000];
+        memory_fill(payload, 'x', sizeof(payload));
+        check("store fixture made", slurp_test_file(path, payload, sizeof(payload)));
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ);
+        check("store reads through growth and EOF",
+              handle >= 0 && file_store_read(handle, &store) == 0 &&
+              store.used == sizeof(payload) && !store.bytes[store.used] &&
+              !memory_compare(store.bytes, payload, sizeof(payload)));
+        check("store keeps its descriptor open", system_seek(handle, 0, 0) == 0);
+        check("store reuses its allocation", file_store_read(handle, &store) == 0 &&
+              store.used == sizeof(payload));
+        check("store resets at EOF", file_store_read(handle, &store) == 0 &&
+              !store.used && !store.bytes[0]);
+        system_close(handle);
+        check("store preserves raw read errors", file_store_read(handle, &store) == -EBADF);
+        byte_store_release(&store);
+        slurp_test_unlink(path);
+}
+
 b32 main(void)
 {
         p8 regular[128], empty[128], absent[128], open_fifo[128], read_fifo[128];
@@ -358,6 +380,7 @@ b32 main(void)
                             (positive)action, 0, 8) == 0);
 
         slurp_test_regular(regular, empty, absent);
+        slurp_test_store(regular);
         slurp_test_fifo(open_fifo, true);
         slurp_test_fifo(read_fifo, false);
 

@@ -25,19 +25,6 @@
 #if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
 
 /*
-        remove, mkstemp, mkstemps, mkdtemp, tmpnam and tmpfile were defined
-        here and are not any more. spool.c owns them.
-
-        Both families were told to build them, which was the brief's fault
-        and not either family's, and both did. spool.c is where they belong:
-        it is the rest of <stdio.h>, its tmpfile hands back a stream rather
-        than a descriptor, and its mkstemp is what its other five are built
-        on. This file is directories, exec and sleeping, and it reaches
-        spool's copies because spool.c is included before it.
-*/
-
-
-/*
         Where this file sits, and what it is allowed to assume.
 
         It is included last in src/compiler_memory.c, after error.c,
@@ -117,14 +104,6 @@
 #ifndef TIMER_ABSTIME
 #define TIMER_ABSTIME 1
 #endif
-
-//      TMP_MAX, L_tmpnam and P_tmpdir went the way the six temporary-file
-//      entries above them went: spool.c defines all three, with the same
-//      values and with the arithmetic behind them written out, and the
-//      umbrella includes spool.c before this file, so every one of these
-//      #ifndef guards was already satisfied by the time it was read.
-//      PROCESS_TEMPORARY_DIRECTORY, PROCESS_TEMPORARY_NAME and
-//      PROCESS_TEMPLATE_TAIL were this file's own and nothing named them.
 
 /*
         How deep a chain of symbolic links realpath will follow before it
@@ -1240,52 +1219,6 @@ static b32 usleep(p32 microseconds)
 }
 
 //      -- names in the file system ------------------------------------------
-
-/*
-        remove, which is unlink and rmdir behind one name.
-
-        Linux answers EISDIR when unlink is given a directory, so the second
-        call is made only then. A missing file is ENOENT from the first call
-        and is reported as it stands.
-*/
-
-
-//      The GNU spelling that lets a template keep an extension: the six X are
-//      the six characters before the last `suffix` bytes.
-
-
-/*
-        tmpnam, which is racy by construction and is kept because programs
-        call it.
-
-        Between the moment this decides a name is free and the moment the
-        caller opens it, anything may create it. That is not a defect in this
-        implementation, it is what the interface is: there is no way to hand
-        back a name and a guarantee at the same time. mkstemp exists for
-        callers that need the guarantee, and tmpfile below uses it rather than
-        this.
-
-        A null argument gets a pointer into storage this owns, which the next
-        call overwrites, and that too is what the interface says.
-*/
-//      process_temporary_name went with tmpnam; spool.c has both.
-
-
-/*
-        tmpfile: a stream with no name, deleted before it is handed over.
-
-        O_TMPFILE first, because a file that never had a name cannot be found
-        by anything and cannot be left behind by a program that dies before
-        fclose. Not every file system supports it -- it wants the directory,
-        not a path, and older ones answer EOPNOTSUPP or EISDIR -- so the
-        fallback is the old way: make a name, open it, unlink it immediately
-        and keep the descriptor. The window in which the name exists is the
-        few microseconds between those two calls, and the name is a mkstemp
-        name rather than a tmpnam one, so nothing can guess it in time.
-
-        fdopen comes from the stream family, which is the only dependency this
-        file has on it.
-*/
 
 /*
         realpath, and the reason it is a walk rather than a call.

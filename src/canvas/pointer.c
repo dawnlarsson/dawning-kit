@@ -440,7 +440,7 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
         {
                 if (code != BTN_LEFT && code != BTN_TOUCH)
                 {
-                        keyboard_event(code, value);
+                        keyboard_event(handle, code, value);
                         return;
                 }
 
@@ -481,6 +481,7 @@ struct pointer_handle
         unsigned long events;
         int opened;
         unsigned int tries;
+        unsigned int modifiers;
 };
 
 static LIST_HEAD(pointer_handles);
@@ -488,6 +489,21 @@ static LIST_HEAD(pointer_handles);
 static inline struct pointer_handle *pointer_handle_of(struct input_handle *handle)
 {
         return container_of(handle, struct pointer_handle, handle);
+}
+
+static unsigned int *keyboard_held(struct input_handle *handle)
+{
+        return &pointer_handle_of(handle)->modifiers;
+}
+
+static unsigned int keyboard_modifiers(void)
+{
+        struct pointer_handle *pointer;
+        unsigned int held = 0;
+
+        list_for_each_entry(pointer, &pointer_handles, link)
+                held |= pointer->modifiers;
+        return (held | (held >> 4)) & (WINDOW_KEY_SHIFT | WINDOW_KEY_CONTROL | WINDOW_KEY_ALT);
 }
 
 static HOT void pointer_event(struct input_handle *handle, unsigned int type,
@@ -583,14 +599,17 @@ static COLD void pointer_disconnect(struct input_handle *handle)
 
         cancel_delayed_work_sync(&pointer->reopen);
 
-        spin_lock_irqsave(&desktop.input_lock, flags);
-        list_del(&pointer->link);
-        spin_unlock_irqrestore(&desktop.input_lock, flags);
-
-        // Closing a handle that never opened would take the input core's
-        // open count below zero.
+        // Stop callbacks before releasing held keys; no late press may
+        // resurrect a modifier after this device leaves the list.
         if (!pointer->opened)
                 input_close_device(handle);
+
+        spin_lock_irqsave(&desktop.input_lock, flags);
+        for (unsigned int code = 0; code < KEY_TABLE; code++)
+                if (pointer->modifiers & key_map[code][2])
+                        keyboard_event(handle, code, 0);
+        list_del(&pointer->link);
+        spin_unlock_irqrestore(&desktop.input_lock, flags);
 
         input_unregister_handle(handle);
         kfree(pointer);

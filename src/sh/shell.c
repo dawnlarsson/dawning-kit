@@ -275,101 +275,69 @@ static inline INLINE fn shell_scratch_bytes(positive want)
 //      Bytes that will not move for as long as the line lasts.
 static p8 address_to shell_store_take(shell_store address_to store, positive room)
 {
-        shell_block address_to block;
-        shell_block address_to before;
-        positive size;
-        p8 address_to bytes;
+        shell_block address_to block = store->here;
 
         if (!room)
                 room = 1;
 
-        if (store->here && store->here->used <= store->here->size &&
-            room <= store->here->size - store->here->used)
+        if (block && block->used <= block->size &&
+            room <= block->size - block->used)
         {
-                bytes = (p8 address_to)(store->here + 1) + store->here->used;
-                store->here->used += room;
+                p8 address_to bytes = (p8 address_to)(block + 1) + block->used;
+                block->used += room;
                 return bytes;
         }
 
-        /* A block left over from an earlier line, still big enough.  Look
-           through the released tail rather than only at its first block: an
-           earlier large/small allocation order must not make an equally large
-           block later in the chain invisible and map a duplicate beside it. */
-        if (store->here && store->here->next &&
-            room <= store->here->next->size)
-        {
-                store->here = store->here->next;
-                store->here->used = room;
-                return (p8 address_to)(store->here + 1);
-        }
+        /* Claim the first large-enough released block, wherever it is in the
+           tail. The same link insertion serves reused and newly mapped blocks,
+           including an arena whose current position is before its head. */
+        shell_block address_to address_to next =
+            block ? address_of block->next : address_of store->head;
+        shell_block address_to address_to link = next;
 
-        if (store->here)
-        {
-                before = store->here->next;
-                block = before ? before->next : null;
-        }
+        while (*link && room > (*link)->size)
+                link = address_of (*link)->next;
+
+        block = *link;
+        if (block)
+                *link = block->next;
         else
         {
-                before = null;
-                block = store->head;
-        }
+                positive size = memory_growth(0, room, SHELL_BLOCK);
 
-        while (block && room > block->size)
-        {
-                before = block;
-                block = block->next;
-        }
-
-        if (block)
-        {
-                if (store->here)
+                if (!size || size > positive_max - sizeof(shell_block))
                 {
-                        before->next = block->next;
-                        block->next = store->here->next;
-                        store->here->next = block;
-                }
-                else if (block != store->head)
-                {
-                        before->next = block->next;
-                        block->next = store->head;
-                        store->head = block;
+                        shell_memory_failed = true;
+                        return null;
                 }
 
-                store->here = block;
-                block->used = room;
-                return (p8 address_to)(block + 1);
+                block = (shell_block address_to)shell_map(
+                    size + sizeof(shell_block));
+                if (!block)
+                        return null;
+                block->size = size;
         }
 
-        size = memory_growth(0, room, SHELL_BLOCK);
+        block->next = *next;
+        *next = block;
+        block->used = room;
+        store->here = block;
+        return (p8 address_to)(block + 1);
+}
 
-        if (!size || size > positive_max - sizeof(shell_block))
+/* Stable, terminated spans share the arena's allocation and overflow policy. */
+static p8 address_to shell_store_copy(shell_store address_to store,
+                                      address_any text, positive length)
+{
+        if (length == positive_max)
         {
                 shell_memory_failed = true;
                 return null;
         }
-
-        block = (shell_block address_to)shell_map(size + sizeof(shell_block));
-
-        if (!block)
-                return null;
-
-        block->size = size;
-        block->used = room;
-        block->next = null;
-
-        if (store->here)
-        {
-                block->next = store->here->next;
-                store->here->next = block;
-        }
-        else
-        {
-                store->head = block;
-        }
-
-        store->here = block;
-
-        return (p8 address_to)(block + 1);
+        p8 address_to held = shell_store_take(store, length + 1);
+        if (held)
+                memory_copy_end(held, text, length);
+        return held;
 }
 
 //      The line is over. Rewind rather than free: the next line will want the

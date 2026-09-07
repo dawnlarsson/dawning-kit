@@ -79,49 +79,23 @@ static COLD b32 ul_bad_usage(string_address program, string_address message)
 static bool ul_unsigned(string_address text, positive maximum,
                         positive address_to value)
 {
-        string_address at = text;
         positive got;
-
-        while (byte_is_space(string_get(at)))
-                at++;
-        if (string_is(at, '+'))
-                at++;
-        else if (string_is(at, '-'))
+        if (!text_unsigned_option(text, false, address_of got) || got > maximum)
                 return false;
-
-        if (!string_digits_checked(address_of at, 10, address_of got) ||
-            string_get(at) || got > maximum)
-                return false;
-
         address_to value = got;
         return true;
 }
 
-/* strtol refuses a digit string that wrapped.  The shell's nice scanner
-   wraps silently, which let 18446744073709551616 reach renice as zero. */
+/* Range policy stays local; the file utilities share checked signed digits. */
 static bool ul_signed(string_address text, bipolar minimum, bipolar maximum,
                       bipolar address_to value)
 {
-        string_address at = text;
-        positive magnitude;
-        bool negative;
-
-        while (byte_is_space(string_get(at)))
-                at++;
-        negative = string_is(at, '-');
-        if (negative || string_is(at, '+'))
-                at++;
-
-        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
-            string_get(at) ||
-            magnitude > (positive)bipolar_max + (negative ? 1 : 0))
+        while (byte_is_space(string_get(text)))
+                text++;
+        bipolar got;
+        if (!file_signed_decimal(text, address_of got) ||
+            got < minimum || got > maximum)
                 return false;
-
-        bipolar got = bipolar_from_magnitude(magnitude, negative);
-
-        if (got < minimum || got > maximum)
-                return false;
-
         address_to value = got;
         return true;
 }
@@ -595,16 +569,8 @@ static b32 util_linux_bits()
         text_begin("bits");
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                text_put_string("Usage: bits [-m|-g|-b|-l] [-w BITS] [MASK_OR_LIST ...]\n");
+        if (file_meta(address_of taking, "[-m|-g|-b|-l] [-w BITS] [MASK_OR_LIST ...]", text_put))
                 return text_done(0);
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                text_put_string("bits from dawning-kit\n");
-                return text_done(0);
-        }
 
         positive width = UL_BITS_DEFAULT;
         string_address width_text = file_option_value(address_of taking, 'w');
@@ -849,21 +815,11 @@ static bipolar ul_path_write(string_address path, address_any bytes,
 static bool ul_meta(file_taking address_to taking, string_address syntax,
                     b32 address_to answer)
 {
-        if (taking->flags & FILE_FLAG('h'))
-        {
-                address_to answer = ul_usage(taking->program, syntax);
-                return true;
-        }
-
-        if (taking->flags & FILE_FLAG('V'))
-        {
-                string_format(log, "%s from dawning-kit\n", taking->program);
-                log_flush();
-                address_to answer = 0;
-                return true;
-        }
-
-        return false;
+        if (!file_meta(taking, syntax, log))
+                return false;
+        log_flush();
+        address_to answer = 0;
+        return true;
 }
 
 /* Ordinary applets share parse/help/version ordering and failure status.
@@ -12008,6 +11964,12 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                                                      : device->kname;
                 if (!ul_lsblk_tree || ul_lsblk_json || !device->depth)
                         return name;
+                /* A path plus 32 tree levels can exceed the 96-byte cell scratch. */
+                static p8 tree_name[FILE_PATH_MAX + 64];
+                positive length = string_length_max(name, FILE_PATH_MAX);
+                if (length >= FILE_PATH_MAX || device->depth > 32)
+                        return name;
+                scratch = tree_name;
                 positive used = 0;
                 for (positive i = 1; i < device->depth; i++)
                 {
@@ -12016,7 +11978,6 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 }
                 scratch[used++] = device->last ? '`' : '|';
                 scratch[used++] = '-';
-                positive length = string_length(name);
                 memory_copy(scratch + used, name, length + 1);
                 return scratch;
         }
@@ -13511,25 +13472,6 @@ static ul_rfkill_row ul_rfkill_rows[UL_RFKILL_MAX];
 static ul_rfkill_row ul_rfkill_spare[UL_RFKILL_MAX];
 static ul_rfkill_view ul_rfkill_views[UL_RFKILL_MAX * UL_RFKILL_FILTER_MAX];
 
-/* Test-only path substitution follows the same trust rule as login-record
-   fixtures: never honor process-controlled paths across a uid/gid boundary. */
-static string_address ul_rfkill_override(string_address name,
-                                         string_address fallback)
-{
-        positive user = (positive)system_call(syscall(getuid));
-        positive effective_user = (positive)system_call(syscall(geteuid));
-        positive group = (positive)system_call(syscall(getgid));
-        positive effective_group = (positive)system_call(syscall(getegid));
-
-        if (user == effective_user && group == effective_group)
-        {
-                string_address value = file_environment(name);
-                if (value && string_get(value))
-                        return value;
-        }
-        return fallback;
-}
-
 static PURE bipolar ul_rfkill_order(ul_rfkill_row left,
                                     ul_rfkill_row right)
 {
@@ -13568,7 +13510,7 @@ static bool ul_rfkill_attribute(string_address directory,
 static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
                            positive address_to count)
 {
-        string_address root = ul_rfkill_override(
+        string_address root = file_environment_override(
             (string_address)"MOONWATER_RFKILL_ROOT",
             (string_address)"/sys/class/rfkill");
         file_walk walk;
@@ -13747,7 +13689,7 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
         if (arguments - first > UL_RFKILL_FILTER_MAX)
                 return ul_bad_usage("rfkill", "too many identifiers");
 
-        string_address device = ul_rfkill_override(
+        string_address device = file_environment_override(
             (string_address)"MOONWATER_RFKILL_DEVICE",
             (string_address)"/dev/rfkill");
         bipolar handle = system_open_at(AT_FDCWD, device,

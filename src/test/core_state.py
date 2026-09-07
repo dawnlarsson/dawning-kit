@@ -14,6 +14,7 @@ compose = (root / "src/canvas/compose.c").read_text()
 drag = (root / "src/canvas/drag.c").read_text()
 output = (root / "src/canvas/output.c").read_text()
 pointer = (root / "src/canvas/pointer.c").read_text()
+keys = (root / "src/canvas/keys.c").read_text()
 spark = (root / "src/spark.c").read_text()
 
 
@@ -64,6 +65,8 @@ typedef uint64_t u64;
 typedef int64_t s64;
 #define HOT
 #define PURE
+#define string_length_max strnlen
+#define memory_fill memset
 #define __user
 #define PAGE_SIZE 4096u
 #define U32_MAX UINT32_MAX
@@ -201,6 +204,21 @@ typedef unsigned refcount_t;
 source += section(core, "struct spawn_strings", "struct pane;")
 source += section(core, "static int copy_strings", "static long do_spawn")
 source += r'''
+#define COLD
+#define KEY_LEFTSHIFT 42
+#define KEY_RIGHTSHIFT 54
+#define KEY_LEFTCTRL 29
+#define KEY_RIGHTCTRL 97
+#define KEY_LEFTALT 56
+#define KEY_RIGHTALT 100
+#define KEY_TAB 15
+#define KEY_F9 67
+#define WINDOW_KEYS 64
+#define WINDOW_KEY_DOWN 1u
+#define WINDOW_KEY_SHIFT 2u
+#define WINDOW_KEY_CONTROL 4u
+#define WINDOW_KEY_ALT 8u
+struct window_key { unsigned code,character,flags,reserved; };
 #define EV_SYN 0
 #define EV_KEY 1
 #define EV_REL 2
@@ -224,6 +242,9 @@ static struct {
     unsigned abs_have;
     atomic_t pending_x,pending_y,motion_pending,shake_dir,shake_count,magnify,wheel;
     atomic_t button_x,button_y,button_down,button_changed;
+    atomic_t modifiers,key_head,key_tail,focus_steps,focus_commit,focus_cycling,minimize;
+    struct window_key key_ring[WINDOW_KEYS];
+    int input_lock;
     u64 accel_stamp,motion_stamp,shake_window;
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
@@ -242,7 +263,35 @@ static _Bool atomic_try_cmpxchg(atomic_t *p,int *old,int value) {
 static int test_bit(unsigned bit,const unsigned long *bits) { return (bits[bit/64]>>(bit%64))&1; }
 static void wake_up_process(void *thread) { (void)thread;wakes++; }
 static void canvas_thread_wake(void) { wakes++; }
-static void keyboard_event(unsigned code,int value) { (void)code;(void)value; }
+static void atomic_fetch_add(int value,atomic_t *at) { *at+=value; }
+#define smp_wmb() ((void)0)
+#define spin_lock_irqsave(lock,flags) do { (flags)=0;mutex_lock(lock); } while(0)
+#define spin_unlock_irqrestore(lock,flags) do { (void)(flags);mutex_unlock(lock); } while(0)
+struct pointer_handle;
+struct key_link { struct pointer_handle *owner; };
+struct pointer_handle {
+    struct input_handle handle;
+    struct pointer_handle *next;
+    struct key_link link;
+    int reopen,opened;
+    unsigned modifiers;
+};
+static struct pointer_handle *pointer_handles;
+static unsigned closed;
+#define container_of(p,type,member) ((type *)(p))
+#undef list_for_each_entry
+#define list_for_each_entry(p,list,link) for(p=pointer_handles;p;p=p->next)
+static void list_del(struct key_link *link) {
+    struct pointer_handle **at=&pointer_handles;
+    while(*at!=link->owner) { assert(*at);at=&(*at)->next; }
+    *at=(*at)->next;
+}
+static void cancel_delayed_work_sync(int *work) { (void)work; }
+static void input_close_device(struct input_handle *handle) {
+    (void)handle;assert(!desktop.input_lock);closed++;
+}
+static void input_unregister_handle(struct input_handle *handle) { (void)handle; }
+#define kfree free
 static u64 div_u64(u64 a,u32 b) { return a/b; }
 static u64 div64_u64(u64 a,u64 b) { assert(b);return a/b; }
 static unsigned long int_sqrt(unsigned long value) {
@@ -256,10 +305,75 @@ static unsigned long int_sqrt(unsigned long value) {
     return root;
 }
 '''
+source += section(keys, "#define KEY_TABLE", "// Under desktop.lock")
+source += section(pointer, "static inline struct pointer_handle *pointer_handle_of", "static HOT void pointer_event")
+source += section(pointer, "static COLD void pointer_disconnect", "static void canvas_input_devices")
 source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
 source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
 source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
 source += r'''
+static struct pointer_handle *keyboard_attach(int opened) {
+    struct pointer_handle *p=calloc(1,sizeof(*p));assert(p);
+    p->link.owner=p;p->opened=opened;p->next=pointer_handles;pointer_handles=p;
+    return p;
+}
+static void keyboard_send(struct pointer_handle *p,unsigned code,int value) {
+    mutex_lock(&desktop.input_lock);
+    pointer_event_locked(&p->handle,EV_KEY,code,value);
+    mutex_unlock(&desktop.input_lock);
+}
+static void check_keyboard_state(void) {
+    const unsigned pairs[][2]={{KEY_LEFTSHIFT,KEY_RIGHTSHIFT},
+                              {KEY_LEFTCTRL,KEY_RIGHTCTRL},{KEY_LEFTALT,KEY_RIGHTALT}};
+    for(unsigned family=0;family<3;family++)for(unsigned order=0;order<2;order++)
+    for(unsigned release=0;release<2;release++)for(unsigned split=0;split<2;split++) {
+        memset(&desktop,0,sizeof(desktop));closed=0;
+        struct pointer_handle *a=keyboard_attach(0),*b=keyboard_attach(-EIO);
+        struct pointer_handle *devices[]={a,split?b:a};
+        unsigned codes[]={pairs[family][order],pairs[family][!order]},flag=2u<<family;
+        keyboard_send(devices[0],codes[0],1);
+        keyboard_send(devices[1],codes[1],1);
+        for(unsigned repeat=0;repeat<4;repeat++)keyboard_send(devices[repeat%2],codes[repeat%2],2);
+        if(family==2)keyboard_send(a,KEY_TAB,1);
+        check((unsigned)desktop.modifiers==flag,"both modifier sides and repeats");
+        keyboard_send(devices[release],codes[release],0);
+        keyboard_send(devices[release],codes[release],0);
+        check((unsigned)desktop.modifiers==flag,"one side and duplicate release preserve other");
+        check(family!=2 || (desktop.focus_cycling && !desktop.focus_commit),
+              "first Alt release preserves traversal");
+        keyboard_send(a,30,1);
+        if(family!=2) {
+            struct window_key *key=&desktop.key_ring[(desktop.key_head-1)%WINDOW_KEYS];
+            check(key->flags==(flag|WINDOW_KEY_DOWN) && key->character==(family?1u:'A'),
+                  "surviving modifier changes delivered character and flags");
+        }
+        keyboard_send(devices[!release],codes[!release],0);
+        check(!desktop.modifiers,"last modifier side releases");
+        check(family!=2 || (!desktop.focus_cycling && desktop.focus_commit),
+              "last Alt release commits traversal");
+        pointer_disconnect(&a->handle);pointer_disconnect(&b->handle);
+        check(!pointer_handles && closed==1,"disconnect closes only opened devices");
+    }
+    for(unsigned family=0;family<3;family++) {
+        memset(&desktop,0,sizeof(desktop));
+        struct pointer_handle *a=keyboard_attach(0),*b=keyboard_attach(0);
+        keyboard_send(a,pairs[family][0],2); // A repeat also establishes held state.
+        keyboard_send(b,pairs[family][0],1);
+        if(family==2)keyboard_send(a,KEY_TAB,1);
+        pointer_disconnect(&a->handle);
+        check((unsigned)desktop.modifiers==(2u<<family),"disconnect preserves same key on another device");
+        check(family!=2 || (desktop.focus_cycling && !desktop.focus_commit),
+              "disconnect preserves another keyboard's Alt traversal");
+        pointer_disconnect(&b->handle);
+        check(!desktop.modifiers && !pointer_handles,"last disconnect releases held modifiers");
+        check(family!=2 || (!desktop.focus_cycling && desktop.focus_commit),
+              "last keyboard disconnect commits Alt traversal");
+        a=keyboard_attach(0);keyboard_send(a,30,1);
+        struct window_key *key=&desktop.key_ring[(desktop.key_head-1)%WINDOW_KEYS];
+        check(key->character=='a' && key->flags==WINDOW_KEY_DOWN,"reconnected keyboard has no stale modifiers");
+        pointer_disconnect(&a->handle);
+    }
+}
 static int reference_int(s64 value) {
     return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;
 }
@@ -584,6 +698,7 @@ int main(void) {
               desktop.abs_have==(high>low?(1u<<axis):0),"absolute axis range and ownership");
     }
     check_pointer_state(&handle);
+    check_keyboard_state();
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
     const char *tally=getenv("TEST_TALLY");

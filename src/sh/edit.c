@@ -4221,64 +4221,17 @@ static bool edit_flush()
         works on the things that do not have one -- a pipe, a device, /proc.
 */
 #define EDIT_ENOENT 2
-#define EDIT_ENOMEM 12
 #define EDIT_PATH_MAX 4096
 
-static p8 address_to edit_read_file(string_address path,
-                                    positive address_to length,
-                                    bipolar address_to failure)
+static bipolar edit_read_file(string_address path,
+                                byte_store address_to store)
 {
-        b32 handle = system_open_at(AT_FDCWD, path,
-                                   FILE_READ);
-        p8 address_to block = null;
-        positive room = 0;
-        positive held = 0;
-
-        address_to length = 0;
-        address_to failure = 0;
-
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ);
         if (handle < 0)
-        {
-                address_to failure = handle;
-                return null;
-        }
-
-        for (;;)
-        {
-                bipolar got;
-
-                if (!memory_resize_reserve(address_of block, address_of room, held + 65536,
-                               65536))
-                {
-                        address_to failure = -EDIT_ENOMEM;
-                        break;
-                }
-
-                got = system_read_retry((positive)handle, block + held,
-                                        room - held);
-
-                if (got < 0)
-                {
-                        address_to failure = got;
-                        break;
-                }
-
-                if (!got)
-                        break;
-
-                held += (positive)got;
-        }
-
+                return handle;
+        bipolar result = file_store_read((positive)handle, store);
         system_close(handle);
-
-        if (address_to failure)
-        {
-                memory_give(block);
-                return null;
-        }
-
-        address_to length = held;
-        return block;
+        return result;
 }
 
 static bool edit_write_file()
@@ -4436,9 +4389,6 @@ static b32 system_edit()
 {
         bool styles = shell_styles;
         positive2 size;
-        p8 address_to loaded;
-        positive length = 0;
-        bipolar read_failure = 0;
         positive window_action[4] = {0, 0, 0, 0};
         positive window_mask = 0;
         b32 result = 0;
@@ -4461,14 +4411,13 @@ static b32 system_edit()
 
         if (edit_path)
         {
-                loaded = edit_read_file(edit_path, address_of length,
-                                        address_of read_failure);
+                byte_store loaded = {0};
+                bipolar read_failure = edit_read_file(edit_path, address_of loaded);
+                bool loaded_all = !read_failure && edit_load(loaded.bytes, loaded.used);
+                byte_store_release(address_of loaded);
 
-                if (loaded)
+                if (!read_failure)
                 {
-                        bool loaded_all = edit_load(loaded, length);
-                        memory_give(loaded);
-
                         if (!loaded_all)
                         {
                                 log_direct(str("edit: file did not fit\n"));

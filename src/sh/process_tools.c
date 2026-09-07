@@ -807,21 +807,12 @@ static b32 process_pipesz()
         if (!file_take(address_of taking))
                 return 1;
 
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                              "Usage: pipesz [options] [--] [command]\n"
-                              "  -g, --get       examine pipe buffers\n"
-                              "  -s, --set SIZE  set pipe buffer size\n"
-                              "  -f FILE  -n FD  -i stdin  -o stdout  -e stderr\n"
-                              "  -c check  -q quiet  -v verbose\n");
+        if (file_meta(address_of taking, "[options] [--] [command]\n"
+                      "  -g, --get       examine pipe buffers\n"
+                      "  -s, --set SIZE  set pipe buffer size\n"
+                      "  -f FILE  -n FD  -i stdin  -o stdout  -e stderr\n"
+                      "  -c check  -q quiet  -v verbose", log))
                 return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "pipesz from dawning-kit\n");
-                return 0;
-        }
 
         bool getting = (taking.flags & FILE_FLAG('g')) != 0;
         if (getting && (taking.flags & FILE_FLAG('s')))
@@ -1064,19 +1055,10 @@ static b32 process_coresched()
         if (!file_take_from(address_of taking, first))
                 return 1;
 
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                              "Usage: coresched [get] [--source PID]\n"
-                              "       coresched new [-t TYPE] --dest PID|-- COMMAND\n"
-                              "       coresched copy [--source PID] [-t TYPE] --dest PID|-- COMMAND\n");
+        if (file_meta(address_of taking, "[get] [--source PID]\n"
+                      "       coresched new [-t TYPE] --dest PID|-- COMMAND\n"
+                      "       coresched copy [--source PID] [-t TYPE] --dest PID|-- COMMAND", log))
                 return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "coresched from dawning-kit\n");
-                return 0;
-        }
 
         positive self = (positive)system_call(syscall(getpid));
         positive source = self;

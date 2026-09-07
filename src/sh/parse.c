@@ -730,14 +730,9 @@ static bool parse_copy_lex(parse_token address_to into,
         if (into->kind == PT_OP)
                 return true;
 
-        into->text = shell_store_take(address_of parse_store,
-                                      source->length + 1);
-
-        if (!into->text)
-                return false;
-
-        memory_copy_end(into->text, source->text, source->length);
-        return true;
+        into->text = shell_store_copy(address_of parse_store, source->text,
+                                      source->length);
+        return into->text != null;
 }
 
 // One token of the line the lexer just cut, and whether it touched the one

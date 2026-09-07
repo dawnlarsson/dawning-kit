@@ -360,20 +360,15 @@ static bool file_mode_adjust(string_address specification, positive current,
 
         if (string_get(specification) >= '0' && string_get(specification) <= '7')
         {
-                positive used;
-                positive value = string_digits_octal_max(
-                    specification, (positive)-1, address_of used);
-                string_address step = specification + used;
-
-                if (string_get(step))
-                        return false;
-
-                if (value > 07777)
+                string_address step = specification;
+                positive value;
+                if (!string_digits_checked(address_of step, 8, address_of value) ||
+                    string_get(step) || value > 07777)
                         return false;
 
                 // Fewer than five digits mention only the special bits they
                 // set; five or more mention all of them.
-                positive mentioned = used < 5 ? value & 06000 : 06000;
+                positive mentioned = step - specification < 5 ? value & 06000 : 06000;
 
                 address_to result = value | (mode & kept & ~mentioned);
                 return true;
@@ -2324,6 +2319,18 @@ typedef struct
         string_address value[FILE_LETTERS];
 } file_taking;
 
+/* Help wins over version; callers retain their writer and flush/status policy. */
+static bool file_meta(file_taking address_to taking, string_address syntax,
+                       writer output)
+{
+        if (!(taking->flags & (FILE_FLAG('h') | FILE_FLAG('V'))))
+                return false;
+        string_format(output, taking->flags & FILE_FLAG('h')
+                                  ? "Usage: %s %s\n" : "%s from dawning-kit\n",
+                      taking->program, syntax);
+        return true;
+}
+
 static string_address file_option_value(file_taking address_to taking, p8 letter)
 {
         return taking->value[file_letter_bit(letter)];
@@ -2583,6 +2590,24 @@ static string_address file_environment(string_address name)
         string_address address_to environment = file_environment_all();
 
         return environment ? string_get_environment(environment, name) : null;
+}
+
+/* Fixture paths never cross a real/effective uid or gid boundary. */
+static string_address file_environment_override(string_address name,
+                                         string_address fallback)
+{
+        positive user = (positive)system_call(syscall(getuid));
+        positive effective_user = (positive)system_call(syscall(geteuid));
+        positive group = (positive)system_call(syscall(getgid));
+        positive effective_group = (positive)system_call(syscall(getegid));
+
+        if (user == effective_user && group == effective_group)
+        {
+                string_address value = file_environment(name);
+                if (value && string_get(value))
+                        return value;
+        }
+        return fallback;
 }
 
 enum
@@ -4711,27 +4736,53 @@ static b32 file_run(string_address address_to words)
         return (b32)((status >> 8) & 0xff);
 }
 
+/* Saturating options consume the complete overflowing run and retain syntax. */
+static bool file_decimal_read(string_address address_to text, bool saturate,
+                              positive address_to value)
+{
+        if (string_digits_checked(text, 10, value))
+                return true;
+        if (!saturate || !byte_is_digit(string_get(address_to text)))
+                return false;
+        address_to text += string_span_of_set(address_to text, "0123456789");
+        address_to value = positive_max;
+        return true;
+}
+
+static bool file_signed_decimal(string_address text, bipolar address_to value)
+{
+        bool negative = string_is(text, '-');
+
+        if (negative || string_is(text, '+'))
+                text++;
+
+        string_address at = text;
+        positive magnitude;
+
+        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
+            string_get(at) ||
+            magnitude > (positive)bipolar_max + (positive)negative)
+                return false;
+
+        address_to value = bipolar_from_magnitude(magnitude, negative);
+        return true;
+}
+
 // nice -------------------------------------------------------------
 #define NICE_PROCESS 0
 
 static bool nice_adjustment(string_address text, bipolar address_to value)
 {
         text += string_span(text, string_set_blanks);
-
-        bool below = string_is(text, '-');
-
-        if (below || string_is(text, '+'))
+        bool negative = string_is(text, '-');
+        if (negative || string_is(text, '+'))
                 text++;
-
-        positive used;
-        positive magnitude = string_digits_max(
-            text, below ? (positive)bipolar_max + 1 : (positive)bipolar_max,
-            address_of used);
-
-        if (!used || string_get(text + used))
+        positive magnitude;
+        if (!file_decimal_read(address_of text, true, address_of magnitude) ||
+            string_get(text))
                 return false;
-
-        address_to value = bipolar_from_magnitude(magnitude, below);
+        address_to value = bipolar_from_magnitude(min(magnitude, (positive)39),
+                                                   negative);
         return true;
 }
 
@@ -4832,11 +4883,6 @@ static b32 file_nice()
                                       given);
                         return 125;
                 }
-
-                if (adjustment < -39)
-                        adjustment = -39;
-                else if (adjustment > 39)
-                        adjustment = 39;
         }
 
         if (first >= count)
@@ -8639,15 +8685,8 @@ static b32 file_namei()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (taking.flags & FILE_FLAG('h'))
+        if (file_meta(address_of taking, "[options] pathname...", log))
         {
-                string_format(log, "Usage: namei [options] pathname...\n");
-                log_flush();
-                return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "namei from dawning-kit\n");
                 log_flush();
                 return 0;
         }
@@ -11184,25 +11223,6 @@ static bool csplit_line_offset(csplit_state address_to state,
         return true;
 }
 
-static bool csplit_signed(string_address text, bipolar address_to value)
-{
-        bool negative = string_is(text, '-');
-
-        if (negative || string_is(text, '+'))
-                text++;
-
-        string_address at = text;
-        positive magnitude;
-
-        if (!string_digits_checked(address_of at, 10, address_of magnitude) ||
-            string_get(at) ||
-            magnitude > (positive)bipolar_max + (positive)negative)
-                return false;
-
-        address_to value = bipolar_from_magnitude(magnitude, negative);
-        return true;
-}
-
 static bool csplit_parse_regex(string_address word,
                                csplit_pattern address_to pattern)
 {
@@ -11238,7 +11258,7 @@ static bool csplit_parse_regex(string_address word,
 
         if (!string_get(offset))
                 pattern->offset = 0;
-        else if (!csplit_signed(offset, address_of pattern->offset))
+        else if (!file_signed_decimal(offset, address_of pattern->offset))
                 return false;
 
         return true;
@@ -12772,19 +12792,10 @@ static b32 file_hardlink()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                              "Usage: hardlink [options] FILE|DIRECTORY...\n"
-                              "  -c content only  -n dry-run  -l list  -q quiet\n"
-                              "  -s MIN  -S MAX  -f respect name\n");
+        if (file_meta(address_of taking, "[options] FILE|DIRECTORY...\n"
+                      "  -c content only  -n dry-run  -l list  -q quiet\n"
+                      "  -s MIN  -S MAX  -f respect name", log))
                 return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "hardlink from dawning-kit\n");
-                return 0;
-        }
         if (!file_operand_count)
                 return file_missing((string_address)"hardlink");
 
@@ -17977,20 +17988,6 @@ static b32 file_uname()
         return 0;
 }
 
-/* The common checked digit engine handles normal counts. Saturating options
-   additionally consume an overflowing run, without accepting a non-number. */
-static bool file_decimal_read(string_address address_to text, bool saturate,
-                              positive address_to value)
-{
-        if (string_digits_checked(text, 10, value))
-                return true;
-        if (!saturate || !byte_is_digit(string_get(address_to text)))
-                return false;
-        address_to text += string_span_of_set(address_to text, "0123456789");
-        address_to value = positive_max;
-        return true;
-}
-
 // nproc -----------------------------------------------------------
 /* Both nproc number grammars are saturating decimal. --ignore accepts a
    leading plus but no trailing space; OpenMP accepts trailing space and a
@@ -19002,19 +18999,10 @@ static b32 file_rename()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                              "Usage: rename [options] SUBSTRING REPLACEMENT FILE...\n"
-                              "  -n no-act  -v verbose  -a all  -l last\n"
-                              "  -o no-overwrite  -i interactive\n");
+        if (file_meta(address_of taking, "[options] SUBSTRING REPLACEMENT FILE...\n"
+                      "  -n no-act  -v verbose  -a all  -l last\n"
+                      "  -o no-overwrite  -i interactive", log))
                 return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "rename from dawning-kit\n");
-                return 0;
-        }
         if (file_operand_count < 3)
         {
                 file_fail("rename: not enough arguments\n", 0);
@@ -19370,17 +19358,8 @@ static b32 file_cal()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                file_fail("Usage: cal [-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]\n",
-                          0);
+        if (file_meta(address_of taking, "[-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]", file_fail))
                 return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                file_fail("cal from dawning-kit\n", 0);
-                return 0;
-        }
         if (taking.flags & (FILE_FLAG('w') | FILE_FLAG('v') |
                             FILE_FLAG('c')))
         {

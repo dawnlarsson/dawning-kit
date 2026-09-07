@@ -495,6 +495,21 @@ static fn table_projection_checks(void)
         PROJECTIONS("lsblk", device, ul_lsblk_columns, ul_lsblk_field, device_expected);
         PROJECTIONS("ipc", ipc, ul_ipc_columns, ul_ipc_field, ipc_expected);
 #undef PROJECTIONS
+
+        p8 long_name[256], guarded[98];
+        memory_fill(long_name, 'x', sizeof(long_name) - 1);
+        long_name[255] = end;
+        memory_fill(guarded, 0xa5, sizeof(guarded));
+        device.kname = long_name;
+        device.depth = 32;
+        ul_lsblk_tree = true;
+        ul_lsblk_json = ul_lsblk_paths = false;
+        string_address tree = ul_lsblk_field(&device, UL_LSBLK_NAME, guarded + 1);
+        check("long lsblk tree name stays complete",
+              string_length(tree) == 319 && !memory_compare(tree + 64, long_name, 256));
+        check("long lsblk tree name preserves callback scratch bounds",
+              guarded[0] == 0xa5 && guarded[97] == 0xa5);
+        ul_lsblk_tree = false;
 }
 
 /* Build the legacy prlimit projection independently: width comes from the

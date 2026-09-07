@@ -34,12 +34,6 @@
         this was written, because kernel code that touches xmm without
         kernel_fpu_begin corrupts whatever userspace had in it.
 
-        UNALIGNED IS THE POINT. The kernel's callers hand out structure
-        members and packed fields, so a plain "*(u32 *)dst = *(const u32 *)src"
-        would tell gcc an alignment it does not have. The packed may_alias
-        structures below are how the rest of the kernel spells an unaligned
-        access, and they compile to the same instruction on x86_64.
-
         WHAT IS NOT FOLDED. memcmp, because folding a comparison has to keep
         the ordered difference of the first differing byte and that is more
         than a load pair. memmove, because 55 of its 873 call sites pass a
@@ -54,122 +48,19 @@
 #ifndef MOONWATER_FOLD_X86
 #define MOONWATER_FOLD_X86 1
 
-struct moonwater_una_16 { __u16 value; } __attribute__((packed, may_alias));
-struct moonwater_una_32 { __u32 value; } __attribute__((packed, may_alias));
-struct moonwater_una_64 { __u64 value; } __attribute__((packed, may_alias));
-
-#define MOONWATER_GET(width, from)                                            \
-        (((const struct moonwater_una_##width *)(from))->value)
-#define MOONWATER_PUT(width, to, what)                                        \
-        (((struct moonwater_una_##width *)(to))->value = (what))
-
+/* The compiler owns the same <=32-byte tier in compiler_memory.c. Explicit
+   builtins preserve unaligned access without a second set of width/tail rules;
+   the kernel's -mno-sse/-mno-avx flags constrain them to general registers. */
 static __always_inline void *moonwater_fold_copy(void *to, const void *from,
                                                  __kernel_size_t count)
 {
-        unsigned char *at = (unsigned char *)to;
-        const unsigned char *source = (const unsigned char *)from;
-
-        switch (count) {
-        case 0:  break;
-        case 1:  *at = *source; break;
-        case 2:  MOONWATER_PUT(16, at, MOONWATER_GET(16, source)); break;
-        case 4:  MOONWATER_PUT(32, at, MOONWATER_GET(32, source)); break;
-        case 8:  MOONWATER_PUT(64, at, MOONWATER_GET(64, source)); break;
-        case 3:  case 5:  case 6:  case 7:
-                /*
-                        THE OVERLAPPING TAIL BELOW CANNOT BE USED HERE, and
-                        the first version of this file used it anyway.
-
-                        It finishes a block by moving the LAST eight bytes,
-                        which overlaps what it already moved. That is only a
-                        move backwards while the count is at least eight. At
-                        three it is "at + 3 - 8", five bytes BEFORE the
-                        destination -- and it wrote there. The kernel took a
-                        general protection fault on a non-canonical address
-                        in PID 1 before the first shell, with RAX holding a
-                        pointer that had had its top half overwritten.
-
-                        So the short odd sizes are moved four-then-remainder,
-                        both overlapping forwards inside the region and never
-                        reaching outside it.
-                */
-                if (count >= 4) {
-                        MOONWATER_PUT(32, at, MOONWATER_GET(32, source));
-                        MOONWATER_PUT(32, at + count - 4,
-                                      MOONWATER_GET(32, source + count - 4));
-                } else {
-                        MOONWATER_PUT(16, at, MOONWATER_GET(16, source));
-                        at[count - 1] = source[count - 1];
-                }
-                break;
-        default:
-                /*
-                        Eight or more: whole eight byte moves, then one
-                        overlapping move for the remainder, which is how the
-                        routine itself finishes a block and costs one extra
-                        move rather than a branch per tail byte. Safe here
-                        because count is at least eight, so the overlapping
-                        move starts at or after the destination.
-                */
-                {
-                        __kernel_size_t done = 0;
-
-                        while (done + 8 <= count) {
-                                MOONWATER_PUT(64, at + done,
-                                              MOONWATER_GET(64, source + done));
-                                done += 8;
-                        }
-
-                        if (done != count)
-                                MOONWATER_PUT(64, at + count - 8,
-                                              MOONWATER_GET(64, source + count - 8));
-                }
-                break;
-        }
-
-        return to;
+        return __builtin_memcpy(to, from, count);
 }
 
 static __always_inline void *moonwater_fold_fill(void *to, int byte,
                                                  __kernel_size_t count)
 {
-        unsigned char *at = (unsigned char *)to;
-        __u64 spread = (__u64)(unsigned char)byte * 0x0101010101010101ULL;
-
-        switch (count) {
-        case 0:  break;
-        case 1:  *at = (unsigned char)byte; break;
-        case 2:  MOONWATER_PUT(16, at, (__u16)spread); break;
-        case 4:  MOONWATER_PUT(32, at, (__u32)spread); break;
-        case 8:  MOONWATER_PUT(64, at, spread); break;
-        case 3:  case 5:  case 6:  case 7:
-                //      Short odd sizes, for the reason written out in the
-                //      copy above: the overlapping tail reaches behind the
-                //      destination when the count is under eight.
-                if (count >= 4) {
-                        MOONWATER_PUT(32, at, (__u32)spread);
-                        MOONWATER_PUT(32, at + count - 4, (__u32)spread);
-                } else {
-                        MOONWATER_PUT(16, at, (__u16)spread);
-                        at[count - 1] = (unsigned char)byte;
-                }
-                break;
-        default:
-                {
-                        __kernel_size_t done = 0;
-
-                        while (done + 8 <= count) {
-                                MOONWATER_PUT(64, at + done, spread);
-                                done += 8;
-                        }
-
-                        if (done != count)
-                                MOONWATER_PUT(64, at + count - 8, spread);
-                }
-                break;
-        }
-
-        return to;
+        return __builtin_memset(to, byte, count);
 }
 
 //      Thirty two, because 91.7% of the constant sizes in the tree are at or

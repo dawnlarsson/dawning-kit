@@ -98,8 +98,8 @@ COLD bool shell_reference_element(
     const_string name, positive length, const_string address_to base,
     positive address_to base_length, const_string address_to subscript,
     positive address_to subscript_length);
-static bool shell_declare_binding(string_address name, positive length,
-                                  positive hash, string_address value);
+static bool shell_declare_binding(const_string name, positive length,
+                                  positive hash, const_string value);
 static bool exec_source_stop(b32 address_to startup_status);
 bool shell_builtin(string_address arguments, positive2 named);
 string_address shell_arguments();
@@ -1893,12 +1893,11 @@ static COLD string_address env_attribute_value(p8 attributes,
                 return made;
         }
 
-        made = shell_store_take(address_of expand_store, length + 1);
+        made = shell_store_copy(address_of expand_store, env_reading(value),
+                                length);
 
         if (!made)
                 return null;
-
-        memory_copy_end(made, env_reading(value), length);
 
         if (attributes & SHELL_ARRAY_UPPER)
                 memory_to_upper_ascii(made, length);
@@ -2103,18 +2102,11 @@ static bool env_write_hashed_span(const_string name, positive name_len,
 
 static bool env_write(const_string name, const_string value, bool assignment)
 {
-        positive2 answer;
-        positive idx;
-        bool written;
-
         if (!name || !value)
                 return false;
 
-        answer = string_hash_33_length(env_reading(name));
-        idx = env_find_hashed_span(name, answer.y, answer.x);
-        written = env_write_found_span(name, answer.y, answer.x, idx, value,
-                                       assignment);
-        return env_write_noted(name, answer.y, written);
+        positive2 named = string_hash_33_length(env_reading(name));
+        return env_write_hashed_span(name, named.y, named.x, value, assignment);
 }
 
 bool env_set(const_string name, const_string value)
@@ -2512,31 +2504,56 @@ COLD string_address shell_array_get(const_string name, positive length,
         return array_element_value(element);
 }
 
-/*
-        Subscript zero of an indexed array is the variable's own value.
+/* `declare -n n=value` changes what n names; an ordinary `n=value` follows
+   n.  Keep that distinction at the declaration boundary and let the common
+   environment writer do the actual cell growth/copy. */
+static bool shell_declare_binding(const_string name, positive length,
+                                  positive hash, const_string value)
+{
+        positive found = env_find_hashed_span(name, length, hash);
+        p8 attributes;
+        bool answer;
 
-        Writing it is therefore the ordinary scalar write, and appending to
-        it the ordinary scalar append, which is what keeps a=(x); a[0]+=y
-        and a=x agreeing about where the bytes live.
-*/
-static COLD bool array_scalar_write(const_string name, positive length,
-                               positive hash, const_string value, bool append)
+        if (found >= shell_var_count)
+                return env_assign_hashed_span(name, length, hash, value);
+
+        attributes = shell_vars[found].attributes;
+        shell_vars[found].attributes &= (p8)~SHELL_ARRAY_NAMEREF;
+        answer = env_assign_hashed_span(name, length, hash, value);
+        shell_vars[found].attributes = attributes;
+        return answer;
+}
+
+static COLD bool shell_scalar_assign(const_string name, positive length,
+                                      positive hash, const_string value,
+                                      bool append, bool bind_reference)
 {
         shell_mark held;
+        p8 address_to joined;
         string_address old;
         positive old_length;
         positive add_length;
-        p8 address_to joined;
         bool answer;
 
         if (!append)
-                return env_write_hashed_span(name, length, hash, value, true);
+                return bind_reference
+                           ? shell_declare_binding(name, length, hash,
+                                                   value)
+                           : env_assign_hashed_span(name, length, hash,
+                                                    value);
 
-        old = env_get_hashed_span(name, length, hash, address_of old_length);
+        if (bind_reference)
+        {
+                positive found = env_find_hashed_span(name, length, hash);
 
-        if (!old)
-                return env_write_hashed_span(name, length, hash, value, true);
-
+                old = found < shell_var_count &&
+                              env_variable_has_value(shell_vars + found)
+                          ? shell_vars[found].text + length + 1
+                          : null;
+        }
+        else
+                old = env_get_hashed_span(name, length, hash, null);
+        old_length = old ? string_length(old) : 0;
         add_length = string_length(env_reading(value));
 
         if (old_length > positive_max - add_length - 1)
@@ -2552,11 +2569,13 @@ static COLD bool array_scalar_write(const_string name, positive length,
                 return false;
         }
 
-        memory_copy(joined, old, old_length);
+        if (old_length)
+                memory_copy(joined, old, old_length);
         memory_copy_end(joined + old_length, env_reading(value), add_length);
-        answer = env_write_hashed_span(name, length, hash, joined, true);
+        answer = bind_reference
+                     ? shell_declare_binding(name, length, hash, joined)
+                     : env_assign_hashed_span(name, length, hash, joined);
         shell_store_rewind(address_of expand_store, held);
-
         return answer;
 }
 
@@ -2593,8 +2612,8 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
                     SHELL_ARRAY_INDEXED | SHELL_ARRAY_ASSIGNED;
                 variable->declared = true;
                 if (!located.key)
-                        return array_scalar_write(name, length, hash, value,
-                                                  append);
+                        return shell_scalar_assign(name, length, hash, value,
+                                                   append, false);
         }
 
         if (!variable->array)
@@ -6584,10 +6603,10 @@ static inline INLINE bool shell_inventory_sorted(
                 for (at = 0; at < shell_var_count; at++)
                 {
                         positive length = shell_vars[at].name_length;
-                        name = shell_store_take(address_of expand_store, length + 1);
+                        name = shell_store_copy(address_of expand_store,
+                                                shell_vars[at].text, length);
                         if (!name)
                                 goto failed;
-                        memory_copy_end(name, shell_vars[at].text, length);
                         names[count++] = name;
                 }
 
@@ -6684,81 +6703,6 @@ static COLD fn shell_declare_listed(writer write, string_address name,
         write("\n", 1);
 }
 
-/* `declare -n n=value` changes what n names; an ordinary `n=value` follows
-   n.  Keep that distinction at the declaration boundary and let the common
-   environment writer do the actual cell growth/copy. */
-static bool shell_declare_binding(string_address name, positive length,
-                                  positive hash, string_address value)
-{
-        positive found = env_find_hashed_span(name, length, hash);
-        p8 attributes;
-        bool answer;
-
-        if (found >= shell_var_count)
-                return env_assign_hashed_span(name, length, hash, value);
-
-        attributes = shell_vars[found].attributes;
-        shell_vars[found].attributes &= (p8)~SHELL_ARRAY_NAMEREF;
-        answer = env_assign_hashed_span(name, length, hash, value);
-        shell_vars[found].attributes = attributes;
-        return answer;
-}
-
-static bool shell_declare_assign(string_address name, string_address value,
-                                 bool append, bool bind_reference)
-{
-        shell_mark held;
-        p8 address_to joined;
-        string_address old;
-        positive2 named = string_hash_33_length(name);
-        positive old_length;
-        positive add_length;
-        bool answer;
-
-        if (!append)
-                return bind_reference
-                           ? shell_declare_binding(name, named.y, named.x,
-                                                   value)
-                           : env_assign_hashed_span(name, named.y, named.x,
-                                                    value);
-
-        if (bind_reference)
-        {
-                positive found = env_find_hashed_span(name, named.y, named.x);
-
-                old = found < shell_var_count &&
-                              env_variable_has_value(shell_vars + found)
-                          ? shell_vars[found].text + named.y + 1
-                          : null;
-        }
-        else
-                old = env_get_hashed_span(name, named.y, named.x, null);
-        old_length = old ? string_length(old) : 0;
-        add_length = string_length(value);
-
-        if (old_length > positive_max - add_length - 1)
-                return false;
-
-        held = shell_store_mark(address_of expand_store);
-        joined = shell_store_take(address_of expand_store,
-                                  old_length + add_length + 1);
-
-        if (!joined)
-        {
-                shell_store_rewind(address_of expand_store, held);
-                return false;
-        }
-
-        if (old_length)
-                memory_copy(joined, old, old_length);
-        memory_copy_end(joined + old_length, value, add_length);
-        answer = bind_reference
-                     ? shell_declare_binding(name, named.y, named.x, joined)
-                     : env_assign_hashed_span(name, named.y, named.x, joined);
-        shell_store_rewind(address_of expand_store, held);
-        return answer;
-}
-
 // local and declare have different scope and failure policy, but write a
 // value with the same scalar/compound/append machinery once that policy has
 // accepted the name.
@@ -6779,7 +6723,8 @@ static b32 shell_declare_value(string_address name, positive length,
                            ? 1 : -1;
         }
 
-        return shell_declare_assign(name, mark + 1, append, bind_reference);
+        return shell_scalar_assign(name, length, env_name_hash(name, length),
+                                    mark + 1, append, bind_reference);
 }
 
 /* `declare -F` is metadata, not body serialization. Named queries retain the
@@ -7571,7 +7516,7 @@ PURE positive test_is_binary(string_address word)
         p8 first;
         p8 second;
 
-        if (!word)
+        if (!word || !string_get(word))
                 return 0;
 
         first = string_get(word);
@@ -11438,54 +11383,15 @@ static bipolar shell_source_read(bipolar handle,
                                   positive address_to room,
                                   bool address_to no_room)
 {
-        positive used = 0;
-
-        while (1)
-        {
-                bipolar got;
-
-                if (!*room || used == *room - 1)
-                {
-                        positive wanted;
-
-                        if (*room && *room > positive_max / 2)
-                        {
-                                *no_room = true;
-                                break;
-                        }
-
-                        wanted = *room ? *room * 2 : 4096;
-
-                        if (!shell_room((address_any address_to)text, room,
-                                        wanted, 1))
-                        {
-                                *no_room = true;
-                                break;
-                        }
-                }
-
-                got = system_read_retry((positive)handle, *text + used,
-                                        *room - used - 1);
-
-                if (got < 0)
-                {
-                        system_close(handle);
-                        return got;
-                }
-
-                if (!got)
-                        break;
-
-                used += (positive)got;
-        }
+        byte_store store = {*text, *room, 0};
+        bipolar result = file_store_read((positive)handle, address_of store);
 
         system_close(handle);
-
-        if (*no_room)
-                return -1;
-
-        (*text)[used] = end;
-        return (bipolar)used;
+        *text = store.bytes;
+        *room = store.room;
+        if (result == -12)
+                *no_room = shell_memory_failed = true;
+        return result < 0 ? result : (bipolar)store.used;
 }
 
 static b32 shell_source_execute(p8 address_to text, positive filled,

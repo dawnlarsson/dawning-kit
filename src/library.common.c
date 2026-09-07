@@ -417,39 +417,42 @@ typedef struct
                                _byte_store->used); })
 
 #ifndef KERNEL_MODE
-/* Read a whole file into reusable owned storage. Procfs may return short
-   reads before EOF, so this is deliberately a loop rather than file_slurp. */
-static HOT bool file_store_slurp(string_address path,
-                                 byte_store address_to store)
+/* Read through EOF into reusable storage, leaving the descriptor open.
+   Preserve raw read errors; -12 is ENOMEM at the Linux syscall boundary. */
+static HOT bipolar file_store_read(positive handle, byte_store address_to store)
 {
-        bipolar handle = system_open_at(AT_FDCWD, path,
-                                        FILE_READ | O_CLOEXEC);
-
-        if (handle < 0)
-                return false;
-
         store->used = 0;
         while (store->used <= positive_max - 4097 &&
                byte_store_reserve(store, store->used + 4097, 4096))
         {
                 bipolar got = system_read_retry(
-                    (positive)handle, store->bytes + store->used,
+                    handle, store->bytes + store->used,
                     store->room - store->used - 1);
 
                 if (got < 0)
-                        break;
+                        return got;
                 if (!got)
                 {
                         store->bytes[store->used] = end;
-                        system_close(handle);
-                        return true;
+                        return 0;
                 }
 
                 store->used += (positive)got;
         }
 
+        return -12;
+}
+
+/* Procfs may return short reads before EOF; use the same loop as streams. */
+static HOT bool file_store_slurp(string_address path,
+                                 byte_store address_to store)
+{
+        bipolar handle = system_open_at(AT_FDCWD, path, FILE_READ | O_CLOEXEC);
+        if (handle < 0)
+                return false;
+        bipolar result = file_store_read((positive)handle, store);
         system_close(handle);
-        return false;
+        return result == 0;
 }
 
 /* One bounded proc/sys-style record: open, one EINTR-safe read, terminate,

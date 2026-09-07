@@ -39,7 +39,7 @@ GENERATORS = {
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/awk.c', 'AWK_TRIG_KERNEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_TRIG'): ('{}',),
-    ('src/sh/expand.c', 'ARITH_BIT_LEVEL'): ('{}',),
+    ('src/sh/expand.c', 'ARITH_LEVEL'): ('{}',),
     ('src/sh/expand.c', 'ARITH_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/exec.c', 'CONDITIONAL_LOGICAL_LEVEL'): ('{}',),
     ('src/sh/snapshot.c', 'SYSTEM_FIELD'): ('{}',),

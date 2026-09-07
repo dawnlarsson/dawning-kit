@@ -178,11 +178,9 @@ static string_address strerror(b32 code)
                 [39] = "Directory not empty",
         };
 
-        if (code < 0)
-                code = -code;
-
-        return (string_address)(code < 40 && messages[code]
-                                    ? messages[code]
+        positive magnitude = code < 0 ? -(bipolar)code : code;
+        return (string_address)(magnitude < array_count(messages) && messages[magnitude]
+                                    ? messages[magnitude]
                                     : "Unknown error");
 }
 

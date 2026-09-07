@@ -1358,19 +1358,7 @@ static fn login_message_selection_clear()
 
 static string_address login_message_utmp()
 {
-        positive user = (positive)system_call(syscall(getuid));
-        positive effective_user = (positive)system_call(syscall(geteuid));
-        positive group = (positive)system_call(syscall(getgid));
-        positive effective_group = (positive)system_call(syscall(getegid));
-
-        if (user == effective_user && group == effective_group)
-        {
-                string_address testing = file_environment("MOONWATER_UTMP");
-                if (testing && string_get(testing))
-                        return testing;
-        }
-
-        return (string_address)LOGIN_UTMP_PATH;
+        return file_environment_override("MOONWATER_UTMP", LOGIN_UTMP_PATH);
 }
 
 /* A ut_line is relative to /dev.  Explicit write operands may use the full
@@ -2443,16 +2431,8 @@ static b32 tools_utmpdump()
         text_begin("utmpdump");
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                text_put_string("Usage: utmpdump [options] [filename]\n");
+        if (file_meta(address_of taking, "[options] [filename]", text_put))
                 return text_done(0);
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                text_put_string("utmpdump from dawning-kit\n");
-                return text_done(0);
-        }
         if (file_operand_count > 1)
                 return text_refuse(file_operand_at(1), "extra operand", 1);
         if (taking.flags & FILE_FLAG('r'))
@@ -2905,16 +2885,8 @@ static b32 tools_last()
         text_begin("last");
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                text_put_string("Usage: last [options] [username|tty ...]\n");
+        if (file_meta(address_of taking, "[options] [username|tty ...]", text_put))
                 return text_done(0);
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                text_put_string("last from dawning-kit\n");
-                return text_done(0);
-        }
         if (taking.flags & FILE_FLAG('d'))
                 return text_refuse(null, "DNS lookup is not supported", 1);
         if (taking.flags & (FILE_FLAG('p') | FILE_FLAG('s') | FILE_FLAG('t')))
@@ -4251,20 +4223,10 @@ static bool numfmt_unit(string_address text, positive address_to unit)
 
         if (digits)
         {
-                value = 0;
-
-                for (positive at = 0; at < digits; at++)
-                {
-                        if (!byte_is_digit(text[at]))
-                                return false;
-
-                        positive digit = (positive)(text[at] - '0');
-
-                        if (value > (positive_max - digit) / 10)
-                                return false;
-
-                        value = value * 10 + digit;
-                }
+                string_address at = text;
+                if (!string_digits_checked(address_of at, 10, address_of value) ||
+                    (positive)(at - text) != digits)
+                        return false;
         }
         else if (!power)
                 return false;
@@ -4281,41 +4243,6 @@ static bool numfmt_unit(string_address text, positive address_to unit)
         }
 
         address_to unit = value;
-        return true;
-}
-
-static bool numfmt_signed_option(string_address text, bipolar address_to value)
-{
-        positive at = 0;
-        bool minus = false;
-
-        if (text[at] == '-' || text[at] == '+')
-        {
-                minus = text[at] == '-';
-                at++;
-        }
-
-        if (!text[at])
-                return false;
-
-        positive magnitude = 0;
-        positive limit = minus ? (positive)bipolar_max + 1
-                               : (positive)bipolar_max;
-
-        for (; text[at]; at++)
-        {
-                if (!byte_is_digit(text[at]))
-                        return false;
-
-                positive digit = (positive)(text[at] - '0');
-
-                if (magnitude > (limit - digit) / 10)
-                        return false;
-
-                magnitude = magnitude * 10 + digit;
-        }
-
-        address_to value = bipolar_from_magnitude(magnitude, minus);
         return true;
 }
 
@@ -5107,7 +5034,7 @@ static b32 tools_numfmt()
                 return text_refuse(value, "invalid unit size", 1);
 
         value = file_option_value(address_of taking, 'p');
-        if (value && (!numfmt_signed_option(value, address_of numfmt.padding) ||
+        if (value && (!file_signed_decimal(value, address_of numfmt.padding) ||
                       !numfmt.padding))
                 return text_refuse(value, "invalid padding value", 1);
 
@@ -12084,17 +12011,9 @@ static b32 tools_dmesg_main()
         if (taking.first != (positive)program_argument_count())
                 return text_refuse(program_argument((b32)taking.first),
                                    "extra operand", 1);
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                text_put_string("Usage: dmesg [options]\n"
-                                "Display or control the kernel ring buffer.\n");
+        if (file_meta(address_of taking, "[options]\n"
+                      "Display or control the kernel ring buffer.", text_put))
                 return text_done(0);
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                text_put_string("dmesg from dawning-kit\n");
-                return text_done(0);
-        }
 
         positive flags = taking.flags;
         if ((flags & FILE_FLAG('F')) && (flags & FILE_FLAG('K')))

@@ -1101,6 +1101,21 @@ static fn clock_iso_week(const tm address_to broken, bipolar address_to year,
                 (thursday - clock_days_from_civil(thursday_year, 1, 1)) / 7 + 1;
 }
 
+/* The composite grammar is shared by strftime and strptime. */
+static const char address_to clock_composite_format(p8 which)
+{
+        switch (which)
+        {
+        case 'c': return "%a %b %e %H:%M:%S %Y";
+        case 'D': case 'x': return "%m/%d/%y";
+        case 'F': return "%Y-%m-%d";
+        case 'r': return "%I:%M:%S %p";
+        case 'R': return "%H:%M";
+        case 'T': case 'X': return "%H:%M:%S";
+        default: return null;
+        }
+}
+
 static fn clock_format_core(clock_format_state address_to state,
                             const char address_to format,
                             const tm address_to broken);
@@ -1316,57 +1331,35 @@ static fn clock_format_core(clock_format_state address_to state,
                         continue;
                 }
 
+                const char address_to composite = clock_composite_format(which);
+                if (composite)
+                {
+                        clock_format_nested(state, composite, broken);
+                        continue;
+                }
+
                 switch (which)
                 {
                 case 'a':
-                        if (state->change_case)
-                        {
-                                state->to_upper = true;
-                                state->to_lower = false;
-                        }
-
-                        clock_format_name(state, broken->tm_wday, false, 7,
-                                          clock_weekday_short,
-                                          clock_weekday_long,
-                                          clock_weekday_long_length);
-                        break;
-
                 case 'A':
-                        if (state->change_case)
-                        {
-                                state->to_upper = true;
-                                state->to_lower = false;
-                        }
-
-                        clock_format_name(state, broken->tm_wday, true, 7,
-                                          clock_weekday_short,
-                                          clock_weekday_long,
-                                          clock_weekday_long_length);
-                        break;
-
                 case 'b':
-                case 'h':
-                        clock_format_name(state, broken->tm_mon, false, 12,
-                                          clock_month_short, clock_month_long,
-                                          clock_month_long_length);
-                        break;
-
                 case 'B':
+                case 'h':
+                {
+                        bool weekday = which == 'a' || which == 'A';
                         if (state->change_case)
                         {
                                 state->to_upper = true;
                                 state->to_lower = false;
                         }
-
-                        clock_format_name(state, broken->tm_mon, true, 12,
-                                          clock_month_short, clock_month_long,
-                                          clock_month_long_length);
+                        clock_format_name(
+                            state, weekday ? broken->tm_wday : broken->tm_mon,
+                            which == 'A' || which == 'B', weekday ? 7 : 12,
+                            weekday ? clock_weekday_short : clock_month_short,
+                            weekday ? clock_weekday_long : clock_month_long,
+                            weekday ? clock_weekday_long_length : clock_month_long_length);
                         break;
-
-                case 'c':
-                        clock_format_nested(state, "%a %b %e %H:%M:%S %Y",
-                                            broken);
-                        break;
+                }
 
                 case 'C':
                         clock_format_number(
@@ -1381,41 +1374,20 @@ static fn clock_format_core(clock_format_state address_to state,
                         clock_format_number(state, broken->tm_mday, 2);
                         break;
 
-                case 'D':
-                        clock_format_nested(state, "%m/%d/%y", broken);
-                        break;
-
                 case 'e':
                         clock_format_number_spaced(state, broken->tm_mday, 2);
                         break;
 
-                case 'F':
-                        clock_format_nested(state, "%Y-%m-%d", broken);
-                        break;
-
                 case 'g':
-                {
-                        bipolar week_year;
-                        bipolar week;
-
-                        clock_iso_week(broken, address_of week_year,
-                                       address_of week);
-                        clock_format_number(
-                                state,
-                                week_year - clock_floor_divide(week_year, 100) *
-                                                    100,
-                                2);
-                        break;
-                }
-
                 case 'G':
+                case 'V':
                 {
-                        bipolar week_year;
-                        bipolar week;
-
-                        clock_iso_week(broken, address_of week_year,
-                                       address_of week);
-                        clock_format_number(state, week_year, 1);
+                        bipolar year, week;
+                        clock_iso_week(broken, address_of year, address_of week);
+                        if (which == 'g')
+                                year -= clock_floor_divide(year, 100) * 100;
+                        clock_format_number(state, which == 'V' ? week : year,
+                                            which == 'G' ? 1 : 2);
                         break;
                 }
 
@@ -1478,38 +1450,15 @@ static fn clock_format_core(clock_format_state address_to state,
                         break;
 
                 case 'p':
-                        if (state->change_case)
+                case 'P':
+                        // %P forces lowercase even when ^ also requests uppercase.
+                        if (state->change_case || which == 'P')
                         {
                                 state->to_upper = false;
                                 state->to_lower = true;
                         }
-
-                        clock_format_append(
-                                state,
-                                (address_any)clock_half_day[broken->tm_hour < 12
-                                                                   ? 0
-                                                                   : 1],
-                                2);
-                        break;
-
-                /*
-                        %P is %p in lower case, and it is lower case whatever
-                        the flags say: "%^P" is "am" and the upper case flag
-                        loses. Which is why the fold is forced here and why
-                        there is no second table of lower case names -- the
-                        fold over "AM" is "am", and one table that cannot
-                        disagree with itself is worth more than two that can.
-                */
-                case 'P':
-                        state->to_upper = false;
-                        state->to_lower = true;
-
-                        clock_format_append(
-                                state,
-                                (address_any)clock_half_day[broken->tm_hour < 12
-                                                                   ? 0
-                                                                   : 1],
-                                2);
+                        clock_format_append(state,
+                            (address_any)clock_half_day[broken->tm_hour >= 12], 2);
                         break;
 
                 case 'q':
@@ -1518,14 +1467,6 @@ static fn clock_format_core(clock_format_state address_to state,
                                     state, (bipolar)broken->tm_mon / 3 + 1, 1);
                         else
                                 clock_format_verbatim(state, opened, cursor);
-                        break;
-
-                case 'r':
-                        clock_format_nested(state, "%I:%M:%S %p", broken);
-                        break;
-
-                case 'R':
-                        clock_format_nested(state, "%H:%M", broken);
                         break;
 
                 /*
@@ -1560,10 +1501,6 @@ static fn clock_format_core(clock_format_state address_to state,
                         clock_format_byte(state, '\t');
                         break;
 
-                case 'T':
-                        clock_format_nested(state, "%H:%M:%S", broken);
-                        break;
-
                 case 'u':
                         clock_format_number(state,
                                             broken->tm_wday == 0
@@ -1580,17 +1517,6 @@ static fn clock_format_core(clock_format_state address_to state,
                                             2);
                         break;
 
-                case 'V':
-                {
-                        bipolar week_year;
-                        bipolar week;
-
-                        clock_iso_week(broken, address_of week_year,
-                                       address_of week);
-                        clock_format_number(state, week, 2);
-                        break;
-                }
-
                 case 'w':
                         clock_format_number(state, broken->tm_wday, 1);
                         break;
@@ -1604,14 +1530,6 @@ static fn clock_format_core(clock_format_state address_to state,
                                           : (bipolar)broken->tm_wday - 1)) /
                                         7,
                                 2);
-                        break;
-
-                case 'x':
-                        clock_format_nested(state, "%m/%d/%y", broken);
-                        break;
-
-                case 'X':
-                        clock_format_nested(state, "%H:%M:%S", broken);
                         break;
 
                 case 'y':
@@ -1940,6 +1858,14 @@ static bool clock_scan_core(clock_scan_state address_to state,
 
                 cursor++;
 
+                const char address_to composite = clock_composite_format(which);
+                if (composite)
+                {
+                        if (!clock_scan_core(state, composite))
+                                return false;
+                        continue;
+                }
+
                 switch (which)
                 {
                 case 'a':
@@ -1982,11 +1908,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
                 }
 
-                case 'c':
-                        if (!clock_scan_core(state, "%a %b %e %H:%M:%S %Y"))
-                                return false;
-                        break;
-
                 case 'C':
                         if (!clock_scan_number(state, 0, 99, 2, address_of value))
                                 return false;
@@ -2003,16 +1924,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         broken->tm_mday = (b32)value;
                         state->have_mday = true;
                         state->want_day = true;
-                        break;
-
-                case 'D':
-                        if (!clock_scan_core(state, "%m/%d/%y"))
-                                return false;
-                        break;
-
-                case 'F':
-                        if (!clock_scan_core(state, "%Y-%m-%d"))
-                                return false;
                         break;
 
                 case 'H':
@@ -2085,16 +1996,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
                 }
 
-                case 'r':
-                        if (!clock_scan_core(state, "%I:%M:%S %p"))
-                                return false;
-                        break;
-
-                case 'R':
-                        if (!clock_scan_core(state, "%H:%M"))
-                                return false;
-                        break;
-
                 /*
                         %s is the one specifier that does not fill a field, it
                         fills the whole structure: the seconds are read and
@@ -2105,20 +2006,14 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 */
                 case 's':
                 {
-                        bipolar seconds = 0;
-                        time_t moment;
-
-                        if (!byte_is_digit((p8)(address_to state->at)))
+                        positive seconds;
+                        string_address at = (string_address)state->at;
+                        if (!string_digits_checked(address_of at, 10,
+                                                   address_of seconds) ||
+                            seconds > (positive)bipolar_max)
                                 return false;
-
-                        do
-                        {
-                                seconds = seconds * 10 +
-                                          ((p8)(address_to state->at) - '0');
-                                state->at++;
-                        } while (byte_is_digit((p8)(address_to state->at)));
-
-                        moment = (time_t)seconds;
+                        state->at = (const char address_to)at;
+                        time_t moment = (time_t)seconds;
 
                         if (is_null(localtime_r(address_of moment, broken)))
                                 return false;
@@ -2137,11 +2032,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                                 return false;
 
                         broken->tm_sec = (b32)value;
-                        break;
-
-                case 'T':
-                        if (!clock_scan_core(state, "%H:%M:%S"))
-                                return false;
                         break;
 
                 case 'u':
@@ -2196,16 +2086,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 case 'V':
                 case 'W':
                         if (!clock_scan_number(state, 0, 53, 2, address_of value))
-                                return false;
-                        break;
-
-                case 'x':
-                        if (!clock_scan_core(state, "%m/%d/%y"))
-                                return false;
-                        break;
-
-                case 'X':
-                        if (!clock_scan_core(state, "%H:%M:%S"))
                                 return false;
                         break;
 

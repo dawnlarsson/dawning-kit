@@ -302,6 +302,41 @@ static fn reuse_benchmark(void)
 
 b32 main(void)
 {
+        bipolar number;
+        positive mode;
+        check("pr accepts signed line-number boundaries",
+              pr_signed(" +2147483647", &number) && number == b32_max &&
+              pr_signed("-2147483648", &number) && number == b32_min);
+        check("pr rejects overflowing line numbers",
+              !pr_signed("2147483648", &number) &&
+              !pr_signed("-2147483649", &number) &&
+              !pr_signed("18446744073709551616", &number));
+        check("nice saturates the complete overflowing digit run",
+              nice_adjustment("18446744073709551616", &number) && number == 39 &&
+              nice_adjustment("-18446744073709551616", &number) && number == -39 &&
+              !nice_adjustment("18446744073709551616x", &number));
+        check("chmod rejects octal overflow",
+              !file_mode_adjust("2000000000000000000000", 0, false, 0, false, &mode));
+        check("chmod keeps explicit leading-zero policy",
+              file_mode_adjust("0000755", 06000, true, 0, false, &mode) && mode == 0755);
+        shell_store store = {0};
+        check("arena starts with a small block", shell_store_take(&store, 1) != null);
+        shell_block address_to head = store.head;
+        store.here = null;
+        check("arena grows before its head without losing the chain",
+              head && shell_store_take(&store, head->size + 1) &&
+              store.head != head && store.head->next == head);
+        while (store.head)
+        {
+                shell_block address_to next = store.head->next;
+                memory_free(store.head, sizeof(shell_block) + store.head->size);
+                store.head = next;
+        }
+        store.here = null;
+        shell_memory_failed = false;
+        check("arena span rejects length overflow",
+              !shell_store_copy(&store, null, positive_max) && shell_memory_failed);
+        shell_memory_failed = false;
         reuse_masks();
         reuse_lists();
         reuse_uuid();

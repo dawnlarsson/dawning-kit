@@ -1377,6 +1377,10 @@ same 'positive adjustment'  nice -n 1 nice
 same 'joined adjustment'    nice -n1 nice
 same 'long adjustment'      nice --adjustment=1 nice
 same 'abbreviated long'     nice --adj=1 nice
+for number in 9223372036854775807 9223372036854775808 \
+        18446744073709551616 9999999999999999999999999999999999; do
+        same "overflow clamp $number" nice -n "$number" nice
+done
 answered 'adjustment needs command' nice -n 1
 answered 'invalid adjustment' nice -n nope true
 answered 'legacy positive clamp' nice -100 sh -c 'printf ok'
