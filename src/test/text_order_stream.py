@@ -4,6 +4,7 @@ import os
 import hashlib
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -275,6 +276,81 @@ if "--capacity" in sys.argv[2:]:
                 failed += 1
                 print("  want capacity", flags, "status 0 and exact full output; got",
                       result.returncode, repr(result.stderr[:96]), output.stat().st_size)
+
+# Exercise every adjacent precedence pair, including false/true short circuit,
+# without deriving the oracle from our operator table or parser.
+operators = ["|", "&", "=", "!=", "<", "<=", ">", ">=", "+", "-", "*", "/", "%"]
+for left in operators:
+    for right in operators:
+        check("expr", ["7", left, "2", right, "3"])
+for operator in ("!", "<<", "<=x", "&&", "||", "+1", "", ">>"):
+    check("expr", ["1", operator, "2"])
+for value in ("0", "00", "", "word", "-1"):
+    for operator in ("|", "&"):
+        for tail in (["1", "/", "0"], ["x", "+", "1"],
+                     ["(", "1", "+", "2", ")"], ["(", "1", "+", ")"]):
+            check("expr", [value, operator, *tail])
+for pattern in ("(a|b)*c", "(a?|b)c", "(^a|b$)", "(a*)*b", "a{0,2}b",
+                "(a|)b", "(a)(b)?\\1", "^$", "(ab|a)*$", "[ab]*c"):
+    for flags in (["-E"], ["-Eo"], ["-Ev"]):
+        check("grep", [*flags, pattern], b"\na\nb\naba\nabbc\nzzbc\naaab\n")
+for length in (1, 31, 32, 63, 64, 65535, 65536, 65537):
+    data = b"\f" + b"x" * length + b"\f\f" + b"y" * length + b"\nend\n"
+    for flags in (["-t"], ["-T"], ["-T", "-l", "3"], ["-t", "-n", "-l", "3"]):
+        check("pr", flags, data)
+for alias in "abcdDhxHXiILlBoOs":
+    check("od", ["-An", "-" + alias + "c", "-t", "x1z"], bytes(range(39)))
+for group, words in (("conv", ["sync", "noerror", "lcase", "ucase", "swab", "notrunc"]),
+                     ("iflag", ["fullblock", "count_bytes", "skip_bytes"]),
+                     ("oflag", ["append", "seek_bytes"])):
+    for word in words:
+        for flags in ([group + "=" + word], [group + "=" + word + "," + word]):
+            check("dd", ["status=none", "bs=7", "count=3", "skip=1", *flags],
+                  b"aBcDeFgHiJkLmNoPqRsTuVwXyZ\n" * 3)
+    for value in ("bogus", words[0] + ",,", words[0] + ",bogus"):
+        check("dd", ["status=none", group + "=" + value])
+for flags in (["iflag=count_bytes,skip_bytes", "count=8", "skip=3"],
+              ["count=8", "skip=3", "iflag=count_bytes,skip_bytes"]):
+    check("dd", ["status=none", "bs=7", *flags], b"abcdefghijklmnopqrstuvwxyz")
+if shutil.which("uuidparse"):
+    values = ["00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-ffffffffffff",
+              "00000000-0000-1000-8000-000000000000", "00000000-0000-6000-8000-000000000000",
+              "1b21dd21-3814-6000-8000-000000000000", "01890abc-def0-7000-8000-000000000000",
+              "bad-value"]
+    for flags in ([], ["-n"], ["-r"], ["-nr"], ["-o", "TIME,UUID,TYPE,UUID"], ["-J"]):
+        check("uuidparse", [*flags, *values])
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    (root / "tree").mkdir()
+    for number in range(160):
+        (root / "tree" / ("%03d.txt" % number)).write_bytes(b"needle\n" if number % 9 else b"other\n")
+    (root / "link").symlink_to("tree", target_is_directory=True)
+    for flags in (["-r"], ["-R"], ["-rl"], ["-rc"], ["-r", "--include=*0.txt"],
+                  ["-r", "--exclude-dir=tree"], ["-r", "--exclude=*1.txt"]):
+        check("grep", [*flags, "needle", str(root)])
+    (root / "denied").mkdir()
+    (root / "hit").write_bytes(b"needle\n")
+    (root / "denied").chmod(0)
+    try:
+        for flags in (["-r"], ["-rs"], ["-rq"], ["-rsq"]):
+            check("grep", [*flags, "needle", str(root / "denied")])
+            check("grep", [*flags, "needle", str(root / "denied"), str(root / "hit")])
+    finally:
+        (root / "denied").chmod(0o700)
+    if shutil.which("strace"):
+        for syscall, when in (("openat", 1), ("openat", 2), ("getdents64", 1), ("getdents64", 2)):
+            for flags, match in (([], False), (["-s"], False), (["-q"], True), (["-sq"], True)):
+                result = subprocess.run(["strace", "-o", os.devnull, "-e",
+                    f"inject={syscall}:error=EIO:when={when}", str(farm / "grep"),
+                    "-r", *flags, "needle", str(root / "tree"),
+                    *([str(root / "hit")] if match else [])], capture_output=True,
+                    env=env, timeout=15)
+                if result.returncode == (0 if match else 2) and bool(result.stderr) == ("s" not in "".join(flags)):
+                    passed += 1
+                else:
+                    failed += 1
+                    print("  want recursive grep injected error", syscall, when, flags,
+                          "got", result.returncode, repr(result.stderr[:96]))
 
 print(f"  order-stream {passed} of {passed + failed}")
 if os.environ.get("TEST_TALLY"):

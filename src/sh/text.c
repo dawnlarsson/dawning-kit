@@ -1790,96 +1790,51 @@ static inline INLINE fn regex_edge_add(p8 address_to table, p8 kind,
                 table[value + 32] = 1;
 }
 
-// True where a match could begin without eating a character, which is what
-// makes the table useless and says so.
-static bool regex_first_walk(b32 pc)
+/* One epsilon-edge walk builds the first-byte table or tests whether DONE
+   can be reached without consuming. Anchors invalidate a first-byte proof,
+   but are passable when finding the last byte; consuming instructions end
+   either walk and update only the first-byte table. */
+static bool regex_edge_walk(b32 pc, bool first)
 {
         if (regex_visited[pc])
                 return false;
 
         regex_visited[pc] = 1;
-
         regex_instruction address_to inst = regex_code + pc;
 
         switch (inst->code)
         {
         case REGEX_SAVE:
-                return regex_first_walk(pc + 1);
-
-        case REGEX_JUMP:
-                return regex_first_walk(inst->x);
-
-        case REGEX_SPLIT:
-        {
-                bool one = regex_first_walk(inst->x);
-                bool two = regex_first_walk(inst->y);
-
-                return one || two;
-        }
-
-        case REGEX_CHAR:
-                regex_edge_add(regex_first, REGEX_CHAR, inst->value, 0);
-                return false;
-
-        case REGEX_ANY:
-                regex_edge_add(regex_first, REGEX_ANY, 0, 0);
-                return false;
-
-        case REGEX_SET:
-                regex_edge_add(regex_first, REGEX_SET, 0, inst->set);
-                return false;
-
-        case REGEX_REPEAT:
-                regex_edge_add(regex_first, inst->kind, inst->value,
-                               inst->set);
-                return inst->low == 0 ? regex_first_walk(inst->x) : false;
-
-        default:
-                return true;
-        }
-}
-
-// True when DONE is reachable from here without eating a character, which is
-// what makes the instruction in front of it able to be a match's last one.
-static bool regex_tail_walk(b32 pc)
-{
-        if (regex_visited[pc])
-                return false;
-
-        regex_visited[pc] = 1;
-
-        regex_instruction address_to inst = regex_code + pc;
-
-        switch (inst->code)
-        {
-        case REGEX_DONE:
-                return true;
-
-        case REGEX_SAVE:
+                return regex_edge_walk(pc + 1, first);
         case REGEX_BOL:
         case REGEX_EOL:
         case REGEX_EDGE:
-                return regex_tail_walk(pc + 1);
-
+                return first || regex_edge_walk(pc + 1, false);
         case REGEX_JUMP:
-                return regex_tail_walk(inst->x);
-
+                return regex_edge_walk(inst->x, first);
         case REGEX_SPLIT:
         {
-                bool one = regex_tail_walk(inst->x);
-                bool two = regex_tail_walk(inst->y);
-
+                bool one = regex_edge_walk(inst->x, first);
+                bool two = regex_edge_walk(inst->y, first);
                 return one || two;
         }
-
+        case REGEX_CHAR:
+        case REGEX_ANY:
+        case REGEX_SET:
+                if (first)
+                        regex_edge_add(regex_first, inst->code, inst->value,
+                                       inst->set);
+                return false;
         case REGEX_REPEAT:
-                return inst->low == 0 ? regex_tail_walk(inst->x) : false;
-
+                if (first)
+                        regex_edge_add(regex_first, inst->kind, inst->value,
+                                       inst->set);
+                return inst->low == 0 && regex_edge_walk(inst->x, first);
+        case REGEX_DONE:
         case REGEX_BACK:
                 return true;
-
         default:
-                return false;
+                return first;
         }
 }
 
@@ -1916,7 +1871,7 @@ static fn regex_find_last()
 
                 memory_fill(regex_visited, 0, (positive)regex_length_code);
 
-                if (!regex_tail_walk(after))
+                if (!regex_edge_walk(after, false))
                         continue;
 
                 regex_edge_add(regex_last,
@@ -1979,7 +1934,7 @@ static fn regex_finish()
         regex_anchored = regex_length_code > 1 && regex_code[1].code == REGEX_BOL;
 
         memory_fill(regex_visited, 0, (positive)regex_length_code);
-        regex_first_known = !regex_first_walk(0);
+        regex_first_known = !regex_edge_walk(0, true);
 
         if (regex_first_known)
                 for (positive c = 0; c < 256; c++)
@@ -8458,9 +8413,8 @@ static b32 pr_source_record(pr_record address_to record)
                 length = text_line_length;
         }
 
-        /* A form feed terminates the current logical page in every paging
-           mode.  With -T the header/trailer goes away, but the separator
-           remains observable between the two records. */
+        /* A form feed ends the record even when -T suppresses its output;
+           the retained suffix becomes the next record. */
         {
                 p8 address_to page = memory_first_of(bytes, '\f', length);
 
@@ -8469,31 +8423,18 @@ static b32 pr_source_record(pr_record address_to record)
                         positive prefix = (positive)(page - bytes);
                         positive suffix = length - prefix - 1;
 
-                        if (!prefix)
-                        {
-                                if (suffix)
-                                {
-                                        memory_copy_apart(text_record_hold,
-                                                          page + 1, suffix);
-                                        pr_pending_length = suffix;
-                                        pr_pending = true;
-                                }
-
-                                return 2;
-                        }
-
-                        if (!pr_store(bytes, prefix, pr_line_number++, record))
+                        if (prefix &&
+                            !pr_store(bytes, prefix, pr_line_number++, record))
                                 return 0;
 
                         if (suffix)
                         {
-                                memory_copy_apart(text_record_hold, page + 1,
-                                                  suffix);
+                                memory_copy(text_record_hold, page + 1, suffix);
                                 pr_pending_length = suffix;
                                 pr_pending = true;
                         }
 
-                        return 3;
+                        return prefix ? 3 : 2;
                 }
         }
 
@@ -8760,7 +8701,7 @@ static fn pr_put_page(positive count, positive rows, positive page,
                                                           pr_page_length - used);
                 }
         }
-        else if (forced)
+        else if (forced && !pr_omit_pagination)
                 text_put_character('\f');
 }
 
@@ -8971,9 +8912,11 @@ static b32 text_pr()
                 return text_refuse(file_option_value(address_of taking, 'o'),
                                    "invalid indentation", 1);
 
-        pr_omit_pagination = (taking.flags & FILE_FLAG('T')) != 0;
-        pr_omit_header = pr_omit_pagination ||
-                         (taking.flags & FILE_FLAG('t')) ||
+        /* An explicit page length restores input page breaks even with -T;
+           the omitted header policy remains independent of that override. */
+        pr_omit_pagination = (taking.flags & FILE_FLAG('T')) &&
+                             !(taking.flags & FILE_FLAG('l'));
+        pr_omit_header = (taking.flags & (FILE_FLAG('T') | FILE_FLAG('t'))) ||
                          pr_page_length <= PR_HEADER_LINES + PR_FOOTER_LINES;
         pr_double = (taking.flags & FILE_FLAG('d')) != 0;
         pr_form_feed = (taking.flags & (FILE_FLAG('F') | FILE_FLAG('f'))) != 0;
@@ -15203,7 +15146,7 @@ enum
 static positive grep_seen_device[GREP_DEPTH_MAX + 1];
 static positive grep_seen_node[GREP_DEPTH_MAX + 1];
 
-static bool grep_walk(string_address path, b32 depth)
+static bool grep_walk(string_address path, b32 depth, bool quietly)
 {
         bipolar handle;
         p8 entries[GREP_DIRENT_BYTES];
@@ -15218,7 +15161,11 @@ static bool grep_walk(string_address path, b32 depth)
                                   FILE_READ, 0);
 
         if (handle < 0)
+        {
+                if (!quietly)
+                        text_error(path, file_reason(handle));
                 return false;
+        }
 
         file_facts facts;
 
@@ -15240,70 +15187,70 @@ static bool grep_walk(string_address path, b32 depth)
                 grep_seen_node[depth] = node;
         }
 
-        while (fine)
+        positive have = 0, at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+
+        while (fine && (entry = file_directory_next(handle, entries,
+                              sizeof(entries), address_of have, address_of at,
+                              address_of error)))
         {
-                bipolar got = system_read_directory(handle, entries,
-                                                    sizeof(entries));
+                string_address name = (string_address)entry->d_name;
+                p8 kind = entry->d_type;
 
-                if (got <= 0)
-                        break;
+                if (file_is_dot(name))
+                        continue;
 
-                for (p8 address_to step = entries; step < entries + got && fine;)
+                if (kind == DIRENT_LINK && !grep_dereference)
+                        continue;
+
+                string_address full = grep_path_join(path, name);
+
+                if (!full)
                 {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)step;
-                        string_address name = (string_address)entry->d_name;
-                        p8 kind = entry->d_type;
-
-                        step += entry->d_reclen;
-
-                        if (name[0] == '.' &&
-                            (!name[1] || (name[1] == '.' && !name[2])))
-                                continue;
-
-                        if (kind == DIRENT_LINK && !grep_dereference)
-                                continue;
-
-                        string_address full = grep_path_join(path, name);
-
-                        if (!full)
-                        {
-                                fine = false;
-                                break;
-                        }
-
-                        if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
-                        {
-                                p32 mode = text_path_mode(full);
-
-                                if (!mode)
-                                        continue;
-
-                                kind = (mode & 0170000) == 0040000 ? DIRENT_DIRECTORY
-                                     : (mode & 0170000) == 0100000 ? DIRENT_FILE
-                                                                   : DIRENT_OTHER;
-                        }
-
-                        if (kind == DIRENT_DIRECTORY)
-                        {
-                                if (grep_wanted_directory(full) &&
-                                    !grep_walk(full, depth + 1))
-                                        fine = false;
-
-                                continue;
-                        }
-
-                        // Anything that is not a plain file is a device, and a
-                        // walk does not read devices.
-                        if (kind != DIRENT_FILE)
-                                continue;
-
-                        if (grep_wanted_file(full) && !grep_path_add(full))
-                                fine = false;
+                        fine = false;
+                        break;
                 }
+
+                if (kind == DIRENT_UNKNOWN || kind == DIRENT_LINK)
+                {
+                        p32 mode = text_path_mode(full);
+
+                        if (!mode)
+                                continue;
+
+                        kind = (mode & 0170000) == 0040000 ? DIRENT_DIRECTORY
+                             : (mode & 0170000) == 0100000 ? DIRENT_FILE
+                                                           : DIRENT_OTHER;
+                }
+
+                if (kind == DIRENT_DIRECTORY)
+                {
+                        if (grep_wanted_directory(full) &&
+                            !grep_walk(full, depth + 1, quietly))
+                                fine = false;
+
+                        continue;
+                }
+
+                // Anything that is not a plain file is a device, and a
+                // walk does not read devices.
+                if (kind != DIRENT_FILE)
+                        continue;
+
+                if (grep_wanted_file(full) && !grep_path_add(full))
+                        fine = false;
         }
 
         system_close(handle);
+
+        if (error < 0)
+        {
+                if (!quietly)
+                        text_error(path, file_reason(error));
+                fine = false;
+        }
+
         return fine;
 }
 
@@ -15799,7 +15746,8 @@ static b32 text_grep()
         if (grep_recursive && !text_files_count)
         {
                 grep_expanded = true;
-                grep_walk((string_address) "", 0);
+                if (!grep_walk((string_address) "", 0, quietly))
+                        trouble = 2;
         }
 
         for (b32 i = 0; i < text_files_count; i++)
@@ -15823,7 +15771,8 @@ static b32 text_grep()
                                 continue;
 
                         grep_expanded = true;
-                        grep_walk(name, 0);
+                        if (!grep_walk(name, 0, quietly))
+                                trouble = 2;
                         continue;
                 }
 
@@ -20185,167 +20134,109 @@ static bool expr_pair(expr_value address_to left, expr_value address_to right,
         return false;
 }
 
-static expr_value expr_product_level()
+/* One precedence walk owns operand sequencing and short-circuit suppression.
+   Match/primary keep their keyword and regex grammar; only binary policy is
+   data, so a skipped branch is still parsed without evaluating its errors. */
+static expr_value expr_binary(positive minimum)
 {
+        static const string_address initials = (string_address)"|&=!<<>>+-*/%";
+        static const p8 precedence[] = {1, 2, 3, 3, 3, 3, 3, 3, 4, 4, 5, 5, 5};
         expr_value left = expr_match_level();
 
-        while (!expr_fault && (expr_is("*") || expr_is("/") || expr_is("%")))
+        while (!expr_fault && expr_word())
         {
-                p8 operator = string_get(expr_word());
-                expr_value right;
-                bipolar a;
-                bipolar b;
-
-                expr_at++;
-                right = expr_match_level();
-
-                if (expr_fault ||
-                    !expr_pair(address_of left, address_of right,
-                               address_of a, address_of b))
+                string_address word = expr_word();
+                string_address initial = string_first_of(initials, word[0]);
+                if (!initial || !word[0])
+                        break;
+                positive operation = initial - initials;
+                if ((operation == 4 || operation == 6) && word[1] == '=')
+                        operation++;
+                bool paired = operation == 3 || operation == 5 || operation == 7;
+                if (word[1] != (paired ? '=' : 0) ||
+                    (paired && word[2]) || precedence[operation] < minimum)
                         break;
 
-                if (operator != '*' && !b)
+                bool logical = operation < 2;
+                bool decided = logical &&
+                    expr_true(address_of left) == (operation == 0);
+                expr_at++;
+                expr_dead += decided;
+                expr_value right = expr_binary(precedence[operation] + 1);
+                expr_dead -= decided;
+                if (expr_fault)
+                        break;
+
+                if (logical)
+                {
+                        if (decided)
+                        {
+                                if (operation == 1)
+                                        left = expr_zero();
+                        }
+                        else if (expr_true(address_of right))
+                        {
+                                if (operation == 0)
+                                        left = right;
+                        }
+                        else
+                                left = expr_zero();
+                        continue;
+                }
+
+                bipolar a, b;
+                if (operation < 8)
+                {
+                        bipolar order;
+                        if (expr_integer(address_of left, address_of a) &&
+                            expr_integer(address_of right, address_of b))
+                                order = a < b ? -1 : a > b;
+                        else
+                                order = string_compare(expr_shown(address_of left),
+                                                       expr_shown(address_of right));
+                        left.text = null;
+                        switch (operation)
+                        {
+                        case 2: left.number = order == 0; break;
+                        case 3: left.number = order != 0; break;
+                        case 4: left.number = order < 0; break;
+                        case 5: left.number = order <= 0; break;
+                        case 6: left.number = order > 0; break;
+                        default: left.number = order >= 0; break;
+                        }
+                        continue;
+                }
+
+                if (!expr_pair(address_of left, address_of right,
+                                address_of a, address_of b))
+                        break;
+                if (operation >= 11 && !b)
                 {
                         if (!expr_dead)
                         {
                                 expr_stop("division by zero");
                                 break;
                         }
-
                         b = 1;
                 }
 
                 left.text = null;
-                left.number = operator == '*' ? a * b
-                              : operator == '/' ? a / b
-                                                : a % b;
-        }
-
-        return left;
-}
-
-static expr_value expr_sum_level()
-{
-        expr_value left = expr_product_level();
-
-        while (!expr_fault && (expr_is("+") || expr_is("-")))
-        {
-                bool adding = expr_is("+");
-                expr_value right;
-                bipolar a;
-                bipolar b;
-
-                expr_at++;
-                right = expr_product_level();
-
-                if (expr_fault ||
-                    !expr_pair(address_of left, address_of right,
-                               address_of a, address_of b))
-                        break;
-
-                left.text = null;
-                left.number = adding ? a + b : a - b;
-        }
-
-        return left;
-}
-
-static bipolar expr_relation(string_address operator, bipolar order)
-{
-        if (!string_compare(operator, "="))
-                return order == 0;
-
-        if (!string_compare(operator, "!="))
-                return order != 0;
-
-        if (!string_compare(operator, "<"))
-                return order < 0;
-
-        if (!string_compare(operator, "<="))
-                return order <= 0;
-
-        if (!string_compare(operator, ">"))
-                return order > 0;
-
-        return order >= 0;
-}
-
-static expr_value expr_compare_level()
-{
-        expr_value left = expr_sum_level();
-
-        while (!expr_fault && (expr_is("=") || expr_is("!=") || expr_is("<") ||
-                               expr_is("<=") || expr_is(">") || expr_is(">=")))
-        {
-                string_address operator = expr_word();
-                expr_value right;
-                bipolar a;
-                bipolar b;
-                bipolar order;
-
-                expr_at++;
-                right = expr_sum_level();
-
-                if (expr_fault)
-                        break;
-
-                // Two numbers are compared as numbers and anything else as
-                // bytes, so 3 is below 10 but "3" is above "10".
-                if (expr_integer(address_of left, address_of a) &&
-                    expr_integer(address_of right, address_of b))
-                        order = a < b ? -1 : a > b;
-                else
+                switch (operation)
                 {
-                        bipolar difference =
-                            string_compare(expr_shown(address_of left),
-                                           expr_shown(address_of right));
-
-                        order = difference < 0 ? -1 : difference > 0;
+                case 8: left.number = a + b; break;
+                case 9: left.number = a - b; break;
+                case 10: left.number = a * b; break;
+                case 11: left.number = a / b; break;
+                default: left.number = a % b; break;
                 }
-
-                left.text = null;
-                left.number = expr_relation(operator, order);
         }
-
         return left;
 }
 
-#define EXPR_LOGICAL_LEVEL(name, lower, spelling, any)                       \
-        static expr_value name()                                            \
-        {                                                                    \
-                expr_value left = lower();                                  \
-                                                                             \
-                while (!expr_fault && expr_is(spelling))                    \
-                {                                                            \
-                        bool decided = expr_true(address_of left) == (any);  \
-                                                                             \
-                        expr_at++;                                           \
-                        expr_dead += decided;                                \
-                        expr_value right = lower();                          \
-                        expr_dead -= decided;                                \
-                                                                             \
-                        if (expr_fault)                                      \
-                                break;                                       \
-                        if (decided)                                         \
-                        {                                                    \
-                                if (!(any))                                  \
-                                        left = expr_zero();                  \
-                        }                                                    \
-                        else if (expr_true(address_of right))                \
-                        {                                                    \
-                                if (any)                                     \
-                                        left = right;                        \
-                        }                                                    \
-                        else                                                 \
-                                left = expr_zero();                          \
-                }                                                            \
-                                                                             \
-                return left;                                                 \
-        }
-
-EXPR_LOGICAL_LEVEL(expr_both_level, expr_compare_level, "&", false)
-EXPR_LOGICAL_LEVEL(expr_any, expr_both_level, "|", true)
-#undef EXPR_LOGICAL_LEVEL
+static expr_value expr_any()
+{
+        return expr_binary(1);
+}
 
 static b32 text_expr()
 {

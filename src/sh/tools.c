@@ -2251,18 +2251,7 @@ static positive login_idle_pinky(p8 address_to into, login_terminal terminal)
 
 static positive login_signed(p8 address_to into, bipolar value)
 {
-        positive made = 0;
-        positive magnitude;
-
-        if (value < 0)
-        {
-                into[made++] = '-';
-                magnitude = (positive)(-(value + 1)) + 1;
-        }
-        else
-                magnitude = (positive)value;
-
-        made += positive_into(into + made, magnitude);
+        positive made = bipolar_into(into, value);
         into[made] = end;
         return made;
 }
@@ -6175,30 +6164,17 @@ static fn tools_uuid_record_read(string_address text,
 
         b64 seconds;
         positive microseconds;
-        if (version == 1)
+        if (version == 1 || version == 6)
         {
-                p64 timestamp = network_load_32(record->uuid.bytes) |
+                p64 timestamp = version == 1
+                              ? network_load_32(record->uuid.bytes) |
                                 ((p64)network_load_16(
                                      record->uuid.bytes + 4) << 32) |
                                 ((p64)(network_load_16(
-                                      record->uuid.bytes + 6) & 0x0fff) << 48);
-                b64 ticks = (b64)timestamp -
-                            (b64)0x01b21dd213814000ULL;
-                seconds = ticks / 10000000;
-                b64 rest = ticks % 10000000;
-                if (rest < 0)
-                {
-                        seconds--;
-                        rest += 10000000;
-                }
-                microseconds = (positive)(rest / 10);
-        }
-        else if (version == 6)
-        {
-                p64 timestamp =
-                    ((p64)network_load_32(record->uuid.bytes) << 28) |
-                    ((p64)network_load_16(record->uuid.bytes + 4) << 12) |
-                    (network_load_16(record->uuid.bytes + 6) & 0x0fff);
+                                      record->uuid.bytes + 6) & 0x0fff) << 48)
+                              : ((p64)network_load_32(record->uuid.bytes) << 28) |
+                                ((p64)network_load_16(record->uuid.bytes + 4) << 12) |
+                                (network_load_16(record->uuid.bytes + 6) & 0x0fff);
                 b64 ticks = (b64)timestamp -
                             (b64)0x01b21dd213814000ULL;
                 seconds = ticks / 10000000;
@@ -6361,32 +6337,13 @@ static b32 tools_uuidparse()
                         else if (columns[at] == TOOLS_UUID_COLUMN_TYPE)
                                 widths[at] = max(widths[at], (positive)10);
 
-        if (!noheadings)
+        for (positive row = 0; row < file_operand_count + !noheadings; row++)
         {
-                for (positive at = 0; at < column_count; at++)
-                {
-                        if (at)
-                                writer_fill(text_put,
-                                            !raw && columns[at - 1] ==
-                                                            TOOLS_UUID_COLUMN_UUID
-                                                ? 2 : 1,
-                                            ' ');
-                        string_address value = tools_uuid_column_names[columns[at]];
-                        positive length = string_length(value);
-                        if (raw)
-                                tools_uuid_safe_cell(value);
-                        else
-                                text_put((p8 address_to)value, length);
-                        if (!raw && at + 1 < column_count)
-                                writer_fill(text_put, widths[at] - length, ' ');
-                }
-                text_put_character('\n');
-        }
-
-        for (positive row = 0; row < file_operand_count; row++)
-        {
+                bool heading = !noheadings && !row;
                 tools_uuid_record record;
-                tools_uuid_record_read(file_operand_at(row), address_of record);
+                if (!heading)
+                        tools_uuid_record_read(file_operand_at(row - !noheadings),
+                                               address_of record);
                 for (positive at = 0; at < column_count; at++)
                 {
                         if (at)
@@ -6395,8 +6352,9 @@ static b32 tools_uuidparse()
                                                             TOOLS_UUID_COLUMN_UUID
                                                 ? 2 : 1,
                                             ' ');
-                        string_address value =
-                            tools_uuid_cell(address_of record, columns[at]);
+                        string_address value = heading
+                            ? tools_uuid_column_names[columns[at]]
+                            : tools_uuid_cell(address_of record, columns[at]);
                         positive length = string_length(value);
                         if (raw)
                                 tools_uuid_safe_cell(value);
@@ -6547,7 +6505,10 @@ static b32 tools_mcookie()
 #define DD_SWAB 0x200
 
 #define DD_FULLBLOCK 0x001
+#define DD_COUNT_BYTES 0x002
+#define DD_SKIP_BYTES 0x004
 #define DD_APPEND 0x001
+#define DD_SEEK_BYTES 0x002
 #define DD_O_APPEND 02000
 
 #define DD_STATUS_ALL 0
@@ -6803,6 +6764,45 @@ static bool dd_word(string_address address_to at, string_address name)
         return true;
 }
 
+/* The three comma lists differ only in their vocabulary and empty policy. */
+static bool dd_flags(string_address value, p8 group, positive address_to flags)
+{
+        static const struct {
+                string_address name;
+                positive flag;
+                p8 group;
+        } words[] = {
+            {"notrunc", DD_NOTRUNC, 0}, {"sync", DD_SYNC, 0},
+            {"noerror", DD_NOERROR, 0}, {"fdatasync", DD_FDATASYNC, 0},
+            {"fsync", DD_FSYNC, 0}, {"excl", DD_EXCL, 0},
+            {"nocreat", DD_NOCREAT, 0}, {"lcase", DD_LCASE, 0},
+            {"ucase", DD_UCASE, 0}, {"swab", DD_SWAB, 0},
+            {"fullblock", DD_FULLBLOCK, 1}, {"count_bytes", DD_COUNT_BYTES, 1},
+            {"skip_bytes", DD_SKIP_BYTES, 1},
+            {"append", DD_APPEND, 2}, {"seek_bytes", DD_SEEK_BYTES, 2},
+        };
+
+        do
+        {
+                if (!*value && !group)
+                        return true;
+                positive word = 0;
+                while (word < array_count(words) &&
+                       (words[word].group != group ||
+                        !dd_word(address_of value, words[word].name)))
+                        word++;
+                if (word == array_count(words))
+                {
+                        text_error(value, group == 0 ? "invalid conversion" :
+                                          group == 1 ? "invalid input flag" :
+                                                       "invalid output flag");
+                        return false;
+                }
+                *flags |= words[word].flag;
+        } while (*value);
+        return true;
+}
+
 /*
         Every complaint dd makes about a file is the same sentence: dd, what
         went wrong, which file, and the kernel's reason when there is one.
@@ -6956,9 +6956,6 @@ static b32 tools_dd(void)
         bool count_bytes = false;
         bool skip_bytes = false;
         bool seek_bytes = false;
-        bool count_bytes_flag = false;
-        bool skip_bytes_flag = false;
-        bool seek_bytes_flag = false;
         b32 status = 0;
 
         text_begin("dd");
@@ -7037,65 +7034,18 @@ static b32 tools_dd(void)
                 }
                 else if (dd_operand(argument, "conv", address_of value))
                 {
-                        string_address at = value;
-
-                        while (string_get(at))
-                        {
-                                if (dd_word(address_of at, "notrunc"))
-                                        conv |= DD_NOTRUNC;
-                                else if (dd_word(address_of at, "sync"))
-                                        conv |= DD_SYNC;
-                                else if (dd_word(address_of at, "noerror"))
-                                        conv |= DD_NOERROR;
-                                else if (dd_word(address_of at, "fdatasync"))
-                                        conv |= DD_FDATASYNC;
-                                else if (dd_word(address_of at, "fsync"))
-                                        conv |= DD_FSYNC;
-                                else if (dd_word(address_of at, "excl"))
-                                        conv |= DD_EXCL;
-                                else if (dd_word(address_of at, "nocreat"))
-                                        conv |= DD_NOCREAT;
-                                else if (dd_word(address_of at, "lcase"))
-                                        conv |= DD_LCASE;
-                                else if (dd_word(address_of at, "ucase"))
-                                        conv |= DD_UCASE;
-                                else if (dd_word(address_of at, "swab"))
-                                        conv |= DD_SWAB;
-                                else
-                                        return text_error(at, "invalid conversion"), 1;
-                        }
+                        if (!dd_flags(value, 0, address_of conv))
+                                return 1;
                 }
                 else if (dd_operand(argument, "iflag", address_of value))
                 {
-                        string_address at = value;
-
-                        if (!string_get(at))
-                                return text_error(value, "invalid input flag"), 1;
-
-                        while (string_get(at))
-                                if (dd_word(address_of at, "fullblock"))
-                                        iflags |= DD_FULLBLOCK;
-                                else if (dd_word(address_of at, "count_bytes"))
-                                        count_bytes_flag = true;
-                                else if (dd_word(address_of at, "skip_bytes"))
-                                        skip_bytes_flag = true;
-                                else
-                                        return text_error(at, "invalid input flag"), 1;
+                        if (!dd_flags(value, 1, address_of iflags))
+                                return 1;
                 }
                 else if (dd_operand(argument, "oflag", address_of value))
                 {
-                        string_address at = value;
-
-                        if (!string_get(at))
-                                return text_error(value, "invalid output flag"), 1;
-
-                        while (string_get(at))
-                                if (dd_word(address_of at, "append"))
-                                        oflags |= DD_APPEND;
-                                else if (dd_word(address_of at, "seek_bytes"))
-                                        seek_bytes_flag = true;
-                                else
-                                        return text_error(at, "invalid output flag"), 1;
+                        if (!dd_flags(value, 2, address_of oflags))
+                                return 1;
                 }
                 else if (dd_operand(argument, "cbs", address_of value))
                 {
@@ -7116,9 +7066,9 @@ static b32 tools_dd(void)
         if (bs_set)
                 ibs = obs = bs;
 
-        count_bytes |= count_bytes_flag;
-        skip_bytes |= skip_bytes_flag;
-        seek_bytes |= seek_bytes_flag;
+        count_bytes |= (iflags & DD_COUNT_BYTES) != 0;
+        skip_bytes |= (iflags & DD_SKIP_BYTES) != 0;
+        seek_bytes |= (oflags & DD_SEEK_BYTES) != 0;
 
         if ((conv & DD_LCASE) && (conv & DD_UCASE))
                 return text_error(null, "cannot combine lcase and ucase"), 1;
@@ -7579,9 +7529,7 @@ typedef struct
 
 static dump_options dump_arguments;
 
-static fn dump_add_integer(positive base, positive size, positive width,
-                           positive gap, bool signed_value, bool zero,
-                           bool printable, bool hexdump)
+static fn dump_add(dump_format format)
 {
         if (dump_arguments.count >= DUMP_FORMAT_MAX)
         {
@@ -7589,7 +7537,14 @@ static fn dump_add_integer(positive base, positive size, positive width,
                 return;
         }
 
-        dump_arguments.format[dump_arguments.count++] = (dump_format){
+        dump_arguments.format[dump_arguments.count++] = format;
+}
+
+static fn dump_add_integer(positive base, positive size, positive width,
+                           positive gap, bool signed_value, bool zero,
+                           bool printable, bool hexdump)
+{
+        dump_add((dump_format){
             .kind = base == 16 && size == 1 && width == 2 && zero && !signed_value
                         ? DUMP_HEX_BYTES : DUMP_INTEGER,
             .base = (p8)base,
@@ -7600,55 +7555,37 @@ static fn dump_add_integer(positive base, positive size, positive width,
             .zero = zero,
             .printable = printable,
             .hexdump = hexdump,
-        };
+        });
 }
 
 static fn dump_add_character(bool hexdump)
 {
-        if (dump_arguments.count >= DUMP_FORMAT_MAX)
-        {
-                dump_arguments.failed = true;
-                return;
-        }
-
-        dump_arguments.format[dump_arguments.count++] = (dump_format){
+        dump_add((dump_format){
             .kind = DUMP_CHARACTER,
             .size = 1,
             .width = 3,
             .gap = 1,
             .hexdump = hexdump,
-        };
+        });
 }
 
 static fn dump_add_named()
 {
-        if (dump_arguments.count >= DUMP_FORMAT_MAX)
-        {
-                dump_arguments.failed = true;
-                return;
-        }
-
-        dump_arguments.format[dump_arguments.count++] = (dump_format){
+        dump_add((dump_format){
             .kind = DUMP_NAMED,
             .size = 1,
             .width = 3,
             .gap = 1,
-        };
+        });
 }
 
 static fn dump_add_canonical()
 {
-        if (dump_arguments.count >= DUMP_FORMAT_MAX)
-        {
-                dump_arguments.failed = true;
-                return;
-        }
-
-        dump_arguments.format[dump_arguments.count++] = (dump_format){
+        dump_add((dump_format){
             .kind = DUMP_CANONICAL,
             .size = 1,
             .hexdump = true,
-        };
+        });
 }
 
 static bool dump_number(string_address source, positive address_to value)
@@ -7765,61 +7702,22 @@ static bool dump_od_seen(p8 letter, string_address value)
                 return false;
         }
 
-        switch (letter)
+        if (letter == 'e' || letter == 'F' || letter == 'f')
         {
-        case 'a': dump_add_named(); break;
-        case 'b':
-                dump_add_integer(8, 1, dump_od_width('o', 1), 1,
-                                 false, true, false, false);
-                break;
-        case 'c': dump_add_character(false); break;
-        case 'd':
-                dump_add_integer(10, 2, dump_od_width('u', 2), 1,
-                                 false, false, false, false);
-                break;
-        case 'D':
-                dump_add_integer(10, 4, dump_od_width('u', 4), 1,
-                                 false, false, false, false);
-                break;
-        case 'e':
-        case 'F':
-        case 'f':
                 text_error(null, "floating point output is unsupported");
                 return false;
-        case 'h':
-        case 'x':
-                dump_add_integer(16, 2, dump_od_width('x', 2), 1,
-                                 false, true, false, false);
-                break;
-        case 'H':
-        case 'X':
-                dump_add_integer(16, 4, dump_od_width('x', 4), 1,
-                                 false, true, false, false);
-                break;
-        case 'i':
-                dump_add_integer(10, 4, dump_od_width('d', 4), 1,
-                                 true, false, false, false);
-                break;
-        case 'I':
-        case 'L':
-        case 'l':
-                dump_add_integer(10, 8, dump_od_width('d', 8), 1,
-                                 true, false, false, false);
-                break;
-        case 'B':
-        case 'o':
-                dump_add_integer(8, 2, dump_od_width('o', 2), 1,
-                                 false, true, false, false);
-                break;
-        case 'O':
-                dump_add_integer(8, 4, dump_od_width('o', 4), 1,
-                                 false, true, false, false);
-                break;
-        case 's':
-                dump_add_integer(10, 2, dump_od_width('d', 2), 1,
-                                 true, false, false, false);
-                break;
         }
+
+        /* Legacy switches name the same formats as -t, including its host
+           sizes and tuned hex-byte selection. Keep only their spelling. */
+        static p8 aliases[] = "abcdDhxHXiILlBoOs";
+        static p8 formats[][3] = {
+            "a", "o1", "c", "u2", "u4", "x2", "x2", "x4", "x4",
+            "d4", "d8", "d8", "d8", "o2", "o2", "o4", "d2",
+        };
+        string_address alias = string_first_of(aliases, letter);
+        if (alias && letter)
+                dump_od_types(formats[alias - aliases]);
 
         if (dump_arguments.failed)
         {
