@@ -38,6 +38,18 @@ ln -s loop "$work/tree/loop" || exit 1
 ln -s "$subject" "$work/names/bash" || exit 1
 ln -s "$subject" "$work/names/dash" || exit 1
 
+# Cross several 2048-byte getdents refills with both files and directories.
+mkdir "$work/tree/scan" || exit 1
+i=0
+while [ "$i" -lt 160 ]; do
+        : > "$work/tree/scan/mw_file$i"
+        mkdir "$work/tree/scan/mw_dir$i" || exit 1
+        : > "$work/tree/scan/mw_dir$i/inside"
+        i=$((i + 1))
+done
+ln -s mw_dir0 "$work/tree/scan/mw_link" || exit 1
+: > "$work/tree/scan/.hidden"
+
 test_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 . "$test_dir/tally.sh"
 
@@ -160,6 +172,15 @@ case_compare 'unnamed physical success' "$B" "$MB" \
         'd="$ROOT/gone"; mkdir "$d"; cd "$d"; rmdir "$d"; cd -P . 2>/dev/null; printf "%s:%s\n" "$?" "${PWD#$ROOT}"'
 case_compare 'unnamed physical exact failure' "$B" "$MB" \
         'd="$ROOT/gone"; mkdir "$d"; cd "$d"; rmdir "$d"; cd -Pe . 2>/dev/null; printf "%s:%s\n" "$?" "${PWD#$ROOT}"'
+
+case_compare 'completion file refill preserves every entry' "$B" "$MB" \
+        'cd "$ROOT/scan"; compgen -f mw_ | LC_ALL=C sort'
+case_compare 'completion directory refill retains type filter' "$B" "$MB" \
+        'cd "$ROOT/scan"; compgen -d mw_dir | LC_ALL=C sort'
+case_compare 'glob refill and recursive parent cursor' "$B" "$MB" \
+        'cd "$ROOT/scan"; set -- mw_*; printf "%s:%s\n" "$#" "$1"; set -- mw_dir*/inside; printf "%s:%s\n" "$#" "$1"'
+case_compare 'globstar refill does not follow directory symlink' "$B" "$MB" \
+        'cd "$ROOT/scan"; shopt -s globstar dotglob; set -- **/inside; printf "%s:%s\n" "$#" "$1"; set -- *; printf "%s:%s\n" "$#" "$1"'
 
 section ""
 printf '  %-12s %s of %s\n' total "$pass" "$((pass + fail))"

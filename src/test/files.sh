@@ -529,6 +529,60 @@ copy_short_extent_stress() {
         fi
 }
 
+# The shared copy walk must preserve data and fail after a broken directory
+# refill or an unsuccessful final source-directory removal.
+copy_walk_failure_stress() {
+        if ! command -v strace >/dev/null 2>&1 ||
+           ! strace -qq -o "$work/walk-probe" -e trace=none true 2>/dev/null; then
+                echo '  cp/mv    directory failures: strace/ptrace unavailable, five cases did not run'
+                return
+        fi
+        transfer_work=$(mktemp -d /dev/shm/mw-copy-errors.XXXXXX)
+        for transfer_tool in cp mv; do
+                for transfer_when in 1 2; do
+                        transfer_source="$work/walk-$transfer_tool-$transfer_when"
+                        transfer_dest="$transfer_work/$transfer_tool-$transfer_when"
+                        mkdir "$transfer_source"
+                        transfer_file=0
+                        while [ "$transfer_file" -lt 400 ]; do
+                                : > "$transfer_source/item-$transfer_file"
+                                transfer_file=$((transfer_file + 1))
+                        done
+                        set --
+                        [ "$transfer_tool" != cp ] || set -- -r
+                        transfer_status=0
+                        strace -qq -o "$work/walk.trace" \
+                                -e inject=getdents64:error=EIO:when="$transfer_when" \
+                                "$binaries/$transfer_tool" "$@" "$transfer_source" \
+                                "$transfer_dest" 2> "$work/walk.err" || transfer_status=$?
+                        set -- "$transfer_source"
+                        [ "$transfer_tool" != mv ] || set -- "$@" "$transfer_dest"
+                        if [ "$transfer_status" -eq 1 ] &&
+                           grep -q 'cannot read directory' "$work/walk.err" &&
+                           [ "$(find "$@" -type f | wc -l)" -eq 400 ]; then
+                                report ok
+                        else
+                                report bad "$transfer_tool directory read $transfer_when" \
+                                        'read failure was hidden or source contents were lost'
+                        fi
+                done
+        done
+        mkdir "$work/move-remove"
+        printf 'retained\n' > "$work/move-remove/item"
+        transfer_status=0
+        strace -qq -o "$work/remove.trace" -e inject=unlinkat:error=EIO:when=2 \
+                "$binaries/mv" "$work/move-remove" "$transfer_work/remove" \
+                2> "$work/remove.err" || transfer_status=$?
+        if [ "$transfer_status" -eq 1 ] && [ -d "$work/move-remove" ] &&
+           grep -q 'cannot remove' "$work/remove.err" &&
+           [ "$(cat "$transfer_work/remove/item")" = retained ]; then
+                report ok
+        else
+                report bad 'mv directory removal failure' 'source removal failure was hidden'
+        fi
+        rm -rf "$transfer_work"
+}
+
 # Fixed-memory ceilings are permitted to refuse work, but never to emit a
 # plausible prefix and exit successfully.
 refuses_ls_ceiling() {
@@ -1043,6 +1097,31 @@ answered 'decimal malformed exponent' seq 1e 2
 answered 'decimal repeated point' seq 1.2.3 2
 answered 'decimal format with equal width' seq -w -f %.1f 1 2
 answered 'decimal multiple formats' seq -f %f-%f 1 2
+for seq_first in -9 -1 0 1 9; do
+        for seq_step in -3 -1 1 3; do
+                for seq_last in -10 0 10; do
+                        for seq_mode in plain width format; do
+                                set --
+                                [ "$seq_mode" != width ] || set -- -w
+                                [ "$seq_mode" != format ] || set -- -f '%+06.1f'
+                                answered "shared iterator $seq_first/$seq_step/$seq_last/$seq_mode" \
+                                        seq "$@" -s '|' "$seq_first" "$seq_step" "$seq_last"
+                        done
+                done
+        done
+done
+for seq_zero in -0 +0 000 -000 -0.00 +0.00; do
+        answered 'shared signed zero' seq "$seq_zero" .25 1
+        answered 'shared plain zero' seq "$seq_zero" 1 2
+        answered 'shared formatted zero' seq -f '%+07.2f' "$seq_zero" .25 1
+        answered 'shared padded zero' seq -w "$seq_zero" 1 2
+        answered 'shared padded zero endpoint' seq -w 2 -1 "$seq_zero"
+done
+for seq_lexical in 001e1 123e-1 0001.0e-1 .1e1 001.00e2; do
+        answered 'shared lexical width' seq -w "$seq_lexical" 1 "$seq_lexical"
+done
+answered 'shared long separator' seq -s "$(printf '%017000d' 0)" 8 10
+answered 'shared empty separator' seq -s '' -2 2
 
 group yes
 yes_stress
@@ -2469,6 +2548,7 @@ far=/dev/shm/mw-files-$$
 if [ -d /dev/shm ] && [ "$(stat -c %d /dev/shm)" != "$(stat -c %d "$work")" ]; then
         effect 'mv across devices' mv 'rm -rf "$far"; chmod 750 tree; chmod 600 tree/two; mkfifo tree/pipe; chmod 600 tree/pipe; timeout 10 "$TOOL" tree "$far"; echo $?; mv "$far" tree'
         effect 'mv across devices read-only' mv 'rm -rf "$far"; chmod 555 tree/deep; timeout 10 "$TOOL" tree "$far" 2>/dev/null; echo $?; chmod -R u+w tree "$far" 2>/dev/null; rm -rf "$far"'
+        copy_walk_failure_stress
 fi
 
 #       The walkers that stopped at their frame ceiling in silence, and the

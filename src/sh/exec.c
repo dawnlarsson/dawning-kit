@@ -8023,95 +8023,50 @@ static b32 exec_aborted(shell_mark mark)
 /*
         What a for or a select walks over, in exec_items.
 
-        Both take the same words in the same place and differ only in what
-        they do with them afterwards, so the expansion is one function and
-        the loop is two.
+        Both retain expanded or positional words through the same collector;
+        the loop chooses either the next item or the user's selection.
 */
 static b32 exec_loop_items(parse_node address_to node, positive base)
 {
         b32 count = 0;
-        b32 at;
-
-        /*
-                The list is expanded the way a command's arguments are.
-
-                "for i in $x" walks the fields of x and "for i in *.c" walks
-                the names on disk; expanding each word whole made a list of
-                one item that happened to contain blanks and a pattern that
-                was never asked about. The fields come back in storage the
-                next word's expansion reuses, so each is copied out before
-                the next one is asked for.
-        */
-        if (node->flags)
+        positive words = node->flags ? (positive)node->word_count - 1
+                                     : shell_parameter_count;
+        for (positive at = 0; at < words; at++)
         {
-                bool room = true;
-
-                for (at = 1; at < node->word_count && room; at++)
+                positive made = 1;
+                string_address address_to fields;
+                if (node->flags)
                 {
                         shell_words list;
-                        positive made;
-                        positive field;
-
                         shell_words_bind(address_of list, address_of exec_fields,
                                          address_of exec_fields_room);
-                        made = shell_expand_fields(parse_words[node->word + at],
+                        made = shell_expand_fields(parse_words[node->word + at + 1],
                                                    address_of list);
-
                         if (exec_line_aborted())
-                        {
-                                room = false;
                                 break;
-                        }
-
-                        for (field = 0; field < made; field++)
-                        {
-                                string_address kept;
-
-                                if (base > positive_max - (positive)count - 1 ||
-                                    !shell_room((address_any address_to)
-                                                    address_of exec_items,
-                                                address_of exec_items_room,
-                                                base + (positive)count + 1,
-                                                sizeof(string_address)))
-                                {
-                                        shell_memory_failed = true;
-                                        room = false;
-                                        break;
-                                }
-
-                                kept = exec_arena_copy(exec_fields[field]);
-
-                                // An arena with nothing left in it gives back
-                                // the empty string, and a loop that quietly
-                                // ran over empty items is worse than one that
-                                // stops where it ran out.
-                                if (kept == exec_nothing)
-                                {
-                                        room = false;
-                                        break;
-                                }
-
-                                exec_items[base + (positive)count++] = kept;
-                        }
+                        fields = exec_fields;
                 }
-        }
-        else
-        {
-                for (at = 0; at < (b32)shell_parameter_count; at++)
+                else
+                        fields = shell_parameter + at;
+
+                // Expanded words and retained positional arguments both own
+                // copies: nested loops may grow either source pointer table.
+                for (positive field = 0; field < made; field++)
                 {
-                        if (base > positive_max - (positive)count - 1 ||
+                        if (count == 0x7fffffff ||
+                            base > positive_max - (positive)count - 1 ||
                             !shell_array_room(exec_items, exec_items_room,
                                               base + (positive)count + 1))
                         {
                                 shell_memory_failed = true;
-                                break;
+                                return count;
                         }
-
-                        exec_items[base + (positive)count++] =
-                            exec_arena_copy(shell_parameter[at]);
+                        string_address kept = exec_arena_copy(fields[field]);
+                        if (kept == exec_nothing)
+                                return count;
+                        exec_items[base + (positive)count++] = kept;
                 }
         }
-
         return count;
 }
 
@@ -8135,48 +8090,6 @@ static COLD b32 exec_loop_assignment_error(string_address name)
         return 2;
 }
 
-static b32 exec_for(b32 index)
-{
-        parse_node address_to node = parse_nodes + index;
-        string_address name = parse_words[node->word];
-        shell_mark mark = shell_store_mark(address_of exec_store);
-        positive base = exec_items_used;
-        b32 count;
-        b32 status = 0;
-        b32 at;
-
-        token_used = 0;
-        count = exec_loop_items(node, base);
-
-        if (exec_line_aborted())
-        {
-                exec_items_used = base;
-                return exec_aborted(mark);
-        }
-
-        exec_items_used = base + (positive)count;
-
-        for (at = 0; at < count; at++)
-        {
-                if (!env_assign(name, exec_items[base + (positive)at]))
-                {
-                        status = exec_loop_assignment_error(name);
-                        break;
-                }
-
-                exec_loop_depth++;
-                status = exec_node(node->right);
-                exec_loop_depth--;
-
-                if (!exec_loop_again())
-                        break;
-        }
-
-        exec_items_used = base;
-        shell_store_rewind(address_of exec_store, mark);
-
-        return status;
-}
 
 /*
         select: a numbered menu, a prompt, and a loop that runs the body once
@@ -8414,7 +8327,7 @@ static PURE positive select_choice(b32 count)
         return value;
 }
 
-static b32 exec_select(b32 index)
+static b32 exec_for(b32 index, bool selecting)
 {
         parse_node address_to node = parse_nodes + index;
         string_address name = parse_words[node->word];
@@ -8437,57 +8350,59 @@ static b32 exec_select(b32 index)
         // Nothing to choose from is not a menu nobody answered: no menu is
         // written, the body never runs, and the construct succeeds.
         if (!count)
+                goto done;
+        if (selecting)
+                select_menu_write(base, count);
+
+        for (positive at = 0; selecting || at < (positive)count;)
         {
-                exec_items_used = base;
-                shell_store_rewind(address_of exec_store, mark);
-                return 0;
-        }
-
-        select_menu_write(base, count);
-
-        while (1)
-        {
-                string_address prompt = env_get((const_string) "PS3");
-                positive chosen;
-
-                log_error(prompt ? prompt : (string_address) "#? ", 0);
-
-                if (!select_read())
+                string_address value;
+                if (selecting)
                 {
-                        /*
-                                The end of the input ends the loop, and Bash
-                                calls that a failure rather than an empty
-                                answer.
+                        string_address prompt = env_get((const_string) "PS3");
+                        positive chosen;
 
-                                The newline that closes the unanswered prompt
-                                line goes to standard output, which is where
-                                Bash puts it and the one thing about a select
-                                that a script reading its body's output sees.
-                        */
-                        log((address_any) "\n", 1);
-                        log_flush();
-                        status = 1;
-                        break;
+                        log_error(prompt ? prompt : (string_address) "#? ", 0);
+
+                        if (!select_read())
+                        {
+                                /*
+                                        The end of the input ends the loop, and Bash
+                                        calls that a failure rather than an empty
+                                        answer.
+
+                                        The newline that closes the unanswered prompt
+                                        line goes to standard output, which is where
+                                        Bash puts it and the one thing about a select
+                                        that a script reading its body's output sees.
+                                */
+                                log((address_any) "\n", 1);
+                                log_flush();
+                                status = 1;
+                                break;
+                        }
+
+                        // An empty line asks for the menu again and nothing else.
+                        if (!select_reply_used)
+                        {
+                                select_menu_write(base, count);
+                                continue;
+                        }
+
+                        if (!env_assign((const_string) "REPLY", select_reply))
+                        {
+                                string_format(exec_error, "REPLY: cannot assign\n");
+                                status = 2;
+                                break;
+                        }
+
+                        chosen = select_choice(count);
+                        value = chosen ? exec_items[base + chosen - 1]
+                                       : (string_address)"";
                 }
-
-                // An empty line asks for the menu again and nothing else.
-                if (!select_reply_used)
-                {
-                        select_menu_write(base, count);
-                        continue;
-                }
-
-                if (!env_assign((const_string) "REPLY", select_reply))
-                {
-                        string_format(exec_error, "REPLY: cannot assign\n");
-                        status = 2;
-                        break;
-                }
-
-                chosen = select_choice(count);
-
-                if (!env_assign(name, chosen ? exec_items[base + chosen - 1]
-                                             : (string_address) ""))
+                else
+                        value = exec_items[base + at++];
+                if (!env_assign(name, value))
                 {
                         status = exec_loop_assignment_error(name);
                         break;
@@ -8501,6 +8416,7 @@ static b32 exec_select(b32 index)
                         break;
         }
 
+done:
         exec_items_used = base;
         shell_store_rewind(address_of exec_store, mark);
 
@@ -10664,9 +10580,9 @@ static b32 exec_node_kind(b32 index)
         else if (node->kind == NODE_UNTIL)
                 status = exec_loop(index, true);
         else if (node->kind == NODE_FOR)
-                status = exec_for(index);
+                status = exec_for(index, false);
         else if (node->kind == NODE_SELECT)
-                status = exec_select(index);
+                status = exec_for(index, true);
         else if (node->kind == NODE_COPROC)
                 status = exec_coproc(index);
         else if (node->kind == NODE_CFOR)

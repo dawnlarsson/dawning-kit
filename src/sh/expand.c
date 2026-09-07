@@ -1828,69 +1828,6 @@ static inline INLINE fn expand_sequence_between(bool fields, p8 between, p8 mark
                 expand_push(between, mark);
 }
 
-/*
-        The exact one-byte trim at the hardware floor.
-
-        ${name#?} and ${name%?} are common ways to consume one byte from a
-        shell value. The general pattern path first copies the whole value and
-        its mark bytes, captures `?`, invokes the matcher, then moves the
-        surviving value back over the byte it removed. For an ordinary named
-        variable and this exact pattern, the result is already a span of the
-        stable environment value. A bounded hash and the value length metadata
-        select that span without a scan or a temporary copy.
-
-        Special and positional parameters retain their existing path because
-        their value may have to be formatted or joined first.
-*/
-static fn expand_push_named_trim_one(string_address name, positive name_length,
-                                     bool prefix, bool quoted)
-{
-        positive value_length;
-        string_address value = env_get_hashed_span(
-            name, name_length, memory_hash_33(name, name_length),
-            address_of value_length);
-
-        if (!value)
-        {
-                // ${RANDOM#?} trims a name with no record, so the miss asks
-                // the dynamic family before it decides there is nothing here.
-                value = shell_dynamic_value(name, name_length,
-                                            memory_hash_33(name, name_length),
-                                            address_of value_length);
-        }
-
-        if (!value)
-        {
-                if (shell_options & ((positive)1 << ('u' - 'a')))
-                {
-                        string_format(expand_complain,
-                                      "%s: parameter not set\n", name);
-                        expand_fatal_status(shell_bash_compat ? 1 : 2);
-                }
-
-                return;
-        }
-
-        if (value_length)
-        {
-                positive removed = 1;
-                // ASCII at the selected edge is one byte in either mode.
-                // Keep the common trim independent of locale lookup.
-                if ((prefix ? value[0] : value[value_length - 1]) >= 0x80 &&
-                    shell_utf8_on())
-                        removed = prefix
-                            ? expand_character_width(value, value_length)
-                            : value_length - expand_character_previous(value,
-                                                                        value_length);
-                if (prefix)
-                        value += removed;
-
-                value_length -= removed;
-        }
-
-        expand_push_run(value, value_length,
-                        quoted ? MARK_QUOTED : MARK_FIELD);
-}
 
 static fn expand_into(string_address text, bool quoted, p8 plain,
                       bool assignment);
@@ -2948,90 +2885,6 @@ static bipolar arith_choose()
         return active ? (value ? taken : left) : 0;
 }
 
-/*
-        The control-loop kernel is a name, one add/subtract, and a literal:
-
-                i=$((i + 1))
-
-        Sending that through every precedence level costs more than the
-        lookup and addition themselves. Recognize only the complete, exact
-        shape before reading the name, so a failed probe cannot duplicate an
-        assignment, increment, nounset error, or other arithmetic side
-        effect. Everything richer stays with the grammar below.
-*/
-static bool arith_simple_addition(string_address text,
-                                  bipolar address_to answer)
-{
-        string_address at = text;
-        string_address name_start;
-        string_address number_at;
-        p8 name_local[EXPAND_LOCAL_NAME];
-        string_address name;
-        positive name_length;
-        bipolar right;
-        bool valid;
-        p8 op;
-
-        at = arith_skip_space(at);
-
-        if (!((string_get(at) >= 'a' && string_get(at) <= 'z') ||
-              (string_get(at) >= 'A' && string_get(at) <= 'Z') ||
-              string_is(at, '_')))
-                return false;
-
-        name_start = at;
-        while (expand_name_character(string_get(at)))
-                at++;
-        name_length = at - name_start;
-
-        at = arith_skip_space(at);
-
-        op = string_get(at);
-        if (op != '+' && op != '-')
-                return false;
-        at++;
-
-        at = arith_skip_space(at);
-
-        if (string_get(at) < '0' || string_get(at) > '9')
-                return false;
-
-        number_at = at;
-        right = expand_base_number(address_of at, address_of valid);
-
-        at = arith_skip_space(at);
-
-        if (!valid || at == number_at || string_get(at))
-                return false;
-
-        name = expand_hold(name_start, name_length, name_local,
-                           sizeof(name_local));
-        if (!name)
-        {
-                arith_bad = true;
-                address_to answer = 0;
-                return true;
-        }
-
-        {
-                p8 scratch[32];
-                string_address expression;
-                bipolar left = arith_number_of(name, scratch,
-                                               address_of expression);
-
-                // A name holding an expression is not this shape after all.
-                // Hand it back rather than reach the grammar from here, which
-                // is what keeps this whole path out of the recursion.
-                if (expression)
-                        return false;
-
-                address_to answer = op == '+'
-                                          ? arith_addition(left, right)
-                                          : arith_subtraction(left, right);
-        }
-
-        return true;
-}
 
 // The comma sequence is the outer arithmetic grammar, including parenthesis
 // groups, recursive variable values and a ternary's middle operand. Keeping
@@ -3068,12 +2921,6 @@ static bipolar arith_evaluate(string_address text)
                 arith_bad = true;
                 return 0;
         }
-
-        /* This is the overwhelmingly common arithmetic path and its grammar
-           is identical in every personality. Keep Bash-mode state entirely
-           out of it. */
-        if (arith_simple_addition(text, address_of value))
-                return value;
 
         bool held_bash_mode = arith_bash_mode;
 
@@ -5120,282 +4967,163 @@ static COLD bool expand_assign_named(string_address name, string_address value)
                                false);
 }
 
-/*
-        Every element of an array, as fields or as one joined field.
-
-        This is the rule "$@" and $* already answer to, because Bash gives
-        arrays exactly that rule: [@] inside double quotes makes its own
-        field boundaries so an element with a space in it stays whole, and
-        every other spelling joins on the first byte of IFS and lets field
-        splitting take the join apart again.
-
-        The elements are pushed straight out of the table they are held in.
-        Nothing is gathered into a joined string first and split out of it
-        after, so a value is written into the word once and not twice.
-*/
-static COLD bool expand_push_array(string_address name, positive length, p8 form,
-                              bool quoted, bool keys)
+/* Scalar and per-element forms share the same modifier dispatch. The
+   replacement separator is restored because array elements reuse the word. */
+static fn expand_modifier(string_address name, p8 operation, bool doubled,
+                           string_address word, bool quoted, b32 parameter_mode)
 {
-        p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
-        p8 written[32];
-        shell_mark held = shell_store_mark(address_of expand_store);
-        shell_array_item address_to items;
-        positive count = shell_array_length(name, length);
-        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
-        p8 between = string_get(expand_ifs());
-
-        if (!count)
+        if (operation == '#' || operation == '%')
         {
-                // "${a[@]}" of an empty array is no field at all, the way
-                // "$@" with no parameters is no field: the quotes are not
-                // what makes an argument here.
-                if (form == '@')
-                        expand_name_at_empty = true;
-
-                return false;
+                positive start = expand_length;
+                expand_push_parameter_as(name, quoted, parameter_mode);
+                string_address pattern = expand_capture(
+                    word, false, EXPAND_CAPTURE_PATTERN);
+                if (!expand_failed)
+                        expand_trim(start, pattern, operation == '#', doubled);
         }
-
-        items = (shell_array_item address_to)shell_store_take(
-            address_of expand_store, count * sizeof(items[0]));
-
-        if (!items)
+        else if (operation == '/')
         {
-                expand_fail_state();
-                return false;
+                string_address separator = expand_replace_separator(word);
+                string_address replacement = (string_address)"";
+                if (separator)
+                {
+                        *separator = end;
+                        replacement = separator + 1;
+                }
+                expand_replace(name, word, replacement, quoted, doubled,
+                               parameter_mode);
+                if (separator)
+                        *separator = '/';
         }
-
-        shell_array_items(name, length, items, count);
-
-        for (positive at = 0; at < count; at++)
-        {
-                if (at)
-                        expand_sequence_between(fields, between, mark);
-
-                if (!keys)
-                        expand_push_run(items[at].value, items[at].value_length,
-                                        mark);
-                else if (items[at].key)
-                        expand_push_run(items[at].key, items[at].key_length,
-                                        mark);
-                else
-                        expand_push_run(written,
-                                        bipolar_into_string(
-                                            written, (bipolar)items[at].index),
-                                        mark);
-        }
-
-        shell_store_rewind(address_of expand_store, held);
-
-        return true;
+        else if (operation == ':')
+                expand_substring(name, word, quoted, parameter_mode);
+        else if (operation == '^' || operation == ',')
+                expand_case_change(name, word, quoted, operation == '^',
+                                   doubled, parameter_mode);
+        else
+                expand_transform(name, word, quoted, parameter_mode);
 }
 
-/*
-        ${a[@]:offset:count} selects elements and not bytes.
-
-        The two numbers are read the same way the string form reads them,
-        because they are the same arithmetic; what differs is only what they
-        count. A negative offset counts back from one past the highest
-        index, not from the number of elements: holes still occupy indices.
-*/
-static COLD fn expand_array_slice(string_address name, positive length, p8 form,
-                             string_address expression, bool quoted)
+/* Values, keys, slices and per-element modifiers all retain one inventory
+   and share field/empty-array policy. Quoted [@] supplies field boundaries;
+   the other forms join on IFS for the normal splitting stage. */
+static COLD fn expand_array_sequence(string_address name, positive length,
+                                     p8 form, p8 operation, bool doubled,
+                                     string_address word, bool quoted, bool keys)
 {
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
-        shell_mark held = shell_store_mark(address_of expand_store);
-        shell_array_item address_to items;
-        positive count = shell_array_length(name, length);
-        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
         p8 between = string_get(expand_ifs());
-        positive offset;
-        positive wanted;
-        positive begin;
+        bool fields = quoted ? form == '@' : !between;
+        bool slice = operation == ':';
+        bool transform = operation && !slice;
+        shell_mark held = shell_store_mark(address_of expand_store);
+        positive count = shell_array_length(name, length);
+        positive begin = 0;
         positive finish;
+        positive offset = 0;
+        positive wanted = positive_max;
+        shell_array_item address_to items;
+        p8 written[32];
+        p8 element_local[EXPAND_LOCAL_NAME];
 
         if (!count)
+                goto empty;
+
+        if (slice)
         {
-                if (form == '@')
-                        expand_name_at_empty = true;
-                return;
+                if (!expand_slice_bounds(name, word, length, 0, SLICE_ARRAY,
+                                         address_of offset, address_of wanted) ||
+                    !wanted)
+                        goto empty;
+                // Offset arithmetic may replace the array. Borrow its live
+                // elements only after evaluating both bounds.
+                count = shell_array_length(name, length);
+                if (!count)
+                        goto empty;
         }
 
-        if (!expand_slice_bounds(name, expression, length, 0, SLICE_ARRAY,
-                                 address_of offset, address_of wanted) || !wanted)
-        {
-                if (form == '@')
-                        expand_name_at_empty = true;
-                shell_store_rewind(address_of expand_store, held);
-                return;
-        }
-
-        // Arithmetic can change the array. Take the current elements only
-        // after it has finished; borrowed element pointers cannot survive a
-        // write to their owning environment cell.
-        count = shell_array_length(name, length);
-        items = (shell_array_item address_to)shell_store_take(
-            address_of expand_store, count * sizeof(items[0]));
-
-        if (!items)
+        if (count > positive_max / sizeof(items[0]) ||
+            !(items = (shell_array_item address_to)shell_store_take(
+                  address_of expand_store, count * sizeof(items[0]))))
         {
                 expand_fail_state();
-                return;
+                goto done;
         }
-
         shell_array_items(name, length, items, count);
 
-        // The shared array inventory is index-sorted. Find the first member
-        // at or above the requested index without walking a sparse prefix.
-        begin = 0;
         finish = count;
-        while (begin < finish)
+        if (slice)
         {
-                positive middle = begin + (finish - begin) / 2;
-                if (items[middle].index < offset)
-                        begin = middle + 1;
-                else
-                        finish = middle;
+                // Sparse indexed slices begin at the first live index, not
+                // at the offset-th element.
+                while (begin < finish)
+                {
+                        positive middle = begin + (finish - begin) / 2;
+                        if (items[middle].index < offset)
+                                begin = middle + 1;
+                        else
+                                finish = middle;
+                }
+                finish = wanted < count - begin ? begin + wanted : count;
         }
-        finish = wanted < count - begin ? begin + wanted : count;
+        if (begin == finish)
+                goto empty;
 
-        if (begin == finish && form == '@')
-                expand_name_at_empty = true;
-
-        for (positive at = begin; at < finish; at++)
+        for (positive at = begin; at < finish && !expand_failed; at++)
         {
                 if (at > begin)
                         expand_sequence_between(fields, between, mark);
 
-                expand_push_run(items[at].value, items[at].value_length, mark);
-        }
+                if (!transform && (!keys || slice))
+                {
+                        expand_push_run(items[at].value, items[at].value_length,
+                                        mark);
+                        continue;
+                }
 
-        shell_store_rewind(address_of expand_store, held);
-}
-
-/*
-        One element name per element, so that the byte operators need no
-        array form of their own.
-
-        ${a[@]#pat}, ${a[@]/x/y} and ${a[@]^^} all mean "that operator, on
-        each element". Naming each element and handing the existing operator
-        the name it already understands keeps one implementation of each
-        instead of an array-shaped copy of five of them.
-*/
-static COLD fn expand_array_each(string_address name, positive length, p8 form,
-                            p8 operation, bool doubled, string_address word,
-                            bool quoted)
-{
-        p8 element_local[EXPAND_LOCAL_NAME];
-        p8 written[32];
-        shell_mark held = shell_store_mark(address_of expand_store);
-        shell_array_item address_to items;
-        positive count = shell_array_length(name, length);
-        bool fields = quoted ? form == '@' : !string_get(expand_ifs());
-        p8 between = string_get(expand_ifs());
-
-        if (!count)
-        {
-                if (form == '@')
-                        expand_name_at_empty = true;
-                return;
-        }
-
-        items = (shell_array_item address_to)shell_store_take(
-            address_of expand_store, count * sizeof(items[0]));
-
-        if (!items)
-        {
-                expand_fail_state();
-                return;
-        }
-
-        shell_array_items(name, length, items, count);
-
-        for (positive at = 0; at < count; at++)
-        {
                 string_address key = items[at].key;
                 positive key_length = items[at].key_length;
-                string_address element;
-                positive start;
-
                 if (!key)
                 {
                         key_length = bipolar_into_string(
                             written, (bipolar)items[at].index);
                         key = written;
                 }
-
-                if (at)
-                        expand_sequence_between(fields, between,
-                                                quoted ? MARK_QUOTED : MARK_FIELD);
-
+                if (!transform)
                 {
-                        positive needed = length + key_length + 3;
-                        p8 address_to made =
-                            needed <= sizeof(element_local)
-                                ? element_local
-                                : shell_store_take(address_of expand_store,
-                                                   needed);
-
-                        if (!made)
-                        {
-                                expand_fail_state();
-                                return;
-                        }
-
-                        memory_copy(made, name, length);
-                        made[length] = '[';
-                        memory_copy(made + length + 1, key, key_length);
-                        made[length + 1 + key_length] = ']';
-                        made[length + 2 + key_length] = end;
-                        element = made;
+                        expand_push_run(key, key_length, mark);
+                        continue;
                 }
 
-                start = expand_length;
-
-                if (operation == '/')
+                if (key_length > positive_max - 3 ||
+                    length > positive_max - key_length - 3)
                 {
-                        string_address separator =
-                            expand_replace_separator(word);
-                        string_address replacement = (string_address) "";
-                        p8 held_byte = 0;
-
-                        if (separator)
-                        {
-                                held_byte = separator[0];
-                                separator[0] = end;
-                                replacement = separator + 1;
-                        }
-
-                        expand_replace(element, word, replacement, quoted,
-                                       doubled, 0);
-
-                        // The word is walked again for the next element, so
-                        // the separator it was cut at has to be put back.
-                        if (separator)
-                                separator[0] = held_byte;
+                        expand_fail_state();
+                        break;
                 }
-                else if (operation == '^' || operation == ',')
-                        expand_case_change(element, word, quoted,
-                                           operation == '^', doubled, 0);
-                else if (operation == '@')
-                        expand_transform(element, word, quoted, 0);
-                else
+                positive needed = length + key_length + 3;
+                p8 address_to element = needed <= sizeof(element_local)
+                    ? element_local
+                    : shell_store_take(address_of expand_store, needed);
+                if (!element)
                 {
-                        string_address pattern;
-
-                        expand_push_parameter_as(element, quoted, 0);
-                        pattern = expand_capture(word, false,
-                                                 EXPAND_CAPTURE_PATTERN);
-
-                        if (expand_failed)
-                                return;
-
-                        expand_trim(start, pattern, operation == '#', doubled);
+                        expand_fail_state();
+                        break;
                 }
-
-                if (expand_failed)
-                        return;
+                memory_copy(element, name, length);
+                element[length] = '[';
+                memory_copy(element + length + 1, key, key_length);
+                element[length + key_length + 1] = ']';
+                element[length + key_length + 2] = end;
+                expand_modifier(element, operation, doubled, word, quoted, 0);
         }
+        goto done;
 
+empty:
+        // Quoted @ over no elements is no field, not one empty field.
+        if (form == '@')
+                expand_name_at_empty = true;
+done:
         shell_store_rewind(address_of expand_store, held);
 }
 
@@ -5456,12 +5184,11 @@ static COLD fn expand_array_form(string_address name, positive length,
                 return;
         }
 
-        if (operation == ':')
-                expand_array_slice(name, length, form, word, quoted);
-        else if (operation == '#' || operation == '%' || operation == '/' ||
-                 operation == '^' || operation == ',' || operation == '@')
-                expand_array_each(name, length, form, operation, doubled,
-                                  word, quoted);
+        if (operation == ':' || operation == '#' || operation == '%' ||
+            operation == '/' || operation == '^' || operation == ',' ||
+            operation == '@')
+                expand_array_sequence(name, length, form, operation, doubled,
+                                      word, quoted, keys);
         else if (operation == '-' && !held)
                 expand_word_into(word, quoted);
         else if (operation == '+' && held)
@@ -5477,7 +5204,8 @@ static COLD fn expand_array_form(string_address name, positive length,
                 expand_parameter_unset_error(name, said, parameter_mode);
         }
         else if (operation != '+')
-                expand_push_array(name, length, form, quoted, keys);
+                expand_array_sequence(name, length, form, 0, false, word,
+                                      quoted, keys);
 }
 
 static string_address expand_braced(string_address step, bool quoted)
@@ -5844,91 +5572,24 @@ static string_address expand_braced(string_address step, bool quoted)
                 return close + 1;
         }
 
-        if (operation == '#' || operation == '%')
-        {
-                string_address pattern;
-                positive start = expand_length;
-
-                if (!(parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
-                    !doubled && string_is(word, '?') &&
-                    string_is(word + 1, end) &&
-                    ((string_get(name) >= 'a' && string_get(name) <= 'z') ||
-                     (string_get(name) >= 'A' && string_get(name) <= 'Z') ||
-                     string_is(name, '_')))
-                {
-                        expand_push_named_trim_one(name, length,
-                                                   operation == '#', quoted);
-                        return close + 1;
-                }
-
-                expand_push_parameter_as(name, quoted, parameter_mode);
-
-                /*
-                        The pattern is not inside the quotes around the whole
-                        of this. A star in it is a star whether or not the
-                        substitution stands in double quotes; handing the
-                        outer quoting in marked every byte of the pattern
-                        quoted, so the star was escaped and the only prefix
-                        that ever matched was a literal one.
-                */
-                pattern = expand_capture(word, false, true);
-
-                if (expand_failed)
-                        return close + 1;
-
-                expand_trim(start, pattern, operation == '#', doubled);
-
-                return close + 1;
-        }
-
-        if (operation == '/')
-        {
-                string_address separator = expand_replace_separator(word);
-                string_address pattern = word;
-                string_address replacement = (string_address) "";
-
-                if (separator)
-                {
-                        separator[0] = end;
-                        replacement = separator + 1;
-                }
-
-                expand_replace(name, pattern, replacement, quoted, doubled,
-                               parameter_mode);
-
-                return close + 1;
-        }
-
-        if (operation == ':')
-        {
-                expand_substring(name, word, quoted, parameter_mode);
-                return close + 1;
-        }
-
-        if (operation == '^' || operation == ',')
-        {
-                expand_case_change(name, word, quoted, operation == '^',
-                                   doubled, parameter_mode);
-                return close + 1;
-        }
-
         if (operation == '@')
         {
                 p8 which = string_get(word);
-
-                // One letter and one of the five, or the whole substitution
-                // is a spelling nobody wrote on purpose.
                 if (!which || string_get(word + 1) ||
-                    !string_first_of((string_address) "QEULua", which))
+                    !string_first_of((string_address)"QEULua", which))
                 {
                         string_format(expand_complain,
                                       "%s: bad substitution\n", name);
                         expand_fatal_mode(parameter_mode);
-
                         return close + 1;
                 }
-
-                expand_transform(name, word, quoted, parameter_mode);
+        }
+        if (operation == '#' || operation == '%' || operation == '/' ||
+            operation == ':' || operation == '^' || operation == ',' ||
+            operation == '@')
+        {
+                expand_modifier(name, operation, doubled, word, quoted,
+                                parameter_mode);
                 return close + 1;
         }
 
@@ -6727,68 +6388,63 @@ static fn glob_walk(p8 address_to prefix, positive used, string_address pattern,
         if (directory < 0)
                 return;
 
-        while (!glob_failed)
+        positive have = 0, at = 0;
+        bipolar error = 0;
+        struct linux_dirent64 address_to entry;
+        while (!glob_failed &&
+               (entry = file_directory_next(directory, block, sizeof(block),
+                                             address_of have, address_of at,
+                                             address_of error)))
         {
-                bipolar got = system_read_directory(directory, block, sizeof(block));
-                if (got < 0)
-                        glob_failed = true;
-                if (got <= 0)
-                        break;
+                string_address named = (string_address)entry->d_name;
+                if (shell_bash_compat && shell_shopt_on(GLOBSKIPDOTS) &&
+                    file_is_dot(named))
+                        continue;
+                // Explicit (including escaped) dots are ordinary
+                // pattern matches. ** never visits . or .., even
+                // with dotglob; that would recurse back into itself.
+                if (named[0] == '.' &&
+                    (star || component[component[0] == '\\'] != '.') &&
+                    (!dotted || file_is_dot(named)))
+                        continue;
+                if (!star && !shell_match_folded(component, named, folded))
+                        continue;
 
-                for (p8 address_to step = block; step < block + got && !glob_failed;)
+                positive run = string_length_max(named, GLOB_PATH - used);
+                positive out = used + run;
+                // ** also needs a slash for recursive descent.
+                if (out + (star ? 1 : 0) >= GLOB_PATH)
                 {
-                        struct linux_dirent64 address_to entry =
-                            (struct linux_dirent64 address_to)step;
-                        string_address named = (string_address)entry->d_name;
-                        step += entry->d_reclen;
+                        glob_failed = true;
+                        break;
+                }
+                memory_copy_apart(prefix + used, named, run);
 
-                        if (shell_bash_compat && shell_shopt_on(GLOBSKIPDOTS) &&
-                            file_is_dot(named))
-                                continue;
-                        // Explicit (including escaped) dots are ordinary
-                        // pattern matches. ** never visits . or .., even
-                        // with dotglob; that would recurse back into itself.
-                        if (named[0] == '.' &&
-                            (star || component[component[0] == '\\'] != '.') &&
-                            (!dotted || file_is_dot(named)))
-                                continue;
-                        if (!star && !shell_match_folded(component, named, folded))
-                                continue;
-
-                        positive run = string_length_max(named, GLOB_PATH - used);
-                        positive out = used + run;
-                        // ** also needs a slash for recursive descent.
-                        if (out + (star ? 1 : 0) >= GLOB_PATH)
+                if (!star)
+                        glob_walk(prefix, out, rest, depth + 1);
+                else
+                {
+                        if (!string_get(rest))
                         {
-                                glob_failed = true;
-                                break;
+                                prefix[out] = end;
+                                glob_add(prefix);
                         }
-                        memory_copy_apart(prefix + used, named, run);
-
-                        if (!star)
-                                glob_walk(prefix, out, rest, depth + 1);
-                        else
+                        // Unknown directory types are resolved by
+                        // the recursive open; symlinks are not followed.
+                        bool link_directory = entry->d_type == 10 &&
+                                              string_equals(rest, "/");
+                        if (entry->d_type == 4 || entry->d_type == 0 ||
+                            link_directory)
                         {
-                                if (!string_get(rest))
-                                {
-                                        prefix[out] = end;
-                                        glob_add(prefix);
-                                }
-                                // Unknown directory types are resolved by
-                                // the recursive open; symlinks are not followed.
-                                bool link_directory = entry->d_type == 10 &&
-                                                      string_equals(rest, "/");
-                                if (entry->d_type == 4 || entry->d_type == 0 ||
-                                    link_directory)
-                                {
-                                        prefix[out] = '/';
-                                        glob_walk(prefix, out + 1,
-                                                  link_directory ? rest + 1 : whole,
-                                                  depth + 1);
-                                }
+                                prefix[out] = '/';
+                                glob_walk(prefix, out + 1,
+                                          link_directory ? rest + 1 : whole,
+                                          depth + 1);
                         }
                 }
         }
+        if (error < 0)
+                glob_failed = true;
         system_close(directory);
 }
 

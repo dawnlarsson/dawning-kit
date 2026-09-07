@@ -154,6 +154,25 @@ def _nested_loop_items(rng):
     return "nested-loop-items", modes, script
 
 
+def _loop_control_transition(rng):
+    """Both item sources retain outer-loop control and parameter ownership."""
+    kind = rng.choice(("for", "select"))
+    explicit = rng.choice(("", " in first '' 'two words'"))
+    action = rng.choice((":", "false", "break", "continue", "break 2", "continue 2"))
+    script = ("set -- first '' 'two words'\nhits=0\n"
+              "for outer in one two; do\n" + kind + " inner" + explicit + "; do\n"
+              "hits=$((hits+1)); printf '%s:<%s>:%s\\n' \"$outer\" \"$inner\" \"$hits\"\n"
+              "set -- changed params\n" + action + "\necho body-tail\ndone")
+    if kind == "select":
+        script += " <<'CHOICES'\n\n0\nnot-a-number\n1\n2\nCHOICES\n"
+    else:
+        script += "\n"
+    script += ("printf 'loop:%s\\n' \"$?\"\ndone\n"
+               "printf 'end:%s:%s:<%s>\\n' \"$?\" \"$hits\" \"$*\"\n")
+    modes = ("bash", "posix") if kind == "select" else ("bash", "posix", "dash")
+    return "loop-control-transition", modes, script
+
+
 def _function_serialization(rng):
     """Round-trip retained ASTs, varying structure as well as operand bytes."""
     value = rng.choice(("plain", "two words", "quote'and\"slash\\", "é🌙"))
@@ -408,7 +427,8 @@ def _readonly_scope(rng):
 GENERATORS = (_special_prefix, _command_exception, _disabled_special,
               _control_status,
               _errexit_context, _child_exit, _inherited_exit, _rhs_status,
-              _function_scope, _nested_loop_items, _function_serialization,
+              _function_scope, _nested_loop_items, _loop_control_transition,
+              _function_serialization,
               _function_heredoc_serialization,
               _function_control_heredoc_serialization,
               _redirect_cardinality, _pipeline_context,

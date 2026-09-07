@@ -178,7 +178,9 @@ def indexed_array(rng):
 
 
 def associative_array(rng):
-    keys = rng.sample(("x", "y", "long-key", "2", "a b"), 3)
+    # ab and bA collide under the shared 33-based hash: equality still needs
+    # the key bytes, including on the COW write/removal paths.
+    keys = rng.sample(("x", "y", "ab", "bA", "long-key", "2", "a b"), 3)
     values = rng.sample(("one", "two words", "", "q:r", "last"), 3)
     action = rng.choice(("write", "append", "unset"))
     setup = [f"m[{quote(key)}]={quote(value)}"
@@ -314,6 +316,42 @@ def array_transform(rng):
         "IFS=" + quote(separator),
         "set -- " + form,
         "printf 'n=%s' \"$#\"; for v do printf '<%s>' \"$v\"; done; echo")
+
+
+def array_sequence_transition(rng):
+    """Reuse one sparse inventory across keys, slices and byte modifiers."""
+    values = rng.sample(("", "a", "two words", "x:y", "AB", "aa", "slash/a"),
+                        rng.randrange(0, 7))
+    indices = sorted(rng.sample((0, 1, 2, 7, 31, 99, 101), len(values)))
+    setup = "a=(" + " ".join(f"[{i}]={quote(v)}" for i, v in zip(indices, values)) + ")"
+    form = rng.choice(("@", "*"))
+    op = rng.choice(("", "#?", "%?", "/a/x", "//a/a/b", "^^", ",,", "@Q",
+                     ": 0:2", ": -2:1", ": 999:1"))
+    name = rng.choice(("a", "ref"))
+    if name == "ref":
+        setup += "\ndeclare -n ref=a"
+    expression = '"${' + name + '[' + form + ']' + op + '}"'
+    expression = rng.choice(("", "pre", "''")) + expression + rng.choice(("", "post", "''"))
+    # Array ordering is stable by numeric index; exercise adjacent output
+    # boundaries and repeated replacement-word reuse in the same expansion.
+    return "array-sequence-transition", ("bash", "posix"), program(
+        setup, "IFS=" + quote(rng.choice(("", " ", ":"))),
+        "observe() { printf 'n=%s' \"$#\"; for v do printf '<%s>' \"$v\"; done; echo; }",
+        "observe " + expression + ' "${!' + name + '[@]}" ' + expression)
+
+
+def arithmetic_simple_transition(rng):
+    """The complete grammar also handles the former name/literal shortcut."""
+    value = rng.choice(("0", "17", "-21", "007", "0x10", " 23 ", "", "unset"))
+    operator = rng.choice(("+", "-"))
+    literal = rng.choice(("0", "1", "07", "0x20", "2147483647"))
+    spacing = rng.choice(("", " ", "\t", "\n"))
+    expression = "x" + spacing + operator + spacing + literal
+    setup = "unset x" if value == "unset" else "x=" + quote(value)
+    return "arithmetic-simple-transition", MODES, program(
+        setup, "set " + ("+u" if value == "unset" else rng.choice(("-u", "+u"))),
+        "f() { printf 'value:%s\\n' \"$((" + expression + "))\"; }",
+        "f; printf 'after:%s:<%s>\\n' \"$?\" \"${x-unset}\"")
 
 
 def sequence_empty_fields(rng):
@@ -595,6 +633,8 @@ GENERATORS = (
     substring,
     sequence_slice,
     array_transform,
+    array_sequence_transition,
+    arithmetic_simple_transition,
     sequence_empty_fields,
     slice_effects,
     character_length,

@@ -2153,6 +2153,35 @@ static PURE positive array_index_of(const_string key, positive key_length)
         return value;
 }
 
+typedef struct
+{
+        positive key;
+        positive at;
+        bool keyed;
+        bool found;
+} array_location;
+
+/* Reads, writes and removals use the same insertion position and exact-hit
+   test. Indexed zero remains the variable's scalar cell, not a table slot. */
+static COLD array_location array_locate(env_variable address_to variable,
+                                         const_string key, positive length)
+{
+        array_table address_to table = array_table_of(variable);
+        array_location located = {0};
+        located.keyed = (variable->attributes & SHELL_ARRAY_ASSOCIATIVE) != 0;
+        located.key = located.keyed ? memory_hash_33((address_any)key, length)
+                                    : array_index_of(key, length);
+        if (table && (located.keyed || located.key))
+        {
+                located.at = located.keyed
+                    ? array_keyed_place(table, located.key, key, length)
+                    : array_place(table, located.key);
+                located.found = located.at < table->count &&
+                    (located.keyed || table->element[located.at].key == located.key);
+        }
+        return located;
+}
+
 COLD PURE p8 shell_variable_attributes(const_string name, positive length)
 {
         positive found = env_find_span(name, length);
@@ -2459,65 +2488,28 @@ COLD string_address shell_array_get(const_string name, positive length,
                                positive address_to value_length)
 {
         env_reference resolved = shell_array_reference(name, length, true);
-        env_variable address_to variable;
-        array_table address_to table;
-        positive at;
-
         if (!resolved.valid || resolved.element ||
             resolved.index >= shell_var_count)
                 return null;
 
-        variable = shell_vars + resolved.index;
-        table = array_table_of(variable);
-
-        if (variable->attributes & SHELL_ARRAY_ASSOCIATIVE)
+        env_variable address_to variable = shell_vars + resolved.index;
+        array_location located = array_locate(variable, key, key_length);
+        if (!located.keyed && !located.key)
         {
-                if (!table)
+                if (!env_variable_has_value(variable))
                         return null;
-
-                at = array_keyed_place(
-                    table, memory_hash_33((address_any)key, key_length), key,
-                    key_length);
-
-                if (at >= table->count)
-                        return null;
-
                 if (value_length)
-                        address_to value_length =
-                            table->element[at].value_length;
-
-                return array_element_value(table->element + at);
+                        *value_length = variable->value_length;
+                return variable->text + resolved.length + 1;
         }
+        if (!located.found)
+                return null;
 
-        {
-                positive index = array_index_of(key, key_length);
-
-                if (!index)
-                {
-                        if (!env_variable_has_value(variable))
-                                return null;
-
-                        if (value_length)
-                                address_to value_length =
-                                    variable->value_length;
-
-                        return variable->text + resolved.length + 1;
-                }
-
-                if (!table)
-                        return null;
-
-                at = array_place(table, index);
-
-                if (at >= table->count || table->element[at].key != index)
-                        return null;
-
-                if (value_length)
-                        address_to value_length =
-                            table->element[at].value_length;
-
-                return array_element_value(table->element + at);
-        }
+        array_element address_to element =
+            array_table_of(variable)->element + located.at;
+        if (value_length)
+                *value_length = element->value_length;
+        return array_element_value(element);
 }
 
 /*
@@ -2576,9 +2568,6 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
         env_variable address_to variable =
             null;
         array_table address_to table;
-        bool keyed;
-        positive index = 0;
-        positive at;
 
         if (!resolved.valid)
                 return true;
@@ -2594,18 +2583,16 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
             (variable->attributes & SHELL_ARRAY_READONLY))
                 return false;
 
-        keyed = (variable->attributes & SHELL_ARRAY_ASSOCIATIVE) != 0;
+        array_location located = array_locate(variable, key, key_length);
 
-        if (!keyed)
+        if (!located.keyed)
         {
                 // A subscript on a name nobody declared declares it indexed,
                 // which is what `a[5]=w` on an unknown name means in Bash.
                 variable->attributes |=
                     SHELL_ARRAY_INDEXED | SHELL_ARRAY_ASSIGNED;
                 variable->declared = true;
-                index = array_index_of(key, key_length);
-
-                if (!index)
+                if (!located.key)
                         return array_scalar_write(name, length, hash, value,
                                                   append);
         }
@@ -2626,24 +2613,10 @@ COLD bool shell_array_set(const_string name, positive length, const_string key,
                 return false;
         table = array_table_of(variable);
 
-        if (keyed)
-        {
-                positive key_hash =
-                    memory_hash_33((address_any)key, key_length);
-
-                at = array_keyed_place(table, key_hash, key, key_length);
-
-                return array_element_write(table, at, at >= table->count,
-                                           key_hash, key, key_length, value,
-                                           string_length(env_reading(value)),
-                                           append);
-        }
-
-        at = array_place(table, index);
-
         return array_element_write(
-            table, at, at >= table->count || table->element[at].key != index,
-            index, null, 0, value, string_length(env_reading(value)), append);
+            table, located.at, !located.found, located.key,
+            located.keyed ? key : null, located.keyed ? key_length : 0,
+            value, string_length(env_reading(value)), append);
 }
 
 /*
@@ -2783,98 +2756,45 @@ static COLD bool shell_array_forget_mode(const_string name, positive length,
                                          bool allow_readonly)
 {
         env_reference resolved = env_reference_span(name, length);
-        env_variable address_to variable;
-        array_table address_to table;
-        positive at;
-
-        if (!resolved.valid)
-                return true;
-        if (resolved.element)
-                return true;
-
-        if (resolved.index >= shell_var_count)
+        if (!resolved.valid || resolved.element ||
+            resolved.index >= shell_var_count)
                 return true;
 
         name = resolved.name;
         length = resolved.length;
-        variable = shell_vars + resolved.index;
-
-        if (!allow_readonly &&
-            (variable->attributes & SHELL_ARRAY_READONLY))
+        env_variable address_to variable = shell_vars + resolved.index;
+        if (!allow_readonly && (variable->attributes & SHELL_ARRAY_READONLY))
                 return false;
 
-        table = array_table_of(variable);
-
-        if (variable->attributes & SHELL_ARRAY_ASSOCIATIVE)
+        array_location located = array_locate(variable, key, key_length);
+        if (!located.keyed && !located.key)
         {
-                if (!table)
+                // Indexed zero is the scalar cell. Keep the name and its
+                // attributes, taking owned storage before changing inherited text.
+                if (!env_variable_has_value(variable))
                         return true;
-
-                at = array_keyed_place(
-                    table, memory_hash_33((address_any)key, key_length), key,
-                    key_length);
-
-                if (at < table->count)
+                if (variable->owned)
+                        variable->text[length] = end;
+                else
                 {
-                        if (!array_table_edit(variable, false))
+                        env_cell address_to cell = env_cell_take(length + 1);
+                        if (!cell)
                                 return false;
-                        array_element_forget(array_table_of(variable), at);
+                        memory_copy_end((p8 address_to)(cell + 1),
+                                        (address_any)name, length);
+                        variable->text = (string_address)(cell + 1);
+                        variable->owned = true;
                 }
-
-                return true;
+                variable->value_length = 0;
+                shell_envp_dirty = true;
         }
-
+        else if (located.found)
         {
-                positive index = array_index_of(key, key_length);
-
-                /*
-                        Subscript zero is the variable's own value, so losing
-                        it is the transition an exported name that has no
-                        value yet already stands for: the name remains and
-                        the value does not. Inherited text may not be written
-                        through, so that case takes a cell of its own.
-                */
-                if (!index)
-                {
-                        if (!env_variable_has_value(variable))
-                                return true;
-
-                        if (variable->owned)
-                                variable->text[length] = end;
-                        else
-                        {
-                                env_cell address_to cell =
-                                    env_cell_take(length + 1);
-
-                                if (!cell)
-                                        return false;
-
-                                memory_copy_end((p8 address_to)(cell + 1),
-                                                (address_any)name, length);
-                                variable->text = (string_address)(cell + 1);
-                                variable->owned = true;
-                        }
-
-                        variable->value_length = 0;
-                        shell_envp_dirty = true;
-
-                        return true;
-                }
-
-                if (!table)
-                        return true;
-
-                at = array_place(table, index);
-
-                if (at < table->count && table->element[at].key == index)
-                {
-                        if (!array_table_edit(variable, false))
-                                return false;
-                        array_element_forget(array_table_of(variable), at);
-                }
-
-                return true;
+                if (!array_table_edit(variable, false))
+                        return false;
+                array_element_forget(array_table_of(variable), located.at);
         }
+        return true;
 }
 
 /*
@@ -13701,32 +13621,19 @@ fn shell_compgen(writer write, string_address input)
                                                    (string_address) ".",
                                                    FILE_READ | O_DIRECTORY);
 
-                while (directory >= 0)
+                positive have = 0, at = 0;
+                bipolar error = 0;
+                struct linux_dirent64 address_to entry;
+                while (directory >= 0 &&
+                       (entry = file_directory_next(
+                            directory, block, sizeof(block), address_of have,
+                            address_of at, address_of error)))
                 {
-                        bipolar got = system_read_directory(directory, block,
-                                                            sizeof(block));
-                        p8 address_to step = block;
-
-                        if (got <= 0)
-                                break;
-
-                        while (step < block + got)
-                        {
-                                struct linux_dirent64 address_to entry =
-                                    (struct linux_dirent64 address_to)step;
-
-                                step += entry->d_reclen;
-
-                                if (entry->d_name[0] == '.')
-                                        continue;
-
-                                if (directories && !files &&
-                                    entry->d_type != 4)
-                                        continue;
-
-                                compgen_offer(write,
-                                              (string_address)entry->d_name);
-                        }
+                        if (entry->d_name[0] == '.')
+                                continue;
+                        if (directories && !files && entry->d_type != 4)
+                                continue;
+                        compgen_offer(write, (string_address)entry->d_name);
                 }
 
                 if (directory >= 0)

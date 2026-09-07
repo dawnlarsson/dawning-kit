@@ -14583,6 +14583,7 @@ static bool cp_hard;
 static bool cp_symbolic;
 static bool cp_loud;
 static b32 cp_status;
+static bool mv_across_said;
 static p8 cp_collision_option;
 static p8 cp_dereference_option;
 
@@ -14626,12 +14627,6 @@ static fn file_keep(string_address destination, file_facts address_to facts)
                 return;
 
         system_change_mode_at(AT_FDCWD, destination, facts->mode & 07777);
-}
-
-static fn cp_keep(string_address destination, file_facts address_to facts)
-{
-        if (cp_preserve)
-                file_keep(destination, facts);
 }
 
 // A pipe, a socket or a device node is made again with the source's kind
@@ -14733,28 +14728,47 @@ static bool cp_linked(string_address source, string_address destination)
         return true;
 }
 
-static bool cp_one(string_address source, string_address destination, positive depth,
-                   bool named)
+static bool file_move_remove(string_address source, positive flags)
+{
+        bipolar gone = system_remove_at(AT_FDCWD, source, flags);
+        if (gone < 0)
+        {
+                string_format(file_fail, "mv: cannot remove '%s': %s\n", source,
+                              file_reason(gone));
+                mv_across_said = true;
+        }
+        return gone == 0;
+}
+
+/* cp and cross-device mv copy the same object graph. Only source removal,
+   dereferencing, overwrite policy and metadata policy differ. */
+static bool file_copy_one(string_address source, string_address destination,
+                           positive depth, bool named, bool moving)
 {
         file_facts facts;
         file_facts there;
-        bool follow = cp_dereference == 1 || (cp_dereference == 2 && named);
+        string_address program = moving ? (string_address)"mv" : (string_address)"cp";
+        bool follow = !moving &&
+                      (cp_dereference == 1 || (cp_dereference == 2 && named));
         bipolar looked = file_look_code(AT_FDCWD, source,
                                         follow ? 0 : AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
 
         if (looked < 0)
         {
-                string_format(file_fail, "cp: cannot stat '%s': %s\n", source,
-                              file_reason(looked));
+                if (!moving)
+                        string_format(file_fail, "cp: cannot stat '%s': %s\n", source,
+                                      file_reason(looked));
                 return false;
         }
+        if (moving && !depth)
+                return false;
 
         positive kind = facts.mode & MODE_FORMAT;
 
-        bool destination_exists = kind == MODE_LINK && !follow
+        bool destination_exists = !moving && (kind == MODE_LINK && !follow
                                       ? file_look_link(destination, address_of there)
-                                      : file_look_at(destination, address_of there);
+                                      : file_look_at(destination, address_of there));
 
         if (destination_exists && file_same_identity(address_of facts, address_of there))
         {
@@ -14763,7 +14777,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                 return false;
         }
 
-        if (kind == MODE_DIRECTORY)
+        if (!moving && kind == MODE_DIRECTORY)
         {
                 p8 from[FILE_PATH_MAX];
                 p8 to[FILE_PATH_MAX];
@@ -14780,10 +14794,11 @@ static bool cp_one(string_address source, string_address destination, positive d
                 }
         }
 
-        if (kind != MODE_DIRECTORY && !cp_allowed(destination, address_of facts))
+        if (!moving && kind != MODE_DIRECTORY &&
+            !cp_allowed(destination, address_of facts))
                 return true;
 
-        if ((cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
+        if (!moving && (cp_hard || cp_symbolic) && kind != MODE_DIRECTORY)
                 return cp_linked(source, destination);
 
         if (kind == MODE_LINK)
@@ -14797,7 +14812,8 @@ static bool cp_one(string_address source, string_address destination, positive d
 
                 if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
                 {
-                        string_format(file_fail, "cp: cannot create link '%s'\n", destination);
+                        if (!moving)
+                                string_format(file_fail, "cp: cannot create link '%s'\n", destination);
                         return false;
                 }
 
@@ -14808,12 +14824,15 @@ static bool cp_one(string_address source, string_address destination, positive d
         // shape rather than a stream to drain; whatever stood at the
         // destination is taken away first, as the reference cp does for a
         // source that is not a regular file.
-        if (cp_recursive && kind != MODE_DIRECTORY && kind != MODE_FILE)
+        if ((moving || cp_recursive) && kind != MODE_DIRECTORY && kind != MODE_FILE)
         {
                 system_remove_at(AT_FDCWD, destination, 0);
 
-                if (!file_make_alike((string_address) "cp", destination, address_of facts))
+                if (!file_make_alike(program, destination, address_of facts))
+                {
+                        mv_across_said |= moving;
                         return false;
+                }
 
                 goto copied;
         }
@@ -14826,7 +14845,7 @@ static bool cp_one(string_address source, string_address destination, positive d
                 // is what asks for the source's mode whole.
                 bool copied = file_copy_contents(
                     AT_FDCWD, source, AT_FDCWD, destination, facts.mode & 07777);
-                if (!copied && cp_force)
+                if (!copied && !moving && cp_force)
                 {
                         // -f retries by replacing an unwritable destination.
                         system_remove_at(AT_FDCWD, destination, 0);
@@ -14835,14 +14854,15 @@ static bool cp_one(string_address source, string_address destination, positive d
                 }
                 if (!copied)
                 {
-                        string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                        if (!moving)
+                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
                         return false;
                 }
 
                 goto copied;
         }
 
-        if (!cp_recursive)
+        if (!moving && !cp_recursive)
         {
                 string_format(file_fail, "cp: -r not specified; omitting directory '%s'\n",
                               source);
@@ -14863,8 +14883,9 @@ static bool cp_one(string_address source, string_address destination, positive d
 
         if (made < 0 && made != -ERROR_EXISTS)
         {
-                string_format(file_fail, "cp: cannot create directory '%s': %s\n",
-                              destination, file_reason(made));
+                string_format(file_fail, "%s: cannot create directory '%s': %s\n",
+                              program, destination, file_reason(made));
+                mv_across_said |= moving;
                 return false;
         }
 
@@ -14872,34 +14893,49 @@ static bool cp_one(string_address source, string_address destination, positive d
 
         if (!file_walk_open(address_of walk, AT_FDCWD, source))
         {
-                string_format(file_fail, "cp: cannot read directory '%s': %s\n", source,
-                              file_reason(walk.handle));
+                string_format(file_fail, "%s: cannot read directory '%s': %s\n",
+                              program, source, file_reason(walk.handle));
+                if (moving)
+                {
+                        mv_across_said = true;
+                        file_keep(destination, address_of facts);
+                }
                 return false;
         }
 
-        cp_said(source, destination);
+        if (!moving)
+                cp_said(source, destination);
 
         bool complete = true;
         positive skipped = 0;
         p8 from[FILE_PATH_MAX];
         p8 to[FILE_PATH_MAX];
 
-        while (file_walk_pair(address_of walk, (string_address) "cp", source,
+        while (file_walk_pair(address_of walk, program, source,
                               destination, from, to, address_of skipped))
         {
-                if (!cp_one(from, to, depth - 1, false))
+                if (!file_copy_one(from, to, depth - 1, false, moving))
                         complete = false;
         }
 
+        if (walk.error < 0)
+        {
+                string_format(file_fail, "%s: cannot read directory '%s': %s\n",
+                              program, source, file_reason(walk.error));
+                mv_across_said |= moving;
+                complete = false;
+        }
         file_walk_close(address_of walk);
 
         complete &= !skipped;
+        if (moving && complete)
+                complete = file_move_remove(source, AT_REMOVEDIR);
 
         // A directory that was already there keeps its mode, as a file does;
         // one made here gets the source's under the umask, unless -p wants
         // the source's whole.
-        if (cp_preserve)
-                cp_keep(destination, address_of facts);
+        if (moving || cp_preserve)
+                file_keep(destination, address_of facts);
         else if (made == 0)
                 system_change_mode_at(AT_FDCWD, destination,
                                       facts.mode & 07777 & ~cp_umask);
@@ -14907,17 +14943,23 @@ static bool cp_one(string_address source, string_address destination, positive d
         return complete;
 
 copied:
-        cp_keep(destination, address_of facts);
-        cp_said(source, destination);
-        return true;
+        if (moving || cp_preserve)
+                file_keep(destination, address_of facts);
+        if (!moving)
+        {
+                cp_said(source, destination);
+                return true;
+        }
+
+        return file_move_remove(source, 0);
 }
 
-// cp_one carries the walk depth and whether the name was written on the
+// file_copy_one carries the walk depth and whether the name was written on the
 // command line; the pair walker cp shares with mv carries neither, and every
 // pair it hands over is a named one at full depth.
 static fn cp_pair(string_address source, string_address destination)
 {
-        if (!cp_one(source, destination, FILE_MAX_DEPTH, true))
+        if (!file_copy_one(source, destination, FILE_MAX_DEPTH, true, false))
                 cp_status = 1;
 }
 
@@ -15259,128 +15301,6 @@ static const file_supersede mv_supersedes[] = {
     {null, null},
 };
 
-static bool mv_across(string_address source, string_address destination, positive depth);
-
-// Whether the walk across devices has already said what went wrong, so the
-// caller does not put the rename's own refusal over the top of it.
-static bool mv_across_said;
-
-static bool mv_across_directory(string_address source, string_address destination,
-                                positive depth)
-{
-        file_walk walk;
-
-        if (!file_walk_open(address_of walk, AT_FDCWD, source))
-        {
-                string_format(file_fail, "mv: cannot read directory '%s': %s\n", source,
-                              file_reason(walk.handle));
-                mv_across_said = true;
-                return false;
-        }
-
-        bool complete = true;
-        positive skipped = 0;
-        p8 from[FILE_PATH_MAX];
-        p8 to[FILE_PATH_MAX];
-
-        while (file_walk_pair(address_of walk, (string_address) "mv", source,
-                              destination, from, to, address_of skipped))
-        {
-                if (!mv_across(from, to, depth - 1))
-                        complete = false;
-        }
-
-        file_walk_close(address_of walk);
-
-        if (skipped)
-                complete = false;
-
-        if (complete)
-                system_remove_at(AT_FDCWD, source, AT_REMOVEDIR);
-
-        return complete;
-}
-
-// A rename that crosses a mount point is not a rename at all, so the bytes
-// have to be carried over and the original taken away afterwards. What is
-// carried is everything a rename would have kept: the mode whole and not
-// under the umask, the times, the owner where that is allowed, and a pipe
-// or a device as the thing it is rather than what could be read out of it.
-static bool mv_across(string_address source, string_address destination, positive depth)
-{
-        file_facts facts;
-
-        if (!file_look_link(source, address_of facts))
-                return false;
-
-        if (depth == 0)
-                return false;
-
-        positive kind = facts.mode & MODE_FORMAT;
-
-        if (kind == MODE_DIRECTORY)
-        {
-                // Filled first and given its mode last, so a directory the
-                // owner may not write is still moved with what is in it;
-                // the mode is set even when something inside could not be
-                // taken away, because the copy is what is left standing.
-                bipolar made = system_make_directory_at(
-                    AT_FDCWD, destination, (facts.mode & 07777) | 0700);
-
-                if (made < 0 && made != -ERROR_EXISTS)
-                {
-                        string_format(file_fail, "mv: cannot create directory '%s': %s\n",
-                                      destination, file_reason(made));
-                        mv_across_said = true;
-                        return false;
-                }
-
-                bool complete = mv_across_directory(source, destination, depth);
-
-                file_keep(destination, address_of facts);
-                return complete;
-        }
-
-        if (kind == MODE_LINK)
-        {
-                p8 target[FILE_PATH_MAX];
-
-                if (file_link_text(source, target, FILE_PATH_MAX) < 0)
-                        return false;
-
-                system_remove_at(AT_FDCWD, destination, 0);
-
-                if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
-                        return false;
-        }
-        else if (kind != MODE_FILE)
-        {
-                system_remove_at(AT_FDCWD, destination, 0);
-
-                if (!file_make_alike((string_address) "mv", destination, address_of facts))
-                {
-                        mv_across_said = true;
-                        return false;
-                }
-        }
-        else if (!file_copy_contents(AT_FDCWD, source, AT_FDCWD, destination,
-                                     facts.mode & 07777))
-                return false;
-
-        file_keep(destination, address_of facts);
-
-        bipolar gone = system_remove_at(AT_FDCWD, source, 0);
-
-        if (gone < 0)
-        {
-                string_format(file_fail, "mv: cannot remove '%s': %s\n", source,
-                              file_reason(gone));
-                mv_across_said = true;
-        }
-
-        return gone == 0;
-}
-
 // -n, -i and -f are the same question mv asks about a destination that is
 // already there, and -f is the default it asks nothing under.
 static bool mv_allowed(string_address destination)
@@ -15434,7 +15354,7 @@ static fn mv_one(string_address source, string_address destination)
         {
                 mv_across_said = false;
 
-                if (mv_across(source, destination, FILE_MAX_DEPTH))
+                if (file_copy_one(source, destination, FILE_MAX_DEPTH, true, true))
                 {
                         if (mv_loud)
                                 string_format(log, "renamed '%s' -> '%s'\n", source,
@@ -16304,78 +16224,15 @@ static b32 file_tty()
         Decimal operands stay decimal.  Keeping an integer coefficient and a
         power-of-ten scale is both smaller than bringing a floating-point
         parser into every utility and, more importantly, means .1 added three
-        times ends at .3 exactly.  The whole-number path below remains
-        separate: it owns the complete signed 64-bit range without making an
-        integer pay for decimal scaling.
+        times ends at .3 exactly. Scale zero owns the complete signed 64-bit
+        range, so integers use the same parser, iterator and formatter.
 */
-static positive seq_into(p8 address_to into, bipolar value, positive width)
-{
-        if (value < 0)
-        {
-                into[0] = '-';
-                return 1 + positive_into_padded(into + 1,
-                    (positive)0 - (positive)value, width ? width - 1 : 0, '0');
-        }
-
-        return positive_into_padded(into, (positive)value, width, '0');
-}
-
-static positive seq_width(bipolar value)
-{
-        positive magnitude = (positive)value;
-
-        if (value < 0)
-                magnitude = (positive)0 - magnitude;
-
-        return positive_digits(magnitude) + (value < 0);
-}
-
-// seq's native-width contract still has to distinguish an exact number from
-// a numeric prefix, and refuse overflow instead of wrapping it into a
-// plausible value. Compose the floor digit/span/compare primitives here;
-// string_bipolar deliberately wraps for arithmetic callers.
-static bool seq_number(string_address text, bipolar address_to value)
-{
-        positive at = 0;
-        bool minus = false;
-
-        if (string_is(text, '-') || string_is(text, '+'))
-        {
-                minus = string_is(text, '-');
-                at++;
-        }
-
-        string_address digits = text + at;
-        positive length = string_length(digits);
-
-        if (!length)
-                return false;
-
-        positive zeros = memory_span_byte(digits, '0', length);
-        positive significant = length - zeros;
-        string_address limit = minus ? (string_address) "9223372036854775808"
-                                     : (string_address) "9223372036854775807";
-
-        if (significant > 19 ||
-            (significant == 19 &&
-             memory_compare(digits + zeros, limit, 19) > 0))
-                return false;
-
-        positive magnitude;
-
-        if (!string_digits_exact(digits, address_of magnitude))
-                return false;
-
-        address_to value = bipolar_from_magnitude(magnitude, minus);
-
-        return true;
-}
-
 typedef struct
 {
         bipolar coefficient;
         positive scale;
         positive shown;
+        positive whole_width;
         bool negative_zero;
 } seq_decimal;
 
@@ -16527,6 +16384,9 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
         }
 
         effective -= (bipolar)trim;
+        out->whole_width = max((positive)1,
+            (point == positive_max ? finish : point) - mantissa) +
+                (exponent > 0 ? (positive)exponent : 0);
 
         if (effective < 0)
         {
@@ -16584,12 +16444,12 @@ static bool seq_decimal_rescale(seq_decimal address_to number, positive scale)
         return true;
 }
 
-static positive seq_decimal_width(bipolar value, positive scale,
-                                  positive precision, bool negative_zero)
+static positive seq_decimal_width(seq_decimal address_to number,
+                                  positive scale, positive precision)
 {
-        positive magnitude = (positive)value;
+        positive magnitude = (positive)number->coefficient;
 
-        if (value < 0)
+        if (number->coefficient < 0)
                 magnitude = (positive)0 - magnitude;
 
         if (scale > precision)
@@ -16597,53 +16457,9 @@ static positive seq_decimal_width(bipolar value, positive scale,
 
         magnitude /= seq_power_ten(scale < precision ? scale : precision);
 
-        return positive_digits(magnitude) + (precision ? precision + 1 : 0) +
-               (value < 0 || negative_zero);
-}
-
-static fn seq_decimal_write(writer write, bipolar value, positive scale,
-                            positive precision, positive width,
-                            bool negative_zero)
-{
-        bool minus = value < 0 || negative_zero;
-        positive magnitude = (positive)value;
-
-        if (value < 0)
-                magnitude = (positive)0 - magnitude;
-
-        // Values emitted by the sequence have no significant digits below
-        // its chosen precision.  The division is therefore exact.
-        if (scale > precision)
-                magnitude /= seq_power_ten(scale - precision);
-
-        positive stored_precision = scale < precision ? scale : precision;
-        positive divisor = seq_power_ten(stored_precision);
-        positive whole = magnitude / divisor;
-        positive fraction = magnitude % divisor;
-        positive suffix = precision ? precision + 1 : 0;
-        positive whole_width = width > suffix ? width - suffix : 0;
-
-        if (minus)
-        {
-                write("-", 1);
-
-                if (whole_width)
-                        whole_width--;
-        }
-
-        positive_to_padded(write, whole, whole_width, '0', 0);
-
-        if (precision)
-        {
-                write(".", 1);
-
-                if (stored_precision)
-                        positive_to_padded(write, fraction, stored_precision,
-                                           '0', 0);
-
-                if (precision > stored_precision)
-                        writer_fill(write, precision - stored_precision, '0');
-        }
+        return max(positive_digits(magnitude), number->whole_width) +
+               (precision ? precision + 1 : 0) +
+               (number->coefficient < 0 || number->negative_zero);
 }
 
 typedef struct
@@ -16859,7 +16675,7 @@ static b32 file_seq()
                 return 1;
         }
 
-        seq_format format;
+        seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
 
         if (format_text && !seq_format_read(format_text, address_of format))
         {
@@ -16867,221 +16683,70 @@ static b32 file_seq()
                 return 1;
         }
 
-        bool decimal = format_text != null;
-
-        for (positive i = 0; i < given && !decimal; i++)
-        {
-                string_address word = program_argument((b32)(index + i));
-
-                decimal = string_first_of_or_end(word, '.') != word + string_length(word) ||
-                          string_first_of_or_end(word, 'e') != word + string_length(word) ||
-                          string_first_of_or_end(word, 'E') != word + string_length(word);
-        }
-
-        if (decimal)
-        {
-                seq_decimal number[3];
-
-                for (positive i = 0; i < given; i++)
-                        if (!seq_decimal_number(program_argument((b32)(index + i)),
-                                                address_of number[i]))
-                        {
-                                string_format(file_fail, "seq: invalid number: %s\n",
-                                              program_argument((b32)(index + i)));
-                                return 1;
-                        }
-
-                seq_decimal first = given == 1
-                                        ? (seq_decimal){1, 0, 0, false}
-                                        : number[0];
-                seq_decimal step = given == 3
-                                       ? number[1]
-                                       : (seq_decimal){1, 0, 0, false};
-                seq_decimal last = number[given - 1];
-                positive precision = first.shown > step.shown
-                                         ? first.shown
-                                         : step.shown;
-                positive scale = first.scale;
-
-                if (step.scale > scale)
-                        scale = step.scale;
-
-                if (last.scale > scale)
-                        scale = last.scale;
-
-                if (!seq_decimal_rescale(address_of first, scale) ||
-                    !seq_decimal_rescale(address_of step, scale) ||
-                    !seq_decimal_rescale(address_of last, scale))
-                {
-                        file_fail("seq: decimal range is too large\n", 0);
-                        return 1;
-                }
-
-                if (step.coefficient == 0)
-                {
-                        file_fail("seq: increment must not be zero\n", 0);
-                        return 1;
-                }
-
-                positive width = 0;
-
-                if (pad)
-                {
-                        width = seq_decimal_width(first.coefficient, scale,
-                                                  precision,
-                                                  first.negative_zero);
-                        positive last_width = seq_decimal_width(
-                            last.coefficient, scale, precision,
-                            last.negative_zero);
-
-                        if (last_width > width)
-                                width = last_width;
-                }
-
-                bipolar value = first.coefficient;
-                bool written = false;
-
-                while (step.coefficient > 0 ? value <= last.coefficient
-                                            : value >= last.coefficient)
-                {
-                        if (written)
-                                log(separator, 0);
-
-                        bool negative_zero = !written && first.negative_zero;
-
-                        if (format_text)
-                                seq_format_write(log, address_of format, value,
-                                                 scale, negative_zero);
-                        else
-                                seq_decimal_write(log, value, scale, precision,
-                                                  width, negative_zero);
-
-                        written = true;
-
-                        if (value == last.coefficient ||
-                            (step.coefficient > 0 &&
-                             value > bipolar_max - step.coefficient) ||
-                            (step.coefficient < 0 &&
-                             value < bipolar_min - step.coefficient))
-                                break;
-
-                        value += step.coefficient;
-                }
-
-                if (written)
-                        log("\n", 1);
-
-                log_flush();
-                return 0;
-        }
-
-        bipolar number[3];
+        seq_decimal number[3];
 
         for (positive i = 0; i < given; i++)
-                if (!seq_number(program_argument((b32)(index + i)),
-                                address_of number[i]))
+                if (!seq_decimal_number(program_argument((b32)(index + i)),
+                                         address_of number[i]))
                 {
                         string_format(file_fail, "seq: invalid number: %s\n",
                                       program_argument((b32)(index + i)));
                         return 1;
                 }
 
-        bipolar first = given == 1 ? 1 : number[0];
-        bipolar step = given == 3 ? number[1] : 1;
-        bipolar last = number[given - 1];
+        seq_decimal first = given == 1 ? (seq_decimal){1} : number[0];
+        seq_decimal step = given == 3 ? number[1] : (seq_decimal){1};
+        seq_decimal last = number[given - 1];
+        positive precision = max(first.shown, step.shown);
+        positive scale = max(first.scale, max(step.scale, last.scale));
 
-        if (step == 0)
+        if (!seq_decimal_rescale(address_of first, scale) ||
+            !seq_decimal_rescale(address_of step, scale) ||
+            !seq_decimal_rescale(address_of last, scale))
+        {
+                file_fail("seq: decimal range is too large\n", 0);
+                return 1;
+        }
+
+        if (!step.coefficient)
         {
                 file_fail("seq: increment must not be zero\n", 0);
                 return 1;
         }
 
-        positive width = 0;
-
+        if (!format_text)
+                format.precision = precision;
         if (pad)
-        {
-                width = seq_width(first);
+                format.width = max(
+                    seq_decimal_width(address_of first, scale, precision),
+                    seq_decimal_width(address_of last, scale, precision));
 
-                if (seq_width(last) > width)
-                        width = seq_width(last);
-        }
-
-        bipolar value = first;
+        bipolar value = first.coefficient;
         bool written = false;
-        p8 block[16384];
-        positive used = 0;
-        positive separator_length = string_length(separator);
-        p8 digits[24];
-        positive length = seq_into(digits, value, width);
-        bool counting = step == 1 && first >= 0;
 
-        while (step > 0 ? value <= last : value >= last)
+        while (step.coefficient > 0 ? value <= last.coefficient
+                                    : value >= last.coefficient)
         {
                 if (written)
-                {
-                        if (separator_length > sizeof(block) - used)
-                        {
-                                log(block, used);
-                                used = 0;
-                        }
+                        log(separator, 0);
 
-                        if (separator_length > sizeof(block))
-                                log(separator, separator_length);
-                        else if (separator_length == 1)
-                                block[used++] = separator[0];
-                        else
-                        {
-                                memory_copy_apart(block + used, separator, separator_length);
-                                used += separator_length;
-                        }
-                }
-
-                if (length > sizeof(block) - used)
-                {
-                        log(block, used);
-                        used = 0;
-                }
-
-                memory_copy_apart(block + used, digits, length);
-                used += length;
+                seq_format_write(log, address_of format, value, scale,
+                                 !written && first.negative_zero);
                 written = true;
 
-                if (value == last ||
-                    (step > 0 && value > bipolar_max - step) ||
-                    (step < 0 && value < bipolar_min - step))
+                if (value == last.coefficient ||
+                    (step.coefficient > 0 &&
+                     value > bipolar_max - step.coefficient) ||
+                    (step.coefficient < 0 &&
+                     value < bipolar_min - step.coefficient))
                         break;
 
-                value += step;
-
-                if (counting)
-                {
-                        // A unit increment changes only the decimal suffix.
-                        // Carry through the existing digits; widen via the
-                        // shared formatter only at a power of ten.
-                        positive at = length;
-
-                        while (at && digits[at - 1] == '9')
-                                digits[--at] = '0';
-
-                        if (at)
-                                digits[at - 1]++;
-                        else
-                                length = seq_into(digits, value, width);
-                }
-                else
-                        length = seq_into(digits, value, width);
+                value += step.coefficient;
         }
 
-        // The separator goes between the numbers; the line still ends the way
-        // every other line does.
         if (written)
-        {
-                log(block, used);
                 log("\n", 1);
-        }
-
         log_flush();
-
         return 0;
 }
 
