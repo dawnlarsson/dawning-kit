@@ -3457,9 +3457,10 @@ static bool ul_table_column_list(
             columns, count, definition_count, NAME_LIST_UNIQUE);
 }
 
-static string_address ul_lsns_field(ul_lsns_entry address_to entry,
-                                    p8 column, p8 address_to scratch)
+static string_address ul_lsns_table_field(address_any row, p8 column,
+                                          p8 address_to scratch)
 {
+        ul_lsns_entry address_to entry = row;
         struct snapshot_process address_to process = entry->process;
 
         switch (column)
@@ -3490,12 +3491,6 @@ static string_address ul_lsns_field(ul_lsns_entry address_to entry,
         default:
                 return entry->user;
         }
-}
-
-static string_address ul_lsns_table_field(address_any row, p8 column,
-                                          p8 address_to scratch)
-{
-        return ul_lsns_field((ul_lsns_entry address_to)row, column, scratch);
 }
 
 static PURE positive ul_table_line_count(string_address text)
@@ -3864,25 +3859,9 @@ static string_address ul_lsclock_type_name(p8 type)
         return type < array_count(names) ? names[type] : (string_address)"";
 }
 
-static positive ul_lsclock_signed(p8 address_to into, b64 value)
-{
-        positive used = 0;
-        positive magnitude;
-        if (value < 0)
-        {
-                into[used++] = '-';
-                magnitude = (positive)(-(value + 1)) + 1;
-        }
-        else
-                magnitude = (positive)value;
-        used += positive_into(into + used, magnitude);
-        into[used] = end;
-        return used;
-}
-
 static positive ul_lsclock_timespec(p8 address_to into, timespec value)
 {
-        positive used = ul_lsclock_signed(into, value.tv_sec);
+        positive used = bipolar_into_string(into, value.tv_sec);
         into[used++] = '.';
         used += positive_into_padded(into + used, value.tv_nsec, 9, '0');
         into[used] = end;
@@ -4077,12 +4056,6 @@ static bool ul_lsclock_offsets(p8 address_to monotonic,
 
 typedef struct { b32 second, minute, hour, day, month, year, weekday, yearday, daylight; } ul_rtc_time;
 
-static PURE bipolar ul_lsclock_path_order(string_address left,
-                                          string_address right)
-{
-        return string_compare(left, right);
-}
-
 static bool ul_lsclock_add_path(ul_lsclock_row address_to rows,
                                 positive address_to count,
                                 string_address path, bool rtc, bool explicit)
@@ -4168,7 +4141,7 @@ static bool ul_lsclock_discover(ul_lsclock_row address_to rows,
         if (found)
         {
                 string_address address_to sorted = array_merge_sort(
-                    paths, spare, found, ul_lsclock_path_order);
+                    paths, spare, found, string_compare);
                 for (positive at = 0; at < found; at++)
                         if (!ul_lsclock_add_path(rows, count, sorted[at],
                             !string_compare_max(sorted[at] + 5, "rtc", 3), false))

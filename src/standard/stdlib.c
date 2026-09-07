@@ -220,11 +220,6 @@ static positive stdlib_environment_room = 0;
 */
 string_address address_to environ = null;
 
-static fn stdlib_environment_publish(void)
-{
-        environ = stdlib_environment_vector;
-}
-
 //      Take a private copy of the vector, once. False means the arena could
 //      not give us the room, and every caller falls back to read-only
 //      behaviour against the kernel's own vector rather than losing entries.
@@ -267,7 +262,7 @@ static bool stdlib_environment_own(void)
         stdlib_environment_count = count;
         stdlib_environment_room = room;
 
-        stdlib_environment_publish();
+        environ = stdlib_environment_vector;
 
         return true;
 }
@@ -306,7 +301,7 @@ static bool stdlib_environment_grow(void)
         stdlib_environment_vector = made;
         stdlib_environment_room = room;
 
-        stdlib_environment_publish();
+        environ = stdlib_environment_vector;
 
         return true;
 }

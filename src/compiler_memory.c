@@ -2574,32 +2574,11 @@ static inline INLINE address_any copy_until_known(address_any destination,
 //      Note the `<` in string_copy_end where the other three have `<=`. That is not a typo and it is not an inconsistency to tidy: copy_end_known copies length plus one, so a length of exactly KNOWN_SIZE_MAX asks copy_apart_known for 129 bytes, which is past what it is correct for.
 //      memory_copy_until guards on the size alone and never on the byte. Folding the byte buys nothing — the compare is register against an immediate or against a register, and the length is the same either way — while requiring both would halve the number of call sites the expansion reaches.
 
-/*
-        The structural half of the C library: the families that are algorithm
-        rather than instruction. An allocator has policy, a formatter has
-        state, qsort has a strategy -- none of that is a floor to hit, so none
-        of it belongs in library.c, whose rule is assembly and declarations
-        only. They live here instead, one file per family, reached the same
-        way src/net reaches its wire layers.
-
-        The order is load-bearing in four places and arbitrary everywhere else.
-        error.c first, because it defines errno, the E constants and the POSIX
-        descriptor calls that stream.c opens files with. allocator.c second,
-        because text.c's strdup and stream.c's getline call malloc, and a
-        translation unit that names malloc without one does not link at all --
-        which is not a warning about these files but about every program that
-        includes this umbrella. stream.c late, because its last act is to
-        #undef stdin, stdout and stderr and redefine them from the descriptor
-        numbers 0, 1 and 2 into the stream pointers that every C program on
-        earth means by those words; anything included after it that wanted the
-        numbers would silently get pointers. format.c last, because printf
-        writes through stream.c's byte primitive and defers to error.c's
-        perror, and it detects both by their include guards.
-*/
-//      declare.c is first and is prototypes only -- no bodies, no macros
-//      wearing the names, no storage. A file that emits nothing cannot
-//      collide with a file that emits something, so putting it in front
-//      costs nothing and puts every standard name in scope for all of them.
+/* Shared C policies sit above library.c's assembly and declarations.
+   Declarations come first; errno and allocation precede their consumers.
+   stream.c changes stdin/stdout/stderr from descriptor numbers to stream
+   pointers, so descriptor-oriented families precede it. Formatting follows
+   streams and errors to use their output and errno implementations. */
 #include "standard/declare.c"
 
 #include "standard/error.c"

@@ -358,7 +358,7 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
         answers it. Building time() on the trap that exists on one machine out
         of three is how a family passes its own test and fails on the others.
 */
-static bipolar clock_read(b32 which, timespec address_to into)
+b32 clock_gettime(clockid_t which, timespec address_to into)
 {
         return error_whole((bipolar)system_call_2(
             syscall(clock_gettime), (positive)which, (positive)into));
@@ -379,7 +379,7 @@ static bipolar clock_now(b32 which)
 {
         timespec stamp = {0, 0};
 
-        if (clock_read(which, address_of stamp) < 0)
+        if (clock_gettime(which, address_of stamp) < 0)
                 return -1;
 
         return (bipolar)stamp.tv_sec;
@@ -411,18 +411,11 @@ clock_t clock(void)
 {
         timespec stamp = {0, 0};
 
-        if (clock_read(CLOCK_PROCESS_CPUTIME_ID, address_of stamp) < 0)
+        if (clock_gettime(CLOCK_PROCESS_CPUTIME_ID, address_of stamp) < 0)
                 return (clock_t)-1;
 
         return (clock_t)stamp.tv_sec * CLOCKS_PER_SEC +
                (clock_t)(stamp.tv_nsec / 1000);
-}
-
-// Straight through to the kernel, with the errno convention flipped from
-// Linux's negative return to the standard's minus one.
-b32 clock_gettime(clockid_t which, timespec address_to into)
-{
-        return (b32)clock_read((b32)which, into);
 }
 
 /* One monotonic nanosecond clock for every polling/backoff state machine in
@@ -431,7 +424,7 @@ static HOT positive clock_monotonic_nanoseconds()
 {
         timespec now = {0, 0};
 
-        if (clock_read(CLOCK_MONOTONIC, address_of now) < 0)
+        if (clock_gettime(CLOCK_MONOTONIC, address_of now) < 0)
                 return 0;
 
         return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
@@ -459,7 +452,7 @@ b32 gettimeofday(timeval address_to into, address_any zone)
 
         (void)zone;
 
-        if (clock_read(CLOCK_REALTIME, address_of stamp) < 0)
+        if (clock_gettime(CLOCK_REALTIME, address_of stamp) < 0)
                 return -1;
 
         if (!is_null(into))
@@ -946,13 +939,6 @@ static fn clock_format_append(clock_format_state address_to state,
                 memory_to_upper_ascii(state->into + where, length);
 }
 
-static fn clock_format_text(clock_format_state address_to state,
-                            const char address_to text)
-{
-        clock_format_append(state, (address_any)text,
-                            string_length((string_address)text));
-}
-
 /*
         A number: its sign, then its own padding, then the width.
 
@@ -1194,24 +1180,6 @@ static bool clock_format_takes_modifier(p8 modifier, p8 which)
         return true;
 }
 
-/*
-        Everything from the percent to the specifier, back out as text.
-
-        Three different failures share it -- a format that stopped in the
-        middle of a directive, a modifier the specifier will not take, and a
-        specifier nobody knows -- and all three are the same answer: the bytes
-        that were consumed, through the ordinary widened and folded path, so
-        that a format string carrying a specifier from a newer standard
-        degrades into something visible rather than vanishing.
-*/
-static fn clock_format_verbatim(clock_format_state address_to state,
-                                const char address_to opened,
-                                const char address_to cursor)
-{
-        clock_format_append(state, (address_any)opened,
-                            (positive)(cursor - opened));
-}
-
 static fn clock_format_core(clock_format_state address_to state,
                             const char address_to format,
                             const tm address_to broken)
@@ -1327,7 +1295,8 @@ static fn clock_format_core(clock_format_state address_to state,
                 if (which == end ||
                     (modifier && !clock_format_takes_modifier(modifier, which)))
                 {
-                        clock_format_verbatim(state, opened, cursor);
+                        clock_format_append(state, (address_any)opened,
+                                            (positive)(cursor - opened));
                         continue;
                 }
 
@@ -1442,7 +1411,8 @@ static fn clock_format_core(clock_format_state address_to state,
                                 clock_format_append(state,
                                                     (address_any)"000000000", 9);
                         else
-                                clock_format_verbatim(state, opened, cursor);
+                                clock_format_append(state, (address_any)opened,
+                                                    (positive)(cursor - opened));
                         break;
 
                 case 'n':
@@ -1466,7 +1436,8 @@ static fn clock_format_core(clock_format_state address_to state,
                                 clock_format_number(
                                     state, (bipolar)broken->tm_mon / 3 + 1, 1);
                         else
-                                clock_format_verbatim(state, opened, cursor);
+                                clock_format_append(state, (address_any)opened,
+                                                    (positive)(cursor - opened));
                         break;
 
                 /*
@@ -1581,7 +1552,8 @@ static fn clock_format_core(clock_format_state address_to state,
                                 clock_format_append(
                                         state, (address_any)clock_zone_name, 3);
                         else
-                                clock_format_text(state, broken->tm_zone);
+                                clock_format_append(state, (address_any)broken->tm_zone,
+                                    string_length((string_address)broken->tm_zone));
                         break;
 
                 case '%':
@@ -1589,7 +1561,8 @@ static fn clock_format_core(clock_format_state address_to state,
                         break;
 
                 default:
-                        clock_format_verbatim(state, opened, cursor);
+                        clock_format_append(state, (address_any)opened,
+                                            (positive)(cursor - opened));
                         break;
                 }
         }
@@ -1804,6 +1777,18 @@ static b32 clock_scan_name(clock_scan_state address_to state,
         return best;
 }
 
+/* Bounds and digit ceilings for numeric strptime fields. The shared reader
+   retains its early range stop; assignments and dependent-date flags follow. */
+static const struct { p16 least, most; p8 digits; } clock_scan_ranges[] = {
+    ['C'] = {0, 99, 2},   ['d'] = {1, 31, 2},   ['e'] = {1, 31, 2},
+    ['H'] = {0, 23, 2},   ['k'] = {0, 23, 2},   ['I'] = {1, 12, 2},
+    ['l'] = {1, 12, 2},   ['j'] = {1, 366, 3},  ['m'] = {1, 12, 2},
+    ['M'] = {0, 59, 2},   ['S'] = {0, 61, 2},   ['u'] = {1, 7, 1},
+    ['w'] = {0, 6, 1},    ['g'] = {0, 99, 2},   ['U'] = {0, 53, 2},
+    ['V'] = {0, 53, 2},   ['W'] = {0, 53, 2},   ['y'] = {0, 99, 2},
+    ['Y'] = {0, 9999, 4},
+};
+
 static bool clock_scan_core(clock_scan_state address_to state,
                             const char address_to format);
 
@@ -1866,6 +1851,14 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         continue;
                 }
 
+                if (which < array_count(clock_scan_ranges) &&
+                    clock_scan_ranges[which].digits &&
+                    !clock_scan_number(state, clock_scan_ranges[which].least,
+                                       clock_scan_ranges[which].most,
+                                       clock_scan_ranges[which].digits,
+                                       address_of value))
+                        return false;
+
                 switch (which)
                 {
                 case 'a':
@@ -1909,18 +1902,12 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 }
 
                 case 'C':
-                        if (!clock_scan_number(state, 0, 99, 2, address_of value))
-                                return false;
-
                         state->century = value;
                         state->want_day = true;
                         break;
 
                 case 'd':
                 case 'e':
-                        if (!clock_scan_number(state, 1, 31, 2, address_of value))
-                                return false;
-
                         broken->tm_mday = (b32)value;
                         state->have_mday = true;
                         state->want_day = true;
@@ -1928,18 +1915,12 @@ static bool clock_scan_core(clock_scan_state address_to state,
 
                 case 'H':
                 case 'k':
-                        if (!clock_scan_number(state, 0, 23, 2, address_of value))
-                                return false;
-
                         broken->tm_hour = (b32)value;
                         state->have_hour12 = false;
                         break;
 
                 case 'I':
                 case 'l':
-                        if (!clock_scan_number(state, 1, 12, 2, address_of value))
-                                return false;
-
                         broken->tm_hour = (b32)(value % 12);
                         state->have_hour12 = true;
                         break;
@@ -1954,26 +1935,17 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         derivation on.
                 */
                 case 'j':
-                        if (!clock_scan_number(state, 1, 366, 3, address_of value))
-                                return false;
-
                         broken->tm_yday = (b32)(value - 1);
                         state->have_yday = true;
                         break;
 
                 case 'm':
-                        if (!clock_scan_number(state, 1, 12, 2, address_of value))
-                                return false;
-
                         broken->tm_mon = (b32)(value - 1);
                         state->have_mon = true;
                         state->want_day = true;
                         break;
 
                 case 'M':
-                        if (!clock_scan_number(state, 0, 59, 2, address_of value))
-                                return false;
-
                         broken->tm_min = (b32)value;
                         break;
 
@@ -2028,24 +2000,15 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         that refuses "23:59:60" refuses text that exists.
                 */
                 case 'S':
-                        if (!clock_scan_number(state, 0, 61, 2, address_of value))
-                                return false;
-
                         broken->tm_sec = (b32)value;
                         break;
 
                 case 'u':
-                        if (!clock_scan_number(state, 1, 7, 1, address_of value))
-                                return false;
-
                         broken->tm_wday = (b32)(value % 7);
                         state->have_wday = true;
                         break;
 
                 case 'w':
-                        if (!clock_scan_number(state, 0, 6, 1, address_of value))
-                                return false;
-
                         broken->tm_wday = (b32)value;
                         state->have_wday = true;
                         break;
@@ -2061,8 +2024,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         answer glibc does not have.
                 */
                 case 'g':
-                        if (!clock_scan_number(state, 0, 99, 2, address_of value))
-                                return false;
                         break;
 
                 /*
@@ -2084,8 +2045,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                 case 'U':
                 case 'V':
                 case 'W':
-                        if (!clock_scan_number(state, 0, 53, 2, address_of value))
-                                return false;
                         break;
 
                 /*
@@ -2096,9 +2055,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         every other strptime does.
                 */
                 case 'y':
-                        if (!clock_scan_number(state, 0, 99, 2, address_of value))
-                                return false;
-
                         broken->tm_year = (b32)(value >= 69 ? value
                                                             : value + 100);
                         state->want_century = true;
@@ -2106,9 +2062,6 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         break;
 
                 case 'Y':
-                        if (!clock_scan_number(state, 0, 9999, 4, address_of value))
-                                return false;
-
                         broken->tm_year = (b32)(value - 1900);
                         state->want_century = false;
                         state->want_day = true;

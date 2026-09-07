@@ -40,10 +40,8 @@
         boot lane structurally cannot check -- it is set because a real
         network needs it, not because a test proved it here.
 
-        What is deliberately not here: the ARP probe that checks nobody else
-        is already using the offered address, and the T1 renewal timer. Both
-        matter on a long-lived machine and neither is needed to get on the
-        network, so they are absent rather than half done.
+        ARP conflict probing is not implemented. The network watcher schedules
+        dhcp_renew at half the lease lifetime.
 */
 
 #define DHCP_CLIENT_PORT 68
@@ -85,6 +83,17 @@ typedef struct
         p32 server;
         p32 seconds;
 } dhcp_lease;
+
+/* All destinations are actual p32 fields. Address comes from the fixed
+   header; the remaining fields are options, some containing address lists. */
+static const struct { p8 option, offset; bool multiple; } dhcp_fields[] = {
+    {0, __builtin_offsetof(dhcp_lease, address), false},
+    {DHCP_OPTION_MASK, __builtin_offsetof(dhcp_lease, mask), false},
+    {DHCP_OPTION_ROUTER, __builtin_offsetof(dhcp_lease, router), true},
+    {DHCP_OPTION_DNS, __builtin_offsetof(dhcp_lease, nameserver), true},
+    {DHCP_OPTION_SERVER, __builtin_offsetof(dhcp_lease, server), false},
+    {DHCP_OPTION_LEASE, __builtin_offsetof(dhcp_lease, seconds), false},
+};
 
 /*
         One packet, built.
@@ -220,35 +229,13 @@ static bipolar dhcp_read(p8 address_to packet, positive size, p32 transaction,
                 if (at + 2 + length > size)
                         return -1;
 
-                switch (option)
-                {
-                case DHCP_OPTION_TYPE:
-                        if (length == 1)
-                                parsed_kind = packet[at + 2];
-                        break;
-                case DHCP_OPTION_MASK:
-                        if (length == 4)
-                                parsed.mask = network_load_32(packet + at + 2);
-                        break;
-                case DHCP_OPTION_ROUTER:
-                        if (length >= 4)
-                                parsed.router = network_load_32(packet + at + 2);
-                        break;
-                case DHCP_OPTION_DNS:
-                        if (length >= 4)
-                                parsed.nameserver = network_load_32(packet + at + 2);
-                        break;
-                case DHCP_OPTION_SERVER:
-                        if (length == 4)
-                                parsed.server = network_load_32(packet + at + 2);
-                        break;
-                case DHCP_OPTION_LEASE:
-                        if (length == 4)
-                                parsed.seconds = network_load_32(packet + at + 2);
-                        break;
-                default:
-                        break;
-                }
+                if (option == DHCP_OPTION_TYPE && length == 1)
+                        parsed_kind = packet[at + 2];
+                for (positive i = 1; i < array_count(dhcp_fields); i++)
+                        if (option == dhcp_fields[i].option && length >= 4 &&
+                            (length == 4 || dhcp_fields[i].multiple))
+                                *(p32 *)((p8 *)&parsed + dhcp_fields[i].offset) =
+                                    network_load_32(packet + at + 2);
 
                 at += 2 + length;
         }
@@ -280,18 +267,12 @@ static CONST p8 dhcp_prefix_of(p32 mask)
 static fn dhcp_lease_merge(dhcp_lease address_to lease,
                            const dhcp_lease address_to fresh)
 {
-        if (fresh->address)
-                lease->address = fresh->address;
-        if (fresh->mask)
-                lease->mask = fresh->mask;
-        if (fresh->router)
-                lease->router = fresh->router;
-        if (fresh->nameserver)
-                lease->nameserver = fresh->nameserver;
-        if (fresh->server)
-                lease->server = fresh->server;
-        if (fresh->seconds)
-                lease->seconds = fresh->seconds;
+        for (positive i = 0; i < array_count(dhcp_fields); i++)
+        {
+                p32 value = *(const p32 *)((const p8 *)fresh + dhcp_fields[i].offset);
+                if (value)
+                        *(p32 *)((p8 *)lease + dhcp_fields[i].offset) = value;
+        }
 }
 
 static bipolar dhcp_open(string_address device, p32 host, bool broadcast)

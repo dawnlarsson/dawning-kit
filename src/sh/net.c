@@ -935,7 +935,7 @@ static b32 net_watch(void)
         //      Configure whatever is already plugged in before waiting for
         //      anything to change, or a machine that boots with its cable in
         //      would wait forever for an event that already happened.
-        handle = netlink_open();
+        handle = netlink_open_groups(0);
 
         memory_fill(address_of held, 0, sizeof held);
 
@@ -992,7 +992,7 @@ static b32 net_watch(void)
                                         continue;
                                 }
 
-                                handle = netlink_open();
+                                handle = netlink_open_groups(0);
 
                                 if (handle >= 0)
                                 {
@@ -1036,7 +1036,7 @@ static b32 net_watch(void)
                         if (!interesting)
                                 continue;
 
-                        handle = netlink_open();
+                        handle = netlink_open_groups(0);
 
                         if (handle < 0)
                                 continue;
@@ -1073,7 +1073,7 @@ static b32 net_ip(void)
                 return object ? 0 : 1;
         }
 
-        handle = netlink_open();
+        handle = netlink_open_groups(0);
 
         if (handle < 0)
         {

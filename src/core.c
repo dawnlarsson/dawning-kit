@@ -1121,42 +1121,27 @@ static long device_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
         switch (cmd)
         {
         case SPARK_IOCTL_SPAWN:
-                return do_spawn(file, (struct spawn __user *)arg, false, NULL,
-                                -1, -1, -1);
         case SPARK_IOCTL_SPAWN_SHELL:
-                return do_spawn(file, (struct spawn __user *)arg, true, NULL,
-                                -1, -1, -1);
         case SPARK_IOCTL_SPAWN_TOOL:
-                return do_spawn(file, (struct spawn __user *)arg, false,
-                                "/shell", -1, -1, -1);
+                return do_spawn(file, (struct spawn __user *)arg,
+                                cmd == SPARK_IOCTL_SPAWN_SHELL,
+                                cmd == SPARK_IOCTL_SPAWN_TOOL ? "/shell" : NULL,
+                                -1, -1, -1);
         case SPARK_IOCTL_SPAWN_SHELL_INTO:
-        {
-                struct spawn_into __user *request =
-                    (struct spawn_into __user *)arg;
-                int input;
-                int output;
-                int error;
-
-                if (get_user(input, &request->input) ||
-                    get_user(output, &request->output) ||
-                    get_user(error, &request->error))
-                        return -EFAULT;
-
-                return do_spawn(file, &request->spawn, true, NULL,
-                                input, output, error);
-        }
         case SPARK_IOCTL_SPAWN_TOOL_TO:
         {
-                struct spawn_to __user *request = (struct spawn_to __user *)arg;
-                int output;
-                int error;
+                _Bool shell = cmd == SPARK_IOCTL_SPAWN_SHELL_INTO;
+                int descriptors[3] = {-1, -1, -1};
 
-                if (get_user(output, &request->output) ||
-                    get_user(error, &request->error))
+                // Both ABIs append descriptors directly after the spawn.
+                if (copy_from_user(descriptors + !shell,
+                                   (const char __user *)arg + sizeof(struct spawn),
+                                   (shell ? 3 : 2) * sizeof(int)))
                         return -EFAULT;
 
-                return do_spawn(file, &request->spawn, false, "/shell",
-                                -1, output, error);
+                return do_spawn(file, (struct spawn __user *)arg, shell,
+                                shell ? NULL : "/shell", descriptors[0],
+                                descriptors[1], descriptors[2]);
         }
         case SPARK_IOCTL_STATS:
                 return report_stats((struct stats __user *)arg);

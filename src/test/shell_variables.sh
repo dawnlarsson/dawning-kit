@@ -478,6 +478,51 @@ compare bash 'nested table relocation and scope ownership' \
 compare bash 'prefix assignment adoption releases saved arrays' \
         'a=([2]=two); for ((i=0;i<100;i++)); do a=next export a; done; declare -p a; unset a; a=([3]=three); declare -p a'
 
+group prefix-values
+compare bash 'temporary integer bytes and attributes' \
+        'declare -i x=7; y=4; f(){ printf "%s:%s:%s\n" "$x" "$y" "${x@a}"; }; x=y++ f; printf "%s:%s:%s\n" "$x" "$y" "${x@a}"'
+compare bash 'repeated integer prefix appends shape once' \
+        'declare -i x=7; y=4; f(){ printf "%s:%s:%s\n" "$x" "$y" "${x@a}"; }; x+=y++ x+=y++ f; printf "%s:%s\n" "$x" "$y"'
+compare bash 'special integer promotion follows body' \
+        'set -o posix; declare -i x=7; y=4; x=y++ x=y++ eval '"'"'printf "%s:%s:%s\n" "$x" "$y" "${x@a}"'"'"'; printf "%s:%s:%s\n" "$x" "$y" "${x@a}"'
+compare bash 'element reference prefix shadows own name' \
+        'a[2]=old; declare -n n="a[2]"; f(){ printf "%s:%s\n" "$n" "${a[2]}"; }; n+=new f; printf "%s:%s\n" "$n" "${a[2]}"'
+compare bash 'parenthesized prefix expands scalar bytes' \
+        'v="two words"; a=(old); f(){ printf "%s:%s\n" "$a" "${a@a}"; }; a+=($v) f; printf "%s\n" "$a"'
+compare bash 'rejected readonly prefix preserves export state' \
+        'readonly x=7; x=9 /usr/bin/printenv x; printf "%s:%s\n" "$?" "${x@a}"'
+compare bash 'adopted array scalar preserves hidden elements' \
+        'declare -al a=(ONE TWO); a=ABC export a; printf "%s:%s:%s\n" "${a[0]}" "${a[1]}" "${a@a}"'
+compare bash 'special body array keeps bytes and merges attributes' \
+        'set -o posix; declare -al a=(ONE TWO); a=ABC eval '"'"'a=(DeF GhI)'"'"'; printf "%s:%s:%s\n" "${a[0]}" "${a[1]}" "${a@a}"'
+compare bash 'special body can remove export' \
+        'set -o posix; declare -i x=7; x=9 eval '"'"'export -n x'"'"'; declare -p x'
+compare bash 'special body nameref adopts its physical cell' \
+        'set -o posix; x=old; y=target; x=raw eval '"'"'declare -n x=y'"'"'; declare -p x y'
+compare bash 'special body keeps an unset exported declaration' \
+        'set -o posix; x=old; x=raw eval '"'"'unset x; export x'"'"'; declare -p x'
+
+compare bash 'element prefix does not evaluate a subscript' \
+        'i=0; a[i++]=new true; printf "%s:%s:%s\n" "$?" "$i" "${a[0]-unset}"'
+compare bash 'unassigned declaration survives prefix restoration' \
+        'declare x; x=temp true; declare -p x'
+compare bash 'invalid element prefix skips right side and runs command' \
+        'i=0; a[i++]=$(printf side) x=$i false; printf "%s:%s:%s\n" "$?" "$i" "${a[0]-unset}"'
+for command in true :; do
+        compare bash "POSIX invalid element prefix $command" \
+                "set -o posix; i=0; a[i++]=new $command; printf after"
+done
+compare bash 'special promotion keeps later global readonly attribute' \
+        'set -o posix; x=old; x=10 eval '"'"'declare -grx x=3'"'"'; declare -p x'
+
+compare bash 'adoption diagnostics retain function redirections' \
+        'd=$(mktemp -d); x=old; f(){ declare -grx "x[2]=new" 2>"$d/declare"; printf "status:%s\n" "$?"; }; x=temp f 2>"$d/function"; for p in declare function; do test -s "$d/$p"; printf "%s:%s\n" "$p" "$?"; done; rm -r "$d"'
+
+for mode in bash dash; do
+        compare "$mode" "allexport prefix reaches later right side $mode" \
+                'unset X Y; set -a; f(){ printf "%s:%s\n" "$X" "$Y"; }; X=one Y=$(/usr/bin/printenv X) f'
+done
+
 section ""
 total=$((pass + fail))
 echo

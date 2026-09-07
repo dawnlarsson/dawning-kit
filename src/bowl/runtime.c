@@ -142,11 +142,6 @@ static bool bowl_named_root(string_address root)
         return !string_equals(name, "bin") && bowl_name(name, false);
 }
 
-static bool bowl_command_name(string_address name)
-{
-        return bowl_name(name, true);
-}
-
 /*
         Install one kernel-interpreted launcher.
 
@@ -208,7 +203,7 @@ static b32 bowl_expose(positive count,
         if (count != 5)
                 path_tail_copy(inferred, sizeof(inferred), program);
 
-        if (!bowl_command_name(name))
+        if (!bowl_name(name, true))
         {
                 string_format(log, bowl_label "%s: invalid command name\n", name);
                 log_flush();

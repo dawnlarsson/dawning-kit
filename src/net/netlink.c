@@ -332,11 +332,6 @@ static bipolar netlink_open_groups(p32 groups)
         return handle;
 }
 
-static bipolar netlink_open(void)
-{
-        return netlink_open_groups(0);
-}
-
 /*
         One datagram, however big it turns out to be.
 

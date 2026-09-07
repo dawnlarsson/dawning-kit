@@ -174,11 +174,6 @@ static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive
         }
 }
 
-static inline INLINE p16 dns_transaction(void)
-{
-        return (p16)network_transaction(sizeof(p16));
-}
-
 /*
         The nameserver, out of resolv.conf.
 
@@ -259,7 +254,7 @@ static bipolar dns_resolve(p32 server, string_address name, p32 address_to found
 {
         p8 request[DNS_MAX_MESSAGE];
         p8 reply[DNS_MAX_MESSAGE];
-        p16 id = dns_transaction();
+        p16 id = (p16)network_transaction(sizeof(p16));
         bipolar handle;
         bipolar written;
         bipolar got;

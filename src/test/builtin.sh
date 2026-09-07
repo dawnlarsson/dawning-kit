@@ -470,6 +470,98 @@ answer 'getopts assignments' 'unset OPTION OPTARG; OPTIND=1; set -a; set -- -x v
 answer 'cd assignments' 'mkdir target; unset PWD OLDPWD; set -a; cd target; /bin/sh -c '\''echo "${PWD##*/}:${OLDPWD##*/}"'\'''
 answer 'readonly assignment' 'unset FIXED; set -a; readonly FIXED=value; /bin/sh -c '\''echo "$FIXED"'\'''
 
+section declarations
+
+group elements
+bash_answer 'scalar assignments mark indexed element zero as assigned' \
+        'declare -a first=target; declare -a second; second=target; f(){ local -a third=target; declare -p third; }; declare -p first second; f'
+bash_answer 'adding indexed type retains a preexisting scalar element zero' \
+        'first=target; declare -a first; declare -i second=7; declare -a second; declare -p first second'
+bash_answer 'associative conversion moves scalar zero without duplicate storage' \
+        'first=old; declare -A first; declare -p first; declare first=next; declare -p first; second=old; declare -A second=new; printf "%s:%s\n" "${second[0]}" "${#second[@]}"; declare -p second'
+bash_answer 'declare indexed elements retain sparse values and append attributes' \
+        'declare -ai a[2]=7; declare -ai a[2]+=3 a[0]=4; printf "%s:%s:%s\n" "${a[0]}" "${a[2]}" "${a@a}"'
+bash_answer 'declare associative elements preserve key bytes and fold values' \
+        'declare -Al a; declare "a[a=b]=Value" "a[a b]=Other"; declare "a[a=b]+=MORE"; printf "%s:%s:%s\n" "${a[a=b]}" "${a[a b]}" "${a@a}"'
+bash_answer 'declaration subscript arithmetic runs exactly once' \
+        'i=0; declare "a[i++]=first" "a[i=2]=second"; printf "%s:%s:%s:%s\n" "$i" "${a[0]}" "${a[2]}" "${#a[@]}"'
+bash_answer 'bare element declaration creates type without evaluating index' \
+        'i=0; declare -i "a[i++]"; printf "%s:%s:%s\n" "$i" "${#a[@]}" "${a@a}"'
+bash_answer 'bare declaration allows equals inside an unevaluated subscript' \
+        'i=0; declare "a[i=1]"; printf "%s:%s:%s\n" "$i" "${#a[@]}" "${a@a}"'
+bash_answer 'element locals restore the whole containing array' \
+        'declare -A a=([outside]=old); f(){ local -Al a[key]=Value; local a[key]+=MORE; printf "%s:%s\n" "${a[key]}" "${a@a}"; }; f; printf "%s:%s:%s\n" "${a[outside]}" "${a[key]-unset}" "${a@a}"'
+bash_answer 'fresh declare locals choose their own array kind' \
+        'declare -a a=([2]=outer); f(){ declare -A a[key]=inner; printf "%s:%s\n" "${a[key]}" "${a@a}"; }; f; printf "%s:%s\n" "${a[2]}" "${a@a}"'
+bash_answer 'declare element converts a nameref record without writing its target' \
+        'target=old; declare -n ref=target; declare -u ref[2]=Value; printf "%s:%s:%s\n" "$target" "${ref[2]}" "${ref@a}"'
+bash_answer 'local element hides and restores an outer nameref' \
+        'target=old; declare -n ref=target; f(){ local ref[2]=inner; printf "%s:%s\n" "$target" "${ref[2]}"; }; f; printf "%s:%s\n" "$ref" "${ref@a}"'
+bash_answer 'explicit nameref element declarations are rejected' \
+        'declare -n "ref[2]=target"; printf "%s:%s\n" "$?" "${ref-unset}"'
+bash_answer 'readonly element declarations preserve existing contents' \
+        'declare -ar a=([2]=old); declare a[2]=new; printf "%s:%s\n" "$?" "${a[2]}"'
+bash_answer 'new readonly export attributes precede element storage' \
+        'declare -a a; declare -rx a[2]=new; printf "%s:%s:%s\n" "$?" "${a[2]-unset}" "${a@a}"'
+bash_answer 'exported element declaration marks its containing array' \
+        'declare -x a[2]=new; printf "%s:%s\n" "${a[2]}" "${a@a}"'
+bash_answer 'global element spelling still assigns the visible local element' \
+        'declare -a a=([2]=outer); f(){ local -a a=([2]=inner); declare -g a[2]=changed; printf "%s\n" "${a[2]}"; }; f; printf "%s\n" "${a[2]}"'
+bash_answer 'global element attributes mark the saved global declaration' \
+        'declare -a a=([2]=outer); f(){ local -a a=([2]=inner); declare -giru a[2]=Value; printf "%s:%s\n" "${a[2]}" "${a@a}"; }; f; printf "%s:%s\n" "${a[2]}" "${a@a}"'
+bash_answer 'global element kind validation uses the saved global array' \
+        'declare -A a=([key]=outer); f(){ local -a a=([2]=inner); declare -gA a[key]=Value; printf "%s:%s:%s\n" "${a[0]}" "${a[2]}" "${a@a}"; }; f; printf "%s:%s\n" "${a[key]}" "${a@a}"'
+bash_answer 'global element declarations retain a saved scalar as element zero' \
+        'a=outer; f(){ local a=inner; declare -g a[2]=changed; printf "%s:%s\n" "${a[0]}" "${a[2]}"; }; f; declare -p a'
+bash_answer 'quoted parentheses stay scalar through declare round trips' \
+        'for value in "(" "(x)" "(a b)"; do declaration=$(declare -p value); unset value; eval "$declaration"; printf "<%s>\n" "$value"; done'
+bash_answer 'retained function compounds keep lexical assignment identity' \
+        'f(){ local a=("(x)" "("); local b="(y)"; printf "%s:%s:%s\n" "${a[0]}" "${a[1]}" "$b"; }; f; f'
+
+group globals
+bash_answer 'global declarations update the variable below a function prefix' \
+        'x=old; y=target; f(){ declare -gn x=y; printf "%s:%s\n" "$?" "$x"; declare -p x; }; x=raw f; declare -p x y'
+bash_answer 'global integer declarations evaluate against the visible prefix' \
+        'x=7; f(){ declare -gi x=x+1; printf "%s\n" "$x"; }; x=10 f; declare -p x; g(){ declare -gi x+="(x=4,x+1)"; printf "%s\n" "$x"; }; x=10 g; declare -p x'
+bash_answer 'global prefix array attributes and scalar element writes stay separate' \
+        'x=old; f(){ declare -gai x=Value; declare -p x; declare -g x[2]=Other; declare -p x; }; x=raw f; declare -p x'
+bash_answer 'explicit exported global elements adopt repeated temporary prefixes' \
+        'x=old; f(){ declare -gx x[2]=new; declare -p x; }; x=one x=two f; declare -p x'
+bash_answer 'readonly global elements retain their adopted temporary array' \
+        'x=old; f(){ declare -gr x[2]=new 2>diagnostic; printf "%s:" "$?"; test -s diagnostic; printf "%s\n" "$?"; declare -p x; }; x=temp f; declare -p x'
+bash_answer 'promoted arrays keep the visible kind after global attribute changes' \
+        'set -o posix; declare -A x=([key]=old); x=temp eval '\''declare -gA x[2]=new; declare -p x'\''; declare -p x'
+bash_answer 'global declarations follow an ordinary nameref below a prefix' \
+        'x=old; declare -n ref=x; f(){ declare -g ref=new; printf "%s:%s\n" "$ref" "$x"; }; ref=temp f; printf "%s:%s\n" "$ref" "$x"'
+bash_answer 'hidden global values survive later command arena reuse' \
+        'x=old; wanted=$(printf "%0192d" 1); f(){ declare -g x="$wanted"; for i in 1 2 3 4 5 6 7 8; do scratch=$(printf "%04096d" 1) :; done; }; x=temp f; test "$x" = "$wanted"; printf "%s\n" "$?"'
+bash_answer 'failed global nameref declarations restore the visible prefix' \
+        'x=old; f(){ declare -gn x=bad-name; printf "%s:%s\n" "$?" "$x"; }; x=raw f; declare -p x'
+
+group namerefs
+bash_answer 'explicit nameref binding clears an inherited integer attribute' \
+        'target=Value; declare -i ref=7; declare -n ref=target; printf "%s:%s\n" "$?" "$ref"; declare -p ref'
+bash_answer 'implicit nameref conversion validates old bytes before attributes change' \
+        'declare -i ref=7; declare -n ref; printf "%s\n" "$?"; declare -p ref'
+bash_answer 'integer nameref declaration without a value does not evaluate' \
+        'ref=old; declare -in ref; printf "%s\n" "$?"; declare -p ref; declare -in absent; declare -p absent'
+bash_answer 'invalid integer nameref binding restores prior reference presence' \
+        'value=7; declare -in absent=value; printf "%s\n" "$?"; declare -p absent; ref=old; declare -in ref=value; printf "%s\n" "$?"; declare -p ref; declare -n bound=value; declare -in bound=value; printf "%s\n" "$?"; declare -p bound'
+bash_answer 'array records reject nameref conversion before arithmetic evaluation' \
+        'side=0; value="(side=3,7)"; declare -a ref=([2]=old); declare -in ref=value; printf "%s:%s:%s\n" "$?" "$side" "${ref[2]}"; declare -p ref'
+bash_answer 'fresh declare locals may hide an outer array with a nameref' \
+        'target=Value; declare -a ref=([2]=outer); f(){ declare -n ref=target; printf "%s:%s\n" "$?" "$ref"; }; f; printf "%s:%s\n" "${ref[2]}" "${ref@a}"'
+bash_answer 'malformed nameref targets do not change existing attributes' \
+        'ref=old; declare -iln ref=bad-name; printf "%s\n" "$?"; declare -p ref; declare -i number=7; declare -n number=bad-name; printf "%s\n" "$?"; declare -p number'
+bash_answer 'integer nameref validation preserves original RHS assignment targets' \
+        'ref=old; value="(ref[2]=3,7)"; declare -in ref=value; printf "%s:%s\n" "$?" "${old-unset}"; declare -p ref; scalar=old; value="(scalar=3,7)"; declare -in scalar=value; printf "%s:%s\n" "$?" "${old-unset}"; declare -p scalar'
+bash_answer 'integer nameref append evaluates before rejecting the binding' \
+        'ref=old; value="(side[2]=3,7)"; declare -in ref+=value; printf "%s:%s\n" "$?" "${side[2]}"; declare -p ref; other=old; declare -in other+="(changed=3,7)"; printf "%s:%s\n" "$?" "$changed"; declare -p other'
+bash_answer 'integer nameref append diagnoses the original operand after evaluation' \
+        'ref=old; value="(side=3,7)"; declare -in ref+=value 2>diagnostic; printf "%s:%s:" "$?" "$side"; test -s diagnostic; printf "%s\n" "$?"; other=old; declare -in other+="(changed=3,7)" 2>diagnostic; printf "%s:%s:" "$?" "$changed"; test -s diagnostic; printf "%s\n" "$?"'
+bash_answer 'ordinary declaration writes through readonly namerefs report refusal' \
+        'readonly target=old; declare -n ref=target; declare ref=new; printf "%s:%s\n" "$?" "$target"; declare ref+=new; printf "%s:%s\n" "$?" "$target"'
+
 section times
 
 #       Both shells run in no time at all, so what is compared is the shape:
@@ -523,6 +615,68 @@ group listing
 answer 'set sorted quoted' "b='x y'; a=\"it's\"; set | grep '^[ab]='"
 answer 'export sorted'   'export zz=1 aa=2; export -p | grep " [az][az]="'
 answer 'readonly sorted' 'readonly zz=1 aa=2; readonly -p | grep " [az][az]="'
+bash_answer 'declaration and transformation attribute order' \
+        'declare -airx indexed=(7); declare -Alx assoc=([key]=Value); declare -ux upper=abc; declare -lr lower=ABC; declare -n ref=upper; declare -p indexed assoc upper lower ref; printf "<%s>\n" "${indexed@a}" "${assoc@a}" "${upper@a}" "${lower@a}" "${ref@a}"'
+bash_answer 'attribute queries evaluate subscript side effects once' \
+        'declare -ai indexed=([2]=7); i=2; printf "<%s>:%s\n" "${indexed[i++]@a}" "$i"; declare -n ref="indexed[i++]"; printf "<%s>:%s\n" "${ref@a}" "$i"'
+bash_answer 'integer appends add expressions across storage forms' \
+        'declare -i scalar=7; declare -ai indexed=([0]=7 [2]=7); declare -Ai assoc=([key]=7); scalar+=2*3; indexed[0]+=2*3; indexed[2]+=2*3; assoc[key]+=2*3; declare -p scalar indexed assoc'
+bash_answer 'associative scalar append reads the zero key' \
+        'declare -Ai assoc=([0]=7); assoc+=3; declare -p assoc; declare -Ai assoc+=4; declare -p assoc'
+bash_answer 'blank integer append operands are zero' \
+        'declare -i scalar=7; declare -ai indexed=([2]=7); declare -Ai assoc=([key]=7); scalar+=" "; indexed[2]+=" "; assoc[key]+=" "; declare -p scalar indexed assoc'
+bash_answer 'case attributes shape the complete appended value' \
+        'scalar=ABC; indexed=([0]=ABC [2]=ABC); declare -A assoc=([key]=abc); declare -l scalar; declare -al indexed; declare -Au assoc; scalar+=DEF; indexed[0]+=DEF; indexed[2]+=DEF; assoc[key]+=def; declare -p scalar indexed assoc'
+bash_answer 'integer writes retain the outer arithmetic cursor' \
+        'declare -i scalar=7; declare -ai indexed=([2]=7); declare -Ai assoc=([key]=7); printf "%s:%s:%s\n" "$((scalar=4,scalar+2))" "$((indexed[2]=4,indexed[2]+2))" "$((assoc[key]=4,assoc[key]+2))"; declare -p scalar indexed assoc'
+bash_answer 'integer append snapshots operands before recursive writes' \
+        'declare -i scalar=7; declare -ai indexed=([2]=7); declare -Ai assoc=([key]=7); scalar+="scalar=3"; indexed[2]+="indexed[4]=5"; assoc[key]+="assoc[other]=5"; declare -p scalar indexed assoc'
+bash_answer 'invalid integer append does not overwrite before exit' \
+        'declare -i scalar=7; trap "declare -p scalar" EXIT; scalar+="1/0"; echo after'
+bash_answer 'invalid array integer write does not overwrite before exit' \
+        'declare -Ai assoc=([key]=7); trap "declare -p assoc" EXIT; assoc[key]="1+"; echo after'
+bash_answer 'readonly nested integer write propagates failure' \
+        'declare -ir fixed=3; declare -i scalar=7; trap "declare -p fixed scalar" EXIT; scalar="fixed=4"; echo after'
+bash_answer 'nameref and element writes share integer append semantics' \
+        'declare -i scalar=7; declare -ai indexed=([2]=7); declare -Ai assoc=([key]=7); declare -n s=scalar i=indexed[2] a=assoc[key]; s+=3; i+=3; a+=3; declare -p scalar indexed assoc'
+bash_answer 'unset prefix scope basic' \
+        'x=old; f(){ unset x; printf "body:%s\n" "${x-unset}"; }; x=temp f; printf "end:%s\n" "${x-unset}"'
+bash_answer 'unset prefix scope writeafter' \
+        'x=old; f(){ unset x; x=new; printf "body:%s\n" "$x"; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope globalbefore' \
+        'x=old; f(){ declare -g x=new; unset x; printf "body:%s\n" "$x"; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope repeated' \
+        'x=old; f(){ unset x; printf "body:%s\n" "${x-unset}"; }; x=first x=second f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope doubleunset' \
+        'x=old; f(){ unset x x; printf "body:%s\n" "${x-unset}"; }; x=temp f; printf "end:%s\n" "${x-unset}"'
+bash_answer 'unset prefix scope localshadow' \
+        'x=old; f(){ local x=local; unset x; printf "body:%s\n" "${x-unset}"; x=localnew; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope nestedfunc' \
+        'x=old; g(){ unset x; printf "g:%s\n" "${x-unset}"; x=new; }; f(){ g; printf "f:%s\n" "$x"; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope nestedprefix' \
+        'x=old; g(){ unset x; printf "g:%s\n" "${x-unset}"; x=new; }; f(){ x=inner g; printf "f:%s\n" "$x"; }; x=outer f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope nestedlocal' \
+        'x=old; g(){ unset x; printf "g:%s\n" "${x-unset}"; x=new; }; f(){ local x=local; g; printf "f:%s\n" "$x"; }; x=outer f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope evalplain' \
+        'x=old; x=temp eval '"'"'unset x; printf "body:%s\n" "${x-unset}"; x=new'"'"'; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope evalposix' \
+        'set -o posix; x=old; x=temp eval '"'"'unset x; printf "body:%s\n" "${x-unset}"; x=new'"'"'; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope scalarnameref' \
+        'x=old; declare -n n=x; f(){ unset n; printf "body:%s:%s\n" "$x" "$n"; n=new; }; n=temp f; printf "end:%s:%s\n" "$x" "$n"'
+bash_answer 'unset prefix scope elementnameref' \
+        'a=(zero one); declare -n n="a[1]"; f(){ unset n; printf "body:%s:%s\n" "${a[1]}" "$n"; n=new; }; n=temp f; printf "end:%s:%s\n" "${a[1]}" "$n"'
+bash_answer 'unset prefix scope elementzero' \
+        'x=old; f(){ unset "x[0]"; printf "body:%s\n" "${x-unset}"; x=new; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope arrayoriginal' \
+        'a=(zero one); f(){ unset a; printf "body:%s:%s\n" "$a" "${a[1]}"; a=new; }; a=temp f; printf "end:%s:%s\n" "$a" "${a[1]}"'
+bash_answer 'unset prefix scope localprefix' \
+        'x=old; f(){ local x=local; g(){ unset x; printf "g:%s\n" "$x"; x=new; }; x=temp g; printf "f:%s\n" "$x"; }; f; printf "end:%s\n" "$x"'
+bash_answer 'unset prefix scope posixfunc' \
+        'set -o posix; x=old; f(){ unset x; printf "body:%s\n" "${x-unset}"; x=new; }; x=temp f; printf "end:%s\n" "$x"'
+bash_answer 'all nonzero bytes survive reusable quoting' \
+        'LC_ALL=C; for ((i=1; i<256; i++)); do printf -v oct "%03o" "$i"; printf -v value "%b" "\\$oct"; eval "round=${value@Q}"; [[ $round == "$value" ]] || exit 1; printf -v quoted "%q" "$value"; eval "round=$quoted"; [[ $round == "$value" ]] || exit 2; declaration=$(declare -p value); unset value; eval "$declaration"; [[ $round == "$value" ]] || exit 3; done; echo "$i"'
+bash_answer 'sorted function names bodies and attributes' \
+        'zz() { echo zz; }; aa() { echo aa; }; bodies=$(declare -f); (unset -f aa zz; eval "$bodies"; aa; zz); readonly -f zz; export -f aa; declare -F; readonly -fp | tr -d " \t\n"; echo; export -fp | tr -d " \t\n"; echo; compgen -A function'
 
 #       A special builtin that fails ends a script: set with a bad option
 #       name, and . with a file it cannot open.

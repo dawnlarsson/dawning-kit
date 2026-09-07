@@ -353,8 +353,6 @@ static CONST inline INLINE bool lex_extended_head(p8 value)
 static string_address lex_nested_at(string_address at);
 static __attribute__((noinline)) string_address
 lex_nesting(string_address at);
-static __attribute__((noinline)) string_address
-lex_nesting_double(string_address at);
 static string_address lex_nesting_at(string_address at, positive nesting,
                                      bool posix_double);
 static string_address lex_quote_end(string_address at, p8 quote);
@@ -943,12 +941,6 @@ static __attribute__((noinline)) string_address
 lex_nesting(string_address at)
 {
         return lex_nesting_at(at, 0, false);
-}
-
-static __attribute__((noinline)) string_address
-lex_nesting_double(string_address at)
-{
-        return lex_nesting_at(at, 0, true);
 }
 
 /*

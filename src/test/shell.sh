@@ -1571,7 +1571,7 @@ bash_answer 'coproc redirected' 'coproc C { echo x >&2; } 2>/dev/null; echo "st:
 #       coproc NAME is a name only when a compound command follows it, so
 #       "coproc C" alone runs C under the default name.
 bash_answer 'coproc name is a command' 'coproc C; echo "st:$?"'
-bash_answer 'coproc twice' 'coproc C { echo a; }; coproc D { echo b; }; read p <&${C[0]}; read q <&${D[0]}; echo "$p$q"'
+bash_answer 'coproc twice' 'coproc C { echo a; read ack; }; coproc D { echo b; read ack; }; read p <&${C[0]}; read q <&${D[0]}; echo go >&${C[1]}; echo go >&${D[1]}; wait; echo "$p$q"'
 bash_answer 'coproc with nothing to run' 'coproc; echo "st:$?"'
 bash_answer 'coproc never closed' 'coproc C { echo x'
 

@@ -243,7 +243,7 @@ static fn link_candidates(void)
 static fn talking(void)
 {
         netlink_search search;
-        bipolar handle = netlink_open();
+        bipolar handle = netlink_open_groups(0);
         bipolar status;
 
         check("a netlink socket opens", handle >= 0);
@@ -440,8 +440,8 @@ static fn resolving(void)
         }
 
         check("a transaction id is not always the same",
-              dns_transaction() != dns_transaction() ||
-                  dns_transaction() != dns_transaction());
+              (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)) ||
+                  (p16)network_transaction(sizeof(p16)) != (p16)network_transaction(sizeof(p16)));
 }
 
 static fn resolving_edges(void)
@@ -1030,6 +1030,30 @@ static fn leasing(void)
                 check("the server is read", lease.server == 0x0a000202);
                 check("the lease time is read", lease.seconds == 86400);
 
+                const p8 options[] = {DHCP_OPTION_MASK, DHCP_OPTION_ROUTER,
+                    DHCP_OPTION_DNS, DHCP_OPTION_SERVER, DHCP_OPTION_LEASE, 99};
+                for (positive i = 0; i < array_count(options); i++)
+                for (positive size = 0; size < 256; size++)
+                {
+                        p8 option = options[i];
+                        p32 value = 0x12345678;
+                        bool take = size == 4 || (size > 4 && (i == 1 || i == 2));
+                        dhcp_lease expected = {0x0a00020f,
+                            take && i == 0 ? value : 0xffffff00,
+                            take && i == 1 ? value : 0x0a000202,
+                            take && i == 2 ? value : 0x0a000203,
+                            take && i == 3 ? value : 0x0a000202,
+                            take && i == 4 ? value : 86400};
+                        packet[at - 1] = option; packet[at] = size;
+                        network_store_32(packet + at + 1, value);
+                        packet[at + 1 + size] = DHCP_OPTION_END;
+                        check("DHCP option lengths and last valid duplicate",
+                              !dhcp_read(packet, at + 2 + size, 0xdeadbeef, hardware,
+                                         &lease, &kind) &&
+                              !memory_compare(&lease, &expected, sizeof lease));
+                }
+                packet[at - 1] = DHCP_OPTION_END;
+
                 //      Somebody else's transaction, and somebody else's
                 //      hardware. Both are on the same broadcast domain as us.
                 check("another transaction is not ours",
@@ -1158,6 +1182,19 @@ static fn leasing(void)
         check("a /16 mask is a /16", dhcp_prefix_of(0xffff0000) == 16);
         check("a /32 mask is a /32", dhcp_prefix_of(0xffffffff) == 32);
         check("no mask at all falls back to /24", dhcp_prefix_of(0) == 24);
+        for (positive bits = 0; bits < 64; bits++)
+        {
+                dhcp_lease held = {1, 2, 3, 4, 5, 6};
+                dhcp_lease fresh = {bits & 1 ? 7 : 0, bits & 2 ? 8 : 0,
+                    bits & 4 ? 9 : 0, bits & 8 ? 10 : 0,
+                    bits & 16 ? 11 : 0, bits & 32 ? 12 : 0};
+                dhcp_lease expected = {bits & 1 ? 7 : 1, bits & 2 ? 8 : 2,
+                    bits & 4 ? 9 : 3, bits & 8 ? 10 : 4,
+                    bits & 16 ? 11 : 5, bits & 32 ? 12 : 6};
+                dhcp_lease_merge(&held, &fresh);
+                check("DHCP acknowledgement merges each nonzero field independently",
+                      !memory_compare(&held, &expected, sizeof held));
+        }
 }
 
 static fn leasing_datagrams(void)

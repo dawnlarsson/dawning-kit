@@ -1743,16 +1743,11 @@ static fn storage_write_hex_escaped(writer output, string_address value,
                            (escape_quote ? HEX_QUOTE : 0));
 }
 
-static fn storage_write_encoded(writer output, string_address value)
-{
-        storage_write_hex_escaped(output, value, false, true);
-}
-
 static fn storage_output_field(writer output, string_address name,
                                string_address value, bool exported)
 {
         string_format(output, exported ? "%s=" : " %s=\"", name);
-        storage_write_encoded(output, value);
+        storage_write_hex_escaped(output, value, false, true);
         output(exported ? "\n" : "\"", 1);
 }
 
@@ -2019,20 +2014,11 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                         continue;
                 }
 
-                if (option == 'U')
+                if (option == 'U' || option == 'L')
                 {
-                        context.selector.tag = (string_address)"UUID";
-                        context.selector.tag_length = 4;
-                        context.selector.value = value;
-                        context.mode = STORAGE_OUTPUT_DEVICE;
-                        context.first_only = true;
-                        continue;
-                }
-
-                if (option == 'L')
-                {
-                        context.selector.tag = (string_address)"LABEL";
-                        context.selector.tag_length = 5;
+                        context.selector.tag = option == 'U' ? (string_address)"UUID"
+                                                             : (string_address)"LABEL";
+                        context.selector.tag_length = option == 'U' ? 4 : 5;
                         context.selector.value = value;
                         context.mode = STORAGE_OUTPUT_DEVICE;
                         context.first_only = true;
@@ -2057,15 +2043,13 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
 
                 if (option == 'o')
                 {
-                        if (string_equals(value, "value"))
-                                context.mode = STORAGE_OUTPUT_VALUE;
-                        else if (string_equals(value, "device"))
-                                context.mode = STORAGE_OUTPUT_DEVICE;
-                        else if (string_equals(value, "export"))
-                                context.mode = STORAGE_OUTPUT_EXPORT;
-                        else if (string_equals(value, "full"))
-                                context.mode = STORAGE_OUTPUT_FULL;
-                        else
+                        static const string_address names[] = {
+                            [STORAGE_OUTPUT_FULL] = "full", [STORAGE_OUTPUT_VALUE] = "value",
+                            [STORAGE_OUTPUT_DEVICE] = "device", [STORAGE_OUTPUT_EXPORT] = "export",
+                        };
+                        context.mode = string_table_find(
+                            value, names, sizeof(names[0]), array_count(names));
+                        if (context.mode == array_count(names))
                                 goto usage;
                         continue;
                 }

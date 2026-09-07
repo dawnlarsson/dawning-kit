@@ -31,7 +31,7 @@ positive env_names_prefix(string_address prefix, positive length,
 PURE bool env_readonly(const_string name);
 string_address env_saved_state(const_string name, positive length,
                                bool address_to exported, p8 address_to kind,
-                               b32 address_to array);
+                               b32 address_to array, bool address_to declared);
 bool env_assign(const_string name, const_string value);
 
 // Resolve LC_CTYPE only for character operations. Keeping this a read of the
@@ -152,6 +152,9 @@ bool shell_array_set(const_string name, positive length, const_string key,
 bool shell_array_forget(const_string name, positive length,
                         const_string key, positive key_length);
 bool shell_array_clear(const_string name, positive length);
+bool shell_reference_resolve(const_string name, positive length,
+                             const_string address_to resolved_name,
+                             positive address_to resolved_length);
 bool shell_reference_element(const_string name, positive length,
                              const_string address_to base,
                              positive address_to base_length,
@@ -1482,7 +1485,7 @@ static PURE bool expand_ifs_blank(p8 value)
         arithmetic or the key's own expansion happens once however many times
         the operator asks for the value.
 */
-static COLD PURE bool expand_named_element(string_address name,
+static COLD bool expand_named_element(string_address name,
                                       positive address_to base_length,
                                       string_address address_to key,
                                       positive address_to key_length)
@@ -1988,6 +1991,7 @@ static bipolar arith_store(string_address name, bipolar value, bool element)
         if (!(element ? expand_assign_named(name, written)
                       : env_assign(name, written)))
         {
+                arith_bad = true;
                 string_format(expand_complain,
                               env_readonly(name) ? "%s: is read only\n"
                                                  : "%s: cannot assign\n",
@@ -4339,19 +4343,12 @@ static const b8 shell_quote_ansi[STRING_SET_BYTES] = {
 // also escape high bytes; quote selection and bulk runs stay with the caller.
 static inline INLINE positive shell_ansi_byte(p8 address_to into, p8 value, bool high)
 {
-        p8 named = 0;
-        switch (value)
-        {
-        case 7: named = 'a'; break;
-        case 8: named = 'b'; break;
-        case 27: named = 'E'; break;
-        case 12: named = 'f'; break;
-        case '\n': named = 'n'; break;
-        case '\r': named = 'r'; break;
-        case '\t': named = 't'; break;
-        case 11: named = 'v'; break;
-        case '\\': case '\'': named = value; break;
-        }
+        static const p8 names[256] = {
+            [7] = 'a', [8] = 'b', [27] = 'E', [12] = 'f',
+            ['\n'] = 'n', ['\r'] = 'r', ['\t'] = 't', [11] = 'v',
+            ['\\'] = '\\', ['\''] = '\''
+        };
+        p8 named = names[value];
         if (named)
         {
                 into[0] = '\\';
@@ -4515,28 +4512,53 @@ static string_address expand_ansi(string_address at, p8 mark, bool source)
         has to read the same from both shells. An ordinary name carries none
         of them and answers with nothing at all.
 */
+// Export is stored beside the attribute byte, so its listing bit is wider.
+#define SHELL_ATTRIBUTE_EXPORTED 256
+static const p16 shell_attribute_bits[256] = {
+    ['a'] = SHELL_ARRAY_INDEXED, ['A'] = SHELL_ARRAY_ASSOCIATIVE,
+    ['i'] = SHELL_ARRAY_INTEGER, ['n'] = SHELL_ARRAY_NAMEREF,
+    ['r'] = SHELL_ARRAY_READONLY, ['x'] = SHELL_ATTRIBUTE_EXPORTED,
+    ['l'] = SHELL_ARRAY_LOWER, ['u'] = SHELL_ARRAY_UPPER
+};
+
+static COLD positive shell_attribute_letters(p8 address_to into, p8 attributes,
+                                             bool readonly, bool exported)
+{
+        static const p8 letters[] = "aAinrxlu";
+        positive flags = (attributes & ~(SHELL_ARRAY_ASSIGNED | SHELL_ARRAY_READONLY)) |
+                         (readonly ? SHELL_ARRAY_READONLY : 0) |
+                         (exported ? SHELL_ATTRIBUTE_EXPORTED : 0);
+        positive count = 0;
+
+        for (positive at = 0; at < sizeof(letters) - 1; at++)
+                if (flags & shell_attribute_bits[letters[at]])
+                        into[count++] = letters[at];
+        return count;
+}
+
 static COLD fn transform_attributes(string_address name, p8 mark)
 {
-        positive length = string_length(name);
-        p8 attributes = shell_variable_attributes((const_string)name, length);
-        static const p8 letters[] = {'a', 'A', 'i', 'n', 'l', 'u'};
-        static const p8 bits[] = {SHELL_ARRAY_INDEXED, SHELL_ARRAY_ASSOCIATIVE,
-                                  SHELL_ARRAY_INTEGER, SHELL_ARRAY_NAMEREF,
-                                  SHELL_ARRAY_LOWER, SHELL_ARRAY_UPPER};
-
-        for (positive at = 0; at < 4; at++)
-                if (attributes & bits[at])
-                        expand_push(letters[at], mark);
-
-        if (env_readonly((const_string)name))
-                expand_push('r', mark);
-
-        if (shell_variable_exported((const_string)name, length))
-                expand_push('x', mark);
-
-        for (positive at = 4; at < array_count(letters); at++)
-                if (attributes & bits[at])
-                        expand_push(letters[at], mark);
+        positive length = (positive)(string_first_of_or_end(name, '[') - name);
+        const_string base = name;
+        bool element = !shell_reference_resolve(name, length, address_of base, address_of length);
+        if (element && !shell_reference_element(name, string_length(name),
+                address_of base, address_of length, null, null))
+                return;
+        p8 attributes = shell_variable_attributes(base, length);
+        bool exported = shell_variable_exported(base, length);
+        p8 letters[8];
+        if (element || string_first_of(name, '['))
+        {
+                p8 scratch[32];
+                bool present;
+                expand_value_of(name, scratch, address_of present, null);
+                if (element && !present)
+                        return;
+        }
+        positive count = shell_attribute_letters(letters, attributes,
+            (attributes & SHELL_ARRAY_READONLY) != 0, exported);
+        if (count)
+                expand_push_run(letters, count, mark);
 }
 
 static COLD fn expand_transform(string_address name, string_address word,
@@ -4550,8 +4572,7 @@ static COLD fn expand_transform(string_address name, string_address word,
         positive length;
         p8 address_to held;
 
-        // The letters are the name's own and have nothing to do with what
-        // it holds, so the value is never asked for.
+        // Attribute queries follow namerefs and evaluate explicit subscripts.
         if (which == 'a')
         {
                 transform_attributes(name, mark);

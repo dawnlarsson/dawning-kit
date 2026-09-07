@@ -298,26 +298,6 @@ static b32 lock_state(lock address_to it)
 #define lock_take_shared(it) lock_take_private((it), 0)
 #define lock_release_shared(it) lock_release_private((it), 0)
 
-/*
-        Which thread is asking, for a test that wants to prove two of them
-        really are running and for an owner field if one is ever added.
-
-        gettid rather than getpid: inside a CLONE_THREAD group every thread
-        shares the process id and only the thread id tells them apart.
-*/
-static b32 lock_thread_identity(void)
-{
-        return (b32)system_call(syscall(gettid));
-}
-
-//      Give the rest of the run queue a turn without sleeping. Not used by
-//      the lock -- it has a futex for that -- but a spin-until-flag join in a
-//      caller wants it, and it is one line here rather than a raw trap there.
-static fn lock_yield(void)
-{
-        system_call(syscall(sched_yield));
-}
-
 #endif // KERNEL_MODE / STANDARD_NO_PLATFORM
 
 #endif // STANDARD_MODERN_C_STANDARD_LOCK

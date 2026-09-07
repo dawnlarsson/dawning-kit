@@ -152,11 +152,11 @@ static fn test_sleeping(void)
 
         //      Time really passed. Twenty milliseconds asked for, and the
         //      monotonic clock must have moved at least that far.
-        clock_read(CLOCK_MONOTONIC, address_of before);
+        clock_gettime(CLOCK_MONOTONIC, address_of before);
         span.tv_sec = 0;
         span.tv_nsec = 20000000;
         nanosleep(address_of span, null);
-        clock_read(CLOCK_MONOTONIC, address_of after);
+        clock_gettime(CLOCK_MONOTONIC, address_of after);
 
         elapsed = (after.tv_sec - before.tv_sec) * 1000000000u +
                   after.tv_nsec - before.tv_nsec;

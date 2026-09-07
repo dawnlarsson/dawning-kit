@@ -245,7 +245,7 @@ static address_any lock_stack_top(positive which)
 static fn lock_join(volatile positive address_to done, positive wanted)
 {
         while (address_to done < wanted)
-                lock_yield();
+                system_call(syscall(sched_yield));
 }
 
 //      -- what the threads run --------------------------------------------
@@ -281,7 +281,7 @@ static volatile positive lock_go = 0;
 static fn lock_wait_for_go(void)
 {
         while (lock_go == 0)
-                lock_yield();
+                system_call(syscall(sched_yield));
 }
 
 #define LOCK_TURNS 100000
@@ -384,7 +384,7 @@ static fn lock_waiting_thread(address_any argument)
         //      the lock before the holder ever tries and the test would be
         //      measuring nothing.
         while (lock_holder_inside == 0)
-                lock_yield();
+                system_call(syscall(sched_yield));
 
         lock_take(address_of lock_guard);
         lock_waiter_saw = lock_holder_inside;

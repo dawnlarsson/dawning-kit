@@ -2118,15 +2118,6 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         file_walk_close(address_of walk);
 }
 
-static fn file_change_walk(bipolar directory, string_address name,
-                           string_address shown, positive depth,
-                           string_address program, b32 address_to status,
-                           file_visit visit)
-{
-        file_change_walk_as(directory, name, shown, depth, program, status,
-                            visit, false);
-}
-
 // The operand list those three read, which is the same list every time: each
 // name is visited, and under -R so is everything under it.
 static fn file_change_paths(positive first, positive count, bool recursive,
@@ -2138,8 +2129,8 @@ static fn file_change_paths(positive first, positive count, bool recursive,
                 string_address path = program_argument((b32)first++);
 
                 if (recursive)
-                        file_change_walk(AT_FDCWD, path, path, FILE_MAX_DEPTH,
-                                         program, status, visit);
+                        file_change_walk_as(AT_FDCWD, path, path, FILE_MAX_DEPTH,
+                                            program, status, visit, false);
                 else
                         visit(AT_FDCWD, path, path);
         }
@@ -3363,15 +3354,10 @@ static fn ls_size_field(p64 value)
         positive_to_string(log, value);
 }
 
-static positive ls_width_of(p64 value)
-{
-        return positive_digits(value);
-}
-
 static positive ls_human_width(p64 value)
 {
         if (!ls_human)
-                return ls_width_of(value);
+                return positive_digits(value);
 
         p8 text[6];
 
@@ -3942,22 +3928,18 @@ static fn ls_print(string_address directory)
                 if (!entry->known)
                         continue;
 
-                if (ls_inode && ls_width_of(entry->inode) > inode_width)
-                        inode_width = ls_width_of(entry->inode);
+                if (ls_inode)
+                        inode_width = max(inode_width, positive_digits(entry->inode));
 
                 if (!ls_long)
                         continue;
 
-                if (ls_width_of(entry->links) > link_width)
-                        link_width = ls_width_of(entry->links);
+                link_width = max(link_width, positive_digits(entry->links));
 
                 if (ls_is_device(entry))
                 {
-                        if (ls_width_of(entry->rdev_major) > major_width)
-                                major_width = ls_width_of(entry->rdev_major);
-
-                        if (ls_width_of(entry->rdev_minor) > minor_width)
-                                minor_width = ls_width_of(entry->rdev_minor);
+                        major_width = max(major_width, positive_digits(entry->rdev_major));
+                        minor_width = max(minor_width, positive_digits(entry->rdev_minor));
                 }
                 else
                 {
@@ -12050,7 +12032,7 @@ static b32 file_truncate()
 
 // hardlink ---------------------------------------------------------
 /*
-        hardlink's walk is file_change_walk, shared with chmod/chown/chgrp.
+        hardlink's walk is file_change_walk_as, shared with chmod/chown/chgrp.
         Candidate ordering is the library's stable merge sorter.  Only files
         with matching device, size and requested metadata are mapped; the
         tuned in-memory hash makes unlike contents cheap, and memory_compare
@@ -19154,15 +19136,10 @@ static const file_long cal_longs[] = {
     {null, 0},
 };
 
-static bool cal_number(string_address text, positive address_to value)
-{
-        return string_digits_exact(text, value);
-}
-
 static bipolar cal_month_number(string_address text)
 {
         positive value;
-        if (cal_number(text, address_of value))
+        if (string_digits_exact(text, address_of value))
                 return value >= 1 && value <= 12 ? (bipolar)value : -1;
 
         positive length = string_length(text);
@@ -19443,7 +19420,7 @@ static b32 file_cal()
                 string_address word = file_operand_at(0);
                 positive number;
                 bipolar named;
-                if (cal_number(word, address_of number))
+                if (string_digits_exact(word, address_of number))
                 {
                         if (!number || number > 2147483646U)
                         {
@@ -19486,7 +19463,7 @@ static b32 file_cal()
                         file_fail("cal: illegal month value: use 1-12\n", 0);
                         return 1;
                 }
-                if (!cal_number(file_operand_at(file_operand_count - 1),
+                if (!string_digits_exact(file_operand_at(file_operand_count - 1),
                                 address_of parsed_year) || !parsed_year ||
                     parsed_year > 2147483646U)
                 {
@@ -19496,7 +19473,7 @@ static b32 file_cal()
                 month = (positive)named;
                 year = parsed_year;
                 if (file_operand_count == 3 &&
-                    (!cal_number(file_operand_at(0), address_of selected_day) ||
+                    (!string_digits_exact(file_operand_at(0), address_of selected_day) ||
                      !selected_day ||
                      selected_day > cal_days_in_month(year, month,
                                                        proleptic)))
@@ -19517,7 +19494,7 @@ static b32 file_cal()
         positive months = 1;
         bool months_given = months_text != null;
 
-        if (months_given && !cal_number(months_text, address_of months))
+        if (months_given && !string_digits_exact(months_text, address_of months))
         {
                 file_fail("cal: invalid month count\n", 0);
                 return 1;

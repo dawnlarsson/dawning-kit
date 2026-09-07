@@ -1259,7 +1259,6 @@ static unsigned int line_anchor_row()
 }
 
 static fn line_erase(b32 shorten);
-static fn line_hide();
 
 /*
         The line, on the screen, wherever it now is.
@@ -1424,11 +1423,6 @@ static fn line_erase(b32 shorten)
                 if (!room)
                         break;
         }
-}
-
-static fn line_hide()
-{
-        line_erase(true);
 }
 
 static fn line_insert(unsigned int character)
@@ -1977,7 +1971,7 @@ fn regrid(b32 master)
 
 #ifndef KERNEL_MODE
         if (line_editing)
-                line_hide();
+                line_erase(true);
 #endif
 
         // A window narrower or shorter than one cell is not a grid, and every

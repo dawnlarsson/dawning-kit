@@ -56,6 +56,7 @@ source = r'''
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,7 +105,8 @@ static void check(int okay, const char *name) {
     if (!okay && ++failures <= 12) fprintf(stderr, "FAIL %s\n", name);
 }
 '''
-source += section(spark, "#define SPARK_SNAPSHOT_VERSION", "// _IOWR('s', 9")
+source += spark.replace('#include "platform/spark.inc"',
+                        (root / "src/platform/spark.inc").read_text())
 source += section(core, "struct snapshot_builder", "static HOT void snapshot_system")
 source += r'''
 static void snapshot_system(struct snapshot_header *header) { header->memory_total=42; }
@@ -204,6 +206,50 @@ typedef unsigned refcount_t;
 '''
 source += section(core, "struct spawn_strings", "struct pane;")
 source += section(core, "static int copy_strings", "static long do_spawn")
+source += r'''
+struct file { int unused; };
+static struct spawn *spawn_request;
+static const char *spawn_path;
+static int spawn_descriptors[3], spawn_shell, spawn_calls;
+static long do_spawn(struct file *file, struct spawn *request, _Bool shell,
+                     const char *path, int input, int output, int error) {
+    (void)file; spawn_calls++; spawn_request=request; spawn_shell=shell; spawn_path=path;
+    spawn_descriptors[0]=input; spawn_descriptors[1]=output; spawn_descriptors[2]=error;
+    return 321;
+}
+static long report_stats(struct stats *out) { (void)out; return 322; }
+'''
+source += section(core, "static long device_ioctl", "/*\n        misc_open")
+source += r'''
+static void check_spawn_dispatch(void) {
+    _Static_assert(sizeof(struct spawn)==48 && sizeof(struct spawn_to)==56 &&
+                   sizeof(struct spawn_into)==64, "spawn ioctl encoded sizes");
+    _Static_assert(offsetof(struct spawn_to,output)==sizeof(struct spawn) &&
+                   offsetof(struct spawn_into,input)==sizeof(struct spawn), "spawn descriptor prefix");
+    const unsigned commands[]={SPARK_IOCTL_SPAWN,SPARK_IOCTL_SPAWN_SHELL,
+        SPARK_IOCTL_SPAWN_TOOL,SPARK_IOCTL_SPAWN_SHELL_INTO,SPARK_IOCTL_SPAWN_TOOL_TO};
+    struct spawn_into into={.input=0,.output=INT_MAX,.error=-9};
+    struct spawn_to to={.output=-9,.error=0};
+    for (unsigned i=0;i<5;i++) for (unsigned fail=0;fail<2;fail++) {
+        void *request=i==4?(void *)&to:(void *)&into;
+        int rejected=i>=3 && fail;
+        spawn_calls=0; copies=0; fail_copy=fail;
+        check(device_ioctl(NULL,commands[i],(unsigned long)request)==(rejected?-EFAULT:321),
+              "spawn dispatch and descriptor-copy failure");
+        check(spawn_calls==!rejected && copies==(i>=3),"spawn copies only its descriptor forms");
+        if (!rejected) {
+            check(spawn_request==request && spawn_shell==(i==1 || i==3) &&
+                  (i==2 || i==4 ? spawn_path && !strcmp(spawn_path,"/shell") : !spawn_path),
+                  "spawn entry prefix and interpretation policy");
+            check(spawn_descriptors[0]==(i==3?0:-1) &&
+                  spawn_descriptors[1]==(i==3?INT_MAX:i==4?-9:-1) &&
+                  spawn_descriptors[2]==(i==3?-9:i==4?0:-1),"spawn keeps descriptor order and bits");
+        }
+    }
+    check(device_ioctl(NULL,0,0)==-ENOTTY,"unknown device ioctl remains rejected");
+    fail_copy=0;
+}
+'''
 source += r'''
 #define COLD
 #define KEY_LEFTSHIFT 42
@@ -564,6 +610,7 @@ static void reset(void) {
     assert(!snapshot_lock);
 }
 int main(void) {
+    check_spawn_dispatch();
     check_console_teardown();
     const unsigned capacities[]={0,111,112,113,4095,4096,4097,8192,SPARK_SNAPSHOT_MAX_BYTES};
     const unsigned records[]={0,1,32,171};

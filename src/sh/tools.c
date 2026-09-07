@@ -2209,13 +2209,6 @@ static positive login_idle_pinky(p8 address_to into, login_terminal terminal)
         return made;
 }
 
-static positive login_signed(p8 address_to into, bipolar value)
-{
-        positive made = bipolar_into(into, value);
-        into[made] = end;
-        return made;
-}
-
 static bool login_ends_with(string_address text, string_address suffix)
 {
         positive length = string_length(text);
@@ -3249,13 +3242,13 @@ static bool login_who_visit(login_record address_to record)
                 {
                         positive made = memory_copy_apart_end(
                                             exit_text, "term=", 5) - exit_text;
-                        made += login_signed(exit_text + made,
+                        made += bipolar_into_string(exit_text + made,
                                              (b16)record->termination);
                         exit_text[made++] = ' ';
                         made += memory_copy_apart_end(exit_text + made,
                                                      "exit=", 5) -
                                 (exit_text + made);
-                        made += login_signed(exit_text + made,
+                        made += bipolar_into_string(exit_text + made,
                                              (b16)record->exit);
                         exit_text[made] = end;
                 }
@@ -4132,19 +4125,17 @@ static positive numfmt_gcd(positive left, positive right)
 
 static bool numfmt_scale_name(string_address name, bool input, p8 address_to scale)
 {
-        if (string_equals(name, "none"))
-                address_to scale = NUMFMT_SCALE_NONE;
-        else if (input && string_equals(name, "auto"))
-                address_to scale = NUMFMT_SCALE_AUTO;
-        else if (string_equals(name, "si"))
-                address_to scale = NUMFMT_SCALE_SI;
-        else if (string_equals(name, "iec"))
-                address_to scale = NUMFMT_SCALE_IEC;
-        else if (string_equals(name, "iec-i"))
-                address_to scale = NUMFMT_SCALE_IEC_I;
-        else
+        static const string_address names[] = {
+            [NUMFMT_SCALE_NONE] = "none", [NUMFMT_SCALE_AUTO] = "auto",
+            [NUMFMT_SCALE_SI] = "si", [NUMFMT_SCALE_IEC] = "iec",
+            [NUMFMT_SCALE_IEC_I] = "iec-i",
+        };
+        positive found = string_table_find(name, names, sizeof(names[0]),
+                                            array_count(names));
+        if (found == array_count(names) ||
+            (!input && found == NUMFMT_SCALE_AUTO))
                 return false;
-
+        address_to scale = (p8)found;
         return true;
 }
 
@@ -5003,32 +4994,28 @@ static b32 tools_numfmt()
         value = file_option_value(address_of taking, 'u');
         if (value)
         {
-                if (string_equals(value, "up"))
-                        numfmt.rounding = NUMFMT_ROUND_UP;
-                else if (string_equals(value, "down"))
-                        numfmt.rounding = NUMFMT_ROUND_DOWN;
-                else if (string_equals(value, "from-zero"))
-                        numfmt.rounding = NUMFMT_ROUND_FROM_ZERO;
-                else if (string_equals(value, "towards-zero"))
-                        numfmt.rounding = NUMFMT_ROUND_TO_ZERO;
-                else if (string_equals(value, "nearest"))
-                        numfmt.rounding = NUMFMT_ROUND_NEAREST;
-                else
+                static const string_address names[] = {
+                    [NUMFMT_ROUND_FROM_ZERO] = "from-zero",
+                    [NUMFMT_ROUND_UP] = "up", [NUMFMT_ROUND_DOWN] = "down",
+                    [NUMFMT_ROUND_TO_ZERO] = "towards-zero",
+                    [NUMFMT_ROUND_NEAREST] = "nearest",
+                };
+                numfmt.rounding = string_table_find(
+                    value, names, sizeof(names[0]), array_count(names));
+                if (numfmt.rounding == array_count(names))
                         return text_refuse(value, "invalid rounding method", 1);
         }
 
         value = file_option_value(address_of taking, 'i');
         if (value)
         {
-                if (string_equals(value, "abort"))
-                        numfmt.invalid = NUMFMT_INVALID_ABORT;
-                else if (string_equals(value, "fail"))
-                        numfmt.invalid = NUMFMT_INVALID_FAIL;
-                else if (string_equals(value, "warn"))
-                        numfmt.invalid = NUMFMT_INVALID_WARN;
-                else if (string_equals(value, "ignore"))
-                        numfmt.invalid = NUMFMT_INVALID_IGNORE;
-                else
+                static const string_address names[] = {
+                    [NUMFMT_INVALID_ABORT] = "abort", [NUMFMT_INVALID_FAIL] = "fail",
+                    [NUMFMT_INVALID_WARN] = "warn", [NUMFMT_INVALID_IGNORE] = "ignore",
+                };
+                numfmt.invalid = string_table_find(
+                    value, names, sizeof(names[0]), array_count(names));
+                if (numfmt.invalid == array_count(names))
                         return text_refuse(value, "invalid invalid-mode", 1);
         }
 
@@ -7773,19 +7760,13 @@ static positive dump_named_field(p8 address_to into, p8 value)
         return made + length;
 }
 
-static positive dump_address(p8 address_to into, positive address,
-                             positive base, positive width)
-{
-        return dump_unsigned_field(into, address, base, width, '0');
-}
-
 static fn dump_canonical_line(p8 address_to bytes, positive length,
                               positive address)
 {
         p8 line[96];
         p8 hex[DUMP_BLOCK * 2];
         memory_into_hex(hex, bytes, length);
-        positive made = dump_address(line, address, 16, 8);
+        positive made = dump_unsigned_field(line, address, 16, 8, '0');
 
         line[made++] = ' ';
         line[made++] = ' ';
@@ -7858,9 +7839,9 @@ static fn dump_regular_line(dump_format address_to format,
         if (first || format->hexdump)
         {
                 if (!dump_arguments.address_none)
-                        made += dump_address(line, address,
+                        made += dump_unsigned_field(line, address,
                                              dump_arguments.address_base,
-                                             dump_arguments.address_width);
+                                             dump_arguments.address_width, '0');
         }
         else if (!dump_arguments.address_none)
                 made += dump_pad(line, dump_arguments.address_width, ' ');
@@ -8108,9 +8089,9 @@ static b32 dump_run(positive first)
                 if (!dump_arguments.address_none)
                 {
                         p8 final[32];
-                        positive length = dump_address(final, offset,
+                        positive length = dump_unsigned_field(final, offset,
                                                        dump_arguments.address_base,
-                                                       dump_arguments.address_width);
+                                                       dump_arguments.address_width, '0');
 
                         final[length++] = '\n';
                         text_put(final, length);
@@ -8659,13 +8640,6 @@ static bool diff_classify(diff_side address_to side, b32 which)
 
 // Discarding ------------------------------------------------
 
-// The loop this used to be is one compiler-visible highest-bit operation; the
-// or with one keeps a zero from asking about a word with nothing set.
-static positive diff_floor_log2(positive value)
-{
-        return top_bit_known(value | 1);
-}
-
 /*
         A line that matches nothing on the other side is a deletion whatever
         the matcher would have said, so it is taken out before the matcher
@@ -8708,7 +8682,7 @@ static bool diff_discard()
                 positive many = 5;
 
                 if (bound >= 64)
-                        many <<= (diff_floor_log2(bound) >> 1) - 3;
+                        many <<= (top_bit_known(bound) >> 1) - 3;
 
                 for (positive i = 0; i < bound; i++)
                 {
@@ -8768,7 +8742,7 @@ static bool diff_discard()
 
                         positive least = length < 4
                                              ? 2
-                                             : ((positive)1 << ((diff_floor_log2(length) >> 1) - 1)) + 1;
+                                             : ((positive)1 << ((top_bit_known(length) >> 1) - 1)) + 1;
                         positive run = 0;
 
                         for (j = 0; j < length; j++)
@@ -10209,6 +10183,7 @@ static positive ps_now;
 static positive ps_own_tty;
 static positive ps_own_uid;
 static positive ps_wall;
+static b64 ps_boot;
 
 // The name behind a numeric user id. file.c already reads /etc/passwd and
 // remembers the last answer, so ps only keeps a copy that lives as long as
@@ -10386,16 +10361,6 @@ static fn ps_put_clock(positive seconds, bool hours_always)
         file_two(ps_bytes, rest % 60);
 }
 
-static fn ps_put_time(positive nanoseconds)
-{
-        ps_put_clock(nanoseconds / SYSTEM_NANOSECONDS, true);
-}
-
-static fn ps_put_elapsed(positive seconds)
-{
-        ps_put_clock(seconds, false);
-}
-
 static fn ps_put_tty(positive tty)
 {
         if (!tty)
@@ -10466,14 +10431,14 @@ static fn ps_draw(struct snapshot_process address_to process,
                                          : ps_state(detail, process));
                 break;
         case PS_FIELD_TIME:
-                ps_put_time(system_saturating_add(process->user_ns,
-                                                  process->system_ns));
+                ps_put_clock(system_saturating_add(process->user_ns,
+                    process->system_ns) / SYSTEM_NANOSECONDS, true);
                 break;
         case PS_FIELD_ETIME:
         {
                 positive began = process->start_ns / SYSTEM_NANOSECONDS;
 
-                ps_put_elapsed(ps_now > began ? ps_now - began : 0);
+                ps_put_clock(ps_now > began ? ps_now - began : 0, false);
                 break;
         }
         case PS_FIELD_RSS: ps_digits(process->resident_bytes / 1024); break;
@@ -10494,7 +10459,7 @@ static fn ps_draw(struct snapshot_process address_to process,
         }
         case PS_FIELD_STIME:
         {
-                b64 began = (b64)ps_wall - (b64)ps_now +
+                b64 began = ps_boot +
                             (b64)(process->start_ns / SYSTEM_NANOSECONDS);
                 b64 year, year_now;
                 positive month, day, hour, minute, second;
@@ -11205,6 +11170,20 @@ static b32 tools_ps(void)
 
         ps_now = ps_snapshot.header.uptime_ns / SYSTEM_NANOSECONDS;
         ps_wall = ps_snapshot.header.realtime_seconds;
+        ps_boot = (b64)ps_wall - (b64)ps_now;
+        if ((wanted & ((positive)1 << PS_FIELD_STIME)) &&
+            file_store_slurp("/proc/stat", address_of ps_snapshot.input))
+        {
+                // Separately rounded wall time and uptime can move STIME
+                // across a minute boundary. Use the kernel's boot epoch.
+                string_address boot = string_search(ps_snapshot.input.bytes,
+                                                    "\nbtime ");
+                if (boot)
+                {
+                        boot += 7;
+                        ps_boot = (b64)system_field_unsigned(address_of boot);
+                }
+        }
         positive ps_count = ps_snapshot.header.process_count;
 
         if (filter_owner)

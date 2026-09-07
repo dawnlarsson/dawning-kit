@@ -1724,6 +1724,17 @@ same 'shift tab is dedent' 'ab'         40 6 text '        ab' keys '\e[Z' buffe
 same 'application arrows' '0,1'         40 6 text 'abc' keys '\eOC' carets
 same 'csi u redo'      'hi'             40 6 keys 'hi^z\e[122;6u' buffer
 
+group tilde
+for home in 1 7; do
+        same "home alias $home" '0,0' 40 6 text 'abc' keys "<end>\e[$home~" carets
+done
+for finish in 4 8; do
+        same "end alias $finish" '0,3' 40 6 text 'abc' keys "\e[$finish~" carets
+done
+for unused in 0 9 10 16 22 25 99999999999999999999; do
+        same "unbound tilde $unused" 'Xabc' 40 6 text 'abc' keys "\e[$unused~X" buffer
+done
+
 group utf8
 same 'two bytes'       '[1 <00e9>]'     40 6 keys '\xc3\xa9' row 0
 same 'two byte minimum' '[1 <0080>]'    40 6 keys '\xc2\x80' row 0

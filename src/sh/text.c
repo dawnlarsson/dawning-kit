@@ -9220,11 +9220,6 @@ static positive ptx_skip_something(ptx_file address_to file, positive at,
         return at;
 }
 
-static fn ptx_put_spaces(positive count)
-{
-        text_tab_repeat_character(' ', count);
-}
-
 static positive ptx_field_padding(positive field, bipolar used)
 {
         if (used < 0)
@@ -9424,7 +9419,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
                         text_put_character(':');
                         positive used = reference_length + 1;
                         positive field = ptx_reference_width + ptx_gap;
-                        ptx_put_spaces(field > used ? field - used : 0);
+                        text_tab_repeat_character(' ', field > used ? field - used : 0);
                 }
                 else
                 {
@@ -9432,7 +9427,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
                                 ptx_put_reference(occurrence);
 
                         positive field = ptx_reference_width + ptx_gap;
-                        ptx_put_spaces(field > reference_length
+                        text_tab_repeat_character(' ', field > reference_length
                                            ? field - reference_length
                                            : 0);
                 }
@@ -9459,7 +9454,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
                 positive field = ptx_half_width > ptx_gap
                                      ? ptx_half_width - ptx_gap
                                      : 0;
-                ptx_put_spaces(ptx_field_padding(field, used));
+                text_tab_repeat_character(' ', ptx_field_padding(field, used));
         }
         else
         {
@@ -9470,14 +9465,14 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
                 positive field = ptx_half_width > ptx_gap
                                      ? ptx_half_width - ptx_gap
                                      : 0;
-                ptx_put_spaces(ptx_field_padding(field, used));
+                text_tab_repeat_character(' ', ptx_field_padding(field, used));
         }
 
         if (before_truncated)
                 text_put(ptx_truncation, ptx_truncation_length);
 
         ptx_put_span(file, (ptx_span){before_start, before_finish, true});
-        ptx_put_spaces(ptx_gap);
+        text_tab_repeat_character(' ', ptx_gap);
         ptx_put_span(file, (ptx_span){key_start, keyafter_finish, true});
 
         if (keyafter_truncated)
@@ -9489,7 +9484,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
                                 head.finish - head.start +
                                 (keyafter_truncated ? ptx_truncation_length : 0) +
                                 (head_truncated ? ptx_truncation_length : 0);
-                ptx_put_spaces(ptx_half_width > used
+                text_tab_repeat_character(' ', ptx_half_width > used
                                    ? ptx_half_width - used
                                    : 0);
 
@@ -9503,7 +9498,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
         {
                 positive used = keyafter_finish - key_start +
                                 (keyafter_truncated ? ptx_truncation_length : 0);
-                ptx_put_spaces(ptx_half_width > used
+                text_tab_repeat_character(' ', ptx_half_width > used
                                    ? ptx_half_width - used
                                    : 0);
         }
@@ -9511,7 +9506,7 @@ static fn ptx_output_one(ptx_occurrence address_to occurrence)
         if ((ptx_auto_reference || ptx_input_reference) &&
             ptx_right_reference)
         {
-                ptx_put_spaces(ptx_gap);
+                text_tab_repeat_character(' ', ptx_gap);
                 ptx_put_reference(occurrence);
         }
 
@@ -11082,10 +11077,7 @@ static fn terminal_col_event(terminal_state address_to state, p8 character,
 
 static positive terminal_crt_length(p8 address_to line, positive room)
 {
-        positive length = 0;
-
-        while (length < room && line[length])
-                length++;
+        positive length = string_length_max(line, room);
 
         while (length && byte_is_space(line[length - 1]))
                 length--;
@@ -11171,6 +11163,29 @@ enum
         TERMINAL_UL_VT100,
 };
 
+static const struct {
+        string_address normal, underline;
+        bool dim;
+} terminal_ul_terminals[] = {
+    [TERMINAL_UL_DUMB] = {"", "", false},
+    [TERMINAL_UL_ANSI] = {"\033[0;10m", "\033[m", false},
+    [TERMINAL_UL_XTERM] = {"\033(B\033[m", "\033[24m", true},
+    [TERMINAL_UL_LINUX] = {"\033[m\017", "\033[24m", true},
+    [TERMINAL_UL_VT100] = {"\033[m\017", "\033[m", false},
+};
+
+static const struct {
+        string_address plain, dim;
+        p8 indicator;
+} terminal_ul_modes[] = {
+    [TERMINAL_UL_NORMAL] = {"", "", ' '},
+    [TERMINAL_UL_ALTERNATIVE] = {"\033[7m", "\033[7m", 'g'},
+    [TERMINAL_UL_SUPER] = {"\033[4m\033[7m", "\033[4m\033[2m", '^'},
+    [TERMINAL_UL_SUB] = {"\033[7m", "\033[2m", 'v'},
+    [TERMINAL_UL_UNDERLINE] = {"\033[4m", "\033[4m", '_'},
+    [TERMINAL_UL_BOLD] = {"\033[1m", "\033[1m", '!'},
+};
+
 static fn terminal_ul_clear(terminal_state address_to state)
 {
         if (state->ul_max_column)
@@ -11184,8 +11199,9 @@ static fn terminal_ul_clear(terminal_state address_to state)
         state->ul_mode &= TERMINAL_UL_ALTERNATIVE;
 }
 
-static bool terminal_ul_set_column(terminal_state address_to state,
-                                   positive column)
+/* Printable bytes replace the output edge; cursor movement only extends it. */
+static bool terminal_ul_column(terminal_state address_to state,
+                                positive column, bool movement)
 {
         if (column > TEXT_LINE_MAX)
         {
@@ -11194,7 +11210,8 @@ static bool terminal_ul_set_column(terminal_state address_to state,
                 return false;
         }
 
-        state->ul_column = column;
+        if (movement)
+                state->ul_column = column;
 
         if (state->ul_plane_column < column)
         {
@@ -11205,36 +11222,9 @@ static bool terminal_ul_set_column(terminal_state address_to state,
                 state->ul_plane_column = column;
         }
 
-        if (state->ul_max_column < column)
+        if (!movement || state->ul_max_column < column)
                 state->ul_max_column = column;
 
-        return true;
-}
-
-/* util-linux's need_column is subtly different from cursor movement: every
-   printable byte makes its right edge the new output edge, including after a
-   carriage return. Bytes already beyond that edge remain in the plane and
-   can become visible again after a later tab. */
-static bool terminal_ul_need_column(terminal_state address_to state,
-                                    positive column)
-{
-        if (column > TEXT_LINE_MAX)
-        {
-                text_error(null, "line too long");
-                state->ul_failed = true;
-                return false;
-        }
-
-        if (state->ul_plane_column < column)
-        {
-                memory_fill(text_line + state->ul_plane_column, 0,
-                            column - state->ul_plane_column);
-                memory_fill(text_record_hold + state->ul_plane_column, 0,
-                            column - state->ul_plane_column);
-                state->ul_plane_column = column;
-        }
-
-        state->ul_max_column = column;
         return true;
 }
 
@@ -11265,59 +11255,26 @@ static fn terminal_ul_mode(terminal_state address_to state, p8 mode)
                 terminal_ul_mode(state, TERMINAL_UL_NORMAL);
 
         if (!mode)
-        {
-                if (state->ul_current_mode == TERMINAL_UL_UNDERLINE)
-                {
-                        if (state->ul_terminal == TERMINAL_UL_XTERM ||
-                            state->ul_terminal == TERMINAL_UL_LINUX)
-                                text_put_string((string_address)"\033[24m");
-                        else
-                                text_put_string((string_address)"\033[m");
-                }
-                else if (state->ul_terminal == TERMINAL_UL_ANSI)
-                        text_put_string((string_address)"\033[0;10m");
-                else if (state->ul_terminal == TERMINAL_UL_XTERM)
-                        text_put_string((string_address)"\033(B\033[m");
-                else
-                        text_put_string((string_address)"\033[m\017");
-        }
-        else if (mode == TERMINAL_UL_UNDERLINE)
-                text_put_string((string_address)"\033[4m");
-        else if (mode == TERMINAL_UL_BOLD)
-                text_put_string((string_address)"\033[1m");
-        else if (mode == TERMINAL_UL_ALTERNATIVE)
-                text_put_string((string_address)"\033[7m");
-        else if (mode == TERMINAL_UL_SUPER)
-        {
-                text_put_string((string_address)"\033[4m");
-                text_put_string(state->ul_terminal == TERMINAL_UL_XTERM ||
-                                        state->ul_terminal == TERMINAL_UL_LINUX
-                                    ? (string_address)"\033[2m"
-                                    : (string_address)"\033[7m");
-        }
-        else if (mode == TERMINAL_UL_SUB)
-                text_put_string(state->ul_terminal == TERMINAL_UL_XTERM ||
-                                        state->ul_terminal == TERMINAL_UL_LINUX
-                                    ? (string_address)"\033[2m"
-                                    : (string_address)"\033[7m");
+                text_put_string(state->ul_current_mode == TERMINAL_UL_UNDERLINE
+                    ? terminal_ul_terminals[state->ul_terminal].underline
+                    : terminal_ul_terminals[state->ul_terminal].normal);
         else
-                text_put_string((string_address)"\033[7m");
+        {
+                string_address sequence = mode < array_count(terminal_ul_modes)
+                    ? terminal_ul_terminals[state->ul_terminal].dim
+                        ? terminal_ul_modes[mode].dim : terminal_ul_modes[mode].plain
+                    : null;
+                text_put_string(sequence ? sequence : (string_address)"\033[7m");
+        }
 
         state->ul_current_mode = mode;
 }
 
 static p8 terminal_ul_indicator(p8 mode)
 {
-        switch (mode)
-        {
-        case TERMINAL_UL_NORMAL: return ' ';
-        case TERMINAL_UL_ALTERNATIVE: return 'g';
-        case TERMINAL_UL_SUPER: return '^';
-        case TERMINAL_UL_SUB: return 'v';
-        case TERMINAL_UL_UNDERLINE: return '_';
-        case TERMINAL_UL_BOLD: return '!';
-        default: return 'X';
-        }
+        p8 indicator = mode < array_count(terminal_ul_modes)
+                           ? terminal_ul_modes[mode].indicator : 0;
+        return indicator ? indicator : 'X';
 }
 
 static fn terminal_ul_flush(terminal_state address_to state)
@@ -11446,8 +11403,8 @@ static fn terminal_ul_byte(terminal_state address_to state, p8 character)
         }
         if (character == '\t')
         {
-                terminal_ul_set_column(state,
-                                       (state->ul_column + 8) & ~(positive)7);
+                terminal_ul_column(state,
+                                    (state->ul_column + 8) & ~(positive)7, true);
                 return;
         }
         if (character == '\r')
@@ -11476,7 +11433,7 @@ static fn terminal_ul_byte(terminal_state address_to state, p8 character)
         }
         if (character == ' ')
         {
-                terminal_ul_set_column(state, state->ul_column + 1);
+                terminal_ul_column(state, state->ul_column + 1, true);
                 return;
         }
         if (!byte_is_printable(character))
@@ -11493,7 +11450,7 @@ static fn terminal_ul_byte(terminal_state address_to state, p8 character)
 
         if (character == '_')
         {
-                if (!terminal_ul_set_column(state, column + 1))
+                if (!terminal_ul_column(state, column + 1, true))
                         return;
 
                 if (text_line[column])
@@ -11510,7 +11467,7 @@ static fn terminal_ul_byte(terminal_state address_to state, p8 character)
         }
         else
         {
-                if (!terminal_ul_need_column(state, column + 1))
+                if (!terminal_ul_column(state, column + 1, false))
                         return;
 
                 if (!text_line[column])
@@ -12224,23 +12181,6 @@ static bool terminal_ul_option_seen(p8 letter, string_address value)
         return true;
 }
 
-static bool terminal_ul_prefix(string_address value, string_address prefix)
-{
-        if (!value)
-                return false;
-
-        while (prefix[0])
-        {
-                if (value[0] != prefix[0])
-                        return false;
-
-                value++;
-                prefix++;
-        }
-
-        return true;
-}
-
 static p8 terminal_ul_type(string_address name, bool explicit)
 {
         if (!name)
@@ -12249,19 +12189,18 @@ static p8 terminal_ul_type(string_address name, bool explicit)
                 return TERMINAL_UL_DUMB;
         }
 
-        if (!string_compare(name, (string_address)"dumb"))
-                return TERMINAL_UL_DUMB;
-        if (!string_compare(name, (string_address)"ansi"))
-                return TERMINAL_UL_ANSI;
-        if (!string_compare(name, (string_address)"linux"))
-                return TERMINAL_UL_LINUX;
-        if (!string_compare(name, (string_address)"vt100"))
-                return TERMINAL_UL_VT100;
-        if (terminal_ul_prefix(name, (string_address)"xterm") ||
-            terminal_ul_prefix(name, (string_address)"screen") ||
-            terminal_ul_prefix(name, (string_address)"tmux") ||
-            terminal_ul_prefix(name, (string_address)"rxvt"))
-                return TERMINAL_UL_XTERM;
+        static const named_byte names[] = {
+            {"dumb", TERMINAL_UL_DUMB}, {"ansi", TERMINAL_UL_ANSI},
+            {"linux", TERMINAL_UL_LINUX}, {"vt100", TERMINAL_UL_VT100},
+        };
+        positive found = string_table_find(name, names, sizeof(names[0]),
+                                           array_count(names));
+        if (found < array_count(names))
+                return names[found].value;
+        static const string_address prefixes[] = {"xterm", "screen", "tmux", "rxvt"};
+        for (positive at = 0; at < array_count(prefixes); at++)
+                if (!string_compare_max(name, prefixes[at], string_length(prefixes[at])))
+                        return TERMINAL_UL_XTERM;
 
         if (explicit)
         {

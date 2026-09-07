@@ -3187,19 +3187,7 @@ static fn edit_key(positive key);
 //      of shift, alt and control.
 static CONST positive edit_modifiers_from(positive value)
 {
-        positive bits = value > 1 ? value - 1 : 0;
-        positive modifiers = 0;
-
-        if (bits & 1)
-                modifiers |= EDIT_KEY_SHIFT;
-
-        if (bits & 2)
-                modifiers |= EDIT_KEY_ALT;
-
-        if (bits & 4)
-                modifiers |= EDIT_KEY_CONTROL;
-
-        return modifiers;
+        return value > 1 ? ((value - 1) & 7) * EDIT_KEY_SHIFT : 0;
 }
 
 //      A byte below space, as the key a person pressed to make it. Ctrl+letter
@@ -3208,43 +3196,19 @@ static CONST positive edit_modifiers_from(positive value)
 //      looks like.
 static CONST positive edit_key_from_control(p8 byte)
 {
-        switch (byte)
-        {
-        case 0:
-                return EDIT_KEY_CONTROL | ' ';
-        case '\t':
-                return EDIT_KEY_TAB;
-        case '\r':
-        case '\n':
-                return EDIT_KEY_ENTER;
-        case 8:
-                /*
-                        Backspace is 0x7f and this is Ctrl+Backspace.
-
-                        xterm and everything that copies it send DEL for the
-                        key with "backspace" written on it and BS for the same
-                        key with Control held, which is backwards from what the
-                        names suggest and is nevertheless what is on the wire.
-                */
-                return EDIT_KEY_CONTROL | EDIT_KEY_BACKSPACE;
-        case 27:
-                return EDIT_KEY_ESCAPE;
-        case 28:
-                return EDIT_KEY_CONTROL | '\\';
-        case 29:
-                return EDIT_KEY_CONTROL | ']';
-        case 30:
-                return EDIT_KEY_CONTROL | '^';
-        case 31:
-                //      Ctrl+/ and Ctrl+_ are the same byte, and the one people
-                //      reach for is Ctrl+/.
-                return EDIT_KEY_CONTROL | '/';
-        }
-
-        if (byte < 27)
-                return EDIT_KEY_CONTROL | (positive)('a' + byte - 1);
-
-        return EDIT_KEY_NONE;
+        // xterm sends DEL for Backspace and BS for Ctrl+Backspace.
+        // Ctrl+/ and Ctrl+_ share byte 31; the binding uses Ctrl+/.
+        static const positive keys[32] = {
+            [0] = EDIT_KEY_CONTROL | ' ', [8] = EDIT_KEY_CONTROL | EDIT_KEY_BACKSPACE,
+            ['\t'] = EDIT_KEY_TAB, ['\r'] = EDIT_KEY_ENTER, ['\n'] = EDIT_KEY_ENTER,
+            [27] = EDIT_KEY_ESCAPE, [28] = EDIT_KEY_CONTROL | '\\',
+            [29] = EDIT_KEY_CONTROL | ']', [30] = EDIT_KEY_CONTROL | '^',
+            [31] = EDIT_KEY_CONTROL | '/'
+        };
+        if (byte < array_count(keys) && keys[byte])
+                return keys[byte];
+        return byte < 27 ? EDIT_KEY_CONTROL | (positive)('a' + byte - 1)
+                         : EDIT_KEY_NONE;
 }
 
 //      The keys a CSI sequence ending in a tilde names, by its first
@@ -3252,28 +3216,19 @@ static CONST positive edit_key_from_control(p8 byte)
 //      agrees with them.
 static CONST positive edit_key_from_tilde(positive value)
 {
-        if (value == 1 || value == 7)
-                return EDIT_KEY_HOME;
-        if (value == 2)
-                return EDIT_KEY_INSERT;
-        if (value == 3)
-                return EDIT_KEY_REMOVE;
-        if (value == 4 || value == 8)
-                return EDIT_KEY_END;
-        if (value == 5)
-                return EDIT_KEY_PAGE_UP;
-        if (value == 6)
-                return EDIT_KEY_PAGE_DOWN;
-        if (value >= 11 && value <= 14)
-                return EDIT_KEY_FUNCTION + value - 10;
-        if (value == 15)
-                return EDIT_KEY_FUNCTION + 5;
-        if (value >= 17 && value <= 21)
-                return EDIT_KEY_FUNCTION + value - 11;
-        if (value >= 23 && value <= 24)
-                return EDIT_KEY_FUNCTION + value - 12;
-
-        return EDIT_KEY_NONE;
+        static const positive keys[] = {
+            [1] = EDIT_KEY_HOME, [2] = EDIT_KEY_INSERT,
+            [3] = EDIT_KEY_REMOVE, [4] = EDIT_KEY_END,
+            [5] = EDIT_KEY_PAGE_UP, [6] = EDIT_KEY_PAGE_DOWN,
+            [7] = EDIT_KEY_HOME, [8] = EDIT_KEY_END,
+            [11] = EDIT_KEY_FUNCTION + 1, [12] = EDIT_KEY_FUNCTION + 2,
+            [13] = EDIT_KEY_FUNCTION + 3, [14] = EDIT_KEY_FUNCTION + 4,
+            [15] = EDIT_KEY_FUNCTION + 5, [17] = EDIT_KEY_FUNCTION + 6,
+            [18] = EDIT_KEY_FUNCTION + 7, [19] = EDIT_KEY_FUNCTION + 8,
+            [20] = EDIT_KEY_FUNCTION + 9, [21] = EDIT_KEY_FUNCTION + 10,
+            [23] = EDIT_KEY_FUNCTION + 11, [24] = EDIT_KEY_FUNCTION + 12
+        };
+        return value < array_count(keys) ? keys[value] : EDIT_KEY_NONE;
 }
 
 static CONST positive edit_key_from_final(p8 final)
@@ -3868,11 +3823,7 @@ static fn edit_prompt_key(positive key)
                 edit_prompt_text[edit_prompt_length++] = (p8)plain;
 }
 
-/*
-        Every key, and what it does. This table is the point of the whole
-        exercise, so it is written as one switch with nothing clever in it:
-        anybody who knows what VS Code does can read down this and check.
-*/
+// Movement keys share one binding table; editing commands carry their actions.
 static fn edit_key(positive key)
 {
         positive plain = key & ~EDIT_KEY_MODIFIERS;
@@ -3895,25 +3846,25 @@ static fn edit_key(positive key)
                 return;
         }
 
-        if (alt && !control)
+        if (alt && !control && (plain == EDIT_KEY_UP || plain == EDIT_KEY_DOWN))
         {
-                switch (plain)
-                {
-                case EDIT_KEY_UP:
-                        if (shift)
-                                edit_copy_lines(true);
-                        else
-                                edit_move_lines(true);
+                if (shift)
+                        edit_copy_lines(plain == EDIT_KEY_UP);
+                else
+                        edit_move_lines(plain == EDIT_KEY_UP);
+                return;
+        }
 
-                        return;
-                case EDIT_KEY_DOWN:
-                        if (shift)
-                                edit_copy_lines(false);
-                        else
-                                edit_move_lines(false);
-
-                        return;
-                }
+        if (!control && plain >= EDIT_KEY_UP && plain <= EDIT_KEY_PAGE_DOWN)
+        {
+                static const p8 motions[] = {
+                    EDIT_MOVE_UP, EDIT_MOVE_DOWN, EDIT_MOVE_RIGHT, EDIT_MOVE_LEFT,
+                    EDIT_MOVE_HOME, EDIT_MOVE_END, EDIT_MOVE_PAGE_UP, EDIT_MOVE_PAGE_DOWN
+                };
+                edit_move(motions[plain - EDIT_KEY_UP], shift);
+                if (plain >= EDIT_KEY_PAGE_UP)
+                        edit_repaint_all();
+                return;
         }
 
         if (control)
@@ -3928,15 +3879,10 @@ static fn edit_key(positive key)
                         edit_quit(true);
                         return;
                 case 'z':
+                case 'y':
                         //      Ctrl+Shift+Z is redo where a terminal can say
                         //      so, and Ctrl+Z is undo everywhere.
-                        edit_step_move(!shift);
-
-                        edit_primary_from(edit_cursor_count - 1);
-                        edit_repaint_all();
-                        return;
-                case 'y':
-                        edit_step_move(false);
+                        edit_step_move(plain == 'z' && !shift);
                         edit_primary_from(edit_cursor_count - 1);
                         edit_repaint_all();
                         return;
@@ -4006,32 +3952,6 @@ static fn edit_key(positive key)
 
         switch (plain)
         {
-        case EDIT_KEY_LEFT:
-                edit_move(EDIT_MOVE_LEFT, shift);
-                return;
-        case EDIT_KEY_RIGHT:
-                edit_move(EDIT_MOVE_RIGHT, shift);
-                return;
-        case EDIT_KEY_UP:
-                edit_move(EDIT_MOVE_UP, shift);
-                return;
-        case EDIT_KEY_DOWN:
-                edit_move(EDIT_MOVE_DOWN, shift);
-                return;
-        case EDIT_KEY_HOME:
-                edit_move(EDIT_MOVE_HOME, shift);
-                return;
-        case EDIT_KEY_END:
-                edit_move(EDIT_MOVE_END, shift);
-                return;
-        case EDIT_KEY_PAGE_UP:
-                edit_move(EDIT_MOVE_PAGE_UP, shift);
-                edit_repaint_all();
-                return;
-        case EDIT_KEY_PAGE_DOWN:
-                edit_move(EDIT_MOVE_PAGE_DOWN, shift);
-                edit_repaint_all();
-                return;
         case EDIT_KEY_BACKSPACE:
                 edit_delete_character(true);
                 edit_repaint_all();
@@ -4321,11 +4241,6 @@ static bool edit_window_signal(positive address_to previous)
             previous);
 }
 
-static fn edit_window_signal_restore(positive address_to previous)
-{
-        system_signal_action(EDIT_SIGNAL_WINCH, previous, 0, 8);
-}
-
 static bool edit_window_block(positive address_to previous)
 {
         positive blocked = (positive)1 << (EDIT_SIGNAL_WINCH - 1);
@@ -4507,7 +4422,7 @@ static b32 system_edit()
                          TERM_MAIN_BUFFER);
         if (!edit_flush())
                 result = 1;
-        edit_window_signal_restore(window_action);
+        system_signal_action(EDIT_SIGNAL_WINCH, window_action, 0, 8);
         edit_window_unblock(window_mask);
         edit_terminal_restore();
         shell_styles = styles;
