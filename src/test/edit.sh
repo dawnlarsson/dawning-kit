@@ -61,12 +61,16 @@ cat > "$work/harness.c" <<'HARNESS'
 #define EDIT_NO_DRIVER
 static positive edit_test_requests;
 static positive edit_test_failure;
+static bool edit_test_persistent;
+#define edit_test_reject() \
+        (++edit_test_requests == edit_test_failure || \
+         (edit_test_failure && edit_test_persistent && edit_test_requests > edit_test_failure))
 #define memory_take(bytes) \
-        (++edit_test_requests == edit_test_failure ? null : memory_take(bytes))
+        (edit_test_reject() ? null : memory_take(bytes))
 #define memory_resize(...) \
-        (++edit_test_requests == edit_test_failure ? null : memory_resize(__VA_ARGS__))
+        (edit_test_reject() ? null : memory_resize(__VA_ARGS__))
 #define memory_resize_growth(...) \
-        (++edit_test_requests == edit_test_failure ? null : memory_resize_growth(__VA_ARGS__))
+        (edit_test_reject() ? null : memory_resize_growth(__VA_ARGS__))
 #include "src/sh/edit.c"
 #undef memory_take
 #undef memory_resize
@@ -472,6 +476,238 @@ static positive check_multicursor_journal()
                         }
                         checks++;
                 }
+        }
+        return checks;
+}
+
+struct edit_test_state
+{
+        p8 bytes[1024];
+        struct edit_cursor cursors[8];
+        positive length, lines, count, step, steps;
+        bool empty, final_newline, modified;
+};
+
+static bool edit_test_state_take(struct edit_test_state *state)
+{
+        state->length = edit_span_length((struct edit_place){0, 0}, edit_place_last());
+        if (state->length > sizeof(state->bytes) || edit_cursor_count > array_count(state->cursors))
+                return false;
+        edit_span_copy((struct edit_place){0, 0}, edit_place_last(), state->bytes);
+        memory_copy_apart(state->cursors, edit_cursors, edit_cursor_count * sizeof(*edit_cursors));
+        state->lines = edit_line_count;
+        state->count = edit_cursor_count;
+        state->step = edit_step_at;
+        state->steps = edit_step_count;
+        state->empty = edit_empty_file;
+        state->final_newline = edit_final_newline;
+        state->modified = edit_modified;
+        return true;
+}
+
+static bool edit_test_state_same(struct edit_test_state *expected)
+{
+        struct edit_test_state actual;
+        return edit_test_state_take(&actual) && actual.length == expected->length &&
+            actual.lines == expected->lines && actual.count == expected->count &&
+            actual.step == expected->step && actual.steps == expected->steps &&
+            actual.empty == expected->empty && actual.final_newline == expected->final_newline &&
+            actual.modified == expected->modified &&
+            !memory_compare(actual.bytes, expected->bytes, actual.length) &&
+            !memory_compare(actual.cursors, expected->cursors, actual.count * sizeof(*edit_cursors));
+}
+
+// Every three-way transition among an in-line splice, a split and a join;
+// plus disjoint line moves, repeated overlapping joins and an empty file.
+static bool edit_test_history(positive scenario, struct edit_test_state *before,
+                              struct edit_test_state *after)
+{
+        if (!edit_load((string_address)"aa\nbb\ncc\ndd\nee", scenario == 29 ? 0 : 14))
+                return false;
+        edit_place_cursor(0, 1, false);
+        if (scenario != 29)
+        {
+                if (!edit_cursor_add(3, 1)) return false;
+                edit_cursors[1].selecting = true;
+                edit_cursors[1].anchor_line = 2;
+                edit_cursors[1].anchor_column = 0;
+        }
+        if (!edit_test_state_take(before)) return false;
+        if (scenario == 27)
+                edit_move_lines(false);
+        else if (scenario == 28)
+        {
+                for (positive at = 0; at < 4; at++)
+                        edit_change(((struct edit_place){0, edit_lines[0].length}),
+                            ((struct edit_place){1, 0}), null, 0, EDIT_STEP_OTHER);
+        }
+        else
+        {
+                positive code = scenario == 29 ? 13 : scenario;
+                for (positive at = 0; at < 3; at++, code /= 3)
+                {
+                        struct edit_place from = {0, min(edit_lines[0].length, 1)};
+                        struct edit_place to = from;
+                        string_address text = (string_address)"w";
+                        positive length = 1;
+                        if (code % 3 == 1)
+                                text = (string_address)"\n";
+                        else if (code % 3 == 2)
+                        {
+                                from.column = edit_lines[0].length;
+                                if (edit_line_count > 1)
+                                        to = (struct edit_place){1, min(edit_lines[1].length, 1)};
+                                else
+                                {
+                                        from.column = 0;
+                                        to.column = min(edit_lines[0].length, 1);
+                                }
+                                text = (string_address)"J";
+                        }
+                        edit_change(from, to, text, length, EDIT_STEP_OTHER);
+                }
+        }
+        if (scenario == 30)
+                edit_change(((struct edit_place){0, 0}), edit_place_last(),
+                            (string_address)"z", 1, EDIT_STEP_OTHER);
+        edit_settle(0);
+        edit_step_seal();
+        before->steps = edit_step_count;
+        return edit_step_count == 1 && !edit_steps[0].open && edit_test_state_take(after);
+}
+
+static positive check_step_atomicity()
+{
+        positive checks = 0;
+        for (positive scenario = 0; scenario < 31; scenario++)
+        for (positive backward = 0; backward < 2; backward++)
+        for (positive persistent = 0; persistent < 2; persistent++)
+        {
+                positive requests = 0;
+                for (positive fail_at = 0; fail_at <= requests + 1; fail_at++)
+                {
+                        struct edit_test_state before, after;
+                        edit_test_failure = 0;
+                        edit_test_persistent = false;
+                        if (!edit_test_history(scenario, &before, &after)) return 0;
+                        if (!backward && (!edit_step_move(true) || !edit_test_state_same(&before))) return 0;
+                        struct edit_step history = edit_steps[0];
+                        struct edit_patch patches[8];
+                        p8 payload[1024];
+                        positive used = 0;
+                        if (history.patch_count > array_count(patches)) return 0;
+                        memory_copy_apart(patches, history.patches, history.patch_count * sizeof(*patches));
+                        for (positive at = 0; at < history.patch_count; at++)
+                        {
+                                struct edit_patch *patch = patches + at;
+                                if (patch->removed_length + patch->inserted_length > sizeof(payload) - used) return 0;
+                                memory_copy_apart(payload + used, patch->removed, patch->removed_length);
+                                used += patch->removed_length;
+                                memory_copy_apart(payload + used, patch->inserted, patch->inserted_length);
+                                used += patch->inserted_length;
+                        }
+                        edit_test_requests = 0;
+                        edit_test_failure = fail_at;
+                        edit_test_persistent = persistent;
+                        bool moved = edit_step_move(backward);
+                        if (!fail_at) requests = edit_test_requests;
+                        bool no_rollback_allocations = moved || edit_test_requests == fail_at;
+                        edit_test_failure = 0;
+                        edit_test_persistent = false;
+                        bool valid = no_rollback_allocations &&
+                            !memory_compare(edit_steps, &history, sizeof(history)) &&
+                            !memory_compare(history.patches, patches, history.patch_count * sizeof(*patches));
+                        used = 0;
+                        for (positive at = 0; at < history.patch_count && valid; at++)
+                        {
+                                struct edit_patch *patch = patches + at;
+                                valid = !memory_compare(payload + used, patch->removed, patch->removed_length);
+                                used += patch->removed_length;
+                                valid = valid && !memory_compare(payload + used, patch->inserted, patch->inserted_length);
+                                used += patch->inserted_length;
+                        }
+                        if (!moved)
+                                valid = valid && edit_test_state_same(backward ? &after : &before) &&
+                                    edit_step_move(backward);
+                        valid = valid && edit_test_state_same(backward ? &before : &after) &&
+                            edit_step_move(!backward) && edit_test_state_same(backward ? &after : &before);
+                        if (!valid)
+                        {
+                                say_number(scenario * 10000 + backward * 1000 + persistent * 100 + fail_at);
+                                say_byte(':');
+                                return 0;
+                        }
+                        checks++;
+                }
+        }
+        for (positive persistent = 0; persistent < 2; persistent++)
+        for (positive reserve = 0; reserve < 2; reserve++)
+        {
+                struct edit_test_state before, after;
+                if (!edit_test_history(30, &before, &after) ||
+                    edit_cursor_count != 1 || edit_steps[0].before_count != 2) return 0;
+                if (reserve)
+                {
+                        // A valid smaller current store forces the restore
+                        // reserve, without falsifying its actual capacity.
+                        struct edit_cursor *single = memory_take(sizeof(*single));
+                        if (!single) return 0;
+                        *single = edit_cursors[0];
+                        memory_give(edit_cursors);
+                        edit_cursors = single;
+                        edit_cursor_room = sizeof(*single);
+                }
+                else
+                {
+                        // The state left by an after-snapshot OOM while a
+                        // step remains open must be sealed before undo.
+                        memory_give(edit_steps[0].after);
+                        edit_steps[0].after = null;
+                        edit_steps[0].after_count = 0;
+                        edit_steps[0].open = true;
+                }
+                edit_test_requests = 0;
+                edit_test_failure = 1;
+                edit_test_persistent = persistent;
+                bool moved = edit_step_move(true);
+                edit_test_failure = 0;
+                edit_test_persistent = false;
+                if (moved || edit_test_requests != 1 || !edit_test_state_same(&after) ||
+                    (!reserve && (!edit_steps[0].open || edit_steps[0].after || edit_steps[0].after_count)) ||
+                    !edit_step_move(true) || !edit_test_state_same(&before) ||
+                    !edit_step_move(false) || !edit_test_state_same(&after)) return 0;
+                checks++;
+        }
+        for (positive persistent = 0; persistent < 2; persistent++)
+        for (positive erasing = 0; erasing < 2; erasing++)
+        {
+                struct edit_test_state before, first, after;
+                if (!edit_load((string_address)"ab", 2)) return 0;
+                edit_place_cursor(0, 1, false);
+                if (!edit_test_state_take(&before)) return 0;
+                edit_insert((string_address)"X", 1, EDIT_STEP_OTHER);
+                if (!edit_test_state_take(&first)) return 0;
+                memory_give(edit_steps[0].after);
+                edit_steps[0].after = null;
+                edit_steps[0].after_count = 0;
+                edit_steps[0].open = true;
+                edit_test_requests = 0;
+                edit_test_failure = 1;
+                edit_test_persistent = persistent;
+                if (erasing) edit_delete_character(false);
+                else edit_insert((string_address)"Y", 1, EDIT_STEP_TYPING);
+                edit_test_failure = 0;
+                edit_test_persistent = false;
+                if (!edit_test_state_same(&first) || !edit_steps[0].open) return 0;
+                if (erasing) edit_delete_character(false);
+                else edit_insert((string_address)"Y", 1, EDIT_STEP_TYPING);
+                if (!edit_test_state_take(&after) || after.steps != 2) return 0;
+                before.steps = first.steps = 2;
+                if (!edit_step_move(true) || !edit_test_state_same(&first) ||
+                    !edit_step_move(true) || !edit_test_state_same(&before) ||
+                    !edit_step_move(false) || !edit_test_state_same(&first) ||
+                    !edit_step_move(false) || !edit_test_state_same(&after)) return 0;
+                checks++;
         }
         return checks;
 }
@@ -910,6 +1146,16 @@ b32 main()
                         say_number(check_multicursor_journal() != 0);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "step_atomicity") == 0)
+                {
+                        say_number(check_step_atomicity() != 0);
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "step_atomicity_count") == 0)
+                {
+                        say_number(check_step_atomicity());
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "add") == 0)
                 {
                         positive at = 0;
@@ -1144,6 +1390,7 @@ same 'all selected row permutations' '1482' 40 8 line_subsets
 same 'overlapping range permutations' '77856' 40 8 line_ranges
 same 'allocation transition matrix' '1' 40 8 line_atomicity
 same 'multicursor journal failures' '1' 40 8 multi_journal
+same 'undo redo allocation matrix' '1' 40 8 step_atomicity
 for column in '' '<right>' '<end>'; do
         case $column in '') offset=0 ;; '<right>') offset=1 ;; *) offset=2 ;; esac
         same "move up column $offset" "0,$offset" 40 8 text 'ab\ncd\nef' \

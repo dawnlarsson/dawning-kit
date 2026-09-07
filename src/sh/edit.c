@@ -283,24 +283,11 @@ static fn edit_say_at(positive screen_row, positive screen_column)
         replaces, which is one memory_copy rather than the two a remove
         followed by an insert would cost.
 */
-static bool edit_line_splice(positive which, positive from, positive to,
-                             string_address text, positive length)
+static inline INLINE fn edit_line_splice_ready(struct edit_line address_to line,
+                                 positive from, positive to,
+                                 string_address text, positive length)
 {
-        struct edit_line address_to line = edit_lines + which;
-        positive tail;
-
-        if (to > line->length)
-                to = line->length;
-
-        if (from > to)
-                from = to;
-
-        tail = line->length - to;
-
-        if (!memory_resize_reserve(address_of line->text,
-                                   address_of line->room,
-                                   from + length + tail, EDIT_LINE_FIRST))
-                return false;
+        positive tail = line->length - to;
 
         // The tail moves before the new bytes land on top of where it was, and
         // memory_copy is memmove, so the two halves are allowed to overlap.
@@ -311,6 +298,19 @@ static bool edit_line_splice(positive which, positive from, positive to,
                 memory_copy_apart(line->text + from, text, length);
 
         line->length = from + length + tail;
+}
+
+static bool edit_line_splice(positive which, positive from, positive to,
+                             string_address text, positive length)
+{
+        struct edit_line address_to line = edit_lines + which;
+        to = min(to, line->length);
+        from = min(from, to);
+        if (!memory_resize_reserve(address_of line->text,
+                                   address_of line->room,
+                                   from + length + line->length - to, EDIT_LINE_FIRST))
+                return false;
+        edit_line_splice_ready(line, from, to, text, length);
         return true;
 }
 
@@ -656,9 +656,38 @@ static p8 address_to edit_span_take(struct edit_place from,
         Here failure releases only the staged lines and the original document
         is still byte-for-byte intact.
 */
-static bool edit_raw_replace(struct edit_place from, struct edit_place to,
+struct edit_line_restore
+{
+        struct edit_line address_to lines;
+        positive removed, made;
+};
+
+static fn edit_lines_give(struct edit_line address_to lines, positive count)
+{
+        for (positive at = 0; at < count; at++)
+                memory_give(lines[at].text);
+}
+
+// The prepared table splice cannot allocate; the same splice restores an
+// undo prefix after OOM, with the retained original line buffers as input.
+static fn edit_lines_exchange(positive first, positive removed,
+                              struct edit_line address_to lines,
+                              positive made, bool release)
+{
+        positive tail = edit_line_count - first - removed;
+        if (release)
+                edit_lines_give(edit_lines + first, removed);
+        if (tail)
+                memory_copy(edit_lines + first + made, edit_lines + first + removed,
+                            tail * sizeof(struct edit_line));
+        memory_copy_apart(edit_lines + first, lines, made * sizeof(struct edit_line));
+        edit_line_count = edit_line_count - removed + made;
+}
+
+static bool edit_raw_replace_mode(struct edit_place from, struct edit_place to,
                              string_address text, positive length,
-                             struct edit_place address_to after)
+                             struct edit_place address_to after,
+                             struct edit_line_restore address_to restore)
 {
         positive breaks;
         positive made;
@@ -668,6 +697,7 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
         positive suffix_length;
         string_address suffix;
         struct edit_line address_to staged;
+        struct edit_line address_to built_lines;
 
         if (edit_place_before(to, from))
                 to = from;
@@ -690,19 +720,28 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
         }
 
         made = breaks + 1;
-        new_count = old_count - (to.line - from.line) + breaks;
+        positive removed = to.line - from.line + 1;
+        positive retained = restore ? removed : 0;
+        if (retained > positive_max / sizeof(struct edit_line) ||
+            made > positive_max / sizeof(struct edit_line) - retained ||
+            made > positive_max - (old_count - removed))
+                return false;
+        new_count = old_count - removed + made;
+        if (new_count > positive_max / sizeof(struct edit_line))
+                return false;
         suffix = edit_lines[to.line].text + to.column;
         suffix_length = edit_lines[to.line].length - to.column;
 
         if (!edit_lines_room_for(new_count))
                 return false;
 
-        staged = (struct edit_line address_to)memory_take(
-            made * sizeof(struct edit_line));
+        built_lines = (struct edit_line address_to)memory_take(
+            (made + retained) * sizeof(struct edit_line));
 
-        if (!staged)
+        if (!built_lines)
                 return false;
 
+        staged = built_lines + retained;
         memory_zero(staged, made * sizeof(struct edit_line));
 
         for (positive line = 0; line < made; line++)
@@ -713,6 +752,13 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
                     : length - input_at;
                 positive prefix = line ? 0 : from.column;
                 positive tail = line + 1 == made ? suffix_length : 0;
+                if (width > positive_max - prefix ||
+                    tail > positive_max - prefix - width)
+                {
+                        edit_lines_give(staged, line);
+                        memory_give(built_lines);
+                        return false;
+                }
                 positive room = prefix + width + tail;
                 positive allocation = line + 1 == made && room
                     ? memory_growth(0, room, EDIT_LINE_FIRST)
@@ -726,10 +772,8 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
 
                         if (!staged[line].text)
                         {
-                                for (positive back = 0; back < line; back++)
-                                        memory_give(staged[back].text);
-
-                                memory_give(staged);
+                                edit_lines_give(staged, line);
+                                memory_give(built_lines);
                                 return false;
                         }
 
@@ -764,21 +808,20 @@ static bool edit_raw_replace(struct edit_place from, struct edit_place to,
         after->column = breaks ? staged[breaks].length - suffix_length
                                : from.column + length;
 
-        for (positive line = from.line; line <= to.line; line++)
-                memory_give(edit_lines[line].text);
-
-        if (to.line + 1 < old_count)
-                memory_copy(edit_lines + from.line + made,
-                            edit_lines + to.line + 1,
-                            (old_count - to.line - 1) *
-                                sizeof(struct edit_line));
-
-        memory_copy_apart(edit_lines + from.line, staged,
-                          made * sizeof(struct edit_line));
-        edit_line_count = new_count;
-        memory_give(staged);
+        if (restore)
+        {
+                memory_copy_apart(built_lines, edit_lines + from.line,
+                                  removed * sizeof(struct edit_line));
+                *restore = (struct edit_line_restore){built_lines, removed, made};
+        }
+        edit_lines_exchange(from.line, removed, staged, made, !restore);
+        if (!restore)
+                memory_give(built_lines);
         return true;
 }
+
+#define edit_raw_replace(from, to, text, length, after) \
+        edit_raw_replace_mode(from, to, text, length, after, null)
 
 /*
         The journal.
@@ -918,6 +961,8 @@ static fn edit_cursors_restore(struct edit_cursor address_to from,
         so the caret positions remembered in the step are the ones the run
         actually started from.
 */
+static inline INLINE bool edit_step_cursors(bool close);
+
 static bool edit_step_start(p8 kind)
 {
         struct edit_step address_to step;
@@ -932,7 +977,8 @@ static bool edit_step_start(p8 kind)
                 if (step->open && step->kind == kind)
                         return true;
 
-                step->open = false;
+                if (!edit_step_cursors(true))
+                        return false;
         }
 
         if (!memory_resize_reserve((p8 address_to address_to)address_of edit_steps,
@@ -964,24 +1010,24 @@ static bool edit_step_start(p8 kind)
         every keystroke that moved a caret. A step whose after-list was never
         written is a step whose redo puts the carets nowhere.
 */
-static inline INLINE fn edit_step_cursors(bool close)
+static inline INLINE bool edit_step_cursors(bool close)
 {
         struct edit_step address_to step;
 
         if (!edit_step_count)
-                return;
+                return true;
 
         step = edit_steps + edit_step_count - 1;
 
         if (!step->open)
-                return;
+                return true;
 
-        if (edit_cursors_remember(address_of step->after, address_of step->after_count))
-        {
-                step->after_empty = edit_empty_file;
-                if (close)
-                        step->open = false;
-        }
+        if (!edit_cursors_remember(address_of step->after, address_of step->after_count))
+                return false;
+        step->after_empty = edit_empty_file;
+        if (close)
+                step->open = false;
+        return true;
 }
 
 //      The after-list kept level with the cursors while a step is still being
@@ -1173,10 +1219,30 @@ static PURE struct edit_place edit_span_end(struct edit_place place,
 
 /* Undo and redo are the same cold replacement machine in opposite directions.
    Keeping it out of the typing path removes two copies of the journal walk. */
+static PURE bool edit_patch_multiline(struct edit_patch address_to patch)
+{
+        return memory_first_of(patch->removed, '\n', patch->removed_length) ||
+               memory_first_of(patch->inserted, '\n', patch->inserted_length);
+}
+
 static COLD bool edit_step_apply(struct edit_step address_to step,
                                  bool backward)
 {
-        for (positive done = 0; done < step->patch_count; done++)
+        positive multiline = 0, kept = 0, done = 0;
+        struct edit_line_restore address_to held = null;
+        if (step->patch_count > 1)
+                for (positive at = 0; at < step->patch_count; at++)
+                        multiline += edit_patch_multiline(step->patches + at);
+        if (multiline)
+        {
+                if (multiline > positive_max / sizeof(*held))
+                        return false;
+                held = memory_take(multiline * sizeof(*held));
+                if (!held)
+                        return false;
+        }
+
+        for (; done < step->patch_count; done++)
         {
                 positive at = backward ? step->patch_count - done - 1 : done;
                 struct edit_patch address_to patch = step->patches + at;
@@ -1186,17 +1252,54 @@ static COLD bool edit_step_apply(struct edit_step address_to step,
                 positive removed_length = backward ? patch->inserted_length
                                                     : patch->removed_length;
                 struct edit_place after;
+                bool retain = held && edit_patch_multiline(patch);
 
-                if (!edit_raw_replace(
+                if (!edit_raw_replace_mode(
                         from, edit_span_end(from, removed, removed_length),
                         backward ? patch->removed : patch->inserted,
                         backward ? patch->removed_length
                                  : patch->inserted_length,
-                        address_of after))
-                        return false;
+                        address_of after, retain ? held + kept : null))
+                        goto rollback;
+                kept += retain;
         }
 
+        for (positive at = 0; at < kept; at++)
+        {
+                edit_lines_give(held[at].lines, held[at].removed);
+                memory_give(held[at].lines);
+        }
+        memory_give(held);
         return true;
+
+rollback:
+        while (done)
+        {
+                done--;
+                positive at = backward ? step->patch_count - done - 1 : done;
+                struct edit_patch address_to patch = step->patches + at;
+                if (edit_patch_multiline(patch))
+                {
+                        struct edit_line_restore saved = held[--kept];
+                        edit_lines_exchange(patch->line, saved.made,
+                                            saved.lines, saved.removed, true);
+                        memory_give(saved.lines);
+                }
+                else
+                {
+                        // Splices never shrink capacity. Later multiline
+                        // patches have already restored these exact buffers,
+                        // so the inverse fits without an allocation or copy
+                        // of the rest of the document.
+                        edit_line_splice_ready(edit_lines + patch->line,
+                            patch->column, patch->column +
+                                (backward ? patch->removed_length : patch->inserted_length),
+                            backward ? patch->inserted : patch->removed,
+                            backward ? patch->inserted_length : patch->removed_length);
+                }
+        }
+        memory_give(held);
+        return false;
 }
 
 static COLD ARM64_ERRATUM_ALIGN bool edit_step_move(bool backward)
@@ -1206,20 +1309,15 @@ static COLD ARM64_ERRATUM_ALIGN bool edit_step_move(bool backward)
         if (backward ? !edit_step_at : edit_step_at >= edit_step_count)
                 return false;
 
-        if (backward)
-                edit_step_seal();
-
-        step = edit_steps + (backward ? --edit_step_at : edit_step_at++);
-
-        if (!edit_step_apply(step, backward))
-        {
-                if (backward)
-                        edit_step_at++;
-                else
-                        edit_step_at--;
+        step = edit_steps + (backward ? edit_step_at - 1 : edit_step_at);
+        if (backward && !edit_step_seal())
                 return false;
-        }
+        positive cursors = backward ? step->before_count : step->after_count;
+        if (cursors > positive_max / sizeof(struct edit_cursor) ||
+            !edit_cursors_room_for(cursors) || !edit_step_apply(step, backward))
+                return false;
 
+        edit_step_at = backward ? edit_step_at - 1 : edit_step_at + 1;
         edit_cursors_restore(backward ? step->before : step->after,
                              backward ? step->before_count : step->after_count);
         edit_empty_file = backward ? step->before_empty : step->after_empty;
