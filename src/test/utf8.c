@@ -77,8 +77,51 @@ static fn utf8_encode_check(p8 address_to out, positive room, positive scalar)
         check("UTF-8 scalar bytes, bounds and transactional failure", exact);
 }
 
+static fn utf8_stream_checks()
+{
+        p8 bytes[4];
+        for (positive byte = 0; byte < 256; byte++)
+        {
+                memory_utf8_state state = {0};
+                b32 expected = byte < 0x80 ? 1 : byte >= 0xc0 && byte < 0xf8 ? 0 : -1;
+                check("stream classifies every leading byte", memory_utf8_feed(address_of state, byte) == expected);
+        }
+        for (positive scalar = 0; scalar <= 0x10ffff; scalar++)
+        {
+                positive width = utf8_encode_reference(bytes, scalar);
+                if (!width)
+                        continue;
+                memory_utf8_state state = {0};
+                bool valid = true;
+                for (positive at = 0; at < width; at++)
+                        if (memory_utf8_feed(address_of state, bytes[at]) !=
+                            (at + 1 == width ? 1 : 0))
+                                valid = false;
+                check("stream every Unicode scalar", valid && state.value == scalar && !state.left);
+        }
+        for (positive lead = 0xc0; lead < 0xf8; lead++)
+        {
+                positive width = lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+                for (positive changed = 1; changed < width; changed++)
+                        for (positive byte = 0; byte < 256; byte++)
+                        {
+                                memory_utf8_state state = {0};
+                                memory_fill(bytes, 0x80, sizeof(bytes));
+                                bytes[0] = lead;
+                                bytes[changed] = byte;
+                                b32 result = 0;
+                                for (positive at = 0; at < width && result >= 0; at++)
+                                        result = memory_utf8_feed(address_of state, bytes[at]);
+                                bool valid = utf8_reference_width(bytes, width) == width;
+                                check("stream malformed scalar boundaries", result == (valid ? 1 : -1) && !state.left);
+                                check("stream recovers after rejection", memory_utf8_feed(address_of state, 'Q') == 1 && state.value == 'Q');
+                        }
+        }
+}
+
 b32 main()
 {
+        utf8_stream_checks();
         static const positive scalars[] = {
             0, 1, 0x7f, 0x80, 0x7ff, 0x800, 0xd7ff, 0xd800,
             0xdfff, 0xe000, 0xffff, 0x10000, 0x10ffff, 0x110000,

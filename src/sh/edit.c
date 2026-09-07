@@ -881,16 +881,14 @@ static bool edit_cursors_remember(struct edit_cursor address_to address_to into,
 {
         positive size = edit_cursor_count * sizeof(struct edit_cursor);
 
-        memory_give(address_to into);
-        address_to into = (struct edit_cursor address_to)memory_take(size + 1);
-
-        if (!address_to into)
-        {
-                address_to count = 0;
+        struct edit_cursor address_to saved = address_to into;
+        if (!saved || address_to count != edit_cursor_count)
+                saved = (struct edit_cursor address_to)memory_resize(saved, size + 1);
+        if (!saved)
                 return false;
-        }
 
-        memory_copy_apart(address_to into, edit_cursors, size);
+        address_to into = saved;
+        memory_copy_apart(saved, edit_cursors, size);
         address_to count = edit_cursor_count;
         return true;
 }
@@ -931,8 +929,7 @@ static bool edit_step_start(p8 kind)
         {
                 step = edit_steps + edit_step_count - 1;
 
-                if (step->open && step->kind == kind &&
-                    kind != EDIT_STEP_OTHER)
+                if (step->open && step->kind == kind)
                         return true;
 
                 step->open = false;
@@ -979,11 +976,12 @@ static inline INLINE fn edit_step_cursors(bool close)
         if (!step->open)
                 return;
 
-        if (close)
-                step->open = false;
-
-        step->after_empty = edit_empty_file;
-        edit_cursors_remember(address_of step->after, address_of step->after_count);
+        if (edit_cursors_remember(address_of step->after, address_of step->after_count))
+        {
+                step->after_empty = edit_empty_file;
+                if (close)
+                        step->open = false;
+        }
 }
 
 //      The after-list kept level with the cursors while a step is still being
@@ -1003,9 +1001,9 @@ static inline INLINE fn edit_step_cursors(bool close)
         step already is; it is what keeps a thousand typed characters from
         being a thousand allocations.
 */
-static struct edit_place edit_change(struct edit_place from,
+static struct edit_place edit_change_mode(struct edit_place from,
                                      struct edit_place to, string_address text,
-                                     positive length, p8 kind)
+                                     positive length, p8 kind, bool shift_cursors)
 {
         struct edit_step address_to step;
         struct edit_patch address_to patch;
@@ -1060,10 +1058,7 @@ static struct edit_place edit_change(struct edit_place from,
                                           text, length);
                         patch->inserted_length += length;
                         memory_give(removed);
-                        edit_cursors_shift(from, to, after);
-                        edit_empty_file = false;
-                        edit_modified = true;
-                        return after;
+                        goto changed;
                 }
         }
 
@@ -1092,10 +1087,8 @@ static struct edit_place edit_change(struct edit_place from,
                         patch->removed_length += removed_length;
                         patch->column = from.column;
                         memory_give(removed);
-                        edit_cursors_shift(from, to, from);
-                        edit_empty_file = false;
-                        edit_modified = true;
-                        return from;
+                        after = from;
+                        goto changed;
                 }
         }
 
@@ -1140,11 +1133,16 @@ static struct edit_place edit_change(struct edit_place from,
         }
 
         step->patch_count++;
-        edit_cursors_shift(from, to, after);
+changed:
+        if (shift_cursors)
+                edit_cursors_shift(from, to, after);
         edit_empty_file = false;
         edit_modified = true;
         return after;
 }
+
+#define edit_change(from, to, text, length, kind) \
+        edit_change_mode(from, to, text, length, kind, true)
 
 //      Where a span ends, worked out from the text rather than remembered,
 //      because the two would then have to be kept level.
@@ -2209,6 +2207,9 @@ static fn edit_insert(string_address text, positive length, p8 kind)
 {
         positive index = edit_primary_index();
 
+        if (kind == EDIT_STEP_OTHER)
+                edit_step_seal();
+
         for (positive at = edit_cursor_count; at; at--)
         {
                 positive cursor = at - 1;
@@ -2229,6 +2230,9 @@ static fn edit_insert(string_address text, positive length, p8 kind)
         }
 
         edit_settle(index);
+
+        if (kind == EDIT_STEP_OTHER)
+                edit_step_seal();
 }
 
 static fn edit_delete_character(bool backward)
@@ -2284,26 +2288,24 @@ static fn edit_delete_word_left()
 {
         positive index = edit_primary_index();
 
-        if (edit_delete_selections(EDIT_STEP_OTHER))
-        {
-                edit_settle(index);
-                return;
-        }
+        edit_step_seal();
 
-        for (positive at = edit_cursor_count; at; at--)
-        {
-                positive cursor = at - 1;
-                struct edit_place to = edit_cursor_caret(cursor);
-                struct edit_place from = edit_word_left(to);
+        if (!edit_delete_selections(EDIT_STEP_OTHER))
+                for (positive at = edit_cursor_count; at; at--)
+                {
+                        positive cursor = at - 1;
+                        struct edit_place to = edit_cursor_caret(cursor);
+                        struct edit_place from = edit_word_left(to);
 
-                if (edit_place_same(from, to))
-                        continue;
+                        if (edit_place_same(from, to))
+                                continue;
 
-                edit_change(from, to, null, 0, EDIT_STEP_OTHER);
-                edit_cursor_place(cursor, from, false);
-        }
+                        edit_change(from, to, null, 0, EDIT_STEP_OTHER);
+                        edit_cursor_place(cursor, from, false);
+                }
 
         edit_settle(index);
+        edit_step_seal();
 }
 
 /*
@@ -2320,6 +2322,7 @@ static fn edit_newline()
 {
         positive index = edit_primary_index();
 
+        edit_step_seal();
         edit_delete_selections(EDIT_STEP_OTHER);
 
         for (positive at = edit_cursor_count; at; at--)
@@ -2405,6 +2408,74 @@ static PURE positive edit_range_last(positive at)
         return to.line;
 }
 
+struct edit_line_range
+{
+        positive first, last;
+};
+
+static CONST bipolar edit_range_order(struct edit_line_range a,
+                                      struct edit_line_range b)
+{
+        return (a.first > b.first) - (a.first < b.first);
+}
+
+/* Caret order is not selection-start order. Capture and merge the selected
+   rows before any edit can shift an overlapping selection's endpoints. */
+static positive edit_ranges_normalize(struct edit_line_range address_to ranges,
+                                      bool adjacent)
+{
+        positive count = edit_cursor_count, kept = 0;
+        bool ordered = true;
+        for (positive at = 0; at < count; at++)
+        {
+                ranges[at] = (struct edit_line_range){
+                    edit_range_first(at), edit_range_last(at)};
+                if (at && ranges[at - 1].first > ranges[at].first)
+                        ordered = false;
+        }
+
+        struct edit_line_range address_to sorted = ordered ? ranges
+            : array_merge_sort(ranges, ranges + count, count, edit_range_order);
+        for (positive at = 0; at < count; at++)
+        {
+                struct edit_line_range held = sorted[at];
+                if (kept && held.first <= ranges[kept - 1].last + adjacent)
+                        ranges[kept - 1].last = max(ranges[kept - 1].last, held.last);
+                else
+                        ranges[kept++] = held;
+        }
+        return kept;
+}
+
+struct edit_line_ranges
+{
+        struct edit_line_range single;
+        struct edit_line_range address_to data;
+        positive count;
+};
+
+static bool edit_ranges_take(struct edit_line_ranges address_to ranges,
+                             bool adjacent)
+{
+        ranges->data = address_of ranges->single;
+        if (edit_cursor_count > 1)
+        {
+                if (edit_cursor_count > positive_max / (2 * sizeof(*ranges->data)))
+                        return false;
+                ranges->data = memory_take(edit_cursor_count * 2 * sizeof(*ranges->data));
+                if (!ranges->data)
+                        return false;
+        }
+        ranges->count = edit_ranges_normalize(ranges->data, adjacent);
+        return true;
+}
+
+static fn edit_ranges_release(struct edit_line_ranges address_to ranges)
+{
+        if (ranges->data != address_of ranges->single)
+                memory_give(ranges->data);
+}
+
 /*
         Tab and Shift+Tab.
 
@@ -2418,20 +2489,17 @@ static fn edit_indent_lines(bool out)
 {
         positive index = edit_primary_index();
         p8 spaces[EDIT_TAB];
-
-        positive claimed = edit_line_count;
+        struct edit_line_ranges ranges;
+        if (!edit_ranges_take(address_of ranges, false))
+                return;
 
         edit_step_seal();
         memory_fill(spaces, ' ', sizeof(spaces));
 
-        for (positive at = edit_cursor_count; at; at--)
+        for (positive at = ranges.count; at; at--)
         {
-                positive cursor = at - 1;
-                positive first = edit_range_first(cursor);
-                positive last = edit_range_last(cursor);
-
-                if (edit_range_taken(address_of claimed, first, address_of last))
-                        continue;
+                positive first = ranges.data[at - 1].first;
+                positive last = ranges.data[at - 1].last;
 
                 for (positive line = last + 1; line > first; line--)
                 {
@@ -2467,6 +2535,7 @@ static fn edit_indent_lines(bool out)
                 }
         }
 
+        edit_ranges_release(address_of ranges);
         edit_settle(index);
         edit_step_seal();
 }
@@ -2494,182 +2563,113 @@ static fn edit_tab(bool back)
 
                 width = EDIT_TAB - column % EDIT_TAB;
                 memory_fill(spaces, ' ', width);
-                edit_step_seal();
                 edit_insert(spaces, width, EDIT_STEP_OTHER);
-                edit_step_seal();
         }
 }
 
-/*
-        Alt+Up and Alt+Down: the line, moved.
+/* A selection ending at column zero belongs to the preceding line's end,
+   not the text at that position. Map that boundary through the same row
+   permutation as its selected text, then turn it back into a boundary. */
+static struct edit_place edit_line_shift(struct edit_place place, bool boundary,
+                                        positive first, positive last,
+                                        bool up, bool copy)
+{
+        positive line = place.line - boundary;
+        if (line >= first && line <= last)
+                line = up ? line - !copy : line + (copy ? last - first + 1 : 1);
+        else if (copy && line >= first)
+                line += last - first + 1;
+        else if (!copy && line == (up ? first - 1 : last + 1))
+                line = up ? last : first;
+        place.line = line + boundary;
+        return place;
+}
 
-        Expressed as one replacement of the block that contains both the line
-        and its new neighbour, rather than as a swap of two entries in the line
-        table, because a swap would be invisible to the journal and undo would
-        put the text back in the wrong order. The table swap is what makes this
-        cheap; doing it through edit_change is what makes it undoable, and the
-        copy is two lines.
-*/
-static fn edit_move_lines(bool up)
+/* Whole-line move and duplication share one journalled replacement. Build
+   its two spans directly: no intermediate copy of the complete old block.
+   Cursor positions follow the row permutation, not the generic replacement
+   collapse, which loses interior columns and can underflow on an upward move. */
+static fn edit_transfer_lines(bool up, bool copy)
 {
         positive index = edit_primary_index();
-        positive claimed = edit_line_count;
+        struct edit_line_ranges ranges;
+        // Adjacent moves are one block; independent adjacent copies retain
+        // their per-line duplication order. Overlaps are always one range.
+        if (!edit_ranges_take(address_of ranges, !copy))
+                return;
 
         edit_step_seal();
 
-        for (positive at = edit_cursor_count; at; at--)
+        for (positive at = ranges.count; at; at--)
         {
-                positive cursor = at - 1;
-                positive first = edit_range_first(cursor);
-                positive last = edit_range_last(cursor);
-                struct edit_place from;
-                struct edit_place to;
-                p8 address_to block;
-                positive length = 0;
-                p8 address_to built;
-                positive built_length = 0;
-                positive other;
-                positive other_length;
-
-                if (edit_range_taken(address_of claimed, first, address_of last))
+                positive first = ranges.data[at - 1].first;
+                positive last = ranges.data[at - 1].last;
+                if (!copy && (up ? !first : last + 1 >= edit_line_count))
                         continue;
 
-                if (up && !first)
+                struct edit_place from = {first, 0};
+                struct edit_place to = {last, edit_lines[last].length};
+                positive length = edit_span_length(from, to);
+                positive other = copy ? first : up ? first - 1 : last + 1;
+                positive extra = copy ? 0 : edit_lines[other].length;
+                if (extra > positive_max - 2 || length > positive_max - extra - 2)
                         continue;
-
-                if (!up && last + 1 >= edit_line_count)
-                        continue;
-
-                other = up ? first - 1 : last + 1;
-                other_length = edit_lines[other].length;
-
-                from.line = up ? first - 1 : first;
-                from.column = 0;
-                to.line = up ? last : last + 1;
-                to.column = edit_lines[to.line].length;
-
-                block = edit_span_take(from, to, address_of length);
-
-                if (!block)
-                        continue;
-
-                built = (p8 address_to)memory_take(length + 2);
-
+                p8 address_to built = (p8 address_to)memory_take(length + extra + 2);
                 if (!built)
-                {
-                        memory_give(block);
                         continue;
-                }
 
-                if (up)
+                if (up || copy)
                 {
-                        // The block is [other][\n][the lines]; it becomes
-                        // [the lines][\n][other].
-                        memory_copy_apart(built, block + other_length + 1,
-                                          length - other_length - 1);
-                        built_length = length - other_length - 1;
-                        built[built_length++] = '\n';
-                        memory_copy_apart(built + built_length, block,
-                                          other_length);
-                        built_length += other_length;
+                        edit_span_copy(from, to, built);
+                        built[length] = '\n';
+                        if (extra)
+                                memory_copy_apart(built + length + 1,
+                                                  edit_lines[other].text, extra);
                 }
                 else
                 {
-                        memory_copy_apart(built, block + length - other_length,
-                                          other_length);
-                        built_length = other_length;
-                        built[built_length++] = '\n';
-                        memory_copy_apart(built + built_length, block,
-                                          length - other_length - 1);
-                        built_length += length - other_length - 1;
+                        memory_copy_apart(built, edit_lines[other].text, extra);
+                        built[extra] = '\n';
+                        edit_span_copy(from, to, built + extra + 1);
                 }
 
-                edit_change(from, to, built, built_length, EDIT_STEP_OTHER);
-                memory_give(block);
+                if (copy)
+                        to = from;
+                else if (up)
+                        from.line = other;
+                else
+                        to = (struct edit_place){other, extra};
+                struct edit_place after = edit_change_mode(
+                    from, to, built, length + extra + 1, EDIT_STEP_OTHER, false);
                 memory_give(built);
+                if (edit_place_same(after, from))
+                        continue;
 
-                // The caret and its selection follow the text they were on.
+                for (positive c = 0; c < edit_cursor_count; c++)
                 {
-                        struct edit_cursor address_to moving = edit_cursors + cursor;
-
-                        if (up)
-                        {
-                                moving->line--;
-                                moving->anchor_line--;
-                        }
-                        else
-                        {
-                                moving->line++;
-                                moving->anchor_line++;
-                        }
+                        struct edit_cursor address_to moving = edit_cursors + c;
+                        bool caret_end = moving->selecting && !moving->column &&
+                                         moving->line > moving->anchor_line;
+                        bool anchor_end = moving->selecting && !moving->anchor_column &&
+                                          moving->anchor_line > moving->line;
+                        struct edit_place caret = edit_line_shift(edit_cursor_caret(c),
+                            caret_end, first, last, up, copy);
+                        struct edit_place anchor = edit_line_shift(edit_cursor_anchor(c),
+                            anchor_end, first, last, up, copy);
+                        moving->line = caret.line;
+                        moving->column = caret.column;
+                        moving->anchor_line = anchor.line;
+                        moving->anchor_column = anchor.column;
                 }
         }
 
+        edit_ranges_release(address_of ranges);
         edit_settle(index);
         edit_step_seal();
 }
 
-//      Shift+Alt+Up and Shift+Alt+Down: the line, copied. The caret stays with
-//      the copy that is where the original was, which is what VS Code does and
-//      is what makes holding the keys down produce a run of copies.
-static fn edit_copy_lines(bool up)
-{
-        positive index = edit_primary_index();
-        positive claimed = edit_line_count;
-
-        edit_step_seal();
-
-        for (positive at = edit_cursor_count; at; at--)
-        {
-                positive cursor = at - 1;
-                positive first = edit_range_first(cursor);
-                positive last = edit_range_last(cursor);
-                struct edit_place from;
-                struct edit_place to;
-                p8 address_to block;
-                positive length = 0;
-                p8 address_to built;
-
-                if (edit_range_taken(address_of claimed, first, address_of last))
-                        continue;
-
-                from.line = first;
-                from.column = 0;
-                to.line = last;
-                to.column = edit_lines[last].length;
-                block = edit_span_take(from, to, address_of length);
-
-                if (!block)
-                        continue;
-
-                built = (p8 address_to)memory_take(length + 2);
-
-                if (!built)
-                {
-                        memory_give(block);
-                        continue;
-                }
-
-                memory_copy_apart(built, block, length);
-                built[length] = '\n';
-
-                edit_change(from, from, built, length + 1, EDIT_STEP_OTHER);
-                memory_give(block);
-                memory_give(built);
-
-                if (!up)
-                {
-                        struct edit_cursor address_to moving = edit_cursors + cursor;
-                        positive step = last - first + 1;
-
-                        moving->line += step;
-                        moving->anchor_line += step;
-                }
-        }
-
-        edit_settle(index);
-        edit_step_seal();
-}
+#define edit_move_lines(up) edit_transfer_lines(up, false)
+#define edit_copy_lines(up) edit_transfer_lines(up, true)
 
 /*
         Ctrl+/ -- the comment marker for whatever this file is, put on or taken
@@ -2729,23 +2729,21 @@ static fn edit_toggle_comment()
         string_address marker = edit_comment_marker();
         positive marker_length = string_length(marker);
         positive marker_bare = marker_length - 1;
-        positive claimed = edit_line_count;
+        struct edit_line_ranges ranges;
+        if (!edit_ranges_take(address_of ranges, false))
+                return;
 
         // The marker is written with a space after it and recognised without
         // one, so a line commented by hand as "//x" is still uncommented.
         edit_step_seal();
 
-        for (positive at = edit_cursor_count; at; at--)
+        for (positive at = ranges.count; at; at--)
         {
-                positive cursor = at - 1;
-                positive first = edit_range_first(cursor);
-                positive last = edit_range_last(cursor);
+                positive first = ranges.data[at - 1].first;
+                positive last = ranges.data[at - 1].last;
                 positive column = 0;
                 bool all = true;
                 bool any = false;
-
-                if (edit_range_taken(address_of claimed, first, address_of last))
-                        continue;
 
                 for (positive line = first; line <= last; line++)
                 {
@@ -2814,6 +2812,7 @@ static fn edit_toggle_comment()
                 }
         }
 
+        edit_ranges_release(address_of ranges);
         edit_settle(index);
         edit_step_seal();
 }
@@ -3151,9 +3150,7 @@ static bool EDIT_SPARE edit_cursor_add(positive line, positive column)
 
 static p8 edit_input_state;
 static terminal_parameters edit_input_csi;
-static positive edit_input_pending;
-static positive edit_input_wanted;
-static positive edit_input_minimum;
+static memory_utf8_state edit_input_utf8;
 static bool edit_input_alt;
 
 /*
@@ -3287,6 +3284,7 @@ static CONST positive edit_key_from_final(p8 final)
 static fn edit_input_reset()
 {
         edit_input_state = EDIT_INPUT_GROUND;
+        edit_input_utf8.left = 0;
         terminal_parameters_reset(address_of edit_input_csi);
         edit_input_alt = false;
         edit_input_pasting = false;
@@ -3416,7 +3414,8 @@ static fn edit_input_byte(p8 byte)
                 edit_input_state = EDIT_INPUT_GROUND;
                 edit_input_alt = true;
                 edit_input_byte(byte);
-                edit_input_alt = false;
+                if (edit_input_state != EDIT_INPUT_UTF8)
+                        edit_input_alt = false;
                 return;
 
         case EDIT_INPUT_SS3:
@@ -3511,29 +3510,12 @@ static fn edit_input_byte(p8 byte)
                         //      read again from the ground rather than thrown
                         //      away with the sequence.
                         edit_input_state = EDIT_INPUT_GROUND;
+                        edit_input_utf8.left = 0;
+                        edit_input_alt = false;
                         edit_input_byte(byte);
                         return;
                 }
-
-                edit_input_pending = (edit_input_pending << 6) | (byte & 0x3f);
-
-                if (--edit_input_wanted)
-                        return;
-
-                edit_input_state = EDIT_INPUT_GROUND;
-
-                /* Reject overlong encodings, surrogate halves and values
-                   outside Unicode. Otherwise malformed terminal bytes turn
-                   into a different, valid character when the buffer is
-                   written back (C0 AF used to become '/'). */
-                if (edit_input_pending < edit_input_minimum ||
-                    edit_input_pending > 0x10ffff ||
-                    (edit_input_pending >= 0xd800 &&
-                     edit_input_pending <= 0xdfff))
-                        return;
-
-                edit_input_deliver(edit_input_pending);
-                return;
+                goto utf8;
         }
 
         if (byte == 27)
@@ -3560,32 +3542,13 @@ static fn edit_input_byte(p8 byte)
                 return;
         }
 
-        //      The head of a UTF-8 sequence says how many bytes follow it. A
-        //      byte that is a continuation with nothing in front of it, or a
-        //      head that names a length this does not have, is not a
-        //      character and is dropped rather than becoming one.
-        if ((byte & 0xe0) == 0xc0)
-        {
-                edit_input_pending = byte & 0x1f;
-                edit_input_wanted = 1;
-                edit_input_minimum = 0x80;
-        }
-        else if ((byte & 0xf0) == 0xe0)
-        {
-                edit_input_pending = byte & 0x0f;
-                edit_input_wanted = 2;
-                edit_input_minimum = 0x800;
-        }
-        else if ((byte & 0xf8) == 0xf0)
-        {
-                edit_input_pending = byte & 0x07;
-                edit_input_wanted = 3;
-                edit_input_minimum = 0x10000;
-        }
-        else
-                return;
-
-        edit_input_state = EDIT_INPUT_UTF8;
+utf8:
+        b32 result = memory_utf8_feed(address_of edit_input_utf8, byte);
+        edit_input_state = result ? EDIT_INPUT_GROUND : EDIT_INPUT_UTF8;
+        if (result > 0)
+                edit_input_deliver(edit_input_utf8.value);
+        if (result)
+                edit_input_alt = false;
 }
 
 //      Nothing more arrived. A held escape was the key after all; a sequence

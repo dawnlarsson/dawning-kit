@@ -911,60 +911,13 @@ static fn csi_final(unsigned int final)
         time. Anything malformed becomes U+FFFD rather than disappearing,
         which is what stops one bad byte from eating the character after it.
 */
-static unsigned int utf8_code, utf8_left, utf8_least;
+static memory_utf8_state terminal_utf8;
 
 static fn utf8_byte(unsigned int c)
 {
-        if (utf8_left)
-        {
-                if ((c & 0xc0) != 0x80)
-                {
-                        utf8_left = 0;
-                        put(0xfffd);
-                        return;
-                }
-
-                utf8_code = (utf8_code << 6) | (c & 0x3f);
-
-                if (--utf8_left)
-                        return;
-
-                // Overlong, and the halves of a surrogate pair, are not
-                // characters and a terminal that lets them through is a
-                // terminal that can be told to hold what its font cannot draw.
-                put(utf8_code < utf8_least || (utf8_code >= 0xd800 && utf8_code < 0xe000) ||
-                            utf8_code > 0x10ffff
-                        ? 0xfffd
-                        : utf8_code);
-                return;
-        }
-
-        if (c < 0xc0)
-        {
-                put(0xfffd);
-                return;
-        }
-
-        if (c < 0xe0)
-        {
-                utf8_code = c & 0x1f;
-                utf8_left = 1;
-                utf8_least = 0x80;
-        }
-        else if (c < 0xf0)
-        {
-                utf8_code = c & 0x0f;
-                utf8_left = 2;
-                utf8_least = 0x800;
-        }
-        else if (c < 0xf8)
-        {
-                utf8_code = c & 0x07;
-                utf8_left = 3;
-                utf8_least = 0x10000;
-        }
-        else
-                put(0xfffd);
+        b32 result = memory_utf8_feed(address_of terminal_utf8, (p8)c);
+        if (result)
+                put(result < 0 ? 0xfffd : terminal_utf8.value);
 }
 
 static fn line_forget();
@@ -973,10 +926,10 @@ static fn line_forget();
 // whatever ended it is not it.
 static fn utf8_flush()
 {
-        if (!utf8_left)
+        if (!terminal_utf8.left)
                 return;
 
-        utf8_left = 0;
+        terminal_utf8.left = 0;
         put(0xfffd);
 }
 
@@ -997,7 +950,7 @@ static fn consume(unsigned int c)
         if (c == 24 || c == 26)
         {
                 in_escape = in_csi = in_string = false;
-                utf8_left = 0;
+                terminal_utf8.left = 0;
                 return;
         }
 
@@ -1181,7 +1134,7 @@ static fn term_record_begin()
         in_escape = in_csi = in_string = false;
         escape_intermediate = string_escape = false;
         terminal_parameters_reset(address_of terminal_csi);
-        utf8_left = 0;
+        terminal_utf8.left = 0;
 }
 #endif
 

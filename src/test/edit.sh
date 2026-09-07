@@ -59,7 +59,18 @@ cat > "$work/harness.c" <<'HARNESS'
 //      The editor, with nothing under it. The driver is the only part of the
 //      file that needs a kernel and it is the only part left out.
 #define EDIT_NO_DRIVER
+static positive edit_test_requests;
+static positive edit_test_failure;
+#define memory_take(bytes) \
+        (++edit_test_requests == edit_test_failure ? null : memory_take(bytes))
+#define memory_resize(...) \
+        (++edit_test_requests == edit_test_failure ? null : memory_resize(__VA_ARGS__))
+#define memory_resize_growth(...) \
+        (++edit_test_requests == edit_test_failure ? null : memory_resize_growth(__VA_ARGS__))
 #include "src/sh/edit.c"
+#undef memory_take
+#undef memory_resize
+#undef memory_resize_growth
 
 #define TERMINAL_FIXTURE_OUTPUT 65536
 #include "src/test/terminal_fixture.inc"
@@ -128,6 +139,396 @@ static positive check_cursor_compaction()
                                 checks++;
                         }
 
+        return checks;
+}
+
+// Every subset of rows, moved as contiguous groups, retains its bytes and
+// cursor columns. One undo/redo must restore the entire key, not one cursor.
+static positive check_line_subsets()
+{
+        positive checks = 0;
+        for (positive count = 1; count <= 7; count++)
+                for (positive mask = 1; mask < ((positive)1 << count); mask++)
+                        for (positive up = 0; up < 2; up++)
+                                for (positive column = 0; column < 3; column++)
+                                {
+                                        p8 source[32];
+                                        positive length = 0, selected = 0;
+                                        positive order[7], width[7], columns[7];
+                                        for (positive row = 0; row < count; row++)
+                                        {
+                                                order[row] = row;
+                                                width[row] = 1 + row % 3;
+                                                columns[row] = column == 2 ? width[row] : column;
+                                                if (row)
+                                                        source[length++] = '\n';
+                                                for (positive byte = 0; byte < width[row]; byte++)
+                                                        source[length++] = (p8)('A' + row);
+                                        }
+                                        if (!edit_load(source, length))
+                                                return 0;
+                                        for (positive row = 0; row < count; row++)
+                                                if (mask & ((positive)1 << row))
+                                                {
+                                                        if (!selected++)
+                                                                edit_place_cursor(row, columns[row], false);
+                                                        else if (!edit_cursor_add(row, columns[row]))
+                                                                return 0;
+                                                }
+                                        // Reference permutation of whole contiguous
+                                        // groups, including groups blocked at an edge.
+                                        for (positive first = 0; first < count;)
+                                        {
+                                                if (!(mask & ((positive)1 << first)))
+                                                {
+                                                        first++;
+                                                        continue;
+                                                }
+                                                positive last = first;
+                                                while (last + 1 < count &&
+                                                       (mask & ((positive)1 << (last + 1))))
+                                                        last++;
+                                                if (up && first)
+                                                {
+                                                        order[last] = first - 1;
+                                                        for (positive row = first; row <= last; row++)
+                                                                order[row - 1] = row;
+                                                }
+                                                else if (!up && last + 1 < count)
+                                                {
+                                                        order[first] = last + 1;
+                                                        for (positive row = first; row <= last; row++)
+                                                                order[row + 1] = row;
+                                                }
+                                                first = last + 1;
+                                        }
+                                        edit_move_lines(up);
+                                        bool changed = false, valid = true;
+                                        for (positive row = 0; row < count; row++)
+                                                changed |= order[row] != row;
+                                        for (positive phase = 0; phase < 3 && valid; phase++)
+                                        {
+                                                if (phase && changed)
+                                                        valid = edit_step_move(phase == 1);
+                                                positive cursor = 0;
+                                                valid = valid && edit_line_count == count &&
+                                                    edit_cursor_count == selected &&
+                                                    edit_step_count == (positive)changed;
+                                                for (positive row = 0; row < count && valid; row++)
+                                                {
+                                                        positive original = phase == 1 ? row : order[row];
+                                                        valid = edit_lines[row].length == width[original];
+                                                        for (positive byte = 0; byte < width[original] && valid; byte++)
+                                                                valid = edit_lines[row].text[byte] == 'A' + original;
+                                                        if (mask & ((positive)1 << original))
+                                                        {
+                                                                struct edit_cursor held = edit_cursors[cursor++];
+                                                                valid = valid && held.line == row &&
+                                                                    held.column == columns[original] &&
+                                                                    held.anchor_line == row &&
+                                                                    held.anchor_column == columns[original];
+                                                        }
+                                                }
+                                        }
+                                        if (!valid)
+                                        {
+                                                say_number(count * 10000 + mask * 10 + up * 3 + column);
+                                                say_byte(':');
+                                                return 0;
+                                        }
+                                        checks++;
+                                }
+        return checks;
+}
+
+// Overlaps, reversed anchors and exclusive column-zero endpoints must move
+// the union of selected rows once, with both cursor endpoints and one undo.
+static positive check_line_ranges()
+{
+        positive checks = 0, failures = 0;
+        for (positive count = 2; count <= 6; count++)
+        for (positive a = 0; a < count; a++)
+        for (positive b = a; b < count; b++)
+        for (positive c = 0; c < count; c++)
+        for (positive d = c; d < count; d++)
+        for (positive flags = 0; flags < 96; flags++)
+        {
+                bool up = flags & 1, copy = (flags & 32) != 0;
+                bool prefixing = (flags & 64) != 0;
+                p8 source[32];
+                positive length = 0, mask = 0, order[12], total = count;
+                for (positive row = 0; row < count; row++)
+                {
+                        order[row] = row;
+                        if (row) source[length++] = '\n';
+                        source[length++] = (p8)('A' + row);
+                        source[length++] = (p8)('A' + row);
+                }
+                if (!edit_load(source, length) || !edit_cursors_room_for(2)) return 0;
+                edit_cursor_count = 2;
+                for (positive i = 0; i < 2; i++)
+                {
+                        positive first = i ? c : a, last = i ? d : b;
+                        bool boundary = (flags & (8 << i)) && last + 1 < count;
+                        struct edit_place start = { first, 0 };
+                        struct edit_place finish = { last + boundary, boundary ? 0 : 2 };
+                        if (flags & (2 << i))
+                        {
+                                struct edit_place temporary = start;
+                                start = finish;
+                                finish = temporary;
+                        }
+                        edit_cursors[i] = (struct edit_cursor){
+                                .line = start.line, .column = start.column,
+                                .anchor_line = finish.line, .anchor_column = finish.column,
+                                .selecting = true };
+                }
+                edit_cursors_sort();
+                positive original_count = edit_cursor_count;
+                struct edit_cursor original[2], mapped[2];
+                positive first[2], last[2];
+                memory_copy_apart(original, edit_cursors, original_count * sizeof(original[0]));
+                for (positive i = 0; i < original_count; i++)
+                {
+                        first[i] = min(original[i].line, original[i].anchor_line);
+                        last[i] = max(original[i].line, original[i].anchor_line);
+                        if ((original[i].line > original[i].anchor_line && !original[i].column) ||
+                            (original[i].anchor_line > original[i].line && !original[i].anchor_column))
+                                last[i]--;
+                        for (positive row = first[i]; row <= last[i]; row++)
+                                mask |= (positive)1 << row;
+                }
+                for (positive first = 0; !copy && !prefixing && first < count;)
+                {
+                        if (!(mask & ((positive)1 << first))) { first++; continue; }
+                        positive last = first;
+                        while (last + 1 < count && (mask & ((positive)1 << (last + 1)))) last++;
+                        if (up && first)
+                        {
+                                order[last] = first - 1;
+                                for (positive row = first; row <= last; row++) order[row - 1] = row;
+                        }
+                        else if (!up && last + 1 < count)
+                        {
+                                order[first] = last + 1;
+                                for (positive row = first; row <= last; row++) order[row + 1] = row;
+                        }
+                        first = last + 1;
+                }
+                if (copy)
+                {
+                        // At most two intervals: merge only actual overlap,
+                        // then emit each chosen group twice in original order.
+                        positive groups = original_count;
+                        if (groups == 2 && first[0] > first[1])
+                        {
+                                positive held = first[0]; first[0] = first[1]; first[1] = held;
+                                held = last[0]; last[0] = last[1]; last[1] = held;
+                        }
+                        if (groups == 2 && first[1] <= last[0])
+                        {
+                                last[0] = max(last[0], last[1]);
+                                groups = 1;
+                        }
+                        positive next = 0;
+                        total = 0;
+                        for (positive group = 0; group < groups; group++)
+                        {
+                                while (next < first[group]) order[total++] = next++;
+                                for (positive twice = 0; twice < 2; twice++)
+                                        for (positive row = first[group]; row <= last[group]; row++)
+                                                order[total++] = row;
+                                next = last[group] + 1;
+                        }
+                        while (next < count) order[total++] = next++;
+                }
+                bool changed = copy || prefixing;
+                for (positive row = 0; row < count; row++) changed |= row != order[row];
+                for (positive i = 0; i < original_count; i++)
+                {
+                        mapped[i] = original[i];
+                        if (prefixing)
+                        {
+                                if (original[i].column && (mask & ((positive)1 << original[i].line)))
+                                        mapped[i].column += up ? 8 : 2;
+                                if (original[i].anchor_column && (mask & ((positive)1 << original[i].anchor_line)))
+                                        mapped[i].anchor_column += up ? 8 : 2;
+                        }
+                        bool caret_boundary = original[i].selecting && !original[i].column &&
+                                                                    original[i].line > original[i].anchor_line;
+                        bool anchor_boundary = original[i].selecting && !original[i].anchor_column &&
+                                                                      original[i].anchor_line > original[i].line;
+                        for (positive step = 0; step < total; step++)
+                        {
+                                positive row = copy && up ? total - step - 1 : step;
+                                if (order[row] == original[i].line - caret_boundary)
+                                        mapped[i].line = row + caret_boundary;
+                                if (order[row] == original[i].anchor_line - anchor_boundary)
+                                        mapped[i].anchor_line = row + anchor_boundary;
+                        }
+                }
+                if (original_count == 2 && (mapped[0].line > mapped[1].line ||
+                        (mapped[0].line == mapped[1].line && mapped[0].column > mapped[1].column)))
+                {
+                        struct edit_cursor held = mapped[0]; mapped[0] = mapped[1]; mapped[1] = held;
+                }
+                positive mapped_count = original_count;
+                if (mapped_count == 2 && mapped[0].line == mapped[1].line &&
+                        mapped[0].column == mapped[1].column) mapped_count = 1;
+                if (!prefixing) edit_transfer_lines(up, copy);
+                else if (up) edit_indent_lines(false);
+                else edit_toggle_comment();
+                bool valid = true;
+                for (positive phase = 0; phase < 3 && valid; phase++)
+                {
+                        if (phase && changed) valid = edit_step_move(phase == 1);
+                        positive rows = phase == 1 ? count : total;
+                        valid = valid && edit_line_count == rows && edit_step_count == (positive)changed;
+                        for (positive row = 0; row < rows && valid; row++)
+                        {
+                                positive prefix = prefixing && phase != 1 &&
+                                    (mask & ((positive)1 << row)) ? (up ? 8 : 2) : 0;
+                                valid = edit_lines[row].length == 2 + prefix &&
+                                        edit_lines[row].text[prefix] == 'A' + (phase == 1 ? row : order[row]) &&
+                                        edit_lines[row].text[prefix + 1] == 'A' + (phase == 1 ? row : order[row]);
+                                for (positive byte = 0; byte < prefix && valid; byte++)
+                                        valid = edit_lines[row].text[byte] == (!up && !byte ? '#' : ' ');
+                        }
+                        positive expected_count = phase == 1 ? original_count : mapped_count;
+                        struct edit_cursor *expected = phase == 1 ? original : mapped;
+                        valid = valid && edit_cursor_count == expected_count;
+                        for (positive i = 0; i < expected_count && valid; i++)
+                                valid = edit_cursors[i].line == expected[i].line &&
+                                        edit_cursors[i].column == expected[i].column &&
+                                        edit_cursors[i].anchor_line == expected[i].anchor_line &&
+                                        edit_cursors[i].anchor_column == expected[i].anchor_column &&
+                                        edit_cursors[i].selecting == expected[i].selecting;
+                }
+                checks++;
+                if (!valid)
+                {
+                        if (failures < 12)
+                        {
+                                say_number(count); say_byte(':'); say_number(a); say_byte('-'); say_number(b);
+                                say_byte(','); say_number(c); say_byte('-'); say_number(d);
+                                say_byte('/'); say_number(flags); say_byte(' ');
+                                for (positive row = 0; row < count; row++) say_byte(edit_lines[row].text[0]);
+                                say_byte('/');
+                                for (positive row = 0; row < count; row++) say_byte('A' + order[row]);
+                                say_byte('\n');
+                        }
+                        failures++;
+                }
+        }
+        return failures ? 0 : checks;
+}
+
+
+/* Fail each allocation/reservation request in a line operation, including
+   journalling and staged document lines. Either the original remains intact,
+   or the complete edit, its cursors, and its undo/redo state agree. */
+static positive check_multicursor_journal()
+{
+        positive checks = 0;
+        for (positive mode = 0; mode < 6; mode++)
+        {
+                positive requests = 0;
+                for (positive fail_at = 0; fail_at <= requests; fail_at++)
+                {
+                        edit_test_failure = 0;
+                        if (!edit_load("aa\nbb\ncc\ndd\nee", 14)) return 0;
+                        edit_place_cursor(1, 1, false);
+                        if (!edit_cursor_add(3, 1)) return 0;
+                        struct edit_cursor before[2], after[2];
+                        memory_copy_apart(before, edit_cursors, sizeof(before));
+                        edit_test_requests = 0;
+                        edit_test_failure = fail_at;
+                        if (mode < 4) edit_transfer_lines(mode & 1, mode & 2);
+                        else if (mode == 4) edit_indent_lines(false);
+                        else edit_toggle_comment();
+                        if (!fail_at) requests = edit_test_requests;
+                        edit_test_failure = 0;
+                        positive length;
+                        p8 address_to bytes = edit_bytes_take(address_of length);
+                        if (!bytes || edit_cursor_count != 2) return 0;
+                        memory_copy_apart(after, edit_cursors, sizeof(after));
+                        bool valid = edit_step_count <= 1;
+                        for (positive phase = 0; phase < 2 && valid; phase++)
+                        {
+                                if (edit_step_count) valid = edit_step_move(!phase);
+                                positive size;
+                                p8 address_to restored = edit_bytes_take(address_of size);
+                                valid = valid && restored && size == (phase ? length : 14) &&
+                                    !memory_compare(restored, phase ? bytes : (string_address)"aa\nbb\ncc\ndd\nee", size) &&
+                                    edit_cursor_count == 2 &&
+                                    !memory_compare(edit_cursors, phase ? after : before, sizeof(before));
+                                memory_give(restored);
+                        }
+                        memory_give(bytes);
+                        if (!valid)
+                        {
+                                say_number(mode * 1000 + fail_at); say_byte(':');
+                                return 0;
+                        }
+                        checks++;
+                }
+        }
+        return checks;
+}
+
+static positive check_line_atomicity()
+{
+        static string_address expected[] = {
+            "ab\nef\ncd", "cd\nab\nef", "ab\ncd\ncd\nef", "ab\ncd\ncd\nef"};
+        positive checks = 0;
+        for (positive mode = 0; mode < 4; mode++)
+        {
+                positive requests = 0;
+                for (positive fail_at = 0; fail_at <= requests; fail_at++)
+                {
+                        edit_test_failure = 0;
+                        if (!edit_load("ab\ncd\nef", 8))
+                                return 0;
+                        edit_place_cursor(1, 1, false);
+                        edit_test_requests = 0;
+                        edit_test_failure = fail_at;
+                        if (mode & 2)
+                                edit_copy_lines(mode & 1);
+                        else
+                                edit_move_lines(mode & 1);
+                        if (!fail_at)
+                                requests = edit_test_requests;
+                        edit_test_failure = 0;
+                        positive length;
+                        p8 address_to bytes = edit_bytes_take(address_of length);
+                        if (!bytes)
+                                return 0;
+                        bool unchanged = length == 8 && !memory_compare(bytes, "ab\ncd\nef", 8);
+                        bool changed = length == string_length(expected[mode]) &&
+                            !memory_compare(bytes, expected[mode], length);
+                        memory_give(bytes);
+                        positive line = unchanged ? 1 : mode & 1 ? (mode & 2 ? 1 : 0) : 2;
+                        if ((!unchanged && !changed) || edit_cursor_count != 1 ||
+                            edit_cursors[0].line != line || edit_cursors[0].column != 1)
+                        {
+                                say_number(mode * 100 + fail_at);
+                                say_byte(':');
+                                return 0;
+                        }
+                        if (changed)
+                        {
+                                if (!edit_step_move(true) || edit_cursors[0].line != 1 ||
+                                    edit_cursors[0].column != 1 || !edit_step_move(false) ||
+                                    edit_cursors[0].line != line || edit_cursors[0].column != 1)
+                                {
+                                        say_number(mode * 100 + fail_at);
+                                        say_byte('!');
+                                        return 0;
+                                }
+                        }
+                        checks++;
+                }
+        }
         return checks;
 }
 
@@ -395,6 +796,8 @@ b32 main()
                 }
                 else if (string_compare(verb, (string_address) "reset") == 0)
                         edit_input_reset();
+                else if (string_compare(verb, (string_address) "alt_pending") == 0)
+                        say_number(edit_input_alt);
                 else if (string_compare(verb, (string_address) "draw") == 0)
                 {
                         edit_draw();
@@ -485,6 +888,26 @@ b32 main()
                 else if (string_compare(verb, (string_address) "compaction") == 0)
                 {
                         say_number(check_cursor_compaction());
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "line_atomicity") == 0)
+                {
+                        say_number(check_line_atomicity() != 0);
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "line_subsets") == 0)
+                {
+                        say_number(check_line_subsets());
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "line_ranges") == 0)
+                {
+                        say_number(check_line_ranges());
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "multi_journal") == 0)
+                {
+                        say_number(check_multicursor_journal() != 0);
                         say_byte('\n');
                 }
                 else if (string_compare(verb, (string_address) "add") == 0)
@@ -663,6 +1086,23 @@ same 'one step'        '1,1'            40 6 keys 'hello' steps
 same 'broken by a move' 'he'            40 6 keys 'he<left>llo^z' buffer
 same 'redo'            'hello'          40 6 keys 'hello^z^y' buffer
 
+group whole_key
+same 'multicursor move undo' 'a|b|c|d' 40 8 text 'a\nb\nc\nd' keys '<down>' add 3,0 keys '<a-up>^z' buffer
+same 'multicursor move redo' 'b|a|d|c' 40 8 text 'a\nb\nc\nd' keys '<down>' add 3,0 keys '<a-up>^z^y' buffer
+same 'consecutive moves separate' 'b|a|d|c' 40 8 text 'a\nb\nc\nd' keys '<down>' add 3,0 keys '<a-up><a-up>^z' buffer
+same 'multicursor copy undo' 'a|b|c' 40 8 text 'a\nb\nc' add 2,0 keys '<s-a-down>^z' buffer
+same 'consecutive copies separate' 'a|a|b|c|c' 40 8 text 'a\nb\nc' add 2,0 keys '<s-a-down><s-a-down>^z' buffer
+same 'multicursor tab undo' 'ab|cd' 40 8 text 'ab\ncd' add 1,0 keys '<tab>^z' buffer
+same 'multicursor comment undo' 'ab|cd' 40 8 text 'ab\ncd' add 1,0 keys '\x1f^z' buffer
+same 'multicursor cut undo' 'a|b|c|d' 40 8 text 'a\nb\nc\nd' add 2,0 keys '^x^z' buffer
+same 'multicursor newline undo' 'ab|cd' 40 8 text 'ab\ncd' keys '<right>' add 1,1 keys '<enter>^z' buffer
+same 'multicursor newline redo' 'a|b|c|d' 40 8 text 'ab\ncd' keys '<right>' add 1,1 keys '<enter>^z^y' buffer
+same 'consecutive newlines separate' 'a|b|c|d' 40 8 text 'ab\ncd' keys '<right>' add 1,1 keys '<enter><enter>^z' buffer
+same 'word delete whole key' 'one two|one two' 40 8 text 'one two\none two' keys '<end>' add 1,7 keys '<c-bs>^z' buffer
+same 'word delete consecutive' 'one |one ' 40 8 text 'one two\none two' keys '<end>' add 1,7 keys '<c-bs><c-bs>^z' buffer
+same 'word selection consecutive' 'a' 40 8 text 'ab' keys '<end><s-left><c-bs><c-bs>^z' buffer
+same 'typing before enter separate' 'x' 40 8 keys 'x<enter>^z' buffer
+
 group carets
 #       Undo puts the carets back where the run started, which is the half of
 #       undo that is immediately obvious when it is missing.
@@ -699,6 +1139,38 @@ group copy
 same 'down'            'ab|ab|cd'       40 6 text 'ab\ncd' keys '<s-a-down>' buffer
 same 'up'              'ab|ab|cd'       40 6 text 'ab\ncd' keys '<s-a-up>' buffer
 
+group line_positions
+same 'all selected row permutations' '1482' 40 8 line_subsets
+same 'overlapping range permutations' '77856' 40 8 line_ranges
+same 'allocation transition matrix' '1' 40 8 line_atomicity
+same 'multicursor journal failures' '1' 40 8 multi_journal
+for column in '' '<right>' '<end>'; do
+        case $column in '') offset=0 ;; '<right>') offset=1 ;; *) offset=2 ;; esac
+        same "move up column $offset" "0,$offset" 40 8 text 'ab\ncd\nef' \
+                keys "<down>$column<a-up>" carets
+        same "move down column $offset" "1,$offset" 40 8 text 'ab\ncd\nef' \
+                keys "$column<a-down>" carets
+        same "copy up column $offset" "0,$offset" 40 8 text 'ab\ncd\nef' \
+                keys "$column<s-a-up>" carets
+        same "copy down column $offset" "1,$offset" 40 8 text 'ab\ncd\nef' \
+                keys "$column<s-a-down>" carets
+        same "move roundtrip $offset" "0,$offset" 40 8 text 'ab\ncd\nef' \
+                keys "$column<a-down><a-up>" carets
+done
+same 'selection down boundary' '2,0-1,0' 40 8 text 'ab\ncd\nef' keys '<s-down><a-down>' carets
+same 'selection up boundary' '1,0-0,0' 40 8 text 'ab\ncd\nef' keys '<down><s-down><a-up>' carets
+same 'reversed boundary' '1,0-2,0' 40 8 text 'ab\ncd\nef' keys '<down><s-up><a-down>' carets
+same 'duplicate up boundary' '1,0-0,0' 40 8 text 'ab\ncd\nef' keys '<s-down><s-a-up>' carets
+same 'duplicate down boundary' '2,0-1,0' 40 8 text 'ab\ncd\nef' keys '<s-down><s-a-down>' carets
+same 'two columns move once' '1,1 1,2' 40 8 text 'abc\ndef\nghi' keys '<right>' add 0,2 keys '<a-down>' carets
+same 'adjacent lines move up' 'def|ghi|abc' 40 8 text 'abc\ndef\nghi' keys '<down>' add 2,0 keys '<a-up>' buffer
+same 'adjacent lines move down' 'ghi|abc|def' 40 8 text 'abc\ndef\nghi' add 1,0 keys '<a-down>' buffer
+same 'whole selection blocks overlap' 'ab|cd' 40 8 text 'ab\ncd' keys '^a' add 1,0 keys '<a-up>' buffer
+same 'adjacent copies remain independent' 'ab|ab|cd|cd' 40 8 text 'ab\ncd' add 1,0 keys '<s-a-down>' buffer
+same 'overlapping copies duplicate once' 'ab|cd|ab|cd' 40 8 text 'ab\ncd' keys '^a' add 1,0 keys '<s-a-down>' buffer
+same 'selection undo positions' '1,0-0,0' 40 8 text 'ab\ncd\nef' keys '<s-down><a-down>^z' carets
+same 'selection redo positions' '2,0-1,0' 40 8 text 'ab\ncd\nef' keys '<s-down><a-down>^z^y' carets
+
 #
 #       Comments.
 #
@@ -709,6 +1181,8 @@ group toggle
 same 'put on'          '# ab'           40 6 text 'ab' keys '\x1f' buffer
 same 'taken off'       'ab'             40 6 text 'ab' keys '\x1f\x1f' buffer
 same 'a block'         '# ab|# cd'      40 6 text 'ab\ncd' keys '^a\x1f' buffer
+same 'adjacent blocks independent' 'a|# b' 40 8 text '# a\nb' add 1,0 keys '\x1f' buffer
+same 'overlap covers every row' '# ab|# cd' 40 8 text 'ab\ncd' keys '<c-end><c-s-home>' add 0,2 keys '\x1f' buffer
 
 #
 #       Moving about.
@@ -809,6 +1283,15 @@ same 'one caret step'  '0,2'            40 6 keys '\xc3\xa9' carets
 same 'backspace whole' ''               40 6 keys '\xc3\xa9<bs>' buffer
 same 'overlong ignored' ''               40 6 keys '\xc0\xaf' buffer
 same 'surrogate ignored' ''              40 6 keys '\xed\xa0\x80' buffer
+same 'alt two bytes'   '0éx'             40 6 keys '\e\xc3\xa9x' alt_pending buffer
+same 'alt three bytes' '0界x'            40 6 keys '\e\xe7\x95\x8cx' alt_pending buffer
+same 'alt four bytes'  '00,5'            40 6 keys '\e\xf0\x90\x80\x80x' alt_pending carets
+same 'alt pending two' '1'               40 6 keys '\e\xc3' alt_pending
+same 'alt pending three' '1'             40 6 keys '\e\xe7\x95' alt_pending
+same 'alt pending four' '1'              40 6 keys '\e\xf0\x90\x80' alt_pending
+same 'alt interrupted' 'x'               40 6 keys '\e\xc3x' buffer
+same 'alt malformed'   'x'               40 6 keys '\e\xc0\xafx' buffer
+same 'alt idle reset'  'x'               40 6 keys '\e\xc3' idle keys 'x' buffer
 same 'out of range ignored' ''           40 6 keys '\xf4\x90\x80\x80' buffer
 same 'csi u surrogate ignored' ''         40 6 keys '\e[55296u\e[57343u' buffer
 same 'csi u scalar boundaries' '[1 <d7ff><e000><10ffff>]' 40 6 keys '\e[55295u\e[57344u\e[1114111u' row 0
@@ -816,6 +1299,10 @@ same 'csi u scalar boundaries' '[1 <d7ff><e000><10ffff>]' 40 6 keys '\e[55295u\e
 group paste
 same 'keeps newlines exact' 'a|  b'      40 6 keys '\e[200~a\n  b\e[201~' buffer
 same 'is one undo step' ''               40 6 keys '\e[200~a\n  b\e[201~^z' buffer
+same 'multicursor paste undo' 'ab|cd'      40 8 text 'ab\ncd' add 1,0 keys '\e[200~X\e[201~^z' buffer
+same 'multicursor paste redo' 'Xab|Xcd'    40 8 text 'ab\ncd' add 1,0 keys '\e[200~X\e[201~^z^y' buffer
+same 'successive pastes separate' 'Xab|Xcd' 40 8 text 'ab\ncd' add 1,0 keys '\e[200~X\e[201~\e[200~Y\e[201~^z' buffer
+same 'typing before paste separate' 'x'   40 8 keys 'x\e[200~Y\e[201~^z' buffer
 same 'reset drops partial frame' 'x'     40 6 keys '\e[200~abc' reset keys 'x' buffer
 
 #

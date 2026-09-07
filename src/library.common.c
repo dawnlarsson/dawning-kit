@@ -112,6 +112,41 @@ static inline INLINE positive memory_utf8_encode(
         return size;
 }
 
+typedef struct {
+        p32 value, left, least;
+} memory_utf8_state;
+
+/* One incremental scalar: 0 needs another byte, 1 completed a scalar, and
+   -1 rejected a sequence. The caller owns replacement/replay policy; a byte
+   interrupting a sequence is consumed here, not silently processed twice. */
+static inline INLINE b32 memory_utf8_feed(memory_utf8_state address_to state, p8 byte)
+{
+        if (state->left)
+        {
+                if ((byte & 0xc0) != 0x80)
+                {
+                        state->left = 0;
+                        return -1;
+                }
+                state->value = (state->value << 6) | (byte & 0x3f);
+                if (--state->left)
+                        return 0;
+                return state->value < state->least || state->value > 0x10ffff ||
+                       (state->value >= 0xd800 && state->value <= 0xdfff) ? -1 : 1;
+        }
+        if (byte < 0x80)
+        {
+                state->value = byte;
+                return 1;
+        }
+        if (byte < 0xc0 || byte >= 0xf8)
+                return -1;
+        state->left = byte < 0xe0 ? 1 : byte < 0xf0 ? 2 : 3;
+        state->least = state->left == 1 ? 0x80 : state->left == 2 ? 0x800 : 0x10000;
+        state->value = byte & (0x3f >> state->left);
+        return 0;
+}
+
 /* The negative half of a signed range has one extra magnitude. Keeping that
    conversion unsigned until the minimum case is selected avoids overflowing
    the signed type in every parser that accepts the full native range. */
