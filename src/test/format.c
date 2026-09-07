@@ -79,6 +79,9 @@ static fn pinned(string_address want, string_address format, bipolar answered)
 //      conversion, against what glibc answered for each.
 static fn conversions(void)
 {
+        CASE("007   |ab|9", "%*.*d|%.*s|%d", -6, 3, 7, 2, "abcd", 9);
+        CASE("%|7", "%*.*%|%d", 5, 2, 7);
+        CASE("7", "%.*d", -3, 7);
         CASE("0", "%d", 0);
         CASE("00000000", "%5.8d", 0);
         CASE("000", "%-1.3d", 0);
@@ -1093,6 +1096,12 @@ static fn bounded(void)
         check("a precision above int is refused",
               answered == -1 && errno == EOVERFLOW && poison[0] == end);
 
+        errno = 0;
+        answered = snprintf(poison, sizeof(poison),
+                            (string_address) "%2147483648.*d", 1, 7);
+        check("oversized width rejects a later starred precision",
+              answered == -1 && errno == EOVERFLOW && poison[0] == end);
+
         //      Counting a truncated padding run is constant work after the
         //      resident prefix has been written, even when the answer itself
         //      is too large once the surrounding literal is included.
@@ -1389,8 +1398,50 @@ static fn shared_sticky_tails(void)
                                 }
 }
 
+static fn lexical_fields(void)
+{
+        string_address at = null;
+        conversion_spec got = conversion_spec_take_max(&at, 0);
+        check("empty counted format does not access its cursor", !at && !got.flags &&
+            got.fields == 1 && !got.stars && !got.overflow && !got.field[0]);
+        for (positive byte = 0; byte < 256; byte++)
+        {
+                p8 text[] = {(p8)byte, '9', '.', '*', 'x'};
+                positive flags = byte == '-' ? CONVERSION_FLAG_LEFT :
+                    byte == '+' ? CONVERSION_FLAG_PLUS : byte == ' ' ? CONVERSION_FLAG_SPACE :
+                    byte == '#' ? CONVERSION_FLAG_ALTERNATE : byte == '0' ? CONVERSION_FLAG_ZERO : 0;
+                bool digit = byte >= '1' && byte <= '9';
+                at = text;
+                got = conversion_spec_take_max(&at, 1);
+                check("bounded field grammar classifies every byte", got.flags == flags &&
+                    got.fields == 1 + (byte == '.') && got.stars == (byte == '*') &&
+                    !got.overflow && got.field[0] == (digit ? byte - '0' : 0) &&
+                    !got.field[1] && at == text + (flags || digit || byte == '.' || byte == '*'));
+        }
+        static const struct {
+                string_address text; positive width, precision; p8 fields, stars, overflow;
+        } cases[] = {
+            {"12",12,0,1,0,0}, {"12.",12,0,2,0,0}, {"12.*",12,0,2,2,0},
+            {"*",0,0,1,1,0}, {"*.*",0,0,2,3,0}, {"*.003",0,3,2,1,0},
+            {"18446744073709551615",positive_max,0,1,0,0},
+            {"18446744073709551616.18446744073709551617",0,1,2,0,3},
+            {"*.00000000000000000000000003",0,3,2,1,0}
+        };
+        for (positive i = 0; i < array_count(cases); i++)
+        {
+                at = cases[i].text;
+                positive length = string_length(at);
+                got = conversion_spec_take_max(&at, length);
+                check("field values retain star, dot and overflow policy", !*at &&
+                    got.field[0] == cases[i].width && got.field[1] == cases[i].precision &&
+                    got.fields == cases[i].fields && got.stars == cases[i].stars &&
+                    got.overflow == cases[i].overflow);
+        }
+}
+
 b32 main(void)
 {
+        lexical_fields();
         shared_sticky_tails();
         conversions();
         rules();

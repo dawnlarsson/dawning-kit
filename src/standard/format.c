@@ -366,6 +366,32 @@ typedef struct
         p8 conversion;
 } format_spec;
 
+/* Integer, decimal and hexadecimal numbers have one field prefix: outside spaces,
+   sign, radix prefix, then inside zeros.  Forced inline keeps the prefix-less
+   decimal path free of even a test or empty emit. */
+static inline INLINE positive format_number_begin(
+    format_sink address_to sink, format_spec address_to spec, positive body,
+    p8 sign, address_any prefix, positive prefix_length)
+{
+        positive spaces = spec->width > body ? spec->width - body : 0;
+
+        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
+            !(spec->flags & FORMAT_FLAG_ZERO))
+                format_fill(sink, ' ', spaces);
+        if (sign)
+                format_emit(sink, address_of sign, 1);
+        if (prefix_length)
+                format_emit(sink, prefix, prefix_length);
+        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
+            (spec->flags & FORMAT_FLAG_ZERO))
+        {
+                format_fill(sink, '0', spaces);
+                spaces = 0;
+        }
+
+        return spaces;
+}
+
 /*
         The integer field, assembled in the order C says it appears.
 
@@ -463,27 +489,10 @@ static fn format_integer(format_sink address_to sink, positive value,
 
         body = (sign != 0) + prefix_length + forced + zeros + length;
 
-        //      The 0 flag pads between the prefix and the digits, and only
-        //      where nothing else has already claimed that job.
-        if ((spec->flags & FORMAT_FLAG_ZERO) &&
-            !(spec->flags & FORMAT_FLAG_LEFT) && spec->precision < 0 &&
-            spec->width > body)
-        {
-                zeros += spec->width - body;
-                body = spec->width;
-        }
-
-        if (spec->width > body)
-                spaces = spec->width - body;
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT))
-                format_fill(sink, ' ', spaces);
-
-        if (sign)
-                format_emit(sink, address_of sign, 1);
-
-        if (prefix_length)
-                format_emit(sink, prefix, prefix_length);
+        format_spec field = *spec;
+        if (spec->precision >= 0)
+                field.flags &= ~FORMAT_FLAG_ZERO;
+        spaces = format_number_begin(sink, &field, body, sign, prefix, prefix_length);
 
         format_fill(sink, '0', zeros + forced);
         format_emit(sink, digits, length);
@@ -965,32 +974,6 @@ static inline INLINE p8 format_number_sign(p64 bits,
                spec->flags & FORMAT_FLAG_SPACE ? ' ' : 0;
 }
 
-/* Decimal and hexadecimal numbers have one field prefix: outside spaces,
-   sign, radix prefix, then inside zeros.  Forced inline keeps the prefix-less
-   decimal path free of even a test or empty emit. */
-static inline INLINE positive format_number_begin(
-    format_sink address_to sink, format_spec address_to spec, positive body,
-    p8 sign, address_any prefix, positive prefix_length)
-{
-        positive spaces = spec->width > body ? spec->width - body : 0;
-
-        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
-            !(spec->flags & FORMAT_FLAG_ZERO))
-                format_fill(sink, ' ', spaces);
-        if (sign)
-                format_emit(sink, address_of sign, 1);
-        if (prefix_length)
-                format_emit(sink, prefix, prefix_length);
-        if (!(spec->flags & FORMAT_FLAG_LEFT) &&
-            (spec->flags & FORMAT_FLAG_ZERO))
-        {
-                format_fill(sink, '0', spaces);
-                spaces = 0;
-        }
-
-        return spaces;
-}
-
 /*
         The three decimal float shapes, and the field around them.
 
@@ -1463,83 +1446,32 @@ static fn format_run(format_sink address_to sink, string_address format,
                 start = at;
                 at++;
 
-                spec.flags = conversion_flags_take(address_of at);
+                conversion_spec parsed = conversion_spec_take_max(&at, positive_max);
+                spec.flags = parsed.flags;
                 spec.width = 0;
                 spec.precision = -1;
-                spec.length = FORMAT_LENGTH_INT;
-
-                if (string_get(at) == '*')
+                for (p8 field = 0; field < parsed.fields; field++)
                 {
-                        b32 given = var_list_get(list, b32);
-
-                        at++;
-
-                        //      A negative star width is a left flag and a
-                        //      positive width, which is the one place a flag
-                        //      can arrive after the flags have been read.
-                        if (given < 0)
-                        {
-                                spec.flags |= FORMAT_FLAG_LEFT;
-                                spec.width = (positive)(0 - (bipolar)given);
-                        }
+                        bipolar value;
+                        if (parsed.stars & (1u << field))
+                                value = var_list_get(list, b32);
                         else
                         {
-                                spec.width = (positive)given;
-                        }
-                }
-                else
-                {
-                        if (byte_is_digit(string_get(at)))
-                        {
-                                positive width;
-
-                                if (!string_digits_checked(address_of at, 10,
-                                                           address_of width) ||
-                                    width > (positive)b32_max)
+                                if ((parsed.overflow & (1u << field)) ||
+                                    parsed.field[field] > (positive)b32_max)
                                 {
                                         sink->failed = true;
                                         errno = EOVERFLOW;
                                         return;
                                 }
-
-                                spec.width = width;
+                                value = (bipolar)parsed.field[field];
                         }
-                }
-
-                if (string_get(at) == '.')
-                {
-                        at++;
-                        spec.precision = 0;
-
-                        if (string_get(at) == '*')
-                        {
-                                b32 given = var_list_get(list, b32);
-
-                                at++;
-
-                                //      A negative star precision is no
-                                //      precision at all, and not a precision
-                                //      of zero.
-                                spec.precision = given < 0 ? -1 : (bipolar)given;
-                        }
+                        if (field)
+                                spec.precision = value < 0 ? -1 : value;
                         else
                         {
-                                if (byte_is_digit(string_get(at)))
-                                {
-                                        positive precision;
-
-                                        if (!string_digits_checked(
-                                                address_of at, 10,
-                                                address_of precision) ||
-                                            precision > (positive)b32_max)
-                                        {
-                                                sink->failed = true;
-                                                errno = EOVERFLOW;
-                                                return;
-                                        }
-
-                                        spec.precision = (bipolar)precision;
-                                }
+                                spec.flags |= value < 0 ? FORMAT_FLAG_LEFT : 0;
+                                spec.width = (positive)absolute_wide(value);
                         }
                 }
 

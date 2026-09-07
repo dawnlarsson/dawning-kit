@@ -16378,36 +16378,16 @@ static bool seq_format_read(string_address text, seq_format address_to format)
                 found = true;
                 format->directive = at++;
 
-                string_address flags_at = text + at;
-
-                format->flags = conversion_flags_take(address_of flags_at);
-                at = (positive)(flags_at - text);
-
-                while (text[at] >= '0' && text[at] <= '9')
-                {
-                        if (format->width > 100000)
-                                return false;
-
-                        format->width = format->width * 10 +
-                                        (positive)(text[at++] - '0');
-                }
-
-                format->precision = 6;
-
-                if (text[at] == '.')
-                {
-                        at++;
-                        format->precision = 0;
-
-                        while (text[at] >= '0' && text[at] <= '9')
-                        {
-                                if (format->precision > 100000)
-                                        return false;
-
-                                format->precision = format->precision * 10 +
-                                                    (positive)(text[at++] - '0');
-                        }
-                }
+                string_address field = text + at;
+                conversion_spec parsed = conversion_spec_take_max(&field, positive_max);
+                // The former pre-digit limit of 100000 admits one final digit.
+                if (parsed.stars || parsed.overflow || parsed.field[0] > 1000009 ||
+                    parsed.field[1] > 1000009)
+                        return false;
+                format->flags = parsed.flags;
+                format->width = parsed.field[0];
+                format->precision = parsed.fields == 2 ? parsed.field[1] : 6;
+                at = (positive)(field - text);
 
                 // coreutils accepts an explicit long-double length here even
                 // though seq supplies that type itself.

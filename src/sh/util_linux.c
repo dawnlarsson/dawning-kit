@@ -5338,12 +5338,10 @@ static b32 util_linux_lsfd()
 
         /* ps_pid_list borrows the text arena; these are not independent mmap
            allocations and must never be passed to array_store_release. */
-        positive address_to pids = null;
-        positive pid_count = 0, pid_room = 0;
+        ps_ids pids = {0};
         string_address pid_list = file_option_value(address_of taking, 'p');
         if (pid_list &&
-            !ps_pid_list(pid_list, address_of pids, address_of pid_count,
-                         address_of pid_room, false))
+            !ps_pid_list(pid_list, &pids, false))
         {
                 ul_lsfd_release();
                 return text_refuse(pid_list, "invalid PID list", 1);
@@ -5353,7 +5351,7 @@ static b32 util_linux_lsfd()
                                            SPARK_SNAPSHOT_PROCESS,
                                            (fields & (((positive)1 << UL_LSFD_USER) |
                                                       ((positive)1 << UL_LSFD_UID))) != 0,
-                                           pids, pid_count))
+                                           pids.values, pids.count))
         {
                 ul_lsfd_release();
                 return text_refuse("/proc", "cannot read", 1);

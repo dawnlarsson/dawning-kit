@@ -572,7 +572,7 @@ typedef struct
         p8 value;
 } named_byte;
 
-/* printf, scanf and seq have one flag grammar. */
+/* printf dialects and seq share the flag grammar. */
 #define CONVERSION_FLAG_LEFT 1
 #define CONVERSION_FLAG_PLUS 2
 #define CONVERSION_FLAG_SPACE 4
@@ -585,41 +585,67 @@ static const p8 conversion_flag_bytes['0' + 1] = {
     ['0'] = CONVERSION_FLAG_ZERO,
 };
 
-/* The bounded form is for a format that is a counted run rather than a
-   string, awk's, whose bytes after the run are whatever the value store
-   holds next; the flag bytes are never the terminator, so the plain form
-   is the same walk with no bound to reach. */
-static inline INLINE positive conversion_flags_take_max(
+/* Lexical printf fields only: field[0] is width, field[1] is precision.
+   Stars and overflow use the corresponding bit. Keep the wrapped unsigned
+   value on overflow; each dialect decides its limits and resolves stars in
+   field order. Length modifiers and the conversion remain at the cursor. */
+typedef struct
+{
+        positive flags, field[2];
+        p8 fields, stars, overflow;
+} conversion_spec;
+
+static inline INLINE conversion_spec conversion_spec_take_max(
     string_address address_to source, positive length)
 {
-        string_address at = address_to source;
-        positive flags = 0;
-
-        // Counted down rather than compared against an end address: the
-        // unbounded caller passes the largest count there is, and adding
-        // that to a pointer would wrap it.
+        string_address at = *source;
+        conversion_spec spec = {0};
+        // A down-counter also accepts positive_max for terminated strings.
         while (length)
         {
                 p8 byte = string_get(at);
                 p8 flag = byte < array_count(conversion_flag_bytes)
                               ? conversion_flag_bytes[byte] : 0;
-
                 if (!flag)
                         break;
-
-                flags |= flag;
+                spec.flags |= flag;
                 at++;
                 length--;
         }
-
-        address_to source = at;
-        return flags;
-}
-
-static inline INLINE positive conversion_flags_take(
-    string_address address_to source)
-{
-        return conversion_flags_take_max(source, positive_max);
+        for (p8 field = 0; field < 2; field++)
+        {
+                if (field)
+                {
+                        if (!length || string_get(at) != '.')
+                                break;
+                        at++;
+                        length--;
+                }
+                spec.fields++;
+                if (length && string_get(at) == '*')
+                {
+                        spec.stars |= 1u << field;
+                        at++;
+                        length--;
+                        continue;
+                }
+                while (length)
+                {
+                        p32 digit = (p32)string_get(at) - '0';
+                        if (digit > 9)
+                                break;
+                        positive scaled;
+                        bool overflow = __builtin_mul_overflow(spec.field[field],
+                            (positive)10, &scaled);
+                        overflow |= __builtin_add_overflow(scaled, (positive)digit,
+                            &spec.field[field]);
+                        spec.overflow |= (p8)overflow << field;
+                        at++;
+                        length--;
+                }
+        }
+        *source = at;
+        return spec;
 }
 
 /* Exact fixed-point fields: the unsigned magnitude is scaled by 10^scale,

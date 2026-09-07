@@ -506,6 +506,19 @@ b32 main(void)
         check("arena span rejects length overflow",
               !shell_store_copy(&store, null, positive_max) && shell_memory_failed);
         shell_memory_failed = false;
+        seq_format sequence;
+        check("seq shared conversion fields retain literals, flags and default precision",
+              seq_format_read("%%[%+-08Lf]%%", &sequence) && sequence.directive == 3 &&
+              sequence.after == 10 && sequence.width == 8 && sequence.precision == 6 &&
+              sequence.flags == (CONVERSION_FLAG_LEFT | CONVERSION_FLAG_PLUS | CONVERSION_FLAG_ZERO));
+        check("seq preserves the pre-digit field limit",
+              seq_format_read("%1000009.1000009f", &sequence) &&
+              !seq_format_read("%1000010f", &sequence) &&
+              !seq_format_read("%.1000010f", &sequence));
+        check("seq rejects stars, overflow and multiple conversions",
+              !seq_format_read("%*.2f", &sequence) && !seq_format_read("%1.*f", &sequence) &&
+              !seq_format_read("%18446744073709551616f", &sequence) &&
+              !seq_format_read("%f%%f%f", &sequence));
         reuse_arguments();
         reuse_masks();
         reuse_lists();

@@ -1435,6 +1435,13 @@ compare 'format aliases' ps -p "$long_pid" -o cmd,command,ucmd
 compare 'clustered format letter' ps -eo pid,comm -p "$long_pid"
 compare 'clustered pid letter' ps -fp "$long_pid"
 compare 'clustered attached pid letter' ps -ep"$long_pid" -o pid=,comm=
+compare 'repeated width before format' ps -wwo pid,comm -p "$long_pid"
+compare 'BSD clustered format argument' ps -p "$long_pid" wwo pid,comm
+compare 'suppressed clustered format' ps --no-headers -wo pid=,comm= -p "$long_pid"
+compare 'cluster then long sort value' ps -ww --sort -pid -p "1,$long_pid" -o pid=
+compare 'missing long format value' ps --format
+compare 'empty long format value' ps --format=
+compare 'mixed PID option spellings' ps -p "$long_pid" --pid="$long_pid" -o pid=
 
 # The terminal is named the way the kernel numbers it: pts/N here when the
 # suite has one, and ? when it is run from nowhere.

@@ -1465,37 +1465,31 @@ static PURE bool expand_ifs_blank(p8 value)
         stable store, sized from the parameters rather than from a fixed
         expansion buffer.
 */
-/*
-        A name with a subscript, taken apart again.
-
-        expand_braced resolves a subscript where the word was read and writes
-        the answer back into the name it hands on -- a[i+1] becomes a[2] and
-        m[$k] becomes m[key]. Every operator below therefore reads one name
-        and needs no second channel for the element it stands for, and the
-        arithmetic or the key's own expansion happens once however many times
-        the operator asks for the value.
-*/
-static COLD bool expand_named_element(string_address name,
-                                      positive address_to base_length,
-                                      string_address address_to key,
-                                      positive address_to key_length)
+// A resolved parameter keeps the key separate from the variable's name.
+// Scalars use only name; element names and keys live through their operator.
+typedef struct
 {
-        string_address open = string_first_of(name, '[');
-        positive length;
+        string_address name, key;
+        positive name_length, key_length;
+} expand_reference;
 
-        if (!open || open == name)
-                return false;
-
-        length = string_length(name);
-
-        if (name[length - 1] != ']')
-                return false;
-
-        address_to base_length = (positive)(open - name);
-        address_to key = open + 1;
-        address_to key_length = length - address_to base_length - 2;
-
-        return true;
+// Only diagnostics need shell syntax after a subscript has been evaluated.
+static COLD string_address expand_reference_text(expand_reference reference)
+{
+        if (!reference.key)
+                return reference.name;
+        positive base = reference.name_length, key = reference.key_length;
+        if (key > positive_max - 3 || base > positive_max - key - 3)
+                return reference.name;
+        string_address text = shell_store_take(address_of expand_store, base + key + 3);
+        if (!text)
+                return reference.name;
+        memory_copy(text, reference.name, base);
+        text[base] = '[';
+        memory_copy(text + base + 1, reference.key, key);
+        text[base + key + 1] = ']';
+        text[base + key + 2] = end;
+        return text;
 }
 
 /*
@@ -1512,20 +1506,6 @@ static COLD string_address expand_absent_value(string_address name,
                                                positive2 answer,
                                                positive address_to value_length)
 {
-        positive base_length;
-        string_address key;
-        positive key_length;
-
-        if (expand_named_element(name, address_of base_length,
-                                 address_of key, address_of key_length))
-        {
-                shell_frames_wanted(name, base_length);
-                shell_dynamic_wanted(name, base_length);
-
-                return shell_array_get(name, base_length, key, key_length,
-                                       value_length);
-        }
-
         {
                 string_address reference = shell_reference_element_value(
                     name, answer.y, value_length);
@@ -1549,16 +1529,27 @@ static COLD string_address expand_absent_value(string_address name,
         return shell_dynamic_value(name, answer.y, answer.x, value_length);
 }
 
-static string_address expand_value_of(string_address name, p8 address_to scratch,
+static string_address expand_value_of(expand_reference reference, p8 address_to scratch,
                                       bool address_to present,
                                       positive address_to value_length)
 {
+        string_address name = reference.name;
         p8 first = string_get(name);
 
         address_to present = true;
         if (value_length)
                 address_to value_length = 0;
         scratch[0] = end;
+
+        if (reference.key)
+        {
+                shell_frames_wanted(name, reference.name_length);
+                shell_dynamic_wanted(name, reference.name_length);
+                string_address value = shell_array_get(name, reference.name_length,
+                    reference.key, reference.key_length, value_length);
+                *present = value != null;
+                return value;
+        }
 
         if (first >= '0' && first <= '9')
         {
@@ -1744,9 +1735,10 @@ static string_address expand_tilde(string_address step, bool assignment);
         Only when IFS is empty is there no byte to join on, and there the
         boundaries have to be put in or every parameter runs together.
 */
-static bool expand_push_parameter_as(string_address name, bool quoted,
+static bool expand_push_parameter_as(expand_reference reference, bool quoted,
                                      b32 mode)
 {
+        string_address name = reference.name;
         p8 mark = quoted ? MARK_QUOTED : MARK_FIELD;
         p8 scratch[32];
         string_address value;
@@ -1778,14 +1770,14 @@ static bool expand_push_parameter_as(string_address name, bool quoted,
                 value_length = 0;
         }
         else
-                value = expand_value_of(name, scratch, address_of present,
+                value = expand_value_of(reference, scratch, address_of present,
                                         address_of value_length);
 
         if (!present)
         {
                 if (shell_options & ((positive)1 << ('u' - 'a')))
                 {
-                        string_format(expand_complain, "%s: parameter not set\n", name);
+                        string_format(expand_complain, "%s: parameter not set\n", expand_reference_text(reference));
                         expand_fatal_mode(mode);
                 }
 
@@ -1797,9 +1789,9 @@ static bool expand_push_parameter_as(string_address name, bool quoted,
         return true;
 }
 
-static bool expand_push_parameter(string_address name, bool quoted)
+static bool expand_push_parameter(expand_reference reference, bool quoted)
 {
-        return expand_push_parameter_as(name, quoted, 0);
+        return expand_push_parameter_as(reference, quoted, 0);
 }
 
 // Sequence readers calculate IFS once, then share this inlined boundary
@@ -1962,15 +1954,11 @@ static bipolar arith_choose();
 static bipolar arith_expression();
 static PURE string_address expand_bracket_end(string_address at, p8 open,
                                               p8 close);
-static COLD string_address expand_subscript_name(string_address base,
-                                                  positive base_length,
-                                                  string_address subscript,
-                                                  positive subscript_length);
-static COLD bool expand_assign_named(string_address name,
+static COLD bool expand_assign_named(expand_reference reference,
                                      string_address value);
 
 // Writing a name back, which every assigning form ends with.
-static bipolar arith_store(string_address name, bipolar value, bool element)
+static bipolar arith_store(expand_reference reference, bipolar value)
 {
         p8 written[32];
 
@@ -1978,9 +1966,9 @@ static bipolar arith_store(string_address name, bipolar value, bool element)
                 return 0;
 
         bipolar_into_string(written, value);
-        if (!(element ? expand_assign_named(name, written)
-                      : env_assign(name, written)))
+        if (!expand_assign_named(reference, written))
         {
+                string_address name = expand_reference_text(reference);
                 arith_bad = true;
                 string_format(expand_complain,
                               env_readonly(name) ? "%s: is read only\n"
@@ -2006,13 +1994,11 @@ static bipolar arith_store(string_address name, bipolar value, bool element)
         state explicitly. An inactive short-circuit arm only advances over
         the balanced bracket: Bash neither reads nor mutates its subscript.
 */
-static COLD string_address arith_element_name(string_address base,
-                                               positive base_length)
+static COLD bool arith_element_name(expand_reference address_to reference)
 {
         string_address open = arith_at;
         string_address close = expand_bracket_end(open + 1, '[', ']');
         string_address after;
-        string_address name;
         string_address held_at;
         bool held_bad;
         bool held_active;
@@ -2021,26 +2007,26 @@ static COLD string_address arith_element_name(string_address base,
         if (!close)
         {
                 arith_bad = true;
-                return null;
+                return false;
         }
 
         after = close + 1;
         arith_at = after;
 
         if (!arith_active)
-                return base;
+                return true;
 
         held_at = arith_at;
         held_bad = arith_bad;
         held_active = arith_active;
-        name = expand_subscript_name(base, base_length, open + 1,
-                                     (positive)(close - open - 1));
+        reference->key = shell_expand_subscript(reference->name, reference->name_length,
+            open + 1, (positive)(close - open - 1), &reference->key_length);
         nested_bad = arith_bad;
         arith_at = held_at;
         arith_bad = held_bad || nested_bad;
         arith_active = held_active;
 
-        return name;
+        return reference->key != null;
 }
 
 /*
@@ -2058,7 +2044,7 @@ static COLD string_address arith_element_name(string_address base,
         question. The scratch belongs to the caller for the same reason: what
         comes back may point into it.
 */
-static bipolar arith_number_of(string_address name, p8 address_to scratch,
+static bipolar arith_number_of(expand_reference reference, p8 address_to scratch,
                                string_address address_to expression)
 {
         bool present;
@@ -2074,7 +2060,7 @@ static bipolar arith_number_of(string_address name, p8 address_to scratch,
         if (!arith_active)
                 return 0;
 
-        value = expand_value_of(name, scratch, address_of present, null);
+        value = expand_value_of(reference, scratch, address_of present, null);
 
         if (!present)
         {
@@ -2175,11 +2161,11 @@ static COLD bipolar arith_named_expression(string_address value)
 
 // What a name is worth to the grammar, which is the number it holds or the
 // answer to the expression it holds.
-static bipolar arith_value_of(string_address name)
+static bipolar arith_value_of(expand_reference reference)
 {
         p8 scratch[32];
         string_address expression;
-        bipolar value = arith_number_of(name, scratch, address_of expression);
+        bipolar value = arith_number_of(reference, scratch, address_of expression);
 
         return expression ? arith_named_expression(expression) : value;
 }
@@ -2414,7 +2400,7 @@ static bipolar arith_primary()
                 bool increment = string_is(arith_at, '+');
                 string_address start;
                 p8 name_local[EXPAND_LOCAL_NAME];
-                string_address name;
+                expand_reference name = {0};
                 positive length = 0;
                 bipolar value;
                 bool element = false;
@@ -2427,17 +2413,15 @@ static bipolar arith_primary()
                 length = string_span(arith_at, string_set_name);
                 arith_at += length;
 
-                if (length && string_is(arith_at, '['))
-                {
-                        element = true;
+                element = length && string_is(arith_at, '[');
+                if (element)
                         held = shell_store_mark(address_of expand_store);
-                        name = arith_element_name(start, length);
-                }
-                else
-                        name = expand_hold(start, length, name_local,
-                                           sizeof(name_local));
+                name.name = expand_hold(start, length, name_local, sizeof(name_local));
+                name.name_length = length;
+                if (element && name.name && !arith_element_name(&name))
+                        name.name = null;
 
-                if (!length || !name)
+                if (!length || !name.name)
                 {
                         arith_bad = true;
                         if (element)
@@ -2449,7 +2433,7 @@ static bipolar arith_primary()
                 value = arith_value_of(name);
                 value = increment ? arith_addition(value, 1)
                                   : arith_subtraction(value, 1);
-                value = arith_store(name, value, element);
+                value = arith_store(name, value);
                 if (element)
                         shell_store_rewind(address_of expand_store, held);
 
@@ -2496,7 +2480,7 @@ static bipolar arith_primary()
         {
                 string_address start = arith_at;
                 p8 name_local[EXPAND_LOCAL_NAME];
-                string_address name;
+                expand_reference name = {0};
                 positive length = 0;
                 bool element = false;
                 shell_mark held;
@@ -2505,17 +2489,15 @@ static bipolar arith_primary()
                 length = string_span(arith_at, string_set_name);
                 arith_at += length;
 
-                if (string_is(arith_at, '['))
-                {
-                        element = true;
+                element = length && string_is(arith_at, '[');
+                if (element)
                         held = shell_store_mark(address_of expand_store);
-                        name = arith_element_name(start, length);
-                }
-                else
-                        name = expand_hold(start, length, name_local,
-                                           sizeof(name_local));
+                name.name = expand_hold(start, length, name_local, sizeof(name_local));
+                name.name_length = length;
+                if (element && name.name && !arith_element_name(&name))
+                        name.name = null;
 
-                if (!name)
+                if (!name.name)
                 {
                         arith_bad = true;
                         if (element)
@@ -2528,7 +2510,7 @@ static bipolar arith_primary()
                 if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
                 {
                         arith_at++;
-                        answer = arith_store(name, arith_choose(), element);
+                        answer = arith_store(name, arith_choose());
                         if (element)
                                 shell_store_rewind(address_of expand_store,
                                                    held);
@@ -2579,8 +2561,7 @@ static bipolar arith_primary()
                                 was = arith_value_of(name);
                                 answer = arith_store(
                                     name,
-                                    arith_combine(op, was, arith_choose()),
-                                    element);
+                                    arith_combine(op, was, arith_choose()));
                                 if (element)
                                         shell_store_rewind(
                                             address_of expand_store, held);
@@ -2597,8 +2578,7 @@ static bipolar arith_primary()
                                 arith_at += 2;
                                 arith_store(name,
                                             increment ? arith_addition(was, 1)
-                                                      : arith_subtraction(was, 1),
-                                            element);
+                                                      : arith_subtraction(was, 1));
                                 if (element)
                                         shell_store_rewind(
                                             address_of expand_store, held);
@@ -3824,7 +3804,7 @@ static fn expand_replace_literal(p8 address_to source, positive length,
         search over the remainder. # and % immediately after the operator
         anchor the match to the beginning or end respectively.
 */
-static fn expand_replace(string_address name, string_address pattern_text,
+static fn expand_replace(expand_reference reference, string_address pattern_text,
                          string_address replacement_text, bool quoted,
                          bool global, b32 parameter_mode)
 {
@@ -3841,7 +3821,7 @@ static fn expand_replace(string_address name, string_address pattern_text,
 
         // This also applies nounset and the special-parameter rules before
         // the value is lifted out of the shared expansion buffer.
-        expand_push_parameter_as(name, quoted, parameter_mode);
+        expand_push_parameter_as(reference, quoted, parameter_mode);
 
         if (expand_failed)
                 return;
@@ -4076,7 +4056,7 @@ static bool expand_slice_number(string_address text, bipolar address_to value)
 #define SLICE_STRING 0
 #define SLICE_POSITIONAL 1
 #define SLICE_ARRAY 2
-static bool expand_slice_bounds(string_address name, string_address expression,
+static bool expand_slice_bounds(expand_reference reference, string_address expression,
                                 positive origin, positive limit, p8 kind,
                                 positive address_to begin,
                                 positive address_to count)
@@ -4099,7 +4079,7 @@ static bool expand_slice_bounds(string_address name, string_address expression,
         }
         else if (!separator)
         {
-                string_format(expand_complain, "%s: bad substitution\n", name);
+                string_format(expand_complain, "%s: bad substitution\n", expand_reference_text(reference));
                 expand_fatal_mode(0);
                 return false;
         }
@@ -4109,7 +4089,7 @@ static bool expand_slice_bounds(string_address name, string_address expression,
         // after that arithmetic, without an extra pre-evaluation lookup.
         if (kind == SLICE_ARRAY)
         {
-                limit = shell_array_highest(name, origin);
+                limit = shell_array_highest(reference.name, origin);
                 origin = limit + 1;
         }
 
@@ -4141,7 +4121,7 @@ static bool expand_slice_bounds(string_address name, string_address expression,
                 if (kind || back > origin - address_to begin)
                 {
                         string_format(expand_complain,
-                                      "%s: substring expression < 0\n", name);
+                                      "%s: substring expression < 0\n", expand_reference_text(reference));
                         expand_slice_error();
                         return false;
                 }
@@ -4165,7 +4145,7 @@ static COLD fn expand_positional_slice(string_address name,
         bool fields = quoted ? form == '@' : !between;
         positive origin = shell_parameter_count + 1;
 
-        if (!expand_slice_bounds(name, expression, origin, origin, SLICE_POSITIONAL,
+        if (!expand_slice_bounds((expand_reference){.name = name}, expression, origin, origin, SLICE_POSITIONAL,
                                  address_of begin, address_of count))
         {
                 if (form == '@')
@@ -4190,9 +4170,10 @@ static COLD fn expand_positional_slice(string_address name,
         }
 }
 
-static fn expand_substring(string_address name, string_address expression,
+static fn expand_substring(expand_reference reference, string_address expression,
                            bool quoted, b32 parameter_mode)
 {
+        string_address name = reference.name;
         positive expansion_start = expand_length;
         positive length;
         positive begin;
@@ -4213,7 +4194,7 @@ static fn expand_substring(string_address name, string_address expression,
         // Capture the value before evaluating arithmetic that may reassign
         // it. The expansion buffer already owns the bytes and marks; no new
         // snapshot or copy is needed. An unset value skips the arithmetic.
-        if (!expand_push_parameter_as(name, quoted, parameter_mode) || expand_failed)
+        if (!expand_push_parameter_as(reference, quoted, parameter_mode) || expand_failed)
                 return;
 
         length = expand_length - expansion_start;
@@ -4221,7 +4202,7 @@ static fn expand_substring(string_address name, string_address expression,
         positive characters = utf8
             ? memory_utf8_span(expand_text + expansion_start, length, positive_max).y
             : length;
-        if (!expand_slice_bounds(name, expression, characters, characters, SLICE_STRING,
+        if (!expand_slice_bounds(reference, expression, characters, characters, SLICE_STRING,
                                  address_of begin, address_of count))
         {
                 expand_length = expansion_start;
@@ -4243,7 +4224,7 @@ static fn expand_substring(string_address name, string_address expression,
         expand_length = expansion_start + count;
 }
 
-static fn expand_case_change(string_address name, string_address pattern_text,
+static fn expand_case_change(expand_reference reference, string_address pattern_text,
                              bool quoted, bool upper, bool every,
                              b32 parameter_mode)
 {
@@ -4253,7 +4234,7 @@ static fn expand_case_change(string_address name, string_address pattern_text,
         p8 one[2] = {0, 0};
         positive count;
 
-        expand_push_parameter_as(name, quoted, parameter_mode);
+        expand_push_parameter_as(reference, quoted, parameter_mode);
 
         if (expand_failed)
                 return;
@@ -4526,9 +4507,10 @@ static COLD positive shell_attribute_letters(p8 address_to into, p8 attributes,
         return count;
 }
 
-static COLD fn transform_attributes(string_address name, p8 mark)
+static COLD fn transform_attributes(expand_reference reference, p8 mark)
 {
-        positive length = (positive)(string_first_of_or_end(name, '[') - name);
+        string_address name = reference.name;
+        positive length = reference.key ? reference.name_length : string_length(name);
         const_string base = name;
         bool element = !shell_reference_resolve(name, length, address_of base, address_of length);
         if (element && !shell_reference_element(name, string_length(name),
@@ -4537,11 +4519,11 @@ static COLD fn transform_attributes(string_address name, p8 mark)
         p8 attributes = shell_variable_attributes(base, length);
         bool exported = shell_variable_exported(base, length);
         p8 letters[8];
-        if (element || string_first_of(name, '['))
+        if (element || reference.key)
         {
                 p8 scratch[32];
                 bool present;
-                expand_value_of(name, scratch, address_of present, null);
+                expand_value_of(reference, scratch, address_of present, null);
                 if (element && !present)
                         return;
         }
@@ -4551,7 +4533,7 @@ static COLD fn transform_attributes(string_address name, p8 mark)
                 expand_push_run(letters, count, mark);
 }
 
-static COLD fn expand_transform(string_address name, string_address word,
+static COLD fn expand_transform(expand_reference reference, string_address word,
                                 bool quoted, b32 parameter_mode)
 {
         positive start = expand_length;
@@ -4565,7 +4547,7 @@ static COLD fn expand_transform(string_address name, string_address word,
         // Attribute queries follow namerefs and evaluate explicit subscripts.
         if (which == 'a')
         {
-                transform_attributes(name, mark);
+                transform_attributes(reference, mark);
                 return;
         }
 
@@ -4574,9 +4556,9 @@ static COLD fn expand_transform(string_address name, string_address word,
         //      them apart: one is no bytes at all and the other is a pair of
         //      quotes with nothing between them.
         if (which == 'Q')
-                expand_value_of(name, scratch, address_of present, null);
+                expand_value_of(reference, scratch, address_of present, null);
 
-        expand_push_parameter_as(name, quoted, parameter_mode);
+        expand_push_parameter_as(reference, quoted, parameter_mode);
 
         if (expand_failed)
                 return;
@@ -4705,9 +4687,8 @@ static fn expand_push_names(string_address prefix, positive prefix_length,
         subscript is bytes, so it is expanded as a word and then kept exactly
         as it stands -- spaces, brackets and all.
 
-        Either answer is spelled back into a name, so one lookup path serves
-        every operator and the subscript is evaluated once however many times
-        the value behind it is asked for.
+        The resolved key is retained separately from the base name, so every
+        operator can read or write it without evaluating its subscript again.
 */
 static COLD string_address expand_subscript_key(string_address base,
                                            positive base_length,
@@ -4782,67 +4763,23 @@ COLD string_address shell_expand_subscript(string_address name, positive length,
                                        address_to key_length) : null;
 }
 
-static COLD string_address expand_subscript_name(string_address base,
-                                            positive base_length,
-                                            string_address subscript,
-                                            positive subscript_length)
+static COLD bool expand_assign_named(expand_reference reference, string_address value)
 {
-        p8 written[32];
-        string_address key;
-        positive key_length;
-        p8 address_to made;
-
-        key = expand_subscript_key(base, base_length, subscript,
-                                   subscript_length, written,
-                                   address_of key_length);
-
-        if (!key)
-                return null;
-
-        made = shell_store_take(address_of expand_store,
-                                base_length + key_length + 3);
-
-        if (!made)
-        {
-                expand_fail_state();
-                return null;
-        }
-
-        memory_copy(made, base, base_length);
-        made[base_length] = '[';
-        memory_copy(made + base_length + 1, key, key_length);
-        made[base_length + 1 + key_length] = ']';
-        made[base_length + 2 + key_length] = end;
-
-        return made;
-}
-
-// ${a[1]:=v} writes an element, and ${x:=v} a variable. The name has
-// already been resolved, so which of the two it is is a question about the
-// name alone.
-static COLD bool expand_assign_named(string_address name, string_address value)
-{
-        positive base_length;
-        string_address key;
-        positive key_length;
-
-        if (!expand_named_element(name, address_of base_length,
-                                  address_of key, address_of key_length))
-                return env_assign(name, value);
-
-        return shell_array_set(name, base_length, key, key_length, value,
-                               false);
+        return reference.key
+            ? shell_array_set(reference.name, reference.name_length, reference.key,
+                               reference.key_length, value, false)
+            : env_assign(reference.name, value);
 }
 
 /* Scalar and per-element forms share the same modifier dispatch. The
    replacement separator is restored because array elements reuse the word. */
-static fn expand_modifier(string_address name, p8 operation, bool doubled,
+static fn expand_modifier(expand_reference reference, p8 operation, bool doubled,
                            string_address word, bool quoted, b32 parameter_mode)
 {
         if (operation == '#' || operation == '%')
         {
                 positive start = expand_length;
-                expand_push_parameter_as(name, quoted, parameter_mode);
+                expand_push_parameter_as(reference, quoted, parameter_mode);
                 string_address pattern = expand_capture(
                     word, false, EXPAND_CAPTURE_PATTERN);
                 if (!expand_failed)
@@ -4857,18 +4794,18 @@ static fn expand_modifier(string_address name, p8 operation, bool doubled,
                         *separator = end;
                         replacement = separator + 1;
                 }
-                expand_replace(name, word, replacement, quoted, doubled,
+                expand_replace(reference, word, replacement, quoted, doubled,
                                parameter_mode);
                 if (separator)
                         *separator = '/';
         }
         else if (operation == ':')
-                expand_substring(name, word, quoted, parameter_mode);
+                expand_substring(reference, word, quoted, parameter_mode);
         else if (operation == '^' || operation == ',')
-                expand_case_change(name, word, quoted, operation == '^',
+                expand_case_change(reference, word, quoted, operation == '^',
                                    doubled, parameter_mode);
         else
-                expand_transform(name, word, quoted, parameter_mode);
+                expand_transform(reference, word, quoted, parameter_mode);
 }
 
 /* Values, keys, slices and per-element modifiers all retain one inventory
@@ -4891,14 +4828,13 @@ static COLD fn expand_array_sequence(string_address name, positive length,
         positive wanted = positive_max;
         shell_array_item address_to items;
         p8 written[32];
-        p8 element_local[EXPAND_LOCAL_NAME];
 
         if (!count)
                 goto empty;
 
         if (slice)
         {
-                if (!expand_slice_bounds(name, word, length, 0, SLICE_ARRAY,
+                if (!expand_slice_bounds((expand_reference){.name = name}, word, length, 0, SLICE_ARRAY,
                                          address_of offset, address_of wanted) ||
                     !wanted)
                         goto empty;
@@ -4962,27 +4898,15 @@ static COLD fn expand_array_sequence(string_address name, positive length,
                         continue;
                 }
 
-                if (key_length > positive_max - 3 ||
-                    length > positive_max - key_length - 3)
+                // A modifier's word may replace the cell that owns this key.
+                key = shell_store_copy(address_of expand_store, key, key_length);
+                if (!key)
                 {
                         expand_fail_state();
                         break;
                 }
-                positive needed = length + key_length + 3;
-                p8 address_to element = needed <= sizeof(element_local)
-                    ? element_local
-                    : shell_store_take(address_of expand_store, needed);
-                if (!element)
-                {
-                        expand_fail_state();
-                        break;
-                }
-                memory_copy(element, name, length);
-                element[length] = '[';
-                memory_copy(element + length + 1, key, key_length);
-                element[length + key_length + 1] = ']';
-                element[length + key_length + 2] = end;
-                expand_modifier(element, operation, doubled, word, quoted, 0);
+                expand_modifier((expand_reference){.name = name, .name_length = length,
+                    .key = key, .key_length = key_length}, operation, doubled, word, quoted, 0);
         }
         goto done;
 
@@ -5082,6 +5006,7 @@ static string_address expand_braced(string_address step, bool quoted)
         p8 word_local[EXPAND_LOCAL_TEXT];
         p8 indirect_scratch[32];
         string_address name;
+        expand_reference reference = {0};
         string_address word;
         // The name without its subscript, kept for the forms that mean the
         // whole array rather than one element of it.
@@ -5154,6 +5079,8 @@ static string_address expand_braced(string_address step, bool quoted)
                 return close + 1;
         }
 
+        reference.name = name;
+        reference.name_length = length;
         seen = string_get(step);
 
         /*
@@ -5171,7 +5098,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 if (!shut || shut >= close)
                 {
                         string_format(expand_complain,
-                                      "%s: bad substitution\n", name);
+                                      "%s: bad substitution\n", expand_reference_text(reference));
                         expand_fatal_mode(parameter_mode);
                         return close + 1;
                 }
@@ -5185,20 +5112,17 @@ static string_address expand_braced(string_address step, bool quoted)
                         array_form = string_get(step + 1);
                 else
                 {
-                        name = expand_subscript_name(name, length, step + 1,
-                                                     inner);
-
-                        if (!name)
+                        reference.key = shell_expand_subscript(name, length, step + 1,
+                                                               inner, &reference.key_length);
+                        if (!reference.key)
                                 return close + 1;
-
-                        length = string_length(name);
                 }
 
                 step = shut + 1;
                 seen = string_get(step);
         }
 
-        if (!array_form && (parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
+        if (!array_form && !reference.key && (parameter_mode & EXPAND_PARAMETER_INDIRECT) &&
             expand_assignable_name(name) && step + 1 == close &&
             (seen == '@' || seen == '*'))
         {
@@ -5288,7 +5212,7 @@ static string_address expand_braced(string_address step, bool quoted)
             (!operation && step != close) ||
             (want_length && (operation || name_list)))
         {
-                string_format(expand_complain, "%s: bad substitution\n", name);
+                string_format(expand_complain, "%s: bad substitution\n", expand_reference_text(reference));
                 expand_fatal_mode(parameter_mode);
 
                 return close + 1;
@@ -5335,7 +5259,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 positive target_length;
                 bool present;
 
-                name = expand_value_of(source, indirect_scratch,
+                name = expand_value_of(reference, indirect_scratch,
                                        address_of present,
                                        address_of target_length);
 
@@ -5349,7 +5273,7 @@ static string_address expand_braced(string_address step, bool quoted)
                         {
                                 string_format(expand_complain,
                                               "%s: invalid indirect expansion\n",
-                                              source);
+                                              expand_reference_text(reference));
                                 expand_fatal_status(1);
                                 return close + 1;
                         }
@@ -5387,6 +5311,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 }
 
                 length = target_length;
+                reference = (expand_reference){.name = name};
         }
 
         if (want_length)
@@ -5404,7 +5329,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 else
                 {
                         string_address value = expand_value_of(
-                            name, scratch, address_of present, address_of count);
+                            reference, scratch, address_of present, address_of count);
                         if (present && count && shell_utf8_on())
                                 count = memory_utf8_span(value, count, positive_max).y;
                 }
@@ -5414,7 +5339,7 @@ static string_address expand_braced(string_address step, bool quoted)
                         if (shell_options & ((positive)1 << ('u' - 'a')))
                         {
                                 string_format(expand_complain,
-                                              "%s: parameter not set\n", name);
+                                              "%s: parameter not set\n", expand_reference_text(reference));
                                 expand_fatal_mode(parameter_mode);
                                 return close + 1;
                         }
@@ -5436,7 +5361,7 @@ static string_address expand_braced(string_address step, bool quoted)
                     !string_first_of((string_address)"QEULua", which))
                 {
                         string_format(expand_complain,
-                                      "%s: bad substitution\n", name);
+                                      "%s: bad substitution\n", expand_reference_text(reference));
                         expand_fatal_mode(parameter_mode);
                         return close + 1;
                 }
@@ -5445,7 +5370,7 @@ static string_address expand_braced(string_address step, bool quoted)
             operation == ':' || operation == '^' || operation == ',' ||
             operation == '@')
         {
-                expand_modifier(name, operation, doubled, word, quoted,
+                expand_modifier(reference, operation, doubled, word, quoted,
                                 parameter_mode);
                 return close + 1;
         }
@@ -5455,7 +5380,7 @@ static string_address expand_braced(string_address step, bool quoted)
                 bool present;
                 string_address value = (parameter_mode & EXPAND_PARAMETER_MISSING)
                                            ? null
-                                           : expand_value_of(name, scratch,
+                                           : expand_value_of(reference, scratch,
                                                              address_of present,
                                                              null);
 
@@ -5469,7 +5394,7 @@ static string_address expand_braced(string_address step, bool quoted)
                         if (missing)
                                 expand_word_into(word, quoted);
                         else
-                                expand_push_parameter(name, quoted);
+                                expand_push_parameter(reference, quoted);
 
                         return close + 1;
                 }
@@ -5497,8 +5422,9 @@ static string_address expand_braced(string_address step, bool quoted)
                                 if (expand_failed)
                                         return close + 1;
 
-                                if (!expand_assign_named(name, made))
+                                if (!expand_assign_named(reference, made))
                                 {
+                                        name = expand_reference_text(reference);
                                         string_format(
                                             expand_complain,
                                             env_readonly(name)
@@ -5511,7 +5437,7 @@ static string_address expand_braced(string_address step, bool quoted)
                                 expand_push_string(made, mark);
                         }
                         else
-                                expand_push_parameter_as(name, quoted,
+                                expand_push_parameter_as(reference, quoted,
                                                          parameter_mode);
 
                         return close + 1;
@@ -5538,17 +5464,17 @@ static string_address expand_braced(string_address step, bool quoted)
                                         return close + 1;
 
                                 expand_parameter_unset_error(
-                                    name, said, parameter_mode);
+                                    expand_reference_text(reference), said, parameter_mode);
 
                                 return close + 1;
                         }
 
-                        expand_push_parameter_as(name, quoted, parameter_mode);
+                        expand_push_parameter_as(reference, quoted, parameter_mode);
 
                         return close + 1;
                 }
 
-                expand_push_parameter_as(name, quoted, parameter_mode);
+                expand_push_parameter_as(reference, quoted, parameter_mode);
         }
 
         return close + 1;
@@ -5574,7 +5500,7 @@ static string_address expand_simple(string_address step, bool quoted)
 
                 special[0] = seen;
                 special[1] = end;
-                expand_push_parameter(special, quoted);
+                expand_push_parameter((expand_reference){.name = special}, quoted);
 
                 return step + 1;
         }
@@ -5594,7 +5520,7 @@ static string_address expand_simple(string_address step, bool quoted)
 
         if (!name)
                 return step;
-        expand_push_parameter(name, quoted);
+        expand_push_parameter((expand_reference){.name = name}, quoted);
 
         return step;
 }

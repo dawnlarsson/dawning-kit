@@ -10572,14 +10572,18 @@ static bool ps_list_next(ps_list_cursor address_to list,
         return true;
 }
 
-static bool ps_pid_list(string_address list,
-                        positive address_to address_to values,
-                        positive address_to count, positive address_to room,
+typedef struct
+{
+        positive address_to values;
+        positive count, room;
+} ps_ids;
+
+static bool ps_pid_list(string_address list, ps_ids address_to ids,
                         bool pid_selector)
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
-        positive before = address_to count;
+        positive before = ids->count;
 
         while (ps_list_next(address_of item, (string_address) ", "))
         {
@@ -10599,13 +10603,13 @@ static bool ps_pid_list(string_address list,
                         but repeated selection operands are unioned. Other
                         numeric selectors are sets in both shapes.
                 */
-                bool seen = ps_value_has(address_to values,
+                bool seen = ps_value_has(ids->values,
                                          pid_selector
                                              ? before
-                                             : address_to count,
+                                             : ids->count,
                                          value);
 
-                if (!seen && !ps_value_add(values, count, room, value))
+                if (!seen && !ps_value_add(&ids->values, &ids->count, &ids->room, value))
                         return false;
 
                 any = true;
@@ -10827,41 +10831,17 @@ static bool ps_format_list(string_address list,
         return any;
 }
 
-/*
-        The long selections arrive both as --name value and --name=value.
-        One reader answers whether the word is this option, and hands back
-        the value: null when the word that should have held it is missing,
-        which each caller's validator already refuses.
-*/
-static bool ps_long_value(string_address argument, string_address name,
-                          b32 address_to at, string_address address_to value)
-{
-        positive length = string_length(name);
-
-        if (environment_key_is(argument, name, length))
-        {
-                address_to value = argument + length + 1;
-                return true;
-        }
-
-        if (!string_equals(argument, name))
-                return false;
-
-        address_to value = program_argument(++(address_to at));
-        return true;
-}
+static const named_byte ps_long_options[] = {
+    {"format", 'o'}, {"pid", 'p'}, {"ppid", 'P'}, {"sort", 's'},
+    {"headers", 'H'}, {"no-headers", 'h'},
+};
 
 static b32 tools_ps(void)
 {
         ps_selected address_to fields = null;
         positive field_count = 0;
         positive field_room = 0;
-        positive address_to selected_pids = null;
-        positive selected_count = 0;
-        positive selected_room = 0;
-        positive address_to selected_ppids = null;
-        positive ppid_count = 0;
-        positive ppid_room = 0;
+        ps_ids pids = {0}, parents = {0};
         string_address address_to selected_commands = null;
         positive command_count = 0;
         positive command_room = 0;
@@ -10886,186 +10866,101 @@ static b32 tools_ps(void)
         ps_columns[PS_FIELD_COMM].header = "COMMAND";
         ps_columns[PS_FIELD_ARGS].header = "COMMAND";
 
-        for (b32 i = 1; i < text_argument_count; i++)
+        argument_cursor cursor = {.argc = (positive)text_argument_count,
+                                  .argv = program_argument_list(), .at = 1};
+        for (;;)
         {
-                string_address argument = program_argument(i);
-                string_address value;
-
-                if (string_equals(argument, "--no-headers"))
+                // ps has no operand mode; reject -- before the shared
+                // cursor can consume it and advance to a following word.
+                if ((!cursor.letters || !*cursor.letters) && cursor.at < cursor.argc &&
+                    string_equals(cursor.argv[cursor.at], "--"))
                 {
+                        text_error("--", "unsupported option");
+                        return text_done(1);
+                }
+                b32 option = argument_next(&cursor);
+                if (option == ARGUMENT_END)
+                        break;
+                bool long_option = option == ARGUMENT_LONG;
+                if (option == ARGUMENT_OPERAND && *cursor.word && *cursor.word != '-')
+                {
+                        // BSD option letters are undashed; their C does not
+                        // mean the command selector supported by dashed -C.
+                        cursor.letters = cursor.word;
+                        option = argument_next(&cursor);
+                }
+                if (long_option)
+                {
+                        option = 0;
+                        for (positive at = 0; at < array_count(ps_long_options); at++)
+                                if (string_length(ps_long_options[at].name) == cursor.name_length &&
+                                    !memory_compare(ps_long_options[at].name, cursor.word + 2,
+                                                    cursor.name_length))
+                                {
+                                        option = ps_long_options[at].value;
+                                        break;
+                                }
+                }
+                bool valued = option == 'o' || option == 'p' || option == 'P' ||
+                              option == 's' || option == 'C';
+                if (!option || (long_option && cursor.attached && !valued) ||
+                    (!long_option && (option > 255 ||
+                     !string_first_of("eAfwhopC", (p8)option) ||
+                     (option == 'C' && *cursor.word != '-'))))
+                {
+                        // Other BSD personalities also change the display
+                        // format and remain unsupported until implemented.
+                        text_error(cursor.word, "unsupported option");
+                        return text_done(1);
+                }
+                string_address value = valued ? argument_value(&cursor, true) : null;
+                switch (option)
+                {
+                case 'e':
+                case 'A': every = true; break;
+                case 'f': full = true; break;
+                case 'w': break;
+                case 'H': force_headers = true; no_headers = false; break;
+                case 'h':
                         no_headers = true;
-                        force_headers = false;
-                        continue;
-                }
-                else if (string_equals(argument, "--headers"))
-                {
-                        force_headers = true;
-                        no_headers = false;
-                        continue;
-                }
-                else if (ps_long_value(argument, "--format", address_of i,
-                                       address_of value))
-                {
-                        if (!value)
+                        if (long_option) force_headers = false;
+                        break;
+                case 'p':
+                case 'P':
+                        if (!value || !ps_pid_list(value, option == 'p' ? &pids : &parents, option == 'p'))
                         {
-                                text_error(null, "option requires an argument -- format");
+                                text_error(value, option == 'p' ? "invalid process id list"
+                                                               : "invalid parent process id list");
                                 return text_done(1);
                         }
-
-                        argument = value;
-                }
-                else if (ps_long_value(argument, "--pid", address_of i,
-                                       address_of value))
-                {
-                        if (!value ||
-                            !ps_pid_list(value, address_of selected_pids,
-                                         address_of selected_count,
-                                         address_of selected_room, true))
+                        break;
+                case 'C':
+                        if (!value || !ps_command_list(value, &selected_commands,
+                                                       &command_count, &command_room))
                         {
-                                text_error(value, "invalid process id list");
+                                text_error(value, "invalid command list");
                                 return text_done(1);
                         }
-
-                        continue;
-                }
-                else if (ps_long_value(argument, "--ppid", address_of i,
-                                       address_of value))
-                {
-                        if (!value ||
-                            !ps_pid_list(value, address_of selected_ppids,
-                                         address_of ppid_count,
-                                         address_of ppid_room, false))
-                        {
-                                text_error(value, "invalid parent process id list");
-                                return text_done(1);
-                        }
-
-                        continue;
-                }
-                else if (ps_long_value(argument, "--sort", address_of i,
-                                       address_of value))
-                {
-                        if (!value || !ps_sort_pid(value, address_of reverse))
+                        break;
+                case 's':
+                        if (!value || !ps_sort_pid(value, &reverse))
                         {
                                 text_error(value, "unsupported sort key");
                                 return text_done(1);
                         }
-
                         sorted = true;
-                        continue;
-                }
-                else
-                {
-                        /*
-                                A word of letters, with or without the dash.
-                                o, p and C carry a value, the rest of the
-                                word when there is one and the next argument
-                                otherwise, so any of them ends the word: -eo
-                                pid and -fp 1 are -e -o pid and -f -p 1,
-                                which is how procps reads them.
-                        */
-                        string_address at = argument;
-                        bool dashed = string_get(at) == '-';
-                        p8 taking = 0;
-
-                        if (dashed)
-                                at++;
-
-                        bool known = string_get(at) != end;
-
-                        for (; string_get(at) && !taking; at++)
-                                switch (string_get(at))
-                                {
-                                case 'e':
-                                case 'A': every = true; break;
-                                case 'f': full = true; break;
-                                case 'w': break;
-                                case 'h': no_headers = true; break;
-                                case 'o':
-                                case 'p':
-                                case 'C':
-                                        // BSD C is a CPU accounting switch,
-                                        // not the selector -C is.
-                                        if (string_get(at) == 'C' && !dashed)
-                                        {
-                                                known = false;
-                                                break;
-                                        }
-
-                                        taking = string_get(at);
-                                        value = string_get(at + 1)
-                                                    ? at + 1
-                                                    : program_argument(++i);
-                                        break;
-                                case 'a':
-                                case 'x':
-                                case 'u':
-                                        /*
-                                                These BSD personalities also
-                                                replace the output format.
-                                                A broad default listing is a
-                                                plausible but wrong `ps aux`,
-                                                so refuse them until that
-                                                format exists in full.
-                                        */
-                                        known = false;
-                                        break;
-                                default: known = false; break;
-                                }
-
-                        if (!known)
-                        {
-                                text_error(argument, "unsupported option");
-                                return text_done(1);
-                        }
-
-                        if (taking == 'p')
-                        {
-                                if (!value ||
-                                    !ps_pid_list(value, address_of selected_pids,
-                                                 address_of selected_count,
-                                                 address_of selected_room,
-                                                 true))
-                                {
-                                        text_error(value,
-                                                   "invalid process id list");
-                                        return text_done(1);
-                                }
-
-                                continue;
-                        }
-
-                        if (taking == 'C')
-                        {
-                                if (!value ||
-                                    !ps_command_list(value,
-                                                     address_of selected_commands,
-                                                     address_of command_count,
-                                                     address_of command_room))
-                                {
-                                        text_error(value, "invalid command list");
-                                        return text_done(1);
-                                }
-
-                                continue;
-                        }
-
-                        if (!taking)
-                                continue;
-
+                        break;
+                case 'o':
                         if (!value)
                         {
-                                text_error(null, "option requires an argument -- o");
+                                text_error(null, long_option ? "option requires an argument -- format"
+                                                            : "option requires an argument -- o");
                                 return text_done(1);
                         }
-
-                        argument = value;
+                        if (!ps_format_list(value, &fields, &field_count, &field_room))
+                                return text_done(1);
+                        break;
                 }
-
-                if (!ps_format_list(argument, address_of fields,
-                                    address_of field_count,
-                                    address_of field_room))
-                        return text_done(1);
         }
 
         /*
@@ -11111,15 +11006,15 @@ static b32 tools_ps(void)
         for (positive f = 0; f < field_count; f++)
                 wanted |= (positive)1 << fields[f].field;
 
-        bool selectors = selected_count || ppid_count || command_count;
-        bool alternate_selectors = ppid_count || command_count;
+        bool selectors = pids.count || parents.count || command_count;
+        bool alternate_selectors = parents.count || command_count;
         bool filter_owner = !every && !selectors;
         bool names = wanted & ((positive)1 << PS_FIELD_USER);
         bool owners = filter_owner || names ||
                       (wanted & ((positive)1 << PS_FIELD_UID));
         if (!system_snapshot_take_selected(
                 address_of ps_snapshot, SPARK_SNAPSHOT_PROCESS, owners,
-                selected_pids, alternate_selectors ? 0 : selected_count))
+                pids.values, alternate_selectors ? 0 : pids.count))
         {
                 text_error("/proc", "cannot read");
                 return text_done(1);
@@ -11213,11 +11108,11 @@ static b32 tools_ps(void)
                 */
                 if (selectors && !(every && alternate_selectors))
                 {
-                        repeats = ps_pid_matches(selected_pids, selected_count,
+                        repeats = ps_pid_matches(pids.values, pids.count,
                                                  process->pid);
 
                         if (!repeats &&
-                            (ps_value_has(selected_ppids, ppid_count,
+                            (ps_value_has(parents.values, parents.count,
                                           process->ppid) ||
                              ps_command_selected(selected_commands,
                                                  command_count,

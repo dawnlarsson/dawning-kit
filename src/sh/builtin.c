@@ -8347,13 +8347,6 @@ fn printf_one(writer write, string_address format)
 
         while (string_get(step) && !printf_cut)
         {
-                bool left;
-                bool zero;
-                bool plus;
-                bool space;
-                bool alternate;
-                positive width = 0;
-                bipolar precision = -1;
                 positive run = string_span(step, printf_plain);
                 p8 conversion;
 
@@ -8372,61 +8365,26 @@ fn printf_one(writer write, string_address format)
 
                 step++;
 
-                {
-                        positive flags = conversion_flags_take(address_of step);
-
-                        left = (flags & CONVERSION_FLAG_LEFT) != 0;
-                        zero = (flags & CONVERSION_FLAG_ZERO) != 0;
-                        plus = (flags & CONVERSION_FLAG_PLUS) != 0;
-                        space = (flags & CONVERSION_FLAG_SPACE) != 0;
-                        alternate = (flags & CONVERSION_FLAG_ALTERNATE) != 0;
-                }
-
-                if (string_is(step, '*'))
-                {
-                        bipolar asked = (bipolar)printf_integer(printf_next(), true);
-
-                        // A negative width is the minus flag written out long.
-                        if (asked < 0)
+                conversion_spec parsed = conversion_spec_take_max(&step, positive_max);
+                positive width = parsed.field[0];
+                bipolar precision = parsed.fields == 2 ? (bipolar)parsed.field[1] : -1;
+                for (p8 field = 0; field < parsed.fields; field++)
+                        if (parsed.stars & (1u << field))
                         {
-                                left = true;
-                                width = (positive)0 - (positive)asked;
+                                bipolar value = (bipolar)printf_integer(printf_next(), true);
+                                if (field)
+                                        precision = value < 0 ? -1 : value;
+                                else
+                                {
+                                        parsed.flags |= value < 0 ? CONVERSION_FLAG_LEFT : 0;
+                                        width = value < 0 ? (positive)0 - (positive)value : (positive)value;
+                                }
                         }
-                        else
-                                width = (positive)asked;
-
-                        step++;
-                }
-                else
-                {
-                        positive used;
-
-                        width = string_digits(step, address_of used);
-                        step += used;
-                }
-
-                if (string_is(step, '.'))
-                {
-                        step++;
-                        precision = 0;
-
-                        if (string_is(step, '*'))
-                        {
-                                precision = (bipolar)printf_integer(printf_next(), true);
-
-                                if (precision < 0)
-                                        precision = -1;
-
-                                step++;
-                        }
-                        else
-                        {
-                                positive used;
-
-                                precision = (bipolar)string_digits(step, address_of used);
-                                step += used;
-                        }
-                }
+                bool left = (parsed.flags & CONVERSION_FLAG_LEFT) != 0;
+                bool zero = (parsed.flags & CONVERSION_FLAG_ZERO) != 0;
+                bool plus = (parsed.flags & CONVERSION_FLAG_PLUS) != 0;
+                bool space = (parsed.flags & CONVERSION_FLAG_SPACE) != 0;
+                bool alternate = (parsed.flags & CONVERSION_FLAG_ALTERNATE) != 0;
 
                 // The length modifiers say nothing here: every number this
                 // reads is already as wide as the machine.
@@ -8622,11 +8580,7 @@ fn printf_one(writer write, string_address format)
 
                         sink.downstream = write;
 
-                        spec.flags = (left ? FORMAT_FLAG_LEFT : 0) |
-                                     (plus ? FORMAT_FLAG_PLUS : 0) |
-                                     (space ? FORMAT_FLAG_SPACE : 0) |
-                                     (alternate ? FORMAT_FLAG_ALTERNATE : 0) |
-                                     (zero ? FORMAT_FLAG_ZERO : 0);
+                        spec.flags = parsed.flags;
                         spec.width = width;
                         spec.precision = precision;
                         spec.conversion = conversion;

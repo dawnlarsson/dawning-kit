@@ -116,6 +116,14 @@ compare bash 'readonly read status' \
 compare bash 'local unset restores outer value' \
         'x=outer; f() { local x=inner; unset x; printf "[%s]" "${x-gone}"; }; f; printf "|%s|\n" "$x"'
 
+# The parser's name span excludes only the assignment's own delimiter.
+compare bash 'assignment subscript operators evaluated once' \
+    'i=0; a[i=1]=one; a[i+=1]+=two; a[i==2?3:4]=three; printf "%s:%s:%s:%s\n" "$i" "${a[1]}" "${a[2]}" "${a[3]}"'
+compare bash 'associative key contains assignment delimiters' \
+    'declare -A a; a["x=y"]=one; a["x=y"]+=two; a["[+]=z"]=three; printf "%s:%s:%s\n" "${a[x=y]}" "${a[[+]=z]}" "${#a[@]}"'
+compare bash 'nameref subscript operators evaluated once' \
+    'i=0; declare -n n="a[i+=1]"; n=one; n+=two; printf "%s:%s:%s\n" "$i" "${a[1]}" "${a[2]}"'
+
 section identity
 group basename
 

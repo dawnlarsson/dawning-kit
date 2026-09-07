@@ -2136,65 +2136,29 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         continue;
                 }
 
-                string_address flags_at = format + at;
-                positive flags = conversion_flags_take_max(address_of flags_at,
-                                                           length - at);
-                bool left = (flags & CONVERSION_FLAG_LEFT) != 0;
-                bool sign = (flags & CONVERSION_FLAG_PLUS) != 0;
-                bool space = (flags & CONVERSION_FLAG_SPACE) != 0;
-                bool zero = (flags & CONVERSION_FLAG_ZERO) != 0;
-                bool alternate = (flags & CONVERSION_FLAG_ALTERNATE) != 0;
-                positive width = 0;
-                b32 precision = -1;
-
-                at = (positive)(flags_at - format);
-
-                if (at < length && format[at] == '*')
-                {
-                        decimal value = taken < count
-                                            ? awk_to_number(address_of arguments[taken++])
-                                            : 0;
-
-                        bipolar field = awk_whole(value);
-                        left |= field < 0;
-                        width = (positive)absolute_wide(field);
-                        at++;
-                }
-                else
-                {
-                        positive digits_taken;
-                        width = string_digits_max(format + at,
-                                                       length - at,
-                                                       address_of digits_taken);
-                        at += digits_taken;
-                }
-
-                if (at < length && format[at] == '.')
-                {
-                        at++;
-                        precision = 0;
-
-                        if (at < length && format[at] == '*')
+                string_address fields_at = format + at;
+                conversion_spec parsed = conversion_spec_take_max(&fields_at, length - at);
+                positive width = parsed.field[0];
+                b32 precision = parsed.fields == 2 ? (b32)min(2147483647ul, parsed.field[1]) : -1;
+                for (p8 field = 0; field < parsed.fields; field++)
+                        if (parsed.stars & (1u << field))
                         {
-                                decimal value = taken < count
-                                                    ? awk_to_number(address_of arguments[taken++])
-                                                    : 0;
-
-                                precision = awk_whole(value);
-                                at++;
-
-                                if (precision < 0)
-                                        precision = -1;
+                                bipolar value = awk_whole(taken < count
+                                    ? awk_to_number(&arguments[taken++]) : 0);
+                                if (field)
+                                        precision = value < 0 ? -1 : (b32)value;
+                                else
+                                {
+                                        parsed.flags |= value < 0 ? CONVERSION_FLAG_LEFT : 0;
+                                        width = (positive)absolute_wide(value);
+                                }
                         }
-                        else
-                        {
-                                positive digits_taken;
-                                positive parsed = string_digits_max(format + at,
-                                    length - at, address_of digits_taken);
-                                precision = (b32)min(2147483647ul, parsed);
-                                at += digits_taken;
-                        }
-                }
+                bool left = (parsed.flags & CONVERSION_FLAG_LEFT) != 0;
+                bool sign = (parsed.flags & CONVERSION_FLAG_PLUS) != 0;
+                bool space = (parsed.flags & CONVERSION_FLAG_SPACE) != 0;
+                bool zero = (parsed.flags & CONVERSION_FLAG_ZERO) != 0;
+                bool alternate = (parsed.flags & CONVERSION_FLAG_ALTERNATE) != 0;
+                at = (positive)(fields_at - format);
 
                 // The length modifiers C needs and awk has no use for.
                 while (at < length && (format[at] == 'l' || format[at] == 'h' ||
