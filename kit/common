@@ -113,9 +113,9 @@ key() {
 # the value would silently concatenate into an unusable command.
 key_one() {
         local matches
-        matches=$(grep -c "^#> $1 " artifacts/.config 2>/dev/null || echo 0)
+        matches=$(grep -c "^#> $1 " artifacts/.config 2>/dev/null || true)
 
-        if [ "$matches" -gt 1 ]; then
+        if [ "${matches:-0}" -gt 1 ]; then
                 echo "config: '$1' is set $matches times; expected one value" >&2
                 return 1
         fi

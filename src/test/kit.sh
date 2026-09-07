@@ -71,6 +71,32 @@ else
         lost 'agent worktree excluded' "copy status $copy_status"
 fi
 
+group config
+common_path=$(pwd)/kit/common
+mkdir -p "$work/config/artifacts"
+for config_shell in bash dash; do
+        command -v "$config_shell" >/dev/null 2>&1 || continue
+        got=$(cd "$work/config" && "$config_shell" -c '. "$1"; key_one absent' \
+                config "$common_path" 2>"$work/config-errors")
+        same "missing scalar $config_shell" "" "$got"
+        same "missing scalar stderr $config_shell" "" "$(cat "$work/config-errors")"
+done
+printf '#> arch x86_64\n#> flags -a\n#> flags -b\n' > "$work/config/artifacts/.config"
+for config_shell in bash dash; do
+        command -v "$config_shell" >/dev/null 2>&1 || continue
+        got=$(cd "$work/config" && "$config_shell" -c '. "$1"; key_one absent; key_one arch' \
+                config "$common_path" 2>"$work/config-errors")
+        same "scalar and absent key $config_shell" "
+x86_64" "$got"
+        same "absent key stderr $config_shell" "" "$(cat "$work/config-errors")"
+        if (cd "$work/config" && "$config_shell" -c '. "$1"; key_one flags' \
+                config "$common_path" > /dev/null 2>&1); then
+                lost "duplicate scalar $config_shell" "accepted two values"
+        else
+                won
+        fi
+done
+
 # Test the benchmark driver's argv contract without a cross compiler or a
 # heavyweight benchmark. Native/taskset and emulated paths see the same words.
 group benchmark
