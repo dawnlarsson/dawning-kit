@@ -152,7 +152,7 @@ static void pane_free(struct pane *pane)
 static void desktop_grid(int width, int height,
                           unsigned int *columns, unsigned int *rows)
 {
-        width -= canvas_border * 2;
+        width -= canvas_border * 2 + canvas_bar;
         height -= canvas_title + canvas_border * 3;
 
         *columns = (unsigned int)(max(width, 0) / canvas_cell_w);
@@ -458,7 +458,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 // The ring is cut for the ceiling; what opens is what fits.
                 columns = min(columns, fit_columns);
                 rows = min(rows, fit_rows);
-                width = columns * (unsigned int)canvas_cell_w;
+                width = columns * (unsigned int)canvas_cell_w + canvas_bar;
                 height = rows * (unsigned int)canvas_cell_h;
         }
 
@@ -516,7 +516,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                 pane->rows = rows;
                 pane->max_columns = max_columns;
                 pane->max_rows = max_rows;
-                pane->max_width = max_columns * (unsigned int)canvas_cell_w;
+                pane->max_width = max_columns * (unsigned int)canvas_cell_w + canvas_bar;
                 pane->max_height = max_rows * (unsigned int)canvas_cell_h;
                 pane->grid_columns = columns;
                 pane->grid_rows = rows;
@@ -587,7 +587,8 @@ static void pane_regrid(struct pane *pane)
         if (!pane->cells)
                 return;
 
-        pane->columns = min((unsigned int)(pane->width / canvas_cell_w), pane->max_columns);
+        pane->columns = min((unsigned int)(max(pane->width - canvas_bar, 0) / canvas_cell_w),
+                            pane->max_columns);
         pane->rows = min((unsigned int)(pane->height / canvas_cell_h), pane->max_rows);
 
         if (!pane->columns)
@@ -596,7 +597,7 @@ static void pane_regrid(struct pane *pane)
         if (!pane->rows)
                 pane->rows = 1;
 
-        pane->width = (int)pane->columns * canvas_cell_w;
+        pane->width = (int)pane->columns * canvas_cell_w + canvas_bar;
         pane->height = (int)pane->rows * canvas_cell_h;
 
         /*

@@ -797,7 +797,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
         positive query_id = 0;
         bool have_query_id = false;
         positive widths[STORAGE_COLUMN_MAX] = {0};
-        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
 
@@ -805,9 +805,9 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                     address_of taking, (string_address)"nrlvPfiSTMtoO",
                     (string_address)"STMtoO", arguments,
                     array_count(arguments), address_of value)) !=
-               STORAGE_ARGUMENT_END)
+               ARGUMENT_END)
         {
-                if (option == STORAGE_ARGUMENT_OPERAND)
+                if (option == ARGUMENT_OPERAND)
                 {
                         if (options.operand)
                         {
@@ -820,7 +820,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         continue;
                 }
 
-                if (option == STORAGE_ARGUMENT_MISSING)
+                if (option == ARGUMENT_MISSING)
                 {
                         storage_write_text(diagnostic,
                             (string_address) "findmnt: option needs an argument\n");
@@ -1032,14 +1032,14 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         bool devno = false;
         bool nofollow = false;
         string_address path = null;
-        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
 
         while ((option = storage_argument_next(
                     address_of taking, (string_address)"qdx",
                     (string_address)"", options, array_count(options),
-                    address_of value)) != STORAGE_ARGUMENT_END)
+                    address_of value)) != ARGUMENT_END)
         {
                 if (option == 'q')
                         quiet = true;
@@ -1049,7 +1049,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                         devno = true;
                 else if (option == 'N')
                         nofollow = true;
-                else if (option == STORAGE_ARGUMENT_OPERAND)
+                else if (option == ARGUMENT_OPERAND)
                 {
                         if (path)
                         {

@@ -444,6 +444,8 @@ static inline CONST _Bool point_in_rect(int x, int y, int width, int height,
 #define canvas_border (2 * (int)desktop.scale)
 #define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)
 #define canvas_cell_h (WINDOW_CELL_H * (int)desktop.scale)
+// A cell window reserves this strip beside its grid, even without scrollback.
+#define canvas_bar (10 * (int)desktop.scale)
 
 // The border and titlebar a framed window wears, and nothing when it does not.
 static void pane_frame(struct pane *pane, int *x, int *y, int *w, int *h)

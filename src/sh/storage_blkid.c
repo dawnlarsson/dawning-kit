@@ -1824,20 +1824,6 @@ static bool storage_blkid_visit(
         return !context->first_only;
 }
 
-/* Storage commands are callable both as shell builtins and through farm
-   links, so they cannot use the process-global utility option reader.  One
-   cursor owns the equivalent argv state machine for the whole storage family:
-   short clusters, attached values, long values and the -- boundary. */
-typedef struct
-{
-        positive argc;
-        string_address address_to argv;
-        positive at;
-        string_address letters;
-        string_address word;
-        bool operands_only;
-} storage_arguments;
-
 /* Length occupies padding the generic named-byte row would leave unused, so
    table lookup never has to rescan constant option names. */
 typedef struct
@@ -1849,14 +1835,6 @@ typedef struct
 
 #define STORAGE_ARGUMENT(name, value)                                      \
         {(string_address)(name), (value), sizeof(name) - 1}
-
-enum
-{
-        STORAGE_ARGUMENT_END,
-        STORAGE_ARGUMENT_OPERAND = 256,
-        STORAGE_ARGUMENT_UNKNOWN = -1,
-        STORAGE_ARGUMENT_MISSING = -2,
-};
 
 static PURE p8 storage_argument_long(string_address name, positive length,
                                      const storage_argument_name address_to options,
@@ -1870,88 +1848,33 @@ static PURE p8 storage_argument_long(string_address name, positive length,
         return 0;
 }
 
+/* Storage keeps exact long names and required values; shared argv mechanics
+   preserve its caller-owned argument vector and diagnostic cursor. */
 static COLD b32 storage_argument_next(
-    storage_arguments address_to taking, string_address allowed,
+    argument_cursor address_to taking, string_address allowed,
     string_address valued, const storage_argument_name address_to longs,
     positive long_count, string_address address_to value)
 {
-        while (true)
+        b32 option = argument_next(taking);
+        if (option == ARGUMENT_END)
+                return option;
+        if (option == ARGUMENT_OPERAND)
         {
-                if (taking->letters && *taking->letters)
-                {
-                        p8 option = *taking->letters++;
-
-                        if (!string_first_of(allowed, option))
-                                return STORAGE_ARGUMENT_UNKNOWN;
-
-                        if (string_first_of(valued, option))
-                        {
-                                if (*taking->letters)
-                                {
-                                        address_to value = taking->letters;
-                                        taking->letters = null;
-                                }
-                                else if (taking->at < taking->argc)
-                                        address_to value =
-                                            taking->argv[taking->at++];
-                                else
-                                        return STORAGE_ARGUMENT_MISSING;
-                        }
-                        else
-                                address_to value = null;
-
-                        return option;
-                }
-
-                taking->letters = null;
-                if (taking->at >= taking->argc)
-                        return STORAGE_ARGUMENT_END;
-
-                taking->word = taking->argv[taking->at++];
-                if (taking->operands_only || taking->word[0] != '-' ||
-                    !taking->word[1])
-                {
-                        address_to value = taking->word;
-                        return STORAGE_ARGUMENT_OPERAND;
-                }
-
-                if (taking->word[1] == '-' && !taking->word[2])
-                {
-                        taking->operands_only = true;
-                        continue;
-                }
-
-                if (taking->word[1] == '-')
-                {
-                        string_address name = taking->word + 2;
-                        string_address mark = string_first_of(name, '=');
-                        positive length = mark ? (positive)(mark - name)
-                                               : string_length(name);
-                        p8 option = storage_argument_long(name, length, longs,
-                                                          long_count);
-
-                        if (!option || (mark &&
-                                        !string_first_of(valued, option)))
-                                return STORAGE_ARGUMENT_UNKNOWN;
-
-                        if (string_first_of(valued, option))
-                        {
-                                if (mark)
-                                        address_to value = mark + 1;
-                                else if (taking->at < taking->argc)
-                                        address_to value =
-                                            taking->argv[taking->at++];
-                                else
-                                        return STORAGE_ARGUMENT_MISSING;
-                        }
-                        else
-                                address_to value = null;
-
-                        return option;
-                }
-
-                taking->letters = taking->word + 1;
+                *value = taking->word;
+                return option;
         }
+        if (option == ARGUMENT_LONG)
+                option = storage_argument_long(taking->word + 2,
+                                                taking->name_length, longs, long_count);
+        else if (!string_first_of(allowed, option))
+                return ARGUMENT_UNKNOWN;
+        if (!option || (taking->attached && !string_first_of(valued, option)))
+                return ARGUMENT_UNKNOWN;
+        string_address taken = null;
+        if (string_first_of(valued, option) && !(taken = argument_value(taking, true)))
+                return ARGUMENT_MISSING;
+        *value = taken;
+        return option;
 }
 
 /*
@@ -1974,7 +1897,7 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
         string_address address_to devices = inline_devices;
         positive device_room = array_count(inline_devices);
         positive device_count = 0;
-        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
 
@@ -1984,9 +1907,9 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
         while ((option = storage_argument_next(
                     address_of taking, (string_address)"ULsto",
                     (string_address)"ULsto", options, array_count(options),
-                    address_of value)) != STORAGE_ARGUMENT_END)
+                    address_of value)) != ARGUMENT_END)
         {
-                if (option == STORAGE_ARGUMENT_OPERAND)
+                if (option == ARGUMENT_OPERAND)
                 {
                         if (device_count == device_room)
                         {

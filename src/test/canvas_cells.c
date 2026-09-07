@@ -22,9 +22,9 @@ typedef uint64_t u64;
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16
 #define DRM_FORMAT_ARGB8888 0x34325241u
-static struct {unsigned scale;} desktop={1};
-#define canvas_cell_w (8*(int)desktop.scale)
-#define canvas_cell_h (16*(int)desktop.scale)
+static struct {unsigned scale;int bar_grab,frame_pending;} desktop={1};
+#define canvas_cell_w (WINDOW_CELL_W * (int)desktop.scale)
+#define canvas_cell_h (WINDOW_CELL_H * (int)desktop.scale)
 static unsigned long canvas_painted,canvas_runs;
 struct drm_rect {int x1,y1,x2,y2;};
 struct window_cell {unsigned character; unsigned char ink,paper; unsigned short flags;};
@@ -64,8 +64,10 @@ static void reference_row(const struct target *t,const struct shape *s,int x,int
     }
 }
 
-struct pane {unsigned grid_columns,columns,rows,view,head,history,stride,skip;
-    unsigned *lengths;struct window_cell *cells;};
+struct pane {unsigned grid_columns,grid_rows,columns,rows,view,head,history,stride,skip;
+    unsigned *lengths;struct window_cell *cells;
+    int x,y,width,height,edge;unsigned style,state,title_length,pitch;
+    const char *title;u32 *pixels;};
 static unsigned pane_rows(struct pane *p) {return p->rows;}
 static unsigned pane_view_at(struct pane *p,unsigned view,unsigned *skip) {*skip=p->skip;return view;}
 struct row_call {int y,used,first,last;const struct window_cell *cells;};
@@ -79,6 +81,80 @@ static void record_row(const struct target *t,const struct shape *s,int x,int y,
 #define compose_row record_row
 #include "canvas-ring.inc"
 #undef compose_row
+
+#define WINDOW_TITLE 20
+#define WINDOW_FRAME 1u
+#define WINDOW_MINIMIZED 4u
+#define WINDOW_FOCUSED 1u
+#define TEXT_CENTRE 1u
+#define TEXT_MIDDLE 4u
+static unsigned extent_first,extent_total,view_set;
+static _Bool pane_extent(struct pane *p,unsigned *first,unsigned *shown,unsigned *total) {
+    *first=extent_first;*shown=p->rows;*total=extent_total;return *shown<*total;
+}
+static _Bool pane_view_set(struct pane *p,unsigned above) {(void)p;view_set=above;return 1;}
+static void canvas_thread_wake(void) {}
+#define atomic_set(at,value) (*(at)=(value))
+// Titles and pixel windows are not exercised by this cell-layout check.
+static void text_draw(const struct target *t,int x,int y,int w,int h,
+    const char *text,unsigned length,unsigned align,int scale,u32 color) {assert(0);}
+static void shape_blit(const struct target *t,const struct shape *s,
+    int x,int y,int w,int h,const u32 *source,unsigned pitch) {assert(0);}
+#include "canvas-pane.inc"
+
+static void check_pane_layout(void) {
+    static u32 screen[256*256];
+    const u32 ink[]={0x102030,0x203040,0x304050,0x405060,0x506070,0x607080,0,0};
+    for(unsigned scale=1;scale<=3;scale++)for(unsigned frame=0;frame<2;frame++)
+    for(unsigned grid=3;grid<=7;grid+=2)for(unsigned scroll=0;scroll<3;scroll++)
+    for(unsigned clip=0;clip<3;clip++) {
+        desktop.scale=scale;
+        struct window_cell cells[3*7];unsigned lengths[3]={grid,grid,grid};
+        for(unsigned r=0;r<3;r++)for(unsigned c=0;c<7;c++)
+            cells[r*7+c]=(struct window_cell){' ',0,1+c,0};
+        struct pane p={.x=8,.y=4,.width=5*canvas_cell_w+canvas_bar,
+            .height=3*canvas_cell_h,.columns=5,.rows=3,.grid_columns=grid,
+            .grid_rows=3,.head=3,.history=3,.stride=7,.lengths=lengths,
+            .cells=cells,.style=frame?WINDOW_FRAME:0};
+        int y=p.y+(frame?canvas_title:0),right=p.x+5*canvas_cell_w;
+        struct target t={.pixels=screen,.pitch=256,.width=256,.height=256,
+            .clip={0,0,256,256},.ink=ink};
+        if(clip)t.clip=(struct drm_rect){clip==1?right-canvas_cell_w:right,y,
+            clip==1?right:right+canvas_bar,y+p.height};
+        extent_first=scroll==2?6:0;extent_total=scroll?9:3;
+        memset(screen,0xa5,sizeof(screen));compose_pane(&p,&t);
+        int okay=1;
+        for(int dy=0;dy<p.height;dy++)for(int dx=0;dx<p.width;dx++) {
+            int px=p.x+dx,py=y+dy;
+            u32 color=0xa5a5a5a5;
+            if(point_in_rect(t.clip.x1,t.clip.y1,t.clip.x2-t.clip.x1,
+                    t.clip.y2-t.clip.y1,px,py)) {
+                color=dx<(int)min(grid,5u)*canvas_cell_w?
+                    canvas_terminal[1+dx/canvas_cell_w]:ink[INK_BODY];
+                if(dx>=5*canvas_cell_w && scroll) {
+                    int top=p.height*(int)extent_first/9,span=p.height/3;
+                    color=dy>=top&&dy<top+span?ink[INK_TITLE_LIT]:ink[INK_FRAME];
+                }
+            }
+            okay&=screen[py*256+px]==color;
+        }
+        check(okay); // Every pixel of the last cell survives bar and gap fills.
+        struct pane_bar_geometry bar;
+        check(pane_bar(&p,&bar)==(scroll!=0));
+        if(scroll) {
+            check(bar.x==right && bar.width==canvas_bar && bar.y==y &&
+                !point_in_rect(bar.x,bar.y,bar.width,bar.height,right-1,y) &&
+                point_in_rect(bar.x,bar.y,bar.width,bar.height,right,y));
+            for(int grab=0;grab<=bar.thumb_span;grab+=bar.thumb_span)
+            for(int at=-1;at<=bar.height+1;at+=bar.height+2) {
+                desktop.bar_grab=grab;desktop.frame_pending=0;
+                bar_move(&p,y+at,&bar);
+                check(view_set==(unsigned)(clamp(at-grab,0,bar.height-bar.thumb_span)*9/bar.height)
+                      && desktop.frame_pending);
+            }
+        }
+    }
+}
 
 int main(void) {
     const u32 palette[]={0x1b2733,0x2f3f52,0x2b3a4c,0x4c6785,
@@ -147,6 +223,7 @@ int main(void) {
         check(!memcmp(pixels,expected,300*sizeof(*pixels)));
     }
     struct font_desc face={8,16,font_bits};canvas_font=&face;
+    check_pane_layout();
     for(unsigned i=0;i<sizeof(font_bits);i++)font_bits[i]=(i*29+i/16*73)&255;
     struct window_cell cells[96];unsigned seed=123;
     for(unsigned trial=0;trial<2400;trial++) {

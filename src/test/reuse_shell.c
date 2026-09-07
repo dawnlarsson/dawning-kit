@@ -6,6 +6,55 @@
 static p8 reuse_output[16384];
 static positive reuse_used;
 
+static fn reuse_arguments(void)
+{
+        string_address words[] = {"test", "-abvalue", "--name=", "--", "-x", ""};
+        argument_cursor cursor = {.argc = array_count(words), .argv = words, .at = 1};
+        check("argument cursor preserves a short cluster",
+              argument_next(&cursor) == 'a' && argument_next(&cursor) == 'b' &&
+              string_equals(argument_value(&cursor, true), "value"));
+        check("argument cursor distinguishes an explicit empty value",
+              argument_next(&cursor) == ARGUMENT_LONG && cursor.name_length == 4 &&
+              argument_value(&cursor, false) == words[2] + 7);
+        check("argument boundary makes dash words and empty words operands",
+              argument_next(&cursor) == ARGUMENT_OPERAND && cursor.word == words[4] &&
+              argument_next(&cursor) == ARGUMENT_OPERAND && cursor.word == words[5] &&
+              argument_next(&cursor) == ARGUMENT_END && cursor.at == array_count(words));
+        string_address valued[] = {"test", "-v", "--", "-o", "operand"};
+        cursor = (argument_cursor){.argc = array_count(valued), .argv = valued, .at = 1};
+        check("required values consume a boundary as data",
+              argument_next(&cursor) == 'v' && argument_value(&cursor, true) == valued[2] &&
+              argument_next(&cursor) == 'o');
+        check("optional values leave the following operand untouched",
+              !argument_value(&cursor, false) && argument_next(&cursor) == ARGUMENT_OPERAND &&
+              cursor.word == valued[4]);
+
+        const storage_argument_name names[] = {{"value", 'v', 5}};
+        string_address storage[] = {"test", "--val", "-v"}, value = "prior";
+        cursor = (argument_cursor){.argc = array_count(storage), .argv = storage, .at = 1};
+        check("storage long names remain exact",
+              storage_argument_next(&cursor, "v", "v", names, 1, &value) == ARGUMENT_UNKNOWN &&
+              string_equals(value, "prior") && cursor.word == storage[1]);
+        check("storage missing values retain the diagnostic letter and prior value",
+              storage_argument_next(&cursor, "v", "v", names, 1, &value) == ARGUMENT_MISSING &&
+              string_equals(value, "prior") && cursor.letters[-1] == 'v');
+
+        string_address address_to saved = program_argument_list();
+        b32 count = program_argument_count();
+        const file_long longs[] = {{"value", 'v'}, {"namespace", 'n'}, {null, 0}};
+        string_address utility[] = {"test", "--val=", "-na", "--namespace=kept",
+                                    "--namespace", "--", "-v"};
+        program_arguments_use(utility, array_count(utility));
+        file_taking taking = {.allowed = "nav", .valued = "v", .longs = longs,
+                              .long_optional = "n", .sticky_optional = "n"};
+        check("utility prefixes, short clusters and sticky long values retain their policies",
+              file_take(&taking) && taking.first == 6 && taking.last == 'n' &&
+              (taking.flags & FILE_FLAG('a')) && (taking.bare & FILE_FLAG('n')) &&
+              taking.value[file_letter_bit('v')] == utility[1] + 6 &&
+              string_equals(taking.value[file_letter_bit('n')], "kept"));
+        program_arguments_use(saved, count);
+}
+
 static fn reuse_capture(address_any data, positive length)
 {
         if (!length) length = string_length(data);
@@ -457,6 +506,7 @@ b32 main(void)
         check("arena span rejects length overflow",
               !shell_store_copy(&store, null, positive_max) && shell_memory_failed);
         shell_memory_failed = false;
+        reuse_arguments();
         reuse_masks();
         reuse_lists();
         reuse_uuid();

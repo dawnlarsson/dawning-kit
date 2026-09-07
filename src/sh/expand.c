@@ -29,9 +29,6 @@ string_address env_get_hashed_span(const_string name, positive length,
 positive env_names_prefix(string_address prefix, positive length,
                           string_address address_to names, positive room);
 PURE bool env_readonly(const_string name);
-string_address env_saved_state(const_string name, positive length,
-                               bool address_to exported, p8 address_to kind,
-                               b32 address_to array, bool address_to declared);
 bool env_assign(const_string name, const_string value);
 
 // Resolve LC_CTYPE only for character operations. Keeping this a read of the

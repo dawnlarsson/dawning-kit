@@ -619,7 +619,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         storage_mount_options options;
         positive operands = 0;
         bool all = false;
-        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
         b32 status = 1;
@@ -631,9 +631,9 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                     address_of taking, (string_address)"arwBRMvncistoTLU",
                     (string_address)"toTLUSX", arguments,
                     array_count(arguments), address_of value)) !=
-               STORAGE_ARGUMENT_END)
+               ARGUMENT_END)
         {
-                if (option == STORAGE_ARGUMENT_OPERAND)
+                if (option == ARGUMENT_OPERAND)
                 {
                         if (operands >= 2)
                         {
@@ -643,9 +643,9 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                         }
                         operand[operands++] = value;
                 }
-                else if (option == STORAGE_ARGUMENT_MISSING)
+                else if (option == ARGUMENT_MISSING)
                         goto missing_option;
-                else if (option == STORAGE_ARGUMENT_UNKNOWN ||
+                else if (option == ARGUMENT_UNKNOWN ||
                          ((option == 'S' || option == 'X') && !*value))
                 {
                         if (taking.letters)
@@ -1003,7 +1003,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         bool all = false;
         bool recursive = false;
         bool read_only = false;
-        storage_arguments taking = {.argc = argc, .argv = argv, .at = 1};
+        argument_cursor taking = {.argc = argc, .argv = argv, .at = 1};
         string_address value;
         b32 option;
         storage_mount_table table;
@@ -1014,9 +1014,9 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
         while ((option = storage_argument_next(
                     address_of taking, (string_address)"alfRrvncit",
                     (string_address)"t", arguments, array_count(arguments),
-                    address_of value)) != STORAGE_ARGUMENT_END)
+                    address_of value)) != ARGUMENT_END)
         {
-                if (option == STORAGE_ARGUMENT_OPERAND)
+                if (option == ARGUMENT_OPERAND)
                 {
                         if (!array_store_reserve(operand, operand_room,
                                                  operands, operands + 1, 16))
@@ -1027,9 +1027,9 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                         }
                         operand[operands++] = value;
                 }
-                else if (option == STORAGE_ARGUMENT_MISSING)
+                else if (option == ARGUMENT_MISSING)
                         goto missing_option;
-                else if (option == STORAGE_ARGUMENT_UNKNOWN)
+                else if (option == ARGUMENT_UNKNOWN)
                 {
                         if (taking.letters)
                                 string_format(diagnostic,

@@ -378,17 +378,10 @@ static void compose_cells(struct pane *pane, const struct target *t,
 /*
         The bar down the right of a window that has more than it is showing.
 
-        Drawn over the last few pixels of the contents rather than beside them,
-        because a window is as wide as its grid and taking a column away for a
-        bar would cost a column of text on every window that never scrolls.
-        Nothing is drawn at all when everything fits, so a window that has
-        never had anything go past the top of it has no bar to explain.
+        The grid ends before its reserved gutter, so every cell stays visible.
+        The gutter remains when everything fits; acquiring scrollback must not
+        change the terminal's columns.
 */
-// Wide enough to take hold of. Six was wide enough to see and not to grab:
-// the resize grip reaches six pixels in from the frame, so a six wide bar was
-// entirely inside it and the hand got a resize every time.
-#define BAR_WIDTH 10
-
 struct pane_bar_geometry
 {
         int x, y, width, height;
@@ -411,7 +404,7 @@ static _Bool pane_bar(struct pane *pane, struct pane_bar_geometry *bar)
         if (!pane_extent(pane, &first, &shown, &total) || !total)
                 return false;
 
-        bar->width = BAR_WIDTH * (int)desktop.scale;
+        bar->width = canvas_bar;
         bar->height = (int)pane->rows * canvas_cell_h;
         bar->x = pane->x + (int)pane->width - bar->width;
         bar->y = pane->y + (pane->style & WINDOW_FRAME ? canvas_title : 0);
@@ -431,7 +424,7 @@ static void compose_bar(struct pane *pane, const struct target *t,
                         const struct shape *shape, int x, int y)
 {
         struct pane_bar_geometry bar;
-        int width = BAR_WIDTH * (int)desktop.scale;
+        int width = canvas_bar;
         int height = (int)pane->rows * canvas_cell_h;
         int left = x + pane->width - width;
 
@@ -521,7 +514,6 @@ static void compose_pane(struct pane *pane, const struct target *t)
                 int gh = (int)min(pane->grid_rows, pane->rows) * canvas_cell_h;
 
                 compose_cells(pane, t, &shape, x, y + title);
-                compose_bar(pane, t, &shape, x, y + title);
 
                 // What the window has grown into but the program has not laid
                 // out yet, which would otherwise show the desktop through it.
@@ -532,6 +524,8 @@ static void compose_pane(struct pane *pane, const struct target *t)
                 if (gh < pane->height)
                         shape_fill(t, &shape, x, y + title + gh, min(gw, pane->width),
                                    pane->height - gh, t->ink[INK_BODY]);
+
+                compose_bar(pane, t, &shape, x, y + title);
         }
         else if (pane->pixels)
                 shape_blit(t, &shape, x, y + title, pane->width, pane->height,

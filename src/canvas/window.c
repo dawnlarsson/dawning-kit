@@ -187,7 +187,8 @@ struct window
         unsigned int key_tail;
         struct window_key keys[WINDOW_KEYS];
 
-        // For a window of cells: its shape, and which rows have changed since
+        // For cells, width includes the scrollbar gutter; columns excludes it.
+        // The grid's shape, and which rows have changed since
         // the compositor last looked. Rows rather than a rectangle because
         // that is what text changes.
         unsigned int columns;

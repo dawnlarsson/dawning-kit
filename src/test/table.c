@@ -512,6 +512,66 @@ static fn table_projection_checks(void)
         ul_lsblk_tree = false;
 }
 
+static fn table_typed_projection_checks(void)
+{
+        struct snapshot_process process = {.pid = 0, .uid = p32_max, .command = ""};
+        ul_lsfd_entry fd = {.process = &process, .user = "", .name = "", .type = "",
+            .major = p32_max, .minor = p32_max, .mount_known = true,
+            .position_known = true, .position = p64_max, .access_known = true};
+        static const table_projection descriptor[] = {
+            {UL_LSFD_PID, "0"}, {UL_LSFD_UID, "4294967295"},
+            {UL_LSFD_DEVICE, "4294967295:4294967295"}, {UL_LSFD_MNTID, "0"},
+            {UL_LSFD_POS, "18446744073709551615"}, {UL_LSFD_DELETED, "0"},
+            {UL_LSFD_MODE, "r--"}, {UL_LSFD_XMODE, "r-----"},
+        };
+        table_projection_check("lsfd known zero", &fd, ul_lsfd_columns,
+            UL_LSFD_COLUMNS, ul_lsfd_field, descriptor, array_count(descriptor));
+        static const string_address modes[] = {"r--", "-w-", "rw-"};
+        static const string_address xmodes[] = {"r-----", "-w----", "rw----"};
+        p8 scratch[96];
+        for (positive access = 0; access < 3; access++)
+        {
+                fd.access = access;
+                check("lsfd access modes retain custom projection",
+                      string_equals(ul_lsfd_field(&fd, UL_LSFD_MODE, scratch), modes[access]) &&
+                      string_equals(ul_lsfd_field(&fd, UL_LSFD_XMODE, scratch), xmodes[access]));
+        }
+        ul_lsblk_device device = {0};
+        static const table_projection absent[] = {
+            {UL_LSBLK_TYPE, ""}, {UL_LSBLK_MOUNTPOINT, ""}, {UL_LSBLK_MOUNTPOINTS, ""},
+            {UL_LSBLK_FSTYPE, ""}, {UL_LSBLK_FSVER, ""}, {UL_LSBLK_LABEL, ""},
+            {UL_LSBLK_UUID, ""}, {UL_LSBLK_PARTUUID, ""}, {UL_LSBLK_PARTLABEL, ""},
+            {UL_LSBLK_OWNER, ""}, {UL_LSBLK_GROUP, ""}, {UL_LSBLK_MODE, ""},
+            {UL_LSBLK_SCHED, ""}, {UL_LSBLK_TRAN, ""}, {UL_LSBLK_VENDOR, ""},
+            {UL_LSBLK_MODEL, ""}, {UL_LSBLK_REV, ""}, {UL_LSBLK_SERIAL, ""},
+            {UL_LSBLK_HCTL, ""}, {UL_LSBLK_RQSIZE, ""}, {UL_LSBLK_RA, "0"},
+            {UL_LSBLK_FSAVAIL, ""}, {UL_LSBLK_FSUSE, ""},
+        };
+        table_projection_check("lsblk missing", &device, ul_lsblk_columns,
+            UL_LSBLK_COLUMNS, ul_lsblk_field, absent, array_count(absent));
+        device.fs_measured = true;
+        device.request_size = positive_max;
+        static const table_projection measured[] = {
+            {UL_LSBLK_FSAVAIL, "0"}, {UL_LSBLK_FSUSE, "0%"},
+            {UL_LSBLK_RQSIZE, "18446744073709551615"},
+        };
+        table_projection_check("lsblk measured zero", &device, ul_lsblk_columns,
+            UL_LSBLK_COLUMNS, ul_lsblk_field, measured, array_count(measured));
+        ul_ipc_row ipc = {.id = p64_max, .count = p64_max, .pid_one = p64_max};
+        p8 selected[] = {UL_IPC_ID, UL_IPC_MSGS, UL_IPC_LSPID, UL_IPC_STATUS};
+        string_address expected = "{\n   \"ipc\": [\n      {\n"
+            "         \"id\": \"18446744073709551615\",\n"
+            "         \"msgs\": \"18446744073709551615\",\n"
+            "         \"lspid\": \"18446744073709551615\",\n"
+            "         \"status\": null\n      }\n   ]\n}\n";
+        table_reset();
+        ul_table_json("ipc", &ipc, sizeof(ipc), 1, ul_ipc_columns,
+                      selected, array_count(selected), ul_ipc_field);
+        check("IPC decimal projections keep JSON strings and nulls",
+              !table_overflow && table_used == string_length(expected) &&
+              !memory_compare(table_output, expected, table_used));
+}
+
 /* Build the legacy prlimit projection independently: width comes from the
    complete resource set, duplicate selected columns remain significant,
    only spaces need escaping in these fixed metadata/decimal fields. */
@@ -749,6 +809,7 @@ b32 main(void)
         name_list_checks();
         table_checks();
         table_projection_checks();
+        table_typed_projection_checks();
         table_limit_checks();
         table_printable_checks();
         table_ipcs_checks();

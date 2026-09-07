@@ -2378,167 +2378,93 @@ static p8 file_long_letter(file_taking address_to taking, string_address name,
 
 static bool file_take_from(file_taking address_to taking, positive index)
 {
-        positive count = (positive)program_argument_count();
-
-        while (index < count)
+        argument_cursor cursor = {.argc = (positive)program_argument_count(),
+                                  .argv = program_argument_list(), .at = index};
+        for (;;)
         {
-                string_address word = program_argument((b32)index);
-
-                if (!string_is(word, '-') || string_is(word + 1, end))
+                /* Legacy numeric operands/counts belong to utility policy,
+                   before tokenization can split their digits into options. */
+                if ((!cursor.letters || !*cursor.letters) &&
+                    !cursor.operands_only && cursor.at < cursor.argc)
+                {
+                        string_address word = cursor.argv[cursor.at];
+                        if (word[0] == '-' && word[1] != '-')
+                        {
+                                if (taking->numbers && (byte_is_digit(word[1]) || word[1] == '.'))
+                                        break;
+                                if (taking->digits && byte_is_digit(word[1]))
+                                {
+                                        positive bit = file_letter_bit(taking->digits);
+                                        taking->flags |= (positive)1 << bit;
+                                        taking->value[bit] = word + 1;
+                                        taking->last = taking->digits;
+                                        cursor.at++;
+                                        cursor.letters = null;
+                                        continue;
+                                }
+                        }
+                }
+                b32 option = argument_next(&cursor);
+                if (option == ARGUMENT_END)
+                        break;
+                if (option == ARGUMENT_OPERAND)
                 {
                         if (!taking->operand)
+                        {
+                                cursor.at--;
                                 break;
-
-                        taking->operand((b32)index++);
+                        }
+                        taking->operand((b32)(cursor.at - 1));
                         continue;
                 }
-
-                if (string_is(word + 1, '-') && string_is(word + 2, end))
+                bool long_option = option == ARGUMENT_LONG;
+                p8 letter = long_option
+                    ? file_long_letter(taking, cursor.word + 2, cursor.name_length)
+                    : (p8)option;
+                p8 named[3] = {'-', letter, end};
+                string_address shown = long_option ? cursor.word : named;
+                if (!letter || (!long_option && !string_first_of(taking->allowed, letter)))
                 {
-                        index++;
-
-                        while (taking->operand && index < count)
-                                taking->operand((b32)index++);
-
-                        break;
+                        file_complain(taking->program,
+                                      long_option ? "unrecognized option" : "invalid option", shown);
+                        return false;
                 }
-
-                if (taking->numbers && !string_is(word + 1, '-') &&
-                    (byte_is_digit(string_get(word + 1)) ||
-                     string_is(word + 1, '.')))
-                        break;
-
-                index++;
-
-                if (taking->digits && byte_is_digit(string_get(word + 1)))
+                positive bit = file_letter_bit(letter);
+                bool optional = file_option_among(taking->optional, letter) ||
+                    (long_option && file_option_among(taking->long_optional, letter));
+                bool valued = file_option_among(taking->valued, letter);
+                if (cursor.attached && !optional && !valued)
                 {
-                        positive bit = file_letter_bit(taking->digits);
-
-                        taking->flags |= (positive)1 << bit;
-                        taking->value[bit] = word + 1;
-                        taking->last = taking->digits;
-                        continue;
+                        file_complain(taking->program, "option does not allow an argument", shown);
+                        return false;
                 }
-
-                if (string_is(word + 1, '-'))
-                {
-                        string_address name = word + 2;
-                        string_address mark = string_first_of(name, '=');
-                        positive length = mark ? (positive)(mark - name)
-                                               : string_length(name);
-                        p8 letter = file_long_letter(taking, name, length);
-
-                        if (!letter)
-                        {
-                                file_complain(taking->program, "unrecognized option", word);
-                                return false;
-                        }
-
-                        positive bit = file_letter_bit(letter);
-                        bool optional = file_option_among(taking->optional,
-                                                          letter) ||
-                                        file_option_among(taking->long_optional,
-                                                          letter);
-                        bool valued = file_option_among(taking->valued, letter);
-
-                        if (mark && !optional && !valued)
-                        {
-                                file_complain(taking->program,
-                                              "option does not allow an argument",
-                                              word);
-                                return false;
-                        }
-
-                        taking->flags |= (positive)1 << bit;
-
-                        if (optional)
-                        {
-                                if (mark)
-                                        taking->value[bit] = mark + 1;
-                                else
-                                {
-                                        taking->bare |= (positive)1 << bit;
-                                        if (!file_option_among(taking->sticky_optional,
-                                                               letter))
-                                                taking->value[bit] = null;
-                                }
-                                taking->last = letter;
-                        }
-                        else if (valued)
-                        {
-                                taking->last = letter;
-
-                                if (mark)
-                                        taking->value[bit] = mark + 1;
-                                else if (index < count)
-                                        taking->value[bit] = program_argument((b32)index++);
-                                else
-                                        return file_option_needs(taking, word);
-                        }
-
+                taking->flags |= (positive)1 << bit;
+                /* Short options supersede before missing-value errors; long
+                   options do so only after their values have been accepted. */
+                if (!long_option)
                         file_option_supersede(taking, letter);
-
-                        if (taking->seen && !taking->seen(letter, taking->value[bit]))
-                                return false;
-
-                        continue;
-                }
-
-                for (string_address letter = word + 1; string_get(letter); letter++)
+                if (optional || valued)
                 {
-                        p8 named[3] = {'-', string_get(letter), end};
-                        positive bit = file_letter_bit(string_get(letter));
-
-                        if (!string_first_of(taking->allowed, string_get(letter)))
-                        {
-                                file_complain(taking->program, "invalid option", named);
-                                return false;
-                        }
-
-                        taking->flags |= (positive)1 << bit;
-
-                        bool spare = file_option_among(taking->optional, string_get(letter));
-
-                        file_option_supersede(taking, string_get(letter));
-
-                        if (!spare &&
-                            !file_option_among(taking->valued,
-                                               string_get(letter)))
-                        {
-                                if (taking->seen && !taking->seen(string_get(letter), null))
-                                        return false;
-
-                                continue;
-                        }
-
-                        // -s.txt and -s .txt are the same option given the
-                        // same way; either the rest of the word is the
-                        // argument or the next word is.
-                        taking->last = string_get(letter);
-
-                        if (string_get(letter + 1))
-                                taking->value[bit] = letter + 1;
-                        else if (spare)
+                        taking->last = letter;
+                        string_address value = argument_value(&cursor, !optional);
+                        if (value)
+                                taking->value[bit] = value;
+                        else if (!optional)
+                                return file_option_needs(taking, shown);
+                        else
                         {
                                 taking->bare |= (positive)1 << bit;
-                                if (!file_option_among(taking->sticky_optional,
-                                                       string_get(letter)))
+                                if (!file_option_among(taking->sticky_optional, letter))
                                         taking->value[bit] = null;
                         }
-                        else if (index < count)
-                                taking->value[bit] = program_argument((b32)index++);
-                        else
-                                return file_option_needs(taking, named);
-
-                        if (taking->seen && !taking->seen(string_get(letter), taking->value[bit]))
-                                return false;
-
-                        break;
                 }
+                if (long_option)
+                        file_option_supersede(taking, letter);
+                if (taking->seen && !taking->seen(letter,
+                    long_option || optional || valued ? taking->value[bit] : null))
+                        return false;
         }
-
-        taking->first = index;
-
+        taking->first = cursor.at;
         return true;
 }
 

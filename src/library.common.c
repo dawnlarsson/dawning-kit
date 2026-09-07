@@ -1110,4 +1110,77 @@ static inline CONST string_address system_error_message(bipolar code)
         return (positive)code < array_count(messages) ? (string_address)messages[code] : null;
 }
 
+/* argv token mechanics shared by utility policy adapters. Short options
+   return one byte at a time; long names remain slices for each caller's
+   exact/prefix lookup. The cursor borrows argv and never changes its bytes. */
+typedef struct
+{
+        positive argc;
+        string_address address_to argv;
+        positive at;
+        string_address letters;
+        string_address word;
+        bool operands_only;
+        bool long_option;
+        string_address attached;
+        positive name_length;
+} argument_cursor;
+
+enum { ARGUMENT_END, ARGUMENT_OPERAND = 256, ARGUMENT_LONG,
+       ARGUMENT_UNKNOWN = -1, ARGUMENT_MISSING = -2 };
+
+static b32 argument_next(argument_cursor address_to cursor)
+{
+        for (;;)
+        {
+                if (cursor->letters && *cursor->letters)
+                        return (p8)*cursor->letters++;
+                cursor->letters = null;
+                cursor->attached = null;
+                cursor->long_option = false;
+                if (cursor->at >= cursor->argc)
+                        return ARGUMENT_END;
+                cursor->word = cursor->argv[cursor->at++];
+                if (cursor->operands_only || cursor->word[0] != '-' ||
+                    !cursor->word[1])
+                        return ARGUMENT_OPERAND;
+                if (cursor->word[1] != '-')
+                {
+                        cursor->letters = cursor->word + 1;
+                        continue;
+                }
+                if (!cursor->word[2])
+                {
+                        cursor->operands_only = true;
+                        continue;
+                }
+                string_address name = cursor->word + 2;
+                string_address mark = string_first_of(name, '=');
+                cursor->long_option = true;
+                cursor->name_length = mark ? (positive)(mark - name) : string_length(name);
+                cursor->attached = mark ? mark + 1 : null;
+                return ARGUMENT_LONG;
+        }
+}
+
+/* Null means an absent optional value or a missing required one. An explicit
+   empty value is a non-null pointer to NUL. Consume a short cluster only when
+   its remaining bytes actually supply the argument. */
+static string_address argument_value(argument_cursor address_to cursor,
+                                      bool required)
+{
+        if (cursor->long_option)
+        {
+                if (cursor->attached)
+                        return cursor->attached;
+        }
+        else if (cursor->letters && *cursor->letters)
+        {
+                string_address value = cursor->letters;
+                cursor->letters = null;
+                return value;
+        }
+        return required && cursor->at < cursor->argc ? cursor->argv[cursor->at++] : null;
+}
+
 #endif

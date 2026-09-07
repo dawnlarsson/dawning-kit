@@ -1185,6 +1185,20 @@ typedef struct
 #define UL_TABLE_NULL_STRING 3
 #define UL_TABLE_NULL_NUMBER 4
 
+// One column list supplies IDs, display policy and typed projections.  Custom
+// columns stay in their row getter; projections use ordinary typed C expressions.
+#define UL_TABLE_ID(id, projection, value, ...) id,
+#define UL_TABLE_DEFINITION(id, projection, value, ...) {__VA_ARGS__},
+#define UL_TABLE_PROJECT(id, projection, value, ...) UL_TABLE_PROJECT_##projection(id, value)
+#define UL_TABLE_PROJECT_TEXT(id, value) case id: return (value);
+#define UL_TABLE_PROJECT_NULL_TEXT(id, value) \
+        case id: { string_address text = (value); return text ? text : (string_address)""; }
+#define UL_TABLE_PROJECT_UNSIGNED(id, value) \
+        case id: positive_into_string(scratch, (positive)(value)); return scratch;
+#define UL_TABLE_PROJECT_BOOLEAN(id, value) \
+        case id: return (value) ? (string_address)"1" : (string_address)"0";
+#define UL_TABLE_PROJECT_CUSTOM(id, value)
+
 typedef string_address (*ul_table_field)(address_any row, p8 column,
                                          p8 address_to scratch);
 
@@ -4931,44 +4945,48 @@ static b32 util_linux_lslocks()
 
 // lsfd ------------------------------------------------------------
 
+#define UL_LSFD_FIELDS(X) \
+    X(UL_LSFD_COMMAND, TEXT, descriptor->process->command, \
+      "command", "COMMAND", 0, false, UL_TABLE_STRING) \
+    X(UL_LSFD_PID, UNSIGNED, descriptor->process->pid, \
+      "pid", "PID", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSFD_USER, TEXT, descriptor->user, \
+      "user", "USER", 0, false, UL_TABLE_STRING) \
+    X(UL_LSFD_FD, UNSIGNED, descriptor->fd, \
+      "fd", "FD", 2, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSFD_MODE, CUSTOM, 0, \
+      "mode", "MODE", 4, false, UL_TABLE_STRING) \
+    X(UL_LSFD_XMODE, CUSTOM, 0, \
+      "xmode", "XMODE", 6, false, UL_TABLE_STRING) \
+    X(UL_LSFD_TYPE, TEXT, descriptor->type, \
+      "type", "TYPE", 5, false, UL_TABLE_STRING) \
+    X(UL_LSFD_NAME, TEXT, descriptor->name, \
+      "name", "NAME", 0, false, UL_TABLE_STRING) \
+    X(UL_LSFD_KNAME, TEXT, descriptor->name, \
+      "kname", "KNAME", 0, false, UL_TABLE_STRING) \
+    X(UL_LSFD_INODE, UNSIGNED, descriptor->inode, \
+      "inode", "INODE", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSFD_DEVICE, CUSTOM, 0, \
+      "maj:min", "MAJ:MIN", 7, false, UL_TABLE_STRING) \
+    X(UL_LSFD_MNTID, CUSTOM, 0, \
+      "mntid", "MNTID", 5, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSFD_SIZE, UNSIGNED, descriptor->size, \
+      "size", "SIZE", 4, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSFD_POS, CUSTOM, 0, \
+      "pos", "POS", 3, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSFD_UID, UNSIGNED, descriptor->process->uid, \
+      "uid", "UID", 3, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSFD_DELETED, BOOLEAN, descriptor->deleted, \
+      "deleted", "DELETED", 7, false, UL_TABLE_BOOLEAN, .decimal = true)
+
 enum
 {
-        UL_LSFD_COMMAND,
-        UL_LSFD_PID,
-        UL_LSFD_USER,
-        UL_LSFD_FD,
-        UL_LSFD_MODE,
-        UL_LSFD_XMODE,
-        UL_LSFD_TYPE,
-        UL_LSFD_NAME,
-        UL_LSFD_KNAME,
-        UL_LSFD_INODE,
-        UL_LSFD_DEVICE,
-        UL_LSFD_MNTID,
-        UL_LSFD_SIZE,
-        UL_LSFD_POS,
-        UL_LSFD_UID,
-        UL_LSFD_DELETED,
+        UL_LSFD_FIELDS(UL_TABLE_ID)
         UL_LSFD_COLUMNS,
 };
 
 static const ul_table_column ul_lsfd_columns[] = {
-    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
-    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
-    {(string_address)"fd", (string_address)"FD", 2, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"mode", (string_address)"MODE", 4, false, UL_TABLE_STRING},
-    {(string_address)"xmode", (string_address)"XMODE", 6, false, UL_TABLE_STRING},
-    {(string_address)"type", (string_address)"TYPE", 5, false, UL_TABLE_STRING},
-    {(string_address)"name", (string_address)"NAME", 0, false, UL_TABLE_STRING},
-    {(string_address)"kname", (string_address)"KNAME", 0, false, UL_TABLE_STRING},
-    {(string_address)"inode", (string_address)"INODE", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"maj:min", (string_address)"MAJ:MIN", 7, false, UL_TABLE_STRING},
-    {(string_address)"mntid", (string_address)"MNTID", 5, true, UL_TABLE_NULL_NUMBER},
-    {(string_address)"size", (string_address)"SIZE", 4, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"pos", (string_address)"POS", 3, true, UL_TABLE_NULL_NUMBER},
-    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"deleted", (string_address)"DELETED", 7, false, UL_TABLE_BOOLEAN, .decimal = true},
+    UL_LSFD_FIELDS(UL_TABLE_DEFINITION)
 };
 
 typedef struct
@@ -5225,16 +5243,7 @@ static string_address ul_lsfd_field(address_any row, p8 column,
 
         switch (column)
         {
-        case UL_LSFD_COMMAND:
-                return descriptor->process->command;
-        case UL_LSFD_PID:
-                positive_into_string(scratch, descriptor->process->pid);
-                return scratch;
-        case UL_LSFD_USER:
-                return descriptor->user;
-        case UL_LSFD_FD:
-                positive_into_string(scratch, descriptor->fd);
-                return scratch;
+        UL_LSFD_FIELDS(UL_TABLE_PROJECT)
         case UL_LSFD_MODE:
                 if (!descriptor->access_known)
                         return (string_address)"";
@@ -5247,14 +5256,6 @@ static string_address ul_lsfd_field(address_any row, p8 column,
                 return descriptor->access == 0 ? (string_address)"r-----"
                      : descriptor->access == 1 ? (string_address)"-w----"
                                                : (string_address)"rw----";
-        case UL_LSFD_TYPE:
-                return descriptor->type;
-        case UL_LSFD_NAME:
-        case UL_LSFD_KNAME:
-                return descriptor->name;
-        case UL_LSFD_INODE:
-                positive_into_string(scratch, (positive)descriptor->inode);
-                return scratch;
         case UL_LSFD_DEVICE:
         {
                 positive at = positive_into_string(scratch, descriptor->major);
@@ -5267,16 +5268,10 @@ static string_address ul_lsfd_field(address_any row, p8 column,
                         return (string_address)"";
                 positive_into_string(scratch, (positive)descriptor->mount_id);
                 return scratch;
-        case UL_LSFD_SIZE:
-                positive_into_string(scratch, (positive)descriptor->size);
-                return scratch;
         case UL_LSFD_POS:
                 if (!descriptor->position_known)
                         return (string_address)"";
                 positive_into_string(scratch, (positive)descriptor->position);
-                return scratch;
-        case UL_LSFD_UID:
-                positive_into_string(scratch, descriptor->process->uid);
                 return scratch;
         default:
                 return descriptor->deleted ? (string_address)"1"
@@ -11202,86 +11197,90 @@ static bool ul_lsblk_tree;
 static bool ul_lsblk_json;
 static bool ul_lsblk_paths;
 
+#define UL_LSBLK_FIELDS(X) \
+    X(UL_LSBLK_NAME, CUSTOM, 0, \
+      "name", "NAME", 0, false, UL_TABLE_STRING) \
+    X(UL_LSBLK_KNAME, TEXT, device->kname, \
+      "kname", "KNAME", 0, false, UL_TABLE_STRING) \
+    X(UL_LSBLK_PATH, TEXT, device->path, \
+      "path", "PATH", 0, false, UL_TABLE_STRING) \
+    X(UL_LSBLK_MAJMIN, CUSTOM, 0, \
+      "maj:min", "MAJ:MIN", 0, false, UL_TABLE_STRING) \
+    X(UL_LSBLK_RM, BOOLEAN, device->removable, \
+      "rm", "RM", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+    X(UL_LSBLK_SIZE, CUSTOM, 0, \
+      "size", "SIZE", 4, true, UL_TABLE_STRING) \
+    X(UL_LSBLK_RO, BOOLEAN, device->read_only, \
+      "ro", "RO", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+    X(UL_LSBLK_TYPE, NULL_TEXT, device->type, \
+      "type", "TYPE", 0, false, UL_TABLE_STRING) \
+    X(UL_LSBLK_MOUNTPOINT, CUSTOM, 0, \
+      "mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_MOUNTPOINTS, NULL_TEXT, device->mount_text, \
+      "mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true) \
+    X(UL_LSBLK_FSTYPE, NULL_TEXT, device->fstype, \
+      "fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_FSVER, NULL_TEXT, device->fsver, \
+      "fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_LABEL, NULL_TEXT, device->label, \
+      "label", "LABEL", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_UUID, NULL_TEXT, device->uuid, \
+      "uuid", "UUID", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_PARTUUID, NULL_TEXT, device->partuuid, \
+      "partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_PARTLABEL, NULL_TEXT, device->partlabel, \
+      "partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_FSAVAIL, CUSTOM, 0, \
+      "fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_FSUSE, CUSTOM, 0, \
+      "fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_OWNER, NULL_TEXT, device->owner, \
+      "owner", "OWNER", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_GROUP, NULL_TEXT, device->group, \
+      "group", "GROUP", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_MODE, NULL_TEXT, device->mode, \
+      "mode", "MODE", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_ALIGNMENT, UNSIGNED, device->alignment, \
+      "alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSBLK_MINIO, UNSIGNED, device->minimum_io, \
+      "min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSBLK_OPTIO, UNSIGNED, device->optimal_io, \
+      "opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSBLK_PHYSEC, UNSIGNED, device->physical_sector, \
+      "phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSBLK_LOGSEC, UNSIGNED, device->logical_sector, \
+      "log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSBLK_ROTA, UNSIGNED, device->rotational, \
+      "rota", "ROTA", 0, true, UL_TABLE_BOOLEAN, .decimal = true) \
+    X(UL_LSBLK_SCHED, NULL_TEXT, device->scheduler, \
+      "sched", "SCHED", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_RQSIZE, CUSTOM, 0, \
+      "rq-size", "RQ-SIZE", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSBLK_RA, UNSIGNED, device->read_ahead, \
+      "ra", "RA", 0, true, UL_TABLE_NULL_NUMBER, .decimal = true) \
+    X(UL_LSBLK_WSAME, CUSTOM, 0, \
+      "wsame", "WSAME", 0, true, UL_TABLE_STRING) \
+    X(UL_LSBLK_TRAN, NULL_TEXT, device->transport, \
+      "tran", "TRAN", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_VENDOR, NULL_TEXT, device->vendor, \
+      "vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_MODEL, NULL_TEXT, device->model, \
+      "model", "MODEL", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_REV, NULL_TEXT, device->revision, \
+      "rev", "REV", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_SERIAL, NULL_TEXT, device->serial, \
+      "serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSBLK_HCTL, NULL_TEXT, device->hctl, \
+      "hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING)
+
 enum
 {
-        UL_LSBLK_NAME,
-        UL_LSBLK_KNAME,
-        UL_LSBLK_PATH,
-        UL_LSBLK_MAJMIN,
-        UL_LSBLK_RM,
-        UL_LSBLK_SIZE,
-        UL_LSBLK_RO,
-        UL_LSBLK_TYPE,
-        UL_LSBLK_MOUNTPOINT,
-        UL_LSBLK_MOUNTPOINTS,
-        UL_LSBLK_FSTYPE,
-        UL_LSBLK_FSVER,
-        UL_LSBLK_LABEL,
-        UL_LSBLK_UUID,
-        UL_LSBLK_PARTUUID,
-        UL_LSBLK_PARTLABEL,
-        UL_LSBLK_FSAVAIL,
-        UL_LSBLK_FSUSE,
-        UL_LSBLK_OWNER,
-        UL_LSBLK_GROUP,
-        UL_LSBLK_MODE,
-        UL_LSBLK_ALIGNMENT,
-        UL_LSBLK_MINIO,
-        UL_LSBLK_OPTIO,
-        UL_LSBLK_PHYSEC,
-        UL_LSBLK_LOGSEC,
-        UL_LSBLK_ROTA,
-        UL_LSBLK_SCHED,
-        UL_LSBLK_RQSIZE,
-        UL_LSBLK_RA,
-        UL_LSBLK_WSAME,
-        UL_LSBLK_TRAN,
-        UL_LSBLK_VENDOR,
-        UL_LSBLK_MODEL,
-        UL_LSBLK_REV,
-        UL_LSBLK_SERIAL,
-        UL_LSBLK_HCTL,
+        UL_LSBLK_FIELDS(UL_TABLE_ID)
         UL_LSBLK_COLUMNS,
 };
 
 static const ul_table_column ul_lsblk_columns[] = {
-    {"name", "NAME", 0, false, UL_TABLE_STRING},
-    {"kname", "KNAME", 0, false, UL_TABLE_STRING},
-    {"path", "PATH", 0, false, UL_TABLE_STRING},
-    {"maj:min", "MAJ:MIN", 0, false, UL_TABLE_STRING},
-    {"rm", "RM", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
-    {"size", "SIZE", 4, true, UL_TABLE_STRING},
-    {"ro", "RO", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
-    {"type", "TYPE", 0, false, UL_TABLE_STRING},
-    {"mountpoint", "MOUNTPOINT", 0, false, UL_TABLE_NULL_STRING},
-    {"mountpoints", "MOUNTPOINTS", 0, false, UL_TABLE_NULL_STRING, true},
-    {"fstype", "FSTYPE", 0, false, UL_TABLE_NULL_STRING},
-    {"fsver", "FSVER", 0, false, UL_TABLE_NULL_STRING},
-    {"label", "LABEL", 0, false, UL_TABLE_NULL_STRING},
-    {"uuid", "UUID", 0, false, UL_TABLE_NULL_STRING},
-    {"partuuid", "PARTUUID", 0, false, UL_TABLE_NULL_STRING},
-    {"partlabel", "PARTLABEL", 0, false, UL_TABLE_NULL_STRING},
-    {"fsavail", "FSAVAIL", 0, true, UL_TABLE_NULL_STRING},
-    {"fsuse%", "FSUSE%", 0, true, UL_TABLE_NULL_STRING},
-    {"owner", "OWNER", 0, false, UL_TABLE_NULL_STRING},
-    {"group", "GROUP", 0, false, UL_TABLE_NULL_STRING},
-    {"mode", "MODE", 0, false, UL_TABLE_NULL_STRING},
-    {"alignment", "ALIGNMENT", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {"min-io", "MIN-IO", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {"opt-io", "OPT-IO", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {"phy-sec", "PHY-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {"log-sec", "LOG-SEC", 0, true, UL_TABLE_NUMBER, .decimal = true},
-    {"rota", "ROTA", 0, true, UL_TABLE_BOOLEAN, .decimal = true},
-    {"sched", "SCHED", 0, false, UL_TABLE_NULL_STRING},
-    {"rq-size", "RQ-SIZE", 0, true, UL_TABLE_NULL_NUMBER},
-    {"ra", "RA", 0, true, UL_TABLE_NULL_NUMBER, .decimal = true},
-    {"wsame", "WSAME", 0, true, UL_TABLE_STRING},
-    {"tran", "TRAN", 0, false, UL_TABLE_NULL_STRING},
-    {"vendor", "VENDOR", 0, false, UL_TABLE_NULL_STRING},
-    {"model", "MODEL", 0, false, UL_TABLE_NULL_STRING},
-    {"rev", "REV", 0, false, UL_TABLE_NULL_STRING},
-    {"serial", "SERIAL", 0, false, UL_TABLE_NULL_STRING},
-    {"hctl", "HCTL", 0, false, UL_TABLE_NULL_STRING},
+    UL_LSBLK_FIELDS(UL_TABLE_DEFINITION)
 };
 
 static fn ul_lsblk_sysfs(p8 address_to path, string_address name,
@@ -11846,6 +11845,7 @@ static string_address ul_lsblk_field(address_any row, p8 column,
         string_address blank = (string_address)"";
         switch (column)
         {
+        UL_LSBLK_FIELDS(UL_TABLE_PROJECT)
         case UL_LSBLK_NAME:
         {
                 string_address name = ul_lsblk_paths ? device->path
@@ -11869,8 +11869,6 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 memory_copy(scratch + used, name, length + 1);
                 return scratch;
         }
-        case UL_LSBLK_KNAME: return device->kname;
-        case UL_LSBLK_PATH: return device->path;
         case UL_LSBLK_MAJMIN:
         {
                 positive used = positive_into_string(scratch, device->major);
@@ -11879,22 +11877,11 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 scratch[used] = end;
                 return scratch;
         }
-        case UL_LSBLK_RM: return device->removable ? (string_address)"1" : (string_address)"0";
         case UL_LSBLK_SIZE:
                 return ul_lscpu_cache_size(device->size, ul_lsblk_bytes,
                                             false);
-        case UL_LSBLK_RO: return device->read_only ? (string_address)"1" : (string_address)"0";
-        case UL_LSBLK_TYPE: return device->type ? device->type : blank;
         case UL_LSBLK_MOUNTPOINT:
                 return device->mount_count ? device->mountpoints[0] : blank;
-        case UL_LSBLK_MOUNTPOINTS:
-                return device->mount_text ? device->mount_text : blank;
-        case UL_LSBLK_FSTYPE: return device->fstype ? device->fstype : blank;
-        case UL_LSBLK_FSVER: return device->fsver ? device->fsver : blank;
-        case UL_LSBLK_LABEL: return device->label ? device->label : blank;
-        case UL_LSBLK_UUID: return device->uuid ? device->uuid : blank;
-        case UL_LSBLK_PARTUUID: return device->partuuid ? device->partuuid : blank;
-        case UL_LSBLK_PARTLABEL: return device->partlabel ? device->partlabel : blank;
         case UL_LSBLK_FSAVAIL:
                 if (!device->fs_measured) return blank;
                 /* util-linux keeps a measured zero unitless (including in
@@ -11907,40 +11894,16 @@ static string_address ul_lsblk_field(address_any row, p8 column,
                 positive_into_string(scratch, device->fs_use);
                 string_copy_end(scratch + string_length(scratch), "%");
                 return scratch;
-        case UL_LSBLK_OWNER: return device->owner ? device->owner : blank;
-        case UL_LSBLK_GROUP: return device->group ? device->group : blank;
-        case UL_LSBLK_MODE: return device->mode ? device->mode : blank;
-        case UL_LSBLK_SCHED:
-                return device->scheduler ? device->scheduler : blank;
-        case UL_LSBLK_TRAN:
-                return device->transport ? device->transport : blank;
-        case UL_LSBLK_VENDOR: return device->vendor ? device->vendor : blank;
-        case UL_LSBLK_MODEL: return device->model ? device->model : blank;
-        case UL_LSBLK_REV: return device->revision ? device->revision : blank;
-        case UL_LSBLK_SERIAL: return device->serial ? device->serial : blank;
-        case UL_LSBLK_HCTL: return device->hctl ? device->hctl : blank;
         case UL_LSBLK_WSAME:
                 return ul_lscpu_cache_size(device->write_same,
                                             ul_lsblk_bytes, false);
-        default:
-        {
-                positive value = 0;
-                switch (column)
-                {
-                case UL_LSBLK_ALIGNMENT: value = device->alignment; break;
-                case UL_LSBLK_MINIO: value = device->minimum_io; break;
-                case UL_LSBLK_OPTIO: value = device->optimal_io; break;
-                case UL_LSBLK_PHYSEC: value = device->physical_sector; break;
-                case UL_LSBLK_LOGSEC: value = device->logical_sector; break;
-                case UL_LSBLK_ROTA: value = device->rotational; break;
-                case UL_LSBLK_RQSIZE: value = device->request_size; break;
-                default: value = device->read_ahead; break;
-                }
-                if (column == UL_LSBLK_RQSIZE && !value)
-                        return blank;
-                positive_into_string(scratch, value);
+        case UL_LSBLK_RQSIZE:
+                if (!device->request_size) return blank;
+                positive_into_string(scratch, device->request_size);
                 return scratch;
-        }
+        default:
+                positive_into_string(scratch, device->read_ahead);
+                return scratch;
         }
 }
 
@@ -12445,70 +12408,74 @@ static bool ul_ipc_snapshot_load(positive types)
         return okay;
 }
 
+#define UL_IPC_FIELDS(X) \
+    X(UL_IPC_KEY, TEXT, ul_ipc_key(scratch, row->key), \
+      "key", "KEY", 10, false, UL_TABLE_STRING) \
+    X(UL_IPC_ID, UNSIGNED, row->id, \
+      "id", "ID", 0, false, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_PERMS, TEXT, ul_ipc_permissions(scratch, row->mode), \
+      "perms", "PERMS", 9, true, UL_TABLE_STRING) \
+    X(UL_IPC_OWNER, TEXT, ul_ipc_account(scratch, row->uid, false, true), \
+      "owner", "OWNER", 5, true, UL_TABLE_STRING) \
+    X(UL_IPC_CUID, UNSIGNED, row->cuid, \
+      "cuid", "CUID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_CUSER, TEXT, ul_ipc_account(scratch, row->cuid, false, true), \
+      "cuser", "CUSER", 0, false, UL_TABLE_STRING) \
+    X(UL_IPC_CGID, UNSIGNED, row->cgid, \
+      "cgid", "CGID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_CGROUP, TEXT, ul_ipc_account(scratch, row->cgid, true, true), \
+      "cgroup", "CGROUP", 0, false, UL_TABLE_STRING) \
+    X(UL_IPC_UID, UNSIGNED, row->uid, \
+      "uid", "UID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_USER, TEXT, ul_ipc_account(scratch, row->uid, false, true), \
+      "user", "USER", 0, false, UL_TABLE_STRING) \
+    X(UL_IPC_GID, UNSIGNED, row->gid, \
+      "gid", "GID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_GROUP, TEXT, ul_ipc_account(scratch, row->gid, true, true), \
+      "group", "GROUP", 0, false, UL_TABLE_STRING) \
+    X(UL_IPC_CTIME, TEXT, ul_ipc_time(scratch, row->change_time), \
+      "ctime", "CTIME", 5, false, UL_TABLE_STRING) \
+    X(UL_IPC_SIZE, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
+      "size", "SIZE", 0, true, UL_TABLE_STRING) \
+    X(UL_IPC_NATTCH, UNSIGNED, row->count, \
+      "nattch", "NATTCH", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_STATUS, TEXT, (string_address)"", \
+      "status", "STATUS", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_ATTACH, TEXT, ul_ipc_time(scratch, row->time_one), \
+      "attach", "ATTACH", 5, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_DETACH, TEXT, ul_ipc_time(scratch, row->time_two), \
+      "detach", "DETACH", 5, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_COMMAND, TEXT, (string_address)"", \
+      "command", "COMMAND", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_CPID, UNSIGNED, row->pid_one, \
+      "cpid", "CPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_LPID, UNSIGNED, row->pid_two, \
+      "lpid", "LPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_USEDBYTES, TEXT, ul_lscpu_cache_size(row->size, ul_ipc_bytes, false), \
+      "usedbytes", "USEDBYTES", 0, true, UL_TABLE_STRING) \
+    X(UL_IPC_MSGS, UNSIGNED, row->count, \
+      "msgs", "MSGS", 0, false, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_SEND, TEXT, ul_ipc_time(scratch, row->time_one), \
+      "send", "SEND", 4, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_RECV, TEXT, ul_ipc_time(scratch, row->time_two), \
+      "recv", "RECV", 4, false, UL_TABLE_NULL_STRING) \
+    X(UL_IPC_LSPID, UNSIGNED, row->pid_one, \
+      "lspid", "LSPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_LRPID, UNSIGNED, row->pid_two, \
+      "lrpid", "LRPID", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_NSEMS, UNSIGNED, row->count, \
+      "nsems", "NSEMS", 0, true, UL_TABLE_STRING, .decimal = true) \
+    X(UL_IPC_OTIME, TEXT, ul_ipc_time(scratch, row->time_one), \
+      "otime", "OTIME", 5, false, UL_TABLE_NULL_STRING)
+
 enum
 {
-        UL_IPC_KEY,
-        UL_IPC_ID,
-        UL_IPC_PERMS,
-        UL_IPC_OWNER,
-        UL_IPC_CUID,
-        UL_IPC_CUSER,
-        UL_IPC_CGID,
-        UL_IPC_CGROUP,
-        UL_IPC_UID,
-        UL_IPC_USER,
-        UL_IPC_GID,
-        UL_IPC_GROUP,
-        UL_IPC_CTIME,
-        UL_IPC_SIZE,
-        UL_IPC_NATTCH,
-        UL_IPC_STATUS,
-        UL_IPC_ATTACH,
-        UL_IPC_DETACH,
-        UL_IPC_COMMAND,
-        UL_IPC_CPID,
-        UL_IPC_LPID,
-        UL_IPC_USEDBYTES,
-        UL_IPC_MSGS,
-        UL_IPC_SEND,
-        UL_IPC_RECV,
-        UL_IPC_LSPID,
-        UL_IPC_LRPID,
-        UL_IPC_NSEMS,
-        UL_IPC_OTIME,
+        UL_IPC_FIELDS(UL_TABLE_ID)
         UL_IPC_COLUMNS,
 };
 
 static const ul_table_column ul_ipc_columns[] = {
-    {"key", "KEY", 10, false, UL_TABLE_STRING},
-    {"id", "ID", 0, false, UL_TABLE_STRING, .decimal = true},
-    {"perms", "PERMS", 9, true, UL_TABLE_STRING},
-    {"owner", "OWNER", 5, true, UL_TABLE_STRING},
-    {"cuid", "CUID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"cuser", "CUSER", 0, false, UL_TABLE_STRING},
-    {"cgid", "CGID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"cgroup", "CGROUP", 0, false, UL_TABLE_STRING},
-    {"uid", "UID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"user", "USER", 0, false, UL_TABLE_STRING},
-    {"gid", "GID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"group", "GROUP", 0, false, UL_TABLE_STRING},
-    {"ctime", "CTIME", 5, false, UL_TABLE_STRING},
-    {"size", "SIZE", 0, true, UL_TABLE_STRING},
-    {"nattch", "NATTCH", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"status", "STATUS", 0, false, UL_TABLE_NULL_STRING},
-    {"attach", "ATTACH", 5, false, UL_TABLE_NULL_STRING},
-    {"detach", "DETACH", 5, false, UL_TABLE_NULL_STRING},
-    {"command", "COMMAND", 0, false, UL_TABLE_NULL_STRING},
-    {"cpid", "CPID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"lpid", "LPID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"usedbytes", "USEDBYTES", 0, true, UL_TABLE_STRING},
-    {"msgs", "MSGS", 0, false, UL_TABLE_STRING, .decimal = true},
-    {"send", "SEND", 4, false, UL_TABLE_NULL_STRING},
-    {"recv", "RECV", 4, false, UL_TABLE_NULL_STRING},
-    {"lspid", "LSPID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"lrpid", "LRPID", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"nsems", "NSEMS", 0, true, UL_TABLE_STRING, .decimal = true},
-    {"otime", "OTIME", 5, false, UL_TABLE_NULL_STRING},
+    UL_IPC_FIELDS(UL_TABLE_DEFINITION)
 };
 
 static string_address ul_ipc_key(p8 address_to text, p64 key)
@@ -12567,38 +12534,7 @@ static string_address ul_ipc_field(address_any opaque, p8 column,
         ul_ipc_row address_to row = (ul_ipc_row address_to)opaque;
         switch (column)
         {
-        case UL_IPC_KEY: return ul_ipc_key(scratch, row->key);
-        case UL_IPC_ID: positive_into_string(scratch, row->id); return scratch;
-        case UL_IPC_PERMS: return ul_ipc_permissions(scratch, row->mode);
-        case UL_IPC_OWNER: return ul_ipc_account(scratch, row->uid, false, true);
-        case UL_IPC_CUID: positive_into_string(scratch, row->cuid); return scratch;
-        case UL_IPC_CUSER: return ul_ipc_account(scratch, row->cuid, false, true);
-        case UL_IPC_CGID: positive_into_string(scratch, row->cgid); return scratch;
-        case UL_IPC_CGROUP: return ul_ipc_account(scratch, row->cgid, true, true);
-        case UL_IPC_UID: positive_into_string(scratch, row->uid); return scratch;
-        case UL_IPC_USER: return ul_ipc_account(scratch, row->uid, false, true);
-        case UL_IPC_GID: positive_into_string(scratch, row->gid); return scratch;
-        case UL_IPC_GROUP: return ul_ipc_account(scratch, row->gid, true, true);
-        case UL_IPC_CTIME: return ul_ipc_time(scratch, row->change_time);
-        case UL_IPC_SIZE:
-                return ul_lscpu_cache_size(row->size, ul_ipc_bytes, false);
-        case UL_IPC_NATTCH:
-        case UL_IPC_MSGS:
-        case UL_IPC_NSEMS:
-                positive_into_string(scratch, row->count); return scratch;
-        case UL_IPC_STATUS: return (string_address)"";
-        case UL_IPC_ATTACH:
-        case UL_IPC_SEND:
-        case UL_IPC_OTIME: return ul_ipc_time(scratch, row->time_one);
-        case UL_IPC_DETACH:
-        case UL_IPC_RECV: return ul_ipc_time(scratch, row->time_two);
-        case UL_IPC_COMMAND: return (string_address)"";
-        case UL_IPC_CPID:
-        case UL_IPC_LSPID:
-                positive_into_string(scratch, row->pid_one); return scratch;
-        case UL_IPC_LPID:
-        case UL_IPC_LRPID:
-                positive_into_string(scratch, row->pid_two); return scratch;
+        UL_IPC_FIELDS(UL_TABLE_PROJECT)
         default:
                 return ul_lscpu_cache_size(row->size, ul_ipc_bytes, false);
         }

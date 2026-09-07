@@ -518,6 +518,33 @@ compare 'printf precision on an integer' /dev/null 'BEGIN{printf "[%.5d][%.0d]\n
 compare 'printf no newline' /dev/null 'BEGIN{printf "%s", "x"}'
 compare 'printf zero and minus' /dev/null 'BEGIN{printf "[%05.1f][%-8.3e][%+.2f]\n", -3.14159, 0.000123, -0}'
 compare 'printf builder grows' /dev/null 'BEGIN{printf "[%1500s][%01500d][%-1500s]\n", "x", 7, "y"}'
+
+# Bound the processes before asking for multi-gigabyte fields. They must
+# refuse allocation, not overflow signed lengths or silently omit padding.
+for bounded_format in \
+        'sprintf("%*s",-2147483648,"x")' \
+        'sprintf("%*s",-2147483649,"x")' \
+        'sprintf("%0*d",-2147483648,7)' \
+        'sprintf("%*s",2147483647,"x")' \
+        'sprintf("%2147483648s","x")' \
+        'sprintf("%+.*d",2147483647,7)' \
+        'sprintf("%.2147483648d",7)'
+do
+        bounded_program="BEGIN{print length($bounded_format)}"
+        (ulimit -v 32768 && ulimit -t 2 && ulimit -c 0 && awk "$bounded_program") \
+                > "$work/want" 2> "$work/want-error"
+        want_status=$?
+        (ulimit -v 32768 && ulimit -t 2 && ulimit -c 0 && "$ours" "$bounded_program") \
+                > "$work/got" 2> "$work/got-error"
+        got_status=$?
+        if [ "$want_status" = 2 ] && [ "$got_status" = 2 ] &&
+                [ ! -s "$work/want" ] && [ ! -s "$work/got" ] &&
+                [ -s "$work/want-error" ] && [ -s "$work/got-error" ]; then
+                pass=$((pass + 1))
+        else
+                report "bounded $bounded_format"
+        fi
+done
 compare 'ofmt' /dev/null 'BEGIN{OFMT="%.2f"; print 3.14159; print 3.14159 ""}'
 compare 'convfmt' /dev/null 'BEGIN{CONVFMT="%.2g"; x=3.14159; print x ""; print x}'
 compare 'ofmt leaves integers' /dev/null 'BEGIN{OFMT="%.2f"; print 3, 3.0, 100000}'

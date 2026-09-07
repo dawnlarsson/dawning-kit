@@ -981,31 +981,69 @@ static env_variable address_to env_export_take(const_string name,
                                       env_name_hash(name, length));
 }
 
-// Snapshot value and metadata in one probe, including an unassigned declaration.
-string_address env_saved_state(const_string name, positive length,
-                               bool address_to exported, p8 address_to kind,
-                               b32 address_to array, bool address_to declared)
+/* A saved binding owns one cell for its name/value and one array reference.
+   Scope policy stays with its owner; payload lifetime is the same everywhere. */
+typedef struct
 {
+        string_address name, value;
+        positive name_length, value_length;
+        bool exported, declared;
+        p8 attributes;
+        b32 array;
+} shell_binding;
+
+// The borrowed view is copied before an operation can replace its cells.
+static shell_binding env_saved_state(const_string name, positive length)
+{
+        shell_binding saved = {.name = (string_address)name, .name_length = length};
         positive found = env_find_span(name, length);
-
-        if (found >= shell_var_count)
+        if (found < shell_var_count)
         {
-                address_to exported = false;
-                address_to kind = 0;
-                address_to array = 0;
-                *declared = false;
-                return null;
+                env_variable address_to variable = shell_vars + found;
+                saved.exported = variable->permanent;
+                saved.declared = variable->declared;
+                saved.attributes = variable->attributes;
+                saved.array = variable->array;
+                if (env_variable_has_value(variable))
+                        saved.value = variable->text + length + 1;
         }
+        return saved;
+}
 
-        address_to exported = shell_vars[found].permanent;
-        address_to kind = shell_vars[found].attributes;
-        address_to array = shell_vars[found].array;
-        *declared = shell_vars[found].declared;
+static bool shell_binding_hold(shell_binding address_to saved, positive extra)
+{
+        string_address name = saved->name, value = saved->value;
+        positive length = saved->name_length;
+        positive size = value ? string_length(value) : 0;
+        if (length > positive_max - 2 || size > positive_max - length - 2 ||
+            extra > positive_max - length - size - 2)
+                return false;
+        env_cell address_to cell = env_cell_take(length + size + extra + 2);
+        if (!cell)
+                return false;
+        b32 array = array_table_hold(saved->array);
+        if (array < 0)
+        {
+                env_cell_drop((string_address)(cell + 1));
+                return false;
+        }
+        saved->name = (string_address)(cell + 1);
+        memory_copy_end(saved->name, name, length);
+        saved->name_length = length;
+        saved->value_length = size;
+        saved->value = value ? saved->name + length + 1 : null;
+        if (value)
+                memory_copy_end(saved->value, value, size);
+        saved->array = array;
+        return true;
+}
 
-        if (!env_variable_has_value(shell_vars + found))
-                return null;
-
-        return shell_vars[found].text + length + 1;
+static fn shell_binding_drop(shell_binding address_to saved)
+{
+        array_table_release(saved->array);
+        env_cell_drop(saved->name);
+        saved->array = 0;
+        saved->name = null;
 }
 
 static bool env_declare(string_address name, positive length)
@@ -4754,6 +4792,18 @@ static bool env_value_restore(string_address name, positive length,
         return true;
 }
 
+/* Consume the retained table while keeping the name/value alive for callers
+   that restore private state before releasing the copied cell. */
+static bool shell_binding_restore(shell_binding address_to saved)
+{
+        bool answer = env_value_restore(saved->name, saved->name_length,
+            saved->value, saved->attributes, saved->array);
+        saved->array = 0;
+        env_declare_restore(saved->name, saved->declared);
+        env_export_restore(saved->name, saved->exported);
+        return answer;
+}
+
 bool env_set_number(string_address name, positive value)
 {
         p8 text[24];
@@ -5966,24 +6016,13 @@ COLD fn shell_unset(writer write, string_address input)
 */
 typedef struct
 {
-        p8 address_to text;
-        positive name_length;
-        positive value_length;
-        bool exported;
-        bool declared;
-        bool present;
+        shell_binding binding;
         bool detached;
-        // What kind of name it was, and the elements it held. An array
-        // local has to come back as the array it was and not as the string
-        // its element zero happened to be.
-        p8 attributes;
-        b32 array;
 } shell_local_entry;
 
 static shell_local_entry address_to local_table;
 static positive local_room;
 static positive local_count;
-static positive local_initialized;
 static positive address_to local_from;
 static positive local_from_room;
 static positive local_depth;
@@ -5995,8 +6034,8 @@ static PURE bool local_getopts_scope(string_address name, positive length)
 
 static PURE p8 address_to local_getopts_saved(shell_local_entry address_to entry)
 {
-        return entry->text + entry->name_length + 1 +
-               (entry->present ? entry->value_length + 1 : 0);
+        return entry->binding.name + entry->binding.name_length + 1 +
+               (entry->binding.value ? entry->binding.value_length + 1 : 0);
 }
 
 /* A fresh Bash local hides the value and attributes, but inherits export
@@ -6056,61 +6095,21 @@ fn shell_local_leave()
         if (!local_depth)
                 return;
         local_depth--;
-        positive at = local_count;
-        while (at > local_from[local_depth])
+        while (local_count > local_from[local_depth])
         {
-                shell_local_entry address_to entry = local_table + --at;
-                string_address name = entry->text;
-                positive length = entry->name_length;
-                if (entry->detached)
+                shell_local_entry address_to entry = local_table + --local_count;
+                if (!entry->detached)
                 {
-                        array_table_release(entry->array);
-                        entry->array = 0;
-                        continue;
+                        shell_binding_restore(&entry->binding);
+                        if (local_getopts_scope(entry->binding.name, entry->binding.name_length))
+                        {
+                                shell_getopts_state saved;
+                                memory_copy(&saved, local_getopts_saved(entry), sizeof(saved));
+                                shell_getopts_restore(saved);
+                        }
                 }
-                env_value_restore(name, length,
-                                  entry->present ? name + length + 1 : null,
-                                  entry->attributes, entry->array);
-                entry->array = 0;
-
-                env_export_restore(name, local_table[at].exported);
-                env_declare_restore(name, local_table[at].declared);
-
-                if (local_getopts_scope(name, length))
-                {
-                        shell_getopts_state saved;
-                        memory_copy(address_of saved,
-                                    local_getopts_saved(local_table + at),
-                                    sizeof(saved));
-                        shell_getopts_restore(saved);
-                }
+                shell_binding_drop(&entry->binding);
         }
-
-        local_count = local_from[local_depth];
-}
-
-static bool local_text_room(shell_local_entry address_to entry,
-                            positive used, positive wanted)
-{
-        env_cell address_to old = entry->text
-                                      ? ((env_cell address_to)entry->text) - 1
-                                      : null;
-        env_cell address_to made;
-
-        if (old && old->room >= wanted)
-                return true;
-
-        made = env_cell_take(wanted);
-
-        if (!made)
-                return false;
-
-        if (used)
-                memory_copy(made + 1, entry->text, used);
-        if (old)
-                env_cell_drop(entry->text);
-        entry->text = (p8 address_to)(made + 1);
-        return true;
 }
 
 // -1 is allocation failure, zero was already local in this frame, and one is
@@ -6119,98 +6118,35 @@ static bool local_text_room(shell_local_entry address_to entry,
 static b32 local_remember(string_address name)
 {
         positive begin = local_depth ? local_from[local_depth - 1] : 0;
-        positive name_length;
-        positive value_length = 0;
-        positive wanted;
-        positive found;
-        positive2 name_info;
-        env_variable address_to variable;
-
-        // Twice in one function is once. Without this a local in a loop fills
-        // the table an iteration at a time.
         for (positive at = begin; at < local_count; at++)
-                if (!local_table[at].detached && !string_compare(local_table[at].text, name))
+                if (!local_table[at].detached && !string_compare(local_table[at].binding.name, name))
                         return 0;
-
         if (local_count == positive_max ||
             !shell_array_room(local_table, local_room, local_count + 1))
                 return -1;
 
-        if (local_count == local_initialized)
-        {
-                local_table[local_count].text = null;
-                local_initialized++;
-        }
-
-        name_info = string_hash_33_length(name);
-        name_length = name_info.y;
-        shell_pipe_status_wanted(name, name_length);
-        found = env_find_hashed_span(name, name_length, name_info.x);
-        variable = found < shell_var_count ? shell_vars + found : null;
-        local_table[local_count].exported =
-            variable && variable->permanent;
-        local_table[local_count].declared = variable && variable->declared;
+        positive length = string_length(name);
+        shell_pipe_status_wanted(name, length);
+        shell_binding address_to saved = &local_table[local_count].binding;
+        *saved = env_saved_state(name, length);
+        bool option_scope = local_getopts_scope(name, length);
+        if (!shell_binding_hold(saved, option_scope ? sizeof(shell_getopts_state) : 0))
+                return -1;
         local_table[local_count].detached = false;
-        local_table[local_count].present =
-            variable && env_variable_has_value(variable);
-        local_table[local_count].attributes =
-            variable ? variable->attributes : 0;
-
-        if (local_table[local_count].present)
-                value_length = variable->value_length;
-
-        if (name_length == positive_max ||
-            value_length > positive_max - name_length - 2)
-                return -1;
-
-        wanted = name_length + 1 +
-                 (local_table[local_count].present ? value_length + 1 : 0);
-
-        bool option_scope = local_getopts_scope(name, name_length);
-
         if (option_scope)
         {
-                if (wanted > positive_max - sizeof(shell_getopts_state))
-                        return -1;
-                wanted += sizeof(shell_getopts_state);
-        }
-
-        if (!local_text_room(local_table + local_count, 0, wanted))
-                return -1;
-
-        memory_copy_end(local_table[local_count].text, name, name_length);
-        local_table[local_count].name_length = name_length;
-        local_table[local_count].value_length = value_length;
-
-        if (local_table[local_count].present)
-                memory_copy_end(local_table[local_count].text + name_length + 1,
-                                variable->text + name_length + 1,
-                                value_length);
-
-        if (option_scope)
-        {
-                /* Only OPTIND needs a private cursor as well as its public
-                   value. Keep it in that local's existing cell, not in every
-                   local record or a second parallel scope registry. */
-                shell_getopts_state saved = shell_getopts_save();
-                memory_copy(local_getopts_saved(local_table + local_count),
-                            address_of saved, sizeof(saved));
+                shell_getopts_state option = shell_getopts_save();
+                memory_copy(local_getopts_saved(local_table + local_count), &option, sizeof(option));
                 shell_getopts_parameters_changed();
         }
-
-        local_table[local_count].array =
-            array_table_hold(variable ? variable->array : 0);
-        if (local_table[local_count].array < 0)
-                return -1;
         local_count++;
-
         return 1;
 }
 
 static PURE shell_local_entry address_to local_saved_global(string_address name)
 {
         for (positive at = 0; at < local_count; at++)
-                if (!local_table[at].detached && !string_compare(local_table[at].text, name))
+                if (!local_table[at].detached && !string_compare(local_table[at].binding.name, name))
                         return local_table + at;
 
         return null;
@@ -6219,32 +6155,27 @@ static PURE shell_local_entry address_to local_saved_global(string_address name)
 static bool local_saved_assign(shell_local_entry address_to entry,
                                string_address value, bool append)
 {
-        positive old_length = append && entry->present ? entry->value_length : 0;
-        positive add_length = string_length(value);
-        positive prefix = entry->name_length + 1;
-        bool option_scope = local_getopts_scope(entry->text, entry->name_length);
-        positive extra = option_scope ? sizeof(shell_getopts_state) : 0;
-        shell_getopts_state saved;
-
-        if (option_scope)
-                memory_copy(address_of saved, local_getopts_saved(entry),
-                            sizeof(saved));
-
-        if (add_length > positive_max - extra - 1 ||
-            old_length > positive_max - add_length - extra - 1 ||
-            prefix > positive_max - old_length - add_length - extra - 1 ||
-            !local_text_room(entry, prefix + old_length,
-                             prefix + old_length + add_length + extra + 1))
-                return false;
-
-        memory_copy_end(entry->text + prefix + old_length, value, add_length);
-        entry->value_length = old_length + add_length;
-        entry->present = true;
-        entry->declared = true;
-        if (option_scope)
-                memory_copy(local_getopts_saved(entry), address_of saved,
-                            sizeof(saved));
-        return true;
+        shell_binding updated = entry->binding;
+        bool option_scope = local_getopts_scope(updated.name, updated.name_length);
+        shell_mark mark = shell_store_mark(&expand_store);
+        if (append)
+                value = env_append_value(updated.value, value, 0);
+        updated.value = value;
+        bool answer = value && shell_binding_hold(&updated,
+            option_scope ? sizeof(shell_getopts_state) : 0);
+        if (answer)
+        {
+                shell_getopts_state option;
+                if (option_scope)
+                        memory_copy(&option, local_getopts_saved(entry), sizeof(option));
+                shell_binding_drop(&entry->binding);
+                entry->binding = updated;
+                entry->binding.declared = true;
+                if (option_scope)
+                        memory_copy(local_getopts_saved(entry), &option, sizeof(option));
+        }
+        shell_store_rewind(&expand_store, mark);
+        return answer;
 }
 
 #define DECLARE_EXPORT 1
@@ -6831,7 +6762,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         refuses to reinterpret the subscripts it already
                         holds rather than answering to both spellings.
                 */
-                held_attributes = saved_global ? saved_global->attributes
+                held_attributes = saved_global ? saved_global->binding.attributes
                                   : shell_variable_attributes(word, length);
 
                 if ((state->attributes_set & SHELL_ARRAY_NAMEREF) &&
@@ -6883,11 +6814,11 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                 goto no_room;
                         else
                         {
-                                saved_global->declared = true;
+                                saved_global->binding.declared = true;
                                 if (state->clear & DECLARE_EXPORT)
-                                        saved_global->exported = false;
+                                        saved_global->binding.exported = false;
                                 if (state->set & DECLARE_EXPORT)
-                                        saved_global->exported = true;
+                                        saved_global->binding.exported = true;
                         }
 
                         goto next;
@@ -6924,27 +6855,27 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                                 // Bash marks the global declaration, but an
                                 // element operand writes the visible local.
                                 if (held_attributes & SHELL_ARRAY_NAMEREF)
-                                        saved_global->present = false;
+                                        saved_global->binding.value = null;
                                 if (!(set & SHELL_ARRAY_EITHER) &&
                                     !(held_attributes & SHELL_ARRAY_EITHER))
                                         set |= SHELL_ARRAY_INDEXED;
-                                if ((set & SHELL_ARRAY_EITHER) && !saved_global->array)
+                                if ((set & SHELL_ARRAY_EITHER) && !saved_global->binding.array)
                                 {
-                                        saved_global->array = array_table_take();
-                                        if (!saved_global->array)
+                                        saved_global->binding.array = array_table_take();
+                                        if (!saved_global->binding.array)
                                                 goto no_room;
                                 }
-                                saved_global->attributes =
+                                saved_global->binding.attributes =
                                     (held_attributes & (p8)~(clear | SHELL_ARRAY_NAMEREF)) | set;
-                                if (mark || saved_global->present)
-                                        saved_global->attributes |= SHELL_ARRAY_ASSIGNED;
+                                if (mark || saved_global->binding.value)
+                                        saved_global->binding.attributes |= SHELL_ARRAY_ASSIGNED;
                                 if (state->set & DECLARE_READONLY)
-                                        saved_global->attributes |= SHELL_ARRAY_READONLY;
+                                        saved_global->binding.attributes |= SHELL_ARRAY_READONLY;
                                 if (state->clear & DECLARE_EXPORT)
-                                        saved_global->exported = false;
+                                        saved_global->binding.exported = false;
                                 if (state->set & DECLARE_EXPORT)
-                                        saved_global->exported = true;
-                                saved_global->declared = true;
+                                        saved_global->binding.exported = true;
+                                saved_global->binding.declared = true;
                                 set = clear = 0;
                         }
                         else

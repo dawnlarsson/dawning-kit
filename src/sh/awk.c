@@ -2038,14 +2038,14 @@ static fn awk_builder_char(awk_builder address_to build, p8 character)
         build->data[build->used++] = character;
 }
 
-static fn awk_builder_fill(awk_builder address_to build, p8 character, b32 count)
+static fn awk_builder_fill(awk_builder address_to build, p8 character, positive count)
 {
-        if (count <= 0)
+        if (!count)
                 return;
 
-        awk_builder_room(build, awk_size_add(build->used, (positive)count + 1));
-        memory_fill(build->data + build->used, character, (positive)count);
-        build->used += (positive)count;
+        awk_builder_room(build, awk_size_add(build->used, awk_size_add(count, 1)));
+        memory_fill(build->data + build->used, character, count);
+        build->used += count;
 }
 
 static awk_text address_to awk_builder_text(awk_builder address_to build)
@@ -2144,7 +2144,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 bool space = (flags & CONVERSION_FLAG_SPACE) != 0;
                 bool zero = (flags & CONVERSION_FLAG_ZERO) != 0;
                 bool alternate = (flags & CONVERSION_FLAG_ALTERNATE) != 0;
-                b32 width = 0;
+                positive width = 0;
                 b32 precision = -1;
 
                 at = (positive)(flags_at - format);
@@ -2155,19 +2155,15 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                             ? awk_to_number(address_of arguments[taken++])
                                             : 0;
 
-                        width = awk_whole(value);
+                        bipolar field = awk_whole(value);
+                        left |= field < 0;
+                        width = (positive)absolute_wide(field);
                         at++;
-
-                        if (width < 0)
-                        {
-                                left = true;
-                                width = -width;
-                        }
                 }
                 else
                 {
                         positive digits_taken;
-                        width = (b32)string_digits_max(format + at,
+                        width = string_digits_max(format + at,
                                                        length - at,
                                                        address_of digits_taken);
                         at += digits_taken;
@@ -2193,9 +2189,9 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         else
                         {
                                 positive digits_taken;
-                                precision = (b32)string_digits_max(format + at,
-                                                                   length - at,
-                                                                   address_of digits_taken);
+                                positive parsed = string_digits_max(format + at,
+                                    length - at, address_of digits_taken);
+                                precision = (b32)min(2147483647ul, parsed);
                                 at += digits_taken;
                         }
                 }
@@ -2219,7 +2215,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 p8 room[2048];
                 p8 prefix[4];
                 b32 prefixed = 0;
-                b32 body = 0;
+                positive body = 0;
                 bool from_string = false;
                 string_address body_at = room;
 
@@ -2269,12 +2265,12 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 {
                                         string_address name = awk_not_finite_name(exact);
 
-                                        body = (b32)string_length(name);
+                                        body = string_length(name);
                                         memory_copy(room, name, (positive)body);
                                         break;
                                 }
 
-                                body = (b32)awk_write_decimal(
+                                body = awk_write_decimal(
                                     exact, precision < 0 ? 6 : precision, room,
                                     sizeof(room), 'g', alternate);
 
@@ -2307,12 +2303,12 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         if (alternate && conversion == 'o')
                         {
                                 room[0] = '0';
-                                body = whole ? 1 + (b32)positive_into_base(room + 1, whole, 8,
+                                body = whole ? 1 + positive_into_base(room + 1, whole, 8,
                                                                           false)
                                              : 1;
                         }
                         else if (whole || precision != 0)
-                                body = (b32)positive_into_base(room, whole, base,
+                                body = positive_into_base(room, whole, base,
                                                                conversion == 'X');
 
                         if (alternate && (conversion == 'x' || conversion == 'X') && exact != 0)
@@ -2345,7 +2341,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         awk_text address_to text = awk_to_text(argument);
 
                         body_at = text->text;
-                        body = (b32)text->length;
+                        body = text->length;
                         from_string = true;
 
                         if (precision >= 0 && precision < body)
@@ -2368,7 +2364,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         {
                                 string_address name = awk_not_finite_name(value);
 
-                                body = (b32)string_length(name);
+                                body = string_length(name);
                                 memory_copy(room, name, (positive)body);
                                 zero = false;
                                 break;
@@ -2377,7 +2373,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         if (places > 1000)
                                 places = 1000;
 
-                        body = (b32)awk_write_decimal(value, places, room, sizeof(room),
+                        body = awk_write_decimal(value, places, room, sizeof(room),
                                                       conversion, alternate);
 
                         // The minus is the formatter's and the field is
@@ -2406,7 +2402,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                 // A precision on an integer is a minimum number of digits,
                 // and it takes the zero flag out of the argument.
-                b32 zeros = 0;
+                positive zeros = 0;
 
                 if (!from_string && precision >= 0 &&
                     (conversion == 'd' || conversion == 'i' || conversion == 'o' ||
@@ -2418,8 +2414,8 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         zero = false;
                 }
 
-                b32 total = prefixed + zeros + body;
-                b32 padding = width > total ? width - total : 0;
+                positive total = awk_size_add(awk_size_add(prefixed, zeros), body);
+                positive padding = width > total ? width - total : 0;
 
                 if (padding && !left && !zero)
                         awk_builder_fill(address_of build, ' ', padding);
@@ -2431,7 +2427,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         awk_builder_fill(address_of build, '0', padding);
 
                 awk_builder_fill(address_of build, '0', zeros);
-                awk_builder_put(address_of build, body_at, (positive)body);
+                awk_builder_put(address_of build, body_at, body);
 
                 if (padding && left)
                         awk_builder_fill(address_of build, ' ', padding);

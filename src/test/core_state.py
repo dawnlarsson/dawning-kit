@@ -37,6 +37,14 @@ def canvas_sources(work, arch):
     cells += section(compose, "static void cell_draw", "/*\n        A window made of text.\n\n        The rows")
     (work / "canvas-cells.inc").write_text(cells)
     (work / "canvas-ring.inc").write_text(section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates."))
+    geometry = section(canvas, "static CONST _Bool rects_overlap", "// The border and titlebar")
+    geometry += section(canvas, "static void pane_frame", "// Which edges")
+    geometry += "#define compose_cells compose_cells_pixels\n"
+    geometry += section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates.")
+    geometry += section(compose, "struct pane_bar_geometry", "/*\n        The desktop, everywhere")
+    geometry += "#undef compose_cells\n"
+    geometry += section(drag, "static void bar_move", "/*\n        Filling the screen")
+    (work / "canvas-pane.inc").write_text(geometry)
     # kit/asm supplies the function macros; these empty include files replace
     # only the kernel declarations, never the renderer's assembly bodies.
     (work / "linux").mkdir(exist_ok=True)
@@ -139,9 +147,11 @@ source += r'''
 #define CONST
 #define INK_DESKTOP 0
 #define WRITE_ONCE(a,b) ((a)=(b))
-static int canvas_title=24, canvas_border=2, canvas_cell_w=8, canvas_cell_h=16;
+static int canvas_title=24, canvas_border=2, canvas_cell_w=8, canvas_cell_h=16, canvas_bar=10;
 struct pane { unsigned display,style,max_width,max_height; int width,height,x,y,edge;
     int saved_x,saved_y,saved_w,saved_h; unsigned saved_display; _Bool maximized;
+    unsigned columns,rows,max_columns,max_rows,grid_columns,grid_rows,damage_row,damage_rows;
+    void *cells; int wait;
     struct pane *shared;
 };
 struct output { unsigned width,height; int x,y; };
@@ -155,9 +165,16 @@ static struct output *output_by_index(unsigned index) { return index ? NULL : &s
 static int point_in_rect(int x,int y,int w,int h,int px,int py) {
     return px>=x && px<x+w && py>=y && py<y+h;
 }
+static unsigned regrids,wakes;
+static void console_regrid(struct pane *p) { (void)p;regrids++; }
+static void wake_up_interruptible(int *wait) { (void)wait;wakes++; }
+'''
+source += section(pane, "static void pane_regrid", "static void pane_refresh")
+source += r'''
 static void pane_limits(struct pane *p,int *w,int *h) { *w=p->max_width; *h=p->max_height; }
 static void pane_reshape(struct pane *p,int x,int y,int w,int h) {
     p->x=x; p->y=y; p->width=w; p->height=h;
+    pane_regrid(p);
 }
 '''
 source += section(pane, "static void pane_size", "static void pane_raise")
@@ -687,14 +704,14 @@ int main(void) {
     }
     for (unsigned scale=1;scale<=3;scale++)
     for (unsigned h=0;h<80;h++)
-    for (unsigned w=0;w<20;w++)
+    for (unsigned w=0;w<80;w++)
     for (unsigned framed=0;framed<2;framed++) {
         canvas_title=20*scale; canvas_border=2*scale;
-        canvas_cell_w=8*scale; canvas_cell_h=16*scale;
+        canvas_cell_w=8*scale; canvas_cell_h=16*scale; canvas_bar=10*scale;
         screen.width=w; screen.height=h;
         unsigned columns,rows;
         desktop_grid(w,h,&columns,&rows);
-        check(columns==(unsigned)max((int)w-4*(int)scale,0)/(8*scale) &&
+        check(columns==(unsigned)max((int)w-14*(int)scale,0)/(8*scale) &&
               rows==(unsigned)max((int)h-26*(int)scale,0)/(16*scale),"framed grid bounds");
         struct pane p={.style=framed,.max_width=640,.max_height=480,
                        .width=123,.height=99,.x=17,.y=19};
@@ -704,6 +721,43 @@ int main(void) {
         pane_maximize(&p,0,0);
         check(!p.maximized && p.width==123 && p.height==99 && p.x==17 && p.y==19,
               "maximize restoration");
+    }
+    const int widths[]={0,1,9,10,17,18,19,25,26,27,639,640,641,3840};
+    for (unsigned scale=1;scale<=3;scale++)
+    for (unsigned shared=0;shared<2;shared++)
+    for (unsigned w=0;w<sizeof(widths)/sizeof(*widths);w++) {
+        canvas_cell_w=8*scale;canvas_cell_h=16*scale;canvas_bar=10*scale;
+        struct pane page={0},p={.width=widths[w],.height=99,.cells=&page,
+            .max_columns=80,.max_rows=24,.shared=shared?&page:NULL};
+        unsigned columns=max(min(max(widths[w]-canvas_bar,0)/canvas_cell_w,80),1);
+        regrids=wakes=0;pane_regrid(&p);
+        check(p.columns==columns && p.width==(int)columns*canvas_cell_w+canvas_bar,
+              "grid reserves gutter before rounding and clamps tiny widths");
+        check(shared ? page.columns==columns && page.width==p.width && wakes==1 :
+            p.grid_columns==columns && p.grid_rows==p.rows && regrids==1,
+            "resized grid reaches client or owned console");
+        int width=p.width,height=p.height;pane_regrid(&p);
+        check(p.width==width && p.height==height && p.columns==columns,
+              "gutter rounding is idempotent");
+    }
+    for (unsigned scale=1;scale<=3;scale++)for(unsigned framed=0;framed<2;framed++) {
+        canvas_title=20*scale;canvas_border=2*scale;canvas_bar=10*scale;
+        canvas_cell_w=8*scale;canvas_cell_h=16*scale;
+        screen.width=1024;screen.height=768;
+        struct pane p={.x=17,.y=19,.width=5*canvas_cell_w+canvas_bar,
+            .height=3*canvas_cell_h,.cells=&screen,.max_columns=80,.max_rows=24,
+            .max_width=80*canvas_cell_w+canvas_bar,.max_height=24*canvas_cell_h,
+            .style=framed?WINDOW_FRAME:0};
+        pane_maximize(&p,0,0);
+        check(p.width<=(int)screen.width-(framed?2*canvas_border:0) &&
+            p.width==(int)p.columns*canvas_cell_w+canvas_bar,
+            "maximized grid and gutter fit within output borders");
+        pane_maximize(&p,0,0);
+        check(p.width==5*canvas_cell_w+canvas_bar && p.columns==5 && p.x==17 && p.y==19,
+            "maximize restores the requested cells and gutter");
+        p.style|=WINDOW_FULLSCREEN;pane_size(&p);pane_regrid(&p);
+        check(p.width<=(int)screen.width && p.width==(int)p.columns*canvas_cell_w+canvas_bar,
+            "fullscreen includes the gutter without covering a cell");
     }
     const int answers[]={0,-EBUSY,-EINVAL,-ENOMEM};
     for (largest=0;largest<=1;largest++)

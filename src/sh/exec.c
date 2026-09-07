@@ -6644,19 +6644,9 @@ static COLD bool exec_special_error_fatal(string_address command,
    unset value remains distinct from an empty value or an unassigned declaration. */
 typedef struct
 {
-        string_address name;
-        positive name_length;
-        // How much of the name is the array, when the name is an element.
+        shell_binding binding;
         positive base_length;
-        string_address value;
-        bool exported;
-        bool declared;
-        bool owned_value;
-        bool promoted;
-        bool detached;
-        // Restore the whole array after the command's scalar view is discarded.
-        p8 attributes;
-        b32 array;
+        bool promoted, detached;
 } exec_kept_value;
 
 static exec_kept_value address_to exec_promotable;
@@ -6672,8 +6662,8 @@ static bool exec_assignment_promote(const_string name, positive length)
         if (!shell_bash_compat)
                 return false;
         for (b32 at = 0; at < exec_promotable_count; at++)
-                if (exec_promotable[at].name_length == length &&
-                    !memory_compare(exec_promotable[at].name, name, length))
+                if (exec_promotable[at].binding.name_length == length &&
+                    !memory_compare(exec_promotable[at].binding.name, name, length))
                 {
                         exec_promotable[at].promoted = true;
                         found = true;
@@ -6690,38 +6680,31 @@ static COLD bool exec_keep_element(exec_kept_value address_to kept,
         string_address key = shell_expand_subscript(
             base, base_length, subscript, subscript_length,
             address_of key_length);
-        string_address value;
 
         if (!key)
                 return false;
 
-        kept->name = shell_store_take(address_of exec_store,
+        kept->binding.name = shell_store_take(address_of exec_store,
                                       base_length + key_length + 3);
 
-        if (!kept->name)
+        if (!kept->binding.name)
                 return false;
 
-        memory_copy(kept->name, base, base_length);
-        kept->name[base_length] = '[';
-        memory_copy(kept->name + base_length + 1, key, key_length);
-        kept->name[base_length + 1 + key_length] = ']';
-        kept->name[base_length + 2 + key_length] = end;
-        kept->name_length = base_length + key_length + 2;
+        memory_copy(kept->binding.name, base, base_length);
+        kept->binding.name[base_length] = '[';
+        memory_copy(kept->binding.name + base_length + 1, key, key_length);
+        kept->binding.name[base_length + 1 + key_length] = ']';
+        kept->binding.name[base_length + 2 + key_length] = end;
+        kept->binding.name_length = base_length + key_length + 2;
         kept->base_length = base_length;
-        kept->exported = false;
-        kept->value = null;
-        kept->attributes = shell_array_attributes(base, base_length);
-        kept->array = 0;
+        kept->binding.exported = false;
+        kept->binding.value = null;
+        kept->binding.attributes = shell_array_attributes(base, base_length);
+        kept->binding.array = 0;
 
-        value = shell_array_get(kept->name, base_length, key, key_length,
-                                null);
-
-        if (!value)
-                return true;
-
-        kept->value = exec_arena_copy(value);
-
-        return kept->value != exec_nothing;
+        kept->binding.value = shell_array_get(kept->binding.name, base_length,
+                                               key, key_length, null);
+        return shell_binding_hold(&kept->binding, 0);
 }
 
 enum { EXEC_KEEP_TARGET, EXEC_KEEP_PREFIX, EXEC_KEEP_CELL };
@@ -6731,12 +6714,10 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
         positive length = (positive)(string_first_of_or_end(word, '=') - word);
         bool append;
         string_address bracket;
-        string_address value;
 
         kept->promoted = false;
         kept->detached = false;
-        kept->declared = false;
-        kept->owned_value = false;
+        kept->binding.declared = false;
         append = length && word[length - 1] == '+';
 
         if (append)
@@ -6753,13 +6734,12 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
                     kept, word, (positive)(bracket - word), bracket + 1,
                     length - (positive)(bracket - word) - 2);
 
-        value = env_saved_state(word, length, address_of kept->exported,
-                                address_of kept->attributes, address_of kept->array, &kept->declared);
+        kept->binding = env_saved_state(word, length);
 
         /* The common case stays the original one-probe save. A nameref alone
            takes the cold second probe needed to save the target that the
            provisional assignment will actually change. */
-        if ((kept->attributes & SHELL_ARRAY_NAMEREF) && mode != EXEC_KEEP_CELL)
+        if ((kept->binding.attributes & SHELL_ARRAY_NAMEREF) && mode != EXEC_KEEP_CELL)
         {
                 const_string resolved_name;
                 const_string resolved_subscript;
@@ -6788,31 +6768,12 @@ static bool exec_keep_value(exec_kept_value address_to kept, string_address word
 
                 word = (string_address)resolved_name;
                 length = resolved_length;
-                value = env_saved_state(word, length,
-                                        address_of kept->exported,
-                                        address_of kept->attributes, address_of kept->array, &kept->declared);
+                kept->binding = env_saved_state(word, length);
         }
 
 held:
-        kept->name = shell_store_take(address_of exec_store, length + 1);
-
-        if (!kept->name)
-                return false;
-
-        string_copy_max_end(kept->name, word, length);
-        kept->name_length = length;
         kept->base_length = 0;
-
-        kept->value = null;
-
-        if (value)
-        {
-                kept->value = exec_arena_copy(value);
-                if (kept->value == exec_nothing)
-                        return false;
-        }
-        kept->array = array_table_hold(kept->array);
-        return kept->array >= 0;
+        return shell_binding_hold(&kept->binding, 0);
 }
 
 // Prefix expansion uses scalar cells. Append applies the original value
@@ -6823,22 +6784,22 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
                                 bool append, bool promote, b32 assignment_error)
 {
         string_address word = *word_at;
-        positive base = kept->base_length ? kept->base_length : kept->name_length;
-        positive hash = env_name_hash(kept->name, base);
-        p8 attributes = kept->attributes;
+        positive base = kept->base_length ? kept->base_length : kept->binding.name_length;
+        positive hash = env_name_hash(kept->binding.name, base);
+        p8 attributes = kept->binding.attributes;
 
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
-                string_format(exec_error, "%s: is read only\n", kept->name);
+                string_format(exec_error, "%s: is read only\n", kept->binding.name);
                 return exec_assignment_error(assignment_error);
         }
         if (append)
         {
-                string_address old = kept->value;
+                string_address old = kept->binding.value;
                 if (attributes & SHELL_ARRAY_EITHER)
                         old = attributes & SHELL_ARRAY_INTEGER ? null
                             : attributes & SHELL_ARRAY_ASSOCIATIVE
-                                ? shell_array_get(kept->name, base, "0", 1, null) : old;
+                                ? shell_array_get(kept->binding.name, base, "0", 1, null) : old;
                 value = env_append_value(old, value, attributes);
         }
         if (!value)
@@ -6860,22 +6821,22 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
         if (!promote)
         {
-                bool written = env_value_restore(kept->name, kept->name_length, value, 0, 0);
+                bool written = env_value_restore(kept->binding.name, kept->binding.name_length, value, 0, 0);
                 if (written && (shell_options & SHELL_FLAG('a')))
-                        env_export_restore(kept->name, true);
+                        env_export_restore(kept->binding.name, true);
                 return written;
         }
 
         // Promotion has already evaluated the value. Keep array/nameref
         // routing, but suppress a second conversion at the storage boundary.
         p8 deferred = ENV_ATTRIBUTE_VALUE | SHELL_ARRAY_READONLY;
-        positive found = env_find_hashed_span(kept->name, base, hash);
+        positive found = env_find_hashed_span(kept->binding.name, base, hash);
         if (found < shell_var_count)
                 shell_vars[found].attributes &= (p8)~deferred;
         bool answer = exec_assign_value(word_at, name_length,
-            env_name_hash(made, name_length), false, false, kept->name,
+            env_name_hash(made, name_length), false, false, kept->binding.name,
             kept->base_length, assignment_error);
-        found = env_find_hashed_span(kept->name, base, hash);
+        found = env_find_hashed_span(kept->binding.name, base, hash);
         if (found < shell_var_count)
                 shell_vars[found].attributes |= attributes & deferred;
         return answer;
@@ -6883,9 +6844,9 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
 static COLD bool exec_put_back_attributes(exec_kept_value address_to kept)
 {
-        const_string name = kept->name;
+        const_string name = kept->binding.name;
         positive length = kept->base_length ? kept->base_length
-                                            : kept->name_length;
+                                            : kept->binding.name_length;
         const_string resolved_name;
         positive resolved_length;
         p8 current;
@@ -6900,41 +6861,37 @@ static COLD bool exec_put_back_attributes(exec_kept_value address_to kept)
 
         current = shell_variable_attributes(name, length);
 
-        return current == kept->attributes ||
+        return current == kept->binding.attributes ||
                shell_variable_attribute_set(
-                   name, length, kept->attributes,
-                   (p8)~kept->attributes);
+                   name, length, kept->binding.attributes,
+                   (p8)~kept->binding.attributes);
 }
 
 static fn exec_put_back(exec_kept_value address_to kept, b32 count, bool restore)
 {
         while (count--)
         {
-                if (!restore || kept[count].promoted || kept[count].detached)
-                        array_table_release(kept[count].array);
-                else if (kept[count].base_length)
+                shell_binding address_to binding = &kept[count].binding;
+                if (restore && !kept[count].promoted && !kept[count].detached)
                 {
-                        if (exec_put_back_attributes(kept + count))
+                        if (kept[count].base_length)
                         {
-                                positive base = kept[count].base_length;
-                                string_address key = kept[count].name + base + 1;
-                                positive key_length = kept[count].name_length - base - 2;
-                                if (kept[count].value)
-                                        shell_array_set(kept[count].name, base, key,
-                                            key_length, kept[count].value, false);
-                                else
-                                        shell_array_forget(kept[count].name, base, key, key_length);
+                                if (exec_put_back_attributes(kept + count))
+                                {
+                                        positive base = kept[count].base_length;
+                                        string_address key = binding->name + base + 1;
+                                        positive key_length = binding->name_length - base - 2;
+                                        if (binding->value)
+                                                shell_array_set(binding->name, base, key,
+                                                    key_length, binding->value, false);
+                                        else
+                                                shell_array_forget(binding->name, base, key, key_length);
+                                }
                         }
+                        else
+                                shell_binding_restore(binding);
                 }
-                else
-                {
-                        env_value_restore(kept[count].name, kept[count].name_length,
-                            kept[count].value, kept[count].attributes, kept[count].array);
-                        env_declare_restore(kept[count].name, kept[count].declared);
-                        env_export_restore(kept[count].name, kept[count].exported);
-                }
-                if (kept[count].owned_value)
-                        env_cell_drop(kept[count].value);
+                shell_binding_drop(binding);
         }
 }
 
@@ -6950,8 +6907,8 @@ static bool exec_finish_prefixes(exec_kept_value address_to kept, b32 count)
                 bool promote = kept[at].promoted && !kept[at].detached;
                 kept[at].promoted = false;
                 for (b32 next = at + 1; promote && next < count; next++)
-                        if (kept[next].name_length == kept[at].name_length &&
-                            !memory_compare(kept[next].name, kept[at].name, kept[at].name_length))
+                        if (kept[next].binding.name_length == kept[at].binding.name_length &&
+                            !memory_compare(kept[next].binding.name, kept[at].binding.name, kept[at].binding.name_length))
                         {
                                 kept[next].promoted |= !kept[next].detached;
                                 promote = false;
@@ -6961,7 +6918,7 @@ static bool exec_finish_prefixes(exec_kept_value address_to kept, b32 count)
                 if (!adopted)
                         adopted = (exec_kept_value address_to)shell_store_take(address_of exec_store,
                             (positive)count * sizeof(*adopted));
-                if (!adopted || !exec_keep_value(adopted + used, kept[at].name, EXEC_KEEP_CELL))
+                if (!adopted || !exec_keep_value(adopted + used, kept[at].binding.name, EXEC_KEEP_CELL))
                 {
                         answer = false;
                         continue;
@@ -6973,50 +6930,50 @@ static bool exec_finish_prefixes(exec_kept_value address_to kept, b32 count)
         {
                 exec_kept_value target;
                 exec_kept_value address_to source = adopted + at;
-                if (!source->value && !source->attributes && !source->exported && !source->declared)
+                if (!source->binding.value && !source->binding.attributes && !source->binding.exported && !source->binding.declared)
                 {
-                        env_unset_span(source->name, source->name_length);
+                        env_unset_span(source->binding.name, source->binding.name_length);
                         continue;
                 }
-                if (!exec_keep_value(&target, source->name, EXEC_KEEP_TARGET))
+                if (!exec_keep_value(&target, source->binding.name, EXEC_KEEP_TARGET))
                 {
                         answer = false;
                         continue;
                 }
-                positive base = target.base_length ? target.base_length : target.name_length;
+                positive base = target.base_length ? target.base_length : target.binding.name_length;
                 bool written;
-                if (!source->value || (source->attributes & SHELL_ARRAY_EITHER))
+                if (!source->binding.value || (source->binding.attributes & SHELL_ARRAY_EITHER))
                 {
-                        p8 inherited = target.attributes;
-                        if (source->attributes & SHELL_ARRAY_EITHER)
+                        p8 inherited = target.binding.attributes;
+                        if (source->binding.attributes & SHELL_ARRAY_EITHER)
                         {
                                 inherited &= (p8)~SHELL_ARRAY_EITHER;
-                                if ((target.attributes & SHELL_ARRAY_READONLY) &&
-                                    !(source->attributes & SHELL_ARRAY_READONLY))
-                                        string_format(exec_error, "%s: is read only\n", source->name);
+                                if ((target.binding.attributes & SHELL_ARRAY_READONLY) &&
+                                    !(source->binding.attributes & SHELL_ARRAY_READONLY))
+                                        string_format(exec_error, "%s: is read only\n", source->binding.name);
                         }
-                        written = env_value_restore(target.name, base, source->value,
-                            inherited | source->attributes, source->array);
-                        source->array = 0;
+                        written = env_value_restore(target.binding.name, base, source->binding.value,
+                            inherited | source->binding.attributes, source->binding.array);
+                        source->binding.array = 0;
                 }
                 else
                 {
-                        string_address word = source->name;
-                        written = exec_prefix_assign(&target, &word, source->name_length,
-                                source->value ? source->value : (string_address)"",
+                        string_address word = source->binding.name;
+                        written = exec_prefix_assign(&target, &word, source->binding.name_length,
+                                source->binding.value ? source->binding.value : (string_address)"",
                                 false, true, 1);
-                        if (written && source->attributes)
-                                written = shell_variable_attribute_set(target.name, base,
-                                    source->attributes, 0);
+                        if (written && source->binding.attributes)
+                                written = shell_variable_attribute_set(target.binding.name, base,
+                                    source->binding.attributes, 0);
                 }
                 if (written)
                 {
-                        p8 closing = target.name[base];
-                        target.name[base] = end;
-                        if (source->declared)
-                                written = env_declare(target.name, base);
-                        env_export_restore(target.name, source->exported);
-                        target.name[base] = closing;
+                        p8 closing = target.binding.name[base];
+                        target.binding.name[base] = end;
+                        if (source->binding.declared)
+                                written = env_declare(target.binding.name, base);
+                        env_export_restore(target.binding.name, source->binding.exported);
+                        target.binding.name[base] = closing;
                 }
                 answer &= written;
                 exec_put_back(&target, 1, false);
@@ -7511,38 +7468,38 @@ static b32 exec_declare_global_begin(string_address name, positive length,
                 if (!frame->depth)
                         for (b32 at = frame->count; at-- > 0;)
                                 if (!frame->kept[at].detached && !frame->kept[at].base_length &&
-                                    frame->kept[at].name_length == length &&
-                                    !memory_compare(frame->kept[at].name, name, length))
+                                    frame->kept[at].binding.name_length == length &&
+                                    !memory_compare(frame->kept[at].binding.name, name, length))
                                         global = frame->kept + at;
         if (!global)
                 return 0;
-        name = global->name;
+        name = global->binding.name;
 
-        p8 attributes = (global->attributes & (p8)~state->attributes_clear) |
+        p8 attributes = (global->binding.attributes & (p8)~state->attributes_clear) |
                         state->attributes_set;
         bool binding = (state->attributes_set & SHELL_ARRAY_NAMEREF) != 0;
         if (binding && !(state->attributes_set & SHELL_ARRAY_INTEGER))
                 attributes &= (p8)~SHELL_ARRAY_INTEGER;
-        bool kind_error = (global->attributes & SHELL_ARRAY_EITHER) &&
+        bool kind_error = (global->binding.attributes & SHELL_ARRAY_EITHER) &&
             (binding || ((state->attributes_set & SHELL_ARRAY_EITHER) &&
              (state->attributes_set & SHELL_ARRAY_EITHER) !=
-                 (global->attributes & SHELL_ARRAY_EITHER)));
+                 (global->binding.attributes & SHELL_ARRAY_EITHER)));
         if (!kind_error && value && (attributes & SHELL_ARRAY_EITHER) && string_is(value, '('))
                 return 0;
         if (value && !(attributes & SHELL_ARRAY_INDEXED) &&
             (attributes & SHELL_ARRAY_INTEGER) &&
-            !(global->attributes & SHELL_ARRAY_READONLY) && !kind_error)
+            !(global->binding.attributes & SHELL_ARRAY_READONLY) && !kind_error)
         {
                 if (binding && !append && *value &&
                     !shell_declare_target_valid(value))
                         return 2;
                 if (!binding || append || *value)
                 {
-                        string_address old = global->value;
-                        if (append && (global->attributes & SHELL_ARRAY_ASSOCIATIVE))
+                        string_address old = global->binding.value;
+                        if (append && (global->binding.attributes & SHELL_ARRAY_ASSOCIATIVE))
                         {
-                                env_variable variable = {.array = global->array,
-                                    .attributes = global->attributes};
+                                env_variable variable = {.array = global->binding.array,
+                                    .attributes = global->binding.attributes};
                                 array_location located = array_locate(&variable, "0", 1);
                                 old = located.found ? array_element_value(
                                     array_table_of(&variable)->element + located.at) : null;
@@ -7563,14 +7520,14 @@ static b32 exec_declare_global_begin(string_address name, positive length,
         if (!held || !exec_keep_value(&held->physical, name, EXEC_KEEP_CELL))
                 return -1;
         held->global = global;
-        b32 array = array_table_hold(global->array);
-        if (array < 0 || !env_value_restore(name, length, global->value, global->attributes, array))
+        b32 array = array_table_hold(global->binding.array);
+        if (array < 0 || !env_value_restore(name, length, global->binding.value, global->binding.attributes, array))
         {
                 exec_put_back(&held->physical, 1, true);
                 return -1;
         }
-        env_declare_restore(name, global->declared);
-        env_export_restore(name, global->exported);
+        env_declare_restore(name, global->binding.declared);
+        env_export_restore(name, global->binding.exported);
         *scope = held;
         return 1;
 }
@@ -7582,30 +7539,11 @@ static bool exec_declare_global_end(address_any address_to scope, bool adopt)
                 return true;
         *scope = null;
         exec_kept_value updated;
-        bool answer = exec_keep_value(&updated, held->global->name, EXEC_KEEP_CELL);
-        if (answer && updated.value)
-        {
-                positive length = string_length(updated.value);
-                env_cell address_to cell = env_cell_take(length + 1);
-                if (!cell)
-                {
-                        array_table_release(updated.array);
-                        answer = false;
-                }
-                else
-                {
-                        memory_copy_end((p8 address_to)(cell + 1), updated.value, length);
-                        updated.value = (string_address)(cell + 1);
-                        updated.owned_value = true;
-                }
-        }
+        bool answer = exec_keep_value(&updated, held->global->binding.name, EXEC_KEEP_CELL);
         if (answer)
         {
-                updated.name = held->global->name;
                 updated.promoted = held->global->promoted || adopt;
-                if (held->global->owned_value)
-                        env_cell_drop(held->global->value);
-                array_table_release(held->global->array);
+                shell_binding_drop(&held->global->binding);
                 *held->global = updated;
         }
         exec_put_back(&held->physical, 1, true);
@@ -7623,8 +7561,8 @@ static b32 exec_unset_prefix(const_string name, positive length)
                 exec_kept_value address_to saved = null;
                 for (b32 at = 0; at < frame->count; at++)
                         if (!frame->kept[at].detached && !frame->kept[at].base_length &&
-                            frame->kept[at].name_length == length &&
-                            !memory_compare(frame->kept[at].name, name, length))
+                            frame->kept[at].binding.name_length == length &&
+                            !memory_compare(frame->kept[at].binding.name, name, length))
                         {
                                 saved = frame->kept + at;
                                 break;
@@ -7639,26 +7577,26 @@ static b32 exec_unset_prefix(const_string name, positive length)
                         positive begin = local_from[depth - 1];
                         for (positive at = begin; at < stop; at++)
                                 if (at >= frame->locals && !local_table[at].detached &&
-                                    local_table[at].name_length == length &&
-                                    !memory_compare(local_table[at].text, name, length) &&
+                                    local_table[at].binding.name_length == length &&
+                                    !memory_compare(local_table[at].binding.name, name, length) &&
                                     (depth == local_depth || depth > frame->depth + 1))
                                         return 0;
                         stop = begin;
                 }
-                b32 array = array_table_hold(saved->array);
-                if (array < 0 || !env_value_restore(saved->name, length,
-                    saved->value, saved->attributes, array))
+                b32 array = array_table_hold(saved->binding.array);
+                if (array < 0 || !env_value_restore(saved->binding.name, length,
+                    saved->binding.value, saved->binding.attributes, array))
                         return -1;
-                name = saved->name;
-                env_declare_restore(saved->name, saved->declared);
-                env_export_restore(saved->name, saved->exported);
+                name = saved->binding.name;
+                env_declare_restore(saved->binding.name, saved->binding.declared);
+                env_export_restore(saved->binding.name, saved->binding.exported);
                 for (positive at = frame->locals; at < local_count; at++)
-                        if (local_table[at].name_length == length &&
-                            !memory_compare(local_table[at].text, name, length))
+                        if (local_table[at].binding.name_length == length &&
+                            !memory_compare(local_table[at].binding.name, name, length))
                                 local_table[at].detached = true;
                 for (b32 at = 0; at < frame->count; at++)
-                        if (frame->kept[at].name_length == length &&
-                            !memory_compare(frame->kept[at].name, name, length))
+                        if (frame->kept[at].binding.name_length == length &&
+                            !memory_compare(frame->kept[at].binding.name, name, length))
                                 frame->kept[at].detached = true;
                 return 1;
         }
@@ -7918,7 +7856,7 @@ static b32 exec_simple(b32 index)
                         trial + value_at, (flags & PARSE_WORD_APPEND) != 0, false, error)
                     : exec_assign_value(&trial, parse_word_name_lengths[word_index],
                         parse_word_name_hashes[word_index], (flags & PARSE_WORD_APPEND) != 0,
-                        (flags & PARSE_WORD_COMPOUND) != 0, saved->name,
+                        (flags & PARSE_WORD_COMPOUND) != 0, saved->binding.name,
                         saved->base_length, error);
                 if (!accepted)
                 {
@@ -7977,10 +7915,10 @@ static b32 exec_simple(b32 index)
         {
                 kept[at].promoted = special;
                 // A rejected readonly prefix does not export its old value.
-                if (!(kept[at].attributes & SHELL_ARRAY_READONLY) &&
+                if (!(kept[at].binding.attributes & SHELL_ARRAY_READONLY) &&
                     !kept[at].base_length && (!special || shell_bash_compat ||
                         (count - first > 1 && word_is(command, "exec"))))
-                        env_export_restore(kept[at].name, true);
+                        env_export_restore(kept[at].binding.name, true);
         }
 
         exec_trace(count);
