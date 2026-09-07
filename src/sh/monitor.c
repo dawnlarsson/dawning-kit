@@ -55,19 +55,9 @@ static fn monitor_fill(positive count, p8 byte)
 static fn monitor_fixed(writer write, positive value, positive places,
                         positive width)
 {
-        p8 fraction[3];
-
-        fraction[0] = '.';
-
-        if (places == 1)
-                fraction[1] = (p8)('0' + value % 10);
-        else
-                positive_into_pair(fraction + 1, value % 100);
-
-        positive_to_base_field(write, value / (places == 1 ? 10 : 100), 10,
-                               width > places + 1 ? width - places - 1 : 0,
-                               -1, 0);
-        write(fraction, places + 1);
+        fixed_decimal field = fixed_decimal_prepare(value, places, false,
+                                                     width, places, 0);
+        fixed_decimal_write(write, address_of field);
 }
 
 static CONST positive monitor_percent(positive part, positive whole,

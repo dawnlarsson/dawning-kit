@@ -656,8 +656,81 @@ static fn table_ipcs_checks(void)
         }
 }
 
+/* Independent fixed-field oracle: decimal digits are divided out backwards,
+   so integration checks do not reproduce the new prepared-field machinery. */
+static positive table_fixed_expected(p8 address_to into, positive value,
+                                      positive places, positive width, p8 sign)
+{
+        p8 reverse[20];
+        positive divisor = places == 1 ? 10 : places == 2 ? 100 : 1000000;
+        positive whole = value / divisor, used = 0, at = 0;
+        do { reverse[used++] = '0' + whole % 10; whole /= 10; } while (whole);
+        positive body = used + places + 1 + (sign != 0);
+        while (at + body < width) into[at++] = ' ';
+        if (sign) into[at++] = sign;
+        while (used) into[at++] = reverse[--used];
+        into[at++] = '.';
+        for (positive step = divisor / 10; step; step /= 10)
+                into[at++] = '0' + (value / step) % 10;
+        return at;
+}
+
+static fn table_fixed_callers(void)
+{
+        static const positive values[] = {
+            0, 1, 9, 10, 99, 100, 999999, 1000000, 9999999,
+            10000000, (positive)bipolar_max, (positive)bipolar_max + 1,
+            positive_max,
+        };
+        for (positive i = 0; i < array_count(values); i++)
+        {
+                p8 expected[128];
+                for (positive places = 1; places <= 2; places++)
+                        for (positive width = 0; width <= 30; width++)
+                        {
+                                positive length = table_fixed_expected(
+                                    expected, values[i], places, width, 0);
+                                table_reset();
+                                monitor_fixed(table_capture, values[i], places, width);
+                                check("monitor shared fixed field", !table_overflow &&
+                                      table_used == length &&
+                                      !memory_compare(table_output, expected, length));
+                        }
+                for (positive mode = 0; mode < 4; mode++)
+                {
+                        bool signed_value = mode & 1, negative = mode & 2;
+                        expected[0] = '[';
+                        positive length = 1 + table_fixed_expected(expected + 1,
+                            values[i], 6, signed_value ? 11 : 12,
+                            signed_value ? negative ? '-' : '+' : 0);
+                        expected[length++] = ']'; expected[length++] = ' ';
+                        text_out_used = 0;
+                        tools_dmesg_timestamp(values[i], signed_value, negative);
+                        check("dmesg shared signed fixed field",
+                              text_out_used == length &&
+                              !memory_compare(text_out_buffer, expected, length));
+
+                        positive delta = values[array_count(values) - 1 - i];
+                        length = 1 + table_fixed_expected(expected + 1,
+                            values[i], 6, 12, 0);
+                        expected[length++] = ' '; expected[length++] = '<';
+                        length += table_fixed_expected(expected + length,
+                            delta, 6, 12, negative ? '-' : 0);
+                        expected[length++] = '>'; expected[length++] = ']';
+                        expected[length++] = ' ';
+                        text_out_used = 0;
+                        tools_dmesg_timestamp_delta(values[i], delta, negative);
+                        check("dmesg shared delta fixed field",
+                              text_out_used == length &&
+                              !memory_compare(text_out_buffer, expected, length));
+                }
+        }
+        text_out_used = 0;
+}
+
 b32 main(void)
 {
+        table_fixed_callers();
         name_list_checks();
         table_checks();
         table_projection_checks();

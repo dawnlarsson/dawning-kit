@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        245 routines (236 public, 9 local), 245 of them on all three.
+        251 routines (242 public, 9 local), 251 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -159,6 +159,10 @@
           memory_count                   public  yes     yes     yes
           memory_count_records_with_prepared public  yes     yes     yes
           memory_count_words             public  yes     yes     yes
+          memory_decimal_series          public  yes     yes     yes
+          memory_decode_power2           public  yes     yes     yes
+          memory_encode_power2           public  yes     yes     yes
+          memory_escape_index            public  yes     yes     yes
           memory_exchange_apart          public  yes     yes     yes
           memory_fill                    public  yes     yes     yes
           memory_fill_32                 public  yes     yes     yes
@@ -171,7 +175,9 @@
           memory_frob                    public  yes     yes     yes
           memory_growth                  public  yes     yes     yes
           memory_hash_33                 public  yes     yes     yes
+          memory_into_escaped            public  yes     yes     yes
           memory_into_hex                public  yes     yes     yes
+          memory_into_hex_case           public  yes     yes     yes
           memory_last_of                 public  yes     yes     yes
           memory_release                 public  yes     yes     yes
           memory_reserve                 public  yes     yes     yes
@@ -3362,6 +3368,7 @@ __asm__(
     "and $0xe6, %r8d\n   cmp $0xe6, %r8d\n"
     "jne 9f  # the kernel does not save the wide state\n"
     "movb $1, cpu_has_avx512(%rip)\n"
+    "bt $1, %ecx\n   setc cpu_has_avx512_vbmi(%rip)\n"
     "9:  pop %rbx\n"
     ASM_RET
 #endif
@@ -5209,13 +5216,22 @@ __asm__(
        SSE2 interleaves the high/low ASCII nibbles sixteen bytes at a time;
        the kernel and the exact tail use only scalar registers. */
     ASM_FUNC(memory_into_hex)
+    "xor %ecx, %ecx\n"
+    "jmp memory_into_hex_case\n"
+    ASM_END(memory_into_hex)
+    ASM_FUNC(memory_into_hex_case)
     "lea (%rdx,%rdx), %rax\n"
+    "lea .Lmemory_hex_x64_digits(%rip), %r8\n"
+    "lea .Lmemory_hex_x64_upper(%rip), %r9\n"
+    "test %rcx, %rcx\n   cmovne %r9, %r8\n"
 #ifndef KERNEL_MODE
     "cmp $16, %rdx\n   jb .Lmemory_hex_x64_tail\n"
     "movdqa .Lmemory_hex_x64_mask(%rip), %xmm2\n"
     "movdqa .Lmemory_hex_x64_nine(%rip), %xmm3\n"
     "movdqa .Lmemory_hex_x64_zero(%rip), %xmm4\n"
-    "movdqa .Lmemory_hex_x64_alpha(%rip), %xmm5\n"
+    "test %rcx, %rcx\n   mov $39, %r9d\n   mov $7, %ecx\n   cmovne %ecx, %r9d\n"
+    "movd %r9d, %xmm5\n   punpcklbw %xmm5, %xmm5\n"
+    "punpcklwd %xmm5, %xmm5\n   pshufd $0, %xmm5, %xmm5\n"
     ".balign 16\n.Lmemory_hex_x64_16:\n"
     "movdqu (%rsi), %xmm0\n   movdqa %xmm0, %xmm1\n"
     "psrlw $4, %xmm0\n   pand %xmm2, %xmm0\n   pand %xmm2, %xmm1\n"
@@ -5230,16 +5246,17 @@ __asm__(
     "sub $16, %rdx\n   cmp $16, %rdx\n   jae .Lmemory_hex_x64_16\n"
 #endif
     ".Lmemory_hex_x64_tail:\n   test %rdx, %rdx\n"
-    "jz .Lmemory_hex_x64_done\n   lea .Lmemory_hex_x64_digits(%rip), %r8\n"
+    "jz .Lmemory_hex_x64_done\n"
     ".Lmemory_hex_x64_one:\n   movzbl (%rsi), %ecx\n"
     "mov %ecx, %r9d\n   shr $4, %ecx\n   and $15, %r9d\n"
     "movzbl (%r8,%rcx), %ecx\n   movzbl (%r8,%r9), %r9d\n"
     "mov %cl, (%rdi)\n   mov %r9b, 1(%rdi)\n"
     "inc %rsi\n   add $2, %rdi\n   dec %rdx\n   jnz .Lmemory_hex_x64_one\n"
     ".Lmemory_hex_x64_done:\n" ASM_RET
-    ASM_END(memory_into_hex)
+    ASM_END(memory_into_hex_case)
     ".section .rodata\n"
     ".Lmemory_hex_x64_digits:\n   .ascii \"0123456789abcdef\"\n"
+    ".Lmemory_hex_x64_upper:\n   .ascii \"0123456789ABCDEF\"\n"
 #ifndef KERNEL_MODE
     ".balign 16\n.Lmemory_hex_x64_mask:\n   .fill 16,1,15\n"
     ".Lmemory_hex_x64_nine:\n   .fill 16,1,9\n"
@@ -9664,10 +9681,14 @@ __asm__(
     ASM_END(memory_to_upper_ascii)
 
     ASM_FUNC(memory_into_hex)
-    "mov x3, x0\n   lsl x0, x2, #1\n"
+    "mov w3, #0\n   b memory_into_hex_case\n"
+    ASM_END(memory_into_hex)
+    ASM_FUNC(memory_into_hex_case)
+    "mov x6, x3\n   mov x3, x0\n   lsl x0, x2, #1\n"
     "cbz x2, .Lmemory_hex_arm64_done\n"
     "adrp x4, .Lmemory_hex_arm64_digits\n"
     "add x4, x4, :lo12:.Lmemory_hex_arm64_digits\n"
+    "add x5, x4, #16\n   cmp x6, #0\n   csel x4, x4, x5, eq\n"
 #ifndef KERNEL_MODE
     "cmp x2, #16\n   b.lo .Lmemory_hex_arm64_one\n"
     "ldr q3, [x4]\n   movi v4.16b, #15\n"
@@ -9685,9 +9706,10 @@ __asm__(
     "strb w6, [x3]\n   strb w5, [x3, #1]\n   add x3, x3, #2\n"
     "subs x2, x2, #1\n   b.ne .Lmemory_hex_arm64_one\n"
     ".Lmemory_hex_arm64_done:\n" ASM_RET
-    ASM_END(memory_into_hex)
+    ASM_END(memory_into_hex_case)
     ".section .rodata\n   .balign 16\n"
     ".Lmemory_hex_arm64_digits:\n   .ascii \"0123456789abcdef\"\n"
+    ".ascii \"0123456789ABCDEF\"\n"
     ASM_SECTION
 
     /* Keep the sum in four 32-bit vector lanes instead of crossing into the
@@ -13088,8 +13110,12 @@ __asm__(
     /* Byte loads and stores keep this encoder valid for arbitrary alignment
        on the baseline RV64 target, without requiring Zbb or vectors. */
     ASM_FUNC(memory_into_hex)
+    "li a3, 0\n   j memory_into_hex_case\n"
+    ASM_END(memory_into_hex)
+    ASM_FUNC(memory_into_hex_case)
     "mv t0, a0\n   slli a0, a2, 1\n   beqz a2, .Lmemory_hex_rv_done\n"
     "lla t1, .Lmemory_hex_rv_digits\n"
+    "snez a3, a3\n   slli a3, a3, 4\n   add t1, t1, a3\n"
     ".balign 16\n.Lmemory_hex_rv_one:\n   lbu t2, 0(a1)\n"
     "srli t3, t2, 4\n   andi t2, t2, 15\n"
     "add t3, t3, t1\n   add t2, t2, t1\n"
@@ -13098,9 +13124,10 @@ __asm__(
     "addi a1, a1, 1\n   addi t0, t0, 2\n   addi a2, a2, -1\n"
     "bnez a2, .Lmemory_hex_rv_one\n"
     ".Lmemory_hex_rv_done:\n" ASM_RET
-    ASM_END(memory_into_hex)
+    ASM_END(memory_into_hex_case)
     ".section .rodata\n.Lmemory_hex_rv_digits:\n"
     ".ascii \"0123456789abcdef\"\n"
+    ".ascii \"0123456789ABCDEF\"\n"
     ASM_SECTION
 
     /* Baseline RV64 has no vector extension and does not promise unaligned
@@ -14982,6 +15009,734 @@ ASM_EXPORT(memset64);
 #endif
 #endif
 
+/* Expand a preformatted decimal record in place. The first record already
+   occupies length bytes. Its [first,end) field contains decimal digits and
+   optionally a point; all other bytes are copied unchanged. Each next field
+   adds step to the unscaled unsigned digits. Stop before field under/overflow
+   or a partial record. Failed-record scratch stays inside room; returned
+   bytes contain complete records only. Zero length, invalid bounds or room
+   below length return zero without touching into. Integer registers only. */
+positive memory_decimal_series(p8 address_to into, positive room,
+                                positive length, positive first,
+                                positive finish, bipolar step);
+#if X64
+__asm__(
+    ASM_FUNC(memory_decimal_series)
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n   cmp %rdx, %rsi\n   jb 9f\n"
+    "cmp %r8, %rcx\n   jae 9f\n   cmp %rdx, %r8\n   ja 9f\n"
+    "push %rbx\n   push %r12\n   push %r13\n   push %r14\n   push %r15\n"
+    "mov %rdx, %r12\n   mov %rcx, %r13\n   mov %r8, %r14\n   mov %r9, %r15\n"
+    "movabs $0xcccccccccccccccd, %rbx\n   mov %rdx, %r11\n   sub %rdx, %rsi\n"
+    "cmp $1, %r15\n   jne 1f\n   cmp $4, %r12\n   jb 1f\n   cmp $16, %r12\n   ja 1f\n"
+    "movzbl -1(%rdi,%r14), %edx\n   cmp $48, %dl\n   jb 1f\n   cmp $57, %dl\n   ja 1f\n"
+    "cmp $8, %r12\n   ja .Ldecimal_series_x86_unit\n"
+    /* Keep short records entirely in a register. Reading the record just
+       written with an overlapping last-digit byte store serializes every
+       iteration through store forwarding; carries here mutate the register
+       too. The final short reservation still receives exact bounded stores. */
+    "mov (%rdi), %r15d\n   mov -4(%rdi,%r12), %eax\n"
+    "lea -4(%r12), %rcx\n   shl $3, %ecx\n   shl %cl, %rax\n   or %rax, %r15\n"
+    "lea -1(%r14), %rcx\n   shl $3, %ecx\n   mov $1, %ebx\n   shl %cl, %rbx\n"
+    ".balign 16\n.Ldecimal_series_x86_cached:\n"
+    "cmp %r12, %rsi\n   jb 8f\n   add %rbx, %r15\n   inc %edx\n   cmp $58, %edx\n"
+    "jb .Ldecimal_series_x86_cached_store\n"
+    "mov $48, %edx\n   lea (%rbx,%rbx,4), %rax\n   add %rax, %rax\n   sub %rax, %r15\n"
+    "lea -1(%r14), %r10\n"
+    ".Ldecimal_series_x86_cached_carry:\n   cmp %r13, %r10\n   je 8f\n   dec %r10\n"
+    "lea (,%r10,8), %ecx\n   mov %r15, %rax\n   shr %cl, %rax\n"
+    "cmp $46, %al\n   je .Ldecimal_series_x86_cached_carry\n"
+    "mov $1, %r8d\n   shl %cl, %r8\n   add %r8, %r15\n   cmp $57, %al\n"
+    "jb .Ldecimal_series_x86_cached_store\n"
+    "lea (%r8,%r8,4), %rax\n   add %rax, %rax\n   sub %rax, %r15\n"
+    "jmp .Ldecimal_series_x86_cached_carry\n"
+    ".Ldecimal_series_x86_cached_store:\n   add %r12, %rdi\n   cmp $8, %rsi\n"
+    "jb .Ldecimal_series_x86_cached_tail\n   mov %r15, (%rdi)\n"
+    ".Ldecimal_series_x86_cached_next:\n   add %r12, %r11\n   sub %r12, %rsi\n"
+    "jmp .Ldecimal_series_x86_cached\n"
+    ".Ldecimal_series_x86_cached_tail:\n   mov %r15d, (%rdi)\n"
+    "lea -4(%r12), %ecx\n   shl $3, %ecx\n   mov %r15, %rax\n   shr %cl, %rax\n"
+    "mov %eax, -4(%rdi,%r12)\n   jmp .Ldecimal_series_x86_cached_next\n"
+    ".Ldecimal_series_x86_unit:\n   cmp %r12, %rsi\n   jb 8f\n   lea (%rdi,%r12), %r8\n"
+    "mov (%rdi), %rax\n   mov -8(%rdi,%r12), %rcx\n"
+    "mov %rax, (%r8)\n   mov %rcx, -8(%r8,%r12)\n"
+    ".Ldecimal_series_x86_unit_digit:\n   mov %r8, %rdi\n   inc %edx\n   cmp $58, %edx\n   jb .Ldecimal_series_x86_unit_store\n"
+    "mov $48, %edx\n   movb $48, -1(%rdi,%r14)\n   lea -1(%rdi,%r14), %r8\n   lea (%rdi,%r13), %r10\n"
+    ".Ldecimal_series_x86_unit_carry:\n   cmp %r10, %r8\n   je 8f\n   dec %r8\n   movzbl (%r8), %eax\n"
+    "cmp $46, %al\n   je .Ldecimal_series_x86_unit_carry\n   inc %eax\n   cmp $58, %al\n   jb .Ldecimal_series_x86_unit_carried\n"
+    "movb $48, (%r8)\n   jmp .Ldecimal_series_x86_unit_carry\n"
+    ".Ldecimal_series_x86_unit_carried:\n   mov %al, (%r8)\n"
+    ".Ldecimal_series_x86_unit_store:\n   mov %dl, -1(%rdi,%r14)\n   add %r12, %r11\n   sub %r12, %rsi\n   jmp .Ldecimal_series_x86_unit\n"
+    "1:  cmp %r12, %rsi\n   jb 8f\n   lea (%rdi,%r12), %r8\n"
+    "cmp $8, %r12\n   jae 2f\n   cmp $4, %r12\n   jb 3f\n"
+    "mov (%rdi), %eax\n   mov -4(%rdi,%r12), %ecx\n   mov %eax, (%r8)\n"
+    "mov %ecx, -4(%r8,%r12)\n   jmp 4f\n"
+    "2:  xor %edx, %edx\n   lea -8(%r12), %rcx\n"
+    "21: mov (%rdi,%rdx), %rax\n   mov %rax, (%r8,%rdx)\n   add $8, %rdx\n"
+    "cmp %rcx, %rdx\n   jb 21b\n   mov (%rdi,%rcx), %rax\n   mov %rax, (%r8,%rcx)\n   jmp 4f\n"
+    "3:  xor %edx, %edx\n"
+    "31: movzbl (%rdi,%rdx), %eax\n   mov %al, (%r8,%rdx)\n   inc %rdx\n   cmp %r12, %rdx\n   jb 31b\n"
+    "4:  mov %r8, %rdi\n   lea (%rdi,%r13), %r10\n   lea (%rdi,%r14), %r8\n"
+    "mov %r15, %r9\n   test %r9, %r9\n   jns 5f\n   neg %r9\n"
+    "5:  test %r9, %r9\n   jz 7f\n   cmp %r10, %r8\n   je 8f\n"
+    "dec %r8\n   movzbl (%r8), %ecx\n   cmp $46, %cl\n   je 5b\n"
+    "xor %edx, %edx\n   cmp $10, %r9\n   jb 6f\n"
+    "mov %r9, %rax\n   mul %rbx\n   shr $3, %rdx\n   lea (%rdx,%rdx,4), %rax\n"
+    "add %rax, %rax\n   sub %rax, %r9\n"
+    "6:  test %r15, %r15\n   js 61f\n   add %r9b, %cl\n   cmp $58, %cl\n   jb 62f\n"
+    "sub $10, %cl\n   inc %rdx\n   jmp 62f\n"
+    "61: sub %r9b, %cl\n   cmp $48, %cl\n   jae 62f\n   add $10, %cl\n   inc %rdx\n"
+    "62: mov %cl, (%r8)\n   mov %rdx, %r9\n   jmp 5b\n"
+    "7:  add %r12, %r11\n   sub %r12, %rsi\n   jmp 1b\n"
+    "8:  mov %r11, %rax\n   pop %r15\n   pop %r14\n   pop %r13\n   pop %r12\n   pop %rbx\n"
+    "9:\n"
+    ASM_RET
+    ASM_END(memory_decimal_series)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(memory_decimal_series)
+    "cbz x2, 9f\n   cmp x1, x2\n   b.lo 9f\n   cmp x3, x4\n   b.hs 9f\n   cmp x4, x2\n   b.hi 9f\n"
+    "mov x6, x2\n   sub x1, x1, x2\n   cmp x5, #0\n   cneg x14, x5, lt\n   mov x17, #10\n"
+    "1:  cmp x1, x2\n   b.lo 8f\n   add x7, x0, x2\n   mov x8, #0\n"
+    "2:  sub x9, x2, x8\n   cmp x9, #8\n   b.lo 3f\n"
+    "ldr x10, [x0, x8]\n   str x10, [x7, x8]\n   add x8, x8, #8\n   b 2b\n"
+    "3:  cmp x8, x2\n   b.hs 4f\n   ldrb w10, [x0, x8]\n   strb w10, [x7, x8]\n   add x8, x8, #1\n   b 3b\n"
+    "4:  mov x0, x7\n   add x13, x0, x3\n   add x8, x0, x4\n   mov x9, x14\n"
+    "5:  cbz x9, 7f\n   cmp x8, x13\n   b.eq 8f\n   ldrb w12, [x8, #-1]!\n   cmp w12, #46\n   b.eq 5b\n"
+    "udiv x10, x9, x17\n   msub x11, x10, x17, x9\n   tbnz x5, #63, 6f\n"
+    "add w12, w12, w11\n   cmp w12, #58\n   b.lo 61f\n   sub w12, w12, #10\n   add x10, x10, #1\n   b 61f\n"
+    "6:  sub w12, w12, w11\n   cmp w12, #48\n   b.hs 61f\n   add w12, w12, #10\n   add x10, x10, #1\n"
+    "61: strb w12, [x8]\n   mov x9, x10\n   b 5b\n"
+    "7:  add x6, x6, x2\n   sub x1, x1, x2\n   b 1b\n"
+    "8:  mov x0, x6\n"
+    ASM_RET
+    "9:  mov x0, #0\n"
+    ASM_RET
+    ASM_END(memory_decimal_series)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(memory_decimal_series)
+    "beqz a2, 9f\n   bltu a1, a2, 9f\n   bgeu a3, a4, 9f\n   bltu a2, a4, 9f\n"
+    "mv a6, a2\n   sub a1, a1, a2\n"
+    "1:  bltu a1, a2, 8f\n   add a7, a0, a2\n   li t0, 0\n"
+    "2:  add t1, a0, t0\n   lbu t2, 0(t1)\n   add t1, a7, t0\n   sb t2, 0(t1)\n"
+    "addi t0, t0, 1\n   bltu t0, a2, 2b\n   mv a0, a7\n   add t0, a0, a4\n   add t1, a0, a3\n"
+    "mv t2, a5\n   bgez t2, 5f\n   neg t2, t2\n"
+    "5:  beqz t2, 7f\n   beq t0, t1, 8f\n   addi t0, t0, -1\n   lbu t3, 0(t0)\n"
+    "li t4, 46\n   beq t3, t4, 5b\n   li t4, 10\n   divu t5, t2, t4\n   remu t6, t2, t4\n"
+    "bltz a5, 6f\n   add t3, t3, t6\n   li t4, 58\n   bltu t3, t4, 61f\n"
+    "addi t3, t3, -10\n   addi t5, t5, 1\n   j 61f\n"
+    "6:  sub t3, t3, t6\n   li t4, 48\n   bgeu t3, t4, 61f\n   addi t3, t3, 10\n   addi t5, t5, 1\n"
+    "61: sb t3, 0(t0)\n   mv t2, t5\n   j 5b\n"
+    "7:  add a6, a6, a2\n   sub a1, a1, a2\n   j 1b\n"
+    "8:  mv a0, a6\n"
+    ASM_RET
+    "9:  li a0, 0\n"
+    ASM_RET
+    ASM_END(memory_decimal_series)
+);
+#endif
+
+/* Bounded power-of-two codec quanta. The alphabet is data, not a command:
+   bits 1/4/5/6 select 1:8, 1:2, 5:8 and 3:4 byte:symbol quanta; 9 is
+   least-significant-bit-first binary. Both spans must hold the requested
+   complete quanta and must not overlap. Zero groups touches neither span.
+   Decode's 256-byte table contains indices below 2^bits or the sentinel 255.
+   Decode stops BEFORE the first quantum containing a table value of 255,
+   leaving that quantum untouched so the caller can retain exact malformed
+   prefix, wrapping and padding policy. The return value is completed quanta.
+   Arbitrary alignment is supported; neither body reads past the final one. */
+positive memory_encode_power2(address_any destination, address_any source,
+                              positive groups, string_address alphabet,
+                              positive bits);
+positive memory_decode_power2(address_any destination, address_any source,
+                              positive groups, address_any values,
+                              positive bits);
+
+#if X64
+__asm__(
+    ASM_FUNC(memory_encode_power2)
+    "test %rdx, %rdx\njz .Lcodec_encode_x64_zero\nmov %rdx, %r9\n"
+    "cmp $6, %r8\nje .Lcodec_encode_x64_6_start\n"
+    "cmp $5, %r8\nje .Lcodec_encode_x64_5_start\n"
+    "cmp $4, %r8\nje .Lcodec_encode_x64_4\n"
+    "cmp $1, %r8\nje .Lcodec_encode_x64_binary\n"
+    "cmp $9, %r8\nje .Lcodec_encode_x64_binary\n"
+    ".Lcodec_encode_x64_zero:\nxor %eax, %eax\n"
+    ASM_RET
+    /* Eight quanta become 32 independent alphabet indices. Four 16-byte
+       shuffles cover ANY 64-byte alphabet, including base64url, without
+       retaining an ASCII-only duplicate engine. Both input loads are exact
+       within the 24-byte span, including the final vector group. */
+    ".Lcodec_encode_x64_6_start:\n"
+    ASM_NARROW("cpu_has_avx2", ".Lcodec_encode_x64_6")
+#ifndef KERNEL_MODE
+    "cmp $8, %rdx\n   jb .Lcodec_encode_x64_6\n"
+    "vbroadcasti128 (%rcx), %ymm4\n   vbroadcasti128 16(%rcx), %ymm5\n"
+    "vbroadcasti128 32(%rcx), %ymm6\n   vbroadcasti128 48(%rcx), %ymm7\n"
+    "vpbroadcastd .Lcodec_encode_x64_mask_a(%rip), %ymm8\n"
+    "vpbroadcastd .Lcodec_encode_x64_mask_b(%rip), %ymm9\n"
+    "vpbroadcastd .Lcodec_encode_x64_mul_a(%rip), %ymm10\n"
+    "vpbroadcastd .Lcodec_encode_x64_mul_b(%rip), %ymm11\n"
+    "vpbroadcastb .Lcodec_encode_x64_limits(%rip), %ymm12\n"
+    "vpbroadcastb .Lcodec_encode_x64_limits+1(%rip), %ymm13\n"
+    "vpbroadcastb .Lcodec_encode_x64_limits+2(%rip), %ymm14\n"
+    "vmovdqu .Lcodec_encode_x64_shuffle(%rip), %ymm15\n"
+    ".balign 16\n.Lcodec_encode_x64_24:\n"
+    "vmovdqu (%rsi), %xmm0\n   vinserti128 $1, 8(%rsi), %ymm0, %ymm0\n"
+    "vpshufb %ymm15, %ymm0, %ymm0\n"
+    "vpand %ymm8, %ymm0, %ymm1\n   vpmulhuw %ymm10, %ymm1, %ymm1\n"
+    "vpand %ymm9, %ymm0, %ymm0\n   vpmullw %ymm11, %ymm0, %ymm0\n"
+    "vpor %ymm1, %ymm0, %ymm0\n   vpshufb %ymm0, %ymm4, %ymm1\n"
+    "vpshufb %ymm0, %ymm5, %ymm2\n   vpcmpgtb %ymm12, %ymm0, %ymm3\n"
+    "vpblendvb %ymm3, %ymm2, %ymm1, %ymm1\n"
+    "vpshufb %ymm0, %ymm6, %ymm2\n   vpcmpgtb %ymm13, %ymm0, %ymm3\n"
+    "vpblendvb %ymm3, %ymm2, %ymm1, %ymm1\n"
+    "vpshufb %ymm0, %ymm7, %ymm2\n   vpcmpgtb %ymm14, %ymm0, %ymm3\n"
+    "vpblendvb %ymm3, %ymm2, %ymm1, %ymm1\n   vmovdqu %ymm1, (%rdi)\n"
+    "add $24, %rsi\n   add $32, %rdi\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae .Lcodec_encode_x64_24\n   vzeroupper\n"
+    "test %rdx, %rdx\n   jnz .Lcodec_encode_x64_6\n   mov %r9, %rax\n"
+    ASM_RET
+#endif
+    ".balign 16\n.Lcodec_encode_x64_6:\n"
+    "movzwl (%rsi), %eax\nrolw $8, %ax\nshl $8, %eax\nmovzbl 2(%rsi), %r10d\nor %r10d, %eax\n"
+    "mov %rax, %r10\nshr $18, %r10\nand $63, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 0(%rdi)\n"
+    "mov %rax, %r10\nshr $12, %r10\nand $63, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 1(%rdi)\n"
+    "mov %rax, %r10\nshr $6, %r10\nand $63, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 2(%rdi)\n"
+    "mov %rax, %r10\nand $63, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 3(%rdi)\n"
+    "add $3, %rsi\nadd $4, %rdi\ndec %rdx\njnz .Lcodec_encode_x64_6\nmov %r9, %rax\n"
+    ASM_RET
+    /* Spread each 40-bit group into eight byte lanes in three mask stages.
+       This is the bit-deposit operation, without requiring BMI2 or serial
+       variable shifts. Two table shuffles serve both base32 alphabets. */
+    ".Lcodec_encode_x64_5_start:\n"
+    ASM_NARROW("cpu_has_avx2", ".Lcodec_encode_x64_5")
+#ifndef KERNEL_MODE
+    "cmp $4, %rdx\n   jb .Lcodec_encode_x64_5\n"
+    "vbroadcasti128 (%rcx), %ymm4\n   vbroadcasti128 16(%rcx), %ymm5\n"
+    "vpbroadcastq .Lcodec_encode_x64_spread20(%rip), %ymm8\n"
+    "vpbroadcastq .Lcodec_encode_x64_spread10(%rip), %ymm9\n"
+    "vpbroadcastq .Lcodec_encode_x64_spread5(%rip), %ymm10\n"
+    "vpbroadcastq .Lcodec_encode_x64_spread10hi(%rip), %ymm13\n"
+    "vpbroadcastq .Lcodec_encode_x64_spread5hi(%rip), %ymm14\n"
+    "vbroadcasti128 .Lcodec_encode_x64_reverse(%rip), %ymm11\n"
+    "vpbroadcastb .Lcodec_encode_x64_limits(%rip), %ymm12\n"
+    "vmovdqu .Lcodec_encode_x64_shuffle5(%rip), %ymm15\n"
+    ".balign 16\n.Lcodec_encode_x64_20:\n"
+    "vmovdqu (%rsi), %xmm0\n   vinserti128 $1, 4(%rsi), %ymm0, %ymm0\n"
+    "vpshufb %ymm15, %ymm0, %ymm0\n"
+    "vpsrlq $20, %ymm0, %ymm1\n   vpsllq $32, %ymm1, %ymm1\n"
+    "vpand %ymm8, %ymm0, %ymm0\n   vpor %ymm1, %ymm0, %ymm0\n"
+    "vpsllq $6, %ymm0, %ymm1\n   vpand %ymm13, %ymm1, %ymm1\n"
+    "vpand %ymm9, %ymm0, %ymm0\n   vpor %ymm1, %ymm0, %ymm0\n"
+    "vpsllq $3, %ymm0, %ymm1\n   vpand %ymm14, %ymm1, %ymm1\n"
+    "vpand %ymm10, %ymm0, %ymm0\n   vpor %ymm1, %ymm0, %ymm0\n"
+    "vpshufb %ymm11, %ymm0, %ymm0\n"
+    "vpshufb %ymm0, %ymm4, %ymm1\n   vpshufb %ymm0, %ymm5, %ymm2\n"
+    "vpcmpgtb %ymm12, %ymm0, %ymm3\n   vpblendvb %ymm3, %ymm2, %ymm1, %ymm1\n"
+    "vmovdqu %ymm1, (%rdi)\n   add $20, %rsi\n   add $32, %rdi\n"
+    "sub $4, %rdx\n   cmp $4, %rdx\n   jae .Lcodec_encode_x64_20\n"
+    "vzeroupper\n   test %rdx, %rdx\n   jnz .Lcodec_encode_x64_5\n"
+    "mov %r9, %rax\n"
+    ASM_RET
+#endif
+    ".balign 16\n.Lcodec_encode_x64_5:\n"
+    "mov (%rsi), %eax\nbswap %eax\nshl $8, %rax\nmovzbl 4(%rsi), %r10d\nor %r10, %rax\n"
+    "mov %rax, %r10\nshr $35, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 0(%rdi)\n"
+    "mov %rax, %r10\nshr $30, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 1(%rdi)\n"
+    "mov %rax, %r10\nshr $25, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 2(%rdi)\n"
+    "mov %rax, %r10\nshr $20, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 3(%rdi)\n"
+    "mov %rax, %r10\nshr $15, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 4(%rdi)\n"
+    "mov %rax, %r10\nshr $10, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 5(%rdi)\n"
+    "mov %rax, %r10\nshr $5, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 6(%rdi)\n"
+    "mov %rax, %r10\nand $31, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 7(%rdi)\n"
+    "add $5, %rsi\nadd $8, %rdi\ndec %rdx\njnz .Lcodec_encode_x64_5\nmov %r9, %rax\n"
+    ASM_RET
+    ".balign 16\n.Lcodec_encode_x64_4:\n"
+    "movzbl (%rsi), %eax\n"
+    "mov %rax, %r10\nshr $4, %r10\nand $15, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 0(%rdi)\n"
+    "mov %rax, %r10\nand $15, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 1(%rdi)\n"
+    "add $1, %rsi\nadd $2, %rdi\ndec %rdx\njnz .Lcodec_encode_x64_4\nmov %r9, %rax\n"
+    ASM_RET
+    ".Lcodec_encode_x64_binary:\n"
+    ASM_NARROW("cpu_has_avx2", ".Lcodec_encode_x64_binary_tail")
+#ifndef KERNEL_MODE
+    "cmp $4, %rdx\n   jb .Lcodec_encode_x64_binary_tail\n"
+    "vpbroadcastb (%rcx), %ymm4\n   vpbroadcastb 1(%rcx), %ymm5\n"
+    "vmovdqu .Lcodec_encode_x64_binary_shuffle(%rip), %ymm6\n"
+    "lea .Lcodec_encode_x64_binary_masks(%rip), %rax\n"
+    "cmp $9, %r8\n   jne 1f\n   add $8, %rax\n"
+    "1:  vpbroadcastq (%rax), %ymm7\n   vpxor %ymm8, %ymm8, %ymm8\n"
+    ".balign 16\n.Lcodec_encode_x64_binary_four:\n"
+    "vpbroadcastd (%rsi), %ymm0\n   vpshufb %ymm6, %ymm0, %ymm0\n"
+    "vpand %ymm7, %ymm0, %ymm0\n   vpcmpeqb %ymm8, %ymm0, %ymm0\n"
+    "vpblendvb %ymm0, %ymm4, %ymm5, %ymm1\n   vmovdqu %ymm1, (%rdi)\n"
+    "add $4, %rsi\n   add $32, %rdi\n   sub $4, %rdx\n"
+    "cmp $4, %rdx\n   jae .Lcodec_encode_x64_binary_four\n   vzeroupper\n"
+    "test %rdx, %rdx\n   jnz .Lcodec_encode_x64_binary_tail\n   mov %r9, %rax\n"
+    ASM_RET
+#endif
+    ".Lcodec_encode_x64_binary_tail:\n   cmp $9, %r8\n   je .Lcodec_encode_x64_9\n"
+    ".balign 16\n.Lcodec_encode_x64_1:\n"
+    "movzbl (%rsi), %eax\n"
+    "mov %rax, %r10\nshr $7, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 0(%rdi)\n"
+    "mov %rax, %r10\nshr $6, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 1(%rdi)\n"
+    "mov %rax, %r10\nshr $5, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 2(%rdi)\n"
+    "mov %rax, %r10\nshr $4, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 3(%rdi)\n"
+    "mov %rax, %r10\nshr $3, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 4(%rdi)\n"
+    "mov %rax, %r10\nshr $2, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 5(%rdi)\n"
+    "mov %rax, %r10\nshr $1, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 6(%rdi)\n"
+    "mov %rax, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 7(%rdi)\n"
+    "add $1, %rsi\nadd $8, %rdi\ndec %rdx\njnz .Lcodec_encode_x64_1\nmov %r9, %rax\n"
+    ASM_RET
+    ".balign 16\n.Lcodec_encode_x64_9:\n"
+    "movzbl (%rsi), %eax\n"
+    "mov %rax, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 0(%rdi)\n"
+    "mov %rax, %r10\nshr $1, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 1(%rdi)\n"
+    "mov %rax, %r10\nshr $2, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 2(%rdi)\n"
+    "mov %rax, %r10\nshr $3, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 3(%rdi)\n"
+    "mov %rax, %r10\nshr $4, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 4(%rdi)\n"
+    "mov %rax, %r10\nshr $5, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 5(%rdi)\n"
+    "mov %rax, %r10\nshr $6, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 6(%rdi)\n"
+    "mov %rax, %r10\nshr $7, %r10\nand $1, %r10d\nmovzbl (%rcx,%r10), %r10d\nmov %r10b, 7(%rdi)\n"
+    "add $1, %rsi\nadd $8, %rdi\ndec %rdx\njnz .Lcodec_encode_x64_9\nmov %r9, %rax\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".balign 4\n.Lcodec_encode_x64_mask_a:\n   .long 0x0fc0fc00\n"
+    ".Lcodec_encode_x64_mask_b:\n   .long 0x003f03f0\n"
+    ".Lcodec_encode_x64_mul_a:\n   .long 0x04000040\n"
+    ".Lcodec_encode_x64_mul_b:\n   .long 0x01000010\n"
+    ".Lcodec_encode_x64_limits:\n   .byte 15,31,47\n"
+    ".Lcodec_encode_x64_shuffle:\n"
+    ".byte 1,0,2,1,4,3,5,4,7,6,8,7,10,9,11,10\n"
+    ".byte 5,4,6,5,8,7,9,8,11,10,12,11,14,13,15,14\n"
+    ".balign 8\n.Lcodec_encode_x64_spread20:\n   .quad 0x00000000000fffff\n"
+    ".Lcodec_encode_x64_spread10:\n   .quad 0x000003ff000003ff\n"
+    ".Lcodec_encode_x64_spread5:\n   .quad 0x001f001f001f001f\n"
+    ".Lcodec_encode_x64_spread10hi:\n   .quad 0x03ff000003ff0000\n"
+    ".Lcodec_encode_x64_spread5hi:\n   .quad 0x1f001f001f001f00\n"
+    ".Lcodec_encode_x64_reverse:\n   .byte 7,6,5,4,3,2,1,0,15,14,13,12,11,10,9,8\n"
+    ".Lcodec_encode_x64_shuffle5:\n"
+    ".byte 4,3,2,1,0,128,128,128,9,8,7,6,5,128,128,128\n"
+    ".byte 10,9,8,7,6,128,128,128,15,14,13,12,11,128,128,128\n"
+    ".Lcodec_encode_x64_binary_masks:\n   .byte 128,64,32,16,8,4,2,1,1,2,4,8,16,32,64,128\n"
+    ".Lcodec_encode_x64_binary_shuffle:\n"
+    ".byte 0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1\n"
+    ".byte 2,2,2,2,2,2,2,2,3,3,3,3,3,3,3,3\n"
+#endif
+    ASM_END(memory_encode_power2)
+    ASM_FUNC(memory_decode_power2)
+    "xor %r9d, %r9d\n   test %rdx, %rdx\n   jz .Lcodec_decode_x64_done\n"
+#ifndef KERNEL_MODE
+    /* A 256-byte alphabet map fits four ZMM registers. Two byte-table
+       permutes and one high-bit merge translate 64 arbitrary bytes, so the
+       same mapper serves all five bit widths without ASCII policy copies. */
+    ASM_NARROW("cpu_has_avx2", ".Lcodec_decode_x64_scalar")
+    ASM_NARROW("cpu_has_avx512", ".Lcodec_decode_x64_scalar")
+    ASM_NARROW("cpu_has_avx512_vbmi", ".Lcodec_decode_x64_scalar")
+    "mov $8, %r10d\n   cmp $1, %r8\n   je .Lcodec_decode_x64_wide_start\n"
+    "cmp $9, %r8\n   je .Lcodec_decode_x64_wide_start\n"
+    "cmp $5, %r8\n   je .Lcodec_decode_x64_wide_start\n"
+    "mov $32, %r10d\n   cmp $4, %r8\n   je .Lcodec_decode_x64_wide_start\n"
+    "mov $16, %r10d\n   cmp $6, %r8\n   jne .Lcodec_decode_x64_done\n"
+    ".Lcodec_decode_x64_wide_start:\n   cmp %r10, %rdx\n   jb .Lcodec_decode_x64_scalar\n"
+    "vmovdqu64 (%rcx), %zmm4\n   vmovdqu64 64(%rcx), %zmm5\n"
+    "vmovdqu64 128(%rcx), %zmm6\n   vmovdqu64 192(%rcx), %zmm7\n"
+    "mov $0x01400140, %eax\n   cmp $6, %r8\n   je 1f\n"
+    "mov $0x01200120, %eax\n   cmp $5, %r8\n   je 1f\n   mov $0x01100110, %eax\n"
+    "1:  vpbroadcastd %eax, %zmm8\n"
+    "mov $0x00011000, %eax\n   cmp $6, %r8\n   je 2f\n   mov $0x00010400, %eax\n"
+    "2:  vpbroadcastd %eax, %zmm9\n"
+    "vmovdqu64 .Lcodec_decode_x64_compact6(%rip), %zmm10\n"
+    "vmovdqu64 .Lcodec_decode_x64_compact5(%rip), %zmm11\n"
+    "vbroadcasti32x4 .Lcodec_encode_x64_reverse(%rip), %zmm12\n"
+    ".balign 16\n.Lcodec_decode_x64_wide:\n"
+    "vmovdqu64 (%rsi), %zmm0\n   vmovdqa64 %zmm4, %zmm1\n"
+    "vpermt2b %zmm5, %zmm0, %zmm1\n   vmovdqa64 %zmm6, %zmm2\n"
+    "vpermt2b %zmm7, %zmm0, %zmm2\n   vpmovb2m %zmm0, %k1\n"
+    "vmovdqu8 %zmm2, %zmm1{%k1}\n   vpmovb2m %zmm1, %k1\n"
+    "kortestq %k1, %k1\n   jnz .Lcodec_decode_x64_wide_tail\n"
+    "cmp $1, %r8\n   je .Lcodec_decode_x64_binary\n"
+    "cmp $9, %r8\n   je .Lcodec_decode_x64_binary\n"
+    "vpmaddubsw %zmm8, %zmm1, %zmm1\n"
+    "cmp $4, %r8\n   je .Lcodec_decode_x64_hex\n"
+    "vpmaddwd %zmm9, %zmm1, %zmm1\n"
+    "cmp $5, %r8\n   je .Lcodec_decode_x64_five\n"
+    "vpermb %zmm1, %zmm10, %zmm1\n"
+    "vmovdqu %ymm1, (%rdi)\n   vextracti32x4 $2, %zmm1, 32(%rdi)\n"
+    "add $48, %rdi\n   jmp .Lcodec_decode_x64_wide_next\n"
+    ".Lcodec_decode_x64_five:\n"
+    "vpsrlq $32, %zmm1, %zmm2\n   vpsllq $20, %zmm1, %zmm1\n"
+    "vporq %zmm2, %zmm1, %zmm1\n   vpermb %zmm1, %zmm11, %zmm1\n"
+    "vmovdqu %ymm1, (%rdi)\n   vextracti32x4 $2, %zmm1, %xmm2\n"
+    "vmovq %xmm2, 32(%rdi)\n   add $40, %rdi\n   jmp .Lcodec_decode_x64_wide_next\n"
+    ".Lcodec_decode_x64_hex:\n"
+    "vpmovwb %zmm1, %ymm1\n   vmovdqu %ymm1, (%rdi)\n"
+    "add $32, %rdi\n   jmp .Lcodec_decode_x64_wide_next\n"
+    ".Lcodec_decode_x64_binary:\n   cmp $9, %r8\n   je 3f\n"
+    "vpshufb %zmm12, %zmm1, %zmm1\n"
+    "3:  vpsllw $7, %zmm1, %zmm1\n   vpmovb2m %zmm1, %k1\n"
+    "kmovq %k1, (%rdi)\n   add $8, %rdi\n"
+    ".Lcodec_decode_x64_wide_next:\n"
+    "add $64, %rsi\n   add %r10, %r9\n   sub %r10, %rdx\n"
+    "cmp %r10, %rdx\n   jae .Lcodec_decode_x64_wide\n"
+    ".Lcodec_decode_x64_wide_tail:\n   vzeroupper\n"
+    "test %rdx, %rdx\n   jz .Lcodec_decode_x64_done\n"
+#endif
+    ".Lcodec_decode_x64_scalar:\n"
+    "cmp $6, %r8\n   je .Lcodec_decode_x64_6\n"
+    "cmp $5, %r8\n   je .Lcodec_decode_x64_5\n"
+    "cmp $4, %r8\n   je .Lcodec_decode_x64_4\n"
+    "cmp $1, %r8\n   je .Lcodec_decode_x64_1\n"
+    "cmp $9, %r8\n   je .Lcodec_decode_x64_9\n"
+    "jmp .Lcodec_decode_x64_done\n"
+    ".balign 16\n.Lcodec_decode_x64_6:\nxor %eax, %eax\nxor %r11d, %r11d\n"
+    "movzbl 0(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $18, %r10\nor %r10, %rax\n"
+    "movzbl 1(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $12, %r10\nor %r10, %rax\n"
+    "movzbl 2(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $6, %r10\nor %r10, %rax\n"
+    "movzbl 3(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nor %r10, %rax\n"
+    "test $128, %r11d\njnz .Lcodec_decode_x64_done\n"
+    "bswap %eax\nshr $8, %eax\nmov %ax, (%rdi)\nshr $16, %eax\nmov %al, 2(%rdi)\n"
+    "add $4, %rsi\nadd $3, %rdi\ninc %r9\ndec %rdx\njnz .Lcodec_decode_x64_6\njmp .Lcodec_decode_x64_done\n"
+    ".balign 16\n.Lcodec_decode_x64_5:\nxor %eax, %eax\nxor %r11d, %r11d\n"
+    "movzbl 0(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $35, %r10\nor %r10, %rax\n"
+    "movzbl 1(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $30, %r10\nor %r10, %rax\n"
+    "movzbl 2(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $25, %r10\nor %r10, %rax\n"
+    "movzbl 3(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $20, %r10\nor %r10, %rax\n"
+    "movzbl 4(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $15, %r10\nor %r10, %rax\n"
+    "movzbl 5(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $10, %r10\nor %r10, %rax\n"
+    "movzbl 6(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $5, %r10\nor %r10, %rax\n"
+    "movzbl 7(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nor %r10, %rax\n"
+    "test $128, %r11d\njnz .Lcodec_decode_x64_done\n"
+    "bswap %rax\nshr $24, %rax\nmov %eax, (%rdi)\nshr $32, %rax\nmov %al, 4(%rdi)\n"
+    "add $8, %rsi\nadd $5, %rdi\ninc %r9\ndec %rdx\njnz .Lcodec_decode_x64_5\njmp .Lcodec_decode_x64_done\n"
+    ".balign 16\n.Lcodec_decode_x64_4:\nxor %eax, %eax\nxor %r11d, %r11d\n"
+    "movzbl 0(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $4, %r10\nor %r10, %rax\n"
+    "movzbl 1(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nor %r10, %rax\n"
+    "test $128, %r11d\njnz .Lcodec_decode_x64_done\n"
+    "mov %al, (%rdi)\n"
+    "add $2, %rsi\nadd $1, %rdi\ninc %r9\ndec %rdx\njnz .Lcodec_decode_x64_4\njmp .Lcodec_decode_x64_done\n"
+    ".balign 16\n.Lcodec_decode_x64_1:\nxor %eax, %eax\nxor %r11d, %r11d\n"
+    "movzbl 0(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $7, %r10\nor %r10, %rax\n"
+    "movzbl 1(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $6, %r10\nor %r10, %rax\n"
+    "movzbl 2(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $5, %r10\nor %r10, %rax\n"
+    "movzbl 3(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $4, %r10\nor %r10, %rax\n"
+    "movzbl 4(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $3, %r10\nor %r10, %rax\n"
+    "movzbl 5(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $2, %r10\nor %r10, %rax\n"
+    "movzbl 6(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $1, %r10\nor %r10, %rax\n"
+    "movzbl 7(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nor %r10, %rax\n"
+    "test $128, %r11d\njnz .Lcodec_decode_x64_done\n"
+    "mov %al, (%rdi)\n"
+    "add $8, %rsi\nadd $1, %rdi\ninc %r9\ndec %rdx\njnz .Lcodec_decode_x64_1\njmp .Lcodec_decode_x64_done\n"
+    ".balign 16\n.Lcodec_decode_x64_9:\nxor %eax, %eax\nxor %r11d, %r11d\n"
+    "movzbl 0(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nor %r10, %rax\n"
+    "movzbl 1(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $1, %r10d\nor %r10, %rax\n"
+    "movzbl 2(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $2, %r10d\nor %r10, %rax\n"
+    "movzbl 3(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $3, %r10d\nor %r10, %rax\n"
+    "movzbl 4(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $4, %r10d\nor %r10, %rax\n"
+    "movzbl 5(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $5, %r10d\nor %r10, %rax\n"
+    "movzbl 6(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $6, %r10d\nor %r10, %rax\n"
+    "movzbl 7(%rsi), %r10d\nmovzbl (%rcx,%r10), %r10d\nor %r10d, %r11d\nshl $7, %r10d\nor %r10, %rax\n"
+    "test $128, %r11d\njnz .Lcodec_decode_x64_done\n"
+    "mov %al, (%rdi)\n"
+    "add $8, %rsi\nadd $1, %rdi\ninc %r9\ndec %rdx\njnz .Lcodec_decode_x64_9\njmp .Lcodec_decode_x64_done\n"
+    ".Lcodec_decode_x64_done:\nmov %r9, %rax\n"
+    ASM_RET
+#ifndef KERNEL_MODE
+    ".Lcodec_decode_x64_compact6:\n"
+    ".byte 2,1,0,6,5,4,10,9,8,14,13,12,18,17,16,22,21,20,26,25,24,30,29,28,34,33,32,38,37,36,42,41,40,46,45,44,50,49,48,54,53,52,58,57,56,62,61,60,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+    ".Lcodec_decode_x64_compact5:\n"
+    ".byte 4,3,2,1,0,12,11,10,9,8,20,19,18,17,16,28,27,26,25,24,36,35,34,33,32,44,43,42,41,40,52,51,50,49,48,60,59,58,57,56,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0\n"
+#endif
+    ASM_END(memory_decode_power2)
+);
+#elif ARM64
+__asm__(
+    ASM_FUNC(memory_encode_power2)
+    "mov x5, x0\nmov x0, #0\ncbz x2, .Lcodec_encode_arm64_done\nmov x6, x2\n"
+    "cmp x4, #6\nb.eq .Lcodec_encode_arm64_6_start\n"
+    "cmp x4, #5\nb.eq .Lcodec_encode_arm64_5\n"
+    "cmp x4, #4\nb.eq .Lcodec_encode_arm64_4\n"
+    "cmp x4, #1\nb.eq .Lcodec_encode_arm64_1\n"
+    "cmp x4, #9\nb.eq .Lcodec_encode_arm64_9\n"
+    "b .Lcodec_encode_arm64_done\n"
+    ".Lcodec_encode_arm64_6_start:\n"
+#ifndef KERNEL_MODE
+    "cmp x2, #16\n   b.lo .Lcodec_encode_arm64_6\n"
+    "ld1 {v16.16b, v17.16b, v18.16b, v19.16b}, [x3]\n"
+    "movi v20.16b, #63\n"
+    ".balign 16\n.Lcodec_encode_arm64_48:\n"
+    "ld3 {v0.16b, v1.16b, v2.16b}, [x1], #48\n"
+    "ushr v4.16b, v0.16b, #2\n   shl v5.16b, v0.16b, #4\n"
+    "sri v5.16b, v1.16b, #4\n   and v5.16b, v5.16b, v20.16b\n"
+    "shl v6.16b, v1.16b, #2\n   sri v6.16b, v2.16b, #6\n"
+    "and v6.16b, v6.16b, v20.16b\n   and v7.16b, v2.16b, v20.16b\n"
+    "tbl v4.16b, {v16.16b, v17.16b, v18.16b, v19.16b}, v4.16b\n"
+    "tbl v5.16b, {v16.16b, v17.16b, v18.16b, v19.16b}, v5.16b\n"
+    "tbl v6.16b, {v16.16b, v17.16b, v18.16b, v19.16b}, v6.16b\n"
+    "tbl v7.16b, {v16.16b, v17.16b, v18.16b, v19.16b}, v7.16b\n"
+    "st4 {v4.16b, v5.16b, v6.16b, v7.16b}, [x5], #64\n"
+    "sub x2, x2, #16\n   cmp x2, #16\n   b.hs .Lcodec_encode_arm64_48\n"
+    "cbnz x2, .Lcodec_encode_arm64_6\n   mov x0, x6\n   b .Lcodec_encode_arm64_done\n"
+#endif
+    ".balign 16\n.Lcodec_encode_arm64_6:\nmov x7, #0\n"
+    "ldrb w8, [x1, #0]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #1]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #2]\norr x7, x8, x7, lsl #8\n"
+    "ubfx x8, x7, #18, #6\nldrb w8, [x3, x8]\nstrb w8, [x5, #0]\n"
+    "ubfx x8, x7, #12, #6\nldrb w8, [x3, x8]\nstrb w8, [x5, #1]\n"
+    "ubfx x8, x7, #6, #6\nldrb w8, [x3, x8]\nstrb w8, [x5, #2]\n"
+    "ubfx x8, x7, #0, #6\nldrb w8, [x3, x8]\nstrb w8, [x5, #3]\n"
+    "add x1, x1, #3\nadd x5, x5, #4\nsubs x2, x2, #1\nb.ne .Lcodec_encode_arm64_6\nmov x0, x6\nb .Lcodec_encode_arm64_done\n"
+    ".balign 16\n.Lcodec_encode_arm64_5:\nmov x7, #0\n"
+    "ldrb w8, [x1, #0]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #1]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #2]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #3]\norr x7, x8, x7, lsl #8\n"
+    "ldrb w8, [x1, #4]\norr x7, x8, x7, lsl #8\n"
+    "ubfx x8, x7, #35, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #0]\n"
+    "ubfx x8, x7, #30, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #1]\n"
+    "ubfx x8, x7, #25, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #2]\n"
+    "ubfx x8, x7, #20, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #3]\n"
+    "ubfx x8, x7, #15, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #4]\n"
+    "ubfx x8, x7, #10, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #5]\n"
+    "ubfx x8, x7, #5, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #6]\n"
+    "ubfx x8, x7, #0, #5\nldrb w8, [x3, x8]\nstrb w8, [x5, #7]\n"
+    "add x1, x1, #5\nadd x5, x5, #8\nsubs x2, x2, #1\nb.ne .Lcodec_encode_arm64_5\nmov x0, x6\nb .Lcodec_encode_arm64_done\n"
+    ".balign 16\n.Lcodec_encode_arm64_4:\nmov x7, #0\n"
+    "ldrb w8, [x1, #0]\norr x7, x8, x7, lsl #8\n"
+    "ubfx x8, x7, #4, #4\nldrb w8, [x3, x8]\nstrb w8, [x5, #0]\n"
+    "ubfx x8, x7, #0, #4\nldrb w8, [x3, x8]\nstrb w8, [x5, #1]\n"
+    "add x1, x1, #1\nadd x5, x5, #2\nsubs x2, x2, #1\nb.ne .Lcodec_encode_arm64_4\nmov x0, x6\nb .Lcodec_encode_arm64_done\n"
+    ".balign 16\n.Lcodec_encode_arm64_1:\nmov x7, #0\n"
+    "ldrb w8, [x1, #0]\norr x7, x8, x7, lsl #8\n"
+    "ubfx x8, x7, #7, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #0]\n"
+    "ubfx x8, x7, #6, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #1]\n"
+    "ubfx x8, x7, #5, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #2]\n"
+    "ubfx x8, x7, #4, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #3]\n"
+    "ubfx x8, x7, #3, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #4]\n"
+    "ubfx x8, x7, #2, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #5]\n"
+    "ubfx x8, x7, #1, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #6]\n"
+    "ubfx x8, x7, #0, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #7]\n"
+    "add x1, x1, #1\nadd x5, x5, #8\nsubs x2, x2, #1\nb.ne .Lcodec_encode_arm64_1\nmov x0, x6\nb .Lcodec_encode_arm64_done\n"
+    ".balign 16\n.Lcodec_encode_arm64_9:\nmov x7, #0\n"
+    "ldrb w8, [x1, #0]\norr x7, x8, x7, lsl #8\n"
+    "ubfx x8, x7, #0, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #0]\n"
+    "ubfx x8, x7, #1, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #1]\n"
+    "ubfx x8, x7, #2, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #2]\n"
+    "ubfx x8, x7, #3, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #3]\n"
+    "ubfx x8, x7, #4, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #4]\n"
+    "ubfx x8, x7, #5, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #5]\n"
+    "ubfx x8, x7, #6, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #6]\n"
+    "ubfx x8, x7, #7, #1\nldrb w8, [x3, x8]\nstrb w8, [x5, #7]\n"
+    "add x1, x1, #1\nadd x5, x5, #8\nsubs x2, x2, #1\nb.ne .Lcodec_encode_arm64_9\nmov x0, x6\nb .Lcodec_encode_arm64_done\n"
+    ".Lcodec_encode_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_encode_power2)
+    ASM_FUNC(memory_decode_power2)
+    "mov x5, x0\nmov x0, #0\ncbz x2, .Lcodec_decode_arm64_done\n"
+    "cmp x4, #6\nb.eq .Lcodec_decode_arm64_6\n"
+    "cmp x4, #5\nb.eq .Lcodec_decode_arm64_5\n"
+    "cmp x4, #4\nb.eq .Lcodec_decode_arm64_4\n"
+    "cmp x4, #1\nb.eq .Lcodec_decode_arm64_1\n"
+    "cmp x4, #9\nb.eq .Lcodec_decode_arm64_9\n"
+    "b .Lcodec_decode_arm64_done\n"
+    ".balign 16\n.Lcodec_decode_arm64_6:\nmov x6, #0\nmov w7, #0\n"
+    "ldrb w8, [x1, #0]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #0\n"
+    "ldrb w8, [x1, #1]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #6\n"
+    "ldrb w8, [x1, #2]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #6\n"
+    "ldrb w8, [x1, #3]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #6\n"
+    "tbnz w7, #7, .Lcodec_decode_arm64_done\n"
+    "lsr x8, x6, #16\nstrb w8, [x5, #0]\n"
+    "lsr x8, x6, #8\nstrb w8, [x5, #1]\n"
+    "lsr x8, x6, #0\nstrb w8, [x5, #2]\n"
+    "add x1, x1, #4\nadd x5, x5, #3\nadd x0, x0, #1\nsubs x2, x2, #1\nb.ne .Lcodec_decode_arm64_6\nb .Lcodec_decode_arm64_done\n"
+    ".balign 16\n.Lcodec_decode_arm64_5:\nmov x6, #0\nmov w7, #0\n"
+    "ldrb w8, [x1, #0]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #0\n"
+    "ldrb w8, [x1, #1]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #2]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #3]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #4]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #5]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #6]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "ldrb w8, [x1, #7]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #5\n"
+    "tbnz w7, #7, .Lcodec_decode_arm64_done\n"
+    "lsr x8, x6, #32\nstrb w8, [x5, #0]\n"
+    "lsr x8, x6, #24\nstrb w8, [x5, #1]\n"
+    "lsr x8, x6, #16\nstrb w8, [x5, #2]\n"
+    "lsr x8, x6, #8\nstrb w8, [x5, #3]\n"
+    "lsr x8, x6, #0\nstrb w8, [x5, #4]\n"
+    "add x1, x1, #8\nadd x5, x5, #5\nadd x0, x0, #1\nsubs x2, x2, #1\nb.ne .Lcodec_decode_arm64_5\nb .Lcodec_decode_arm64_done\n"
+    ".balign 16\n.Lcodec_decode_arm64_4:\nmov x6, #0\nmov w7, #0\n"
+    "ldrb w8, [x1, #0]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #0\n"
+    "ldrb w8, [x1, #1]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #4\n"
+    "tbnz w7, #7, .Lcodec_decode_arm64_done\n"
+    "lsr x8, x6, #0\nstrb w8, [x5, #0]\n"
+    "add x1, x1, #2\nadd x5, x5, #1\nadd x0, x0, #1\nsubs x2, x2, #1\nb.ne .Lcodec_decode_arm64_4\nb .Lcodec_decode_arm64_done\n"
+    ".balign 16\n.Lcodec_decode_arm64_1:\nmov x6, #0\nmov w7, #0\n"
+    "ldrb w8, [x1, #0]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #0\n"
+    "ldrb w8, [x1, #1]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #2]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #3]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #4]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #5]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #6]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "ldrb w8, [x1, #7]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x8, x6, lsl #1\n"
+    "tbnz w7, #7, .Lcodec_decode_arm64_done\n"
+    "lsr x8, x6, #0\nstrb w8, [x5, #0]\n"
+    "add x1, x1, #8\nadd x5, x5, #1\nadd x0, x0, #1\nsubs x2, x2, #1\nb.ne .Lcodec_decode_arm64_1\nb .Lcodec_decode_arm64_done\n"
+    ".balign 16\n.Lcodec_decode_arm64_9:\nmov x6, #0\nmov w7, #0\n"
+    "ldrb w8, [x1, #0]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #0\n"
+    "ldrb w8, [x1, #1]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #1\n"
+    "ldrb w8, [x1, #2]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #2\n"
+    "ldrb w8, [x1, #3]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #3\n"
+    "ldrb w8, [x1, #4]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #4\n"
+    "ldrb w8, [x1, #5]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #5\n"
+    "ldrb w8, [x1, #6]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #6\n"
+    "ldrb w8, [x1, #7]\nldrb w8, [x3, x8]\norr w7, w7, w8\norr x6, x6, x8, lsl #7\n"
+    "tbnz w7, #7, .Lcodec_decode_arm64_done\n"
+    "lsr x8, x6, #0\nstrb w8, [x5, #0]\n"
+    "add x1, x1, #8\nadd x5, x5, #1\nadd x0, x0, #1\nsubs x2, x2, #1\nb.ne .Lcodec_decode_arm64_9\nb .Lcodec_decode_arm64_done\n"
+    ".Lcodec_decode_arm64_done:\n"
+    ASM_RET
+    ASM_END(memory_decode_power2)
+);
+#elif RISCV64
+__asm__(
+    ASM_FUNC(memory_encode_power2)
+    "mv a5, a0\nli a0, 0\nbeqz a2, .Lcodec_encode_rv_done\nmv a6, a2\n"
+    "li t0, 6\nbeq a4, t0, .Lcodec_encode_rv_6\n"
+    "li t0, 5\nbeq a4, t0, .Lcodec_encode_rv_5\n"
+    "li t0, 4\nbeq a4, t0, .Lcodec_encode_rv_4\n"
+    "li t0, 1\nbeq a4, t0, .Lcodec_encode_rv_1\n"
+    "li t0, 9\nbeq a4, t0, .Lcodec_encode_rv_9\n"
+    "j .Lcodec_encode_rv_done\n"
+    ".balign 16\n.Lcodec_encode_rv_6:\nli t0, 0\n"
+    "lbu t1, 0(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "srli t1, t0, 18\nandi t1, t1, 63\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 0(a5)\n"
+    "srli t1, t0, 12\nandi t1, t1, 63\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 1(a5)\n"
+    "srli t1, t0, 6\nandi t1, t1, 63\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 2(a5)\n"
+    "srli t1, t0, 0\nandi t1, t1, 63\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 3(a5)\n"
+    "addi a1, a1, 3\naddi a5, a5, 4\naddi a2, a2, -1\nbnez a2, .Lcodec_encode_rv_6\nmv a0, a6\nj .Lcodec_encode_rv_done\n"
+    ".balign 16\n.Lcodec_encode_rv_5:\nli t0, 0\n"
+    "lbu t1, 0(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 3(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "lbu t1, 4(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "srli t1, t0, 35\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 0(a5)\n"
+    "srli t1, t0, 30\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 1(a5)\n"
+    "srli t1, t0, 25\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 2(a5)\n"
+    "srli t1, t0, 20\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 3(a5)\n"
+    "srli t1, t0, 15\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 4(a5)\n"
+    "srli t1, t0, 10\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 5(a5)\n"
+    "srli t1, t0, 5\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 6(a5)\n"
+    "srli t1, t0, 0\nandi t1, t1, 31\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 7(a5)\n"
+    "addi a1, a1, 5\naddi a5, a5, 8\naddi a2, a2, -1\nbnez a2, .Lcodec_encode_rv_5\nmv a0, a6\nj .Lcodec_encode_rv_done\n"
+    ".balign 16\n.Lcodec_encode_rv_4:\nli t0, 0\n"
+    "lbu t1, 0(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "srli t1, t0, 4\nandi t1, t1, 15\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 0(a5)\n"
+    "srli t1, t0, 0\nandi t1, t1, 15\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 1(a5)\n"
+    "addi a1, a1, 1\naddi a5, a5, 2\naddi a2, a2, -1\nbnez a2, .Lcodec_encode_rv_4\nmv a0, a6\nj .Lcodec_encode_rv_done\n"
+    ".balign 16\n.Lcodec_encode_rv_1:\nli t0, 0\n"
+    "lbu t1, 0(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "srli t1, t0, 7\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 0(a5)\n"
+    "srli t1, t0, 6\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 1(a5)\n"
+    "srli t1, t0, 5\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 2(a5)\n"
+    "srli t1, t0, 4\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 3(a5)\n"
+    "srli t1, t0, 3\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 4(a5)\n"
+    "srli t1, t0, 2\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 5(a5)\n"
+    "srli t1, t0, 1\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 6(a5)\n"
+    "srli t1, t0, 0\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 7(a5)\n"
+    "addi a1, a1, 1\naddi a5, a5, 8\naddi a2, a2, -1\nbnez a2, .Lcodec_encode_rv_1\nmv a0, a6\nj .Lcodec_encode_rv_done\n"
+    ".balign 16\n.Lcodec_encode_rv_9:\nli t0, 0\n"
+    "lbu t1, 0(a1)\nslli t0, t0, 8\nor t0, t0, t1\n"
+    "srli t1, t0, 0\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 0(a5)\n"
+    "srli t1, t0, 1\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 1(a5)\n"
+    "srli t1, t0, 2\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 2(a5)\n"
+    "srli t1, t0, 3\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 3(a5)\n"
+    "srli t1, t0, 4\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 4(a5)\n"
+    "srli t1, t0, 5\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 5(a5)\n"
+    "srli t1, t0, 6\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 6(a5)\n"
+    "srli t1, t0, 7\nandi t1, t1, 1\nadd t1, t1, a3\nlbu t1, 0(t1)\nsb t1, 7(a5)\n"
+    "addi a1, a1, 1\naddi a5, a5, 8\naddi a2, a2, -1\nbnez a2, .Lcodec_encode_rv_9\nmv a0, a6\nj .Lcodec_encode_rv_done\n"
+    ".Lcodec_encode_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_encode_power2)
+    ASM_FUNC(memory_decode_power2)
+    "mv a5, a0\nli a0, 0\nbeqz a2, .Lcodec_decode_rv_done\n"
+    "li t0, 6\nbeq a4, t0, .Lcodec_decode_rv_6\n"
+    "li t0, 5\nbeq a4, t0, .Lcodec_decode_rv_5\n"
+    "li t0, 4\nbeq a4, t0, .Lcodec_decode_rv_4\n"
+    "li t0, 1\nbeq a4, t0, .Lcodec_decode_rv_1\n"
+    "li t0, 9\nbeq a4, t0, .Lcodec_decode_rv_9\n"
+    "j .Lcodec_decode_rv_done\n"
+    ".balign 16\n.Lcodec_decode_rv_6:\nli t0, 0\nli t2, 0\n"
+    "lbu t1, 0(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 0\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 6\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 6\nor t0, t0, t1\n"
+    "lbu t1, 3(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 6\nor t0, t0, t1\n"
+    "andi t2, t2, 128\nbnez t2, .Lcodec_decode_rv_done\n"
+    "srli t1, t0, 16\nsb t1, 0(a5)\n"
+    "srli t1, t0, 8\nsb t1, 1(a5)\n"
+    "srli t1, t0, 0\nsb t1, 2(a5)\n"
+    "addi a1, a1, 4\naddi a5, a5, 3\naddi a0, a0, 1\naddi a2, a2, -1\nbnez a2, .Lcodec_decode_rv_6\nj .Lcodec_decode_rv_done\n"
+    ".balign 16\n.Lcodec_decode_rv_5:\nli t0, 0\nli t2, 0\n"
+    "lbu t1, 0(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 0\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 3(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 4(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 5(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 6(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "lbu t1, 7(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 5\nor t0, t0, t1\n"
+    "andi t2, t2, 128\nbnez t2, .Lcodec_decode_rv_done\n"
+    "srli t1, t0, 32\nsb t1, 0(a5)\n"
+    "srli t1, t0, 24\nsb t1, 1(a5)\n"
+    "srli t1, t0, 16\nsb t1, 2(a5)\n"
+    "srli t1, t0, 8\nsb t1, 3(a5)\n"
+    "srli t1, t0, 0\nsb t1, 4(a5)\n"
+    "addi a1, a1, 8\naddi a5, a5, 5\naddi a0, a0, 1\naddi a2, a2, -1\nbnez a2, .Lcodec_decode_rv_5\nj .Lcodec_decode_rv_done\n"
+    ".balign 16\n.Lcodec_decode_rv_4:\nli t0, 0\nli t2, 0\n"
+    "lbu t1, 0(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 0\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 4\nor t0, t0, t1\n"
+    "andi t2, t2, 128\nbnez t2, .Lcodec_decode_rv_done\n"
+    "srli t1, t0, 0\nsb t1, 0(a5)\n"
+    "addi a1, a1, 2\naddi a5, a5, 1\naddi a0, a0, 1\naddi a2, a2, -1\nbnez a2, .Lcodec_decode_rv_4\nj .Lcodec_decode_rv_done\n"
+    ".balign 16\n.Lcodec_decode_rv_1:\nli t0, 0\nli t2, 0\n"
+    "lbu t1, 0(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 0\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 3(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 4(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 5(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 6(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "lbu t1, 7(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t0, t0, 1\nor t0, t0, t1\n"
+    "andi t2, t2, 128\nbnez t2, .Lcodec_decode_rv_done\n"
+    "srli t1, t0, 0\nsb t1, 0(a5)\n"
+    "addi a1, a1, 8\naddi a5, a5, 1\naddi a0, a0, 1\naddi a2, a2, -1\nbnez a2, .Lcodec_decode_rv_1\nj .Lcodec_decode_rv_done\n"
+    ".balign 16\n.Lcodec_decode_rv_9:\nli t0, 0\nli t2, 0\n"
+    "lbu t1, 0(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 0\nor t0, t0, t1\n"
+    "lbu t1, 1(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 1\nor t0, t0, t1\n"
+    "lbu t1, 2(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 2\nor t0, t0, t1\n"
+    "lbu t1, 3(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 3\nor t0, t0, t1\n"
+    "lbu t1, 4(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 4\nor t0, t0, t1\n"
+    "lbu t1, 5(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 5\nor t0, t0, t1\n"
+    "lbu t1, 6(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 6\nor t0, t0, t1\n"
+    "lbu t1, 7(a1)\nadd t1, t1, a3\nlbu t1, 0(t1)\nor t2, t2, t1\nslli t1, t1, 7\nor t0, t0, t1\n"
+    "andi t2, t2, 128\nbnez t2, .Lcodec_decode_rv_done\n"
+    "srli t1, t0, 0\nsb t1, 0(a5)\n"
+    "addi a1, a1, 8\naddi a5, a5, 1\naddi a0, a0, 1\naddi a2, a2, -1\nbnez a2, .Lcodec_decode_rv_9\nj .Lcodec_decode_rv_done\n"
+    ".Lcodec_decode_rv_done:\n"
+    ASM_RET
+    ASM_END(memory_decode_power2)
+);
+#endif
+
 /*
         The two routines that work in decimals.
 
@@ -15259,6 +16014,352 @@ __asm__(
 #endif // KERNEL_MODE
 
 
+/* Bounded escaping shared by storage, tables and JSON output. The scan answers
+   the first byte selected by policy, or size. The encoder answers {consumed,
+   written}; a replacement is indivisible, so a short destination stops before
+   that input byte. Neither routine reads beyond size, and zero bounds permit
+   inaccessible pointers. Input/output must not overlap. Policy is 0..63 for
+   hex categories (control except TAB, TAB, space, quote, backslash, high), or
+   64 for JSON (controls as \\u00xx, quote/backslash as two bytes). Encoder bit
+   128 permits an early return before a literal run of two or more bytes,
+   after making progress; a scanning caller can send that run without copying.
+
+   The writer glue sends ordinary spans directly and batches replacements.
+   Its scanner uses bounded SSE2/NEON; the encoder's short expansions use the
+   existing lowercase alphabet, not another hex table or per-byte call. Kernel
+   builds and RV64 keep the same byte-table scalar contract. */
+PURE positive memory_escape_index(address_any source, positive size, p8 policy);
+positive2 memory_into_escaped(address_any destination, address_any source,
+                              positive size, positive capacity, p8 policy);
+extern const p8 escape_categories[256];
+__asm__(
+    ASM_RODATA_OBJECT_BEGIN(escape_categories, 16)
+    " .rept 9\n .byte 65\n .endr\n .byte 66\n .rept 22\n .byte 65\n .endr\n"
+    " .byte 4,0,72\n .rept 57\n .byte 0\n .endr\n .byte 80\n"
+    " .rept 34\n .byte 0\n .endr\n .byte 1\n .rept 128\n .byte 32\n .endr\n"
+    ASM_OBJECT_END(escape_categories)
+    ASM_SECTION
+);
+#if X64
+/* The AVX2 classifier intersects low/high nibble tables with a policy mask.
+   Three basis bits separate the two control nibbles and DEL; the remaining
+   bits are TAB, space, quote, backslash and high bytes. JSON selects both
+   control nibbles and TAB, but not DEL. Thus all 65 policies share two LUTs.
+   The SSE2 fallback's policy 63 uses signed 34 > (byte + 1 wrapping) for
+   <=32 or >=127, completed by quote/backslash using three constants. */
+#define ESCAPE_SHUFFLE_SETUP_X(policy, offset) \
+    "movzbq " policy ", " offset "\n   and $127, " offset "\n" \
+    "lea escape_shuffle_bytes(%rip), %rcx\n" \
+    "vpbroadcastb 48(%rcx," offset "), %xmm5\n" \
+    "vmovdqa (%rcx), %xmm3\n   vpand 16(%rcx), %xmm5, %xmm4\n" \
+    "vmovdqa 32(%rcx), %xmm6\n   vpxor %xmm5, %xmm5, %xmm5\n"
+#define ESCAPE_CANDIDATES_X(policy, wide) \
+    "test " wide ", " wide "\n   jnz 995f\n" \
+    "cmp $63, " policy "\n   je 991f\n" \
+    "cmp $1, " policy "\n   je 993f\n   cmp $3, " policy "\n   je 993f\n" \
+    "movdqa %xmm0, %xmm1\n   movdqa %xmm0, %xmm2\n" \
+    "pmaxub %xmm4, %xmm1\n   pcmpeqb %xmm4, %xmm1\n" \
+    "pcmpeqb %xmm5, %xmm2\n   por %xmm2, %xmm1\n" \
+    "movdqa %xmm0, %xmm2\n   pand %xmm8, %xmm2\n   por %xmm2, %xmm1\n" \
+    "movdqa %xmm0, %xmm2\n   pcmpeqb %xmm6, %xmm2\n   por %xmm2, %xmm1\n" \
+    "pcmpeqb %xmm7, %xmm0\n   por %xmm0, %xmm1\n   pmovmskb %xmm1, %ecx\n   jmp 992f\n" \
+    "991: movdqa %xmm0, %xmm1\n   paddb %xmm4, %xmm1\n   movdqa %xmm6, %xmm2\n" \
+    "pcmpgtb %xmm1, %xmm2\n   movdqa %xmm0, %xmm1\n   pcmpeqb %xmm6, %xmm1\n" \
+    "por %xmm1, %xmm2\n   pcmpeqb %xmm7, %xmm0\n   por %xmm0, %xmm2\n   pmovmskb %xmm2, %ecx\n   jmp 992f\n" \
+    "993: movdqa %xmm0, %xmm1\n   pmaxub %xmm4, %xmm1\n   pcmpeqb %xmm4, %xmm1\n" \
+    "movdqa %xmm0, %xmm2\n   pcmpeqb %xmm5, %xmm2\n   por %xmm2, %xmm1\n" \
+    "cmp $1, " policy "\n   jne 994f\n   pcmpeqb %xmm6, %xmm0\n   pandn %xmm1, %xmm0\n" \
+    "pmovmskb %xmm0, %ecx\n   jmp 992f\n   994: pmovmskb %xmm1, %ecx\n" \
+    "jmp 992f\n" \
+    "995: vpand %xmm6, %xmm0, %xmm1\n   vpsrlw $4, %xmm0, %xmm2\n" \
+    "vpand %xmm6, %xmm2, %xmm2\n   vpshufb %xmm1, %xmm3, %xmm1\n" \
+    "vpshufb %xmm2, %xmm4, %xmm2\n   vpand %xmm2, %xmm1, %xmm1\n" \
+    "vpcmpeqb %xmm5, %xmm1, %xmm1\n   vpmovmskb %xmm1, %ecx\n   not %ecx\n   and $65535, %ecx\n" \
+    "992:\n"
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(memory_escape_index)
+    "xor %eax, %eax\n   test %dl, %dl\n   jz .Lescape_index_x_all\n"
+    "lea escape_categories(%rip), %r8\n"
+#ifndef KERNEL_MODE
+    "cmp $8, %rsi\n   jb .Lescape_index_x_tail\n"
+    "xor %r9d, %r9d\n"
+    ASM_WIDER("cpu_has_avx2", ".Lescape_index_x_shuffle")
+    "cmp $63, %dl\n   je .Lescape_index_x_common_hex\n"
+    "cmp $64, %dl\n   je .Lescape_index_x_common_json\n"
+    "cmp $1, %dl\n   je .Lescape_index_x_common_control\n   cmp $3, %dl\n   je .Lescape_index_x_common_control\n"
+    // Conservative SIMD candidates: the table resolves TAB/DEL distinctions.
+    "cmp $16, %rsi\n   jb .Lescape_index_x_tail\n"
+    "xor %ecx, %ecx\n   test $67, %dl\n   jz 1f\n   mov $31, %ecx\n"
+    "1: test $4, %dl\n   jz 2f\n   mov $32, %ecx\n"
+    "2: imul $0x01010101, %ecx, %ecx\n   movd %ecx, %xmm4\n   pshufd $0, %xmm4, %xmm4\n"
+    "pxor %xmm8, %xmm8\n   test $32, %dl\n   jz 3f\n   movdqa escape_vector_bytes+48(%rip), %xmm8\n"
+    "3: xor %ecx, %ecx\n   test $1, %dl\n   jz 4f\n   mov $127, %ecx\n"
+    "4: imul $0x01010101, %ecx, %ecx\n   movd %ecx, %xmm5\n   pshufd $0, %xmm5, %xmm5\n"
+    "xor %ecx, %ecx\n   test $72, %dl\n   jz 5f\n   mov $34, %ecx\n"
+    "5: imul $0x01010101, %ecx, %ecx\n   movd %ecx, %xmm6\n   pshufd $0, %xmm6, %xmm6\n"
+    "xor %ecx, %ecx\n   test $80, %dl\n   jz 6f\n   mov $92, %ecx\n"
+    "6: imul $0x01010101, %ecx, %ecx\n   movd %ecx, %xmm7\n   pshufd $0, %xmm7, %xmm7\n"
+    "jmp .Lescape_index_x_wide\n"
+    ASM_RODATA_OBJECT_BEGIN(escape_vector_bytes, 16)
+    " .rept 16\n .byte 1\n .endr\n .rept 16\n .byte 31\n .endr\n"
+    " .rept 16\n .byte 127\n .endr\n .rept 16\n .byte 128\n .endr\n"
+    " .rept 16\n .byte 34\n .endr\n .rept 16\n .byte 92\n .endr\n"
+    " .rept 16\n .byte 9\n .endr\n"
+    ASM_OBJECT_END(escape_vector_bytes)
+    ASM_RODATA_OBJECT_BEGIN(escape_shuffle_bytes, 16)
+    " .byte 147,131,163,131,131,131,131,131,131,138,131,131,195,131,131,135\n"
+    " .byte 9,2,48,0,0,64,0,4,128,128,128,128,128,128,128,128\n"
+    " .rept 16\n .byte 15\n .endr\n .set .Lescape_policy,0\n .rept 64\n"
+    " .byte ((.Lescape_policy & 1) * 7) | ((.Lescape_policy & 62) << 2)\n"
+    " .set .Lescape_policy,.Lescape_policy+1\n .endr\n .byte 107\n"
+    ASM_OBJECT_END(escape_shuffle_bytes)
+    ".Lescape_index_x_shuffle:\n"
+    ESCAPE_SHUFFLE_SETUP_X("%dl", "%r9")
+    "mov $1, %r9d\n   jmp .Lescape_index_x_common_ready\n"
+    ".Lescape_index_x_common_control:\n   movdqa escape_vector_bytes+16(%rip), %xmm4\n"
+    "movdqa escape_vector_bytes+32(%rip), %xmm5\n   movdqa escape_vector_bytes+96(%rip), %xmm6\n"
+    "jmp .Lescape_index_x_common_ready\n"
+    ".Lescape_index_x_common_hex:\n   movdqa escape_vector_bytes(%rip), %xmm4\n"
+    "jmp .Lescape_index_x_common\n"
+    ".Lescape_index_x_common_json:\n   movdqa escape_vector_bytes+16(%rip), %xmm4\n"
+    "pxor %xmm5, %xmm5\n   pxor %xmm8, %xmm8\n"
+    ".Lescape_index_x_common:\n   movdqa escape_vector_bytes+64(%rip), %xmm6\n"
+    "movdqa escape_vector_bytes+80(%rip), %xmm7\n"
+    ".Lescape_index_x_common_ready:\n   cmp $16, %rsi\n   jae .Lescape_index_x_wide\n"
+    ".Lescape_index_x_eight:\n   movq (%rdi,%rax), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%dl", "%r9b")
+    "and $255, %ecx\n   jnz .Lescape_index_x_candidate\n   add $8, %rax\n"
+    // The remaining 1..7 bytes share the already-loaded classifier; the
+    // overlapping prefix of the final bounded word was just proven literal.
+    "cmp %rsi, %rax\n   jae .Lescape_index_x_done\n   lea -8(%rsi), %rax\n   jmp .Lescape_index_x_eight\n"
+    ".Lescape_index_x_wide:\n"
+    "movdqu (%rdi,%rax), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%dl", "%r9b")
+    "test %ecx, %ecx\n   jnz .Lescape_index_x_candidate\n   add $16, %rax\n"
+    ".Lescape_index_x_more:\n   mov %rsi, %rcx\n   sub %rax, %rcx\n   cmp $16, %rcx\n"
+    "jae .Lescape_index_x_wide\n   cmp $8, %rcx\n   jae .Lescape_index_x_eight\n   jmp .Lescape_index_x_tail\n"
+    ".Lescape_index_x_candidate:\n   bsf %ecx, %ecx\n   add %rcx, %rax\n"
+    "test %r9b, %r9b\n   jnz .Lescape_index_x_done\n"
+    "cmp $63, %dl\n   je .Lescape_index_x_done\n"
+    "cmp $1, %dl\n   je .Lescape_index_x_done\n   cmp $3, %dl\n   je .Lescape_index_x_done\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n"
+    "inc %rax\n   jmp .Lescape_index_x_more\n"
+#endif
+    ".Lescape_index_x_tail:\n   mov %rsi, %rcx\n   sub %rax, %rcx\n   cmp $4, %rcx\n   jb .Lescape_index_x_byte\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n   inc %rax\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n   inc %rax\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n   inc %rax\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n   inc %rax\n"
+    "jmp .Lescape_index_x_tail\n"
+    ".Lescape_index_x_byte:\n   cmp %rsi, %rax\n   jae .Lescape_index_x_done\n"
+    "movzbl (%rdi,%rax), %ecx\n   test %dl, (%r8,%rcx)\n   jnz .Lescape_index_x_done\n"
+    "inc %rax\n   jmp .Lescape_index_x_byte\n"
+    ".Lescape_index_x_all:\n   mov %rsi, %rax\n"
+    ".Lescape_index_x_done:\n" ASM_RET
+    ASM_END(memory_escape_index)
+
+    ASM_FUNC(memory_into_escaped)
+    // Short literal cells need neither a frame nor per-byte capacity checks.
+    "test $128, %r8b\n   jnz .Lescape_into_x_scalar\n"
+    "cmp $8, %rdx\n   jae .Lescape_into_x_bulk\n   cmp %rdx, %rcx\n   jb .Lescape_into_x_scalar\n"
+    "test %rdx, %rdx\n   jz .Lescape_into_x_tiny_done\n"
+    ".Lescape_into_x_tiny_setup:\n   lea escape_categories(%rip), %r10\n   xor %r11d, %r11d\n"
+    ".Lescape_into_x_tiny_scan:\n   mov %rdx, %r9\n   sub %r11, %r9\n   cmp $4, %r9\n   jb .Lescape_into_x_tiny_scan_byte\n"
+    "movzbl (%rsi,%r11), %r9d\n   movzbl (%r10,%r9), %eax\n"
+    "movzbl 1(%rsi,%r11), %r9d\n   or (%r10,%r9), %al\n"
+    "movzbl 2(%rsi,%r11), %r9d\n   or (%r10,%r9), %al\n"
+    "movzbl 3(%rsi,%r11), %r9d\n   or (%r10,%r9), %al\n"
+    "test %r8b, %al\n   jnz .Lescape_into_x_tiny_scan_byte\n   add $4, %r11\n"
+    "cmp %rdx, %r11\n   jb .Lescape_into_x_tiny_scan\n   jmp .Lescape_into_x_tiny_literal\n"
+    ".Lescape_into_x_tiny_scan_byte:\n   cmp %rdx, %r11\n   jae .Lescape_into_x_tiny_literal\n"
+    "movzbl (%rsi,%r11), %r9d\n   test %r8b, (%r10,%r9)\n   jnz .Lescape_into_x_tiny_found\n"
+    "inc %r11\n   jmp .Lescape_into_x_tiny_scan_byte\n"
+    ".Lescape_into_x_tiny_found:\n   test %r11, %r11\n   jz .Lescape_into_x_scalar\n"
+    "lea (%rdx,%rdx,2), %r9\n   add %r9, %r9\n   cmp %r9, %rcx\n   jb .Lescape_into_x_scalar\n"
+    "mov %r11, %rax\n   jmp .Lescape_into_x_tiny_copy\n"
+    ".Lescape_into_x_tiny_literal:\n   mov %rdx, %rax\n"
+    ".Lescape_into_x_tiny_copy:\n   cmp $8, %rdx\n   jb .Lescape_into_x_tiny_four\n"
+    "mov (%rsi), %r10\n   mov %r10, (%rdi)\n   je .Lescape_into_x_tiny_copied\n"
+    "mov -8(%rsi,%rdx), %r11\n   mov %r11, -8(%rdi,%rdx)\n"
+    "jmp .Lescape_into_x_tiny_copied\n"
+    ".Lescape_into_x_tiny_four:\n"
+    "cmp $4, %rdx\n   jb .Lescape_into_x_tiny_two\n   mov (%rsi), %r10d\n   mov -4(%rsi,%rdx), %r11d\n"
+    "mov %r10d, (%rdi)\n   mov %r11d, -4(%rdi,%rdx)\n   jmp .Lescape_into_x_tiny_copied\n"
+    ".Lescape_into_x_tiny_two:\n   cmp $2, %rdx\n   jb .Lescape_into_x_tiny_one\n"
+    "movzwl (%rsi), %r10d\n   movzwl -2(%rsi,%rdx), %r11d\n   mov %r10w, (%rdi)\n   mov %r11w, -2(%rdi,%rdx)\n"
+    "jmp .Lescape_into_x_tiny_copied\n"
+    ".Lescape_into_x_tiny_one:\n   movzbl (%rsi), %r10d\n   mov %r10b, (%rdi)\n"
+    ".Lescape_into_x_tiny_copied:\n   cmp %rdx, %rax\n   je .Lescape_into_x_tiny_done\n   sub %rax, %rcx\n   jmp .Lescape_into_x_begin\n"
+    ".Lescape_into_x_tiny_done:\n   mov %rdx, %rax\n" ASM_RET
+    ".Lescape_into_x_bulk:\n"
+#ifndef KERNEL_MODE
+    // Small cells: classify both bounded, possibly overlapping words,
+    // then copy directly. No frame or byte loop on this all-literal lane.
+    "cmp $32, %rdx\n   ja .Lescape_into_x_scalar\n   cmp %rdx, %rcx\n   jb .Lescape_into_x_scalar\n"
+    "xor %r10d, %r10d\n"
+    ASM_WIDER("cpu_has_avx2", ".Lescape_into_x_small_shuffle")
+    "cmp $63, %r8b\n   je .Lescape_into_x_small_hex\n   cmp $64, %r8b\n   je .Lescape_into_x_small_json\n"
+    "cmp $1, %r8b\n   je .Lescape_into_x_small_control\n   cmp $3, %r8b\n   je .Lescape_into_x_small_control\n"
+    "cmp $16, %rdx\n   jbe .Lescape_into_x_tiny_setup\n   jmp .Lescape_into_x_scalar\n"
+    ".Lescape_into_x_small_shuffle:\n   mov %rcx, %r9\n"
+    ESCAPE_SHUFFLE_SETUP_X("%r8b", "%r10")
+    "mov %r9, %rcx\n   mov $1, %r10d\n   jmp .Lescape_into_x_small_check\n"
+    ".Lescape_into_x_small_control:\n   movdqa escape_vector_bytes+16(%rip), %xmm4\n"
+    "movdqa escape_vector_bytes+32(%rip), %xmm5\n   movdqa escape_vector_bytes+96(%rip), %xmm6\n"
+    "jmp .Lescape_into_x_small_check\n"
+    ".Lescape_into_x_small_hex:\n   movdqa escape_vector_bytes(%rip), %xmm4\n"
+    "jmp .Lescape_into_x_small_marks\n"
+    ".Lescape_into_x_small_json:\n   movdqa escape_vector_bytes+16(%rip), %xmm4\n"
+    "pxor %xmm5, %xmm5\n   pxor %xmm8, %xmm8\n"
+    ".Lescape_into_x_small_marks:\n   movdqa escape_vector_bytes+64(%rip), %xmm6\n   movdqa escape_vector_bytes+80(%rip), %xmm7\n"
+    ".Lescape_into_x_small_check:\n   mov %rcx, %r9\n   xor %r11d, %r11d\n   cmp $16, %rdx\n   ja .Lescape_into_x_small_wide\n   movq (%rsi), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%r8b", "%r10b")
+    "test $255, %ecx\n   jnz .Lescape_into_x_small_found\n   cmp $8, %rdx\n   je .Lescape_into_x_small_copy_eight\n"
+    "lea -8(%rdx), %r11\n   movq -8(%rsi,%rdx), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%r8b", "%r10b")
+    "test $255, %ecx\n   jnz .Lescape_into_x_small_found\n"
+    ".Lescape_into_x_small_copy:\n   movq (%rsi), %xmm0\n   movq -8(%rsi,%rdx), %xmm1\n"
+    "movq %xmm0, (%rdi)\n   movq %xmm1, -8(%rdi,%rdx)\n   mov %rdx, %rax\n" ASM_RET
+    ".Lescape_into_x_small_copy_eight:\n   movq (%rsi), %xmm0\n   movq %xmm0, (%rdi)\n   mov %rdx, %rax\n" ASM_RET
+    ".Lescape_into_x_small_wide:\n   movdqu (%rsi), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%r8b", "%r10b")
+    "test %ecx, %ecx\n   jnz .Lescape_into_x_small_found\n"
+    "lea -16(%rdx), %r11\n   movdqu -16(%rsi,%rdx), %xmm0\n"
+    ESCAPE_CANDIDATES_X("%r8b", "%r10b")
+    "test %ecx, %ecx\n   jnz .Lescape_into_x_small_found\n"
+    "movdqu (%rsi), %xmm0\n   movdqu -16(%rsi,%rdx), %xmm1\n"
+    "movdqu %xmm0, (%rdi)\n   movdqu %xmm1, -16(%rdi,%rdx)\n   mov %rdx, %rax\n" ASM_RET
+    // With worst-case capacity, all input will be consumed. Seed the output
+    // from the literal input, then begin expanding at the first candidate.
+    ".Lescape_into_x_small_found:\n   lea (%rdx,%rdx,2), %r10\n   add %r10, %r10\n"
+    "cmp %r10, %r9\n   jb .Lescape_into_x_restore\n   bsf %ecx, %eax\n   add %r11, %rax\n"
+    "mov %r9, %rcx\n   cmp $16, %rdx\n   ja .Lescape_into_x_small_seed_wide\n"
+    "jmp .Lescape_into_x_tiny_copy\n"
+    ".Lescape_into_x_small_seed_wide:\n   movdqu (%rsi), %xmm0\n   movdqu -16(%rsi,%rdx), %xmm1\n"
+    "movdqu %xmm0, (%rdi)\n   movdqu %xmm1, -16(%rdi,%rdx)\n   sub %rax, %rcx\n   jmp .Lescape_into_x_begin\n"
+    ".Lescape_into_x_restore:\n   mov %r9, %rcx\n"
+#endif
+    ".Lescape_into_x_scalar:\n   xor %eax, %eax\n"
+    ".Lescape_into_x_begin:\n"
+    "push %rbx\n   push %r12\n   push %r13\n   mov %rdx, %r12\n   mov %rax, %rdx\n"
+    "lea escape_categories(%rip), %r10\n   lea positive_base_lower(%rip), %r11\n"
+    ".Lescape_into_x_loop:\n   cmp %r12, %rax\n   jae .Lescape_into_x_done\n   test %rcx, %rcx\n   jz .Lescape_into_x_done\n"
+    "movzbl (%rsi,%rax), %r9d\n   test %r8b, (%r10,%r9)\n   jnz .Lescape_into_x_replace\n"
+    "test $128, %r8b\n   jz .Lescape_into_x_literal\n   test %rdx, %rdx\n   jz .Lescape_into_x_literal\n"
+    "lea 1(%rax), %rbx\n   cmp %r12, %rbx\n   jae .Lescape_into_x_literal\n"
+    "movzbl 1(%rsi,%rax), %ebx\n   test %r8b, (%r10,%rbx)\n   jz .Lescape_into_x_done\n"
+    ".Lescape_into_x_literal:\n"
+    "mov %r9b, (%rdi,%rdx)\n   inc %rdx\n   dec %rcx\n   jmp .Lescape_into_x_next\n"
+    ".Lescape_into_x_replace:\n   mov $4, %ebx\n   test $64, %r8b\n   jz .Lescape_into_x_hex\n"
+    "mov $2, %ebx\n   cmp $32, %r9d\n   jae .Lescape_into_x_quote\n   mov $6, %ebx\n"
+    ".Lescape_into_x_hex:\n   cmp %rbx, %rcx\n   jb .Lescape_into_x_done\n"
+    "mov %r9d, %r13d\n   shr $4, %r13d\n   and $15, %r9d\n"
+    "movzbl (%r11,%r13), %r13d\n   movzbl (%r11,%r9), %r9d\n"
+    // A writer reading four bytes can forward one complete escape store.
+    "shl $8, %r9d\n   or %r13d, %r9d\n   cmp $6, %ebx\n   je 1f\n"
+    "shl $16, %r9d\n   or $0x785c, %r9d\n   mov %r9d, (%rdi,%rdx)\n   jmp 2f\n"
+    "1: movl $0x3030755c, (%rdi,%rdx)\n   mov %r9w, 4(%rdi,%rdx)\n"
+    "2: add %rbx, %rdx\n"
+    "sub %rbx, %rcx\n   jmp .Lescape_into_x_next\n"
+    ".Lescape_into_x_quote:\n   cmp $2, %rcx\n   jb .Lescape_into_x_done\n"
+    "movb $92, (%rdi,%rdx)\n   mov %r9b, 1(%rdi,%rdx)\n   add $2, %rdx\n   sub $2, %rcx\n"
+    ".Lescape_into_x_next:\n   inc %rax\n   jmp .Lescape_into_x_loop\n"
+    ".Lescape_into_x_done:\n   pop %r13\n   pop %r12\n   pop %rbx\n" ASM_RET
+    ASM_END(memory_into_escaped)
+);
+#elif ARM64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(memory_escape_index)
+    "mov x3, #0\n   cbz w2, .Lescape_index_a_all\n   adrp x4, escape_categories\n   add x4, x4, :lo12:escape_categories\n"
+#ifndef KERNEL_MODE
+    "cmp x1, #16\n   b.lo .Lescape_index_a_tail\n"
+    "mov w5, #31\n   mov w6, #67\n   tst w2, w6\n   csel w5, w5, wzr, ne\n   tbz w2, #2, 1f\n   mov w5, #32\n"
+    "1: dup v4.16b, w5\n   mov w5, #0\n   tbz w2, #5, 2f\n   mov w5, #128\n"
+    "2: dup v16.16b, w5\n   mov w5, #0\n   tbz w2, #0, 3f\n   mov w5, #127\n"
+    "3: dup v5.16b, w5\n   mov w5, #34\n   mov w6, #72\n   tst w2, w6\n   csel w5, w5, wzr, ne\n   dup v6.16b, w5\n"
+    "mov w5, #92\n   mov w6, #80\n   tst w2, w6\n   csel w5, w5, wzr, ne\n   dup v7.16b, w5\n"
+    ".Lescape_index_a_wide:\n   add x5, x0, x3\n   ld1 {v0.16b}, [x5]\n"
+    "cmhs v1.16b, v4.16b, v0.16b\n   cmeq v2.16b, v0.16b, v5.16b\n   orr v1.16b, v1.16b, v2.16b\n"
+    "and v2.16b, v0.16b, v16.16b\n   orr v1.16b, v1.16b, v2.16b\n"
+    "cmeq v2.16b, v0.16b, v6.16b\n   orr v1.16b, v1.16b, v2.16b\n"
+    "cmeq v2.16b, v0.16b, v7.16b\n   orr v1.16b, v1.16b, v2.16b\n   umaxv b1, v1.16b\n"
+    "umov w5, v1.b[0]\n   cbnz w5, .Lescape_index_a_candidate\n   add x3, x3, #16\n"
+    ".Lescape_index_a_more:\n   sub x5, x1, x3\n   cmp x5, #16\n   b.hs .Lescape_index_a_wide\n   b .Lescape_index_a_tail\n"
+    ".Lescape_index_a_candidate:\n   ldrb w5, [x0, x3]\n   ldrb w5, [x4, x5]\n   tst w5, w2\n   b.ne .Lescape_index_a_done\n"
+    "add x3, x3, #1\n   b .Lescape_index_a_more\n"
+#endif
+    ".Lescape_index_a_tail:\n   cmp x3, x1\n   b.hs .Lescape_index_a_done\n"
+    "ldrb w5, [x0, x3]\n   ldrb w5, [x4, x5]\n   tst w5, w2\n   b.ne .Lescape_index_a_done\n"
+    "add x3, x3, #1\n   b .Lescape_index_a_tail\n"
+    ".Lescape_index_a_all:\n   mov x3, x1\n"
+    ".Lescape_index_a_done:\n   mov x0, x3\n" ASM_RET
+    ASM_END(memory_escape_index)
+
+    ASM_FUNC(memory_into_escaped)
+    "mov x5, x0\n   mov x6, x1\n   mov x0, #0\n   mov x1, #0\n"
+    "adrp x7, escape_categories\n   add x7, x7, :lo12:escape_categories\n"
+    "adrp x8, positive_base_lower\n   add x8, x8, :lo12:positive_base_lower\n"
+    ".Lescape_into_a_loop:\n   cmp x0, x2\n   b.hs .Lescape_into_a_done\n   cbz x3, .Lescape_into_a_done\n"
+    "ldrb w9, [x6, x0]\n   ldrb w10, [x7, x9]\n   tst w10, w4\n   b.ne .Lescape_into_a_replace\n"
+    "tbz w4, #7, .Lescape_into_a_literal\n   cbz x1, .Lescape_into_a_literal\n"
+    "add x10, x0, #1\n   cmp x10, x2\n   b.hs .Lescape_into_a_literal\n"
+    "ldrb w10, [x6, x10]\n   ldrb w10, [x7, x10]\n   tst w10, w4\n   b.eq .Lescape_into_a_done\n"
+    ".Lescape_into_a_literal:\n"
+    "strb w9, [x5, x1]\n   add x1, x1, #1\n   sub x3, x3, #1\n   b .Lescape_into_a_next\n"
+    ".Lescape_into_a_replace:\n   mov x10, #4\n   tbz w4, #6, .Lescape_into_a_hex\n"
+    "cmp w9, #32\n   b.hs .Lescape_into_a_quote\n   mov x10, #6\n"
+    ".Lescape_into_a_hex:\n   cmp x3, x10\n   b.lo .Lescape_into_a_done\n"
+    "lsr w11, w9, #4\n   and w9, w9, #15\n   ldrb w11, [x8, x11]\n   ldrb w9, [x8, x9]\n"
+    "add x12, x5, x1\n   mov w13, #92\n   strb w13, [x12]\n   mov w13, #120\n   strb w13, [x12, #1]\n"
+    "cmp x10, #6\n   b.ne 1f\n   mov w13, #117\n   strb w13, [x12, #1]\n   mov w13, #48\n"
+    "strb w13, [x12, #2]\n   strb w13, [x12, #3]\n"
+    "1: add x12, x12, x10\n   strb w11, [x12, #-2]\n   strb w9, [x12, #-1]\n   add x1, x1, x10\n   sub x3, x3, x10\n"
+    "b .Lescape_into_a_next\n"
+    ".Lescape_into_a_quote:\n   cmp x3, #2\n   b.lo .Lescape_into_a_done\n   add x12, x5, x1\n   mov w13, #92\n"
+    "strb w13, [x12]\n   strb w9, [x12, #1]\n   add x1, x1, #2\n   sub x3, x3, #2\n"
+    ".Lescape_into_a_next:\n   add x0, x0, #1\n   b .Lescape_into_a_loop\n"
+    ".Lescape_into_a_done:\n" ASM_RET
+    ASM_END(memory_into_escaped)
+);
+#elif RISCV64
+__asm__(
+    ASM_SECTION
+    ASM_FUNC(memory_escape_index)
+    "li t0, 0\n   beqz a2, .Lescape_index_r_all\n   lla t1, escape_categories\n"
+    ".Lescape_index_r_loop:\n   bgeu t0, a1, .Lescape_index_r_done\n   add t2, a0, t0\n"
+    "lbu t2, 0(t2)\n   add t2, t1, t2\n   lbu t2, 0(t2)\n   and t2, t2, a2\n   bnez t2, .Lescape_index_r_done\n"
+    "addi t0, t0, 1\n   j .Lescape_index_r_loop\n"
+    ".Lescape_index_r_all:\n   mv t0, a1\n"
+    ".Lescape_index_r_done:\n   mv a0, t0\n" ASM_RET
+    ASM_END(memory_escape_index)
+
+    ASM_FUNC(memory_into_escaped)
+    "mv a5, a0\n   mv a6, a1\n   li a0, 0\n   li a1, 0\n   lla a7, escape_categories\n   lla t6, positive_base_lower\n"
+    ".Lescape_into_r_loop:\n   bgeu a0, a2, .Lescape_into_r_done\n   beqz a3, .Lescape_into_r_done\n"
+    "add t0, a6, a0\n   lbu t0, 0(t0)\n   add t1, a7, t0\n   lbu t1, 0(t1)\n   and t1, t1, a4\n"
+    "bnez t1, .Lescape_into_r_replace\n   andi t1, a4, 128\n   beqz t1, .Lescape_into_r_literal\n   beqz a1, .Lescape_into_r_literal\n"
+    "addi t1, a0, 1\n   bgeu t1, a2, .Lescape_into_r_literal\n   add t1, a6, t1\n   lbu t1, 0(t1)\n"
+    "add t1, a7, t1\n   lbu t1, 0(t1)\n   and t1, t1, a4\n   beqz t1, .Lescape_into_r_done\n"
+    ".Lescape_into_r_literal:\n   add t1, a5, a1\n   sb t0, 0(t1)\n   addi a1, a1, 1\n   addi a3, a3, -1\n"
+    "j .Lescape_into_r_next\n"
+    ".Lescape_into_r_replace:\n   li t1, 4\n   andi t2, a4, 64\n   beqz t2, .Lescape_into_r_hex\n"
+    "li t2, 32\n   bgeu t0, t2, .Lescape_into_r_quote\n   li t1, 6\n"
+    ".Lescape_into_r_hex:\n   bltu a3, t1, .Lescape_into_r_done\n   srli t2, t0, 4\n   andi t0, t0, 15\n"
+    "add t2, t6, t2\n   lbu t2, 0(t2)\n   add t0, t6, t0\n   lbu t0, 0(t0)\n"
+    "add t3, a5, a1\n   li t4, 92\n   sb t4, 0(t3)\n   li t4, 120\n   sb t4, 1(t3)\n"
+    "li t4, 6\n   bne t1, t4, 1f\n   li t4, 117\n   sb t4, 1(t3)\n   li t4, 48\n   sb t4, 2(t3)\n   sb t4, 3(t3)\n"
+    "1: add t3, t3, t1\n   sb t2, -2(t3)\n   sb t0, -1(t3)\n   add a1, a1, t1\n   sub a3, a3, t1\n"
+    "j .Lescape_into_r_next\n"
+    ".Lescape_into_r_quote:\n   li t1, 2\n   bltu a3, t1, .Lescape_into_r_done\n   add t3, a5, a1\n   li t4, 92\n"
+    "sb t4, 0(t3)\n   sb t0, 1(t3)\n   addi a1, a1, 2\n   addi a3, a3, -2\n"
+    ".Lescape_into_r_next:\n   addi a0, a0, 1\n   j .Lescape_into_r_loop\n"
+    ".Lescape_into_r_done:\n" ASM_RET
+    ASM_END(memory_into_escaped)
+);
+#endif
+
 string_address string_copy(string_address destination, string_address source);
 
 //      strcat exactly: the source onto the end of the destination.
@@ -15456,6 +16557,10 @@ PURE p32 memory_sum_bytes(address_any block, positive size);
 // doubled. Zero size permits null pointers. Both spans may be unaligned.
 positive memory_into_hex(address_any destination, address_any source,
                           positive size);
+// The same bounded encoder, selecting uppercase rather than lowercase when
+// upper is nonzero. Both entries share their vector and exact-tail bodies.
+positive memory_into_hex_case(address_any destination, address_any source,
+                              positive size, positive upper);
 PURE p32 memory_checksum_bsd16(address_any block, positive size, p32 seed);
 PURE positive2 string_hash_33_length(string_address source);
 PURE positive memory_span_byte(address_any block, p8 value, positive size);
@@ -15520,6 +16625,7 @@ p8 address_to memory_copy_end(p8 address_to destination, address_any source,
 #ifndef KERNEL_MODE
 extern p8 cpu_has_avx2;
 extern p8 cpu_has_avx512;
+extern p8 cpu_has_avx512_vbmi;
 extern p8 cpu_has_fma;
 
 __asm__(
@@ -15529,6 +16635,9 @@ __asm__(
     ASM_BSS_OBJECT_BEGIN(cpu_has_avx512, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_has_avx512)
+    ASM_BSS_OBJECT_BEGIN(cpu_has_avx512_vbmi, 1)
+    ".zero 1\n"
+    ASM_OBJECT_END(cpu_has_avx512_vbmi)
     ASM_BSS_OBJECT_BEGIN(cpu_has_fma, 1)
     ".zero 1\n"
     ASM_OBJECT_END(cpu_has_fma)

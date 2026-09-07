@@ -326,6 +326,19 @@ cover('folds_already', 'size', 'memory_into_hex',
       'production dump/checksum spans carry runtime lengths; fixed expansions '
       'would duplicate bounded scalar/vector conversion with no constant caller')
 
+cover('folds_already', 'size', 'memory_into_hex_case',
+      'the case is selected once per span; production span lengths remain '
+      'runtime and both cases share the existing hexadecimal core')
+cover('folds_already', 'groups', 'memory_encode_power2 memory_decode_power2',
+      'production group counts and input bytes are runtime; shape selection '
+      'happens once per batch, with no per-utility codec expansion')
+cover('folds_already', 'size', 'memory_escape_index memory_into_escaped',
+      'the bounded bytes remain runtime; shared scalar/vector paths handle '
+      'policy selection without adding a second escaping engine at call sites')
+cover('folds_already', 'step', 'memory_decimal_series',
+      'the production stride, decimal field bounds and record length are '
+      'runtime; assembly already selects a short unit-stride record path')
+
 # These shapes make a synthetic constant-call benchmark smaller, but no
 # production caller presents the required constant. Keeping their macro and
 # helper machinery would therefore add source without changing an image.

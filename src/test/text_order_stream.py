@@ -366,6 +366,69 @@ bits = subprocess.check_output(["basenc", "--base2lsbf", "-w0"], input=bytes(ran
 for stride in (1, 3, 7, 8, 9):
     for separator, flags in ((b"\n", ["-d"]), (b"#", ["-di"])):
         check("basenc", ["--base2lsbf", *flags], separator.join(bits[i:i+stride] for i in range(0, len(bits), stride)))
+# A 256-byte repeating input can conceal a stale/refill-offset decode bug.
+# Change the pattern across both byte and reader periods, with line widths
+# that split binary octets at different positions on successive refills.
+for length in (65549, 1048579):
+    data = bytes((i * 197 + (i >> 8) + (i >> 16)) & 255 for i in range(length))
+    for wrap in (7, 76, 79):
+        encoded = subprocess.check_output(
+            ["basenc", "--base2lsbf", "-w", str(wrap)], input=data, env=env)
+        check("basenc", ["--base2lsbf", "-d"], encoded)
+# Force the bulk decoder to hand off to stream policy at each SIMD/quantum
+# boundary. Invalid input must preserve exactly the prefix GNU emits.
+for codec in ("base64", "base64url", "base32", "base32hex", "base16", "base2msbf", "base2lsbf"):
+    encoded = subprocess.check_output(["basenc", "--" + codec, "-w0"],
+                                      input=bytes(range(97)), env=env)
+    for at in (0, 1, 3, 7, 15, 16, 31, 32, 63):
+        for marker in (b"=", b"\x00", b"!\n"):
+            data = encoded[:at] + marker + encoded[at:]
+            for mode in ("-d", "-di"):
+                check("basenc", ["--" + codec, mode], data)
+# Explicit padding closes a member, not the entire stream. An incomplete
+# base32 padded member at EOF also has different prefix output from an error
+# byte interrupting that same member; exercise both without normalising it.
+for codec in ("base64", "base32"):
+    for symbols in range(9):
+        for padding in range(9):
+            for tail in (b"", b"A", b"!", b"\n"):
+                data = b"A" * symbols + b"=" * padding + tail
+                for mode in ("-d", "-di"):
+                    check(codec, [mode], data)
+for codec in ("base64", "base64url", "base32", "base32hex"):
+    for size in range(1, 9):
+        member = subprocess.check_output(["basenc", "--" + codec, "-w0"],
+                                         input=bytes(range(size)), env=env)
+        for separator, mode in ((b"", "-d"), (b"\n", "-d"), (b"!", "-di")):
+            check("basenc", ["--" + codec, mode], member + separator + member)
+            check("basenc", ["--" + codec, mode], member.rstrip(b"="))
+    quantum = 4 if codec.startswith("base64") else 8
+    alphabet = (b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+                if quantum == 4 else b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
+    if codec == "base64url":
+        alphabet = alphabet[:-2] + b"-_"
+    elif codec == "base32hex":
+        alphabet = b"0123456789ABCDEFGHIJKLMNOPQRSTUV"
+    # Every unused-bit pattern: padding is optional, zero unused bits are not.
+    for symbols in ((2, 3) if quantum == 4 else (2, 4, 5, 7)):
+        for final in alphabet:
+            data = alphabet[:1] * (symbols - 1) + bytes([final])
+            padding = b"=" * (quantum - symbols)
+            for tail in (b"", padding, padding + alphabet[:1] * quantum):
+                check("basenc", ["--" + codec, "-d"], data + tail)
+    for symbols in (65533, 65534, 65535, 65536, 65537):
+        data = b"A" * symbols + b"=" * ((-symbols) % quantum) + b"A" * quantum
+        check("basenc", ["--" + codec, "-d"], data)
+for groups in (13106, 13107, 13108):
+    # A padded one-byte member offsets the 64 KiB staging alignment, then the
+    # unfinished final member must remain retractable across a flush.
+    data = b"AA======" + b"A" * (groups * 8) + b"AA="
+    check("base32", ["-d"], data)
+    check("base32", ["-d"], data + b"!")
+for size in range(65532, 65536):
+    member = subprocess.check_output(["base32", "-w0"], input=b"x" * size, env=env)
+    for tail in (b"AA=", b"AAAA=", b"AAAAA=", b"AAAAAA="):
+        check("base32", ["-d"], member + tail)
 with tempfile.TemporaryDirectory() as directory:
     one, two = (Path(directory) / name for name in ("one", "two"))
     for length in (0, 1, 31, 65535, 65536, 65537):

@@ -16236,16 +16236,6 @@ typedef struct
         bool negative_zero;
 } seq_decimal;
 
-static positive seq_power_ten(positive power)
-{
-        positive answer = 1;
-
-        while (power--)
-                answer *= 10;
-
-        return answer;
-}
-
 /*
         Read the decimal grammar accepted by seq: a sign, digits with one
         optional point, and an optional decimal exponent.  Trailing fractional
@@ -16404,7 +16394,7 @@ static bool seq_decimal_number(string_address text, seq_decimal address_to out)
                         return true;
                 }
 
-                positive multiplier = seq_power_ten(grow);
+                positive multiplier = positive_power_ten(grow);
 
                 if (coefficient > limit / multiplier)
                         return false;
@@ -16425,7 +16415,7 @@ static bool seq_decimal_rescale(seq_decimal address_to number, positive scale)
         if (number->scale == scale)
                 return true;
 
-        positive multiplier = seq_power_ten(scale - number->scale);
+        positive multiplier = positive_power_ten(scale - number->scale);
         positive magnitude = (positive)number->coefficient;
         positive limit = number->coefficient < 0
                              ? (positive)bipolar_max + 1
@@ -16453,9 +16443,9 @@ static positive seq_decimal_width(seq_decimal address_to number,
                 magnitude = (positive)0 - magnitude;
 
         if (scale > precision)
-                magnitude /= seq_power_ten(scale - precision);
+                magnitude /= positive_power_ten(scale - precision);
 
-        magnitude /= seq_power_ten(scale < precision ? scale : precision);
+        magnitude /= positive_power_ten(scale < precision ? scale : precision);
 
         return max(positive_digits(magnitude), number->whole_width) +
                (precision ? precision + 1 : 0) +
@@ -16557,79 +16547,17 @@ static fn seq_format_literal(writer write, string_address text, positive length)
                 write(text + start, length - start);
 }
 
-static fn seq_format_write(writer write, seq_format address_to format,
-                           bipolar value, positive scale, bool negative_zero)
+static positive seq_format_literal_into(p8 address_to into,
+                                         string_address text, positive length)
 {
-        seq_format_literal(write, format->text, format->directive);
-
-        bool minus = value < 0 || negative_zero;
-        positive magnitude = (positive)value;
-
-        if (value < 0)
-                magnitude = (positive)0 - magnitude;
-
-        positive precision = format->precision;
-        positive stored = scale;
-
-        if (stored > precision)
+        positive used = 0;
+        for (positive at = 0; at < length; at++)
         {
-                positive divisor = seq_power_ten(stored - precision);
-                positive rounded = magnitude / divisor;
-                positive remainder = magnitude % divisor;
-                positive half = divisor / 2;
-
-                if (remainder > half || (remainder == half && (rounded & 1)))
-                        rounded++;
-
-                magnitude = rounded;
-                stored = precision;
+                into[used++] = text[at];
+                if (text[at] == '%' && at + 1 < length && text[at + 1] == '%')
+                        at++;
         }
-
-        positive divisor = seq_power_ten(stored);
-        positive whole = magnitude / divisor;
-        positive fraction = magnitude % divisor;
-        positive sign = minus ||
-                        (format->flags & (CONVERSION_FLAG_PLUS |
-                                          CONVERSION_FLAG_SPACE));
-        positive body = positive_digits(whole) + sign +
-                        (precision ||
-                                 (format->flags & CONVERSION_FLAG_ALTERNATE)
-                             ? precision + 1 : 0);
-        positive padding = format->width > body ? format->width - body : 0;
-
-        if (!(format->flags & CONVERSION_FLAG_LEFT) &&
-            !(format->flags & CONVERSION_FLAG_ZERO))
-                writer_fill(write, padding, ' ');
-
-        if (minus)
-                write("-", 1);
-        else if (format->flags & CONVERSION_FLAG_PLUS)
-                write("+", 1);
-        else if (format->flags & CONVERSION_FLAG_SPACE)
-                write(" ", 1);
-
-        if (!(format->flags & CONVERSION_FLAG_LEFT) &&
-            (format->flags & CONVERSION_FLAG_ZERO))
-                writer_fill(write, padding, '0');
-
-        positive_to_string(write, whole);
-
-        if (precision || (format->flags & CONVERSION_FLAG_ALTERNATE))
-        {
-                write(".", 1);
-
-                if (stored)
-                        positive_to_padded(write, fraction, stored, '0', 0);
-
-                if (precision > stored)
-                        writer_fill(write, precision - stored, '0');
-        }
-
-        if (format->flags & CONVERSION_FLAG_LEFT)
-                writer_fill(write, padding, ' ');
-
-        string_address suffix = format->text + format->after;
-        seq_format_literal(write, suffix, string_length(suffix));
+        return used;
 }
 
 static const file_long seq_longs[] = {
@@ -16723,6 +16651,12 @@ static b32 file_seq()
 
         bipolar value = first.coefficient;
         bool written = false;
+        positive separator_length = string_length(separator);
+        string_address suffix = format.text + format.after;
+        positive suffix_length = string_length(suffix);
+        positive stride = step.coefficient < 0
+                              ? (positive)0 - (positive)step.coefficient
+                              : (positive)step.coefficient;
 
         while (step.coefficient > 0 ? value <= last.coefficient
                                     : value >= last.coefficient)
@@ -16730,9 +16664,75 @@ static b32 file_seq()
                 if (written)
                         log(separator, 0);
 
-                seq_format_write(log, address_of format, value, scale,
-                                 !written && first.negative_zero);
+                positive magnitude = value < 0 ? (positive)0 - (positive)value
+                                               : (positive)value;
+                bool negative_zero = !written && first.negative_zero;
+                fixed_decimal field = fixed_decimal_prepare(
+                    magnitude, scale, value < 0 || negative_zero,
+                    format.width, format.precision, format.flags);
+                positive records = 1;
+                positive length = field.length + field.zeroes + field.padding;
+                if (format.directive + suffix_length + separator_length <=
+                        sizeof(file_transfer) &&
+                    length <= sizeof(file_transfer) - format.directive -
+                                  suffix_length - separator_length)
+                {
+                        positive prefix = seq_format_literal_into(
+                            file_transfer, format.text, format.directive);
+                        fixed_decimal_into(file_transfer + prefix,
+                                           sizeof(file_transfer) - prefix,
+                                           address_of field);
+                        length += prefix;
+                        length += seq_format_literal_into(file_transfer + length,
+                                                           suffix, suffix_length);
+                        memory_copy_apart(file_transfer + length, separator,
+                                          separator_length);
+                        length += separator_length;
+                        if (format.precision >= scale && !negative_zero &&
+                            stride <= (positive)bipolar_max)
+                        {
+                                records = sizeof(file_transfer) / length;
+                                positive distance = step.coefficient > 0
+                                    ? (positive)last.coefficient - (positive)value
+                                    : (positive)value - (positive)last.coefficient;
+                                if (distance / stride < records - 1)
+                                        records = distance / stride + 1;
+                                bool decreasing = (value < 0) !=
+                                                  (step.coefficient < 0);
+                                positive boundary = positive_power_ten(scale + 1);
+                                while (boundary <= magnitude && boundary <= positive_max / 10)
+                                        boundary *= 10;
+                                positive minimum = boundary / 10;
+                                if (minimum <= positive_power_ten(scale)) minimum = 0;
+                                distance = decreasing ? magnitude - minimum
+                                                      : boundary - 1 - magnitude;
+                                if (distance / stride < records - 1)
+                                        records = distance / stride + 1;
+                                if (value < 0 && step.coefficient > 0 &&
+                                    (magnitude - 1) / stride < records - 1)
+                                        records = (magnitude - 1) / stride + 1;
+                                positive offset = prefix +
+                                    (field.left ? 0 : field.padding);
+                                bipolar increment = decreasing ? -(bipolar)stride
+                                                               : (bipolar)stride;
+                                positive bytes = memory_decimal_series(
+                                    file_transfer, records * length, length,
+                                    offset + field.sign,
+                                    offset + field.length, increment);
+                                records = bytes / length;
+                        }
+                        log(file_transfer, records * length - separator_length);
+                }
+                else
+                {
+                        seq_format_literal(log, format.text, format.directive);
+                        fixed_decimal_write(log, address_of field);
+                        seq_format_literal(log, suffix, suffix_length);
+                }
                 written = true;
+
+                value = (bipolar)((positive)value +
+                                 (positive)step.coefficient * (records - 1));
 
                 if (value == last.coefficient ||
                     (step.coefficient > 0 &&

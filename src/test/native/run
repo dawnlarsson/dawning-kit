@@ -64,6 +64,8 @@ python3 "$here/extract.py" "$lib" \
 #       attributable to this one body.
 python3 "$here/extract.py" "$lib" memory_reverse \
         > "$work/reverse.h" || exit 1
+python3 "$here/extract.py" "$lib" memory_decimal_series \
+        > "$work/series.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
@@ -125,7 +127,7 @@ python3 "$here/extract.py" "$lib" memory_growth memory_reserve memory_release \
         > "$work/reserve.h" || exit 1
 
 status=0
-for case in byte_hunts bounded riscv_bits bulk reverse wide bases base_field human human_nearest fields input_bases network reserve; do
+for case in byte_hunts bounded riscv_bits bulk reverse series wide bases base_field human human_nearest fields input_bases network reserve; do
         cc -O2 -w -I"$work" "$here/$case.c" -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done

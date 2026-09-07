@@ -549,6 +549,98 @@ static inline INLINE positive conversion_flags_take(
         return conversion_flags_take_max(source, positive_max);
 }
 
+/* Exact fixed-point fields: the unsigned magnitude is scaled by 10^scale,
+   scale <= 18, independently of the requested display precision. Preparation
+   rounds ties to even once and retains a compact body; arbitrarily wide
+   padding and trailing zeroes need no width-sized scratch allocation. */
+typedef struct
+{
+        p8 bytes[40];
+        positive length, zeroes, padding, sign;
+        bool left, zero;
+} fixed_decimal;
+
+static inline positive positive_power_ten(positive power)
+{
+        positive value = 1;
+        while (power--) value *= 10;
+        return value;
+}
+
+static inline fixed_decimal fixed_decimal_prepare(
+    positive magnitude, positive scale, bool minus, positive width,
+    positive precision, positive flags)
+{
+        fixed_decimal field = {.left = (flags & CONVERSION_FLAG_LEFT) != 0,
+                                .zero = (flags & CONVERSION_FLAG_ZERO) != 0};
+        if (scale > precision)
+        {
+                positive divisor = positive_power_ten(scale - precision);
+                positive remainder = magnitude % divisor;
+                magnitude /= divisor;
+                magnitude += remainder > divisor / 2 ||
+                    (remainder == divisor / 2 && (magnitude & 1));
+                scale = precision;
+        }
+        positive divisor = positive_power_ten(scale);
+        p8 sign = minus ? '-' : flags & CONVERSION_FLAG_PLUS ? '+'
+                                 : flags & CONVERSION_FLAG_SPACE ? ' ' : 0;
+        if (sign) field.bytes[field.length++] = sign;
+        field.sign = field.length;
+        field.length += positive_into(field.bytes + field.length,
+                                       magnitude / divisor);
+        if (precision || (flags & CONVERSION_FLAG_ALTERNATE))
+        {
+                field.bytes[field.length++] = '.';
+                if (scale)
+                        field.length += positive_into_padded(
+                            field.bytes + field.length, magnitude % divisor,
+                            scale, '0');
+                field.zeroes = precision - scale;
+        }
+        positive length = field.length + field.zeroes;
+        field.padding = width > length ? width - length : 0;
+        return field;
+}
+
+/* No terminator and no partial write on a short buffer. Width/precision must
+   leave the complete field length representable in positive. */
+static inline positive fixed_decimal_into(p8 address_to into, positive room,
+                                          fixed_decimal address_to field)
+{
+        positive length = field->length + field->zeroes + field->padding;
+        if (length > room) return 0;
+        positive at = 0;
+        if (!field->left)
+        {
+                if (field->zero && field->sign)
+                        into[at++] = field->bytes[0];
+                memory_fill(into + at, field->zero ? '0' : ' ', field->padding);
+                at += field->padding;
+        }
+        positive skip = !field->left && field->zero ? field->sign : 0;
+        memory_copy_apart(into + at, field->bytes + skip, field->length - skip);
+        at += field->length - skip;
+        memory_fill(into + at, '0', field->zeroes);
+        if (field->left)
+                memory_fill(into + at + field->zeroes, ' ', field->padding);
+        return length;
+}
+
+static inline fn fixed_decimal_write(writer write,
+                                      fixed_decimal address_to field)
+{
+        if (!field->left)
+        {
+                if (field->zero && field->sign) write(field->bytes, 1);
+                writer_fill(write, field->padding, field->zero ? '0' : ' ');
+        }
+        positive skip = !field->left && field->zero ? field->sign : 0;
+        write(field->bytes + skip, field->length - skip);
+        writer_fill(write, field->zeroes, '0');
+        if (field->left) writer_fill(write, field->padding, ' ');
+}
+
 /* printf and scanf assign different meanings to `l`, but recognize the same
    h, hh, l, ll, q, z, t, j and L byte state machine. */
 #define CONVERSION_LENGTH_INT 0
@@ -612,69 +704,84 @@ enum {
         HEX_QUOTE = 8, HEX_SLASH = 16, HEX_HIGH = 32,
 };
 
-/* One bounded byte policy for storage, table cells and kernel messages.
-   Category bits share one table; NUL is an ordinary escapable control byte. */
-static fn writer_hex_escaped(writer output, address_any data, positive length,
-                              p8 policy)
+/* Long ordinary spans stay zero-copy; replacements cross the writer in bounded
+   batches, not one callback per escaped byte. Policy 64 is JSON's spelling. */
+static fn writer_escaped_bulk(writer output, address_any data, positive length,
+                             p8 policy)
 {
-        static const p8 categories[256] = {
-            [0 ... 8] = HEX_CONTROL, [9] = HEX_TAB,
-            [10 ... 31] = HEX_CONTROL, [' '] = HEX_SPACE,
-            ['"'] = HEX_QUOTE, ['\\'] = HEX_SLASH, [127] = HEX_CONTROL,
-            [128 ... 255] = HEX_HIGH,
-        };
         p8 address_to bytes = data;
-        positive start = 0;
-        for (positive at = 0; at < length; at++)
+        while (length)
         {
-                if (!(categories[bytes[at]] & policy))
-                        continue;
-                if (at > start)
-                        output(bytes + start, at - start);
-                p8 escaped[4] = {'\\', 'x'};
-                memory_into_hex(escaped + 2, bytes + at, 1);
-                output(escaped, sizeof(escaped));
-                start = at + 1;
+                positive plain = memory_escape_index(bytes, length, policy);
+                if (plain)
+                        output(bytes, plain);
+                bytes += plain;
+                length -= plain;
+                if (!length)
+                        break;
+                p8 escaped[256];
+                positive2 chunk = memory_into_escaped(escaped, bytes, length,
+                                                       sizeof(escaped), policy | 128);
+                output(escaped, chunk.y);
+                bytes += chunk.x;
+                length -= chunk.x;
         }
-        if (length > start)
-                output(bytes + start, length - start);
+}
+
+static inline INLINE fn writer_hex_escaped(writer output, address_any data,
+                                           positive length, p8 policy)
+{
+        // The only inline classification is a tiny literal fast path over the
+        // ASM-owned table. All scanning and replacement machinery stays shared.
+        p8 address_to bytes = data;
+        if (length && length < 8)
+        {
+                p8 categories = escape_categories[bytes[0]];
+                for (positive at = 1; at < length; at++)
+                        categories |= escape_categories[bytes[at]];
+                if (!(categories & policy))
+                {
+                        output(bytes, length);
+                        return;
+                }
+                if (length == 1 && !(policy & 64))
+                {
+                        p8 escaped[4] = {'\\', 'x'};
+                        memory_into_hex(escaped + 2, bytes, 1);
+                        output(escaped, sizeof(escaped));
+                        return;
+                }
+        }
+        if (length && length <= 16)
+        {
+                p8 escaped[96];
+                positive2 chunk = memory_into_escaped(escaped, bytes, length,
+                                                       sizeof(escaped), policy);
+                output(escaped, chunk.y);
+                return;
+        }
+        writer_escaped_bulk(output, data, length, policy);
 }
 
 /* JSON byte-string policy shared by UUID output and util-linux tables.
-   Controls use the exact \u00xx spelling expected by those interfaces;
-   printable spans cross the writer once, not once per byte. */
+   Controls retain the shared \u00xx spelling; quote/backslash use short
+   escapes. Printable spans cross the writer once, not once per byte. */
 static fn writer_json_string(writer output, string_address value)
 {
-        string_address start = value;
-        output("\"", 1);
-
-        while (*value)
+        positive length = string_length(value);
+        if (length <= 20)
         {
-                p8 byte = *value;
-                if (byte >= ' ' && byte != '"' && byte != '\\')
-                {
-                        value++;
-                        continue;
-                }
-
-                if (value > start)
-                        output(start, (positive)(value - start));
-                if (byte == '"' || byte == '\\')
-                {
-                        p8 escaped[2] = {'\\', byte};
-                        output(escaped, sizeof(escaped));
-                }
-                else
-                {
-                        p8 escaped[6] = {'\\', 'u', '0', '0'};
-                        memory_into_hex(escaped + 4, address_of byte, 1);
-                        output(escaped, sizeof(escaped));
-                }
-                value++;
-                start = value;
+                // A short cell, including both quotes, crosses the writer once.
+                p8 escaped[122];
+                escaped[0] = '"';
+                positive2 chunk = memory_into_escaped(escaped + 1, value, length,
+                                                       sizeof(escaped) - 2, 64);
+                escaped[chunk.y + 1] = '"';
+                output(escaped, chunk.y + 2);
+                return;
         }
-        if (value > start)
-                output(start, (positive)(value - start));
+        output("\"", 1);
+        writer_hex_escaped(output, value, length, 64);
         output("\"", 1);
 }
 

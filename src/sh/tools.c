@@ -4513,7 +4513,7 @@ static bool numfmt_ratio(seq_decimal address_to number, positive base,
                 top[tops++] = base;
 
         if (number->scale)
-                bottom[bottoms++] = seq_power_ten(number->scale);
+                bottom[bottoms++] = positive_power_ten(number->scale);
         bottom[bottoms++] = numfmt.to_unit;
 
         for (positive b = 0; b < bottoms; b++)
@@ -4607,7 +4607,7 @@ static bool numfmt_round(positive numerator, positive denominator,
 
         if (increase)
         {
-                positive scale = seq_power_ten(digits);
+                positive scale = positive_power_ten(digits);
                 decimals++;
 
                 if (decimals == scale)
@@ -4926,7 +4926,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
            directly in decimal so libc and binary floating point stay out. */
         if (print_precision < round_precision)
         {
-                positive divisor = seq_power_ten(round_precision -
+                positive divisor = positive_power_ten(round_precision -
                                                  print_precision);
                 positive kept = fraction / divisor;
                 positive dropped = fraction % divisor;
@@ -4937,7 +4937,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                 if (dropped > half || (dropped == half && (last & 1)))
                         kept++;
 
-                positive display_scale = seq_power_ten(print_precision);
+                positive display_scale = positive_power_ten(print_precision);
                 if (kept == display_scale)
                 {
                         kept = 0;
@@ -11766,25 +11766,21 @@ static bool tools_dmesg_mask(string_address list,
         return mask != 0;
 }
 
+static fn tools_dmesg_fixed(p64 microseconds, bool negative, positive width,
+                            positive flags)
+{
+        fixed_decimal field = fixed_decimal_prepare(microseconds, 6, negative,
+                                                     width, 6, flags);
+        fixed_decimal_write(text_put, address_of field);
+}
+
 static fn tools_dmesg_timestamp(p64 microseconds, bool signed_value,
                                 bool negative)
 {
-        positive seconds = (positive)(microseconds / 1000000);
-        positive fraction = (positive)(microseconds % 1000000);
-
         text_put_character('[');
-        if (signed_value)
-        {
-                p8 number[24];
-                positive digits = positive_into(number, seconds);
-                writer_fill(text_put, digits < 3 ? 3 - digits : 0, ' ');
-                text_put_character(negative ? '-' : '+');
-                text_put(number, digits);
-        }
-        else
-                positive_to_padded(text_put, seconds, 5, ' ', 0);
-        text_put_character('.');
-        positive_to_padded(text_put, fraction, 6, '0', 0);
+        tools_dmesg_fixed(microseconds, signed_value && negative,
+                          signed_value ? 11 : 12,
+                          signed_value ? CONVERSION_FLAG_PLUS : 0);
         text_put_string("] ");
 }
 
@@ -11792,27 +11788,9 @@ static fn tools_dmesg_timestamp_delta(p64 microseconds, p64 delta,
                                       bool negative)
 {
         text_put_character('[');
-        positive_to_padded(text_put, (positive)(microseconds / 1000000),
-                           5, ' ', 0);
-        text_put_character('.');
-        positive_to_padded(text_put, (positive)(microseconds % 1000000),
-                           6, '0', 0);
+        tools_dmesg_fixed(microseconds, false, 12, 0);
         text_put_string(" <");
-        if (negative)
-        {
-                p8 number[24];
-                positive seconds = (positive)(delta / 1000000);
-                positive digits = positive_into(number, seconds);
-                writer_fill(text_put, digits < 4 ? 4 - digits : 0, ' ');
-                text_put_character('-');
-                text_put(number, digits);
-        }
-        else
-                positive_to_padded(text_put, (positive)(delta / 1000000),
-                                   5, ' ', 0);
-        text_put_character('.');
-        positive_to_padded(text_put, (positive)(delta % 1000000),
-                           6, '0', 0);
+        tools_dmesg_fixed(delta, negative, 12, 0);
         text_put_string(">] ");
 }
 

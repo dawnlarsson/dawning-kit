@@ -67,6 +67,22 @@ positive_into_base
 cover('direct_benchmark', 'kit/bench_hex.c', 'memory_into_hex',
       'paired former-C/assembly timing over byte tails, dump rows and large spans')
 
+cover('direct_benchmark', 'kit/bench_fixed.c', 'memory_decimal_series',
+      'bounded decimal-record expansion against a C carry loop; native timing required')
+
+cover('benchmark_context', 'kit/bench_escape.c', '''
+memory_escape_index memory_into_escaped
+''', 'shared primitives timed through sparse/dense hex and JSON writer workloads',
+      anchors={'memory_escape_index': 'writer_hex_escaped',
+               'memory_into_escaped': 'writer_hex_escaped'})
+
+cover('direct_benchmark', 'kit/bench_codec.c', '''
+memory_encode_power2 memory_decode_power2
+''', 'bounded codec quanta against independent scalar bit loops; native timing required')
+
+cover('correctness_only', 'src/test/codec.c', 'memory_into_hex_case',
+      'case-selectable entry shares the existing hexadecimal assembly core')
+
 cover('direct_benchmark', 'kit/bench_padded.c', '''
 positive_to_padded
 ''', 'paired former-C/assembly timing across field shapes')

@@ -1122,6 +1122,17 @@ for seq_lexical in 001e1 123e-1 0001.0e-1 .1e1 001.00e2; do
 done
 answered 'shared long separator' seq -s "$(printf '%017000d' 0)" 8 10
 answered 'shared empty separator' seq -s '' -2 2
+answered 'batch count across buffer and digit widths' seq 1 50000
+answered 'batch decreasing across buffer and zero' seq 25000 -1 -25000
+answered 'batch negative magnitude grows' seq -9000 -3 -70000
+answered 'batch negative magnitude shrinks' seq -70000 3 -9000
+answered 'batch padded leading zeros' seq -w 00001 50000
+answered 'batch fractional carry and sign crossing' seq -100.00 .25 100.00
+answered 'batch finer displayed precision' seq -f '%+012.6f' -100.00 .25 100.00
+answered 'batch rounded ties alternate' seq -f '%.2f' -1.125 .25 1.125
+answered 'batch decimal point alternate' seq -f '%#08.0f' -20000 20000
+answered 'batch literal percent and left padding' seq -f '%%[%-12.2f]%%' -100.00 .25 100.00
+answered 'batch trailing separator suppression' seq -s '::' -25000 3 25000
 
 group yes
 yes_stress

@@ -2609,8 +2609,8 @@ static inline INLINE p8 address_to encoding_symbol(
         return into;
 }
 
-/* One quantum walk covers every alphabet, wrapping and a padded final group.
-   Reserve a whole batch once; no extra table or per-symbol writer calls. */
+/* Encode complete quanta directly into their reserved span. Padding remains
+   stream policy; wrapping expands backward in that same reservation. */
 static bool encoding_groups(const encoding_codec address_to codec,
                             encoding_output address_to output,
                             p8 address_to input, positive length)
@@ -2618,35 +2618,58 @@ static bool encoding_groups(const encoding_codec address_to codec,
         if (!length)
                 return true;
 
-        positive groups = (length + codec->input - 1) / codec->input;
-        p8 address_to into = text_reserve(
-            encoding_wrapped(output, groups * codec->output));
+        positive groups = length / codec->input;
+        positive symbols = (groups + (length % codec->input != 0)) * codec->output;
+        positive reserved = encoding_wrapped(output, symbols);
+        p8 address_to begin = text_reserve(reserved);
+        p8 address_to into = begin;
         positive mask = ((positive)1 << codec->bits) - 1;
 
         if (!into)
                 return false;
 
-        while (length)
+        if (codec->bits == 4)
+                memory_into_hex_case(into, input, length, true);
+        else
+                memory_encode_power2(into, input, groups, codec->alphabet,
+                                     codec->low_bit_first ? 9 : codec->bits);
+        input += groups * codec->input;
+        length -= groups * codec->input;
+        into += groups * codec->output;
+
+        if (length)
         {
-                positive count = min(length, (positive)codec->input);
-                positive symbols = count == codec->input ? codec->output
-                    : (count * 8 + codec->bits - 1) / codec->bits;
+                positive tail = (length * 8 + codec->bits - 1) / codec->bits;
                 positive bits = 0;
 
-                for (positive byte = 0; byte < count; byte++)
+                for (positive byte = 0; byte < length; byte++)
                         bits = (bits << 8) | *input++;
-                bits <<= codec->output * codec->bits - count * 8;
+                bits <<= codec->output * codec->bits - length * 8;
 
                 for (positive symbol = 0; symbol < codec->output; symbol++)
                 {
-                        positive shift = codec->low_bit_first ? symbol * codec->bits
-                            : (codec->output - symbol - 1) * codec->bits;
-                        p8 value = symbol < symbols
+                        positive shift = (codec->output - symbol - 1) * codec->bits;
+                        *into++ = symbol < tail
                             ? codec->alphabet[(bits >> shift) & mask] : '=';
-                        into = encoding_symbol(into, output, value);
                 }
-                length -= count;
         }
+
+        if (output->wrap)
+        {
+                positive column = (output->column + symbols) % output->wrap;
+                positive left = symbols, ending = reserved, take = column;
+
+                while (ending > left)
+                {
+                        ending -= take;
+                        left -= take;
+                        memory_copy(begin + ending, begin + left, take);
+                        begin[--ending] = '\n';
+                        take = min(left, output->wrap);
+                }
+                output->column = column;
+        }
+        output->wrote = true;
         return true;
 }
 
@@ -2746,7 +2769,7 @@ static bool encoding_padding(const encoding_codec address_to codec,
         else
                 return false;
 
-        return padding == expected;
+        return !padding || padding == expected;
 }
 
 static b32 encoding_decode(const encoding_codec address_to codec,
@@ -2771,6 +2794,30 @@ static b32 encoding_decode(const encoding_codec address_to codec,
         {
                 while (text_input.position < text_input.filled)
                 {
+                        if (!held && !padded)
+                        {
+                                positive groups = min(
+                                    (text_input.filled - text_input.position) / codec->output,
+                                    (TEXT_READ_MAX - made) / codec->input);
+                                positive done = memory_decode_power2(
+                                    text_line + made,
+                                    text_input.buffer + text_input.position,
+                                    groups, values,
+                                    codec->low_bit_first ? 9 : codec->bits);
+
+                                text_input.position += done * codec->output;
+                                seen += done * codec->output;
+                                made += done * codec->input;
+                                // Enter each scalar quantum with room for all
+                                // its bytes, including after a padded member.
+                                if (TEXT_READ_MAX - made < codec->input)
+                                {
+                                        text_put(text_line, made);
+                                        made = 0;
+                                }
+                                if (text_input.position == text_input.filled)
+                                        break;
+                        }
                         p8 byte = text_input.buffer[text_input.position++];
                         p8 value = values[byte];
 
@@ -2817,6 +2864,20 @@ static b32 encoding_decode(const encoding_codec address_to codec,
                         {
                                 padded = true;
                                 padding++;
+                                if (seen % codec->output + padding == codec->output)
+                                {
+                                        if (accumulator ||
+                                            !encoding_padding(codec, seen % codec->output,
+                                                              padding))
+                                        {
+                                                valid = false;
+                                                break;
+                                        }
+                                        // A complete padded quantum closes one member;
+                                        // the next alphabet byte begins a fresh one.
+                                        accumulator = held = seen = padding = 0;
+                                        padded = false;
+                                }
                                 continue;
                         }
 
@@ -2828,10 +2889,17 @@ static b32 encoding_decode(const encoding_codec address_to codec,
                 }
         }
 
+        /* GNU's base32 decoder withholds an unfinished explicitly padded
+           quantum at EOF, but retains its decoded prefix on an invalid byte.
+           Whole-quantum flushes leave these at most four bytes staged here. */
+        if (valid && codec->bits == 5 && padding &&
+            seen % codec->output + padding < codec->output)
+                made -= (seen % codec->output) * codec->bits / 8;
+
         if (made)
                 text_put(text_line, made);
 
-        if (!encoding_padding(codec, seen % codec->output, padding))
+        if (accumulator || !encoding_padding(codec, seen % codec->output, padding))
                 valid = false;
 
         if (!valid)
