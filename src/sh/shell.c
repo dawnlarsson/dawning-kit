@@ -971,13 +971,10 @@ positive shell_flatten_env(positive address_to count_out)
 
 static bool shell_spawn_device_open();
 
-// Returns the child pid, or a negative error if the device could not take it.
-static bipolar shell_spawn_via_device(b32 operation, string_address path,
-                                      string_address address_to arguments,
-                                      b32 output, b32 error)
+static bool shell_spawn_request(struct spawn address_to request,
+                                 string_address path,
+                                 string_address address_to arguments)
 {
-        struct spawn_to directed;
-        struct spawn address_to request = address_of directed.spawn;
         positive argc = 0;
         positive envc = 0;
 
@@ -986,7 +983,7 @@ static bipolar shell_spawn_via_device(b32 operation, string_address path,
             arguments, address_of spawn_argv_block,
             address_of spawn_argv_room, address_of argc);
         if (argc == positive_max)
-                return -1;
+                return false;
 
         request->argv = (unsigned long)spawn_argv_block;
         request->argv_count = (unsigned int)argc;
@@ -996,11 +993,23 @@ static bipolar shell_spawn_via_device(b32 operation, string_address path,
            syntactically valid request with envc zero silently stripped every
            exported variable from the child instead. */
         if (envc == positive_max)
-                return -1;
+                return false;
 
         request->envp = (unsigned long)spawn_envp_block;
         request->envp_count = envc;
         request->envp_generation = spawn_envp_generation;
+        return true;
+}
+
+// Returns the child pid, or a negative error if the device could not take it.
+static bipolar shell_spawn_via_device(b32 operation, string_address path,
+                                      string_address address_to arguments,
+                                      b32 output, b32 error)
+{
+        struct spawn_to directed;
+        struct spawn address_to request = address_of directed.spawn;
+        if (!shell_spawn_request(request, path, arguments))
+                return -1;
         directed.output = output;
         directed.error = error;
 
@@ -1025,30 +1034,9 @@ bipolar shell_spawn_stage(string_address address_to arguments,
 {
         struct spawn_into directed;
         struct spawn address_to request = address_of directed.spawn;
-        positive argc = 0;
-        positive envc = 0;
-
-        if (!shell_spawn_device_open())
+        if (!shell_spawn_device_open() ||
+            !shell_spawn_request(request, arguments[0], arguments))
                 return -1;
-
-        request->path = (unsigned long)arguments[0];
-        request->argv_bytes = shell_flatten_strings(
-            arguments, address_of spawn_argv_block,
-            address_of spawn_argv_room, address_of argc);
-
-        if (argc == positive_max)
-                return -1;
-
-        request->argv = (unsigned long)spawn_argv_block;
-        request->argv_count = (unsigned int)argc;
-        request->envp_bytes = shell_flatten_env(address_of envc);
-
-        if (envc == positive_max)
-                return -1;
-
-        request->envp = (unsigned long)spawn_envp_block;
-        request->envp_count = envc;
-        request->envp_generation = spawn_envp_generation;
         directed.input = input;
         directed.output = output;
         directed.error = error;
@@ -1546,11 +1534,9 @@ fn shell_input_end()
 // A prompt is for somebody watching. Asking the terminal about itself is the
 // only way to know whether anybody is: a script piped in gets none, which is
 // also what keeps its output free of them.
-#define TCGETS 0x5401u
-
 static b32 shell_interactive()
 {
         p8 settings[64];
 
-        return system_control(0, TCGETS, settings) == 0;
+        return system_control(0, PTY_TCGETS, settings) == 0;
 }

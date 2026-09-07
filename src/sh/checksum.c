@@ -68,25 +68,12 @@ static const checksum_algorithm checksum_algorithms[] = {
      (string_address) "sha512", (string_address) "SHA512", 64, false},
 };
 
+/* BLAKE2 alone exposes length; every other sum uses the common tail. */
 static const file_long checksum_longs[] = {
-    {(string_address) "binary", 'b'},
-    {(string_address) "check", 'c'},
-    {(string_address) "ignore-missing", 'i'},
-    {(string_address) "quiet", 'q'},
-    {(string_address) "status", 's'},
-    {(string_address) "strict", 'S'},
-    {(string_address) "tag", 'T'},
-    {(string_address) "text", 't'},
-    {(string_address) "warn", 'w'},
-    {(string_address) "zero", 'z'},
-    {null, 0},
-};
-
-static const file_long checksum_b2_longs[] = {
-    {(string_address) "binary", 'b'},
-    {(string_address) "check", 'c'},
-    {(string_address) "ignore-missing", 'i'},
     {(string_address) "length", 'l'},
+    {(string_address) "binary", 'b'},
+    {(string_address) "check", 'c'},
+    {(string_address) "ignore-missing", 'i'},
     {(string_address) "quiet", 'q'},
     {(string_address) "status", 's'},
     {(string_address) "strict", 'S'},
@@ -123,20 +110,11 @@ static string_address checksum_called()
 }
 
 static const checksum_algorithm address_to checksum_algorithm_find(
-    string_address command)
+    string_address name, bool type)
 {
         for (positive i = 0; i < array_count(checksum_algorithms); i++)
-                if (string_equals(command, checksum_algorithms[i].command))
-                        return checksum_algorithms + i;
-
-        return null;
-}
-
-static const checksum_algorithm address_to checksum_algorithm_type_find(
-    string_address type)
-{
-        for (positive i = 0; i < array_count(checksum_algorithms); i++)
-                if (string_equals(type, checksum_algorithms[i].type))
+                if (string_equals(name, type ? checksum_algorithms[i].type
+                                             : checksum_algorithms[i].command))
                         return checksum_algorithms + i;
 
         return null;
@@ -791,7 +769,7 @@ static b32 checksum_main()
 {
         string_address command = checksum_called();
         const checksum_algorithm address_to algorithm =
-            checksum_algorithm_find(command);
+            checksum_algorithm_find(command, false);
 
         if (!algorithm)
                 return 1;
@@ -808,8 +786,7 @@ static b32 checksum_main()
             .valued = algorithm->variable_length
                           ? (string_address) "l"
                           : null,
-            .longs = algorithm->variable_length ? checksum_b2_longs
-                                                : checksum_longs,
+            .longs = checksum_longs + !algorithm->variable_length,
             .seen = checksum_option_seen,
         };
 

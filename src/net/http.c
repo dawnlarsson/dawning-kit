@@ -63,6 +63,10 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
         if (!string_compare_max(url, (string_address) "https://", 8))
                 return HTTP_NOT_PLAIN;
 
+        for (string_address scan = url; *scan; scan++)
+                if (byte_is_control(*scan) || *scan == ' ')
+                        return HTTP_BAD_URL;
+
         if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
@@ -242,8 +246,10 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
                 written += length;
                 read += length;
 
-                while (read < size && (bytes[read] == '\r' || bytes[read] == '\n'))
+                if (read < size && bytes[read] == '\r')
                         read++;
+                if (read >= size || bytes[read++] != '\n')
+                        return HTTP_MALFORMED;
         }
 }
 

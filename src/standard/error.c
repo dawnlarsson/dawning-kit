@@ -909,54 +909,29 @@ static b32 error_message_into(string_address into, positive size, b32 number)
         positive length;
         positive room;
 
-        if (error_message_known(number))
+        bool known = error_message_known(number);
+        if (known)
         {
                 source = error_messages[number];
-
-                if (is_null(into) || size == 0)
-                        return ERANGE;
-
                 length = string_length(source);
-
-                //      Apart rather than memory_copy: the destination is the
-                //      caller's buffer and the source is the table, which is
-                //      static const and cannot be written through, so the
-                //      overlap test memory_copy opens with is a test whose
-                //      answer is already known. setenv in the sibling file
-                //      spells the same shape the same way.
-                if (length < size)
-                {
-                        memory_copy_apart(into, source, length + 1);
-                        return 0;
-                }
-
-                room = size - 1;
-                memory_copy_apart(into, source, room);
-                into[room] = end;
-
-                return ERANGE;
+        }
+        else
+        {
+                memory_copy_apart(built, (string_address)ERROR_UNKNOWN_PREFIX,
+                                  ERROR_UNKNOWN_PREFIX_LENGTH);
+                length = ERROR_UNKNOWN_PREFIX_LENGTH +
+                         bipolar_into_string(built + ERROR_UNKNOWN_PREFIX_LENGTH,
+                                             (bipolar)number);
+                source = built;
         }
 
-        //      Both the length and the copy are constant here, so the copy
-        //      folds to straight-line stores and no scan of the prefix
-        //      happens at all.
-        memory_copy_apart(built, (string_address)ERROR_UNKNOWN_PREFIX,
-                          ERROR_UNKNOWN_PREFIX_LENGTH);
-        length = ERROR_UNKNOWN_PREFIX_LENGTH +
-                 bipolar_into_string(built + ERROR_UNKNOWN_PREFIX_LENGTH,
-                                     (bipolar)number);
-
         if (is_null(into) || size == 0)
-                return EINVAL;
+                return known ? ERANGE : EINVAL;
 
         room = length < size ? length : size - 1;
-
-        //      `built` is this function's own frame and `into` is the
-        //      caller's buffer, so these two cannot be the same memory.
-        memory_copy_apart(into, built, room);
+        memory_copy_apart(into, source, room);
         into[room] = end;
-
-        return EINVAL;
+        return known ? (length < size ? 0 : ERANGE) : EINVAL;
 }
 
 /*

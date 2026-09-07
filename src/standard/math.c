@@ -154,13 +154,6 @@ typedef union
         b64 signed_bits;
 } math_shape;
 
-typedef union
-{
-        f32 value;
-        p32 bits;
-        b32 signed_bits;
-} math_narrow_shape;
-
 #define MATH_SIGN_MASK 0x8000000000000000ULL
 #define MATH_MAGNITUDE_MASK 0x7fffffffffffffffULL
 #define MATH_INFINITY_BITS 0x7ff0000000000000ULL
@@ -205,35 +198,63 @@ typedef union
 #define MATH_CLASS_SUBNORMAL 3
 #define MATH_CLASS_NORMAL 4
 
-static bool decimal_is_nan(decimal value)
-{
-        math_shape shape;
-        shape.value = value;
-        return (shape.bits & MATH_MAGNITUDE_MASK) > MATH_INFINITY_BITS;
-}
+/* The same integer classification in each floating width. The x87 reader
+   below normalizes its explicit integer bit into the binary128 layout. */
+#define MATH_CLASSIFIER(name, type, word, normal, infinity, sign, read)       \
+        static word name##_magnitude_bits(type value)                        \
+        { return (read) & (((word)1 << (sign)) - 1); }                        \
+        static bool name##_is_nan(type value)                               \
+        { return name##_magnitude_bits(value) > (infinity); }                \
+        static bool name##_is_infinite(type value)                          \
+        { return name##_magnitude_bits(value) == (infinity); }               \
+        static bool name##_is_finite(type value)                            \
+        { return name##_magnitude_bits(value) < (infinity); }                \
+        static bool name##_is_normal(type value)                            \
+        { word magnitude = name##_magnitude_bits(value);                     \
+          return magnitude >= (normal) && magnitude < (infinity); }          \
+        static bool name##_sign_bit(type value)                             \
+        { return ((read) >> (sign)) != 0; }                                  \
+        static b32 name##_class(type value)                                 \
+        { word magnitude = name##_magnitude_bits(value);                     \
+          if (!magnitude) return MATH_CLASS_ZERO;                            \
+          if (magnitude < (normal)) return MATH_CLASS_SUBNORMAL;              \
+          if (magnitude < (infinity)) return MATH_CLASS_NORMAL;               \
+          return magnitude == (infinity) ? MATH_CLASS_INFINITE               \
+                                           : MATH_CLASS_NAN; }
 
-static bool decimal_is_infinite(decimal value)
-{
-        math_shape shape;
-        shape.value = value;
-        return (shape.bits & MATH_MAGNITUDE_MASK) == MATH_INFINITY_BITS;
-}
+MATH_CLASSIFIER(decimal, decimal, p64, MATH_IMPLIED_BIT, MATH_INFINITY_BITS,
+                63, memory_cast(p64, value))
+MATH_CLASSIFIER(narrow, f32, p32, 0x00800000U, 0x7f800000U,
+                31, memory_cast(p32, value))
 
-static bool decimal_is_finite(decimal value)
+#if __LDBL_MANT_DIG__ == 64
+static p128 math_extended_bits(f128 value)
 {
-        math_shape shape;
-        shape.value = value;
-        return (shape.bits & MATH_MAGNITUDE_MASK) < MATH_INFINITY_BITS;
+        p128 bits = memory_cast(p128, value);
+        p64 fraction = (p64)bits & 0x7fffffffffffffffULL;
+        p32 exponent = (p32)(bits >> 64) & 0x7fff;
+        if ((p64)bits >> 63)
+                exponent += !exponent; // x87 pseudo-denormals are normal.
+        else if (exponent)
+        {
+                exponent = 0x7fff; // An absent explicit bit makes an unnormal NaN.
+                fraction = 1;
+        }
+        return ((bits >> 79) & 1) << 127 | (p128)exponent << 112 |
+               (p128)fraction << 49;
 }
+#else
+#define math_extended_bits(value) memory_cast(p128, value)
+#endif
 
-static bool decimal_is_normal(decimal value)
-{
-        math_shape shape;
-        p64 magnitude;
-        shape.value = value;
-        magnitude = shape.bits & MATH_MAGNITUDE_MASK;
-        return magnitude >= MATH_IMPLIED_BIT && magnitude < MATH_INFINITY_BITS;
-}
+#if __LDBL_MANT_DIG__ > 53
+MATH_CLASSIFIER(extended, f128, p128, (p128)1 << 112, (p128)0x7fff << 112,
+                127, math_extended_bits(value))
+#else
+MATH_CLASSIFIER(extended, f128, p64, MATH_IMPLIED_BIT, MATH_INFINITY_BITS,
+                63, memory_cast(p64, value))
+#endif
+#undef MATH_CLASSIFIER
 
 /*
         The magnitude, with the sign bit cleared where it stands.
@@ -274,108 +295,19 @@ static decimal math_magnitude(decimal value)
         return shape.value;
 }
 
-//      The sign of a negative zero is what separates this from a comparison
-//      against zero, and it is the whole reason the routine exists.
-static bool decimal_sign_bit(decimal value)
-{
-        return (memory_cast(p64, value) >> 63) != 0;
-}
-
-static b32 decimal_class(decimal value)
-{
-        math_shape shape;
-        p64 magnitude;
-        shape.value = value;
-        magnitude = shape.bits & MATH_MAGNITUDE_MASK;
-
-        if (magnitude == 0)
-                return MATH_CLASS_ZERO;
-        if (magnitude < MATH_IMPLIED_BIT)
-                return MATH_CLASS_SUBNORMAL;
-        if (magnitude < MATH_INFINITY_BITS)
-                return MATH_CLASS_NORMAL;
-        if (magnitude == MATH_INFINITY_BITS)
-                return MATH_CLASS_INFINITE;
-        return MATH_CLASS_NAN;
-}
-
-//      The same five questions asked of a float, so that a program working
-//      in single precision does not have to widen to ask them. Widening is
-//      exact for every float including the NaNs, so these would answer
-//      correctly through the wide ones -- but the widening is an instruction
-//      and the mask is a different constant, and doing it in the width the
-//      caller has is both shorter and closer to what was meant.
-static bool narrow_is_nan(f32 value)
-{
-        math_narrow_shape shape;
-        shape.value = value;
-        return (shape.bits & 0x7fffffffU) > 0x7f800000U;
-}
-
-static bool narrow_is_infinite(f32 value)
-{
-        math_narrow_shape shape;
-        shape.value = value;
-        return (shape.bits & 0x7fffffffU) == 0x7f800000U;
-}
-
-static bool narrow_is_finite(f32 value)
-{
-        math_narrow_shape shape;
-        shape.value = value;
-        return (shape.bits & 0x7fffffffU) < 0x7f800000U;
-}
-
-static bool narrow_is_normal(f32 value)
-{
-        math_narrow_shape shape;
-        p32 magnitude;
-        shape.value = value;
-        magnitude = shape.bits & 0x7fffffffU;
-        return magnitude >= 0x00800000U && magnitude < 0x7f800000U;
-}
-
-static bool narrow_sign_bit(f32 value)
-{
-        return (memory_cast(p32, value) >> 31) != 0;
-}
-
-static b32 narrow_class(f32 value)
-{
-        math_narrow_shape shape;
-        p32 magnitude;
-        shape.value = value;
-        magnitude = shape.bits & 0x7fffffffU;
-
-        if (magnitude == 0)
-                return MATH_CLASS_ZERO;
-        if (magnitude < 0x00800000U)
-                return MATH_CLASS_SUBNORMAL;
-        if (magnitude < 0x7f800000U)
-                return MATH_CLASS_NORMAL;
-        if (magnitude == 0x7f800000U)
-                return MATH_CLASS_INFINITE;
-        return MATH_CLASS_NAN;
-}
-
-/*
-        The C spellings, which are macros because C says they are.
-
-        The dispatch is on the size of the argument rather than on its type,
-        because a size comparison is a constant the compiler folds and a
-        _Generic would refuse an integer argument that the C macros are
-        required to accept. Both arms of the conditional are type correct for
-        any arithmetic argument, so only one survives compilation. A long
-        double argument goes down the double arm and is narrowed, which is
-        the one place these differ from a library that has a long double
-        path; nothing in this tree has one.
-*/
-#define isnan(value) (sizeof(value) == sizeof(f32) ? narrow_is_nan((f32)(value)) : decimal_is_nan((decimal)(value)))
-#define isinf(value) (sizeof(value) == sizeof(f32) ? narrow_is_infinite((f32)(value)) : decimal_is_infinite((decimal)(value)))
-#define isfinite(value) (sizeof(value) == sizeof(f32) ? narrow_is_finite((f32)(value)) : decimal_is_finite((decimal)(value)))
-#define isnormal(value) (sizeof(value) == sizeof(f32) ? narrow_is_normal((f32)(value)) : decimal_is_normal((decimal)(value)))
-#define signbit(value) (sizeof(value) == sizeof(f32) ? narrow_sign_bit((f32)(value)) : decimal_sign_bit((decimal)(value)))
-#define fpclassify(value) (sizeof(value) == sizeof(f32) ? narrow_class((f32)(value)) : decimal_class((decimal)(value)))
+/* Classify in the argument's floating width: narrowing long double loses
+   both its finite range and its subnormal boundary. Each selected arm still
+   evaluates the value once; the size tests disappear during compilation. */
+#define MATH_CLASSIFY(value, operation)                                      \
+        (sizeof(value) == sizeof(f32) ? narrow_##operation((f32)(value)) :   \
+         sizeof(value) > sizeof(decimal) ? extended_##operation((f128)(value))\
+                                         : decimal_##operation((decimal)(value)))
+#define isnan(value) MATH_CLASSIFY(value, is_nan)
+#define isinf(value) MATH_CLASSIFY(value, is_infinite)
+#define isfinite(value) MATH_CLASSIFY(value, is_finite)
+#define isnormal(value) MATH_CLASSIFY(value, is_normal)
+#define signbit(value) MATH_CLASSIFY(value, sign_bit)
+#define fpclassify(value) MATH_CLASSIFY(value, class)
 
 #define FP_NAN MATH_CLASS_NAN
 #define FP_INFINITE MATH_CLASS_INFINITE

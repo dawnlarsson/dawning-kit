@@ -104,7 +104,11 @@ static fn storage_options_free(storage_mount_options address_to options)
 static bool storage_data_add(storage_mount_options address_to options,
                              string_address item, positive length)
 {
-        positive extra = length + (options->data.used ? 1 : 0) + 1;
+        positive extra = (options->data.used ? 1 : 0) + 1;
+
+        if (length > positive_max - extra)
+                return false;
+        extra += length;
 
         if (extra > positive_max - options->data.used ||
             !byte_store_reserve(address_of options->data,

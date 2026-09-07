@@ -612,38 +612,22 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
                         close_on_exec = true;
         }
 
-        if (mode[0] == 'r')
-        {
-                address_to open_flags = update ? stream_open_read_write
-                                               : stream_open_read_only;
-                address_to stream_flags = update
-                                                  ? STREAM_READABLE | STREAM_WRITABLE
-                                                  : STREAM_READABLE;
-        }
-        else if (mode[0] == 'w')
-        {
-                address_to open_flags = (update ? stream_open_read_write
-                                                : stream_open_write_only) |
-                                        stream_open_create | stream_open_truncate;
-                address_to stream_flags = update
-                                                  ? STREAM_READABLE | STREAM_WRITABLE
-                                                  : STREAM_WRITABLE;
-        }
-        else if (mode[0] == 'a')
-        {
-                address_to open_flags = (update ? stream_open_read_write
-                                                : stream_open_write_only) |
-                                        stream_open_create | stream_open_append;
-                address_to stream_flags = (update
-                                                   ? STREAM_READABLE | STREAM_WRITABLE
-                                                   : STREAM_WRITABLE) |
-                                          STREAM_APPEND;
-        }
-        else
+        p8 kind = mode[0];
+        if (kind != 'r' && kind != 'w' && kind != 'a')
         {
                 errno = EINVAL;
                 return false;
         }
+        address_to open_flags = update ? stream_open_read_write
+                                : kind == 'r' ? stream_open_read_only
+                                              : stream_open_write_only;
+        address_to stream_flags = update ? STREAM_READABLE | STREAM_WRITABLE
+                                  : kind == 'r' ? STREAM_READABLE : STREAM_WRITABLE;
+        if (kind != 'r')
+                address_to open_flags |= stream_open_create |
+                    (kind == 'a' ? stream_open_append : stream_open_truncate);
+        if (kind == 'a')
+                address_to stream_flags |= STREAM_APPEND;
 
         if (exclusive)
                 address_to open_flags |= stream_open_exclusive;
@@ -1589,9 +1573,14 @@ b32 stream_seek(stream address_to handle, bipolar offset, b32 whence)
         if (stream_flush_output(handle) != 0)
                 return -1;
 
-        if (whence == SEEK_CUR)
-                offset -= (bipolar)((handle->read_tail - handle->read_head) +
-                                    handle->pushback_used);
+        if (whence == SEEK_CUR &&
+            __builtin_sub_overflow(offset,
+                (bipolar)((handle->read_tail - handle->read_head) +
+                           handle->pushback_used), address_of offset))
+        {
+                errno = EINVAL;
+                return -1;
+        }
 
         landed = stream_trap_seek(handle->descriptor, offset, whence);
 
@@ -1634,7 +1623,12 @@ bipolar stream_tell(stream address_to handle)
         if (position < 0)
                 return -1;
 
-        position += (bipolar)handle->write_used;
+        if (__builtin_add_overflow(position, (bipolar)handle->write_used,
+                                   address_of position))
+        {
+                errno = EOVERFLOW;
+                return -1;
+        }
         position -= (bipolar)(handle->read_tail - handle->read_head);
         position -= (bipolar)handle->pushback_used;
 

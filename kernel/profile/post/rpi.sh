@@ -1,20 +1,20 @@
 #!/bin/sh
+set -e
 . kit/common
 
-source="https://github.com/raspberrypi/firmware/raw/master/"
+source="https://github.com/raspberrypi/firmware/raw/master"
 
 label $GREEN"Raspberry Pi Post build setup"
 
 mkdir -p artifacts/pi
 
-is_file artifacts/pi/bootcode.bin ||
-        wget -q -O artifacts/pi/bootcode.bin $source/boot/bootcode.bin
-
-is_file artifacts/pi/start.elf ||
-        wget -q -O artifacts/pi/start.elf $source/boot/start.elf
-
-is_file artifacts/pi/fixup.dat ||
-        wget -q -O artifacts/pi/fixup.dat $source/boot/fixup.dat
+for firmware in bootcode.bin start.elf fixup.dat; do
+        cached="artifacts/pi/$firmware"
+        if ! is_file "$cached"; then
+                wget -q -O "$cached.part" "$source/boot/$firmware"
+                mv "$cached.part" "$cached"
+        fi
+done
 
 mkdir -p dist/boot
 

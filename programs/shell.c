@@ -76,17 +76,7 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
         while (at < length)
         {
                 positive left = length - at;
-                p8 address_to newline = null;
-
-                /* A call cannot beat one or two byte compares. Longer scans
-                   belong to the architecture floor. */
-                if (text[at] == '\n')
-                        newline = text + at;
-                else if (left > 1 && text[at + 1] == '\n')
-                        newline = text + at + 1;
-                else if (left > 2)
-                        newline = (p8 address_to)memory_first_of(
-                            text + at + 2, '\n', left - 2);
+                p8 address_to newline = memory_first_of(text + at, '\n', left);
 
                 if (!newline)
                         break;

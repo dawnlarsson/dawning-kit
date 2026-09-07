@@ -1296,37 +1296,20 @@ static fn scan_extended_decimal(string_address text, address_any into)
 #endif
 }
 
-//      A whole number that came out of the input's sign, saturated the way
-//      strtol saturates: the positive limit is one below the negative one,
-//      so the two ends are asked about separately.
+//      Signed magnitude saturates at the positive or negative limit.
 static positive scan_signed_value(positive magnitude, bool negative,
                                   bool overflowed)
 {
-        positive limit_positive = ~(positive)0 >> 1;
-        positive limit_negative = (~(positive)0 >> 1) + 1;
+        positive limit = (~(positive)0 >> 1) + negative;
 
-        if (overflowed)
+        if (overflowed || magnitude > limit)
         {
                 scan_out_of_range();
 
-                return negative ? limit_negative : limit_positive;
+                return limit;
         }
 
-        if (!negative && magnitude > limit_positive)
-        {
-                scan_out_of_range();
-
-                return limit_positive;
-        }
-
-        if (negative && magnitude > limit_negative)
-        {
-                scan_out_of_range();
-
-                return limit_negative;
-        }
-
-        return negative ? (positive)(0 - (bipolar)magnitude) : magnitude;
+        return negative ? 0 - magnitude : magnitude;
 }
 
 //      And the unsigned one, where strtoul saturates at the top and a minus
@@ -1342,7 +1325,7 @@ static positive scan_unsigned_value(positive magnitude, bool negative,
                 return ~(positive)0;
         }
 
-        return negative ? (positive)(0 - (bipolar)magnitude) : magnitude;
+        return negative ? 0 - magnitude : magnitude;
 }
 
 /*

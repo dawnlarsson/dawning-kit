@@ -301,7 +301,7 @@ b32 main()
                         }
 
                         term_follow_modes(master);
-                        system_call_3(syscall(ioctl), master, TCGETS,
+                        system_call_3(syscall(ioctl), master, PTY_TCGETS,
                                       (positive)address_of modes);
 
                         tell("editing=");
@@ -314,7 +314,7 @@ b32 main()
 
                         // And the far end going raw takes the editor with it.
                         modes.behaviour &= ~TERMINAL_CANONICAL;
-                        system_call_3(syscall(ioctl), slave, TCSETS,
+                        system_call_3(syscall(ioctl), slave, PTY_TCSETS,
                                       (positive)address_of modes);
                         term_follow_modes(master);
 
@@ -367,7 +367,7 @@ b32 main()
                                      descriptor++)
                                         if (system_call_3(syscall(fcntl),
                                                           (positive)descriptor,
-                                                          PTY_F_GETFD, 0) != 0)
+                                                          1 /* F_GETFD */, 0) != 0)
                                                 result = (p8)(20 + descriptor);
 
                                 system_write_all((positive)pair[1],
@@ -451,9 +451,9 @@ if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
         -o "$work/term" "$work/harness.c" 2> "$work/err"
 then
-        echo "  term         the harness does not build here, skipped"
-        sed 's/^/    /' "$work/err" | head -10
-        exit 2
+        echo "  term         harness build failed"
+        sed 's/^/    /' "$work/err"
+        exit 1
 fi
 
 #       Rows arrive one to a line and are joined by a bar, so a case that

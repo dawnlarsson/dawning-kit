@@ -8759,7 +8759,6 @@ static bool read_timeout(string_address text, timespec address_to span)
         positive fraction = 0;
         positive scale = 100000;
         bool negative = false;
-        bool overflow = false;
 
         if (string_is(at, '-') || string_is(at, '+'))
         {
@@ -8767,15 +8766,10 @@ static bool read_timeout(string_address text, timespec address_to span)
                 at++;
         }
 
-        while (byte_is_digit(string_get(at)))
-        {
-                positive digit = string_get(at++) - '0';
-
-                if (seconds > ((positive)b64_max - digit) / 10)
-                        overflow = true;
-                else
-                        seconds = seconds * 10 + digit;
-        }
+        if (byte_is_digit(string_get(at)) &&
+            (!string_digits_checked(address_of at, 10, address_of seconds) ||
+             seconds > (positive)b64_max))
+                return false;
 
         if (string_is(at, '.'))
         {
@@ -8793,7 +8787,7 @@ static bool read_timeout(string_address text, timespec address_to span)
                 }
         }
 
-        if (string_get(at) || overflow ||
+        if (string_get(at) ||
             (negative && (seconds || fraction)))
                 return false;
 
@@ -8884,22 +8878,22 @@ static bool read_nonnegative(string_address text, positive maximum,
         calls and a flag rather than a mode the shell has to remember -- and
         why a test that reads down a pipe cannot see whether it works.
 */
-static bool read_echo_off(b32 descriptor, edit_terminal_modes address_to held)
+static bool read_echo_off(b32 descriptor, terminal_modes address_to held)
 {
-        edit_terminal_modes quiet;
+        terminal_modes quiet;
 
-        if (system_control(descriptor, EDIT_TCGETS, held) != 0)
+        if (system_control(descriptor, PTY_TCGETS, held) != 0)
                 return false;
 
         quiet = address_to held;
         quiet.behaviour &= ~EDIT_LOCAL_ECHO;
 
-        return system_control(descriptor, EDIT_TCSETS, address_of quiet) == 0;
+        return system_control(descriptor, PTY_TCSETS, address_of quiet) == 0;
 }
 
-static fn read_echo_back(b32 descriptor, edit_terminal_modes address_to held)
+static fn read_echo_back(b32 descriptor, terminal_modes address_to held)
 {
-        system_control(descriptor, EDIT_TCSETS, held);
+        system_control(descriptor, PTY_TCSETS, held);
 }
 
 // The fields of one read line, when they are going into an array rather than
@@ -8976,7 +8970,7 @@ COLD fn shell_read(writer write, string_address input)
         bool exact = false;
         bool hidden = false;
         bool quieted = false;
-        edit_terminal_modes quiet_held;
+        terminal_modes quiet_held;
         b32 descriptor = 0;
         string_address ifs;
         p8 ifs_default[] = " \t\n";

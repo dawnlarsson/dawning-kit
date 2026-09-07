@@ -56,6 +56,44 @@ static bool line_buffer_fits_one_shelf(void)
         return fits;
 }
 
+// A pipe may already occupy the child's destination descriptor. Its `e`
+// flag belongs to the parent's end; exec must still inherit the child's end.
+static bool process_pipe_closed_standard(void)
+{
+        bool okay = true;
+        for (b32 reading = 0; reading < 2; reading++)
+        {
+                log_flush();
+                b32 saved_input = dup(0), saved_output = dup(1);
+                if (saved_input < 0 || saved_output < 0)
+                        return false;
+                close(0);
+                if (reading) close(1);
+                stream address_to pipe = popen(reading ? "printf ok" :
+                        "read code && exit \"$code\"", reading ? "re" : "we");
+                if (!pipe)
+                {
+                dup2(saved_input, 0);
+                dup2(saved_output, 1);
+                close(saved_input);
+                close(saved_output);
+                        return false;
+                }
+                okay &= (fcntl(fileno(pipe), 1, (positive)0) & 1) != 0;
+                if (reading)
+                        okay &= fgetc(pipe) == 'o' && fgetc(pipe) == 'k' &&
+                                fgetc(pipe) == EOF;
+                else
+                        okay &= fputs("0\n", pipe) >= 0;
+                okay &= pclose(pipe) == 0;
+                dup2(saved_input, 0);
+                dup2(saved_output, 1);
+                close(saved_input);
+                close(saved_output);
+        }
+        return okay;
+}
+
 b32 main(void)
 {
         char bytes[] = "read only";
@@ -69,5 +107,5 @@ b32 main(void)
         bool fits = line_buffer_fits_one_shelf();
 
         log_flush();
-        return fits ? 0 : 1;
+        return fits && process_pipe_closed_standard() ? 0 : 1;
 }

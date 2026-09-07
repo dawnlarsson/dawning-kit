@@ -300,8 +300,40 @@ static fn reuse_benchmark(void)
 }
 #endif
 
+static fn reuse_counted_classes(void)
+{
+        p8 address_to pages = memory(8192);
+        check("class guard fixture allocates", pages && (positive)pages < (positive)-4095);
+        if (!pages || (positive)pages >= (positive)-4095) return;
+        bipolar status = system_call_3(syscall(mprotect), (positive)(pages + 4096),
+                                       4096, FILE_PROTECT_NONE);
+        check("class guard fixture protects", !status);
+        if (!status)
+                for (positive length = 0; length <= 9; length++)
+                {
+                        p8 address_to text = pages + 4096 - length;
+                        memory_copy(text, "[:alpha:]", length);
+                        check("class prefix never reads past its counted end",
+                              byte_class_end(text, pages + 4096) ==
+                                  (length == 9 ? pages + 4096 : null));
+                }
+        memory_free(pages, 8192);
+}
+
 b32 main(void)
 {
+        reuse_counted_classes();
+        timespec span;
+        check("read timeout keeps permissive zero spellings",
+              read_timeout("", &span) && !span.tv_sec && !span.tv_nsec &&
+              read_timeout("-.", &span) && !span.tv_sec && !span.tv_nsec);
+        check("read timeout keeps signed limit and microsecond truncation",
+              read_timeout("9223372036854775807.1234569", &span) &&
+              span.tv_sec == b64_max && span.tv_nsec == 123456000);
+        check("read timeout refuses overflowing seconds and suffixes",
+              !read_timeout("9223372036854775808", &span) &&
+              !read_timeout("18446744073709551616", &span) &&
+              !read_timeout("12x", &span) && !read_timeout("-0.000001", &span));
         bipolar number;
         positive mode;
         check("pr accepts signed line-number boundaries",
@@ -319,6 +351,31 @@ b32 main(void)
               !file_mode_adjust("2000000000000000000000", 0, false, 0, false, &mode));
         check("chmod keeps explicit leading-zero policy",
               file_mode_adjust("0000755", 06000, true, 0, false, &mode) && mode == 0755);
+        check("replay refuses nanosecond ceil-add overflow",
+              !process_replay_sleep(18446744055453255927ull, 999999999, true, 0));
+        positive duration;
+        check("duration nanosecond limit survives discarded zeros",
+              file_duration_read("18446744073.709551615", false, &duration) && duration == positive_max &&
+              file_duration_read("18446744073.7095516150", false, &duration) && duration == positive_max);
+        check("duration overflow cannot drop a digit and resume",
+              !file_duration_read("18446744073.7095516160", false, &duration) &&
+              !file_duration_read("18446744073709551616", true, &duration));
+        check("duration scientific notation and suffix policy",
+              file_duration_read("1.25e-3", false, &duration) && duration == 1250000 &&
+              file_duration_read("1.5m", true, &duration) && duration == 90000000000 &&
+              !file_duration_read("1.5m", false, &duration));
+        p8 long_duration[1024];
+        memory_fill(long_duration, '0', sizeof(long_duration));
+        memory_copy(long_duration + sizeof(long_duration) - 2, "1", 2);
+        check("duration spelling has no fixed scratch ceiling",
+              file_duration_read(long_duration, true, &duration) && duration == 1000000000);
+        storage_mount_options options = {0};
+        check("mount data refuses empty and nonempty size overflow",
+              !storage_data_add(&options, "x", positive_max) && !options.data.used &&
+              storage_data_add(&options, "x", 1) &&
+              !storage_data_add(&options, "x", positive_max - 1) && options.data.used == 1 &&
+              options.data.bytes[0] == 'x');
+        byte_store_release(&options.data);
         shell_store store = {0};
         check("arena starts with a small block", shell_store_take(&store, 1) != null);
         shell_block address_to head = store.head;

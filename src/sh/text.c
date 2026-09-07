@@ -2945,48 +2945,29 @@ static bool z85_groups(encoding_output address_to output,
         if (!into)
                 return false;
 
-        if (!output->wrap)
-        {
-                for (positive group = 0; group < groups; group++)
-                {
-                        p32 value = ((p32)input[0] << 24) |
-                                    ((p32)input[1] << 16) |
-                                    ((p32)input[2] << 8) | input[3];
-                        p8 digits[5];
-
-                        for (positive at = 5; at; at--)
-                        {
-                                digits[at - 1] = z85_alphabet[value % 85];
-                                value /= 85;
-                        }
-
-                        memory_copy_apart(into, digits, sizeof(digits));
-                        into += sizeof(digits);
-                        input += 4;
-                }
-
-                output->wrote = true;
-                return true;
-        }
-
         for (positive group = 0; group < groups; group++)
         {
-                p32 value = ((p32)input[0] << 24) |
-                            ((p32)input[1] << 16) |
-                            ((p32)input[2] << 8) | input[3];
+                p32 value = network_load_32(input);
                 p8 digits[5];
 
-                for (positive at = 5; at; at--)
+                for (positive at = sizeof(digits); at; at--)
                 {
                         digits[at - 1] = z85_alphabet[value % 85];
                         value /= 85;
                 }
 
-                for (positive at = 0; at < sizeof(digits); at++)
-                        into = encoding_symbol(into, output, digits[at]);
-
+                if (output->wrap)
+                        for (positive at = 0; at < sizeof(digits); at++)
+                                into = encoding_symbol(into, output, digits[at]);
+                else
+                {
+                        memory_copy_apart(into, digits, sizeof(digits));
+                        into += sizeof(digits);
+                }
                 input += 4;
         }
+
+        output->wrote = true;
 
         return true;
 }

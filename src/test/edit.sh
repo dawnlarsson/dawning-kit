@@ -54,6 +54,7 @@ cat > "$work/harness.c" <<'HARNESS'
 #include "src/compiler_memory.c"
 #include "src/spark.c"
 #include "src/canvas/window.c"
+#include "src/sh/pty.c"
 #include "src/sh/term.c"
 
 //      The editor, with nothing under it. The driver is the only part of the
@@ -1392,9 +1393,9 @@ if ! $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
         -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
         -o "$work/edit" "$work/harness.c" 2> "$work/err"
 then
-        echo "  edit         the harness does not build here, skipped"
-        sed 's/^/    /' "$work/err" | head -30
-        exit 2
+        echo "  edit         harness build failed"
+        sed 's/^/    /' "$work/err"
+        exit 1
 fi
 
 edit() { ${TEST_RUNNER:-} "$work/edit" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }

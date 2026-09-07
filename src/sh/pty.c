@@ -7,10 +7,19 @@
         identical close-on-error and close-on-exec behavior.
 */
 
+// Linux TCGETS/TCSETS use the kernel's compact layout, not libc's termios.
+#define PTY_TCGETS 0x5401u
+#define PTY_TCSETS 0x5402u
+typedef struct
+{
+        unsigned int arriving, leaving, hardware, behaviour;
+        p8 discipline;
+        p8 controls[19];
+} terminal_modes;
+
 #define PTY_TIOCSPTLCK 0x40045431u
 #define PTY_TIOCGPTN 0x80045430u
 #define PTY_TIOCSCTTY 0x540eu
-#define PTY_F_GETFD 1
 #define PTY_F_SETFD 2
 
 static bipolar process_pty_open(b32 address_to master_out,

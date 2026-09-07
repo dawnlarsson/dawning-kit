@@ -359,8 +359,37 @@ static b32 test_keep_plain(const process_dirent address_to entry)
         return entry->d_name[0] != '.';
 }
 
+static fn test_scandir_growth(void)
+{
+        p8 folder[PATH_MAX], path[PATH_MAX];
+        test_path(folder, "scan-growth");
+        same("scandir growth directory", mkdir(folder, 0700), 0);
+        for (b32 at = 0; at < 65; at++)
+        {
+                snprintf(path, sizeof(path), "%s/%02d", folder, at);
+                b32 descriptor = open(path, O_CREAT | O_WRONLY, 0600);
+                true_is("scandir growth file", descriptor >= 0);
+                close(descriptor);
+        }
+        process_dirent address_to address_to list = null;
+        b32 count = scandir(folder, address_of list, test_keep_plain, alphasort);
+        same("scandir crosses three vector growth boundaries", count, 65);
+        for (b32 at = 0; at < count; at++)
+        {
+                p8 name[16];
+                snprintf(name, sizeof(name), "%02d", at);
+                same_text("scandir growth order", list[at]->d_name, name);
+                path_join(path, sizeof(path), folder, list[at]->d_name);
+                unlink(path);
+                free(list[at]);
+        }
+        free(list);
+        rmdir(folder);
+}
+
 static fn test_scandir(void)
 {
+        test_scandir_growth();
         process_dirent address_to address_to list = null;
         b32 count;
         b32 at;

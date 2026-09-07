@@ -1953,77 +1953,49 @@ static b32 parse_enclosed(b32 kind)
         return index;
 }
 
-static b32 parse_function()
-{
-        b32 index = parse_node_new(NODE_FUNCTION);
-
-        if (parse_state)
-                return 0;
-
-        parse_attach_word(index, parse_look(0)->text,
-                          parse_look(0)->length);
-        parse_position += 3;
-        parse_skip_newlines();
-
-        parse_nodes[index].right = parse_command();
-
-        return parse_state ? 0 : index;
-}
-
-static b32 parse_function_keyword()
-{
-        b32 index = parse_node_new(NODE_FUNCTION);
-
-        if (parse_state)
-                return 0;
-
-        parse_position++;
-
-        if (parse_look(0)->kind != PT_WORD || parse_reserved(0))
-        {
-                parse_fail();
-                return 0;
-        }
-
-        parse_attach_word(index, parse_look(0)->text,
-                          parse_look(0)->length);
-        parse_position++;
-
-        if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN &&
-            parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_RPAREN)
-                parse_position += 2;
-
-        parse_skip_newlines();
-
-        b32 keyword = parse_keyword(0);
-
-        if (!((keyword > PARSE_KEYWORD_NONE &&
-               keyword <= PARSE_KEYWORD_OPEN) ||
-              (parse_look(0)->kind == PT_OP &&
-               parse_look(0)->op == OP_LPAREN)))
-        {
-                parse_fail();
-                return 0;
-        }
-
-        parse_nodes[index].right = parse_command();
-
-        return parse_state ? 0 : index;
-}
-
 // Whether a compound command begins at this token, which is the one thing
 // that tells "coproc NAME { ... }" from "coproc command arguments".
 static PURE bool parse_at_compound(b32 ahead)
 {
         b32 keyword = parse_keyword(ahead);
 
-        if (keyword > PARSE_KEYWORD_NONE && keyword <= PARSE_KEYWORD_OPEN)
+        if ((keyword >= PARSE_KEYWORD_IF && keyword <= PARSE_KEYWORD_SELECT) ||
+            keyword == PARSE_KEYWORD_OPEN)
                 return true;
 
         return parse_look(ahead)->kind == PT_ARITHMETIC ||
                parse_look(ahead)->kind == PT_CONDITIONAL ||
                (parse_look(ahead)->kind == PT_OP &&
                 parse_look(ahead)->op == OP_LPAREN);
+}
+
+static b32 parse_function(bool keyword)
+{
+        b32 index = parse_node_new(NODE_FUNCTION);
+
+        if (parse_state)
+                return 0;
+        if (keyword)
+                parse_position++;
+        if (parse_look(0)->kind != PT_WORD || parse_reserved(0))
+        {
+                parse_fail();
+                return 0;
+        }
+        parse_attach_word(index, parse_look(0)->text,
+                          parse_look(0)->length);
+        parse_position++;
+        if (parse_look(0)->kind == PT_OP && parse_look(0)->op == OP_LPAREN &&
+            parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_RPAREN)
+                parse_position += 2;
+        parse_skip_newlines();
+        if (!parse_at_compound(0))
+        {
+                parse_fail();
+                return 0;
+        }
+        parse_nodes[index].right = parse_command();
+        return parse_state ? 0 : index;
 }
 
 /*
@@ -2072,33 +2044,19 @@ static b32 parse_command()
                 return 0;
 
         if (parse_word_is(0, "function"))
-                return parse_function_keyword();
+                return parse_function(true);
 
-        if (parse_look(0)->kind == PT_ARITHMETIC)
+        if (parse_look(0)->kind == PT_ARITHMETIC ||
+            parse_look(0)->kind == PT_CONDITIONAL)
         {
-                index = parse_node_new(NODE_ARITHMETIC);
-
+                index = parse_node_new(parse_look(0)->kind == PT_ARITHMETIC
+                                           ? NODE_ARITHMETIC : NODE_CONDITIONAL);
                 if (!parse_state)
                 {
                         parse_attach_word(index, parse_look(0)->text,
                                           parse_look(0)->length);
                         parse_position++;
                 }
-
-                goto command_done;
-        }
-
-        if (parse_look(0)->kind == PT_CONDITIONAL)
-        {
-                index = parse_node_new(NODE_CONDITIONAL);
-
-                if (!parse_state)
-                {
-                        parse_attach_word(index, parse_look(0)->text,
-                                          parse_look(0)->length);
-                        parse_position++;
-                }
-
                 goto command_done;
         }
 
@@ -2107,7 +2065,7 @@ static b32 parse_command()
         if (parse_look(0)->kind == PT_WORD && keyword == PARSE_KEYWORD_NONE &&
             parse_look(1)->kind == PT_OP && parse_look(1)->op == OP_LPAREN &&
             parse_look(2)->kind == PT_OP && parse_look(2)->op == OP_RPAREN)
-                return parse_function();
+                return parse_function(false);
 
         if (keyword == PARSE_KEYWORD_IF)
         {

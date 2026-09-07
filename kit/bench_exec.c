@@ -28,6 +28,14 @@ positive now_ns()
         return (positive)t.tv_sec * 1000000000 + (positive)t.tv_nsec;
 }
 
+static bool bench_wait_child(bipolar child)
+{
+        positive status = 0;
+        return child > 0 &&
+               system_wait4_retry(child, address_of status, 0, null) == child &&
+               !status;
+}
+
 // path == null measures fork + exit + wait with no exec at all, which is the
 // floor: whatever that costs is not the loader's fault. Subtracting it from
 // the other two leaves the cost of actually loading the image.
@@ -60,10 +68,7 @@ positive run_many_flags(string_address path, positive flags)
                         continue;
                 }
 
-                positive status = 0;
-                system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
-
-                if (status)
+                if (!bench_wait_child(child))
                         failed = true;
         }
 
@@ -84,6 +89,8 @@ positive best_of_flags(string_address path, positive flags, positive tries)
         for (positive i = 0; i < tries; i++)
         {
                 positive t = run_many_flags(path, flags);
+                if (!t)
+                        return 0;
                 if (!best || t < best)
                         best = t;
         }
@@ -133,10 +140,7 @@ positive bench_spawn_device(string_address path)
                         return 0;
                 }
 
-                positive status = 0;
-                system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
-
-                if (status)
+                if (!bench_wait_child(child))
                         failed = true;
         }
 
@@ -176,12 +180,7 @@ positive bench_spawn_environment_submission(string_address path,
                                               SPARK_IOCTL_SPAWN,
                                               (positive)address_of request);
                 elapsed += now_ns() - start;
-                positive status = 0;
-
-                if (child < 0 ||
-                    system_call_4(syscall(wait4), child,
-                                  (positive)address_of status, 0, 0) != child ||
-                    status)
+                if (!bench_wait_child(child))
                         return 0;
         }
 
@@ -213,10 +212,7 @@ positive bench_execveat(string_address path)
                         system_call_1(syscall(exit), 127);
                 }
 
-                positive status = 0;
-                system_call_4(syscall(wait4), child, (positive)address_of status, 0, 0);
-
-                if (status)
+                if (!bench_wait_child(child))
                         failed = true;
         }
 
@@ -256,15 +252,7 @@ positive bench_spawn_submission(string_address path)
                                               (positive)address_of request);
                 elapsed += now_ns() - start;
 
-                positive status = 0;
-                if (child > 0)
-                {
-                        system_call_4(syscall(wait4), child,
-                                      (positive)address_of status, 0, 0);
-                        if (status)
-                                failed = true;
-                }
-                else
+                if (!bench_wait_child(child))
                         failed = true;
         }
 

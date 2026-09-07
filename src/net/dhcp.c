@@ -306,16 +306,13 @@ static bipolar dhcp_open(string_address device, p32 host, bool broadcast)
             .family = AF_INET, .port = network_order_16(DHCP_CLIENT_PORT),
             .host = network_order_32(host)};
 
-        if (broadcast)
-                socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
-                                  address_of one, sizeof one);
-
-        socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR,
-                          address_of one, sizeof one);
-        socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
-                          string_length(device) + 1);
-
-        if (socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
+        if ((broadcast && socket_option_set((b32)handle, SOL_SOCKET, SO_BROADCAST,
+                                            address_of one, sizeof one) < 0) ||
+            socket_option_set((b32)handle, SOL_SOCKET, SO_REUSEADDR,
+                              address_of one, sizeof one) < 0 ||
+            socket_option_set((b32)handle, SOL_SOCKET, SO_BINDTODEVICE, device,
+                              string_length(device) + 1) < 0 ||
+            socket_bind((b32)handle, address_of mine, sizeof mine) < 0)
         {
                 socket_close((b32)handle);
                 return -1;
@@ -334,9 +331,9 @@ static bool dhcp_receive(bipolar handle, p8 address_to packet, positive room,
         if (network_wait_readable(handle, seconds, nanoseconds) <= 0)
                 return false;
 
-        got = socket_receive((b32)handle, packet, room, 0, 0, 0);
+        got = socket_receive((b32)handle, packet, room, MSG_TRUNC, 0, 0);
 
-        return got > 0 &&
+        return got > 0 && (positive)got <= room &&
                dhcp_read(packet, (positive)got, transaction, hardware,
                          lease, kind) >= 0;
 }

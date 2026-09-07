@@ -5748,7 +5748,7 @@ static bipolar tools_uuid_name_transform(bool sha1)
 {
         const checksum_algorithm address_to algorithm =
             checksum_algorithm_find(sha1 ? (string_address)"sha1sum"
-                                         : (string_address)"md5sum");
+                                         : (string_address)"md5sum", false);
 
         return algorithm ? checksum_kernel_open(algorithm) : -ERROR_INVALID;
 }

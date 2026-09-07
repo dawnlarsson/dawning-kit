@@ -1219,46 +1219,6 @@ static const file_long process_timeout_longs[] = {
          ((positive)1 << (SIGTERM - 1)) |                                   \
          ((positive)1 << (SIGCHLD - 1)))
 
-/* util-linux's duration reader is already the exact, overflow-checked
-   decimal/scientific seconds grammar used by flock and waitpid.  Coreutils
-   adds only four unit suffixes around that same grammar. */
-static bool process_timeout_duration(string_address text,
-                                     positive address_to nanoseconds)
-{
-        positive length = string_length(text);
-        positive scale = 1;
-        p8 number[128];
-
-        if (!length || length >= sizeof(number))
-                return false;
-
-        p8 suffix = string_get(text + length - 1);
-
-        if (suffix == 's' || suffix == 'm' || suffix == 'h' || suffix == 'd')
-        {
-                scale = suffix == 'm' ? 60
-                      : suffix == 'h' ? 60 * 60
-                      : suffix == 'd' ? 24 * 60 * 60
-                                      : 1;
-                length--;
-        }
-
-        if (!length)
-                return false;
-
-        memory_copy(number, text, length);
-        number[length] = end;
-
-        positive made;
-
-        if (!ul_duration((string_address)number, address_of made) ||
-            made > positive_max / scale)
-                return false;
-
-        address_to nanoseconds = made * scale;
-        return true;
-}
-
 /* Wait for one child until a monotonic deadline. pidfd+ppoll is the native
    steady-state path: no handler, alarm signal, tick loop, or PID reuse race.
    The WNOHANG loop exists only for kernels predating pidfd_open. */
@@ -1439,7 +1399,7 @@ static b32 process_timeout()
 
         positive duration;
 
-        if (!process_timeout_duration(program_argument((b32)taking.first++),
+        if (!file_duration_read(program_argument((b32)taking.first++), true,
                                       address_of duration))
         {
                 file_fail("timeout: invalid time interval\n", 0);
@@ -1471,7 +1431,7 @@ static b32 process_timeout()
         positive kill_after = 0;
 
         if (escalate &&
-            !process_timeout_duration(file_option_value(address_of taking, 'k'),
+            !file_duration_read(file_option_value(address_of taking, 'k'), true,
                                       address_of kill_after))
         {
                 file_fail("timeout: invalid time interval for --kill-after\n", 0);
@@ -1641,8 +1601,6 @@ static b32 process_timeout()
 
 // script ----------------------------------------------------------
 /* The terminal recorder and graphical terminal share pty.c's open floor. */
-#define PROCESS_TCGETS 0x5401u
-#define PROCESS_TCSETS 0x5402u
 #define PROCESS_TIOCGWINSZ 0x5413u
 #define PROCESS_TIOCSWINSZ 0x5414u
 #define PROCESS_TERMINAL_ECHO 0x0008u
@@ -1656,12 +1614,6 @@ static b32 process_timeout()
 #define PROCESS_POLL_ERROR 0x008
 #define PROCESS_POLL_HUP 0x010
 
-typedef struct
-{
-        unsigned int arriving, leaving, hardware, behaviour;
-        p8 discipline;
-        p8 controls[19];
-} process_terminal_modes;
 
 typedef struct
 {
@@ -2000,14 +1952,14 @@ static b32 process_script_record(process_script_state address_to state,
 
         if (state->echo)
         {
-                process_terminal_modes modes;
-                if (system_control(slave, PROCESS_TCGETS, address_of modes) >= 0)
+                terminal_modes modes;
+                if (system_control(slave, PTY_TCGETS, address_of modes) >= 0)
                 {
                         if (state->echo == 1)
                                 modes.behaviour |= PROCESS_TERMINAL_ECHO;
                         else
                                 modes.behaviour &= ~PROCESS_TERMINAL_ECHO;
-                        system_control(slave, PROCESS_TCSETS, address_of modes);
+                        system_control(slave, PTY_TCSETS, address_of modes);
                 }
         }
 
@@ -2706,7 +2658,7 @@ static bool process_replay_timing(string_address line, bool address_to advanced,
                 return false;
         address_to gap = end;
         positive waited;
-        bool okay = ul_duration(at, address_of waited);
+        bool okay = file_duration_read(at, false, address_of waited);
         address_to gap = ' ';
         if (!okay)
                 return false;
@@ -2733,12 +2685,12 @@ static bool process_replay_sleep(positive delay, positive divisor,
         {
                 positive whole = delay / divisor;
                 positive remainder = delay % divisor;
-                if (whole > positive_max / 1000000000)
-                        return false;
                 if (remainder > positive_max / 1000000000)
                         return false;
-                delay = whole * 1000000000 +
-                        (positive)((p64)remainder * 1000000000 / divisor);
+                positive fraction = remainder * 1000000000 / divisor;
+                if (whole > (positive_max - fraction) / 1000000000)
+                        return false;
+                delay = whole * 1000000000 + fraction;
         }
         if (limited && delay > maximum)
                 delay = maximum;
@@ -2857,7 +2809,7 @@ static b32 process_scriptreplay()
                 return ul_bad_usage("scriptreplay", "extra operand");
         positive divisor = 1000000000;
         if (divisor_text &&
-            (!ul_duration(divisor_text, address_of divisor) || !divisor))
+            (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
                 return ul_bad_usage("scriptreplay", "invalid divisor");
 
         bool limited = false;
@@ -2865,7 +2817,7 @@ static b32 process_scriptreplay()
         string_address maximum_text = file_option_value(address_of taking, 'm');
         if (maximum_text)
         {
-                if (!ul_duration(maximum_text, address_of maximum))
+                if (!file_duration_read(maximum_text, false, address_of maximum))
                         return ul_bad_usage("scriptreplay",
                                             "invalid maximum delay");
                 limited = true;

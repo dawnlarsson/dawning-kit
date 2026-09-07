@@ -192,12 +192,20 @@ static void console_regrid(struct pane *pane)
 
 static void console_stop(void)
 {
+        struct pane *pane;
+
         if (!console_registered)
                 return;
 
         unregister_console(&canvas_console);
         console_registered = false;
 
-        // The pane is the desktop's to free, like any other window.
+        // unregister_console drains callbacks. This owned pane has no file
+        // context whose release could return its ring to the desktop budget.
+        mutex_lock(&desktop.lock);
+        pane = console_pane;
         WRITE_ONCE(console_pane, NULL);
+        if (pane)
+                pane_free(pane);
+        mutex_unlock(&desktop.lock);
 }

@@ -56,6 +56,9 @@ GENERATORS = {
     ('src/standard/error.c', 'var_list_entry'): ('{}',),
     ('src/standard/format.c', 'var_list_entry'): ('{}',),
     ('src/standard/scan.c', 'var_list_entry'): ('{}',),
+    ('src/standard/math.c', 'MATH_CLASSIFIER'):
+        ('{}_magnitude_bits', '{}_is_nan', '{}_is_infinite', '{}_is_finite',
+         '{}_is_normal', '{}_sign_bit', '{}_class'),
     ('src/standard/numbers.c', 'NUMBERS_EXACT'): ('{}',),
     ('src/standard/numbers.c', 'NUMBERS_TO'): ('{}',),
     ('src/standard/signal.c', 'SIGNAL_SET_CHANGE'): ('{}',),

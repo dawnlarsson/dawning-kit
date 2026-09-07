@@ -929,6 +929,24 @@ number_case(extended)
                    text("strtold nan"));
 #endif
 
+        static const struct { const char *input; p64 bits; positive stop; b32 error; } edges[] = {
+                {"", 0, 0, 99}, {" +", 0, 0, 99}, {"-0!", 1ULL << 63, 2, 99},
+                {"0x!", 0, 1, 99}, {"inf!", 0x7ff0000000000000ULL, 3, 99},
+                {"-1e99999!", 0xfff0000000000000ULL, 8, ERANGE},
+                {"-1e-99999!", 1ULL << 63, 9, ERANGE},
+        };
+        for (positive i = 0; i < array_count(edges); i++)
+        {
+                char *stop;
+                errno = 99;
+                extended.value = strtold(edges[i].input, &stop);
+                number_say(number_extended_same(extended.bits, number_widened(edges[i].bits)),
+                           text("extended dispatch bits"));
+                number_say((positive)(stop - edges[i].input) == edges[i].stop,
+                           text("extended dispatch end pointer"));
+                number_say(errno == edges[i].error, text("extended dispatch errno retention/range"));
+        }
+
         return number_failures == 0;
 }
 

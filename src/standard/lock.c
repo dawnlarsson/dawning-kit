@@ -284,7 +284,7 @@ static bool lock_try(lock address_to it)
 //      and for a test that wants to see the state machine move.
 static b32 lock_state(lock address_to it)
 {
-        return it->word;
+        return __atomic_load_n(address_of it->word, __ATOMIC_RELAXED);
 }
 
 //      The two threads-in-one-process spellings, which is the case this

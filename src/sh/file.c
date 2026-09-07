@@ -16003,72 +16003,117 @@ static b32 file_touch()
         return status;
 }
 
-// sleep ------------------------------------------------------------
-/*
-        sleep NUMBER[SUFFIX]..., where the number may have a fraction and the
-        suffix is s, m, h or d. The fraction is read digit by digit into
-        nanoseconds rather than through a decimal, so there is no rounding
-        anywhere between the text and the timespec.
-*/
-static bool sleep_read(string_address text, p64 address_to seconds,
-                       p64 address_to nanoseconds)
+// Durations: sleep, timeout, replay and util-linux waits share checked
+// decimal/scientific seconds. Keep 19 significant digits plus the next digit:
+// only the twentieth can still contribute to a native-word nanosecond count.
+static bool file_duration_read(string_address text, bool units,
+                                positive address_to nanoseconds)
 {
-        positive taken;
-        p64 whole = string_digits(text, address_of taken);
-        p64 fraction = 0;
-        p64 scale = 100000000;
-        bool any = taken != 0;
+        string_address at = text;
+        positive made = 0;
+        positive fraction = 0;
+        positive dropped = 0;
+        positive next = 0;
+        bool point = false;
+        bool any = false;
 
-        text += taken;
+        while (byte_is_space(string_get(at)))
+                at++;
+        if (string_is(at, '+'))
+                at++;
 
-        if (string_is(text, '.'))
+        while (byte_is_digit(string_get(at)) ||
+               (!point && string_is(at, '.')))
         {
-                text++;
-
-                while (byte_is_digit(string_get(text)))
+                if (string_is(at, '.'))
                 {
-                        if (scale > 0)
-                        {
-                                fraction += (p64)(string_get(text) - '0') * scale;
-                                scale /= 10;
-                        }
+                        point = true;
+                        at++;
+                        continue;
+                }
 
-                        text++;
-                        any = true;
+                positive digit = string_get(at++) - '0';
+                any = true;
+                if (point)
+                        fraction++;
+                if (!dropped && made < 1000000000000000000ul)
+                        made = made * 10 + digit;
+                else
+                {
+                        if (!dropped)
+                                next = digit;
+                        dropped++;
                 }
         }
-
         if (!any)
                 return false;
 
-        p64 multiplier = 1;
+        bipolar exponent = 0;
+        if (string_is(at, 'e') || string_is(at, 'E'))
+        {
+                bool negative = false;
+                positive magnitude = 0;
 
-        if (string_is(text, 's'))
-                text++;
-        else if (string_is(text, 'm'))
-        {
-                multiplier = 60;
-                text++;
+                at++;
+                if (string_is(at, '+') || string_is(at, '-'))
+                        negative = string_get(at++) == '-';
+                if (!byte_is_digit(string_get(at)))
+                        return false;
+                while (byte_is_digit(string_get(at)))
+                {
+                        if (magnitude < 1000000)
+                                magnitude = magnitude * 10 +
+                                            string_get(at) - '0';
+                        at++;
+                }
+                exponent = negative ? -(bipolar)magnitude
+                                    : (bipolar)magnitude;
         }
-        else if (string_is(text, 'h'))
+        positive multiplier = 1;
+        if (units && string_get(at) && string_first_of("smhd", string_get(at)))
         {
-                multiplier = 3600;
-                text++;
+                p8 suffix = string_get(at++);
+                multiplier = suffix == 'm' ? 60 : suffix == 'h' ? 3600
+                             : suffix == 'd' ? 86400 : 1;
         }
-        else if (string_is(text, 'd'))
-        {
-                multiplier = 86400;
-                text++;
-        }
-
-        if (string_get(text))
+        if (string_get(at))
                 return false;
 
-        p64 total = whole * multiplier * 1000000000 + fraction * multiplier;
+        bipolar scale = 9 + exponent - (bipolar)fraction +
+                        (bipolar)dropped;
+        if (!made)
+        {
+                address_to nanoseconds = 0;
+                return true;
+        }
+        while (scale > 0)
+        {
+                positive digit = dropped ? next : 0;
+                if (made > (positive_max - digit) / 10)
+                        return false;
+                made = made * 10 + digit;
+                dropped = 0;
+                scale--;
+        }
+        while (scale < 0 && made)
+        {
+                made /= 10;
+                scale++;
+        }
+        if (made > positive_max / multiplier)
+                return false;
+        address_to nanoseconds = made * multiplier;
+        return true;
+}
 
+static bool sleep_read(string_address text, p64 address_to seconds,
+                       p64 address_to nanoseconds)
+{
+        positive total;
+        if (!file_duration_read(text, true, address_of total))
+                return false;
         address_to seconds = total / 1000000000;
         address_to nanoseconds = total % 1000000000;
-
         return true;
 }
 
@@ -16095,11 +16140,15 @@ static b32 file_sleep()
                 // in the second timespec, and the sleep goes on from there.
                 p64 left[2] = {wanted[0], wanted[1]};
 
-                while (system_call_2(syscall(nanosleep), (positive)left,
-                                     (positive)left) < 0)
+                bipolar slept;
+                do
+                        slept = system_call_2(syscall(nanosleep),
+                                               (positive)left, (positive)left);
+                while (slept == -4);
+                if (slept < 0)
                 {
-                        if (left[0] == 0 && left[1] == 0)
-                                break;
+                        string_format(file_fail, "sleep: %s\n", file_reason(slept));
+                        return 1;
                 }
         }
 

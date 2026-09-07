@@ -835,6 +835,48 @@ test(classification)
         fail(narrow_class(0.0f) == MATH_CLASS_ZERO);
         fail(narrow_class(1.0f) == MATH_CLASS_NORMAL);
 
+        // Extended values must retain their own range, subnormal boundary,
+        // NaN/sign encoding and single-evaluation macro contract.
+        static const struct { f128 value; b32 kind; bool minus; } extended[] = {
+                {0.0L, FP_ZERO, false}, {-0.0L, FP_ZERO, true},
+                {1.0L, FP_NORMAL, false}, {-1.0L, FP_NORMAL, true},
+                {__LDBL_MAX__, FP_NORMAL, false}, {-__LDBL_MAX__, FP_NORMAL, true},
+                {__LDBL_MIN__, FP_NORMAL, false},
+                {__LDBL_DENORM_MIN__, FP_SUBNORMAL, false},
+                {__builtin_huge_vall(), FP_INFINITE, false},
+                {-__builtin_huge_vall(), FP_INFINITE, true},
+                {__builtin_nanl(""), FP_NAN, false},
+                {-__builtin_nansl(""), FP_NAN, true},
+        };
+        for (positive i = 0; i < array_count(extended); i++)
+        {
+                volatile f128 value = extended[i].value;
+                b32 kind = extended[i].kind;
+                positive reads = 0;
+                fail(fpclassify((reads++, value)) == kind);
+                fail(isnan((reads++, value)) == (kind == FP_NAN));
+                fail(isinf((reads++, value)) == (kind == FP_INFINITE));
+                fail(isfinite((reads++, value)) == (kind != FP_NAN && kind != FP_INFINITE));
+                fail(isnormal((reads++, value)) == (kind == FP_NORMAL));
+                fail(signbit((reads++, value)) == extended[i].minus);
+                fail(reads == 6);
+        }
+#if __LDBL_MANT_DIG__ == 64
+        static const struct { p64 low; p32 high; b32 kind; } x87[] = {
+                {0x8000000000000000ULL, 0, FP_NORMAL},
+                {0x8000000000000001ULL, 0, FP_NORMAL},
+                {0, 1, FP_NAN}, {1, 0x7ffe, FP_NAN}, {0, 0x7fff, FP_NAN},
+        };
+        for (positive i = 0; i < array_count(x87); i++)
+        for (positive minus = 0; minus < 2; minus++)
+        {
+                p128 bits = x87[i].low | (p128)(x87[i].high | (minus << 15)) << 64;
+                f128 value = memory_cast(f128, bits);
+                fail(fpclassify(value) == x87[i].kind && signbit(value) == minus);
+                fail(isnan(value) == (x87[i].kind == FP_NAN));
+        }
+#endif
+
         return true;
 }
 

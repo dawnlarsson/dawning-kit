@@ -46,6 +46,13 @@ static address_any awk_take(positive bytes)
         return made;
 }
 
+static positive awk_size_add(positive left, positive right)
+{
+        if (right > positive_max - left)
+                awk_out_of_memory();
+        return left + right;
+}
+
 /*
         Strings, counted.
 
@@ -72,7 +79,8 @@ static awk_text awk_empty_text = {1000000000, 0, {0}};
 
 static awk_text address_to awk_text_room(positive length)
 {
-        awk_text address_to made = (awk_text address_to)awk_take(sizeof(awk_text) + length + 8);
+        awk_text address_to made = (awk_text address_to)awk_take(
+            awk_size_add(length, sizeof(awk_text) + 8));
 
         made->refs = 1;
         made->length = length;
@@ -125,33 +133,10 @@ static fn awk_text_drop(awk_text address_to which)
         its strtod rounds correctly, so printing 1e300 in full comes out as
         the reference prints it.
 */
-#define awk_bits_of(value) memory_cast(positive, (value))
 #define awk_from_bits(value) memory_cast(decimal, (value))
 
 static decimal awk_infinity = 0;
 static decimal awk_not_a_number = 0;
-
-static bool awk_is_nan(decimal value)
-{
-        return value != value;
-}
-
-static bool awk_is_finite(decimal value)
-{
-        positive bits = awk_bits_of(value);
-
-        return ((bits >> 52) & 0x7ff) != 0x7ff;
-}
-
-static bool awk_negative(decimal value)
-{
-        return (awk_bits_of(value) >> 63) != 0;
-}
-
-static decimal awk_absolute(decimal value)
-{
-        return value < 0 ? -value : value;
-}
 
 /*
         A double where a count is wanted.
@@ -190,10 +175,10 @@ static bipolar awk_whole_wide(decimal value)
 
 static decimal awk_truncate(decimal value)
 {
-        if (!awk_is_finite(value))
+        if (!decimal_is_finite(value))
                 return value;
 
-        if (awk_absolute(value) >= 9223372036854775808.0)
+        if (math_magnitude(value) >= 9223372036854775808.0)
                 return value;
 
         return (decimal)(bipolar)value;
@@ -204,12 +189,12 @@ static decimal awk_power(decimal base, decimal exponent)
         if (exponent == 0 || base == 1)
                 return 1;
 
-        if (awk_is_nan(base) || awk_is_nan(exponent))
+        if (decimal_is_nan(base) || decimal_is_nan(exponent))
                 return awk_not_a_number;
 
         decimal whole = awk_truncate(exponent);
 
-        if (whole == exponent && awk_absolute(exponent) <= 4096)
+        if (whole == exponent && math_magnitude(exponent) <= 4096)
         {
                 bool invert = exponent < 0;
                 positive count = (positive)(invert ? -whole : whole);
@@ -265,8 +250,8 @@ static positive awk_write_decimal(decimal value, b32 precision, p8 address_to ou
 // The reference spells these with a sign, always, wherever they are written.
 static string_address awk_not_finite_name(decimal value)
 {
-        if (awk_is_nan(value))
-                return awk_negative(value) ? "-nan" : "+nan";
+        if (decimal_is_nan(value))
+                return decimal_sign_bit(value) ? "-nan" : "+nan";
 
         return value < 0 ? "-inf" : "+inf";
 }
@@ -507,7 +492,7 @@ static awk_text address_to awk_text_of_number(decimal number, string_address for
 {
         p8 room[512];
 
-        if (!awk_is_finite(number))
+        if (!decimal_is_finite(number))
         {
                 string_address name = awk_not_finite_name(number);
 
@@ -679,6 +664,9 @@ static awk_array address_to awk_array_new()
 
 static fn awk_array_grow(awk_array address_to which)
 {
+        if (which->width > positive_max / (4 * sizeof(address_any)))
+                awk_out_of_memory();
+
         positive width = which->width * 4;
         awk_slot address_to address_to buckets =
             (awk_slot address_to address_to)awk_take(width * sizeof(address_any));
@@ -1323,7 +1311,7 @@ static fn awk_record_rebuild()
         positive total = 0;
 
         for (b32 i = 1; i <= awk_nf; i++)
-                total += awk_to_text(awk_field(i))->length + length;
+                total = awk_size_add(total, awk_size_add(awk_to_text(awk_field(i))->length, length));
 
         awk_text address_to made = awk_text_room(total ? total : 1);
         positive at = 0;
@@ -1681,9 +1669,8 @@ static bool awk_reader_fill(awk_reader address_to which)
                 which->at = 0;
         }
 
-        if (which->filled > positive_max - AWK_READ_CHUNK - 1 ||
-            !memory_resize_reserve(address_of which->data, address_of which->room,
-                                    which->filled + AWK_READ_CHUNK + 1,
+        if (!memory_resize_reserve(address_of which->data, address_of which->room,
+                                    awk_size_add(which->filled, AWK_READ_CHUNK + 1),
                                     AWK_READ_CHUNK * 2))
                 awk_out_of_memory();
 
@@ -2040,14 +2027,14 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
 
 static fn awk_builder_put(awk_builder address_to build, string_address data, positive length)
 {
-        awk_builder_room(build, build->used + length + 1);
+        awk_builder_room(build, awk_size_add(build->used, awk_size_add(length, 1)));
         memory_copy_apart(build->data + build->used, data, length);
         build->used += length;
 }
 
 static fn awk_builder_char(awk_builder address_to build, p8 character)
 {
-        awk_builder_room(build, build->used + 2);
+        awk_builder_room(build, awk_size_add(build->used, 2));
         build->data[build->used++] = character;
 }
 
@@ -2056,7 +2043,7 @@ static fn awk_builder_fill(awk_builder address_to build, p8 character, b32 count
         if (count <= 0)
                 return;
 
-        awk_builder_room(build, build->used + (positive)count + 1);
+        awk_builder_room(build, awk_size_add(build->used, (positive)count + 1));
         memory_fill(build->data + build->used, character, (positive)count);
         build->used += (positive)count;
 }
@@ -2085,7 +2072,7 @@ static b32 awk_integer_digits(decimal value, p8 address_to out, positive room,
 {
         address_to negative = value < 0;
 
-        if (!awk_is_finite(value))
+        if (!decimal_is_finite(value))
         {
                 string_address name = awk_not_finite_name(value);
                 b32 at = (b32)string_length(name);
@@ -2276,9 +2263,9 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                 which is not as a number in that base at all.
                         */
                         if (value >= 18446744073709551616.0 ||
-                            value < -9223372036854775808.0 || !awk_is_finite(value))
+                            value < -9223372036854775808.0 || !decimal_is_finite(value))
                         {
-                                if (!awk_is_finite(exact))
+                                if (!decimal_is_finite(exact))
                                 {
                                         string_address name = awk_not_finite_name(exact);
 
@@ -2377,7 +2364,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         decimal value = awk_to_number(argument);
                         b32 places = precision < 0 ? 6 : precision;
 
-                        if (!awk_is_finite(value))
+                        if (!decimal_is_finite(value))
                         {
                                 string_address name = awk_not_finite_name(value);
 
@@ -4699,7 +4686,7 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
         {
                 awk_text address_to left = awk_eval_text(node->a);
                 awk_text address_to right = awk_eval_text(node->b);
-                awk_text address_to made = awk_text_room(left->length + right->length);
+                awk_text address_to made = awk_text_room(awk_size_add(left->length, right->length));
 
                 memory_copy_apart(made->text, left->text, left->length);
                 memory_copy_apart(made->text + left->length, right->text, right->length);
@@ -4998,7 +4985,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 positive from;
                 positive want;
 
-                if (awk_is_nan(start) || start < 1)
+                if (decimal_is_nan(start) || start < 1)
                         start = 1;
 
                 from = start > (decimal)text->length ? text->length
@@ -5008,7 +4995,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 {
                         decimal length = awk_truncate(awk_eval_number(third));
 
-                        if (awk_is_nan(length) || length < 0)
+                        if (decimal_is_nan(length) || length < 0)
                                 length = 0;
 
                         want = length > (decimal)text->length ? text->length

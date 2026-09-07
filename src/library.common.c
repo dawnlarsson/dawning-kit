@@ -89,26 +89,12 @@ static inline INLINE positive memory_utf8_encode(
             size > room)
                 return 0;
 
-        if (size == 1)
-                into[0] = (p8)scalar;
-        else if (size == 2)
+        for (positive at = size - 1; at; at--)
         {
-                into[0] = (p8)(0xc0 | (scalar >> 6));
-                into[1] = (p8)(0x80 | (scalar & 0x3f));
+                into[at] = (p8)(0x80 | (scalar & 0x3f));
+                scalar >>= 6;
         }
-        else if (size == 3)
-        {
-                into[0] = (p8)(0xe0 | (scalar >> 12));
-                into[1] = (p8)(0x80 | ((scalar >> 6) & 0x3f));
-                into[2] = (p8)(0x80 | (scalar & 0x3f));
-        }
-        else
-        {
-                into[0] = (p8)(0xf0 | (scalar >> 18));
-                into[1] = (p8)(0x80 | ((scalar >> 12) & 0x3f));
-                into[2] = (p8)(0x80 | ((scalar >> 6) & 0x3f));
-                into[3] = (p8)(0x80 | (scalar & 0x3f));
-        }
+        into[0] = (p8)scalar | (size == 1 ? 0 : (p8)(0xffu << (8 - size)));
         return size;
 }
 
@@ -855,7 +841,7 @@ static COLD bool name_list_select(
 static PURE inline INLINE string_address byte_class_end(string_address text,
                                                          string_address limit)
 {
-        if (text[0] != '[' || text[1] != ':')
+        if ((limit && limit - text < 2) || text[0] != '[' || text[1] != ':')
                 return null;
 
         for (text += 2; (!limit || text + 1 < limit) && string_get(text); text++)

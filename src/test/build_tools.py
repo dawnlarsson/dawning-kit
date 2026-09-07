@@ -119,6 +119,42 @@ while True: time.sleep(0.05)
                 pass
             process.wait(timeout=5)
 
+    def test_image_build_preserves_remote_paths_and_profile_arguments(self):
+        remote = self.work / "remote ' $(printf injected) [glob]"
+        (remote / "kit").mkdir(parents=True)
+        (remote / "kit/common").write_text((ROOT / "kit/common").read_text())
+        (remote / "artifacts").mkdir()
+        (remote / "artifacts/.config").write_text("#> kernel_export dist/image space.efi\n")
+        (remote / "dist").mkdir()
+        (remote / "dist/image space.efi").write_bytes(b"image\x00bytes")
+        for name in ("src", "kit"):
+            (self.work / name).mkdir()
+        (self.work / "build.sh").touch()
+        self.env["MOONWATER_BUILD_DIR"] = str(remote)
+        self.executable("ssh", '''#!/usr/bin/env python3
+import os, subprocess, sys
+raise SystemExit(subprocess.run(["/bin/sh", "-c", sys.argv[-1]], env=os.environ).returncode)
+''')
+        self.executable("rsync", '''#!/usr/bin/env python3
+import os, subprocess, sys
+for arg in sys.argv[1:]:
+    if arg.startswith("--rsync-path="):
+        raise SystemExit(subprocess.run(["/bin/sh", "-c", arg.split("=", 1)[1]], env=os.environ).returncode)
+''')
+        self.executable("sudo", '''#!/usr/bin/env python3
+import json, os, pathlib, sys
+(pathlib.Path(os.environ["BUILD_FIXTURE"]) / "remote-args").write_text(json.dumps(sys.argv[1:]))
+''')
+        profiles = ["arch/x64", "quote ' ; printf injected", "", "line\nend\n", "[glob]"]
+        result = subprocess.run(["/bin/sh", str(ROOT / "build.sh"), profiles[0],
+                                 "--host", "fixture", *profiles[1:]],
+                                cwd=self.work, env=self.env, capture_output=True,
+                                text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads((self.work / "remote-args").read_text()),
+                         ["env", "sh", "build.sh", *profiles])
+        self.assertEqual((self.work / "dist/image space.efi").read_bytes(), b"image\x00bytes")
+
     def test_onbox_rejects_remote_path_code_before_contact(self):
         for name in ("rsync", "ssh"):
             self.executable(name, '#!/bin/sh\nprintf contacted >>"$BUILD_FIXTURE/contacted"\nexit 0\n')

@@ -609,6 +609,22 @@ bash_interactive_case "interactive command string still stops on syntax" <<'CASE
 printf 'recovered:%s\n' "$?"
 CASE
 
+section "function_bodies"
+group "compound grammar"
+for header in 'f()' 'function f' 'function f()'; do
+        for body in '{ printf body; }' '(printf body)' '((1))' '[[ x = x ]]' \
+                    'if true; then printf body; fi' 'while false; do :; done'; do
+                capture_command /bin/bash want "$header $body; f"
+                capture_command "$work/names/bash" got "$header $body; f"
+                same_result "$header $body" exact
+        done
+        for body in 'printf forbidden' 'time true' '! true' 'coproc true' 'function g { :; }'; do
+                capture_command /bin/bash want "$header $body" -n
+                capture_command "$work/names/bash" got "$header $body" -n
+                same_result "reject $header $body" ignore
+        done
+done
+
 section "bounds"
 group "nesting"
 

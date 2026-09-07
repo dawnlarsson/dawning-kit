@@ -30,12 +30,8 @@
 // Not the attribute that keeps a symbol: this one lets the compiler drop what
 // it finds no call to, and only quiets the warning about having found none.
 #define SPARE __attribute__((unused))
-// The kernel spells all four itself, and the two below are only wanted where
-// there is a pty to say them to.
+// The kernel provides its own ioctl constants and window-size type.
 #ifndef KERNEL_MODE
-#define TIOCSPTLCK 0x40045431u
-#define TIOCGPTN 0x80045430u
-#define TIOCSCTTY 0x540Eu
 #define TIOCSWINSZ 0x5414u
 
 typedef struct

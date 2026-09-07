@@ -2564,14 +2564,9 @@ static bool history_event_at(string_address bang,
                  string_get(at + 1) <= '9')
         {
                 at++;
-                while (string_get(at) >= '0' && string_get(at) <= '9')
-                {
-                        positive digit = string_get(at++) - '0';
-
-                        if (number > (positive_max - digit) / 10)
-                                goto missing;
-                        number = number * 10 + digit;
-                }
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of number))
+                        goto missing;
 
                 if (!number || number > history_used)
                         goto missing;
@@ -2579,14 +2574,9 @@ static bool history_event_at(string_address bang,
         }
         else if (string_get(at) >= '0' && string_get(at) <= '9')
         {
-                while (string_get(at) >= '0' && string_get(at) <= '9')
-                {
-                        positive digit = string_get(at++) - '0';
-
-                        if (number > (positive_max - digit) / 10)
-                                goto missing;
-                        number = number * 10 + digit;
-                }
+                if (!string_digits_checked(address_of at, 10,
+                                           address_of number))
+                        goto missing;
 
                 if (number < history_first ||
                     number - history_first >= history_used)
@@ -3089,28 +3079,18 @@ static bool history_word_designator(string_address address_to at,
                 {
                         positive end_word = 0;
 
-                        while (string_get(step) >= '0' &&
-                               string_get(step) <= '9')
-                        {
-                                positive digit = string_get(step++) - '0';
-                                if (end_word > (positive_max - digit) / 10)
-                                        return false;
-                                end_word = end_word * 10 + digit;
-                        }
+                        if (!string_digits_checked(address_of step, 10,
+                                                   address_of end_word))
+                                return false;
                         address_to kind = HISTORY_WORD_RANGE;
                         address_to last = end_word;
                 }
         }
         else
         {
-                while (string_get(step) >= '0' && string_get(step) <= '9')
-                {
-                        positive digit = string_get(step++) - '0';
-
-                        if (number > (positive_max - digit) / 10)
-                                return false;
-                        number = number * 10 + digit;
-                }
+                if (!string_digits_checked(address_of step, 10,
+                                           address_of number))
+                        return false;
 
                 address_to kind = HISTORY_WORD_ONE;
                 address_to first = address_to last = number;
@@ -3134,16 +3114,9 @@ static bool history_word_designator(string_address address_to at,
                                         address_to last = 0;
                                         goto word_done;
                                 }
-                                while (string_get(step) >= '0' &&
-                                       string_get(step) <= '9')
-                                {
-                                        positive digit =
-                                            string_get(step++) - '0';
-                                        if (end_word >
-                                            (positive_max - digit) / 10)
-                                                return false;
-                                        end_word = end_word * 10 + digit;
-                                }
+                                if (!string_digits_checked(address_of step, 10,
+                                                           address_of end_word))
+                                        return false;
                         }
                         address_to kind = HISTORY_WORD_RANGE;
                         address_to last = end_word;

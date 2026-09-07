@@ -96,7 +96,7 @@ is_safe() {
         if [ ! -d src ] || [ ! -d kit ] || [ ! -f build.sh ]; then
                 echo "ERROR: not in the repository root." >&2
                 echo "These scripts expect to run from the directory holding" >&2
-                echo "build.sh, kit/ and profile/. Current directory: $(pwd)" >&2
+                echo "build.sh, kit/ and src/. Current directory: $(pwd)" >&2
                 exit 1
         fi
 }
@@ -121,6 +121,17 @@ key_one() {
         fi
 
         key "$1"
+}
+
+# SSH takes shell source, not argv. Keep empty words, quotes and newlines intact.
+shell_quote() {
+        local argument separator=""
+        for argument do
+                printf "%s'" "$separator"
+                printf '%s' "$argument" | sed "s/'/'\\\\''/g"
+                printf "'"
+                separator=" "
+        done
 }
 
 line_has() { is_file "$1" && [ -n "$2" ] && grep -F -q "$2" "$1"; }

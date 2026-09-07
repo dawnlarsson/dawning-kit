@@ -4095,8 +4095,6 @@ static fn edit_key(positive key)
 //      them: the two files end up in one translation unit and a second
 //      typedef of one anonymous struct under one name is not a duplicate, it
 //      is an error.
-#define EDIT_TCGETS 0x5401u
-#define EDIT_TCSETS 0x5402u
 
 //      c_iflag
 #define EDIT_INPUT_IGNORE_BREAK 0x0001u
@@ -4122,16 +4120,7 @@ static fn edit_key(positive key)
 //      c_cc
 #define EDIT_CONTROL_TIME 5
 #define EDIT_CONTROL_MIN 6
-#define EDIT_CONTROLS 19
-
-typedef struct
-{
-        unsigned int arriving, leaving, hardware, behaviour;
-        p8 discipline;
-        p8 controls[EDIT_CONTROLS];
-} edit_terminal_modes;
-
-static edit_terminal_modes edit_modes_before;
+static terminal_modes edit_modes_before;
 static bool edit_modes_held;
 
 /*
@@ -4149,9 +4138,9 @@ static bool edit_modes_held;
 */
 static bool edit_terminal_raw()
 {
-        edit_terminal_modes modes;
+        terminal_modes modes;
 
-        if (system_control(standard_input_descriptor, EDIT_TCGETS,
+        if (system_control(standard_input_descriptor, PTY_TCGETS,
                            address_of edit_modes_before) != 0)
                 return false;
 
@@ -4169,7 +4158,7 @@ static bool edit_terminal_raw()
         modes.controls[EDIT_CONTROL_MIN] = 1;
         modes.controls[EDIT_CONTROL_TIME] = 0;
 
-        if (system_control(standard_input_descriptor, EDIT_TCSETS,
+        if (system_control(standard_input_descriptor, PTY_TCSETS,
                            address_of modes) != 0)
                 return false;
 
@@ -4182,7 +4171,7 @@ static fn edit_terminal_restore()
         if (!edit_modes_held)
                 return;
 
-        system_control(standard_input_descriptor, EDIT_TCSETS,
+        system_control(standard_input_descriptor, PTY_TCSETS,
                        address_of edit_modes_before);
         edit_modes_held = false;
 }

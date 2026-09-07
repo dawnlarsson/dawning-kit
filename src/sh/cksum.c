@@ -459,7 +459,7 @@ static b32 cksum_main()
         {
 #if defined(LINUX)
                 const checksum_algorithm address_to digest =
-                    checksum_algorithm_type_find(algorithm);
+                    checksum_algorithm_find(algorithm, true);
 
                 if (digest)
                         return cksum_digest(digest);

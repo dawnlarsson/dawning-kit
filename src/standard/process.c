@@ -680,7 +680,6 @@ static b32 scandir(string_address path,
         DIR address_to folder;
         process_dirent address_to record;
         process_dirent address_to address_to found = null;
-        process_dirent address_to address_to grown;
         positive room = 0;
         positive count = 0;
         positive length;
@@ -715,21 +714,13 @@ static b32 scandir(string_address path,
                 if (!is_null(keep) && !keep(record))
                         continue;
 
-                if (count == room)
+                if (count == (positive)__INT_MAX__ ||
+                    !memory_resize_reserve(address_of found, address_of room,
+                        (count + 1) * sizeof(found[0]),
+                        PROCESS_SCANDIR_FIRST * sizeof(found[0])))
                 {
-                        positive next = room ? room * 2 : PROCESS_SCANDIR_FIRST;
-
-                        grown = (process_dirent address_to address_to)
-                                realloc(found, next * sizeof(found[0]));
-
-                        if (is_null(grown))
-                        {
-                                errno = ENOMEM;
-                                goto process_scandir_failed;
-                        }
-
-                        found = grown;
-                        room = next;
+                        errno = count == (positive)__INT_MAX__ ? EOVERFLOW : ENOMEM;
+                        goto process_scandir_failed;
                 }
 
                 length = string_length(record->d_name);

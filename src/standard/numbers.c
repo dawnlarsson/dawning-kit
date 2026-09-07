@@ -2451,7 +2451,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
 #define NUMBERS_FAST(type, exact, format, bits_type) do { } while (0)
 #endif
 
-#define NUMBERS_TO(name, type, shape_type, zero, format, bits_type, exact)   \
+#define NUMBERS_TO(name, type, shape_type, format, bits_type, fast)   \
         static type name(string_address input,                              \
                          string_address address_to stopped)                  \
         {                                                                    \
@@ -2463,7 +2463,10 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
                 if (stopped)                                                 \
                         address_to stopped = number.stopped;                 \
                 if (number.kind == NUMBERS_NONE)                             \
-                        return (zero);                                       \
+                {                                                            \
+                        shape.bits = 0;                                      \
+                        return shape.value;                                  \
+                }                                                            \
                 if (number.kind == NUMBERS_INFINITE ||                       \
                     number.kind == NUMBERS_NOT_A_NUMBER)                     \
                 {                                                            \
@@ -2478,7 +2481,7 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
                             address_of condition);                           \
                 else                                                         \
                 {                                                            \
-                        NUMBERS_FAST(type, exact, format, bits_type);         \
+                        fast;                                                \
                         shape.bits = (bits_type)numbers_assemble(            \
                             address_of number, address_of format,            \
                             address_of condition);                           \
@@ -2488,12 +2491,10 @@ static p128 numbers_special(const numbers_format address_to shape, bool negative
                 return shape.value;                                          \
         }
 
-NUMBERS_TO(string_to_decimal, decimal, numbers_shape, 0.0,
-           numbers_binary64, p64, numbers_exact_double)
-NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, 0.0f,
-           numbers_binary32, p32, numbers_exact_narrow)
-#undef NUMBERS_TO
-#undef NUMBERS_FAST
+NUMBERS_TO(string_to_decimal, decimal, numbers_shape, numbers_binary64, p64,
+           NUMBERS_FAST(decimal, numbers_exact_double, numbers_binary64, p64))
+NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, numbers_binary32, p32,
+           NUMBERS_FAST(f32, numbers_exact_narrow, numbers_binary32, p32))
 
 /*
         long double, which is eighty bit x87 on x86_64 and binary128 on arm64
@@ -2514,45 +2515,10 @@ NUMBERS_TO(string_to_narrow, f32, numbers_narrow_shape, 0.0f,
         single comparison of two binary128 values on arm64 or riscv64 is a
         call to __letf2 that would not resolve.
 */
-static f128 string_to_extended(string_address input, string_address address_to stopped)
-{
-        numbers_scan number;
-        numbers_extended_shape shape;
-        b32 condition = NUMBERS_FINE;
-
-        numbers_read(input, address_of number);
-
-        if (stopped)
-                address_to stopped = number.stopped;
-
-        if (number.kind == NUMBERS_NONE)
-        {
-                shape.bits = 0;
-                return shape.value;
-        }
-
-        if (number.kind == NUMBERS_INFINITE || number.kind == NUMBERS_NOT_A_NUMBER)
-        {
-                shape.bits = numbers_special(address_of numbers_extended,
-                                             number.negative, number.kind,
-                                             number.packed);
-                return shape.value;
-        }
-
-        if (number.hexadecimal)
-                shape.bits = numbers_round_binary(address_of number,
-                                                  address_of numbers_extended,
-                                                  address_of condition);
-        else
-                shape.bits = numbers_assemble(address_of number,
-                                              address_of numbers_extended,
-                                              address_of condition);
-
-        if (condition != NUMBERS_FINE)
-                errno = ERANGE;
-
-        return shape.value;
-}
+NUMBERS_TO(string_to_extended, f128, numbers_extended_shape, numbers_extended,
+           p128, (void)0)
+#undef NUMBERS_TO
+#undef NUMBERS_FAST
 
 /*
         The standard names.

@@ -196,6 +196,25 @@ static b32 injected_write_stop(b32 expected)
         return correct ? 0 : 1;
 }
 
+static bool bounded_stream_positions(void)
+{
+        b32 descriptor = (b32)system_call_2(syscall(memfd_create),
+                                            (positive)"stream-positions", 1);
+        if (descriptor < 0) return false;
+        FILE *file = fdopen(descriptor, "w+");
+        if (!file) { close(descriptor); return false; }
+        bool okay = fputs("ab", file) >= 0 && fseek(file, 0, SEEK_SET) == 0 &&
+                    fgetc(file) == 'a';
+        errno = 0;
+        okay &= fseek(file, bipolar_min, SEEK_CUR) == -1 && errno == EINVAL;
+        okay &= ftell(file) == 1 && fgetc(file) == 'b';
+        okay &= fseek(file, bipolar_max, SEEK_SET) == 0 && fputc('z', file) == 'z';
+        errno = 0;
+        okay &= ftell(file) == -1 && errno == EOVERFLOW;
+        fclose(file);
+        return okay;
+}
+
 b32 main(void)
 {
         if (program_argument_count() > 2)
@@ -203,7 +222,7 @@ b32 main(void)
         if (program_argument_count() > 1)
                 return body_allocation_failure();
         if (!empty_mode_stays_bounded() || !checked_write_errors() ||
-            !bounded_line_reads())
+            !bounded_line_reads() || !bounded_stream_positions())
                 return 1;
         trace_body();
         bool fits = dynamic_buffer_fits_one_shelf();

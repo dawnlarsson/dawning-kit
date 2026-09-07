@@ -1300,39 +1300,19 @@ static b32 lex_word(string_address address_to at)
                 lex_text[lex_used++] = c;
                 step++;
 
-                if (c == '$' && string_is(step, '\''))
+                bool dollar_quote = c == '$' && string_is(step, '\'');
+                if (dollar_quote || c == '\'' || c == '"')
                 {
-                        string_address stop = lex_dollar_quote_end(step + 1);
-
-                        run = (positive)(stop - step) +
-                              (string_get(stop) ? 1 : 0);
-
-                        if (!lex_room(lex_used + run + 3))
-                                return false;
-
-                        memory_copy_apart(lex_text + lex_used, step, run);
-                        lex_used += run;
-                        step += run;
-                        continue;
-                }
-
-                if (c == '\'' || c == '"')
-                {
-                        // Every byte of a quoted run is kept as it stands, so
-                        // it is one copy once its end is known. An unterminated
-                        // quote is the parser's to complain about, not the
-                        // lexer's to guess at.
-                        string_address stop = lex_quote_end(step, c);
-
+                        // Quotes retain their bytes, including the closing
+                        // quote when present; the parser diagnoses open ones.
+                        string_address stop = dollar_quote
+                            ? lex_dollar_quote_end(step + 1) : lex_quote_end(step, c);
                         run = (positive)(stop - step) + (string_get(stop) ? 1 : 0);
-
                         if (!lex_room(lex_used + run + 3))
                                 return false;
-
                         memory_copy_apart(lex_text + lex_used, step, run);
                         lex_used += run;
                         step += run;
-
                         continue;
                 }
 

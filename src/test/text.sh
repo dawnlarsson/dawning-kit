@@ -2463,14 +2463,15 @@ fi
 # this a table test rather than a filesystem-capacity test. stderr is omitted
 # exactly as compare() omits it; stdout and status remain byte-exact.
 case_start operands
-python3 - "$bin" "$work" > "$work/text-many-report" <<'PY'
+if ! python3 - "$bin" "$work" > "$work/text-many-report" <<'PY'
 import os
 import subprocess
 import sys
 
 binary, work = sys.argv[1:]
-one = os.path.join(work, "operand-one")
-missing = os.path.join(work, "operand-missing")
+os.chdir(work)
+one = "operand-one"
+missing = "operand-missing"
 with open(one, "wb") as f:
     f.write(b"x\n")
 
@@ -2534,6 +2535,9 @@ print("PASS" if (want.stdout == got.stdout and
                  want.returncode == got.returncode and
                  want_file == got_file) else "FAIL", "tee-2000-operands")
 PY
+then
+        printf 'FAIL many-operand-harness aborted\n' >> "$work/text-many-report"
+fi
 
 while read -r result name detail; do
         if [ "$result" = PASS ]; then

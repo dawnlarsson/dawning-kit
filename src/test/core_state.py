@@ -11,6 +11,7 @@ core = (root / "src/core.c").read_text()
 pane = (root / "src/canvas/pane.c").read_text()
 canvas = (root / "src/canvas/canvas.c").read_text()
 compose = (root / "src/canvas/compose.c").read_text()
+console = (root / "src/canvas/console.c").read_text()
 drag = (root / "src/canvas/drag.c").read_text()
 output = (root / "src/canvas/output.c").read_text()
 pointer = (root / "src/canvas/pointer.c").read_text()
@@ -249,7 +250,6 @@ static struct {
 } desktop;
 static unsigned long pointer_counts,pointer_moved;
 static unsigned wakes,wheel_cas,drain_race;
-static void *canvas_thread;
 static int atomic_read(const atomic_t *p) { return *p; }
 static void atomic_set(atomic_t *p,int value) { *p=value; }
 static int atomic_xchg(atomic_t *p,int value) { int old=*p;*p=value;return old; }
@@ -261,7 +261,6 @@ static _Bool atomic_try_cmpxchg(atomic_t *p,int *old,int value) {
     *p=value;return 1;
 }
 static int test_bit(unsigned bit,const unsigned long *bits) { return (bits[bit/64]>>(bit%64))&1; }
-static void wake_up_process(void *thread) { (void)thread;wakes++; }
 static void canvas_thread_wake(void) { wakes++; }
 static void atomic_fetch_add(int value,atomic_t *at) { *at+=value; }
 #define smp_wmb() ((void)0)
@@ -311,6 +310,51 @@ source += section(pointer, "static COLD void pointer_disconnect", "static void c
 source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
 source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
 source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
+# Run the real owned-pane release after printk has drained its callbacks.
+source += r'''
+struct console_test_pane { int link; unsigned long bytes; void *mapping; };
+static struct console_test_pane *console_pane;
+static struct { int lock; } console_desktop;
+static int console_registered,canvas_console,console_callbacks,console_listed,console_frees;
+static unsigned long canvas_pane_bytes;
+static void unregister_console(int *console) {
+    (void)console;assert(console_pane && console_registered);console_callbacks=0;
+}
+static void console_list_del(int *link) {
+    assert(*link && console_desktop.lock);*link=0;console_listed--;
+}
+static void console_vfree(void *mapping) {
+    assert(!console_callbacks && !console_registered && !console_pane &&
+           !console_listed && console_desktop.lock);
+    console_frees++;free(mapping);
+}
+#define pane console_test_pane
+#define desktop console_desktop
+#define list_del console_list_del
+#define vfree console_vfree
+'''
+source += section(pane, "static void pane_free", "static void desktop_grid(")
+source += console[console.index("static void console_stop(void)"): ]
+source += r'''
+#undef pane
+#undef desktop
+#undef list_del
+#undef vfree
+static void check_console_teardown(void) {
+    for (unsigned run=0;run<2;run++) {
+        console_pane=malloc(sizeof(*console_pane));assert(console_pane);
+        *console_pane=(struct console_test_pane){1,4096,malloc(4096)};
+        assert(console_pane->mapping);
+        console_registered=console_callbacks=console_listed=1;canvas_pane_bytes=4096;
+        console_stop();
+        check(!console_pane && !canvas_pane_bytes && console_frees==(int)run+1,
+              "console release returns its owned pane and ring budget");
+        console_stop();
+        check(console_frees==(int)run+1 && !console_desktop.lock,
+              "console release is idempotent");
+    }
+}
+'''
 source += r'''
 static struct pointer_handle *keyboard_attach(int opened) {
     struct pointer_handle *p=calloc(1,sizeof(*p));assert(p);
@@ -520,6 +564,7 @@ static void reset(void) {
     assert(!snapshot_lock);
 }
 int main(void) {
+    check_console_teardown();
     const unsigned capacities[]={0,111,112,113,4095,4096,4097,8192,SPARK_SNAPSHOT_MAX_BYTES};
     const unsigned records[]={0,1,32,171};
     unsigned char *output=malloc(SPARK_SNAPSHOT_MAX_BYTES+1);

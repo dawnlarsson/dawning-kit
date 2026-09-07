@@ -901,12 +901,8 @@ static void compose_output(struct output *output)
 
         pixels = map.vaddr;
 
-        {
-                struct target t = target_of(output, pixels, output->x, output->y,
-                                            (int)output->width, (int)output->height);
-
-                compose_clip(&t);
-        }
+        compose_rect(output, pixels, output->x, output->y,
+                     (int)output->width, (int)output->height);
 
         output_draw_cursor(output, pixels);
 

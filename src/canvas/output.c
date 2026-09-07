@@ -44,11 +44,11 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
                                                  unsigned int want_width)
 {
         struct drm_display_mode *mode, *best = NULL;
-        int best_area = 0, best_refresh = 0;
+        int best_score = 0, best_refresh = 0;
 
         list_for_each_entry(mode, &connector->modes, head)
         {
-                int area, refresh;
+                int score, refresh;
 
                 if (mode->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN))
                         continue;
@@ -60,29 +60,14 @@ static struct drm_display_mode *output_best_mode(struct drm_connector *connector
                         under it: a mode list with a hole in it would otherwise
                         drop a long way below half, and half is the point.
                 */
-                if (want_width)
-                {
-                        int off = mode->hdisplay > (int)want_width
-                                      ? mode->hdisplay - (int)want_width
-                                      : (int)want_width - mode->hdisplay;
-
-                        if (best && (off > best_area ||
-                                     (off == best_area && refresh <= best_refresh)))
-                                continue;
-
-                        best = mode;
-                        best_area = off;
-                        best_refresh = refresh;
-                        continue;
-                }
-
-                area = mode->hdisplay * mode->vdisplay;
-
-                if (area < best_area || (area == best_area && refresh <= best_refresh))
+                score = want_width ? -abs(mode->hdisplay - (int)want_width)
+                                   : mode->hdisplay * mode->vdisplay;
+                if (best && (score < best_score ||
+                             (score == best_score && refresh <= best_refresh)))
                         continue;
 
                 best = mode;
-                best_area = area;
+                best_score = score;
                 best_refresh = refresh;
         }
 
@@ -169,7 +154,7 @@ static _Bool canvas_modes_changed(struct canvas *canvas)
         unsigned int active = 0, mine = 0;
         _Bool changed = false;
 
-        if (canvas_probe_modes(canvas, true))
+        if (canvas_probe_modes(canvas, IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE)))
                 return false;
 
         mutex_lock(&client->modeset_mutex);

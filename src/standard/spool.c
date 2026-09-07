@@ -721,9 +721,13 @@ static stream address_to spool_open_process(string_address command,
                 //      pipe and still leave the child with a usable one.
                 if (theirs != wanted)
                 {
-                        dup2(theirs, wanted);
+                        if (dup2(theirs, wanted) < 0)
+                                _exit(127);
                         close(theirs);
                 }
+                else if (pipe_flags &&
+                         system_call_3(syscall(fcntl), (positive)theirs, 2, 0) < 0)
+                        _exit(127);
 
                 words[0] = (string_address)STDLIB_SHELL;
                 words[1] = (string_address) "-c";

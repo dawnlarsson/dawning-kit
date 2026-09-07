@@ -532,7 +532,7 @@ static HOT bool system_snapshot_processes(system_snapshot address_to sample,
 
         file_walk_close(address_of walk);
 
-        return true;
+        return !walk.error;
 }
 
 static HOT bool system_snapshot_take_selected(

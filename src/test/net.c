@@ -207,6 +207,39 @@ static fn error_frames(void)
         socket_close(pair[1]);
 }
 
+static fn link_candidates(void)
+{
+        netlink_buffer message = {0};
+        netlink_search search = {.skip_loopback = true};
+        p8 hardware[6] = {1, 2, 3, 4, 5, 6};
+
+        for (positive step = 0; step < 3; step++)
+        {
+                bool built = netlink_begin(&message, RTM_NEWLINK, 0, 1,
+                                            sizeof(netlink_link)) &&
+                             netlink_attribute_add(&message, IFLA_IFNAME,
+                                                    "eth0", step == 2 ? 4 : 5);
+                if (!step)
+                        built &= netlink_attribute_add(&message, IFLA_ADDRESS,
+                                                        hardware, sizeof hardware);
+                check("synthetic link builds", built);
+                if (!built)
+                        break;
+                netlink_link address_to link = netlink_body(&message);
+                link->index = step + 1;
+                link->flags = step ? IFF_RUNNING : 0;
+                if (step == 2)
+                        search.found = false;
+                netlink_link_seen((netlink_header address_to)message.bytes, &search);
+                check("link names and hardware stay with their candidate",
+                      step == 2 ? !search.found :
+                      search.found && search.index == step + 1 &&
+                      search.has_hardware == !step);
+                netlink_forget(&message);
+        }
+        netlink_forget(&message);
+}
+
 static fn talking(void)
 {
         netlink_search search;
@@ -496,6 +529,23 @@ static fn fetching(void)
         check("the port defaults to 80", port == 80);
         check("the path comes out", string_equals(path, (string_address) "/index.html"));
 
+        for (positive byte = 1; byte <= 127; byte++)
+        {
+                if (byte > 32 && byte != 127)
+                        continue;
+                p8 input[] = "http://h/x";
+                for (positive at = 7; at <= 9; at += 2)
+                {
+                        input[at] = byte;
+                        check("HTTP refuses raw whitespace and controls in host and path",
+                              http_split(input, name, sizeof name, &port, &path) == HTTP_BAD_URL);
+                        input[at] = at == 7 ? 'h' : 'x';
+                }
+        }
+        check("HTTP keeps percent-encoded path bytes unchanged",
+              http_split("http://h/%20%0d%0a%7f", name, sizeof name, &port, &path) == HTTP_OK &&
+              string_equals(path, "/%20%0d%0a%7f"));
+
         check("a port is taken",
               http_split((string_address) "http://127.0.0.1:8080/x", name, sizeof name,
                          address_of port, address_of path) == HTTP_OK);
@@ -591,6 +641,20 @@ static fn fetching(void)
 
                 check("a chunk longer than the body is refused",
                       http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+
+        {
+                static string_address separators[] = {"", "\r", "\r\r\n", "\n\n", "\n", "\r\n"};
+                for (positive i = 0; i < array_count(separators); i++)
+                {
+                        p8 body[32];
+                        string_address tail = string_copy_end(body, "1\r\na");
+                        tail = string_copy_end(tail, separators[i]);
+                        tail = string_copy_end(tail, "0\r\n\r\n");
+                        bipolar got = http_unchunk(body, tail - body);
+                        check("chunks need exactly one line ending after their data",
+                              i < 4 ? got == HTTP_MALFORMED : got == 1 && body[0] == 'a');
+                }
         }
 
         {
@@ -1096,6 +1160,36 @@ static fn leasing(void)
         check("no mask at all falls back to /24", dhcp_prefix_of(0) == 24);
 }
 
+static fn leasing_datagrams(void)
+{
+        b32 pair[2];
+        p8 packet[301], received[300], hardware[6] = {1, 2, 3, 4, 5, 6};
+        dhcp_lease lease = {0};
+        p8 kind = 0;
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_DGRAM, 0, (positive)pair);
+        check("DHCP datagram test socket pair opens", opened == 0);
+        if (opened)
+                return;
+        dhcp_build(packet, sizeof packet, DHCP_OFFER, 123, hardware, 0, 0, 0);
+        packet[0] = 2;
+        packet[300] = 0;
+        for (positive length = 300; length <= 301; length++)
+        {
+                check("DHCP datagram queues", socket_send(pair[1], packet, length,
+                      0, null, 0) == (bipolar)length);
+                check("DHCP refuses datagrams larger than its receive buffer",
+                      dhcp_receive(pair[0], received, sizeof received, 123, hardware,
+                                   &lease, &kind, 0, 100000000) == (length == 300));
+        }
+        socket_close(pair[0]);
+        socket_close(pair[1]);
+        bipolar invalid = dhcp_open("moonwater-no-interface", HOST_ANY, true);
+        check("DHCP cannot continue when binding to its interface fails", invalid < 0);
+        if (invalid >= 0)
+                socket_close(invalid);
+}
+
 b32 main(void)
 {
         arithmetic();
@@ -1104,12 +1198,14 @@ b32 main(void)
         oversized();
         attribute_growth();
         error_frames();
+        link_candidates();
         talking();
         resolving();
         resolving_edges();
         fetching();
         fetching_for_real();
         leasing();
+        leasing_datagrams();
 
         return test_report(null);
 }

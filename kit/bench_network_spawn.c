@@ -53,8 +53,7 @@ static positive run_fork_exec(void)
                 if (child < 0)
                         return 0;
 
-                if (system_call_4(syscall(wait4), child,
-                                  (positive)address_of status, 0, 0) != child ||
+                if (system_wait4_retry(child, address_of status, 0, null) != child ||
                     status)
                         return 0;
         }
@@ -86,8 +85,7 @@ static positive run_spark(void)
                 if (child < 0)
                         return 0;
 
-                if (system_call_4(syscall(wait4), child,
-                                  (positive)address_of status, 0, 0) != child ||
+                if (system_wait4_retry(child, address_of status, 0, null) != child ||
                     status)
                         return 0;
         }

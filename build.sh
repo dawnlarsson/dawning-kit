@@ -78,7 +78,6 @@ host=${MOONWATER_BUILD_HOST:-}
 #
 tree_mark=$(printf '%s' "$here" | cksum | cut -d' ' -f1)
 remote=${MOONWATER_BUILD_DIR:-/tmp/moonwater-$(basename "$here")-$tree_mark}
-extra=""
 do_run=0
 do_build=1
 do_clean=0
@@ -86,23 +85,27 @@ do_usb=0
 console=0
 image=""
 
-while [ "$#" -gt 0 ]; do
-        case "$1" in
+remaining=$#
+while [ "$remaining" -gt 0 ]; do
+        argument=$1
+        shift
+        remaining=$((remaining - 1))
+        case "$argument" in
         --clean) do_clean=1 ;;
         --run) do_run=1 ;;
         --boot) do_run=1; do_build=0 ;;
         --shell) console=1 ;;
         --usb) do_usb=1 ;;
         --host)
-                [ "$#" -ge 2 ] || die "--host wants a machine to build on"
-                host=$2
+                [ "$remaining" -gt 0 ] || die "--host wants a machine to build on"
+                host=$1
                 shift
+                remaining=$((remaining - 1))
                 ;;
-        --host=*) host=${1#--host=} ;;
-        --*) die "unknown option $1" ;;
-        *) extra="$extra $1" ;;
+        --host=*) host=${argument#--host=} ;;
+        --*) die "unknown option $argument" ;;
+        *) set -- "$@" "$argument" ;;
         esac
-        shift
 done
 
 #
@@ -119,21 +122,22 @@ build_remote() {
                 die "cannot reach $host over ssh"
 
         say "Copying the tree to $host:$remote"
-        ssh -n "$host" "mkdir -p $remote" || die "could not create $remote"
+        remote_path=$(shell_quote "$remote")
+        remote_rsync="mkdir -p -- $remote_path && cd -- $remote_path && rsync"
 
         # The kernel source, its artifacts and the built filesystem stay on
         # the build host: they are large, and none of them belong to this
         # checkout. linux/ is the upstream tree, not part of this repository.
-        rsync -az --delete \
+        rsync -az --delete --rsync-path="$remote_rsync" \
                 --exclude '.git' \
                 --exclude '.claude' \
                 --exclude 'linux' \
                 --exclude 'artifacts' \
                 --exclude 'fs' \
                 --exclude 'dist' \
-                ./ "$host:$remote/" || die "copying the tree failed"
+                ./ "$host:./" || die "copying the tree failed"
 
-        say "Building on $host:$extra"
+        say "Building on $host: $*"
         # -n so the build does not swallow this script's stdin. Without it the
         # USB prompts below read nothing, because ssh forwards whatever is on
         # stdin to the remote command.
@@ -147,14 +151,14 @@ build_remote() {
         [ -z "${MOONWATER_STOCK:-}" ] || carry="MOONWATER_STOCK=1"
 
         # shellcheck disable=SC2029,SC2086
-        ssh -n "$host" "cd $remote && sudo env $carry sh build.sh $extra" ||
+        ssh -n "$host" "cd -- $remote_path && sudo env $carry sh build.sh $(shell_quote "$@")" ||
                 die "the build failed on $host"
 
         # The host which built the configured profile is authoritative about
         # its export.  A stale local artifacts/.config may describe another
         # architecture entirely (an ARM Mac commonly names kernel8.img).
         image=$(ssh -n "$host" \
-                "cd $remote && . ./kit/common && key_one kernel_export") ||
+                "cd -- $remote_path && . ./kit/common && key_one kernel_export") ||
                 die "could not identify the built image"
         case "$image" in
         dist/*) ;;
@@ -163,7 +167,7 @@ build_remote() {
 
         say "Fetching $image"
         mkdir -p "$(dirname "$image")"
-        scp -q "$host:$remote/$image" "$image" ||
+        ssh -n "$host" "cd -- $remote_path && cat -- $(shell_quote "$image")" > "$image" ||
                 die "could not fetch the built image"
 }
 
@@ -354,7 +358,7 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # a kernel developer uses. All six are composed in ahead of whatever
                 # was asked for, in that order, so the last two win the choices the
                 # earlier ones happen to touch.
-                if [ -z "$extra" ]; then
+                if [ "$#" -eq 0 ]; then
                         #
                         #       serial is last on purpose, and it is not
                         #       optional.
@@ -374,10 +378,7 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         #       and the timestamps that make the transcript
                         #       readable, and debug_none quietens both.
                         #
-                        profiles="any general gpu guests latency prod arch/x64 debug_none limbo desktop serial"
-                else
-                        # shellcheck disable=SC2086
-                        profiles="any general gpu guests latency prod $extra"
+                        set -- arch/x64 debug_none limbo desktop serial
                 fi
 
                 # Always compose the selected profiles. Reusing artifacts/.config
@@ -387,8 +388,7 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                 # kit/config preserves incremental builds when the result is
                 # unchanged, so deterministic selection costs no rebuild by
                 # itself.
-                # shellcheck disable=SC2086
-                sudo sh kit/config $profiles || die "configuration"
+                sudo sh kit/config any general gpu guests latency prod "$@" || die "configuration"
 
                 make_flags=$(key make_flags)
 
@@ -666,9 +666,9 @@ fi
 
 if [ "$do_build" -eq 1 ]; then
         if [ -n "$host" ]; then
-                build_remote
+                build_remote "$@"
         else
-                build_local
+                build_local "$@"
         fi
 fi
 

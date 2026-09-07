@@ -377,14 +377,9 @@ static bipolar bowl_system_populate()
                 bipolar failed;
 
                 failed = bowl_mkdir(point->target);
-                if (failed < 0)
-                {
-                        bowl_fail(point->target, failed);
-                        return failed;
-                }
-
-                failed = system_mount(point->source, point->target,
-                                      point->filesystem, point->flags, 0);
+                if (!failed)
+                        failed = system_mount(point->source, point->target,
+                                              point->filesystem, point->flags, 0);
 
                 if (failed)
                 {

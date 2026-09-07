@@ -134,20 +134,10 @@ static fn net_flush(void)
 
 static bool net_word_is(string_address word, const char *full, positive least)
 {
-        positive at = 0;
-
         if (!word)
                 return false;
-
-        while (word[at])
-        {
-                if (!full[at] || word[at] != (p8)full[at])
-                        return false;
-
-                at++;
-        }
-
-        return at >= least;
+        positive length = string_length(word);
+        return length >= least && !string_compare_max(word, (string_address)full, length);
 }
 
 static COLD fn net_complain(string_address message)
@@ -1111,7 +1101,7 @@ static b32 net_ip(void)
                                          AF_UNSPEC, net_link_line, null) < 0)
                                 status = net_refused((string_address) "link show", -1);
                 }
-                else if (net_word_is(verb, "set", 3) && net_words() > 4 &&
+                else if (net_word_is(verb, "set", 3) && net_words() == 5 &&
                          net_word_is(net_word(4), "up", 2))
                 {
                         bipolar index = net_index_of((b32)handle, net_word(3), null);
@@ -1142,7 +1132,7 @@ static b32 net_ip(void)
                                          AF_INET, net_address_line, null) < 0)
                                 status = net_refused((string_address) "addr show", -1);
                 }
-                else if (net_word_is(verb, "add", 1) && net_words() > 5 &&
+                else if (net_word_is(verb, "add", 1) && net_words() == 6 &&
                          net_word_is(net_word(4), "dev", 3))
                 {
                         p32 host = 0;
@@ -1185,37 +1175,30 @@ static b32 net_ip(void)
                                          AF_INET, net_route_line, null) < 0)
                                 status = net_refused((string_address) "route show", -1);
                 }
-                else if (net_word_is(verb, "add", 1) && net_words() > 5 &&
+                else if (net_word_is(verb, "add", 1) &&
+                         (net_words() == 6 || (net_words() == 8 &&
+                          net_word_is(net_word(6), "dev", 3))) &&
                          net_word_is(net_word(3), "default", 3) &&
                          net_word_is(net_word(4), "via", 3))
                 {
                         bipolar gateway = string_to_host(net_word(5));
-                        p32 index = 0;
+                        bipolar index = 0;
 
                         if (gateway < 0)
                         {
                                 net_complain((string_address) "route add: not an address");
                                 status = 1;
                         }
+                        else if (net_words() == 8 &&
+                                 (index = net_index_of((b32)handle, net_word(7), null)) < 0)
+                                status = net_refused((string_address) "route add", index);
                         else
                         {
-                                bipolar done;
-
-                                if (net_words() > 7 && net_word_is(net_word(6), "dev", 3))
-                                {
-                                        bipolar found = net_index_of((b32)handle,
-                                                                     net_word(7), null);
-
-                                        if (found >= 0)
-                                                index = (p32)found;
-                                }
-
-                                done = netlink_route_add((b32)handle, 0, 0, (p32)gateway,
-                                                         index);
+                                bipolar done = netlink_route_add(
+                                    (b32)handle, 0, 0, (p32)gateway, (p32)index);
 
                                 if (done < 0)
-                                        status = net_refused((string_address) "route add",
-                                                             done);
+                                        status = net_refused((string_address) "route add", done);
                         }
                 }
                 else

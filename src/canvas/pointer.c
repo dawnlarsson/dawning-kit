@@ -14,7 +14,7 @@
         thread applies it.
 */
 
-static struct task_struct *canvas_thread;
+static struct task_struct __rcu *canvas_thread;
 static _Bool pointer_handler_registered;
 
 /*
@@ -291,7 +291,7 @@ static void pointer_commit(s64 x, s64 y)
                 without waiting, so a workqueue's pool and dispatch and kworker
                 would all be overhead around it.
         */
-        wake_up_process(canvas_thread);
+        canvas_thread_wake();
 }
 
 /*
@@ -449,7 +449,7 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 atomic_set(&desktop.button_down, !!value);
                 atomic_set(&desktop.button_changed, 1);
 
-                wake_up_process(canvas_thread);
+                canvas_thread_wake();
                 return;
         }
 }
@@ -668,8 +668,12 @@ static struct input_handler pointer_handler = {
 
 static void canvas_thread_stop(void)
 {
-        if (!canvas_thread)
+        struct task_struct *thread = rcu_dereference_protected(
+            canvas_thread, lockdep_is_held(&canvas_list_lock));
+
+        if (!thread)
                 return;
+        RCU_INIT_POINTER(canvas_thread, NULL);
 
         /* Registration can be interrupted before the input core initializes
            the handler's lists.  Only hand a handler back after the matching
@@ -681,11 +685,13 @@ static void canvas_thread_stop(void)
         }
         cpu_latency_qos_remove_request(&pointer_qos);
 
-        desktop.awake = false;
+        mutex_lock(&desktop.lock);
+        desktop_set_awake(false);
+        mutex_unlock(&desktop.lock);
         hrtimer_cancel(&desktop.frame);
 
-        kthread_stop(canvas_thread);
-        canvas_thread = NULL;
+        synchronize_rcu();
+        kthread_stop(thread);
 }
 
 /*
@@ -697,14 +703,19 @@ static void canvas_thread_stop(void)
 */
 static void canvas_thread_wake(void)
 {
-        if (canvas_thread)
-                wake_up_process(canvas_thread);
+        struct task_struct *thread;
+
+        rcu_read_lock();
+        thread = rcu_dereference(canvas_thread);
+        if (thread)
+                wake_up_process(thread);
+        rcu_read_unlock();
 }
 
 // Whether there is anything to answer a frame. Nothing arms one otherwise.
 static _Bool canvas_thread_running(void)
 {
-        return canvas_thread != NULL;
+        return rcu_access_pointer(canvas_thread) != NULL;
 }
 
 static int canvas_loop(void *unused)
@@ -787,18 +798,19 @@ static void canvas_thread_start(void)
                 SCHED_OTHER task and behind anything the machine considers
                 more urgent than a cursor, which is the honest place for it.
         */
+        struct task_struct *thread;
+
         hrtimer_setup(&desktop.frame, desktop_frame, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+        thread = kthread_run(canvas_loop, NULL, "moonwater/canvas");
 
-        canvas_thread = kthread_run(canvas_loop, NULL, "moonwater/canvas");
-
-        if (IS_ERR(canvas_thread))
+        if (IS_ERR(thread))
         {
                 log_canvas("no thread for input\n");
-                canvas_thread = NULL;
                 return;
         }
 
-        sched_set_fifo_low(canvas_thread);
+        rcu_assign_pointer(canvas_thread, thread);
+        sched_set_fifo_low(thread);
 
         // 0 microseconds: no idle state whose exit can be measured.
         cpu_latency_qos_add_request(&pointer_qos, 0);

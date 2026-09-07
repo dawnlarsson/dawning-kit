@@ -557,8 +557,11 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
 static inline INLINE string_address netlink_link_name(
     netlink_header address_to header, netlink_link address_to address_to link)
 {
+        positive length = 0;
+        string_address name = (string_address)netlink_find(
+            header, sizeof(netlink_link), IFLA_IFNAME, address_of length);
         address_to link = (netlink_link address_to)((p8 address_to)header + NETLINK_HEADER);
-        return (string_address)netlink_find(header, sizeof(netlink_link), IFLA_IFNAME, null);
+        return name && memory_first_of(name, 0, length) ? name : null;
 }
 
 static bool netlink_link_seen(netlink_header address_to header, address_any context)
@@ -603,6 +606,7 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
         search->index = link->index;
         search->flags = link->flags;
         search->found = true;
+        search->has_hardware = false;
         string_copy_max_end(search->name, name, IFNAME_SIZE - 1);
 
         //      The hardware address, which DHCP has to put in the packet and
@@ -634,7 +638,7 @@ static bool netlink_link_seen(netlink_header address_to header, address_any cont
 */
 static bipolar netlink_link_find(b32 handle, netlink_search address_to search)
 {
-        search->found = false;
+        search->found = search->has_hardware = false;
 
         bipolar status = netlink_dump(handle, RTM_GETLINK, sizeof(netlink_link),
                                       AF_UNSPEC, netlink_link_seen, search);

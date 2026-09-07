@@ -158,7 +158,7 @@ static b32 ul_tasks(b32 pid, bool all, ul_task_action action,
         }
 
         file_walk_close(address_of walk);
-        return failed;
+        return failed || walk.error;
 }
 
 static PURE b32 ul_hex(p8 byte)
@@ -1982,88 +1982,6 @@ typedef struct
         b32 padding;
 } ul_flock_range;
 
-static bool ul_duration(string_address text, positive address_to nanoseconds)
-{
-        string_address at = text;
-        positive made = 0;
-        positive fraction = 0;
-        positive dropped = 0;
-        bool point = false;
-        bool any = false;
-
-        while (byte_is_space(string_get(at)))
-                at++;
-        if (string_is(at, '+'))
-                at++;
-
-        while (byte_is_digit(string_get(at)) ||
-               (!point && string_is(at, '.')))
-        {
-                if (string_is(at, '.'))
-                {
-                        point = true;
-                        at++;
-                        continue;
-                }
-
-                positive digit = string_get(at++) - '0';
-                any = true;
-                if (point)
-                        fraction++;
-                if (made <= (positive_max - digit) / 10)
-                        made = made * 10 + digit;
-                else
-                        dropped++;
-        }
-        if (!any)
-                return false;
-
-        bipolar exponent = 0;
-        if (string_is(at, 'e') || string_is(at, 'E'))
-        {
-                bool negative = false;
-                positive magnitude = 0;
-
-                at++;
-                if (string_is(at, '+') || string_is(at, '-'))
-                        negative = string_get(at++) == '-';
-                if (!byte_is_digit(string_get(at)))
-                        return false;
-                while (byte_is_digit(string_get(at)))
-                {
-                        if (magnitude < 1000000)
-                                magnitude = magnitude * 10 +
-                                            string_get(at) - '0';
-                        at++;
-                }
-                exponent = negative ? -(bipolar)magnitude
-                                    : (bipolar)magnitude;
-        }
-        if (string_get(at))
-                return false;
-
-        bipolar scale = 9 + exponent - (bipolar)fraction +
-                        (bipolar)dropped;
-        if (!made)
-        {
-                address_to nanoseconds = 0;
-                return true;
-        }
-        while (scale > 0)
-        {
-                if (made > positive_max / 10)
-                        return false;
-                made *= 10;
-                scale--;
-        }
-        while (scale < 0 && made)
-        {
-                made /= 10;
-                scale++;
-        }
-        address_to nanoseconds = made;
-        return true;
-}
 
 static bipolar ul_flock_try(b32 handle, p8 kind, bool nonblocking,
                             bool fcntl, positive start, positive length)
@@ -2265,7 +2183,7 @@ static b32 util_linux_flock()
 
         bool timed = file_option_value(address_of taking, 'w') != null;
         positive timeout = 0;
-        if (timed && !ul_duration(file_option_value(address_of taking, 'w'),
+        if (timed && !file_duration_read(file_option_value(address_of taking, 'w'), false,
                                   address_of timeout))
         {
                 ul_bad_usage("flock", "invalid timeout");
@@ -2808,7 +2726,7 @@ static b32 util_linux_waitpid()
 
         positive timeout = 0;
         if ((taking.flags & FILE_FLAG('t')) &&
-            !ul_duration(file_option_value(address_of taking, 't'),
+            !file_duration_read(file_option_value(address_of taking, 't'), false,
                          address_of timeout))
                 return ul_bad_usage("waitpid", "invalid timeout");
 
@@ -9056,7 +8974,7 @@ static b32 util_linux_wipefs()
         text_arena_used = 0;
         ul_wipefs_work work = {
             .room = operands * 13,
-            .types = file_option_value(address_of taking, 't'),
+            .types = file_option_value(address_of taking, 't'), false,
         };
         work.rows = text_arena_take(work.room * sizeof(work.rows[0]));
         if (!work.rows)

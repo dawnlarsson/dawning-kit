@@ -22,22 +22,9 @@
         appears twice -- once where the editor drew it and once where the
         kernel echoed it back.
 */
-#define TCGETS 0x5401u
-#define TCSETS 0x5402u
 #define TERMINAL_CANONICAL 0x0002u
 #define TERMINAL_ECHO 0x0008u
-#define TERMINAL_CONTROLS 19
 
-// The struct the kernel fills in, which is not the larger one a C library
-// hands its callers. A pty master answers these for the slave, so this is
-// asking the program on the other end what it has asked the line discipline
-// for.
-typedef struct
-{
-        unsigned int arriving, leaving, hardware, behaviour;
-        p8 discipline;
-        p8 controls[TERMINAL_CONTROLS];
-} terminal_modes;
 
 /*
         What a write did to the queued bytes.
@@ -79,7 +66,7 @@ static fn term_follow_modes(b32 master)
 {
         terminal_modes modes;
 
-        if (system_control(master, TCGETS, address_of modes) != 0)
+        if (system_control(master, PTY_TCGETS, address_of modes) != 0)
                 return;
 
         term_line_editing((modes.behaviour & TERMINAL_CANONICAL) != 0);
@@ -91,7 +78,7 @@ static fn term_follow_modes(b32 master)
                 return;
 
         modes.behaviour &= ~TERMINAL_ECHO;
-        system_control(master, TCSETS, address_of modes);
+        system_control(master, PTY_TCSETS, address_of modes);
 }
 
 // term ---------------------------------------------------------
