@@ -2433,6 +2433,7 @@ lane_edit()
 
 lane_kit()
 {
+        python3 src/test/core_state.py || return 1
         python3 kit/function_audit.py --check || return 1
         python3 kit/surface.d/coreutils_gap.py || return 1
         sh src/test/kit.sh

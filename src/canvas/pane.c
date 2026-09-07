@@ -91,7 +91,8 @@ static void pane_size(struct pane *pane)
         title = pane->style & WINDOW_FRAME ? canvas_title : 0;
 
         pane->width = (int)min(output->width, pane->max_width);
-        pane->height = (int)min(output->height - (unsigned int)title, pane->max_height);
+        pane->height = (int)min(output->height - min(output->height, (unsigned int)title),
+                                pane->max_height);
 }
 
 static void pane_raise(struct pane *raised)

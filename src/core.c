@@ -1069,9 +1069,14 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
         }
 
         mutex_lock(&snapshot_lock);
-        if (unlikely(request.capacity > snapshot_room))
+        // A caller's spare capacity is not live kernel data. Keep the warm
+        // buffer, but grow beyond a page only after a capture needs more.
+        u32 capacity = min_t(u32, request.capacity,
+                             max_t(u32, snapshot_room, PAGE_SIZE));
+retry:
+        if (unlikely(capacity > snapshot_room))
         {
-                u8 *larger = kvrealloc(snapshot, request.capacity, GFP_KERNEL);
+                u8 *larger = kvrealloc(snapshot, capacity, GFP_KERNEL);
 
                 if (!larger)
                 {
@@ -1080,11 +1085,11 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
                 }
 
                 snapshot = larger;
-                snapshot_room = request.capacity;
+                snapshot_room = capacity;
         }
 
         build.data = snapshot;
-        build.capacity = request.capacity;
+        build.capacity = capacity;
         build.used = 0;
         build.required = 0;
         memset(build.data, 0, sizeof(*header));
@@ -1103,6 +1108,15 @@ static HOT long report_snapshot(struct snapshot_request __user *out)
                 snapshot_cpus(&build, header);
         if (request.flags & SPARK_SNAPSHOT_NETWORK)
                 snapshot_networks(&build, header);
+
+        if (build.required > capacity && capacity < request.capacity)
+        {
+                // Inventory can grow during capture. Doubling bounds this to
+                // 12 retries from one page to the ABI's 16 MiB ceiling and
+                // leaves ENOSPC exclusively for the caller's own capacity.
+                capacity = min(max(build.required, capacity * 2), request.capacity);
+                goto retry;
+        }
 
         header->bytes = build.used;
         request.used = build.used;
