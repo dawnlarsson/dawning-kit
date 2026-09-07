@@ -15,13 +15,13 @@ rng = random.Random(0x534F5254)
 passed = failed = 0
 
 
-def check(tool, args, data=b""):
+def check(tool, args, data=b"", status=None):
     global passed, failed
     commands = ([str(farm / tool), *args], [tool, *args])
     outputs = [subprocess.run(command, input=data, stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, env=env, timeout=15)
                for command in commands]
-    if (outputs[0].returncode, outputs[0].stdout) == (outputs[1].returncode, outputs[1].stdout):
+    if (outputs[0].returncode, outputs[0].stdout) == (outputs[1].returncode if status is None else status, outputs[1].stdout):
         passed += 1
     else:
         failed += 1
@@ -351,6 +351,40 @@ with tempfile.TemporaryDirectory() as directory:
                     failed += 1
                     print("  want recursive grep injected error", syscall, when, flags,
                           "got", result.returncode, repr(result.stderr[:96]))
+
+# One codec state must cover complete quanta, partial tails, wrapping and
+# refills; in particular LSB-first cannot silently become MSB-first on -i.
+for index, length in enumerate((0, 1, 2, 3, 4, 5, 7, 8, 31, 65535, 65536, 65537)):
+    data = (bytes(range(256)) * ((length + 255) // 256))[:length]
+    for codec in ("base64", "base64url", "base32", "base32hex", "base16", "base2msbf", "base2lsbf"):
+        flags = ["--" + codec, "-w", str((0, 1, 7, 76)[index % 4])]
+        check("basenc", flags, data)
+        encoded = subprocess.check_output(["basenc", *flags], input=data, env=env)
+        check("basenc", ["--" + codec, "-d"], encoded)
+        check("basenc", ["--" + codec, "-di"], b"!" + encoded[:1] + b"!\n" + encoded[1:])
+bits = subprocess.check_output(["basenc", "--base2lsbf", "-w0"], input=bytes(range(256)), env=env)
+for stride in (1, 3, 7, 8, 9):
+    for separator, flags in ((b"\n", ["-d"]), (b"#", ["-di"])):
+        check("basenc", ["--base2lsbf", *flags], separator.join(bits[i:i+stride] for i in range(0, len(bits), stride)))
+with tempfile.TemporaryDirectory() as directory:
+    one, two = (Path(directory) / name for name in ("one", "two"))
+    for length in (0, 1, 31, 65535, 65536, 65537):
+        data = (b"abc\n" * ((length + 3) // 4))[:length]
+        one.write_bytes(data)
+        for altered in (data, data + b"\n", data[:-1], data[:length//2] + b"!" + data[length//2+1:]):
+            two.write_bytes(altered)
+            for flags in ([], ["-l"], ["-lb"], ["-s"], ["-n", str(length//2)], ["-i", "1:2"]):
+                left, right = (data[1:], altered[2:]) if "-i" in flags else (data, altered)
+                if "-n" in flags:
+                    left, right = left[:length//2], right[:length//2]
+                # GNU diffutils 3.12 can print -l differences yet return 0
+                # after a long equal suffix; derive status from the bytes.
+                check("cmp", [*flags, str(one), str(two)], status=int(left != right))
+    for left, right in ((b"a\n" * 80 + b"b\nc\n", b"b\n" + b"a\n" * 80),
+                        (b"a\nb\n" * 70, b"b\na\n" * 71), (b"", b"x\n"), (b"x", b"")):
+        one.write_bytes(left); two.write_bytes(right)
+        for flags in ([], ["-u"], ["-U0"], ["-U1"], ["-B"], ["-ub"]):
+            check("diff", [*flags, str(one), str(two)])
 
 print(f"  order-stream {passed} of {passed + failed}")
 if os.environ.get("TEST_TALLY"):

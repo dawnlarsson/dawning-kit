@@ -366,6 +366,135 @@ static fn storage_test_consumed_mounts(void)
               string_equals(storage_umount_target(address_of table, "/live"), "/live"));
 }
 
+static p8 storage_test_output[4096];
+static positive storage_test_output_used;
+
+static fn storage_test_capture(address_any bytes, positive length)
+{
+        if (length > sizeof(storage_test_output) - storage_test_output_used)
+        {
+                check("storage cell capture capacity", false);
+                return;
+        }
+        memory_copy_apart(storage_test_output + storage_test_output_used, bytes, length);
+        storage_test_output_used += length;
+}
+
+/* Independent scalar oracle: all non-NUL bytes, both root policies, duplicate
+   projections, and raw+pairs precedence. OPTIONS points into read-only data;
+   bounded output must never temporarily terminate a borrowed option token. */
+static positive storage_test_encode(p8 address_to into, string_address text,
+                                     bool raw, bool pairs)
+{
+        positive used = 0;
+        for (positive i = 0; text[i]; i++)
+        {
+                p8 byte = text[i];
+                if ((raw || pairs) && (byte < 32 || byte >= 127 || byte == '\\' ||
+                    (pairs ? byte == '"' : byte == ' ')))
+                {
+                        into[used++] = '\\';
+                        into[used++] = 'x';
+                        into[used++] = "0123456789abcdef"[byte >> 4];
+                        into[used++] = "0123456789abcdef"[byte & 15];
+                }
+                else
+                        into[used++] = byte;
+        }
+        return used;
+}
+
+static fn storage_test_findmnt(void)
+{
+        static const p8 columns[] = {STORAGE_SOURCE, STORAGE_OPTIONS, STORAGE_ID,
+            STORAGE_PARENT, STORAGE_TARGET, STORAGE_FSROOT, STORAGE_FSTYPE,
+            STORAGE_MAJMIN, STORAGE_VFS_OPTIONS, STORAGE_FS_OPTIONS};
+        for (positive byte = 1; byte < 256; byte++)
+                for (positive mode = 0; mode < 8; mode++)
+                {
+                        p8 name[] = {'x', (p8)byte, 'y', 0};
+                        p8 source[32], wanted[4096];
+                        storage_mount mount = {.id = positive_max, .parent_id = 0,
+                            .source = name, .target = "/a b", .root = "/r\n\t\\\"\xff",
+                            .type = "ext4", .device = "8:1",
+                            .options = "rw,,key=a b\\c\"\t\x80,dup",
+                            .filesystem_options = "ro,dup,tail=\x7f"};
+                        storage_findmnt_options options = {.count = array_count(columns),
+                            .raw = (mode & 1) != 0, .pairs = (mode & 2) != 0,
+                            .no_fsroot = (mode & 4) != 0};
+                        string_copy_end(source, name);
+                        if (!options.no_fsroot)
+                        {
+                                string_copy_end(source + 3, "[");
+                                string_address end_at = string_copy_end(source + 4, mount.root);
+                                string_copy_end(end_at, "]");
+                        }
+                        string_address values[] = {source, "ro,key=a b\\c\"\t\x80,dup,tail=\x7f",
+                            "18446744073709551615", "0", mount.target, mount.root,
+                            mount.type, mount.device, mount.options, mount.filesystem_options};
+                        positive widths[STORAGE_COLUMN_MAX], used = 0;
+                        for (positive i = 0; i < options.count; i++)
+                        {
+                                positive selected = (i + byte) % array_count(columns);
+                                if (byte & 1) selected = i % 2; // Duplicate computed cells.
+                                options.columns[i] = columns[selected];
+                                positive length = string_length(values[selected]);
+                                widths[i] = length + i % 4;
+                                check("findmnt count/write projection agreement",
+                                      storage_findmnt_cell(null, address_of mount,
+                                          options.columns[i], address_of options) == length);
+                                if (i) wanted[used++] = ' ';
+                                if (options.pairs)
+                                {
+                                        used += string_copy_end(wanted + used,
+                                            storage_column_name(options.columns[i])) - (wanted + used);
+                                        wanted[used++] = '=';
+                                        wanted[used++] = '"';
+                                }
+                                used += storage_test_encode(wanted + used, values[selected],
+                                                             options.raw, options.pairs);
+                                if (options.pairs)
+                                        wanted[used++] = '"';
+                                else if (!options.raw && i + 1 < options.count)
+                                        for (positive pad = length; pad < widths[i]; pad++)
+                                                wanted[used++] = ' ';
+                        }
+                        wanted[used++] = '\n';
+                        storage_test_output_used = 0;
+                        storage_findmnt_row(storage_test_capture, address_of mount,
+                                             address_of options, widths);
+                        check("findmnt all byte policies and column ordering",
+                              storage_test_output_used == used &&
+                              !memory_compare(storage_test_output, wanted, used));
+                }
+}
+
+static fn storage_test_script_rollback(void)
+{
+        string_address address_to saved_words = program_words;
+        b32 saved_count = program_words_count;
+        string_address words[] = {"script", "-q", "-O", "/dev/null",
+            "-I", "/dev/null", "-T", "/dev/null", "-c", "true", null};
+        for (positive role = 0; role < 3; role++)
+        {
+                bipolar available = system_open_at(AT_FDCWD, "/dev/null", FILE_READ);
+                check("script rollback fixture descriptor", available >= 0);
+                if (available < 0) break;
+                system_close(available);
+                words[3 + role * 2] = "/dev/null/missing";
+                program_arguments_use(words, 10);
+                check("script stops before child when a log cannot open", process_script() == 1);
+                bipolar after = system_open_at(AT_FDCWD, "/dev/null", FILE_READ);
+                check("script rollback releases every earlier log descriptor", after == available);
+                if (after >= 0) system_close(after);
+                words[3 + role * 2] = "/dev/null";
+        }
+        if (saved_words)
+                program_arguments_use(saved_words, saved_count);
+        else
+                program_arguments_own();
+}
+
 static fn storage_test_link_state(void)
 {
         net_holding held = {0};
@@ -398,6 +527,8 @@ b32 main(void)
         storage_test_copy();
         storage_test_lsfd();
         storage_test_consumed_mounts();
+        storage_test_findmnt();
+        storage_test_script_rollback();
         storage_test_link_state();
         return test_report(null);
 }

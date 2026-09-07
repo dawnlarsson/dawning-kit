@@ -581,29 +581,21 @@ static bool storage_columns(string_address list,
 
 #define storage_column_name(column) storage_column_table[(column)].name
 
-static fn storage_findmnt_value(writer output, string_address value, bool raw)
+/* Count and write the same bounded cell pieces. Counting returns the original
+   byte width: raw/pairs escaping does not participate in padded columns. */
+static positive storage_findmnt_value(writer output, string_address value,
+                                      positive length, bool raw, bool pairs)
 {
-        if (!raw)
+        if (output)
         {
-                storage_write_text(output, value);
-                return;
+                if (raw || pairs)
+                        writer_hex_escaped(output, value, length,
+                            HEX_CONTROL | HEX_TAB | HEX_SLASH | HEX_HIGH |
+                            (pairs ? HEX_QUOTE : HEX_SPACE));
+                else
+                        output(value, length);
         }
-
-        storage_write_hex_escaped(output, value, true, false);
-}
-
-static string_address storage_findmnt_cell(storage_mount address_to mount,
-                                           enum storage_column column,
-                                           bool heading)
-{
-        if (heading)
-                return storage_column_name(column);
-
-        p16 offset = storage_column_table[column].offset;
-
-        return offset ? memory_load_unaligned(
-                            string_address, (p8 address_to)mount + offset)
-                      : null;
+        return length;
 }
 
 static PURE inline INLINE bool storage_filesystem_option_represented(
@@ -613,57 +605,11 @@ static PURE inline INLINE bool storage_filesystem_option_represented(
             storage_rw_opposite(mount->options, option, length);
 }
 
-static PURE positive storage_combined_options_length(storage_mount address_to mount)
-{
-        positive length = 0;
-
-        for (positive filesystem = 0; filesystem < 2; filesystem++)
-        {
-                string_address cursor = filesystem ? mount->filesystem_options
-                                                   : mount->options;
-                string_address at;
-                positive token_length;
-
-                while ((at = storage_comma_next(address_of cursor,
-                                                 address_of token_length)))
-                        if (token_length &&
-                            (!filesystem ||
-                             !storage_filesystem_option_represented(
-                                 mount, at, token_length)))
-                                length += token_length + (length ? 1 : 0);
-        }
-
-        return length;
-}
-
-static fn storage_findmnt_option_write(writer output, string_address at,
-                                       positive length, string_address shown,
-                                       bool raw, bool pairs)
-{
-        if (!raw && !pairs)
-        {
-                output((address_any)shown, length);
-                return;
-        }
-
-        p8 saved = at[length];
-        bool borrowed = shown == at;
-
-        if (borrowed)
-                at[length] = end;
-        if (pairs)
-                storage_write_encoded(output, shown);
-        else
-                storage_findmnt_value(output, shown, true);
-        if (borrowed)
-                at[length] = saved;
-}
-
-static fn storage_combined_options_write(writer output,
+static positive storage_combined_options_write(writer output,
                                          storage_mount address_to mount,
                                          bool raw, bool pairs)
 {
-        bool any = false;
+        positive length = 0;
 
         for (positive filesystem = 0; filesystem < 2; filesystem++)
         {
@@ -689,13 +635,14 @@ static fn storage_combined_options_write(writer output,
                                    : (string_address)"rw")
                             : at;
 
-                        if (any)
-                                output((address_any)",", 1);
-                        storage_findmnt_option_write(
-                            output, at, token_length, shown, raw, pairs);
-                        any = true;
+                        if (length)
+                                length += storage_findmnt_value(
+                                    output, ",", 1, raw, pairs);
+                        length += storage_findmnt_value(
+                            output, shown, token_length, raw, pairs);
                 }
         }
+        return length;
 }
 
 static PURE bool storage_source_has_root(storage_mount address_to mount)
@@ -704,25 +651,38 @@ static PURE bool storage_source_has_root(storage_mount address_to mount)
                !string_equals(mount->root, "/");
 }
 
-static PURE positive storage_findmnt_cell_length(storage_mount address_to mount,
-                                            enum storage_column column,
-                                            bool show_fsroot)
+static positive storage_findmnt_cell(writer output,
+                                     storage_mount address_to mount,
+                                     enum storage_column column,
+                                     storage_findmnt_options address_to options)
 {
-        positive length;
-
-        if (column == STORAGE_ID)
-                return positive_digits(mount->id);
-        if (column == STORAGE_PARENT)
-                return positive_digits(mount->parent_id);
-        if (column == STORAGE_OPTIONS)
-                return storage_combined_options_length(mount);
-
-        length = string_length(storage_findmnt_cell(mount, column, false));
-
-        if (column == STORAGE_SOURCE && show_fsroot &&
+        string_address value = storage_column_name(column);
+        p8 number[32];
+        if (mount)
+        {
+                if (column == STORAGE_OPTIONS)
+                        return storage_combined_options_write(
+                            output, mount, options->raw, options->pairs);
+                if (column == STORAGE_ID || column == STORAGE_PARENT)
+                {
+                        positive_into_string(number, column == STORAGE_ID
+                            ? mount->id : mount->parent_id);
+                        value = number;
+                }
+                else
+                        value = memory_load_unaligned(string_address,
+                            (p8 address_to)mount + storage_column_table[column].offset);
+        }
+        positive length = storage_findmnt_value(
+            output, value, string_length(value), options->raw, options->pairs);
+        if (mount && column == STORAGE_SOURCE && !options->no_fsroot &&
             storage_source_has_root(mount))
-                length += string_length(mount->root) + 2;
-
+        {
+                length += storage_findmnt_value(output, "[", 1, false, false);
+                length += storage_findmnt_value(output, mount->root,
+                    string_length(mount->root), options->raw, options->pairs);
+                length += storage_findmnt_value(output, "]", 1, false, false);
+        }
         return length;
 }
 
@@ -747,105 +707,27 @@ static bool storage_source_matches(storage_mount address_to mount,
                wanted[source_length + root_length + 1] == ']';
 }
 
-/* A cell pads to its column only between columns and never in raw mode;
-   the last column stays ragged so no line carries trailing blanks. */
-static fn storage_findmnt_pad(writer output,
-                              storage_findmnt_options address_to options,
-                              positive address_to widths, positive at,
-                              positive length)
-{
-        if (!options->raw && at + 1 < options->count && widths[at] > length)
-                writer_fill(output, widths[at] - length, ' ');
-}
-
 static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                               storage_findmnt_options address_to options,
-                              positive address_to widths, bool heading)
+                              positive address_to widths)
 {
-        if (!heading && options->pairs)
-        {
-                for (positive at = 0; at < options->count; at++)
-                {
-                        enum storage_column column = options->columns[at];
-                        string_address value = storage_findmnt_cell(
-                            mount, column, false);
-
-                        if (at)
-                                output((address_any)" ", 1);
-                        storage_write_text(output, storage_column_name(column));
-                        output((address_any)"=\"", 2);
-
-                        if (column == STORAGE_ID || column == STORAGE_PARENT)
-                                positive_to_string(output,
-                                    column == STORAGE_ID ? mount->id
-                                                         : mount->parent_id);
-                        else if (column == STORAGE_SOURCE &&
-                                 storage_source_has_root(mount) &&
-                                 !options->no_fsroot)
-                        {
-                                storage_write_encoded(output, mount->source);
-                                output((address_any)"[", 1);
-                                storage_write_encoded(output, mount->root);
-                                output((address_any)"]", 1);
-                        }
-                        else if (column == STORAGE_OPTIONS)
-                                storage_combined_options_write(output, mount,
-                                                               false, true);
-                        else
-                                storage_write_encoded(output, value);
-
-                        output((address_any)"\"", 1);
-                }
-
-                output((address_any)"\n", 1);
-                return;
-        }
-
         for (positive at = 0; at < options->count; at++)
         {
-                string_address value = storage_findmnt_cell(
-                    mount, options->columns[at], heading);
-
                 if (at)
                         output((address_any)" ", 1);
-
-                if (!heading && (options->columns[at] == STORAGE_ID ||
-                                 options->columns[at] == STORAGE_PARENT))
+                if (options->pairs)
                 {
-                        positive value_number = options->columns[at] == STORAGE_ID
-                                                    ? mount->id
-                                                    : mount->parent_id;
-
-                        positive_to_string(output, value_number);
-                        storage_findmnt_pad(output, options, widths, at,
-                                            positive_digits(value_number));
+                        storage_write_text(output,
+                            storage_column_name(options->columns[at]));
+                        output((address_any)"=\"", 2);
                 }
-                else if (!heading && options->columns[at] == STORAGE_OPTIONS)
-                {
-                        storage_combined_options_write(output, mount,
-                                                       options->raw, false);
-                        storage_findmnt_pad(
-                            output, options, widths, at,
-                            storage_combined_options_length(mount));
-                }
-                else if (!heading && options->columns[at] == STORAGE_SOURCE &&
-                         storage_source_has_root(mount) && !options->no_fsroot)
-                {
-                        storage_findmnt_value(output, mount->source,
-                                              options->raw);
-                        output((address_any)"[", 1);
-                        storage_findmnt_value(output, mount->root,
-                                              options->raw);
-                        output((address_any)"]", 1);
-                        storage_findmnt_pad(
-                            output, options, widths, at,
-                            storage_findmnt_cell_length(mount, STORAGE_SOURCE,
-                                                        true));
-                }
-                else if (!options->raw && at + 1 < options->count)
-                        string_to_field(output, value, widths[at], ' ', true);
-                else
-                        storage_findmnt_value(output, value, options->raw);
+                positive length = storage_findmnt_cell(
+                    output, mount, options->columns[at], options);
+                if (options->pairs)
+                        output((address_any)"\"", 1);
+                else if (!options->raw && at + 1 < options->count &&
+                         widths[at] > length)
+                        writer_fill(output, widths[at] - length, ' ');
         }
 
         output((address_any)"\n", 1);
@@ -1027,26 +909,15 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                            have_query_id, query_id))
                         continue;
 
-                matched++;
-
-                if (direct)
-                {
-                        if (matched == 1 && !options.no_headings)
-                                storage_findmnt_row(output, null,
-                                                    address_of options,
-                                                    widths, true);
-
-                        storage_findmnt_row(output, mount, address_of options,
-                                            widths, false);
-                }
-                else
+                table.entry[matched++] = *mount;
+                if (!direct)
                 {
                         for (positive column = 0; column < options.count;
                              column++)
                         {
-                                positive length = storage_findmnt_cell_length(
-                                    mount, options.columns[column],
-                                    !options.no_fsroot);
+                                positive length = storage_findmnt_cell(
+                                    null, mount, options.columns[column],
+                                    address_of options);
 
                                 if (length > widths[column])
                                         widths[column] = length;
@@ -1057,7 +928,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         break;
         }
 
-        if (matched && !direct)
+        if (matched)
         {
                 if (!options.no_headings)
                 {
@@ -1070,24 +941,12 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                                         widths[column] = length;
                         }
 
-                        storage_findmnt_row(output, null, address_of options,
-                                            widths, true);
+                        storage_findmnt_row(output, null, address_of options, widths);
                 }
 
-                for (positive at = 0; at < table.count; at++)
-                {
-                        storage_mount address_to mount = table.entry + at;
-
-                        if (!storage_findmnt_match(mount, address_of options,
-                                                   have_query_id, query_id))
-                                continue;
-
-                        storage_findmnt_row(output, mount, address_of options,
-                                            widths, false);
-
-                        if (options.first_only)
-                                break;
-                }
+                for (positive at = 0; at < matched; at++)
+                        storage_findmnt_row(output, table.entry + at,
+                                            address_of options, widths);
         }
 
         storage_mount_table_release(address_of table);

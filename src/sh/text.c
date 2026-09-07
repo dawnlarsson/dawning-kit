@@ -2578,33 +2578,6 @@ static const encoding_codec encoding_codecs[] = {
     {(string_address)"01", 1, 1, 8, false, true},
 };
 
-/* Two adjacent encoded symbols as one little-endian store.  Every ABI this
-   project supports is little-endian, and the no-wrap kernels always advance
-   by complete four/eight-byte output quanta, so these halfword stores stay
-   aligned.  One table is enough for both widths and all alphabets. */
-static p16 encoding_pairs[4096];
-static string_address encoding_pairs_alphabet;
-static p8 encoding_pairs_bits;
-
-static fn encoding_pairs_prepare(const encoding_codec address_to codec)
-{
-        if (encoding_pairs_alphabet == codec->alphabet &&
-            encoding_pairs_bits == codec->bits)
-                return;
-
-        positive symbols = (positive)1 << codec->bits;
-        positive entries = symbols * symbols;
-        positive mask = symbols - 1;
-
-        for (positive value = 0; value < entries; value++)
-                encoding_pairs[value] =
-                    (p16)(codec->alphabet[value >> codec->bits] |
-                          ((p16)codec->alphabet[value & mask] << 8));
-
-        encoding_pairs_alphabet = codec->alphabet;
-        encoding_pairs_bits = codec->bits;
-}
-
 typedef struct
 {
         positive wrap;
@@ -2636,202 +2609,44 @@ static inline INLINE p8 address_to encoding_symbol(
         return into;
 }
 
-/* Whole quanta have no carried bits.  That lets every call reserve its exact
-   result and lets one block-level dispatch select a fixed-shift kernel. */
+/* One quantum walk covers every alphabet, wrapping and a padded final group.
+   Reserve a whole batch once; no extra table or per-symbol writer calls. */
 static bool encoding_groups(const encoding_codec address_to codec,
                             encoding_output address_to output,
-                            p8 address_to input, positive groups)
+                            p8 address_to input, positive length)
 {
-        positive symbols = groups * codec->output;
-        p8 address_to into = text_reserve(encoding_wrapped(output, symbols));
-        string_address alphabet = codec->alphabet;
+        if (!length)
+                return true;
+
+        positive groups = (length + codec->input - 1) / codec->input;
+        p8 address_to into = text_reserve(
+            encoding_wrapped(output, groups * codec->output));
+        positive mask = ((positive)1 << codec->bits) - 1;
 
         if (!into)
                 return false;
 
-        /* -w0 is common in machine-to-machine paths.  Keep its inner loops
-           completely free of column updates and wrap branches. */
-        if (!output->wrap)
+        while (length)
         {
-                if (codec->bits == 6)
-                        for (positive group = 0; group < groups; group++)
-                        {
-                                positive bits = ((positive)input[0] << 16) |
-                                                ((positive)input[1] << 8) |
-                                                input[2];
+                positive count = min(length, (positive)codec->input);
+                positive symbols = count == codec->input ? codec->output
+                    : (count * 8 + codec->bits - 1) / codec->bits;
+                positive bits = 0;
 
-                                address_to (p16 address_to)into =
-                                    encoding_pairs[bits >> 12];
-                                address_to (p16 address_to)(into + 2) =
-                                    encoding_pairs[bits & 4095];
-                                input += 3;
-                                into += 4;
-                        }
-                else if (codec->bits == 5)
-                        for (positive group = 0; group < groups; group++)
-                        {
-                                positive bits = ((positive)input[0] << 32) |
-                                                ((positive)input[1] << 24) |
-                                                ((positive)input[2] << 16) |
-                                                ((positive)input[3] << 8) |
-                                                input[4];
+                for (positive byte = 0; byte < count; byte++)
+                        bits = (bits << 8) | *input++;
+                bits <<= codec->output * codec->bits - count * 8;
 
-                                address_to (p16 address_to)into =
-                                    encoding_pairs[bits >> 30];
-                                address_to (p16 address_to)(into + 2) =
-                                    encoding_pairs[(bits >> 20) & 1023];
-                                address_to (p16 address_to)(into + 4) =
-                                    encoding_pairs[(bits >> 10) & 1023];
-                                address_to (p16 address_to)(into + 6) =
-                                    encoding_pairs[bits & 1023];
-                                input += 5;
-                                into += 8;
-                        }
-                else if (codec->bits == 4)
-                        for (positive group = 0; group < groups; group++)
-                        {
-                                p8 value = *input++;
-
-                                *into++ = alphabet[value >> 4];
-                                *into++ = alphabet[value & 15];
-                        }
-                else
-                        for (positive group = 0; group < groups; group++)
-                        {
-                                p8 value = *input++;
-
-                                if (codec->low_bit_first)
-                                        for (positive bit = 0; bit < 8; bit++)
-                                                *into++ = alphabet[
-                                                    (value >> bit) & 1];
-                                else
-                                        for (positive bit = 8; bit; bit--)
-                                                *into++ = alphabet[
-                                                    (value >> (bit - 1)) & 1];
-                        }
-
-                output->wrote = true;
-                return true;
-        }
-
-        positive wrap = output->wrap;
-        positive column = output->column;
-
-#define ENCODING_GROUP_SYMBOL(value)                                        \
-        do                                                                  \
-        {                                                                   \
-                *into++ = (value);                                          \
-                if (++column == wrap)                                       \
-                {                                                           \
-                        *into++ = '\n';                                      \
-                        column = 0;                                         \
-                }                                                           \
-        } while (0)
-
-        /* Dispatch once per block, not once per symbol.  These fixed shifts
-           are the steady-state kernels; base64url and base32hex differ only
-           in the alphabet pointer and share the same code. */
-        if (codec->bits == 6)
-        {
-                for (positive group = 0; group < groups; group++)
+                for (positive symbol = 0; symbol < codec->output; symbol++)
                 {
-                        positive bits = ((positive)input[0] << 16) |
-                                        ((positive)input[1] << 8) | input[2];
-
-                        ENCODING_GROUP_SYMBOL(alphabet[bits >> 18]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 12) & 63]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 6) & 63]);
-                        ENCODING_GROUP_SYMBOL(alphabet[bits & 63]);
-                        input += 3;
+                        positive shift = codec->low_bit_first ? symbol * codec->bits
+                            : (codec->output - symbol - 1) * codec->bits;
+                        p8 value = symbol < symbols
+                            ? codec->alphabet[(bits >> shift) & mask] : '=';
+                        into = encoding_symbol(into, output, value);
                 }
+                length -= count;
         }
-        else if (codec->bits == 5)
-        {
-                for (positive group = 0; group < groups; group++)
-                {
-                        positive bits = ((positive)input[0] << 32) |
-                                        ((positive)input[1] << 24) |
-                                        ((positive)input[2] << 16) |
-                                        ((positive)input[3] << 8) | input[4];
-
-                        ENCODING_GROUP_SYMBOL(alphabet[bits >> 35]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 30) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 25) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 20) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 15) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 10) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[(bits >> 5) & 31]);
-                        ENCODING_GROUP_SYMBOL(alphabet[bits & 31]);
-                        input += 5;
-                }
-        }
-        else if (codec->bits == 4)
-        {
-                for (positive group = 0; group < groups; group++)
-                {
-                        p8 value = *input++;
-
-                        ENCODING_GROUP_SYMBOL(alphabet[value >> 4]);
-                        ENCODING_GROUP_SYMBOL(alphabet[value & 15]);
-                }
-        }
-        else
-        {
-                for (positive group = 0; group < groups; group++)
-                {
-                        p8 value = *input++;
-
-                        if (codec->low_bit_first)
-                                for (positive bit = 0; bit < 8; bit++)
-                                        ENCODING_GROUP_SYMBOL(
-                                            alphabet[(value >> bit) & 1]);
-                        else
-                                for (positive bit = 8; bit; bit--)
-                                        ENCODING_GROUP_SYMBOL(alphabet[
-                                            (value >> (bit - 1)) & 1]);
-                }
-        }
-
-        output->column = column;
-        output->wrote = true;
-#undef ENCODING_GROUP_SYMBOL
-        return true;
-}
-
-static bool encoding_tail(const encoding_codec address_to codec,
-                          encoding_output address_to output,
-                          p8 address_to input, positive count)
-{
-        if (!count)
-                return true;
-
-        positive symbols = (count * 8 + codec->bits - 1) / codec->bits;
-        positive padding = codec->padding ? codec->output - symbols : 0;
-        positive all = symbols + padding;
-        p8 address_to into = text_reserve(encoding_wrapped(output, all));
-        positive bits = 0;
-
-        if (!into)
-                return false;
-
-        for (positive byte = 0; byte < count; byte++)
-                bits = (bits << 8) | input[byte];
-
-        bits <<= symbols * codec->bits - count * 8;
-
-        for (positive symbol = 0; symbol < symbols; symbol++)
-        {
-                positive shift = (symbols - symbol - 1) * codec->bits;
-                positive mask = ((positive)1 << codec->bits) - 1;
-
-                into = encoding_symbol(
-                    into, output,
-                    codec->alphabet[(bits >> shift) & mask]);
-        }
-
-        while (padding--)
-                into = encoding_symbol(into, output, '=');
-
         return true;
 }
 
@@ -2843,9 +2658,6 @@ static b32 encoding_encode(const encoding_codec address_to codec,
         positive held = 0;
         encoding_output output = {.wrap = wrap};
         bool writing = true;
-
-        if (!wrap && (codec->bits == 6 || codec->bits == 5))
-                encoding_pairs_prepare(codec);
 
         while (writing && text_fill())
         {
@@ -2865,7 +2677,7 @@ static b32 encoding_encode(const encoding_codec address_to codec,
                         if (held == codec->input)
                         {
                                 writing = encoding_groups(codec, address_of output,
-                                                          pending, 1);
+                                                          pending, held);
                                 held = 0;
                         }
                 }
@@ -2879,9 +2691,9 @@ static b32 encoding_encode(const encoding_codec address_to codec,
                         if (groups > 4096)
                                 groups = 4096;
 
-                        writing = encoding_groups(codec, address_of output, at,
-                                                  groups);
                         positive used = groups * codec->input;
+                        writing = encoding_groups(codec, address_of output, at,
+                                                  used);
 
                         at += used;
                         left -= used;
@@ -2899,7 +2711,7 @@ static b32 encoding_encode(const encoding_codec address_to codec,
         }
 
         if (writing)
-                writing = encoding_tail(codec, address_of output, pending, held);
+                writing = encoding_groups(codec, address_of output, pending, held);
 
         /* A positive wrap always terminates the final nonempty short line.
            Width zero means exactly the encoded bytes, with no final newline. */
@@ -2937,116 +2749,6 @@ static bool encoding_padding(const encoding_codec address_to codec,
         return padding == expected;
 }
 
-/* Decode contiguous complete quanta straight into the shared staging area.
-   A wrapped line, padding or garbage stops before consuming its group and the
-   scalar state machine below handles that edge.  The OR folds each group's
-   validation to one branch: every alphabet value is below 64, while an
-   unrecognized byte maps to 255. */
-static positive encoding_decode_groups(
-    const encoding_codec address_to codec, const p8 address_to values,
-    p8 address_to input, positive groups, p8 address_to output)
-{
-        positive done = 0;
-
-        if (codec->bits == 6)
-        {
-                for (; done < groups; done++)
-                {
-                        positive a = values[input[0]];
-                        positive b = values[input[1]];
-                        positive c = values[input[2]];
-                        positive d = values[input[3]];
-
-                        if ((a | b | c | d) == 255)
-                                break;
-
-                        positive bits = (a << 18) | (b << 12) | (c << 6) | d;
-
-                        output[0] = (p8)(bits >> 16);
-                        output[1] = (p8)(bits >> 8);
-                        output[2] = (p8)bits;
-                        input += 4;
-                        output += 3;
-                }
-        }
-        else if (codec->bits == 5)
-        {
-                for (; done < groups; done++)
-                {
-                        positive a = values[input[0]];
-                        positive b = values[input[1]];
-                        positive c = values[input[2]];
-                        positive d = values[input[3]];
-                        positive e = values[input[4]];
-                        positive f = values[input[5]];
-                        positive g = values[input[6]];
-                        positive h = values[input[7]];
-
-                        if ((a | b | c | d | e | f | g | h) == 255)
-                                break;
-
-                        positive bits = (a << 35) | (b << 30) | (c << 25) |
-                                        (d << 20) | (e << 15) | (f << 10) |
-                                        (g << 5) | h;
-
-                        output[0] = (p8)(bits >> 32);
-                        output[1] = (p8)(bits >> 24);
-                        output[2] = (p8)(bits >> 16);
-                        output[3] = (p8)(bits >> 8);
-                        output[4] = (p8)bits;
-                        input += 8;
-                        output += 5;
-                }
-        }
-        else if (codec->bits == 4)
-        {
-                for (; done < groups; done++)
-                {
-                        positive high = values[input[0]];
-                        positive low = values[input[1]];
-
-                        if ((high | low) == 255)
-                                break;
-
-                        *output++ = (p8)((high << 4) | low);
-                        input += 2;
-                }
-        }
-        else
-        {
-                for (; done < groups; done++)
-                {
-                        positive made = 0;
-                        positive valid = 0;
-
-                        if (codec->low_bit_first)
-                                for (positive bit = 0; bit < 8; bit++)
-                                {
-                                        positive value = values[input[bit]];
-
-                                        valid |= value;
-                                        made |= value << bit;
-                                }
-                        else
-                                for (positive bit = 0; bit < 8; bit++)
-                                {
-                                        positive value = values[input[bit]];
-
-                                        valid |= value;
-                                        made = (made << 1) | value;
-                                }
-
-                        if (valid == 255)
-                                break;
-
-                        *output++ = (p8)made;
-                        input += 8;
-                }
-        }
-
-        return done;
-}
-
 static b32 encoding_decode(const encoding_codec address_to codec,
                            bool ignore_garbage)
 {
@@ -3069,42 +2771,6 @@ static b32 encoding_decode(const encoding_codec address_to codec,
         {
                 while (text_input.position < text_input.filled)
                 {
-                        if (!padded && !held)
-                        {
-                                positive left = text_input.filled -
-                                                text_input.position;
-                                positive groups = left / codec->output;
-                                positive room = (TEXT_READ_MAX - made) /
-                                                codec->input;
-
-                                if (groups > room)
-                                        groups = room;
-
-                                if (groups)
-                                {
-                                        positive decoded = encoding_decode_groups(
-                                            codec, values,
-                                            text_input.buffer + text_input.position,
-                                            groups, text_line + made);
-
-                                        if (decoded)
-                                        {
-                                                text_input.position +=
-                                                    decoded * codec->output;
-                                                made += decoded * codec->input;
-                                                seen += decoded * codec->output;
-
-                                                if (made == TEXT_READ_MAX)
-                                                {
-                                                        text_put(text_line, made);
-                                                        made = 0;
-                                                }
-
-                                                continue;
-                                        }
-                                }
-                        }
-
                         p8 byte = text_input.buffer[text_input.position++];
                         p8 value = values[byte];
 
@@ -3121,7 +2787,9 @@ static b32 encoding_decode(const encoding_codec address_to codec,
                                         break;
                                 }
 
-                                accumulator = (accumulator << codec->bits) | value;
+                                accumulator = codec->low_bit_first
+                                    ? accumulator | ((positive)value << held)
+                                    : (accumulator << codec->bits) | value;
                                 held += codec->bits;
                                 seen++;
 
@@ -19276,14 +18944,6 @@ static b32 cmp_ends(b32 code)
         return text_done(code);
 }
 
-static bipolar cmp_byte(text_reader address_to side)
-{
-        if (!text_reader_fill(side))
-                return -1;
-
-        return side->buffer[side->position++];
-}
-
 // What is left of a side, which is the whole of it until -i has skipped
 // something. Nothing, for a pipe: what is behind one has no length until it
 // has ended.
@@ -19311,8 +18971,12 @@ static fn cmp_pass(text_reader address_to side, positive count)
         if (system_seek(side->handle, count, FILE_SEEK_CUR) >= 0)
                 return;
 
-        while (count-- && cmp_byte(side) >= 0)
-                ;
+        while (count && text_reader_fill(side))
+        {
+                positive take = min(count, side->filled - side->position);
+                side->position += take;
+                count -= take;
+        }
 }
 
 // The line is left out when the differences were listed, because that is
@@ -19447,7 +19111,6 @@ static b32 text_cmp()
         positive limit = TEXT_UNSET;
         bool newline = true;
         positive width = 1;
-        positive scalar_left = 0;
         b32 answer = 0;
         string_address said = file_option_value(address_of taking, 'n');
 
@@ -19551,164 +19214,115 @@ static b32 text_cmp()
                 if (limit != TEXT_UNSET && at >= limit)
                         break;
 
-                /*
-                        Equal blocks are cmp's common case.  Prove the whole
-                        run in the wide library compare and count its lines in
-                        the wide byte counter; only a block containing the
-                        first difference falls back to the byte path below.
-                */
-                if (!scalar_left && text_reader_fill(address_of cmp_left) &&
-                    text_reader_fill(address_of cmp_right))
-                {
-                        positive left = cmp_left.filled - cmp_left.position;
-                        positive right = cmp_right.filled - cmp_right.position;
-                        positive run = min(left, right);
-
-                        if (limit != TEXT_UNSET && run > limit - at)
-                                run = limit - at;
-
-                        p8 address_to one = cmp_left.buffer + cmp_left.position;
-                        p8 address_to two = cmp_right.buffer + cmp_right.position;
-
-                        if (run)
-                        {
-                                bipolar order = memory_compare(one, two, run);
-
-                                if (!order)
-                                {
-                                        lines += memory_count(one, run, '\n');
-                                        newline = one[run - 1] == '\n';
-                                        cmp_left.position += run;
-                                        cmp_right.position += run;
-                                        at += run;
-                                        continue;
-                                }
-
-                                if (silent)
-                                        return cmp_ends(1);
-
-                                if (listing)
-                                {
-                                        // Do not compare the same known-
-                                        // different suffix again per byte.
-                                        scalar_left = run;
-                                }
-                                else
-                                {
-                                        positive prefix =
-                                            memory_common_prefix(one, two, run);
-
-                                        if (prefix)
-                                        {
-                                                lines += memory_count(one, prefix, '\n');
-                                                newline = one[prefix - 1] == '\n';
-                                                cmp_left.position += prefix;
-                                                cmp_right.position += prefix;
-                                                at += prefix;
-                                        }
-                                }
-                        }
-                }
-
-                bipolar a = cmp_byte(address_of cmp_left);
-                bipolar b = cmp_byte(address_of cmp_right);
-
+                bool have_left = text_reader_fill(address_of cmp_left);
+                bool have_right = text_reader_fill(address_of cmp_right);
                 if (cmp_left.failed || cmp_right.failed)
                 {
                         answer = 2;
                         break;
                 }
-
-                if (a < 0 && b < 0)
+                if (!have_left && !have_right)
                         break;
-
-                if (a < 0 || b < 0)
+                if (!have_left || !have_right)
                 {
                         if (!silent)
-                                cmp_ended(a < 0 ? address_of cmp_left
-                                                : address_of cmp_right,
+                                cmp_ended(!have_left ? address_of cmp_left
+                                                     : address_of cmp_right,
                                           at, lines, newline, listing);
-
                         answer = 1;
                         break;
                 }
 
+                positive run = min(cmp_left.filled - cmp_left.position,
+                                   cmp_right.filled - cmp_right.position);
+                run = min(run, limit - at);
+                p8 address_to one = cmp_left.buffer + cmp_left.position;
+                p8 address_to two = cmp_right.buffer + cmp_right.position;
+                positive prefix = memory_common_prefix(one, two, run);
+
+                if (prefix)
+                {
+                        lines += memory_count(one, prefix, '\n');
+                        newline = one[prefix - 1] == '\n';
+                        cmp_left.position += prefix;
+                        cmp_right.position += prefix;
+                        at += prefix;
+                }
+                if (prefix == run)
+                        continue;
+
+                p8 a = cmp_left.buffer[cmp_left.position++];
+                p8 b = cmp_right.buffer[cmp_right.position++];
                 at++;
                 newline = a == '\n';
 
-                if (scalar_left)
-                        scalar_left--;
+                if (silent)
+                        return cmp_ends(1);
 
-                if (a != b)
+                answer = 1;
+
+                p8 left[8];
+                p8 right[8];
+                positive wide = 0;
+
+                if (shown)
                 {
-                        if (silent)
-                                return cmp_ends(1);
+                        wide = text_visible(left, (p8)a);
+                        text_visible(right, (p8)b);
+                }
 
-                        answer = 1;
-
-                        p8 left[8];
-                        p8 right[8];
-                        positive wide = 0;
+                if (!listing)
+                {
+                        text_put_string(cmp_left.name);
+                        text_put_character(' ');
+                        text_put_string(cmp_right.name);
+                        text_put_string(shown ? " differ: byte "
+                                              : " differ: char ");
+                        positive_to_string(text_put, at);
+                        text_put_string(", line ");
+                        positive_to_string(text_put, lines + 1);
 
                         if (shown)
                         {
-                                wide = text_visible(left, (p8)a);
-                                text_visible(right, (p8)b);
-                        }
-
-                        if (!listing)
-                        {
-                                text_put_string(cmp_left.name);
+                                text_put_string(" is ");
+                                cmp_octal((positive)a);
                                 text_put_character(' ');
-                                text_put_string(cmp_right.name);
-                                text_put_string(shown ? " differ: byte "
-                                                      : " differ: char ");
-                                positive_to_string(text_put, at);
-                                text_put_string(", line ");
-                                positive_to_string(text_put, lines + 1);
-
-                                if (shown)
-                                {
-                                        text_put_string(" is ");
-                                        cmp_octal((positive)a);
-                                        text_put_character(' ');
-                                        text_put_string(left);
-                                        text_put_character(' ');
-                                        cmp_octal((positive)b);
-                                        text_put_character(' ');
-                                        text_put_string(right);
-                                }
-
-                                text_put_character('\n');
-                                break;
-                        }
-
-                        positive_to_padded(text_put, at, width, ' ', 0);
-                        text_put_character(' ');
-                        cmp_octal((positive)a);
-                        text_put_character(' ');
-
-                        if (shown)
-                        {
                                 text_put_string(left);
-
-                                // The listing's own column, which is four
-                                // wide because M-^? is.
-                                writer_fill(text_put, wide < 4 ? 4 - wide : 0, ' ');
-
                                 text_put_character(' ');
-                        }
-
-                        cmp_octal((positive)b);
-
-                        if (shown)
-                        {
+                                cmp_octal((positive)b);
                                 text_put_character(' ');
                                 text_put_string(right);
                         }
 
                         text_put_character('\n');
+                        break;
                 }
+
+                positive_to_padded(text_put, at, width, ' ', 0);
+                text_put_character(' ');
+                cmp_octal((positive)a);
+                text_put_character(' ');
+
+                if (shown)
+                {
+                        text_put_string(left);
+
+                        // The listing's own column, which is four
+                        // wide because M-^? is.
+                        writer_fill(text_put, wide < 4 ? 4 - wide : 0, ' ');
+
+                        text_put_character(' ');
+                }
+
+                cmp_octal((positive)b);
+
+                if (shown)
+                {
+                        text_put_character(' ');
+                        text_put_string(right);
+                }
+
+                text_put_character('\n');
 
                 if (newline)
                         lines++;

@@ -1697,10 +1697,7 @@ typedef struct
 
 typedef struct
 {
-        process_script_log output;
-        process_script_log input;
-        process_script_log combined;
-        process_script_log timing;
+        process_script_log logs[3]; // Output (also combined), input, timing.
         process_script_log address_to out;
         process_script_log address_to in;
         bool append;
@@ -1854,7 +1851,7 @@ static bool process_script_footer_one(process_script_log address_to log_file,
 static bool process_script_timing_line(process_script_state address_to state,
                                        p8 stream, positive length)
 {
-        process_script_log address_to timing = address_of state->timing;
+        process_script_log address_to timing = state->logs + 2;
         if (timing->handle < 0)
                 return true;
         if (!state->advanced && stream != 'O')
@@ -1885,14 +1882,14 @@ static bool process_script_timing_header(process_script_state address_to state,
                                          string_address key,
                                          string_address value)
 {
-        if (state->timing.handle < 0 || !state->advanced)
+        process_script_log address_to timing = state->logs + 2;
+        if (timing->handle < 0 || !state->advanced)
                 return true;
-        return process_script_log_text(address_of state->timing,
-                                       "H 0.000000 ") &&
-               process_script_log_text(address_of state->timing, key) &&
-               process_script_log_text(address_of state->timing, " ") &&
-               process_script_log_text(address_of state->timing, value) &&
-               process_script_log_text(address_of state->timing, "\n");
+        return process_script_log_text(timing, "H 0.000000 ") &&
+               process_script_log_text(timing, key) &&
+               process_script_log_text(timing, " ") &&
+               process_script_log_text(timing, value) &&
+               process_script_log_text(timing, "\n");
 }
 
 static bool process_script_command_text(p8 address_to into, positive room,
@@ -2283,9 +2280,9 @@ static b32 process_script_record(process_script_state address_to state,
                 if (state->in && state->in != state->out)
                         system_call_1(syscall(fsync),
                                       (positive)state->in->handle);
-                if (state->timing.handle >= 0)
+                if (state->logs[2].handle >= 0)
                         system_call_1(syscall(fsync),
-                                      (positive)state->timing.handle);
+                                      (positive)state->logs[2].handle);
         }
         state->failed = failed;
         return failed ? 1 : wait_status_code(status);
@@ -2323,19 +2320,10 @@ static b32 process_script()
             .longs = process_script_longs,
         };
         positive count = (positive)program_argument_count();
-        if (!file_take(address_of taking))
-                return 1;
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                    "Usage: script [options] [file] [-- command [argument...]]\n");
-                return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "script from dawning-kit\n");
-                return 0;
-        }
+        b32 answer;
+        if (ul_options_done(address_of taking,
+                "[options] [file] [-- command [argument...]]", address_of answer))
+                return answer;
         if (taking.flags & FILE_FLAG('o'))
                 return ul_bad_usage("script",
                                     "output limits are not supported");
@@ -2390,8 +2378,8 @@ static b32 process_script()
 
         process_script_state state;
         memory_fill(address_of state, 0, sizeof(state));
-        state.output.handle = state.input.handle = state.combined.handle =
-            state.timing.handle = -1;
+        for (positive i = 0; i < array_count(state.logs); i++)
+                state.logs[i].handle = -1;
         state.append = (taking.flags & FILE_FLAG('a')) != 0;
         state.force = (taking.flags & FILE_FLAG('X')) != 0;
         state.flush = (taking.flags & FILE_FLAG('f')) != 0;
@@ -2451,96 +2439,49 @@ static b32 process_script()
                 return ul_bad_usage(
                     "script", "log and timing paths must be distinct");
 
-        bipolar opened;
-        if (combined_path)
+        string_address paths[] = {
+            output_path, combined_path ? null : input_path, timing_path};
+        answer = 1;
+        bool close_flush = false;
+        for (positive i = 0; i < array_count(paths); i++)
         {
-                opened = process_script_log_open(address_of state.combined,
-                                                  combined_path, state.append,
-                                                  state.force);
-                if (opened < 0)
+                if (paths[i])
                 {
-                        string_format(file_fail, "script: %s: %s\n",
-                                      combined_path, file_reason(opened));
-                        return 1;
-                }
-                state.out = state.in = address_of state.combined;
-        }
-        else
-        {
-                if (output_path)
-                {
-                        opened = process_script_log_open(address_of state.output,
-                                                          output_path,
-                                                          state.append,
-                                                          state.force);
+                        bipolar opened = process_script_log_open(state.logs + i,
+                            paths[i], state.append, state.force);
                         if (opened < 0)
                         {
                                 string_format(file_fail, "script: %s: %s\n",
-                                              output_path, file_reason(opened));
-                                return 1;
+                                              paths[i], file_reason(opened));
+                                goto close_logs;
                         }
-                        state.out = address_of state.output;
-                }
-                if (input_path)
-                {
-                        opened = process_script_log_open(address_of state.input,
-                                                          input_path,
-                                                          state.append,
-                                                          state.force);
-                        if (opened < 0)
-                        {
-                                process_script_log_close(state.out, false);
-                                string_format(file_fail, "script: %s: %s\n",
-                                              input_path, file_reason(opened));
-                                return 1;
-                        }
-                        state.in = address_of state.input;
                 }
         }
+        state.out = output_path ? state.logs : null;
+        state.in = combined_path ? state.out : input_path ? state.logs + 1 : null;
+        process_script_log address_to timing = state.logs + 2;
 
-        if (timing_path)
+        if (!timing_path && (taking.flags & FILE_FLAG('t')) &&
+            (taking.bare & FILE_FLAG('t')))
         {
-                opened = process_script_log_open(address_of state.timing,
-                                                  timing_path, state.append,
-                                                  state.force);
-                if (opened < 0)
-                {
-                        process_script_log_close(state.out, false);
-                        if (state.in != state.out)
-                                process_script_log_close(state.in, false);
-                        string_format(file_fail, "script: %s: %s\n",
-                                      timing_path, file_reason(opened));
-                        return 1;
-                }
-        }
-        else if ((taking.flags & FILE_FLAG('t')) &&
-                 (taking.bare & FILE_FLAG('t')))
-        {
-                state.timing.handle = 2;
-                state.timing.path = (string_address)"/dev/stderr";
+                timing->handle = 2;
+                timing->path = (string_address)"/dev/stderr";
         }
 
         if (process_script_log_same(state.out, state.in) ||
-            process_script_log_same(state.out, address_of state.timing) ||
-            process_script_log_same(state.in, address_of state.timing))
+            process_script_log_same(state.out, timing) ||
+            process_script_log_same(state.in, timing))
         {
-                process_script_log_close(state.out, false);
-                if (state.in != state.out)
-                        process_script_log_close(state.in, false);
-                process_script_log_close(address_of state.timing, false);
-                return ul_bad_usage(
-                    "script", "log files must name distinct objects");
+                ul_bad_usage("script", "log files must name distinct objects");
+                goto close_logs;
         }
 
         p8 display[4096];
         if (!process_script_command_text(display, sizeof(display), command,
                                          command_first))
         {
-                process_script_log_close(state.out, false);
-                if (state.in != state.out)
-                        process_script_log_close(state.in, false);
-                process_script_log_close(address_of state.timing, false);
-                return ul_bad_usage("script", "command is too long");
+                ul_bad_usage("script", "command is too long");
+                goto close_logs;
         }
 
         p8 stamp[64];
@@ -2562,10 +2503,10 @@ static b32 process_script()
                                              (string_address)"SHELL", shell);
         good &= process_script_timing_header(address_of state,
                                              (string_address)"COMMAND", display);
-        if (state.timing.path)
+        if (timing->path)
                 good &= process_script_timing_header(
                     address_of state, (string_address)"TIMING_LOG",
-                    state.timing.path);
+                    timing->path);
         if (output_path)
                 good &= process_script_timing_header(
                     address_of state, (string_address)"OUTPUT_LOG", output_path);
@@ -2582,9 +2523,9 @@ static b32 process_script()
                 if (input_path)
                         string_format(log, ", input log file is '%s'",
                                       input_path);
-                if (state.timing.path)
+                if (timing->path)
                         string_format(log, ", timing file is '%s'",
-                                      state.timing.path);
+                                      timing->path);
                 string_format(log, ".\n");
                 log_flush();
         }
@@ -2596,7 +2537,7 @@ static b32 process_script()
         if (state.in != state.out)
                 good &= process_script_footer_one(state.in, stamp, status);
 
-        if (state.timing.handle >= 0 && state.advanced)
+        if (timing->handle >= 0 && state.advanced)
         {
                 positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= state.began ? now - state.began : 0;
@@ -2619,17 +2560,17 @@ static b32 process_script()
                 string_format(log, "Script done.\n");
                 log_flush();
         }
-        good &= !state.output.failed && !state.input.failed &&
-                !state.combined.failed && !state.timing.failed;
-        process_script_log_close(state.out, state.flush);
-        if (state.in != state.out)
-                process_script_log_close(state.in, state.flush);
-        process_script_log_close(address_of state.timing, state.flush);
-        if (!good)
-                return 1;
-        if (state.failed)
-                return 1;
-        return state.child_status ? status : 0;
+        if (good && !state.failed)
+                answer = state.child_status ? status : 0;
+        close_flush = state.flush;
+close_logs:
+        for (positive i = 0; i < array_count(state.logs); i++)
+        {
+                if (state.logs[i].failed)
+                        answer = 1;
+                process_script_log_close(state.logs + i, close_flush);
+        }
+        return answer;
 }
 
 // scriptreplay ----------------------------------------------------
@@ -2890,19 +2831,10 @@ static b32 process_scriptreplay()
             .longs = process_scriptreplay_longs,
         };
         positive argument_count = (positive)program_argument_count();
-        if (!file_take(address_of taking))
-                return 1;
-        if (taking.flags & FILE_FLAG('h'))
-        {
-                string_format(log,
-                    "Usage: scriptreplay [options] timingfile [typescript [divisor]]\n");
-                return 0;
-        }
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "scriptreplay from dawning-kit\n");
-                return 0;
-        }
+        b32 answer;
+        if (ul_options_done(address_of taking,
+                "[options] timingfile [typescript [divisor]]", address_of answer))
+                return answer;
         if (taking.flags & FILE_FLAG('S'))
                 return ul_bad_usage("scriptreplay",
                                     "summary mode is not supported");
@@ -3097,16 +3029,10 @@ static b32 process_pivot_root()
         };
         positive count = (positive)program_argument_count();
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (taking.flags & FILE_FLAG('h'))
-                return ul_usage((string_address)"pivot_root",
-                                (string_address)"[options] new_root put_old");
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "pivot_root from dawning-kit\n");
-                return 0;
-        }
+        b32 answer;
+        if (ul_options_done(address_of taking, "[options] new_root put_old",
+                            address_of answer))
+                return answer;
         if (taking.first + 2 != count)
                 return ul_bad_usage((string_address)"pivot_root",
                                     (string_address)"expected new_root and put_old");
@@ -3148,16 +3074,9 @@ static b32 process_ctrlaltdel()
         };
         positive count = (positive)program_argument_count();
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (taking.flags & FILE_FLAG('h'))
-                return ul_usage((string_address)"ctrlaltdel",
-                                (string_address)"hard|soft");
-        if (taking.flags & FILE_FLAG('V'))
-        {
-                string_format(log, "ctrlaltdel from dawning-kit\n");
-                return 0;
-        }
+        b32 answer;
+        if (ul_options_done(address_of taking, "hard|soft", address_of answer))
+                return answer;
         if (taking.first + 1 != count)
                 return ul_bad_usage((string_address)"ctrlaltdel",
                                     (string_address)"expected hard or soft");

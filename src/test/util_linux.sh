@@ -1895,6 +1895,58 @@ subject 'detached recorder gives child controlling terminal' script \
         'rm -f "$1/ctty.log"; out=$(timeout 5 setsid "$TOOL" -q -e -O "$1/ctty.log" -c "python3 $1/controlling-tty.py" </dev/null 2>/dev/null | tr -d "\r"); [ "$out" = True ]' \
         sh "$script_work"
 
+# Each role follows the same open/rollback/close path. Combined input/output
+# must still own one descriptor and receive one header/footer, not two.
+for role in output input separate combined; do
+        for append in no yes; do
+                subject "script log ownership $role/$append" script '
+                        directory="$1/roles-$2-$3"; mkdir "$directory" || exit
+                        case $2 in
+                        output) logs=out; set -- "$directory" "$3" -O "$directory/out" ;;
+                        input) logs=in; set -- "$directory" "$3" -I "$directory/in" ;;
+                        separate) logs="out in"; set -- "$directory" "$3" -O "$directory/out" -I "$directory/in" ;;
+                        combined) logs=both; set -- "$directory" "$3" -B "$directory/both" ;;
+                        esac
+                        append=$2; shift 2
+                        if [ "$append" = yes ]; then
+                                for path in $logs; do printf "seed\n" > "$directory/$path"; done
+                                set -- -a "$@"
+                        fi
+                        printf "inputmark\n" | "$TOOL" -q -e -E never "$@" -T "$directory/time" \
+                                -c "read line; printf \"out:%s\\n\" \"\$line\"; exit 7" > "$directory/stdout"
+                        [ "$?" = 7 ] && grep -q out:inputmark "$directory/stdout" || exit 1
+                        for name in $logs; do
+                                path="$directory/$name"
+                                [ "$(grep -c "Script started on" "$path")" = 1 ] || exit 1
+                                [ "$(grep -c "Script done on" "$path")" = 1 ] || exit 1
+                                if [ "$append" = yes ]; then [ "$(head -n 1 "$path")" = seed ] || exit 1; fi
+                        done
+                        test -s "$directory/time"
+                ' sh "$script_work" "$role" "$append"
+        done
+done
+for role in output input timing; do
+        subject "script open failure rolls back $role" script '
+                directory="$1/failure-$2"; mkdir "$directory" || exit
+                out="$directory/out"; in="$directory/in"; timing="$directory/time"
+                case $2 in output) out="$directory/missing/out" ;;
+                        input) in="$directory/missing/in" ;;
+                        timing) timing="$directory/missing/time" ;; esac
+                "$TOOL" -q -O "$out" -I "$in" -T "$timing" \
+                        -c "touch $directory/child" </dev/null >/dev/null 2>&1
+                [ "$?" = 1 ] && [ ! -e "$directory/child" ] || exit 1
+                for path in "$directory/out" "$directory/in" "$directory/time"; do
+                        [ ! -s "$path" ] || exit 1
+                done
+        ' sh "$script_work" "$role"
+done
+for role in O I B T; do
+        subject "script $role write failure is retained" script '
+                "$TOOL" -q -f -"$2" /dev/full -c "printf marker" \
+                        </dev/null >/dev/null 2>&1; [ "$?" = 1 ]
+        ' sh "$script_work" "$role"
+done
+
 printf 'Script started on fixture\nabcDEF\nScript done on fixture\n' > "$script_work/classic.log"
 printf '0.000000 3\n0.000000 3\n' > "$script_work/classic.time"
 compare 'classic zero-delay playback' scriptreplay \

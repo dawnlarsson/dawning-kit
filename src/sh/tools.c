@@ -8905,56 +8905,22 @@ static bool diff_discard()
                                 }
                         }
 
-                        run = 0;
-
-                        for (j = 0; j < length; j++)
+                        for (positive reverse = 0; reverse < 2; reverse++)
                         {
-                                if (j >= 8 && mark[i + j] == 1)
-                                        break;
-
-                                if (mark[i + j] == 2)
+                                run = 0;
+                                for (j = 0; j < length; j++)
                                 {
-                                        run = 0;
-                                        mark[i + j] = 0;
+                                        positive at = i + (reverse ? length - j - 1 : j);
+                                        if (j >= 8 && mark[at] == 1)
+                                                break;
+                                        if (mark[at] == 2)
+                                                mark[at] = 0;
+                                        run = mark[at] ? run + 1 : 0;
+                                        if (run == 3)
+                                                break;
                                 }
-                                else if (!mark[i + j])
-                                {
-                                        run = 0;
-                                }
-                                else
-                                {
-                                        run++;
-                                }
-
-                                if (run == 3)
-                                        break;
                         }
-
                         i += length - 1;
-                        run = 0;
-
-                        for (j = 0; j < length; j++)
-                        {
-                                if (j >= 8 && mark[i - j] == 1)
-                                        break;
-
-                                if (mark[i - j] == 2)
-                                {
-                                        run = 0;
-                                        mark[i - j] = 0;
-                                }
-                                else if (!mark[i - j])
-                                {
-                                        run = 0;
-                                }
-                                else
-                                {
-                                        run++;
-                                }
-
-                                if (run == 3)
-                                        break;
-                        }
                 }
         }
 
@@ -9003,86 +8969,57 @@ static fn diff_meet(positive xoff, positive xlim, positive yoff, positive ylim,
         bipolar high = (bipolar)xlim - (bipolar)yoff;
         bipolar front = (bipolar)xoff - (bipolar)yoff;
         bipolar back = (bipolar)xlim - (bipolar)ylim;
-        bipolar front_low = front, front_high = front;
-        bipolar back_low = back, back_high = back;
+        bipolar first[2] = {front, back}, last[2] = {front, back};
+        b32 address_to frontier[2] = {diff_forward, diff_backward};
         bool odd = (front - back) & 1;
         positive shift = diff_middle;
 
         diff_forward[shift + front] = (b32)xoff;
         diff_backward[shift + back] = (b32)xlim;
 
-        while (1)
-        {
-                if (front_low > low)
-                        diff_forward[shift + --front_low - 1] = -1;
-                else
-                        front_low++;
-
-                if (front_high < high)
-                        diff_forward[shift + ++front_high + 1] = -1;
-                else
-                        front_high--;
-
-                for (bipolar d = front_high; d >= front_low; d -= 2)
+        for (;;)
+                for (positive reverse = 0; reverse < 2; reverse++)
                 {
-                        bipolar lower = diff_forward[shift + d - 1];
-                        bipolar upper = diff_forward[shift + d + 1];
-                        bipolar x = lower < upper ? upper : lower + 1;
-                        bipolar y = x - d;
+                        b32 address_to edge = frontier[reverse] + shift;
+                        b32 address_to other = frontier[1 - reverse] + shift;
+                        b32 outside = reverse ? 0x7fffffff : -1;
+                        bipolar step = reverse ? -1 : 1;
 
-                        while (x < (bipolar)xlim && y < (bipolar)ylim &&
-                               xv[x] == yv[y])
+                        if (first[reverse] > low)
+                                edge[--first[reverse] - 1] = outside;
+                        else
+                                first[reverse]++;
+                        if (last[reverse] < high)
+                                edge[++last[reverse] + 1] = outside;
+                        else
+                                last[reverse]--;
+
+                        for (bipolar d = last[reverse]; d >= first[reverse]; d -= 2)
                         {
-                                x++;
-                                y++;
-                        }
+                                bipolar lower = edge[d - 1], upper = edge[d + 1];
+                                bipolar x = reverse ? (lower < upper ? lower : upper - 1)
+                                                     : (lower < upper ? upper : lower + 1);
+                                bipolar y = x - d;
 
-                        diff_forward[shift + d] = (b32)x;
-
-                        if (odd && back_low <= d && d <= back_high &&
-                            diff_backward[shift + d] <= x)
-                        {
-                                address_to xmid = (positive)x;
-                                address_to ymid = (positive)y;
-                                return;
+                                while (reverse ? ((bipolar)xoff < x && (bipolar)yoff < y)
+                                               : (x < (bipolar)xlim && y < (bipolar)ylim))
+                                {
+                                        if (xv[x - reverse] != yv[y - reverse])
+                                                break;
+                                        x += step;
+                                        y += step;
+                                }
+                                edge[d] = (b32)x;
+                                if (odd != reverse && first[1 - reverse] <= d &&
+                                    d <= last[1 - reverse] &&
+                                    (reverse ? x <= other[d] : other[d] <= x))
+                                {
+                                        *xmid = (positive)x;
+                                        *ymid = (positive)y;
+                                        return;
+                                }
                         }
                 }
-
-                if (back_low > low)
-                        diff_backward[shift + --back_low - 1] = 0x7fffffff;
-                else
-                        back_low++;
-
-                if (back_high < high)
-                        diff_backward[shift + ++back_high + 1] = 0x7fffffff;
-                else
-                        back_high--;
-
-                for (bipolar d = back_high; d >= back_low; d -= 2)
-                {
-                        bipolar lower = diff_backward[shift + d - 1];
-                        bipolar upper = diff_backward[shift + d + 1];
-                        bipolar x = lower < upper ? lower : upper - 1;
-                        bipolar y = x - d;
-
-                        while ((bipolar)xoff < x && (bipolar)yoff < y &&
-                               xv[x - 1] == yv[y - 1])
-                        {
-                                x--;
-                                y--;
-                        }
-
-                        diff_backward[shift + d] = (b32)x;
-
-                        if (!odd && front_low <= d && d <= front_high &&
-                            x <= diff_forward[shift + d])
-                        {
-                                address_to xmid = (positive)x;
-                                address_to ymid = (positive)y;
-                                return;
-                        }
-                }
-        }
 }
 
 // The high half is looped rather than recursed, which is what keeps the
@@ -9322,41 +9259,17 @@ static fn diff_number(positive value)
 }
 
 static fn diff_range(diff_side address_to side, bipolar first, bipolar last,
-                     p8 separator)
+                     bool unified)
 {
         bipolar low = first + (bipolar)side->prefix + 1;
         bipolar high = last + (bipolar)side->prefix + 1;
 
-        if (high > low)
+        diff_number((positive)(high > low ? low : high));
+        if (high > low || (unified && high < low))
         {
-                diff_number((positive)low);
-                text_put_character(separator);
-                diff_number((positive)high);
+                text_put_character(',');
+                diff_number((positive)(unified ? (high < low ? 0 : high - low + 1) : high));
         }
-        else
-        {
-                diff_number((positive)high);
-        }
-}
-
-static fn diff_unified_range(diff_side address_to side, bipolar first, bipolar last)
-{
-        bipolar low = first + (bipolar)side->prefix + 1;
-        bipolar high = last + (bipolar)side->prefix + 1;
-
-        if (high <= low)
-        {
-                diff_number((positive)high);
-
-                if (high < low)
-                        text_put_string(",0");
-
-                return;
-        }
-
-        diff_number((positive)low);
-        text_put_character(',');
-        diff_number((positive)(high - low + 1));
 }
 
 static fn diff_put_line(diff_side address_to side, bipolar middle, string_address flag)
@@ -9424,11 +9337,11 @@ static fn diff_normal_output()
                 bipolar first1 = (bipolar)one->line1;
                 bipolar last1 = (bipolar)(one->line1 + one->inserted) - 1;
 
-                diff_range(diff_files + 0, first0, last0, ',');
+                diff_range(diff_files + 0, first0, last0, false);
                 text_put_character(one->deleted && one->inserted
                                        ? 'c'
                                        : one->deleted ? 'd' : 'a');
-                diff_range(diff_files + 1, first1, last1, ',');
+                diff_range(diff_files + 1, first1, last1, false);
                 text_put_character('\n');
 
                 for (positive i = 0; i < one->deleted; i++)
@@ -9534,9 +9447,9 @@ static fn diff_unified_output(string_address left, string_address right)
                 }
 
                 text_put_string("@@ -");
-                diff_unified_range(diff_files + 0, first0, last0);
+                diff_range(diff_files + 0, first0, last0, true);
                 text_put_string(" +");
-                diff_unified_range(diff_files + 1, first1, last1);
+                diff_range(diff_files + 1, first1, last1, true);
                 text_put_string(" @@\n");
 
                 positive at = c;
