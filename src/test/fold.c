@@ -24,16 +24,7 @@
 */
 #include "../compiler_memory.c"
 
-typedef unsigned short __u16;
-typedef unsigned int __u32;
-typedef unsigned long long __u64;
 typedef unsigned long __kernel_size_t;
-
-#ifndef __always_inline
-#define __always_inline INLINE
-#endif
-
-#define FOLD_ONLY_BODIES 1
 #include "../../kernel/patch/fold-x86.h"
 
 static p8 fold_mine[256];
@@ -51,6 +42,37 @@ static fn fold_note(string_address what, positive size, positive at,
                       what, size, at, got, want);
 }
 
+static fn fold_check(string_address what, positive size, p8 address_to source)
+{
+        fold_checks++;
+        for (positive at = 0; at < sizeof(fold_mine); at++)
+        {
+                p8 want = at >= 96 && at < 96 + size
+                    ? (source ? source[at - 96] : 0x5C) : 0xA5;
+                if (fold_mine[at] != want)
+                {
+                        fold_note(what, size, at, fold_mine[at], want);
+                        break;
+                }
+        }
+}
+
+/* Literal tokens reach the builtin arms; changed arguments must run once. */
+#define FOLD_LITERAL(size)                                                   \
+        do {                                                                 \
+                positive to = 96, from = 64;                                 \
+                memory_fill(fold_mine, 0xA5, sizeof(fold_mine));                \
+                if (memcpy(fold_mine + to++, fold_region + from++, size) !=   \
+                        fold_mine + 96 || to != 97 || from != 65)             \
+                        fold_note("literal copy arguments", size, 0, 1, 0); \
+                fold_check("literal copy", size, fold_region + 64);          \
+                memory_fill(fold_mine, 0xA5, sizeof(fold_mine));                \
+                if (memset(fold_mine + --to, 0x5C, size) != fold_mine + 96 || \
+                    to != 96)                                                \
+                        fold_note("literal fill arguments", size, 0, 1, 0); \
+                fold_check("literal fill", size, null);                      \
+        } while (0)
+
 b32 main(void)
 {
         positive size;
@@ -66,39 +88,38 @@ b32 main(void)
                 for (at = 0; at < 64; at++)
                         source[at] = (p8)(at * 37 + 11);
 
-                moonwater_fold_copy(fold_mine + 96, source, size);
+                memcpy(fold_mine + 96, source, size);
                 memory_copy_apart(fold_theirs + 96, source, size);
 
-                fold_checks++;
-                for (at = 0; at < sizeof(fold_mine); at++)
-                {
-                        p8 want = (at >= 96 && at < 96 + size)
-                                          ? fold_theirs[at] : 0xA5;
-
-                        if (fold_mine[at] != want)
-                        {
-                                fold_note((string_address) "copy", size, at,
-                                          fold_mine[at], want);
-                                break;
-                        }
-                }
+                fold_check("copy", size, fold_theirs + 96);
 
                 memory_fill(fold_mine, 0xA5, sizeof(fold_mine));
-                moonwater_fold_fill(fold_mine + 96, 0x5C, size);
+                memset(fold_mine + 96, 0x5C, size);
 
-                fold_checks++;
-                for (at = 0; at < sizeof(fold_mine); at++)
-                {
-                        p8 want = (at >= 96 && at < 96 + size) ? 0x5C : 0xA5;
-
-                        if (fold_mine[at] != want)
-                        {
-                                fold_note((string_address) "fill", size, at,
-                                          fold_mine[at], want);
-                                break;
-                        }
-                }
+                fold_check("fill", size, null);
         }
+
+        FOLD_LITERAL(0);
+        FOLD_LITERAL(1);
+        FOLD_LITERAL(7);
+        FOLD_LITERAL(8);
+        FOLD_LITERAL(15);
+        FOLD_LITERAL(16);
+        FOLD_LITERAL(31);
+        FOLD_LITERAL(32);
+        FOLD_LITERAL(33);
+
+        positive to = 96, from = 64, count = 8, byte = 0x15C;
+        memory_fill(fold_mine, 0xA5, sizeof(fold_mine));
+        if (memcpy(fold_mine + to++, fold_region + from++, count++) !=
+                fold_mine + 96 || to != 97 || from != 65 || count != 9)
+                fold_note("dynamic copy arguments", 8, 0, 1, 0);
+        fold_check("dynamic copy", 8, source);
+        memory_fill(fold_mine, 0xA5, sizeof(fold_mine));
+        if (memset(fold_mine + --to, byte++, count++) != fold_mine + 96 ||
+            to != 96 || byte != 0x15D || count != 10)
+                fold_note("dynamic fill arguments", 9, 0, 1, 0);
+        fold_check("dynamic fill", 9, null);
 
         string_format(log, "%p checks, %p failures\n", fold_checks,
                       fold_failures);

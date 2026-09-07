@@ -2071,6 +2071,15 @@ static decimal math_cosine_reduced(decimal reduced)
         is as accurate as sin of 1. tan is the one that is worse, and only by
         the last bit, for the reason written above its own routine.
 */
+/* A quarter turn swaps the reduced kernels; a half turn changes the sign.
+   Cosine enters one quadrant ahead of sine. */
+static decimal math_quadrant_sine(decimal reduced, b32 quadrant)
+{
+        decimal result = quadrant & 1 ? math_cosine_reduced(reduced)
+                                      : math_sine_reduced(reduced);
+        return quadrant & 2 ? -result : result;
+}
+
 static decimal sine(decimal value)
 {
         decimal reduced;
@@ -2091,17 +2100,7 @@ static decimal sine(decimal value)
 
         quadrant = math_reduce_quadrant(value, address_of reduced);
 
-        switch (quadrant)
-        {
-        case 0:
-                return math_sine_reduced(reduced);
-        case 1:
-                return math_cosine_reduced(reduced);
-        case 2:
-                return -math_sine_reduced(reduced);
-        default:
-                return -math_cosine_reduced(reduced);
-        }
+        return math_quadrant_sine(reduced, quadrant);
 }
 
 static decimal cosine(decimal value)
@@ -2117,17 +2116,7 @@ static decimal cosine(decimal value)
 
         quadrant = math_reduce_quadrant(value, address_of reduced);
 
-        switch (quadrant)
-        {
-        case 0:
-                return math_cosine_reduced(reduced);
-        case 1:
-                return -math_sine_reduced(reduced);
-        case 2:
-                return -math_cosine_reduced(reduced);
-        default:
-                return math_sine_reduced(reduced);
-        }
+        return math_quadrant_sine(reduced, quadrant + 1);
 }
 
 /*

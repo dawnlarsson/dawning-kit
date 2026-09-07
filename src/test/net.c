@@ -201,6 +201,22 @@ static fn error_frames(void)
                 }
         else
                 check("netlink framing request allocates", false);
+        frame.header.length = sizeof frame;
+        if (netlink_begin(&request, RTM_GETLINK, NLM_REQUEST, 91, 0))
+        {
+                socket_send(pair[1], &frame, sizeof frame, 0, null, 0);
+                check("netlink transaction owns reply and preserves error",
+                      netlink_transact(pair[0], &request, 91, null, null) == -123);
+                check("netlink transaction releases request on reply failure",
+                      !request.bytes && !request.room && !request.used && !request.failed);
+        }
+        if (netlink_begin(&request, RTM_GETLINK, NLM_REQUEST, 91, 0))
+        {
+                request.failed = true;
+                check("netlink transaction releases a poisoned request",
+                      netlink_transact(-1, &request, 91, null, null) == -1 &&
+                          !request.bytes && !request.room && !request.used && !request.failed);
+        }
         netlink_forget(&request);
         netlink_forget(&reply);
         socket_close(pair[0]);

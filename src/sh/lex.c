@@ -848,43 +848,18 @@ static string_address lex_nesting_at(string_address at, positive nesting,
                 /* A nested substitution is one word piece in this command.
                    Walk it independently so its comment state and closing
                    delimiter cannot leak into the containing word. */
-                if (c == '$' &&
-                    (string_is(step + 1, '(') || string_is(step + 1, '{')))
+                if ((c == '$' &&
+                     (string_is(step + 1, '(') || string_is(step + 1, '{'))) ||
+                    ((c == '<' || c == '>') && string_is(step + 1, '(')) ||
+                    (c == '`' && open != '`'))
                 {
-                        string_address inner = step + 1;
+                        string_address inner = step + (c != '`');
                         string_address stop =
                             lex_nesting_at(inner, nesting + 1,
-                                           posix_double && open == '{' &&
+                                           c == '$' && posix_double && open == '{' &&
                                                string_is(inner, '{'));
 
                         if (stop == inner)
-                                return at;
-
-                        step = stop;
-                        fresh = false;
-                        continue;
-                }
-
-                if ((c == '<' || c == '>') && string_is(step + 1, '('))
-                {
-                        string_address inner = step + 1;
-                        string_address stop =
-                            lex_nesting_at(inner, nesting + 1, false);
-
-                        if (stop == inner)
-                                return at;
-
-                        step = stop;
-                        fresh = false;
-                        continue;
-                }
-
-                if (c == '`' && open != '`')
-                {
-                        string_address stop =
-                            lex_nesting_at(step, nesting + 1, false);
-
-                        if (stop == step)
                                 return at;
 
                         step = stop;

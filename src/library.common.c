@@ -12,6 +12,67 @@
 #ifndef STANDARD_MODERN_C_LIBRARY_COMMON
 #define STANDARD_MODERN_C_LIBRARY_COMMON
 
+/* C varargs adapters shared by the standard compatibility families. */
+#define var_list_entry(name, returned, parameters, last, call)               \
+        static returned name parameters                                      \
+        {                                                                    \
+                var_args _variadic_list;                                     \
+                var_list(_variadic_list, last);                              \
+                returned _variadic_answer = (call);                          \
+                var_list_end(_variadic_list);                                \
+                return _variadic_answer;                                     \
+        }
+
+//      One digit for a base that is folded. Anything that is not a digit of
+//      that base answers the base itself, which no digit of it can be.
+static inline INLINE positive digit_known(p8 character, positive base)
+{
+        p32 narrow = (p32)character - 48;
+
+        if (base <= 10)
+                return narrow < (p32)base ? narrow : base;
+        if (narrow <= 9)
+                return narrow;
+
+        narrow = (p32)(character | 32) - 97;
+        return narrow <= (p32)base - 11 ? narrow + 10 : base;
+}
+
+/* Checked base-2..36 digit runs: overflow or no digits leaves both outputs
+   untouched; success advances the cursor and writes the unsigned value. */
+static inline bool string_digits_checked(string_address address_to text,
+                                         positive base,
+                                         positive address_to value)
+{
+        string_address at = address_to text;
+        positive got = 0;
+        bool any = false;
+
+        while (1)
+        {
+                positive digit = digit_known(string_get(at), base);
+
+                if (digit >= base)
+                        break;
+
+                positive scaled;
+
+                if (__builtin_mul_overflow(got, base, address_of scaled) ||
+                    __builtin_add_overflow(scaled, digit, address_of got))
+                        return false;
+
+                at++;
+                any = true;
+        }
+
+        if (!any)
+                return false;
+
+        address_to text = at;
+        address_to value = got;
+        return true;
+}
+
 /* GNU ld repairs an A53 ADRP/load pair split by a 4 KiB boundary with a whole
    veneer page.  Large functions which have actually hit that layout use one
    shared, architecture-scoped alignment spelling. */
@@ -902,6 +963,151 @@ static inline INLINE bool environment_key_is(string_address entry,
 
         return (positive)(equals - entry) == length && equals[0] == '=' &&
                !memory_compare(entry, name, length);
+}
+
+/* Linux errno text shared by libc and descriptor-oriented diagnostics.
+   Numbering and wording match glibc; 41 and 58 are unassigned. A negative
+   kernel result must be normalized by its caller. Unknown codes return null
+   so each interface retains its own fallback and buffer policy. */
+static inline CONST string_address system_error_message(bipolar code)
+{
+        static const char address_to const messages[] = {
+                "Success",
+                "Operation not permitted",
+                "No such file or directory",
+                "No such process",
+                "Interrupted system call",
+                "Input/output error",
+                "No such device or address",
+                "Argument list too long",
+                "Exec format error",
+                "Bad file descriptor",
+                "No child processes",
+                "Resource temporarily unavailable",
+                "Cannot allocate memory",
+                "Permission denied",
+                "Bad address",
+                "Block device required",
+                "Device or resource busy",
+                "File exists",
+                "Invalid cross-device link",
+                "No such device",
+                "Not a directory",
+                "Is a directory",
+                "Invalid argument",
+                "Too many open files in system",
+                "Too many open files",
+                "Inappropriate ioctl for device",
+                "Text file busy",
+                "File too large",
+                "No space left on device",
+                "Illegal seek",
+                "Read-only file system",
+                "Too many links",
+                "Broken pipe",
+                "Numerical argument out of domain",
+                "Numerical result out of range",
+                "Resource deadlock avoided",
+                "File name too long",
+                "No locks available",
+                "Function not implemented",
+                "Directory not empty",
+                "Too many levels of symbolic links",
+                null,
+                "No message of desired type",
+                "Identifier removed",
+                "Channel number out of range",
+                "Level 2 not synchronized",
+                "Level 3 halted",
+                "Level 3 reset",
+                "Link number out of range",
+                "Protocol driver not attached",
+                "No CSI structure available",
+                "Level 2 halted",
+                "Invalid exchange",
+                "Invalid request descriptor",
+                "Exchange full",
+                "No anode",
+                "Invalid request code",
+                "Invalid slot",
+                null,
+                "Bad font file format",
+                "Device not a stream",
+                "No data available",
+                "Timer expired",
+                "Out of streams resources",
+                "Machine is not on the network",
+                "Package not installed",
+                "Object is remote",
+                "Link has been severed",
+                "Advertise error",
+                "Srmount error",
+                "Communication error on send",
+                "Protocol error",
+                "Multihop attempted",
+                "RFS specific error",
+                "Bad message",
+                "Value too large for defined data type",
+                "Name not unique on network",
+                "File descriptor in bad state",
+                "Remote address changed",
+                "Can not access a needed shared library",
+                "Accessing a corrupted shared library",
+                ".lib section in a.out corrupted",
+                "Attempting to link in too many shared libraries",
+                "Cannot exec a shared library directly",
+                "Invalid or incomplete multibyte or wide character",
+                "Interrupted system call should be restarted",
+                "Streams pipe error",
+                "Too many users",
+                "Socket operation on non-socket",
+                "Destination address required",
+                "Message too long",
+                "Protocol wrong type for socket",
+                "Protocol not available",
+                "Protocol not supported",
+                "Socket type not supported",
+                "Operation not supported",
+                "Protocol family not supported",
+                "Address family not supported by protocol",
+                "Address already in use",
+                "Cannot assign requested address",
+                "Network is down",
+                "Network is unreachable",
+                "Network dropped connection on reset",
+                "Software caused connection abort",
+                "Connection reset by peer",
+                "No buffer space available",
+                "Transport endpoint is already connected",
+                "Transport endpoint is not connected",
+                "Cannot send after transport endpoint shutdown",
+                "Too many references: cannot splice",
+                "Connection timed out",
+                "Connection refused",
+                "Host is down",
+                "No route to host",
+                "Operation already in progress",
+                "Operation now in progress",
+                "Stale file handle",
+                "Structure needs cleaning",
+                "Not a XENIX named type file",
+                "No XENIX semaphores available",
+                "Is a named type file",
+                "Remote I/O error",
+                "Disk quota exceeded",
+                "No medium found",
+                "Wrong medium type",
+                "Operation canceled",
+                "Required key not available",
+                "Key has expired",
+                "Key has been revoked",
+                "Key was rejected by service",
+                "Owner died",
+                "State not recoverable",
+                "Operation not possible due to RF-kill",
+                "Memory page has hardware error",
+        };
+        return (positive)code < array_count(messages) ? (string_address)messages[code] : null;
 }
 
 #endif

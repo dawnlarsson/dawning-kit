@@ -146,42 +146,19 @@ static positive format_stream_write(format_stream, address_any, positive)
 
 static bipolar errno = 0;
 
-/*
-        Enough of the table to make perror useful on its own. The error family
-        carries the whole of it, checked against glibc number by number, and
-        replaces this outright; what is here is the codes this tree already
-        names in src/sh/file.c and the handful beside them.
-*/
+/* Standalone formatting retains its historical subset and sign normalization.
+   The complete libc interface below the error guard accepts signed errno. */
 static string_address strerror(b32 code)
 {
-        static const char address_to messages[40] = {
-                [0] = "Success",
-                [1] = "Operation not permitted",
-                [2] = "No such file or directory",
-                [3] = "No such process",
-                [4] = "Interrupted system call",
-                [5] = "Input/output error",
-                [9] = "Bad file descriptor",
-                [11] = "Resource temporarily unavailable",
-                [12] = "Cannot allocate memory",
-                [13] = "Permission denied",
-                [14] = "Bad address",
-                [17] = "File exists",
-                [18] = "Invalid cross-device link",
-                [20] = "Not a directory",
-                [21] = "Is a directory",
-                [22] = "Invalid argument",
-                [24] = "Too many open files",
-                [25] = "Inappropriate ioctl for device",
-                [28] = "No space left on device",
-                [32] = "Broken pipe",
-                [39] = "Directory not empty",
+        static const p8 supported[] = {
+                0, 1, 2, 3, 4, 5, 9, 11, 12, 13, 14, 17, 18, 20, 21, 22,
+                24, 25, 28, 32, 39,
         };
-
         positive magnitude = code < 0 ? -(bipolar)code : code;
-        return (string_address)(magnitude < array_count(messages) && messages[magnitude]
-                                    ? messages[magnitude]
-                                    : "Unknown error");
+        return magnitude <= 39 &&
+               memory_first_of((address_any)supported, magnitude, sizeof(supported))
+                   ? system_error_message(magnitude)
+                   : (string_address)"Unknown error";
 }
 
 #define FORMAT_OWNS_PERROR 1

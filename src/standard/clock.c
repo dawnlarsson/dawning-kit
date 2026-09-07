@@ -360,7 +360,7 @@ static bool clock_break_down(bipolar seconds, tm address_to broken)
 */
 b32 clock_gettime(clockid_t which, timespec address_to into)
 {
-        return error_whole((bipolar)system_call_2(
+        return error_result((bipolar)system_call_2(
             syscall(clock_gettime), (positive)which, (positive)into));
 }
 
@@ -432,7 +432,7 @@ static HOT positive clock_monotonic_nanoseconds()
 
 b32 clock_getres(clockid_t which, timespec address_to into)
 {
-        return error_whole((bipolar)system_call_2(
+        return error_result((bipolar)system_call_2(
             syscall(clock_getres), (positive)which, (positive)into));
 }
 

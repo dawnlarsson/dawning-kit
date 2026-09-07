@@ -573,7 +573,7 @@ b32 signal_action_change(b32 number, const signal_action address_to wanted,
 #endif
         }
 
-        outcome = error_whole(system_call_4(
+        outcome = error_result(system_call_4(
                 syscall(rt_sigaction), (positive)number,
                 wanted ? (positive)address_of asked : 0,
                 previous ? (positive)address_of had : 0,
@@ -652,7 +652,7 @@ b32 signal_raise(b32 number)
         b32 process = (b32)system_call(syscall(getpid));
         b32 thread = (b32)system_call(syscall(gettid));
 
-        return error_whole(system_call_3(syscall(tgkill), (positive)process,
+        return error_result(system_call_3(syscall(tgkill), (positive)process,
                                          (positive)thread, (positive)number));
 }
 
@@ -678,7 +678,7 @@ b32 signal_mask_change(b32 how, const signal_set address_to wanted,
         positive had = 0;
         b32 outcome;
 
-        outcome = error_whole(system_call_4(
+        outcome = error_result(system_call_4(
                 syscall(rt_sigprocmask), (positive)how,
                 wanted ? (positive)address_of asked : 0,
                 previous ? (positive)address_of had : 0,
@@ -719,7 +719,7 @@ b32 signal_mask_suspend(const signal_set address_to mask)
 {
         positive asked = mask ? mask->words[0] : 0;
 
-        return error_whole(system_call_2(syscall(rt_sigsuspend),
+        return error_result(system_call_2(syscall(rt_sigsuspend),
                                          (positive)address_of asked,
                                          SIGNAL_KERNEL_SET_BYTES));
 }
@@ -730,7 +730,7 @@ b32 signal_mask_pending(signal_set address_to into)
         positive had = 0;
         b32 outcome;
 
-        outcome = error_whole(system_call_2(syscall(rt_sigpending),
+        outcome = error_result(system_call_2(syscall(rt_sigpending),
                                             (positive)address_of had,
                                             SIGNAL_KERNEL_SET_BYTES));
 
@@ -787,7 +787,7 @@ p32 signal_alarm(p32 seconds)
 
         wanted.first_seconds = (bipolar)seconds;
 
-        if (error_whole(system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
+        if (error_result(system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
                                       (positive)address_of wanted,
                                       (positive)address_of had)) < 0)
                 return 0;
@@ -818,7 +818,7 @@ b32 signal_wait(void)
         system_signal_mask(SIG_BLOCK, 0, address_of mask,
                            SIGNAL_KERNEL_SET_BYTES);
 
-        return error_whole(system_call_2(syscall(rt_sigsuspend),
+        return error_result(system_call_2(syscall(rt_sigsuspend),
                                          (positive)address_of mask,
                                          SIGNAL_KERNEL_SET_BYTES));
 }

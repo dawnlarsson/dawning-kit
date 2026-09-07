@@ -2236,11 +2236,6 @@ static bool readonly_add_mode(string_address name, positive length,
         return true;
 }
 
-static bool readonly_add(string_address name, positive length)
-{
-        return readonly_add_mode(name, length, false);
-}
-
 static COLD env_reference shell_array_reference(const_string name,
                                                  positive length,
                                                  bool frames)
@@ -5762,6 +5757,16 @@ fn shell_shift(writer write, string_address input)
         shell_answer(0);
 }
 
+static bool shell_unset_variable(const_string name, positive length)
+{
+        b32 detached = exec_unset_prefix(name, length);
+        if (detached < 0)
+                shell_no_room("unset");
+        else if (!detached)
+                env_unset_span((string_address)name, length);
+        return detached >= 0;
+}
+
 COLD fn shell_unset(writer write, string_address input)
 {
         shell_option_walk walk = {1};
@@ -5833,14 +5838,8 @@ COLD fn shell_unset(writer write, string_address input)
                                 return;
                         }
 
-                        b32 detached = exec_unset_prefix(word, word_length);
-                        if (detached < 0)
-                        {
-                                shell_no_room("unset");
+                        if (!shell_unset_variable(word, word_length))
                                 return;
-                        }
-                        if (!detached)
-                                env_unset_span(word, word_length);
                         index++;
                         continue;
                 }
@@ -5941,17 +5940,8 @@ COLD fn shell_unset(writer write, string_address input)
                                         return;
                                 }
                         }
-                        else
-                        {
-                                b32 detached = exec_unset_prefix(resolved.name, resolved.length);
-                                if (detached < 0)
-                                {
-                                        shell_no_room("unset");
-                                        return;
-                                }
-                                if (!detached)
-                                        env_unset_span((string_address)resolved.name, resolved.length);
-                        }
+                        else if (!shell_unset_variable(resolved.name, resolved.length))
+                                return;
                 }
 
                 index++;
@@ -6734,7 +6724,7 @@ static p8 shell_assignment_kind(string_address word,
 static b32 exec_declare_global_begin(string_address name, positive length,
     shell_declare_state address_to state, string_address value, bool append,
     address_any address_to scope, string_address address_to prepared);
-static bool exec_declare_global_end(address_any scope, bool adopt);
+static bool exec_declare_global_end(address_any address_to scope, bool adopt);
 static inline INLINE fn shell_declare_apply(shell_declare_state address_to state, bool local_mode)
 {
         bool failed = false;
@@ -7010,9 +7000,7 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                         if ((state->set & DECLARE_READONLY) &&
                             !readonly_add_mode(word, length, true))
                                 goto no_room;
-                        bool restored = exec_declare_global_end(global_scope, global_adopt);
-                        global_scope = null;
-                        if (!restored)
+                        if (!exec_declare_global_end(&global_scope, global_adopt))
                                 goto no_room;
                         global_element = true;
                         readonly = env_readonly(word);
@@ -7106,20 +7094,16 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 if (state->clear & DECLARE_EXPORT)
                         env_export_restore(word, false);
                 if ((state->set & DECLARE_EXPORT) &&
-                    !(scoped ||
-                              (state->attributes_set & SHELL_ARRAY_NAMEREF)
-                          ? env_export_mark_span_mode(word, string_length(word), true)
-                          : env_export_mark(word)))
+                    !env_export_mark_span_mode(word, length,
+                        scoped || (state->attributes_set & SHELL_ARRAY_NAMEREF)))
                 {
                         if (local_mode)
                                 goto no_room;
                         failed = true;
                 }
                 if ((state->set & DECLARE_READONLY) &&
-                    !(scoped ||
-                              (state->attributes_set & SHELL_ARRAY_NAMEREF)
-                          ? readonly_add_mode(word, length, true)
-                          : readonly_add(word, length)))
+                    !readonly_add_mode(word, length,
+                        scoped || (state->attributes_set & SHELL_ARRAY_NAMEREF)))
                 {
                         if (local_mode)
                                 goto no_room;
@@ -7127,20 +7111,14 @@ static inline INLINE fn shell_declare_apply(shell_declare_state address_to state
                 }
 
         next:
-                if (global_scope)
-                {
-                        bool restored = exec_declare_global_end(global_scope, false);
-                        global_scope = null;
-                        if (!restored)
-                                goto no_room;
-                }
+                if (!exec_declare_global_end(&global_scope, false))
+                        goto no_room;
                 if (name_end)
                         address_to name_end = delimiter;
                 continue;
 
         no_room:
-                if (global_scope)
-                        exec_declare_global_end(global_scope, false);
+                exec_declare_global_end(&global_scope, false);
                 if (name_end)
                         address_to name_end = delimiter;
                 return shell_no_room(local_mode ? (string_address)"local" : (string_address)"declare");
@@ -7474,7 +7452,7 @@ static COLD fn shell_marked(writer write, p8 mark)
                         kept = (!value || env_assign(word, value + 1)) &&
                                (mark == DECLARE_EXPORT
                                     ? env_export_mark(word)
-                                    : readonly_add(word, length));
+                                    : readonly_add_mode(word, length, false));
 
                 if (value)
                         address_to value = '=';
@@ -8105,11 +8083,6 @@ static fn printf_holder(address_any data, positive length)
         printf_collect(address_of printf_hold, data, length);
 }
 
-static PURE bool printf_took_argument()
-{
-        return printf_argument < shell_argc;
-}
-
 string_address printf_next()
 {
         if (printf_argument < shell_argc)
@@ -8644,7 +8617,7 @@ fn printf_one(writer write, string_address format)
                         }
 
                         step++;
-                        when = printf_took_argument()
+                        when = printf_argument < shell_argc
                                  ? (bipolar)printf_integer(printf_next(), true)
                                  : -1;
 
@@ -9036,11 +9009,6 @@ static bool read_echo_off(b32 descriptor, terminal_modes address_to held)
         return system_control(descriptor, PTY_TCSETS, address_of quiet) == 0;
 }
 
-static fn read_echo_back(b32 descriptor, terminal_modes address_to held)
-{
-        system_control(descriptor, PTY_TCSETS, held);
-}
-
 // The fields of one read line, when they are going into an array rather than
 // into a name each. The vector is the builtin's own and is reused.
 static string_address address_to read_words;
@@ -9281,7 +9249,7 @@ COLD fn shell_read(writer write, string_address input)
                 if (read_length == positive_max || !read_reserve(read_length + 2))
                 {
                         if (quieted)
-                                read_echo_back(descriptor,
+                                system_control(descriptor, PTY_TCSETS,
                                                address_of quiet_held);
 
                         shell_diagnostic("read: no room\n", 0);
@@ -9330,7 +9298,7 @@ COLD fn shell_read(writer write, string_address input)
         // of here from now on is a return.
         if (quieted)
         {
-                read_echo_back(descriptor, address_of quiet_held);
+                system_control(descriptor, PTY_TCSETS, address_of quiet_held);
 
                 // The newline the terminal did not show, so the next prompt
                 // does not land on the same line as what was typed.

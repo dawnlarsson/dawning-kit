@@ -1,4 +1,10 @@
+#ifdef FORMAT_STANDALONE
+#include "../library.c"
+#include "../library.common.c"
+#include "../standard/format.c"
+#else
 #include "../compiler_memory.c"
+#endif
 /*
         Experimental C standard library
 
@@ -1246,6 +1252,10 @@ static fn reasons(void)
               string_compare(strerror(4095), "Unknown error") == 0);
         check("the minimum signed error code stays outside the table",
               string_compare(strerror(b32_min), "Unknown error") == 0);
+        check("standalone formatting keeps its limited diagnostic set",
+              string_compare(strerror(6), "Unknown error") == 0 &&
+              string_compare(strerror(-6), "Unknown error") == 0 &&
+              string_compare(strerror(133), "Unknown error") == 0);
 #endif
 }
 

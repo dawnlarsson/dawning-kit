@@ -790,13 +790,13 @@ static fn error_test_contract(void)
         check("errno is an lvalue through the accessor",
               address_of errno == __errno_location());
 
-        for (number = 0; number <= ERROR_HIGHEST; number++)
+        for (number = 0; number <= 133; number++)
         {
                 if (number == 41 || number == 58)
                         continue;
 
                 checks++;
-                if (is_null(error_messages[number]))
+                if (is_null(system_error_message(number)))
                 {
                         failures++;
                         string_format(log, "  FAIL message missing for %b\n",
@@ -804,8 +804,27 @@ static fn error_test_contract(void)
                 }
         }
 
-        check("41 is a hole", is_null(error_messages[41]));
-        check("58 is a hole", is_null(error_messages[58]));
+        check("41 is a hole", is_null(system_error_message(41)));
+        check("58 is a hole", is_null(system_error_message(58)));
+
+        static const bipolar outside[] = {-1, -133, 134, 4095,
+                                          bipolar_min, bipolar_max};
+        for (positive i = 0; i < array_count(outside); i++)
+                check("unknown message has no table address",
+                      system_error_message(outside[i]) == null);
+
+        static const bipolar raw[] = {bipolar_min, -4096, -4095, -2, -1,
+                                      0, 1, b32_max, (bipolar)b32_max + 1,
+                                      bipolar_max};
+        for (positive i = 0; i < array_count(raw); i++)
+        {
+                errno = EPIPE;
+                bool failed = raw[i] >= -4095 && raw[i] < 0;
+                check("error conversion preserves wide successful results",
+                      error_result(raw[i]) == (failed ? -1 : raw[i]));
+                check("only the kernel error window changes errno",
+                      errno == (failed ? -raw[i] : EPIPE));
+        }
 
         //      The two spellings that are one number, which a program may
         //      compare either way.
@@ -849,7 +868,7 @@ static fn error_test_contract(void)
                 buffer, at fifty and above the whole message fits and the
                 terminator lands right after it with the rest untouched.
         */
-        length = string_length(error_messages[84]);
+        length = string_length(system_error_message(84));
 
         for (number = 1; number < (b32)sizeof room; number++)
         {
@@ -877,13 +896,13 @@ static fn error_test_contract(void)
 
         //      Nothing in the table may outgrow the buffer perror builds its
         //      line in, which is the assumption that would fail silently.
-        for (number = 0; number <= ERROR_HIGHEST; number++)
+        for (number = 0; number <= 133; number++)
         {
-                if (is_null(error_messages[number]))
+                if (is_null(system_error_message(number)))
                         continue;
 
                 checks++;
-                if (string_length(error_messages[number])
+                if (string_length(system_error_message(number))
                     >= ERROR_MESSAGE_MAX)
                 {
                         failures++;
@@ -893,7 +912,7 @@ static fn error_test_contract(void)
         }
 
         check("strerror of a known number is the table entry",
-              strerror(ENOENT) == error_messages[ENOENT]);
+              strerror(ENOENT) == system_error_message(ENOENT));
 
         /*
                 The three that the differential cannot reach, checked here

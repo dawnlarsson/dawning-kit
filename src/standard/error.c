@@ -490,10 +490,6 @@
 #define EDEADLOCK EDEADLK
 #endif
 
-//      41 and 58 are holes in Linux's numbering, and stay holes. glibc
-//      answers "Unknown error 41" for both and so does this.
-#define ERROR_HIGHEST 133
-
 /*
         Where errno lives, which is the one decision in this file that was
         made against a measurement rather than from the standard.
@@ -635,24 +631,9 @@ static bool error_thread_storage_begin(address_any block, positive size)
 }
 #endif // STANDARD_ERROR_THREAD_LOCAL
 
-//      The three shapes a POSIX return takes, so the sign handling and the
-//      errno store appear once each rather than at every call.
-
-//      int-returning calls: a handle, a count that fits, a plain success.
-static b32 error_whole(bipolar result)
-{
-        if (system_failed(result))
-        {
-                errno = (b32) - result;
-                return -1;
-        }
-
-        return (b32)result;
-}
-
-//      Register-width calls, where truncating to int would lose a large read,
-//      file offset or address. Pointer results cast back at their boundary.
-static bipolar error_wide(bipolar result)
+/* Translate the kernel error window before each public return type narrows
+   the result. Register-width offsets and mapped addresses stay intact. */
+static bipolar error_result(bipolar result)
 {
         if (system_failed(result))
         {
@@ -664,160 +645,7 @@ static bipolar error_wide(bipolar result)
 }
 
 /*
-        The messages, taken from glibc and not written here.
-
-        Copied out of GNU libc 2.44 on the build machine by a program that
-        linked it and printed strerror(i) for every i from 0 to 140, so the
-        wording is what a user of any other Linux program sees rather than
-        what seemed reasonable to whoever typed this table. 41 and 58 are
-        holes in Linux's numbering; glibc answers "Unknown error 41" for them
-        and the null entries below make this answer the same.
-
-        A table of pointers rather than a packed block of text with an offset
-        array: the pointers cost eight bytes an entry in .data and the packed
-        form costs a two byte offset, but the packed form also costs an add
-        and a load at every lookup, and this table is consulted when something
-        has already gone wrong. Nothing here is on a path that is measured.
-*/
-static string_address const error_messages[ERROR_HIGHEST + 1] = {
-        (string_address) "Success",
-        (string_address) "Operation not permitted",
-        (string_address) "No such file or directory",
-        (string_address) "No such process",
-        (string_address) "Interrupted system call",
-        (string_address) "Input/output error",
-        (string_address) "No such device or address",
-        (string_address) "Argument list too long",
-        (string_address) "Exec format error",
-        (string_address) "Bad file descriptor",
-        (string_address) "No child processes",
-        (string_address) "Resource temporarily unavailable",
-        (string_address) "Cannot allocate memory",
-        (string_address) "Permission denied",
-        (string_address) "Bad address",
-        (string_address) "Block device required",
-        (string_address) "Device or resource busy",
-        (string_address) "File exists",
-        (string_address) "Invalid cross-device link",
-        (string_address) "No such device",
-        (string_address) "Not a directory",
-        (string_address) "Is a directory",
-        (string_address) "Invalid argument",
-        (string_address) "Too many open files in system",
-        (string_address) "Too many open files",
-        (string_address) "Inappropriate ioctl for device",
-        (string_address) "Text file busy",
-        (string_address) "File too large",
-        (string_address) "No space left on device",
-        (string_address) "Illegal seek",
-        (string_address) "Read-only file system",
-        (string_address) "Too many links",
-        (string_address) "Broken pipe",
-        (string_address) "Numerical argument out of domain",
-        (string_address) "Numerical result out of range",
-        (string_address) "Resource deadlock avoided",
-        (string_address) "File name too long",
-        (string_address) "No locks available",
-        (string_address) "Function not implemented",
-        (string_address) "Directory not empty",
-        (string_address) "Too many levels of symbolic links",
-        null,
-        (string_address) "No message of desired type",
-        (string_address) "Identifier removed",
-        (string_address) "Channel number out of range",
-        (string_address) "Level 2 not synchronized",
-        (string_address) "Level 3 halted",
-        (string_address) "Level 3 reset",
-        (string_address) "Link number out of range",
-        (string_address) "Protocol driver not attached",
-        (string_address) "No CSI structure available",
-        (string_address) "Level 2 halted",
-        (string_address) "Invalid exchange",
-        (string_address) "Invalid request descriptor",
-        (string_address) "Exchange full",
-        (string_address) "No anode",
-        (string_address) "Invalid request code",
-        (string_address) "Invalid slot",
-        null,
-        (string_address) "Bad font file format",
-        (string_address) "Device not a stream",
-        (string_address) "No data available",
-        (string_address) "Timer expired",
-        (string_address) "Out of streams resources",
-        (string_address) "Machine is not on the network",
-        (string_address) "Package not installed",
-        (string_address) "Object is remote",
-        (string_address) "Link has been severed",
-        (string_address) "Advertise error",
-        (string_address) "Srmount error",
-        (string_address) "Communication error on send",
-        (string_address) "Protocol error",
-        (string_address) "Multihop attempted",
-        (string_address) "RFS specific error",
-        (string_address) "Bad message",
-        (string_address) "Value too large for defined data type",
-        (string_address) "Name not unique on network",
-        (string_address) "File descriptor in bad state",
-        (string_address) "Remote address changed",
-        (string_address) "Can not access a needed shared library",
-        (string_address) "Accessing a corrupted shared library",
-        (string_address) ".lib section in a.out corrupted",
-        (string_address) "Attempting to link in too many shared libraries",
-        (string_address) "Cannot exec a shared library directly",
-        (string_address) "Invalid or incomplete multibyte or wide character",
-        (string_address) "Interrupted system call should be restarted",
-        (string_address) "Streams pipe error",
-        (string_address) "Too many users",
-        (string_address) "Socket operation on non-socket",
-        (string_address) "Destination address required",
-        (string_address) "Message too long",
-        (string_address) "Protocol wrong type for socket",
-        (string_address) "Protocol not available",
-        (string_address) "Protocol not supported",
-        (string_address) "Socket type not supported",
-        (string_address) "Operation not supported",
-        (string_address) "Protocol family not supported",
-        (string_address) "Address family not supported by protocol",
-        (string_address) "Address already in use",
-        (string_address) "Cannot assign requested address",
-        (string_address) "Network is down",
-        (string_address) "Network is unreachable",
-        (string_address) "Network dropped connection on reset",
-        (string_address) "Software caused connection abort",
-        (string_address) "Connection reset by peer",
-        (string_address) "No buffer space available",
-        (string_address) "Transport endpoint is already connected",
-        (string_address) "Transport endpoint is not connected",
-        (string_address) "Cannot send after transport endpoint shutdown",
-        (string_address) "Too many references: cannot splice",
-        (string_address) "Connection timed out",
-        (string_address) "Connection refused",
-        (string_address) "Host is down",
-        (string_address) "No route to host",
-        (string_address) "Operation already in progress",
-        (string_address) "Operation now in progress",
-        (string_address) "Stale file handle",
-        (string_address) "Structure needs cleaning",
-        (string_address) "Not a XENIX named type file",
-        (string_address) "No XENIX semaphores available",
-        (string_address) "Is a named type file",
-        (string_address) "Remote I/O error",
-        (string_address) "Disk quota exceeded",
-        (string_address) "No medium found",
-        (string_address) "Wrong medium type",
-        (string_address) "Operation canceled",
-        (string_address) "Required key not available",
-        (string_address) "Key has expired",
-        (string_address) "Key has been revoked",
-        (string_address) "Key was rejected by service",
-        (string_address) "Owner died",
-        (string_address) "State not recoverable",
-        (string_address) "Operation not possible due to RF-kill",
-        (string_address) "Memory page has hardware error",
-};
-
-/*
-        The longest message above is "Invalid or incomplete multibyte or wide
+        The longest shared errno message is "Invalid or incomplete multibyte or wide
         character" at forty nine bytes, and the longest line the unknown path
         can build is "Unknown error -2147483648" at twenty five, since the
         number is an int and cannot be wider. Sixty four holds either with its
@@ -848,16 +676,8 @@ static string_address const error_messages[ERROR_HIGHEST + 1] = {
 #define ERROR_UNKNOWN_PREFIX "Unknown error "
 #define ERROR_UNKNOWN_PREFIX_LENGTH (sizeof ERROR_UNKNOWN_PREFIX - 1)
 
-//      True when the number names a message, which is not the same as being
-//      in range: 41 and 58 are in range and name nothing.
-static bool error_message_known(b32 number)
-{
-        return number >= 0 && number <= ERROR_HIGHEST
-               && !is_null(error_messages[number]);
-}
-
 /*
-        The message half of perror, and the engine under both strerror forms.
+        POSIX strerror_r, shared by strerror and perror.
 
         Returns what POSIX strerror_r returns, and matched against glibc 2.44
         rather than against the wording of the standard, because the standard
@@ -879,19 +699,16 @@ static bool error_message_known(b32 number)
         and a program that passes a raw kernel return by mistake sees the
         mistake rather than a plausible message.
 */
-static b32 error_message_into(string_address into, positive size, b32 number)
+static b32 strerror_r(b32 number, string_address into, positive size)
 {
         p8 built[ERROR_MESSAGE_MAX];
-        string_address source;
+        string_address source = system_error_message(number);
         positive length;
         positive room;
 
-        bool known = error_message_known(number);
+        bool known = source != null;
         if (known)
-        {
-                source = error_messages[number];
                 length = string_length(source);
-        }
         else
         {
                 memory_copy_apart(built, (string_address)ERROR_UNKNOWN_PREFIX,
@@ -909,33 +726,6 @@ static b32 error_message_into(string_address into, positive size, b32 number)
         memory_copy_apart(into, source, room);
         into[room] = end;
         return known ? (length < size ? 0 : ERANGE) : EINVAL;
-}
-
-/*
-        strerror_r, in its POSIX shape rather than its GNU one.
-
-        The two disagree about the return type: POSIX has
-        int strerror_r(int, char *, size_t) and GNU has
-        char *strerror_r(int, char *, size_t), and glibc picks between them by
-        whether _GNU_SOURCE is defined. There is no _GNU_SOURCE here and no
-        feature test macro machinery to hang one on, so the choice has to be
-        made once and defended.
-
-        POSIX, because its contract is checkable. The POSIX form always writes
-        the buffer it was handed and reports whether the whole message fit;
-        the GNU form is permitted to return a pointer to static storage and
-        never touch the buffer at all, so a caller cannot tell from the return
-        whether the buffer holds anything, and a test cannot pin the behaviour
-        without knowing which message came from where. A program that wants
-        the GNU shape can write
-
-            strerror_r(number, buffer, size), buffer
-
-        and get it, which is not true in the other direction.
-*/
-static b32 strerror_r(b32 number, string_address into, positive size)
-{
-        return error_message_into(into, size, number);
 }
 
 /*
@@ -959,11 +749,11 @@ static p8 error_unknown_text[ERROR_MESSAGE_MAX];
 
 static string_address strerror(b32 number)
 {
-        if (error_message_known(number))
-                return error_messages[number];
+        string_address known = system_error_message(number);
+        if (known)
+                return known;
 
-        error_message_into(error_unknown_text, sizeof error_unknown_text,
-                           number);
+        strerror_r(number, error_unknown_text, sizeof error_unknown_text);
 
         return error_unknown_text;
 }
@@ -1014,7 +804,7 @@ static fn perror(string_address prefix)
                 line[at++] = ' ';
         }
 
-        error_message_into(line + at, ERROR_MESSAGE_MAX, errno);
+        strerror_r(errno, line + at, ERROR_MESSAGE_MAX);
         at += string_length(line + at);
         line[at++] = '\n';
 
@@ -1185,7 +975,7 @@ typedef struct stat
 
         Every one is the same three lines -- trap, test, translate -- and
         there is nothing else in any of them, which is the point: policy lives
-        in error_whole and error_wide, so the only thing a reader has to check
+        in error_result, so the only thing a reader has to check
         per routine is that the arguments went to the kernel in the right
         order.
 
@@ -1201,8 +991,8 @@ typedef struct stat
 
 //      -- descriptors ------------------------------------------------------
 
-#define ERROR_ENTRY(name, returned, parameters, translate, call)             \
-        static returned name parameters { return translate(call); }
+#define ERROR_ENTRY(name, returned, parameters, call)                        \
+        static returned name parameters { return (returned)error_result(call); }
 
 #define ERROR_OPEN(name, parameters, directory)                              \
         static b32 name parameters                                           \
@@ -1215,7 +1005,7 @@ typedef struct stat
                         mode = var_list_get(list, p32);                       \
                         var_list_end(list);                                   \
                 }                                                            \
-                return error_whole(system_open_at_mode(                     \
+                return error_result(system_open_at_mode(                     \
                     directory, path, flags, mode));                          \
         }
 
@@ -1228,11 +1018,11 @@ ERROR_OPEN(open, (string_address path, b32 flags, ...), ERROR_AT_HERE)
 //      shell scripts and old C both still use it.
 static b32 creat(string_address path, p32 mode)
 {
-        return error_whole(system_open_at_mode(
+        return error_result(system_open_at_mode(
             ERROR_AT_HERE, path, O_WRONLY | O_CREAT | O_TRUNC, mode));
 }
 
-ERROR_ENTRY(close, b32, (b32 handle), error_whole,
+ERROR_ENTRY(close, b32, (b32 handle),
             system_close(handle))
 
 /*
@@ -1243,22 +1033,22 @@ ERROR_ENTRY(close, b32, (b32 handle), error_whole,
         offset that certainly does not fit.
 */
 ERROR_ENTRY(read, bipolar, (b32 handle, address_any buffer, positive count),
-            error_wide, system_read_once(handle, buffer, count))
+            system_read_once(handle, buffer, count))
 ERROR_ENTRY(write, bipolar,
-            (b32 handle, const address_any buffer, positive count), error_wide,
+            (b32 handle, const address_any buffer, positive count),
             system_write_once(handle, buffer, count))
 ERROR_ENTRY(pread, bipolar,
             (b32 handle, address_any buffer, positive count, bipolar offset),
-            error_wide, system_call_4(syscall(pread64), (positive)handle,
+            system_call_4(syscall(pread64), (positive)handle,
                                       (positive)buffer, count, (positive)offset))
 ERROR_ENTRY(pwrite, bipolar,
             (b32 handle, const address_any buffer, positive count,
              bipolar offset),
-            error_wide, system_call_4(syscall(pwrite64), (positive)handle,
+            system_call_4(syscall(pwrite64), (positive)handle,
                                       (positive)buffer, count, (positive)offset))
 ERROR_ENTRY(lseek, bipolar, (b32 handle, bipolar offset, b32 whence),
-            error_wide, system_seek(handle, offset, whence))
-ERROR_ENTRY(dup, b32, (b32 handle), error_whole,
+            system_seek(handle, offset, whence))
+ERROR_ENTRY(dup, b32, (b32 handle),
             system_call_1(syscall(dup), (positive)handle))
 
 /*
@@ -1271,7 +1061,7 @@ ERROR_ENTRY(dup, b32, (b32 handle), error_whole,
         dup2 on a closed descriptor must still fail with EBADF rather than
         silently succeeding.
 */
-ERROR_ENTRY(dup3, b32, (b32 from, b32 to, b32 flags), error_whole,
+ERROR_ENTRY(dup3, b32, (b32 from, b32 to, b32 flags),
             system_duplicate(from, to, flags))
 
 static b32 dup2(b32 from, b32 to)
@@ -1293,17 +1083,17 @@ static b32 dup2(b32 from, b32 to)
         return dup3(from, to, 0);
 }
 
-ERROR_ENTRY(pipe2, b32, (b32 address_to pair, b32 flags), error_whole,
+ERROR_ENTRY(pipe2, b32, (b32 address_to pair, b32 flags),
             system_pipe(pair, flags))
-ERROR_ENTRY(pipe, b32, (b32 address_to pair), error_whole,
+ERROR_ENTRY(pipe, b32, (b32 address_to pair),
             system_pipe(pair, 0))
 
 var_list_entry(fcntl, b32, (b32 handle, b32 command, ...), command,
-               error_whole(system_call_3(
+               error_result(system_call_3(
                    syscall(fcntl), (positive)handle, (positive)command,
                    var_list_get(_variadic_list, positive))))
 var_list_entry(ioctl, b32, (b32 handle, positive request, ...), request,
-               error_whole(system_call_3(
+               error_result(system_call_3(
                    syscall(ioctl), (positive)handle, request,
                    var_list_get(_variadic_list, positive))))
 
@@ -1338,10 +1128,10 @@ b32 isatty(b32 handle)
 
 ERROR_ENTRY(fstatat, b32,
             (b32 directory, string_address path, stat_address into, b32 flags),
-            error_whole, system_status_at(directory, path, into, flags))
-ERROR_ENTRY(stat, b32, (string_address path, stat_address into), error_whole,
+            system_status_at(directory, path, into, flags))
+ERROR_ENTRY(stat, b32, (string_address path, stat_address into),
             system_status_at(ERROR_AT_HERE, path, into, 0))
-ERROR_ENTRY(lstat, b32, (string_address path, stat_address into), error_whole,
+ERROR_ENTRY(lstat, b32, (string_address path, stat_address into),
             system_status_at(ERROR_AT_HERE, path, into, AT_SYMLINK_NOFOLLOW))
 
 /*
@@ -1350,19 +1140,19 @@ ERROR_ENTRY(lstat, b32, (string_address path, stat_address into), error_whole,
         string and the plain form does not, and the plain form is one number
         on every machine here.
 */
-ERROR_ENTRY(fstat, b32, (b32 handle, stat_address into), error_whole,
+ERROR_ENTRY(fstat, b32, (b32 handle, stat_address into),
             system_file_status(handle, into))
 ERROR_ENTRY(unlinkat, b32,
-            (b32 directory, string_address path, b32 flags), error_whole,
+            (b32 directory, string_address path, b32 flags),
             system_remove_at(directory, path, flags))
-ERROR_ENTRY(unlink, b32, (string_address path), error_whole,
+ERROR_ENTRY(unlink, b32, (string_address path),
             system_remove_at(ERROR_AT_HERE, path, 0))
-ERROR_ENTRY(rmdir, b32, (string_address path), error_whole,
+ERROR_ENTRY(rmdir, b32, (string_address path),
             system_remove_at(ERROR_AT_HERE, path, AT_REMOVEDIR))
 ERROR_ENTRY(mkdirat, b32,
-            (b32 directory, string_address path, p32 mode), error_whole,
+            (b32 directory, string_address path, p32 mode),
             system_make_directory_at(directory, path, mode))
-ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode), error_whole,
+ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode),
             system_make_directory_at(ERROR_AT_HERE, path, mode))
 
 /*
@@ -1377,14 +1167,12 @@ ERROR_ENTRY(mkdir, b32, (string_address path, p32 mode), error_whole,
 ERROR_ENTRY(renameat2, b32,
             (b32 from_directory, string_address from, b32 to_directory,
              string_address to, p32 flags),
-            error_whole,
             system_rename_at(from_directory, from, to_directory, to, flags))
-ERROR_ENTRY(rename, b32, (string_address from, string_address to), error_whole,
+ERROR_ENTRY(rename, b32, (string_address from, string_address to),
             system_rename_at(ERROR_AT_HERE, from, ERROR_AT_HERE, to, 0))
-ERROR_ENTRY(link, b32, (string_address from, string_address to), error_whole,
+ERROR_ENTRY(link, b32, (string_address from, string_address to),
             system_link_at(ERROR_AT_HERE, from, ERROR_AT_HERE, to, 0))
 ERROR_ENTRY(symlink, b32, (string_address target, string_address path),
-            error_whole,
             system_symbolic_link_at(target, ERROR_AT_HERE, path))
 
 /*
@@ -1395,12 +1183,11 @@ ERROR_ENTRY(symlink, b32, (string_address target, string_address path),
 */
 ERROR_ENTRY(readlink, bipolar,
             (string_address path, string_address into, positive size),
-            error_wide,
             system_read_link_at(ERROR_AT_HERE, path, into, size))
 ERROR_ENTRY(readlinkat, bipolar,
             (b32 directory, string_address path, string_address into,
              positive size),
-            error_wide, system_read_link_at(directory, path, into, size))
+            system_read_link_at(directory, path, into, size))
 
 /*
         access asks the kernel with the real user and group rather than the
@@ -1410,41 +1197,40 @@ ERROR_ENTRY(readlinkat, bipolar,
         AT_EACCESS is faccessat2, which is a much newer number and is not
         used here.
 */
-ERROR_ENTRY(access, b32, (string_address path, b32 mode), error_whole,
+ERROR_ENTRY(access, b32, (string_address path, b32 mode),
             system_access_at(ERROR_AT_HERE, path, mode))
 
 static b32 faccessat(b32 directory, string_address path, b32 mode, b32 flags)
 {
         (void)flags;
-        return error_whole(system_access_at(directory, path, mode));
+        return error_result(system_access_at(directory, path, mode));
 }
 
 //      fchmodat on asm-generic is three arguments; the flags-taking form is
 //      fchmodat2 and is newer than the floor this targets.
-ERROR_ENTRY(chmod, b32, (string_address path, p32 mode), error_whole,
+ERROR_ENTRY(chmod, b32, (string_address path, p32 mode),
             system_change_mode_at(ERROR_AT_HERE, path, mode))
-ERROR_ENTRY(fchmod, b32, (b32 handle, p32 mode), error_whole,
+ERROR_ENTRY(fchmod, b32, (b32 handle, p32 mode),
             system_call_2(syscall(fchmod), (positive)handle, (positive)mode))
 ERROR_ENTRY(chown, b32, (string_address path, p32 owner, p32 group),
-            error_whole,
             system_change_owner_at(ERROR_AT_HERE, path, owner, group, 0))
 ERROR_ENTRY(lchown, b32, (string_address path, p32 owner, p32 group),
-            error_whole, system_change_owner_at(
+            system_change_owner_at(
                 ERROR_AT_HERE, path, owner, group, AT_SYMLINK_NOFOLLOW))
-ERROR_ENTRY(fchown, b32, (b32 handle, p32 owner, p32 group), error_whole,
+ERROR_ENTRY(fchown, b32, (b32 handle, p32 owner, p32 group),
             system_call_3(syscall(fchown), (positive)handle, (positive)owner,
                           (positive)group))
-ERROR_ENTRY(truncate, b32, (string_address path, bipolar length), error_whole,
+ERROR_ENTRY(truncate, b32, (string_address path, bipolar length),
             system_call_2(syscall(truncate), (positive)path, (positive)length))
-ERROR_ENTRY(ftruncate, b32, (b32 handle, bipolar length), error_whole,
+ERROR_ENTRY(ftruncate, b32, (b32 handle, bipolar length),
             system_truncate_handle(handle, length))
-ERROR_ENTRY(fsync, b32, (b32 handle), error_whole,
+ERROR_ENTRY(fsync, b32, (b32 handle),
             system_call_1(syscall(fsync), (positive)handle))
-ERROR_ENTRY(fdatasync, b32, (b32 handle), error_whole,
+ERROR_ENTRY(fdatasync, b32, (b32 handle),
             system_call_1(syscall(fdatasync), (positive)handle))
-ERROR_ENTRY(chdir, b32, (string_address path), error_whole,
+ERROR_ENTRY(chdir, b32, (string_address path),
             system_change_directory(path))
-ERROR_ENTRY(fchdir, b32, (b32 handle), error_whole,
+ERROR_ENTRY(fchdir, b32, (b32 handle),
             system_call_1(syscall(fchdir), (positive)handle))
 
 /*
@@ -1455,7 +1241,7 @@ ERROR_ENTRY(fchdir, b32, (b32 handle), error_whole,
         terminator. C returns the buffer, or a null pointer with errno set --
         and ERANGE specifically when the buffer was too small, which the
         kernel already reports as -ERANGE. So the translation is not
-        error_whole's: the count is discarded and the buffer comes back.
+        error_result's: the count is discarded and the buffer comes back.
 
         Passing a null buffer for the library to allocate one is a GNU
         extension and is refused here with EINVAL rather than half-supported.
@@ -1482,7 +1268,7 @@ static string_address getcwd(string_address into, positive size)
 }
 
 ERROR_ENTRY(getdents64, b32, (b32 handle, address_any into, positive size),
-            error_whole, system_read_directory(handle, into, size))
+            system_read_directory(handle, into, size))
 
 //      umask cannot fail: it returns the previous mask and there is no error
 //      the kernel can report, so no translation happens and errno is not
@@ -1511,16 +1297,16 @@ static p32 umask(p32 mask)
 static address_any mmap(address_any hint, positive length, b32 protection,
                         b32 flags, b32 handle, bipolar offset)
 {
-        return (address_any)error_wide(
+        return (address_any)error_result(
             system_call_6(syscall(mmap), (positive)hint, length,
                           (positive)protection, (positive)flags,
                           (positive)handle, (positive)offset));
 }
 
-ERROR_ENTRY(munmap, b32, (address_any address, positive length), error_whole,
+ERROR_ENTRY(munmap, b32, (address_any address, positive length),
             system_call_2(syscall(munmap), (positive)address, length))
 ERROR_ENTRY(mprotect, b32,
-            (address_any address, positive length, b32 protection), error_whole,
+            (address_any address, positive length, b32 protection),
             system_call_3(syscall(mprotect), (positive)address, length,
                           (positive)protection))
 
@@ -1540,12 +1326,12 @@ ERROR_ID(getgid, p32)
 ERROR_ID(getegid, p32)
 #undef ERROR_ID
 
-ERROR_ENTRY(kill, b32, (b32 process, b32 signal), error_whole,
+ERROR_ENTRY(kill, b32, (b32 process, b32 signal),
             system_call_2(syscall(kill), (positive)process, (positive)signal))
 ERROR_ENTRY(execve, b32,
             (string_address path, string_address address_to arguments,
              string_address address_to environment),
-            error_whole, system_execute(path, arguments, environment))
+            system_execute(path, arguments, environment))
 
 /*
         fork, which is clone with one flag and nothing else.
@@ -1561,7 +1347,7 @@ ERROR_ENTRY(execve, b32,
         SIGCHLD and makes wait work, and is the whole of what distinguishes
         this from a thread.
 */
-ERROR_ENTRY(fork, b32, (void), error_whole,
+ERROR_ENTRY(fork, b32, (void),
             system_fork())
 
 /*
@@ -1577,14 +1363,14 @@ ERROR_ENTRY(fork, b32, (void), error_whole,
 ERROR_ENTRY(wait4, b32,
             (b32 process, b32 address_to status, b32 options,
              address_any usage),
-            error_whole, system_call_4(syscall(wait4), (positive)process,
+            system_call_4(syscall(wait4), (positive)process,
                                        ERROR_STATUS_ADDRESS(status),
                                        (positive)options, (positive)usage))
 ERROR_ENTRY(waitpid, b32,
-            (b32 process, b32 address_to status, b32 options), error_whole,
+            (b32 process, b32 address_to status, b32 options),
             system_call_4(syscall(wait4), (positive)process,
                           ERROR_STATUS_ADDRESS(status), (positive)options, 0))
-ERROR_ENTRY(wait, b32, (b32 address_to status), error_whole,
+ERROR_ENTRY(wait, b32, (b32 address_to status),
             system_call_4(syscall(wait4), (positive)(bipolar)-1,
                           ERROR_STATUS_ADDRESS(status), 0, 0))
 
@@ -1606,8 +1392,10 @@ DEAD_END fn _exit(b32 status)
 
 DEAD_END fn _Exit(b32 status) __attribute__((alias("_exit")));
 
-ERROR_ENTRY(setsid, b32, (void), error_whole, system_call(syscall(setsid)))
-ERROR_ENTRY(sync, b32, (void), error_whole, system_call(syscall(sync)))
+ERROR_ENTRY(setsid, b32, (void),
+            system_call(syscall(setsid)))
+ERROR_ENTRY(sync, b32, (void),
+            system_call(syscall(sync)))
 
 #undef ERROR_ENTRY
 

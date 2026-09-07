@@ -106,6 +106,16 @@ static b32 tools_hostid()
 #define LOGGER_FRAME_ROOM 64
 #define LOGGER_UNIX_PATH 108
 
+static fn tools_hostname(p8 address_to into, positive room,
+                          string_address fallback)
+{
+        file_machine machine = {0};
+        bool known = system_call_1(syscall(uname),
+                                    (positive)address_of machine) >= 0 &&
+                     machine.node[0];
+        string_copy_max_end(into, known ? machine.node : fallback, room - 1);
+}
+
 enum
 {
         LOGGER_PROTOCOL_LOCAL,
@@ -951,15 +961,7 @@ static b32 tools_logger()
                 control.tag = control.login;
         }
 
-        file_machine facts;
-        memory_fill(address_of facts, 0, sizeof(facts));
-        if (system_call_1(syscall(uname), (positive)address_of facts) >= 0 &&
-            facts.node[0])
-                string_copy_max_end(control.hostname, facts.node,
-                                    sizeof(control.hostname) - 1);
-        else
-                string_copy_max_end(control.hostname, "-",
-                                    sizeof(control.hostname) - 1);
+        tools_hostname(control.hostname, sizeof(control.hostname), "-");
 
         if (control.protocol == LOGGER_PROTOCOL_5424 &&
             string_length(control.tag) > 48)
@@ -1905,14 +1907,7 @@ static b32 tools_write()
         positive uid = (positive)system_call(syscall(getuid));
         if (!file_user_name(uid, login, sizeof(login)))
                 string_copy_max_end(login, "???", sizeof(login) - 1);
-        file_machine machine;
-        memory_fill(address_of machine, 0, sizeof(machine));
-        if (system_call_1(syscall(uname), (positive)address_of machine) >= 0 &&
-            machine.node[0])
-                string_copy_max_end(hostname, machine.node,
-                                    sizeof(hostname) - 1);
-        else
-                string_copy_max_end(hostname, "???", sizeof(hostname) - 1);
+        tools_hostname(hostname, sizeof(hostname), "???");
 
         time_t now = (time_t)file_now();
         tm broken;
@@ -1975,14 +1970,7 @@ static fn login_wall_banner(login_message_sink address_to sink)
         if (!file_user_name(uid, login, sizeof(login)))
                 string_copy_max_end(login, "<someone>", sizeof(login) - 1);
 
-        file_machine machine;
-        memory_fill(address_of machine, 0, sizeof(machine));
-        if (system_call_1(syscall(uname), (positive)address_of machine) >= 0 &&
-            machine.node[0])
-                string_copy_max_end(hostname, machine.node,
-                                    sizeof(hostname) - 1);
-        else
-                string_copy_max_end(hostname, "???", sizeof(hostname) - 1);
+        tools_hostname(hostname, sizeof(hostname), "???");
 
         string_address where = (string_address)"somewhere";
         if (login_message_source_tty(source_path, sizeof(source_path), true) >= 0)
@@ -2155,42 +2143,23 @@ static b32 tools_wall()
         return text_done(0);
 }
 
-static positive login_idle_who(p8 address_to into, login_terminal terminal,
-                                b64 boot)
+static positive login_idle(p8 address_to into, login_terminal terminal,
+                            bool who, b64 boot)
 {
         if (!terminal.known)
-                return memory_copy_apart_end(into, "  ?", 3) - into;
+                return memory_copy_apart_end(into, who ? "  ?" : "?????",
+                                              who ? 3 : 5) - into;
 
         b64 now = file_now();
         b64 idle = now - terminal.accessed;
 
-        if (boot < terminal.accessed && terminal.accessed <= now &&
-            idle < 86400)
-        {
-                if (idle < 60)
-                        return memory_copy_apart_end(into, "  .  ", 5) - into;
-
-                positive made = positive_into_padded(
-                    into, (positive)idle / 3600, 2, '0');
-                into[made++] = ':';
-                made += positive_into_padded(
-                    into + made, ((positive)idle / 60) % 60, 2, '0');
-                into[made] = end;
-                return made;
-        }
-
-        return memory_copy_apart_end(into, " old ", 5) - into;
-}
-
-static positive login_idle_pinky(p8 address_to into, login_terminal terminal)
-{
-        if (!terminal.known)
-                return memory_copy_apart_end(into, "?????", 5) - into;
-
-        b64 idle = file_now() - terminal.accessed;
+        if (who && !(boot < terminal.accessed && terminal.accessed <= now &&
+                     idle < 86400))
+                return memory_copy_apart_end(into, " old ", 5) - into;
 
         if (idle < 60)
-                return memory_copy_apart_end(into, "     ", 5) - into;
+                return memory_copy_apart_end(into, who ? "  .  " : "     ",
+                                              5) - into;
 
         if (idle < 86400)
         {
@@ -3183,7 +3152,7 @@ static bool login_who_visit(login_record address_to record)
                 p8 comment[260] = {0};
 
                 if (login_who.idle && !login_who.short_output)
-                        login_idle_who(idle, terminal, login_who.boottime);
+                        login_idle(idle, terminal, true, login_who.boottime);
                 if (!login_who.short_output)
                         positive_into_string(pid, record->process);
                 if (host[0])
@@ -3573,7 +3542,7 @@ static bool login_pinky_visit(login_record address_to record)
 
         if (login_pinky.idle)
         {
-                positive idle_length = login_idle_pinky(idle, terminal);
+                positive idle_length = login_idle(idle, terminal, false, 0);
                 text_put_character(' ');
                 login_put_width(idle, idle_length, 6, false);
         }
@@ -4111,7 +4080,7 @@ static const file_long numfmt_longs[] = {
     {null, 0},
 };
 
-static positive numfmt_gcd(positive left, positive right)
+static positive tools_gcd(positive left, positive right)
 {
         while (right)
         {
@@ -4399,7 +4368,7 @@ static bool numfmt_ratio(seq_decimal address_to number, positive base,
         for (positive b = 0; b < bottoms; b++)
                 for (positive t = 0; t < tops; t++)
                 {
-                        positive common = numfmt_gcd(top[t], bottom[b]);
+                        positive common = tools_gcd(top[t], bottom[b]);
                         top[t] /= common;
                         bottom[b] /= common;
                 }
@@ -5202,18 +5171,6 @@ static positive factor_power(factor_modulus address_to context,
         return answer;
 }
 
-static positive factor_gcd(positive left, positive right)
-{
-        while (right)
-        {
-                positive next = left % right;
-                left = right;
-                right = next;
-        }
-
-        return left;
-}
-
 static bool factor_is_prime(positive number)
 {
         static const positive bases[] = {
@@ -5333,7 +5290,7 @@ static positive factor_rho(positive number)
                                         budget--;
                                 }
 
-                                divisor = factor_gcd(product, number);
+                                divisor = tools_gcd(product, number);
                                 done += block;
                         }
 
@@ -5356,7 +5313,7 @@ static positive factor_rho(positive number)
                                                           saved, constant);
                                 positive difference = x > saved ? x - saved
                                                                 : saved - x;
-                                divisor = factor_gcd(difference, number);
+                                divisor = tools_gcd(difference, number);
                                 budget--;
                         }
                 }

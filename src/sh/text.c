@@ -3542,42 +3542,32 @@ static b32 text_comm()
                         break;
         }
 
-        while (have_left &&
-               !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+        bool remaining[] = {have_left, have_right};
+        for (positive side = 0; side < array_count(remaining); side++)
         {
-                unpaired = true;
-                totals[0]++;
-                if (show[0])
-                        comm_record(sides[0].record, sides[0].length,
-                                    column[0], before, separator,
-                                    text_delimiter);
-                have_left = comm_advance(sides, text_delimiter,
-                                         comm_order_mode != RELATION_ORDER_NONE,
-                                         address_of disorder);
-        }
-
-        while (have_right &&
-               !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
-        {
-                unpaired = true;
-                totals[1]++;
-                if (show[1])
-                        comm_record(sides[1].record, sides[1].length,
-                                    column[1], before, separator,
-                                    text_delimiter);
-                have_right = comm_advance(sides + 1, text_delimiter,
-                                          comm_order_mode != RELATION_ORDER_NONE,
-                                          address_of disorder);
+                while (remaining[side] &&
+                       !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+                {
+                        unpaired = true;
+                        totals[side]++;
+                        if (show[side])
+                                comm_record(sides[side].record, sides[side].length,
+                                            column[side], before, separator,
+                                            text_delimiter);
+                        remaining[side] = comm_advance(
+                            sides + side, text_delimiter,
+                            comm_order_mode != RELATION_ORDER_NONE,
+                            address_of disorder);
+                }
         }
 
         if (taking.flags & FILE_FLAG('T'))
         {
-                positive_to_string(text_put, totals[0]);
-                comm_separator(separator);
-                positive_to_string(text_put, totals[1]);
-                comm_separator(separator);
-                positive_to_string(text_put, totals[2]);
-                comm_separator(separator);
+                for (positive side = 0; side < array_count(totals); side++)
+                {
+                        positive_to_string(text_put, totals[side]);
+                        comm_separator(separator);
+                }
                 text_put_string("total");
                 text_put_character(text_delimiter);
         }
@@ -4419,79 +4409,63 @@ static b32 text_join()
         p8 address_to group = null;
         positive group_room = 0;
 
-        bool have_left = text_record_next(sides, text_delimiter,
-                                           null, 0, null);
-        bool have_right = text_record_next(sides + 1, text_delimiter,
-                                            null, 0, null);
+        bool have[2];
+        have[0] = text_record_next(sides, text_delimiter, null, 0, null);
+        have[1] = text_record_next(sides + 1, text_delimiter, null, 0, null);
 
-        if (have_left)
+        if (have[0])
                 join_cursor_key(sides, 0, separated, separator);
-        if (have_right)
+        if (have[1])
                 join_cursor_key(sides + 1, 1, separated, separator);
 
-        positive auto_left = have_left
+        positive auto_left = have[0]
             ? join_field_count(sides[0].record, sides[0].length,
                                separated, separator) : 0;
-        positive auto_right = have_right
+        positive auto_right = have[1]
             ? join_field_count(sides[1].record, sides[1].length,
                                separated, separator) : 0;
         bool disorder = false;
         bool unpaired = false;
         bool trouble = false;
 
-        if (header && (have_left || have_right))
+        if (header && (have[0] || have[1]))
         {
-                join_emit(have_left ? sides[0].record : null,
-                          have_left ? sides[0].length : 0,
-                          have_right ? sides[1].record : null,
-                          have_right ? sides[1].length : 0,
+                join_emit(have[0] ? sides[0].record : null,
+                          have[0] ? sides[0].length : 0,
+                          have[1] ? sides[1].record : null,
+                          have[1] ? sides[1].length : 0,
                           separated, separator, empty,
                           auto_left, auto_right, text_delimiter);
 
-                if (have_left)
-                        have_left = join_advance(
+                if (have[0])
+                        have[0] = join_advance(
                             sides, 0, text_delimiter, false, separated,
                             separator, fold, address_of disorder);
-                if (have_right)
-                        have_right = join_advance(
+                if (have[1])
+                        have[1] = join_advance(
                             sides + 1, 1, text_delimiter, false, separated,
                             separator, fold, address_of disorder);
         }
 
-        while (have_left && have_right)
+        while (have[0] && have[1])
         {
                 bipolar order = text_record_compare(
                     sides[0].key, sides[0].key_length,
                     sides[1].key, sides[1].key_length, fold);
 
-                if (order < 0)
+                if (order)
                 {
+                        positive side = order > 0;
                         unpaired = true;
-                        if ((join_unpaired | join_only) & 1)
-                                join_emit(sides[0].record, sides[0].length,
-                                          null, 0, separated, separator, empty,
-                                          auto_left, auto_right,
-                                          text_delimiter);
-                        have_left = join_advance(
-                            sides, 0, text_delimiter,
-                            join_order_check(unpaired),
-                            separated, separator, fold, address_of disorder);
-                        if (disorder &&
-                            join_order_mode == RELATION_ORDER_FORCE)
-                                break;
-                        continue;
-                }
-
-                if (order > 0)
-                {
-                        unpaired = true;
-                        if ((join_unpaired | join_only) & 2)
-                                join_emit(null, 0, sides[1].record,
-                                          sides[1].length, separated, separator,
-                                          empty, auto_left, auto_right,
-                                          text_delimiter);
-                        have_right = join_advance(
-                            sides + 1, 1, text_delimiter,
+                        if ((join_unpaired | join_only) & (1 << side))
+                                join_emit(side ? null : sides[0].record,
+                                          side ? 0 : sides[0].length,
+                                          side ? sides[1].record : null,
+                                          side ? sides[1].length : 0,
+                                          separated, separator, empty,
+                                          auto_left, auto_right, text_delimiter);
+                        have[side] = join_advance(
+                            sides + side, side, text_delimiter,
                             join_order_check(unpaired),
                             separated, separator, fold, address_of disorder);
                         if (disorder &&
@@ -4580,70 +4554,77 @@ static b32 text_join()
                         continue;
                 }
 
-                /* Buffer exactly one right-side equal-key run.  The common
-                   unique-key case stores one record, and the left-major
-                   Cartesian walk below matches GNU's duplicate ordering. */
+                /* The right run is always buffered for the Cartesian walk.
+                   Forced checking also retains the left run until both next
+                   keys are validated, so a bad boundary emits no partial run. */
                 positive group_used = 0;
+                positive right_used = 0;
                 p8 address_to group_key = null;
                 positive group_key_length = 0;
+                bool checked = join_order_mode == RELATION_ORDER_FORCE;
 
                 text_arena_used = group_mark;
                 group = null;
                 group_room = 0;
 
-                do
+                for (b32 side = 1; side >= (checked ? 0 : 1); side--)
                 {
-                        positive next = join_store(
-                            address_of group, address_of group_room,
-                            group_mark, group_used,
-                            sides[1].record, sides[1].length);
-
-                        if (next == TEXT_UNSET)
+                        do
                         {
-                                text_error(null, "matching group too large");
-                                trouble = true;
-                                have_right = false;
+                                positive next = join_store(
+                                    address_of group, address_of group_room,
+                                    group_mark, group_used,
+                                    sides[side].record, sides[side].length);
+
+                                if (next == TEXT_UNSET)
+                                {
+                                        text_error(null, "matching group too large");
+                                        trouble = true;
+                                        break;
+                                }
+
+                                group_used = next;
+                                if (!group_key)
+                                {
+                                        join_stored address_to first =
+                                            (join_stored address_to)group;
+                                        join_view_key((p8 address_to)(first + 1),
+                                                      first->length, 1, separated,
+                                                      separator, address_of group_key,
+                                                      address_of group_key_length);
+                                }
+
+                                have[side] = join_advance(
+                                    sides + side, side, text_delimiter,
+                                    join_order_check(unpaired),
+                                    separated, separator, fold, address_of disorder);
+                                if (disorder && checked)
+                                        break;
+                        } while (have[side] && !text_record_compare(
+                                     group_key, group_key_length,
+                                     sides[side].key, sides[side].key_length, fold));
+                        if (side)
+                                right_used = group_used;
+                        if (trouble || (disorder && checked))
                                 break;
-                        }
+                }
 
-                        group_used = next;
-
-                        if (!group_key)
-                        {
-                                join_stored address_to first =
-                                    (join_stored address_to)group;
-
-                                join_view_key((p8 address_to)(first + 1),
-                                              first->length, 1, separated,
-                                              separator, address_of group_key,
-                                              address_of group_key_length);
-                        }
-
-                        have_right = join_advance(
-                            sides + 1, 1, text_delimiter,
-                            join_order_check(unpaired),
-                            separated, separator, fold, address_of disorder);
-                        if (disorder &&
-                            join_order_mode == RELATION_ORDER_FORCE)
-                                break;
-                } while (have_right && !text_record_compare(
-                             sides[0].key, sides[0].key_length,
-                             sides[1].key, sides[1].key_length, fold));
-
-                if (trouble ||
-                    (disorder && join_order_mode == RELATION_ORDER_FORCE))
+                if (trouble || (disorder && checked))
                         break;
 
+                positive left_at = right_used;
                 do
                 {
+                        join_stored address_to left = checked
+                            ? (join_stored address_to)(group + left_at) : null;
                         if (!join_only)
-                                for (positive at = 0; at < group_used;)
+                                for (positive at = 0; at < right_used;)
                                 {
                                         join_stored address_to stored =
                                             (join_stored address_to)(group + at);
-
-                                        join_emit(sides[0].record,
-                                                  sides[0].length,
+                                        join_emit(left ? (p8 address_to)(left + 1)
+                                                       : sides[0].record,
+                                                  left ? left->length : sides[0].length,
                                                   (p8 address_to)(stored + 1),
                                                   stored->length, separated,
                                                   separator, empty,
@@ -4652,44 +4633,37 @@ static b32 text_join()
                                         at += stored->bytes;
                                 }
 
-                        have_left = join_advance(
-                            sides, 0, text_delimiter,
+                        if (left)
+                                left_at += left->bytes;
+                        else
+                                have[0] = join_advance(
+                                    sides, 0, text_delimiter,
+                                    join_order_check(unpaired),
+                                    separated, separator, fold, address_of disorder);
+                } while (checked ? left_at < group_used
+                                 : have[0] && !text_record_compare(
+                                       sides[0].key, sides[0].key_length,
+                                       group_key, group_key_length, fold));
+        }
+
+        for (positive side = 0; side < array_count(have); side++)
+        {
+                while (!trouble && have[side] &&
+                       !(disorder && join_order_mode == RELATION_ORDER_FORCE))
+                {
+                        unpaired = true;
+                        if ((join_unpaired | join_only) & (1 << side))
+                                join_emit(side ? null : sides[0].record,
+                                          side ? 0 : sides[0].length,
+                                          side ? sides[1].record : null,
+                                          side ? sides[1].length : 0,
+                                          separated, separator, empty,
+                                          auto_left, auto_right, text_delimiter);
+                        have[side] = join_advance(
+                            sides + side, side, text_delimiter,
                             join_order_check(unpaired),
                             separated, separator, fold, address_of disorder);
-                        if (disorder &&
-                            join_order_mode == RELATION_ORDER_FORCE)
-                                break;
-                } while (have_left && group_used && !text_record_compare(
-                             sides[0].key, sides[0].key_length,
-                             group_key, group_key_length, fold));
-        }
-
-        while (!trouble && have_left &&
-               !(disorder && join_order_mode == RELATION_ORDER_FORCE))
-        {
-                unpaired = true;
-                if ((join_unpaired | join_only) & 1)
-                        join_emit(sides[0].record, sides[0].length,
-                                  null, 0, separated, separator, empty,
-                                  auto_left, auto_right, text_delimiter);
-                have_left = join_advance(
-                    sides, 0, text_delimiter,
-                    join_order_check(unpaired),
-                    separated, separator, fold, address_of disorder);
-        }
-
-        while (!trouble && have_right &&
-               !(disorder && join_order_mode == RELATION_ORDER_FORCE))
-        {
-                unpaired = true;
-                if ((join_unpaired | join_only) & 2)
-                        join_emit(null, 0, sides[1].record,
-                                  sides[1].length, separated, separator, empty,
-                                  auto_left, auto_right, text_delimiter);
-                have_right = join_advance(
-                    sides + 1, 1, text_delimiter,
-                    join_order_check(unpaired),
-                    separated, separator, fold, address_of disorder);
+                }
         }
 
         bool failed = sides[0].reader.failed || sides[1].reader.failed;

@@ -889,6 +889,18 @@ compare 'auto nonfirst keys' join - -o auto -t: -1 2 -2 2 -a1 -a2 "$work/join_fi
 compare 'auto header width'  join - -o auto --header -a1 -a2 -e EMPTY "$work/join_header_left" "$work/join_header_right"
 compare 'auto zero records' join - -o auto -z -a1 -a2 "$work/join_zero_left" "$work/join_zero_right"
 
+# Forced ordering validates both duplicate runs before emitting their product.
+printf 'a 1\na 2\n0 bad\nz last\n' > "$work/join_bad_run"
+printf 'a R\nb R\n' > "$work/join_good_run"
+for join_selection in -a1 -a2 -v1 -v2; do
+        compare "checked left run $join_selection" join - --check-order \
+                "$join_selection" "$work/join_bad_run" "$work/join_good_run"
+        compare "checked right run $join_selection" join - --check-order \
+                "$join_selection" "$work/join_good_run" "$work/join_bad_run"
+done
+compare 'checked run on stdin' join join_bad_run --check-order -a1 \
+        - "$work/join_good_run"
+
 case_start grep
 compare 'literal'        grep a  alpha
 compare 'anchor start'   grep a  '^delta'

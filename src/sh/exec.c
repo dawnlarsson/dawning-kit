@@ -502,19 +502,10 @@ fn job_monitor_told(bool on)
                 job_monitor_stop();
 }
 
-static positive job_find_number(positive number)
+static positive job_find(positive value, bool process)
 {
         for (positive at = 0; at < job_count; at++)
-                if (job_table[at].number == number)
-                        return at;
-
-        return job_count;
-}
-
-static positive job_find_last(bipolar last)
-{
-        for (positive at = 0; at < job_count; at++)
-                if (job_table[at].last == last)
+                if ((process ? (positive)job_table[at].last : job_table[at].number) == value)
                         return at;
 
         return job_count;
@@ -540,13 +531,13 @@ static fn job_mark(positive number)
 
 static fn job_marks_settle()
 {
-        if (job_current && job_find_number(job_current) == job_count)
+        if (job_current && job_find(job_current, false) == job_count)
         {
                 job_current = job_previous;
                 job_previous = 0;
         }
 
-        if (!job_current || job_find_number(job_current) == job_count)
+        if (!job_current || job_find(job_current, false) == job_count)
         {
                 job_current = 0;
 
@@ -556,7 +547,7 @@ static fn job_marks_settle()
         }
 
         if (job_previous == job_current ||
-            (job_previous && job_find_number(job_previous) == job_count))
+            (job_previous && job_find(job_previous, false) == job_count))
                 job_previous = 0;
 
         if (!job_previous)
@@ -774,7 +765,7 @@ static positive job_started(bipolar address_to children, positive count,
         /* A process identifier is reusable once the kernel has reaped its
            last owner. The new job owns the name; a stale row still carrying
            it does not. */
-        at = job_find_last(children[count - 1]);
+        at = job_find(children[count - 1], true);
 
         if (at < job_count)
                 job_drop_at(at);
@@ -972,7 +963,7 @@ static fn job_child_changed(bipolar pid, positive status)
         shell_background_reaped(pid, status);
 
         // A here-document writer is a child too, and belongs to no job.
-        at = job_find_last(pid);
+        at = job_find(pid, true);
 
         if (at < job_count)
                 job_table[at].status = status;
@@ -1277,7 +1268,7 @@ static positive job_specified(string_address word, positive address_to found)
 
         if (!word || !string_get(word))
         {
-                address_to found = job_find_number(job_current);
+                address_to found = job_find(job_current, false);
                 return job_current && address_to found < job_count
                            ? JOB_SPEC_FOUND
                            : JOB_SPEC_UNKNOWN;
@@ -1289,7 +1280,7 @@ static positive job_specified(string_address word, positive address_to found)
         if (!string_get(text) || string_get(text) == '%' ||
             string_get(text) == '+')
         {
-                address_to found = job_find_number(job_current);
+                address_to found = job_find(job_current, false);
                 return job_current && address_to found < job_count
                            ? JOB_SPEC_FOUND
                            : JOB_SPEC_UNKNOWN;
@@ -1297,7 +1288,7 @@ static positive job_specified(string_address word, positive address_to found)
 
         if (string_get(text) == '-' && !string_get(text + 1))
         {
-                address_to found = job_find_number(job_previous);
+                address_to found = job_find(job_previous, false);
                 return job_previous && address_to found < job_count
                            ? JOB_SPEC_FOUND
                            : JOB_SPEC_UNKNOWN;
@@ -1305,7 +1296,7 @@ static positive job_specified(string_address word, positive address_to found)
 
         if (string_digits_exact(text, address_of number))
         {
-                address_to found = job_find_number(number);
+                address_to found = job_find(number, false);
                 return address_to found < job_count ? JOB_SPEC_FOUND
                                                     : JOB_SPEC_UNKNOWN;
         }
@@ -1705,7 +1696,7 @@ fn shell_suspend(writer write, string_address input)
 */
 static b32 job_wait_foreground(positive number)
 {
-        positive at = job_find_number(number);
+        positive at = job_find(number, false);
         b32 status = shell_status;
         bipolar last;
 
@@ -1720,7 +1711,7 @@ static b32 job_wait_foreground(positive number)
                 positive raw = 0;
                 bipolar got;
 
-                at = job_find_number(number);
+                at = job_find(number, false);
 
                 if (at >= job_count || job_table[at].state != JOB_RUNNING ||
                     !job_running_children(last))
@@ -1747,7 +1738,7 @@ static b32 job_wait_foreground(positive number)
 
         job_terminal_give(job_shell_group);
 
-        at = job_find_number(number);
+        at = job_find(number, false);
 
         if (at >= job_count)
                 return status;
@@ -1765,7 +1756,7 @@ static b32 job_wait_foreground(positive number)
                 bool interrupted;
 
                 status = shell_wait_one(last, address_of interrupted);
-                at = job_find_number(number);
+                at = job_find(number, false);
 
                 if (at < job_count)
                         job_drop_at(at);
@@ -1841,7 +1832,7 @@ static b32 job_foreground_wait(bipolar child, bipolar group, b32 node)
                 return answer;
 
         {
-                positive at = job_find_number(number);
+                positive at = job_find(number, false);
 
                 job_table[at].state = JOB_STOPPED;
                 job_table[at].stopped_by = stopped_by;
@@ -2085,7 +2076,7 @@ static b32 job_wait_job(positive found, string_address into,
                 env_set_number(into, (positive)last);
 
         answer = shell_wait_one(last, interrupted);
-        found = job_find_last(last);
+        found = job_find(last, true);
 
         if (found < job_count)
                 job_drop_at(found);
@@ -2304,7 +2295,7 @@ fn job_wait(writer write, string_address input)
                                 return shell_answer(2);
                         }
 
-                        found = job_find_last((bipolar)pid);
+                        found = job_find(pid, true);
 
                         if (found >= job_count)
                         {
@@ -7584,9 +7575,12 @@ static b32 exec_declare_global_begin(string_address name, positive length,
         return 1;
 }
 
-static bool exec_declare_global_end(address_any scope, bool adopt)
+static bool exec_declare_global_end(address_any address_to scope, bool adopt)
 {
-        exec_declaration_scope address_to held = scope;
+        exec_declaration_scope address_to held = *scope;
+        if (!held)
+                return true;
+        *scope = null;
         exec_kept_value updated;
         bool answer = exec_keep_value(&updated, held->global->name, EXEC_KEEP_CELL);
         if (answer && updated.value)
@@ -10061,7 +10055,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                         ? job_started(job_held, started, group, first, true,
                                       false)
                         : 0;
-                positive slot = number ? job_find_number(number) : job_count;
+                positive slot = number ? job_find(number, false) : job_count;
 
                 memory_free(children, children_room * sizeof(children[0]));
 

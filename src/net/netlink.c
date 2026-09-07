@@ -378,14 +378,15 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
         buffers given back whatever the answer was.
 */
 static bipolar netlink_transact(b32 handle, netlink_buffer address_to request,
-                                p32 sequence, netlink_buffer address_to reply,
-                                netlink_visitor visit, address_any context)
+                                p32 sequence, netlink_visitor visit,
+                                address_any context)
 {
-        bipolar status = netlink_walk(handle, request, sequence, reply,
+        netlink_buffer reply = {0};
+        bipolar status = netlink_walk(handle, request, sequence, address_of reply,
                                       visit, context);
 
         netlink_forget(request);
-        netlink_forget(reply);
+        netlink_forget(address_of reply);
 
         return status;
 }
@@ -648,7 +649,6 @@ static bipolar netlink_link_find(b32 handle, netlink_search address_to search)
 static bipolar netlink_link_up(b32 handle, p32 index)
 {
         netlink_buffer request = {0};
-        netlink_buffer reply = {0};
         netlink_link address_to body;
         p32 sequence = netlink_sequence_next++;
 
@@ -663,7 +663,7 @@ static bipolar netlink_link_up(b32 handle, p32 index)
         body->change = IFF_UP;
 
         return netlink_transact(handle, address_of request, sequence,
-                                address_of reply, null, null);
+                                null, null);
 }
 
 /*
@@ -676,7 +676,6 @@ static bipolar netlink_link_up(b32 handle, p32 index)
 static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
 {
         netlink_buffer request = {0};
-        netlink_buffer reply = {0};
         netlink_address address_to body;
         p32 sequence = netlink_sequence_next++;
         p32 wire = network_order_32(host);
@@ -696,7 +695,7 @@ static bipolar netlink_address_add(b32 handle, p32 index, p32 host, p8 prefix)
         netlink_attribute_add(address_of request, IFA_ADDRESS, address_of wire, 4);
 
         return netlink_transact(handle, address_of request, sequence,
-                                address_of reply, null, null);
+                                null, null);
 }
 
 /*
@@ -711,7 +710,6 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
                                  p32 index)
 {
         netlink_buffer request = {0};
-        netlink_buffer reply = {0};
         netlink_route address_to body;
         p32 sequence = netlink_sequence_next++;
         p32 wire_gateway = network_order_32(gateway);
@@ -747,7 +745,7 @@ static bipolar netlink_route_add(b32 handle, p32 destination, p8 bits, p32 gatew
                                       address_of index, 4);
 
         return netlink_transact(handle, address_of request, sequence,
-                                address_of reply, null, null);
+                                null, null);
 }
 
 /*
@@ -762,7 +760,6 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
                             netlink_visitor visit, address_any context)
 {
         netlink_buffer request = {0};
-        netlink_buffer reply = {0};
         p32 sequence = netlink_sequence_next++;
         if (!netlink_begin(address_of request, type, NLM_REQUEST | NLM_DUMP,
                            sequence, body))
@@ -771,7 +768,7 @@ static bipolar netlink_dump(b32 handle, p16 type, positive body, p8 family,
         address_to(p8 address_to) netlink_body(address_of request) = family;
 
         return netlink_transact(handle, address_of request, sequence,
-                                address_of reply, visit, context);
+                                visit, context);
 }
 
 #endif // STANDARD_MODERN_C_NET_NETLINK

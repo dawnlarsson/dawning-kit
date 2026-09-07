@@ -4254,11 +4254,6 @@ static bool edit_window_block(positive address_to previous)
         return true;
 }
 
-static fn edit_window_unblock(positive previous)
-{
-        system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of previous, 0, 8);
-}
-
 static bipolar edit_wait(bool briefly)
 {
         timespec limit = {0, 50000000};
@@ -4357,7 +4352,7 @@ static b32 system_edit()
 
         if (!edit_window_signal(window_action))
         {
-                edit_window_unblock(window_mask);
+                system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of window_mask, 0, 8);
                 edit_terminal_restore();
                 log_direct(str("edit: could not watch terminal size\n"));
                 edit_document_release();
@@ -4423,7 +4418,7 @@ static b32 system_edit()
         if (!edit_flush())
                 result = 1;
         system_signal_action(EDIT_SIGNAL_WINCH, window_action, 0, 8);
-        edit_window_unblock(window_mask);
+        system_signal_mask(EDIT_SIGNAL_SET_MASK, address_of window_mask, 0, 8);
         edit_terminal_restore();
         shell_styles = styles;
         edit_document_release();

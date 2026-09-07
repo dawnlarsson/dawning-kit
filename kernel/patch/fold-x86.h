@@ -51,35 +51,20 @@
 /* The compiler owns the same <=32-byte tier in compiler_memory.c. Explicit
    builtins preserve unaligned access without a second set of width/tail rules;
    the kernel's -mno-sse/-mno-avx flags constrain them to general registers. */
-static __always_inline void *moonwater_fold_copy(void *to, const void *from,
-                                                 __kernel_size_t count)
-{
-        return __builtin_memcpy(to, from, count);
-}
-
-static __always_inline void *moonwater_fold_fill(void *to, int byte,
-                                                 __kernel_size_t count)
-{
-        return __builtin_memset(to, byte, count);
-}
-
 //      Thirty two, because 91.7% of the constant sizes in the tree are at or
 //      below it and the routine reaches rep movsb just above it.
 #define MOONWATER_FOLD_MAX 32
 
-#ifndef FOLD_ONLY_BODIES
 #define memcpy(to, from, count)                                               \
         (__builtin_constant_p(count) &&                                       \
          (__kernel_size_t)(count) <= MOONWATER_FOLD_MAX                       \
-                 ? moonwater_fold_copy((to), (from), (count))                 \
+                 ? __builtin_memcpy((to), (from), (count))                    \
                  : memcpy((to), (from), (count)))
 
 #define memset(to, byte, count)                                               \
         (__builtin_constant_p(count) && __builtin_constant_p(byte) &&         \
          (__kernel_size_t)(count) <= MOONWATER_FOLD_MAX                       \
-                 ? moonwater_fold_fill((to), (byte), (count))                 \
+                 ? __builtin_memset((to), (byte), (count))                    \
                  : memset((to), (byte), (count)))
-
-#endif /* FOLD_ONLY_BODIES */
 
 #endif /* MOONWATER_FOLD_X86 */

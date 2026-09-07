@@ -1981,7 +1981,18 @@ lane_strings()   { freestanding_checks_lane strings src/test/strings.c; }
 lane_stdlib()    { freestanding_checks_lane stdlib src/test/stdlib.c; }
 lane_clock()     { freestanding_checks_lane clock src/test/clock.c; }
 lane_math()      { freestanding_checks_lane math src/test/math.c; }
-lane_format()    { freestanding_checks_lane format src/test/format.c; }
+lane_format()
+{
+        format_status=0
+        for format_suite in format format_standalone; do
+                freestanding_checks_lane "$format_suite" "src/test/$format_suite.c" && continue
+                case $? in
+                2) [ "$format_status" != 0 ] || format_status=2 ;;
+                *) format_status=1 ;;
+                esac
+        done
+        return "$format_status"
+}
 lane_stream()    { sh src/test/stream.sh; }
 
 lane_known()

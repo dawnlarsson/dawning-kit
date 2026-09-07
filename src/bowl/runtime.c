@@ -420,22 +420,6 @@ static bipolar bowl_fast_enter(string_address root)
         return 0;
 }
 
-static bipolar bowl_execute(bipolar native_shell,
-                             string_address program,
-                             string_address address_to arguments,
-                             string_address address_to environment)
-{
-        if (native_shell >= 0)
-                return system_call_5(syscall(execveat),
-                                     (positive)native_shell,
-                                     (positive)"",
-                                     (positive)arguments,
-                                     (positive)environment,
-                                     AT_EMPTY_PATH);
-
-        return system_execute(program, arguments, environment);
-}
-
 static b32 bowl_launch_failed(bipolar native_shell, string_address what,
                               bipolar failed)
 {
@@ -464,7 +448,11 @@ static DEAD_END fn bowl_inside(string_address root,
                 exit(1);
         }
 
-        failed = bowl_execute(native_shell, program, arguments, environment);
+        failed = native_shell >= 0
+            ? system_call_5(syscall(execveat), (positive)native_shell,
+                             (positive)"", (positive)arguments,
+                             (positive)environment, AT_EMPTY_PATH)
+            : system_execute(program, arguments, environment);
         bowl_fail(program, failed);
         exit(127);
 }
@@ -506,25 +494,17 @@ static b32 bowl_launch(string_address root, string_address program,
                 arguments = native_arguments;
         }
 
-        if (!system_profile)
-        {
-                failed = system_call_1(syscall(unshare), CLONE_NEWNS);
-                if (failed)
-                        return bowl_launch_failed(native_shell,
-                                                  "cannot make a mount view",
-                                                  failed);
-
-                /* Success never returns: this process becomes the command. */
-                bowl_inside(root, program, arguments, environment,
-                            native_shell, false);
-        }
-
-        failed = system_call_1(syscall(unshare), CLONE_NEWNS | CLONE_NEWUTS |
-                                                     CLONE_NEWIPC | CLONE_NEWPID);
-
+        failed = system_call_1(syscall(unshare), CLONE_NEWNS |
+            (system_profile ? CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWPID : 0));
         if (failed)
                 return bowl_launch_failed(native_shell,
-                                          "cannot make system views", failed);
+                    system_profile ? "cannot make system views"
+                                   : "cannot make a mount view", failed);
+
+        /* Success never returns: this process becomes the command. */
+        if (!system_profile)
+                bowl_inside(root, program, arguments, environment,
+                            native_shell, false);
 
         /* CLONE_NEWPID places the next child, not this caller, in the view. */
         child = system_fork();

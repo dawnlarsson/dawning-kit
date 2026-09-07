@@ -358,12 +358,12 @@ positive stream_put_bytes(stream address_to handle, address_any data,
 /* Keep syscall policies named at each call; only writes need both the
    accepted prefix and the terminal error from the shared assembly loop. */
 #define stream_trap_read(descriptor, into, length)                           \
-        error_wide(system_read_retry((positive)(descriptor), (into), (length)))
+        error_result(system_read_retry((positive)(descriptor), (into), (length)))
 #define stream_trap_seek(descriptor, offset, whence)                         \
-        error_wide(system_seek((descriptor), (offset), (whence)))
-#define stream_trap_close(descriptor) error_whole(system_close(descriptor))
+        error_result(system_seek((descriptor), (offset), (whence)))
+#define stream_trap_close(descriptor) error_result(system_close(descriptor))
 #define stream_trap_open(path, flags, permissions)                           \
-        error_wide(system_open_at_mode(AT_FDCWD, (path), (flags), (permissions)))
+        error_result(system_open_at_mode(AT_FDCWD, (path), (flags), (permissions)))
 
 static positive stream_trap_write(b32 descriptor, address_any from, positive length)
 {
@@ -752,7 +752,7 @@ stream address_to stream_adopt(b32 descriptor, string_address mode)
 
         if (!stream_read_mode(mode, address_of open_flags, address_of stream_flags))
                 return null;
-        bipolar flags = error_wide(system_call_3(syscall(fcntl),
+        bipolar flags = error_result(system_call_3(syscall(fcntl),
                                                   (positive)descriptor, 3, 0));
         if (flags < 0)
                 return null;
@@ -763,7 +763,7 @@ stream address_to stream_adopt(b32 descriptor, string_address mode)
                 return null;
         }
         if ((stream_flags & STREAM_APPEND) && !(flags & stream_open_append) &&
-            error_whole(system_call_3(syscall(fcntl), (positive)descriptor, 4,
+            error_result(system_call_3(syscall(fcntl), (positive)descriptor, 4,
                                         (positive)flags | stream_open_append)) < 0)
                 return null;
         return stream_attach(descriptor, stream_flags);

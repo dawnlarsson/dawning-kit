@@ -768,13 +768,6 @@ PURE bool shell_extglob_asked()
         return shell_extglob_on;
 }
 
-// Whether one of the five heads stands here with its parenthesis behind it.
-static CONST inline INLINE bool glob_group_head(p8 value)
-{
-        return value == '?' || value == '*' || value == '+' || value == '@' ||
-               value == '!';
-}
-
 /*
         Whether the pattern holds an extended group at all.
 
@@ -794,7 +787,7 @@ static PURE bool glob_extended_anywhere(string_address pattern)
                 if (!at)
                         return false;
 
-                if (at > pattern && glob_group_head(string_get(at - 1)))
+                if (at > pattern && lex_extended_head(string_get(at - 1)))
                         return true;
 
                 at++;
@@ -971,7 +964,7 @@ static bool glob_bounded(string_address pattern, string_address pattern_end,
                 p8 want = string_get(pattern);
                 string_address stop;
 
-                if (glob_group_head(want) && string_is(pattern + 1, '('))
+                if (lex_extended_head(want) && string_is(pattern + 1, '('))
                 {
                         string_address close = glob_group_end(pattern + 1);
 
@@ -6111,7 +6104,7 @@ static PURE bool glob_magic(string_address pattern)
                 //      of a group in front of a parenthesis, which is a
                 //      pattern to look on disk with like any other.
                 if (shell_extglob_on && string_is(pattern + 1, '(') &&
-                    glob_group_head(string_get(pattern)))
+                    lex_extended_head(string_get(pattern)))
                         return true;
 
                 pattern++;
@@ -6381,7 +6374,7 @@ static string_address expand_keep_field(positive at, positive stop)
 static inline INLINE bool glob_quoted_special(p8 byte)
 {
         return byte == '*' || byte == '?' || byte == '[' || byte == '\\' ||
-               (shell_extglob_on && (glob_group_head(byte) || byte == '(' ||
+               (shell_extglob_on && (lex_extended_head(byte) || byte == '(' ||
                                      byte == ')' || byte == '|'));
 }
 
@@ -6454,7 +6447,7 @@ static bool expand_emit(positive at, positive stop, shell_words address_to out)
                                 pattern[used++] = '\\';
                 }
                 else if (value == '*' || value == '?' ||
-                         (shell_extglob_on && glob_group_head(value) &&
+                         (shell_extglob_on && lex_extended_head(value) &&
                           index + 1 < stop && expand_text[index + 1] == '(' &&
                           expand_mark[index + 1] != MARK_QUOTED))
                         magic = true;

@@ -52,18 +52,18 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
         unsigned int row, column;
 
         /*
-                The whole thing in one call, when it is entirely inside the
-                damage and drawn at its own size. That is nearly every glyph;
-                the rest go the long way round below.
+                Whole eight-pixel tiles share the glyph floor when the bitmap
+                is entirely inside the damage and drawn at its own size.
         */
-        if (scale == 1 && w == 8 && pitch == 1 &&
-            x >= max(t->clip.x1, 0) && x + 8 <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) && y + (int)h <= min(t->clip.y2, t->height))
+        if (scale == 1 && !(w & 7) &&
+            x >= max(t->clip.x1, 0) && (long)x + w <= min(t->clip.x2, t->width) &&
+            y >= max(t->clip.y1, 0) && (long)y + h <= min(t->clip.y2, t->height))
         {
-                canvas_painted += h * 8;
-                canvas_runs++;
-                canvas_glyph(t->pixels + (size_t)y * t->pitch + x, t->pitch,
-                             bits, 1, h, colour);
+                canvas_painted += (unsigned long)h * w;
+                canvas_runs += w / 8;
+                for (column = 0; column < w; column += 8)
+                        canvas_glyph(t->pixels + (size_t)y * t->pitch + x + column,
+                                     t->pitch, bits + column / 8, pitch, h, colour);
                 return;
         }
 
@@ -163,25 +163,6 @@ static HOT void canvas_draw_cursor(const struct target *t, int x, int y,
 {
         x -= canvas_cursor_hot[shape][0] * (int)scale;
         y -= canvas_cursor_hot[shape][1] * (int)scale;
-
-        // The whole cell in four calls, when it is at its own size and
-        // entirely inside the damage. Two halves of a row, two colours.
-        if (scale == 1 &&
-            x >= max(t->clip.x1, 0) && x + CURSOR_W <= min(t->clip.x2, t->width) &&
-            y >= max(t->clip.y1, 0) && y + CURSOR_H <= min(t->clip.y2, t->height))
-        {
-                u32 *at = t->pixels + (size_t)y * t->pitch + x;
-
-                canvas_glyph(at, t->pitch, (const u8 *)cursor_fill[shape], 2,
-                             CURSOR_H, t->ink[INK_CURSOR]);
-                canvas_glyph(at + 8, t->pitch, (const u8 *)cursor_fill[shape] + 1, 2,
-                             CURSOR_H, t->ink[INK_CURSOR]);
-                canvas_glyph(at, t->pitch, (const u8 *)cursor_edge[shape], 2,
-                             CURSOR_H, t->ink[INK_CURSOR_EDGE]);
-                canvas_glyph(at + 8, t->pitch, (const u8 *)cursor_edge[shape] + 1, 2,
-                             CURSOR_H, t->ink[INK_CURSOR_EDGE]);
-                return;
-        }
 
         bits_draw(t, x, y, (int)scale, (const u8 *)cursor_fill[shape], 2, CURSOR_W,
                   CURSOR_H, t->ink[INK_CURSOR]);

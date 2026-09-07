@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 typedef uint8_t u8;
+typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 #define HOT
@@ -113,6 +114,29 @@ int main(void) {
         check(!memcmp(pixels,expected,sizeof(pixels)));
     }
     const u32 colors[]={0,1,0x80000000,0xffffffff,0xaabbccdd,0x10203040};
+    // Cursor tiles and clipped/scaled bitmap runs must produce the same pixels.
+    const int positions[]={-6,9,28,60};
+    for(unsigned shape=0;shape<CURSOR_SHAPES;shape++)for(unsigned scale=1;scale<=3;scale++)
+    for(unsigned xi=0;xi<4;xi++)for(unsigned yi=0;yi<4;yi++) {
+        struct target t={.pixels=pixels,.pitch=1024,.width=64,.height=64,
+            .ink=palette,.clip={3,2,61,62}};
+        int x=positions[xi],y=positions[yi];
+        memset(pixels,0xa5,sizeof(pixels));memset(expected,0xa5,sizeof(expected));
+        canvas_draw_cursor(&t,x,y,shape,scale);
+        x-=canvas_cursor_hot[shape][0]*(int)scale;
+        y-=canvas_cursor_hot[shape][1]*(int)scale;
+        for(unsigned layer=0;layer<2;layer++) {
+            const u8 *bits=(const u8 *)(layer?cursor_edge[shape]:cursor_fill[shape]);
+            for(unsigned r=0;r<CURSOR_H;r++)for(unsigned c=0;c<CURSOR_W;c++)
+            if(bits[r*2+c/8]&(0x80>>(c%8)))
+            for(unsigned dy=0;dy<scale;dy++)for(unsigned dx=0;dx<scale;dx++) {
+                int px=x+(int)(c*scale+dx),py=y+(int)(r*scale+dy);
+                if(px>=t.clip.x1&&px<t.clip.x2&&py>=t.clip.y1&&py<t.clip.y2)
+                    expected[py*t.pitch+px]=palette[layer?INK_CURSOR_EDGE:INK_CURSOR];
+            }
+        }
+        check(!memcmp(pixels,expected,sizeof(pixels)));
+    }
     for(unsigned a=0;a<6;a++)for(unsigned b=0;b<6;b++)for(unsigned pattern=0;pattern<256;pattern++) {
         unsigned rows=1+pattern%17,pitch=8+(pattern%10),align=(pattern/10)%2;
         u8 bits[17];for(unsigned r=0;r<rows;r++)bits[r]=(pattern+r*17)&255;

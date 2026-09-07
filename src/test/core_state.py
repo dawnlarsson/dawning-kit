@@ -32,7 +32,7 @@ def canvas_sources(work, arch):
     cells += section(compose, "static _Bool shape_span", "static void shape_blit")
     cells += section(canvas, "enum\n{", "/*\n        A pane")
     cells += section(paint, "static const u32 canvas_ink", "/*\n        A bitmap,")
-    cells += section(paint, "static void bits_draw", "/*\n        Cursors.")
+    cells += section(paint, "static void bits_draw", "// xrgb8888")
     cells += section(text, "static const struct font_desc", "/*\n        Where one line ends.")
     cells += section(compose, "static void cell_draw", "/*\n        A window made of text.\n\n        The rows")
     (work / "canvas-cells.inc").write_text(cells)

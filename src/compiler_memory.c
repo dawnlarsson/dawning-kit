@@ -16,12 +16,9 @@
 #include "library.common.c"
 
 /*
-        Source-generating conveniences are compiler policy too.
-
-        Neither is used by the library or by an in-tree consumer. They remain
-        available to code that deliberately opts into this compatibility
-        layer, while the pure library cannot expand either a C loop or a weak
-        C function body.
+        Legacy source-generating conveniences remain opt-in compiler policy.
+        The shared varargs entry macro lives in library.common.c. None belongs
+        in library.c's assembly-only include graph.
 */
 #define var_list_iter(list, count, type, action)              \
         do                                                    \
@@ -32,16 +29,6 @@
                         action;                               \
                 }                                             \
         } while (0)
-
-#define var_list_entry(name, returned, parameters, last, call)               \
-        static returned name parameters                                      \
-        {                                                                    \
-                var_args _variadic_list;                                     \
-                var_list(_variadic_list, last);                              \
-                returned _variadic_answer = (call);                          \
-                var_list_end(_variadic_list);                                \
-                return _variadic_answer;                                     \
-        }
 
 #ifdef LIBRARY_API
 
@@ -1568,65 +1555,6 @@ static inline INLINE address_any last_of_known(address_any block, b8 value,
         nothing at all past four, and it costs no source at all.
 */
 
-//      One digit for a base that is folded. Anything that is not a digit of
-//      that base answers the base itself, which no digit of it can be.
-static inline INLINE positive digit_known(p8 character, positive base)
-{
-        p32 narrow = (p32)character - 48;
-
-        if (base <= 10)
-                return narrow < (p32)base ? narrow : base;
-        if (narrow <= 9)
-                return narrow;
-
-        narrow = (p32)(character | 32) - 97;
-        return narrow <= (p32)base - 11 ? narrow + 10 : base;
-}
-
-/*
-        A run of digits in a folded base, refused rather than wrapped.
-
-        string_digits_max wraps by contract and says nothing, which every
-        size and count a shell parses is checked against its own limit
-        afterwards. A util-linux operand has no such limit behind it: a
-        priority or a descriptor that wrapped reached the kernel as a
-        different number. dd and the util-linux applets each wrote this
-        loop; it answers false with nothing consumed when there is no digit
-        or when a digit would not fit, and moves the cursor past the run
-        otherwise.
-*/
-static inline bool string_digits_checked(string_address address_to text,
-                                         positive base,
-                                         positive address_to value)
-{
-        string_address at = address_to text;
-        positive got = 0;
-        bool any = false;
-
-        while (1)
-        {
-                positive digit = digit_known(string_get(at), base);
-
-                if (digit >= base)
-                        break;
-
-                positive scaled;
-
-                if (__builtin_mul_overflow(got, base, address_of scaled) ||
-                    __builtin_add_overflow(scaled, digit, address_of got))
-                        return false;
-
-                at++;
-                any = true;
-        }
-
-        if (!any)
-                return false;
-
-        address_to text = at;
-        address_to value = got;
-        return true;
-}
 
 /*
         strtol and strtoul with the base folded.

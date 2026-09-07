@@ -1115,7 +1115,7 @@ static b32 execle(string_address path, string_address first, ...)
 */
 static b32 nanosleep(timespec address_to request, timespec address_to remaining)
 {
-        return error_whole(system_call_2(syscall(nanosleep),
+        return error_result(system_call_2(syscall(nanosleep),
                                          (positive)request,
                                          (positive)remaining));
 }
@@ -1126,7 +1126,7 @@ static b32 nanosleep(timespec address_to request, timespec address_to remaining)
 
         POSIX says it returns the error number directly and leaves errno
         alone, which is the opposite of every other name here and is the
-        reason it cannot go through error_whole. A program that writes
+        reason it cannot go through error_result. A program that writes
 
             if (clock_nanosleep(...) != 0)
 

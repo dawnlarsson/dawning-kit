@@ -110,7 +110,7 @@ static positive stdlib_arena_left = 0;
 /* Standalone users of this family have no errno dependency. With the error
    family present, every failed environment operation reports its cause. */
 #ifdef STANDARD_MODERN_C_STANDARD_ERROR
-#define stdlib_environment_failure(result) error_whole(result)
+#define stdlib_environment_failure(result) error_result(result)
 #else
 #define stdlib_environment_failure(result) (-1)
 #endif

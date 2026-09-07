@@ -2616,18 +2616,6 @@ static bool process_replay_skip_header(
         return false;
 }
 
-static bool process_replay_count(string_address text,
-                                 positive address_to count)
-{
-        string_address at = text;
-        positive value;
-        if (!string_digits_checked(address_of at, 10, address_of value) ||
-            string_get(at))
-                return false;
-        address_to count = value;
-        return true;
-}
-
 static bool process_replay_timing(string_address line, bool address_to advanced,
                                   p8 address_to stream,
                                   positive address_to delay,
@@ -2670,7 +2658,7 @@ static bool process_replay_timing(string_address line, bool address_to advanced,
            The out/in replay engine preserves their delay and consumes no
            payload; selecting the signal stream itself is rejected below. */
         positive bytes = 0;
-        if (kind != 'S' && !process_replay_count(at, address_of bytes))
+        if (kind != 'S' && !file_unsigned_decimal(at, address_of bytes))
                 return false;
         address_to stream = kind ? kind : 'O';
         address_to delay = waited;

@@ -352,8 +352,38 @@ static fn reuse_counted_classes(void)
         memory_free(pages, 8192);
 }
 
+static fn reuse_utility_numbers(void)
+{
+        for (bipolar sign = -1; sign <= 1; sign += 2)
+        {
+                check("file reasons preserve accepted error text and both signs",
+                      string_equals(file_reason(sign * ERROR_ACCESS), "Permission denied") &&
+                      string_equals(file_reason(sign * ERROR_OVER_QUOTA), "Disk quota exceeded"));
+                check("file reasons retain the narrower utility error set",
+                      string_equals(file_reason(sign * EINTR), "Error") &&
+                      string_equals(file_reason(sign * EDOM), "Error"));
+        }
+        check("file reasons bound magnitudes before narrowing to a byte",
+              string_equals(file_reason(256 + ERROR_ACCESS), "Error") &&
+              string_equals(file_reason(bipolar_min), "Error") &&
+              string_equals(file_reason(bipolar_max), "Error"));
+        positive number = 9;
+        check("checked utility decimals accept the whole unsigned range",
+              file_unsigned_decimal("18446744073709551615", &number) && number == positive_max);
+        static const string_address rejected[] = {
+            "", "+1", "-1", " 1", "1 ", "1x", "18446744073709551616",
+        };
+        for (positive at = 0; at < array_count(rejected); at++)
+        {
+                number = 9;
+                check("checked utility decimals reject overflow without changing the default",
+                      !file_unsigned_decimal(rejected[at], &number) && number == 9);
+        }
+}
+
 b32 main(void)
 {
+        reuse_utility_numbers();
         reuse_lookup_contracts();
         reuse_counted_classes();
         timespec span;

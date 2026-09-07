@@ -2781,48 +2781,28 @@ static fn file_color_sgr(writer write, file_color_span color)
 
 CONST RETURNS_NONNULL string_address file_reason(bipolar code)
 {
-        if (code < 0)
-                code = -code;
+        static const p8 accepted[] = {
+            ERROR_NO_ENTRY, ERROR_NO_PROCESS, ERROR_BAD_DESCRIPTOR,
+            ERROR_NOT_PERMITTED, ERROR_ACCESS, ERROR_EXISTS,
+            ERROR_NOT_DIRECTORY, ERROR_IS_DIRECTORY, ERROR_NOT_EMPTY,
+            ERROR_INVALID, ERROR_NOT_TERMINAL, ERROR_CROSS_DEVICE,
+            ERROR_ILLEGAL_SEEK, ERROR_NAME_TOO_LONG, ERROR_INPUT_OUTPUT,
+            ERROR_NO_DEVICE_ADDRESS, ERROR_ARGUMENT_LIST, ERROR_AGAIN,
+            ERROR_NO_MEMORY, ERROR_BUSY, ERROR_NO_DEVICE,
+            ERROR_SYSTEM_FILES, ERROR_PROCESS_FILES, ERROR_TEXT_BUSY,
+            ERROR_FILE_TOO_LARGE, ERROR_NO_SPACE, ERROR_READ_ONLY,
+            ERROR_TOO_MANY_LINKS, ERROR_BROKEN_PIPE, ERROR_OUT_OF_RANGE,
+            ERROR_NO_SYSTEM_CALL, ERROR_TOO_MANY_LEVELS, ERROR_NOT_SUPPORTED,
+            ERROR_NOT_CONNECTED, ERROR_OVER_QUOTA,
+        };
+        positive magnitude = code < 0 ? (positive)0 - (positive)code
+                                      : (positive)code;
 
-        switch (code)
-        {
-        case ERROR_NO_ENTRY: return (string_address)"No such file or directory";
-        case ERROR_NO_PROCESS: return (string_address)"No such process";
-        case ERROR_BAD_DESCRIPTOR: return (string_address)"Bad file descriptor";
-        case ERROR_NOT_PERMITTED: return (string_address)"Operation not permitted";
-        case ERROR_ACCESS: return (string_address)"Permission denied";
-        case ERROR_EXISTS: return (string_address)"File exists";
-        case ERROR_NOT_DIRECTORY: return (string_address)"Not a directory";
-        case ERROR_IS_DIRECTORY: return (string_address)"Is a directory";
-        case ERROR_NOT_EMPTY: return (string_address)"Directory not empty";
-        case ERROR_INVALID: return (string_address)"Invalid argument";
-        case ERROR_NOT_TERMINAL: return (string_address)"Inappropriate ioctl for device";
-        case ERROR_CROSS_DEVICE: return (string_address)"Invalid cross-device link";
-        case ERROR_ILLEGAL_SEEK: return (string_address)"Illegal seek";
-        case ERROR_NAME_TOO_LONG: return (string_address)"File name too long";
-        case ERROR_INPUT_OUTPUT: return (string_address)"Input/output error";
-        case ERROR_NO_DEVICE_ADDRESS: return (string_address)"No such device or address";
-        case ERROR_ARGUMENT_LIST: return (string_address)"Argument list too long";
-        case ERROR_AGAIN: return (string_address)"Resource temporarily unavailable";
-        case ERROR_NO_MEMORY: return (string_address)"Cannot allocate memory";
-        case ERROR_BUSY: return (string_address)"Device or resource busy";
-        case ERROR_NO_DEVICE: return (string_address)"No such device";
-        case ERROR_SYSTEM_FILES: return (string_address)"Too many open files in system";
-        case ERROR_PROCESS_FILES: return (string_address)"Too many open files";
-        case ERROR_TEXT_BUSY: return (string_address)"Text file busy";
-        case ERROR_FILE_TOO_LARGE: return (string_address)"File too large";
-        case ERROR_NO_SPACE: return (string_address)"No space left on device";
-        case ERROR_READ_ONLY: return (string_address)"Read-only file system";
-        case ERROR_TOO_MANY_LINKS: return (string_address)"Too many links";
-        case ERROR_BROKEN_PIPE: return (string_address)"Broken pipe";
-        case ERROR_OUT_OF_RANGE: return (string_address)"Numerical result out of range";
-        case ERROR_NO_SYSTEM_CALL: return (string_address)"Function not implemented";
-        case ERROR_TOO_MANY_LEVELS: return (string_address)"Too many levels of symbolic links";
-        case ERROR_NOT_SUPPORTED: return (string_address)"Operation not supported";
-        case ERROR_NOT_CONNECTED: return (string_address)"Transport endpoint is not connected";
-        case ERROR_OVER_QUOTA: return (string_address)"Disk quota exceeded";
-        default: return (string_address)"Error";
-        }
+        return magnitude <= p8_max &&
+               memory_first_of((address_any)accepted, (p8)magnitude,
+                               sizeof(accepted))
+                   ? system_error_message((bipolar)magnitude)
+                   : (string_address)"Error";
 }
 
 // Copying, removing, making --------------------------------
@@ -4731,6 +4711,20 @@ static bool file_signed_decimal(string_address text, bipolar address_to value)
                 return false;
 
         address_to value = bipolar_from_magnitude(magnitude, negative);
+        return true;
+}
+
+static bool file_unsigned_decimal(string_address text,
+                                   positive address_to number)
+{
+        string_address at = text;
+        positive value;
+
+        if (!string_digits_checked(address_of at, 10, address_of value) ||
+            string_get(at))
+                return false;
+
+        address_to number = value;
         return true;
 }
 
@@ -10770,11 +10764,9 @@ static bool split_materialized(bipolar in, file_facts address_to facts,
 
 static bool split_chunks(string_address text, positive address_to chunks)
 {
-        string_address at = text;
         positive value;
 
-        if (!string_digits_checked(address_of at, 10, address_of value) ||
-            string_get(at) || !value)
+        if (!file_unsigned_decimal(text, address_of value) || !value)
                 return false;
         address_to chunks = value;
         return true;
@@ -11228,11 +11220,9 @@ static bool csplit_parse_regex(string_address word,
 static bool csplit_parse_line(string_address word,
                               csplit_pattern address_to pattern)
 {
-        string_address at = word;
         positive line;
 
-        if (!string_digits_checked(address_of at, 10, address_of line) ||
-            string_get(at) || !line)
+        if (!file_unsigned_decimal(word, address_of line) || !line)
                 return false;
 
         pattern->kind = CSPLIT_LINE;
@@ -12991,19 +12981,6 @@ static const file_long shred_longs[] = {
     {null, 0},
 };
 
-static bool shred_number(string_address text, positive address_to number)
-{
-        string_address at = text;
-        positive value;
-
-        if (!string_digits_checked(address_of at, 10, address_of value) ||
-            string_get(at))
-                return false;
-
-        address_to number = value;
-        return true;
-}
-
 static bool shred_size(string_address text, positive address_to size)
 {
         if (string_is(text, '0') && !string_get(text + 1))
@@ -13347,7 +13324,7 @@ static b32 file_shred()
         string_address iteration_text = file_option_value(address_of taking, 'n');
 
         if (iteration_text &&
-            !shred_number(iteration_text, address_of iterations))
+            !file_unsigned_decimal(iteration_text, address_of iterations))
         {
                 string_format(file_fail, "shred: invalid number of passes: '%s'\n",
                               iteration_text);
@@ -13804,7 +13781,7 @@ static b32 file_shuf()
         string_address count_text = file_option_value(address_of taking, 'n');
         bool limited = count_text != null;
 
-        if (limited && !shred_number(count_text, address_of wanted))
+        if (limited && !file_unsigned_decimal(count_text, address_of wanted))
         {
                 string_format(file_fail, "shuf: invalid line count: '%s'\n",
                               count_text);
