@@ -2604,23 +2604,13 @@ static bool login_last_record_at(login_last_reader address_to reader,
                 positive first = (index / per_block) * per_block;
                 positive count = min(per_block, reader->records - first);
                 positive wanted = count * LOGIN_UTMP_SIZE;
-                positive have = 0;
                 p64 offset = (p64)first * LOGIN_UTMP_SIZE;
 
-                while (have < wanted)
+                if (file_transfer_exact(syscall(pread64), reader->handle,
+                                         reader->block, wanted, offset) < 0)
                 {
-                        bipolar got = system_call_4(
-                            syscall(pread64), (positive)reader->handle,
-                            (positive)(reader->block + have), wanted - have,
-                            (positive)(offset + have));
-                        if (got == LOGIN_ERROR_INTERRUPTED)
-                                continue;
-                        if (got <= 0)
-                        {
-                                login_last.failed = true;
-                                return false;
-                        }
-                        have += (positive)got;
+                        login_last.failed = true;
+                        return false;
                 }
                 reader->first = first;
                 reader->count = count;

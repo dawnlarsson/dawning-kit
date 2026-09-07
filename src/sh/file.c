@@ -12351,15 +12351,18 @@ static b32 hardlink_index_compare(positive left_at, positive right_at)
         return 0;
 }
 
-static bipolar hardlink_read_exact(bipolar handle, p64 offset,
-                                   p8 address_to buffer, positive length)
+/* Exact positional reads and writes share offset/short-transfer handling.
+   Probe reads that preserve a short prefix intentionally use storage_read. */
+static bipolar file_transfer_exact(positive operation, bipolar handle,
+                                   p8 address_to buffer, positive length,
+                                   p64 offset)
 {
         positive have = 0;
 
         while (have < length)
         {
                 bipolar got = system_call_4(
-                    syscall(pread64), (positive)handle,
+                    operation, (positive)handle,
                     (positive)(buffer + have), length - have,
                     (positive)(offset + have));
 
@@ -12401,8 +12404,8 @@ static bool hardlink_hash_one(hardlink_file address_to file)
                 p64 left = before.size - offset;
                 positive take = left < hardlink_io_size
                                     ? (positive)left : hardlink_io_size;
-                bipolar got = hardlink_read_exact(handle, offset,
-                                                   hardlink_read_one, take);
+                bipolar got = file_transfer_exact(syscall(pread64), handle,
+                                                   hardlink_read_one, take, offset);
                 if (got < 0)
                 {
                         read_error = got;
@@ -12492,11 +12495,11 @@ static bool hardlink_equal(hardlink_file address_to one,
                 p64 left = one_before.size - offset;
                 positive take = left < hardlink_io_size
                                     ? (positive)left : hardlink_io_size;
-                bipolar got = hardlink_read_exact(one_handle, offset,
-                                                   hardlink_read_one, take);
+                bipolar got = file_transfer_exact(syscall(pread64), one_handle,
+                                                   hardlink_read_one, take, offset);
                 if (got >= 0)
-                        got = hardlink_read_exact(two_handle, offset,
-                                                  hardlink_read_two, take);
+                        got = file_transfer_exact(syscall(pread64), two_handle,
+                                                  hardlink_read_two, take, offset);
                 if (got < 0)
                 {
                         read_error = got;
@@ -18362,6 +18365,20 @@ static b32 file_uname()
         return 0;
 }
 
+/* The common checked digit engine handles normal counts. Saturating options
+   additionally consume an overflowing run, without accepting a non-number. */
+static bool file_decimal_read(string_address address_to text, bool saturate,
+                              positive address_to value)
+{
+        if (string_digits_checked(text, 10, value))
+                return true;
+        if (!saturate || !byte_is_digit(string_get(address_to text)))
+                return false;
+        address_to text += string_span_of_set(address_to text, "0123456789");
+        address_to value = positive_max;
+        return true;
+}
+
 // nproc -----------------------------------------------------------
 /* Both nproc number grammars are saturating decimal. --ignore accepts a
    leading plus but no trailing space; OpenMP accepts trailing space and a
@@ -18378,20 +18395,9 @@ static bool nproc_decimal(string_address text, bool plus, bool trailing,
         if (plus && string_is(text, '+'))
                 text++;
 
-        if (!byte_is_digit(string_get(text)))
+        positive number;
+        if (!file_decimal_read(address_of text, true, address_of number))
                 return false;
-
-        positive number = 0;
-
-        while (byte_is_digit(string_get(text)))
-        {
-                positive digit = (positive)(string_get(text++) - '0');
-
-                if (number > (positive_max - digit) / 10)
-                        number = positive_max;
-                else
-                        number = number * 10 + digit;
-        }
 
         if (trailing)
                 while (byte_is_space(string_get(text)))

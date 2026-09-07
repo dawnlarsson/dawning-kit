@@ -682,39 +682,17 @@ static const b8 address_to text_inside()
 static bool text_unsigned_option(string_address source, bool saturate,
                                  positive address_to value)
 {
-        positive at = 0;
-        positive made = 0;
-        positive ceiling = (positive)-1;
-        bool overflow = false;
-        positive digits = 0;
-
         if (!source)
                 return false;
 
-        while (byte_is_space(source[at]))
-                at++;
+        while (byte_is_space(string_get(source)))
+                source++;
+        if (string_is(source, '+'))
+                source++;
 
-        if (source[at] == '+')
-                at++;
-        else if (source[at] == '-')
-                return false;
-
-        while (byte_is_digit(source[at]))
-        {
-                positive digit = source[at++] - '0';
-
-                digits++;
-
-                if (made > (ceiling - digit) / 10)
-                {
-                        overflow = true;
-                        made = ceiling;
-                }
-                else if (!overflow)
-                        made = made * 10 + digit;
-        }
-
-        if (!digits || source[at] || (overflow && !saturate))
+        positive made;
+        if (!file_decimal_read(address_of source, saturate, address_of made) ||
+            string_get(source))
                 return false;
 
         address_to value = made;
@@ -19439,21 +19417,10 @@ static bool cmp_count_of(string_address value, positive address_to result)
         if (value[at] == '+')
                 at++;
 
-        positive start = at;
-        total = 0;
-
-        while (byte_is_digit(value[at]))
-        {
-                positive digit = value[at++] - '0';
-
-                if (total > ((positive)-1 - digit) / 10)
-                        total = (positive)-1;
-                else if (total != (positive)-1)
-                        total = total * 10 + digit;
-        }
-
-        if (at == start)
+        string_address digits = value + at;
+        if (!file_decimal_read(address_of digits, true, address_of total))
                 return false;
+        at = (positive)(digits - value);
 
         if (!value[at])
         {

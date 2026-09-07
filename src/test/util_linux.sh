@@ -1907,6 +1907,46 @@ compare 'advanced input stream playback' scriptreplay \
 compare 'always CR conversion' scriptreplay \
         'LC_ALL=C "$TOOL" -m0 -c always -t "$1/advanced.time" -I "$1/advanced.in" -O "$1/advanced.out" -x out' \
         sh "$script_work"
+python3 - "$script_work" <<'PYTHON'
+from pathlib import Path
+import sys
+root = Path(sys.argv[1])
+header = b"Script started on " + b"h" * 4077 + b"\n"
+records = [(b"I" if i % 3 else b"O", (b"a\0\r\nz" * 820)[:[0, 1, 4095, 4096, 4097][i % 5]])
+           for i in range(127)]
+(root / "combined.extended.time").write_bytes(b"H 0.000000 START_TIME fixture\r\n" + b"".join(
+    kind + b" 0.000000 " + str(len(data)).encode() + (b"\r\n" if i % 2 else b"\n")
+    for i, (kind, data) in enumerate(records)))
+(root / "combined.time").write_bytes(b"H 0.000000 START_TIME fixture\n" + b"".join(
+    kind + b" 0.000000 " + str(len(data)).encode() + b"\n"
+    for kind, data in records if data))
+for name, select in (("combined.log", None), ("combined.in", b"I"), ("combined.out", b"O")):
+    (root / name).write_bytes(header + b"".join(data for kind, data in records
+                                               if select is None or kind == select))
+for stream, kind in (("in", b"I"), ("out", b"O")):
+    data = b"".join(data for select, data in records if select == kind)
+    for cr in ("never", "always"):
+        (root / (stream + "." + cr)).write_bytes(
+            (data.replace(b"\r", b"\n") if cr == "always" else data) + b"\n")
+PYTHON
+for replay_stream in in out; do
+        for replay_cr in never always; do
+                compare "combined cursor $replay_stream/$replay_cr" scriptreplay \
+                        'LC_ALL=C "$TOOL" -m0 -t "$1/combined.time" -B "$1/combined.log" -x "$2" -c "$3"' \
+                        sh "$script_work" "$replay_stream" "$replay_cr"
+                compare "separate cursors $replay_stream/$replay_cr" scriptreplay \
+                        'LC_ALL=C "$TOOL" -m0 -t "$1/combined.time" -I "$1/combined.in" -O "$1/combined.out" -x "$2" -c "$3"' \
+                        sh "$script_work" "$replay_stream" "$replay_cr"
+                # util-linux aborts on zero-size records and rejects CRLF
+                # timing rows; the byte oracle retains our accepted contract.
+                subject "zero-size/CRLF combined $replay_stream/$replay_cr" scriptreplay \
+                        '"$TOOL" -m0 -t "$1/combined.extended.time" -B "$1/combined.log" -x "$2" -c "$3" > "$1/replayed" && cmp -s "$1/replayed" "$1/$2.$3"' \
+                        sh "$script_work" "$replay_stream" "$replay_cr"
+                subject "zero-size/CRLF separate $replay_stream/$replay_cr" scriptreplay \
+                        '"$TOOL" -m0 -t "$1/combined.extended.time" -I "$1/combined.in" -O "$1/combined.out" -x "$2" -c "$3" > "$1/replayed" && cmp -s "$1/replayed" "$1/$2.$3"' \
+                        sh "$script_work" "$replay_stream" "$replay_cr"
+        done
+done
 subject 'script output-limit policy rejected explicitly' script \
         '"$TOOL" -q -o 1K -c true "$1/out" >/dev/null 2>&1; [ "$?" -ne 0 ]' \
         sh "$script_work"
@@ -2393,7 +2433,7 @@ subject 'unreadable traversal is not partial success' hardlink \
         'd=$(mktemp -d "$1/hardlink-unreadable.XXXXXX"); mkdir "$d/closed"; printf same >"$d/closed/a"; chmod 000 "$d/closed"; if [ "$(id -u)" -eq 0 ]; then chmod 700 "$d/closed"; exit 0; fi; "$TOOL" -q "$d" >/dev/null 2>&1; result=$?; chmod 700 "$d/closed"; [ "$result" -ne 0 ]' \
         sh "$work"
 subject 'overlapping oversized tree is indexed once' hardlink \
-        'd=$(mktemp -d "$1/hardlink-many.XXXXXX"); i=0; while [ "$i" -lt 2000 ]; do printf x >"$d/f$i"; i=$((i+1)); done; lines=$(timeout 10 "$TOOL" -l -b4096 "$d" "$d" | wc -l) || exit; [ "$lines" -eq 2000 ]' \
+        'd=$(mktemp -d "$1/hardlink-many.XXXXXX"); i=0; while [ "$i" -lt 2000 ]; do printf x >"$d/f$i"; i=$((i+1)); done; touch -r "$d/f0" "$d"/*; lines=$(timeout 10 "$TOOL" -l -b4096 "$d" "$d" | wc -l) || exit; [ "$lines" -eq 2000 ]' \
         sh "$work"
 
 section nologin

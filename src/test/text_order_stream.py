@@ -157,6 +157,17 @@ with tempfile.TemporaryDirectory() as directory:
 # retained duplicate records rather than only repeating tiny sorted inputs.
 with tempfile.TemporaryDirectory() as directory:
     source = Path(directory) / "spill"
+    source.write_bytes(b"a one\na two\nz three\n")
+    for number in ("", "+", "-1", "0", "1", "42", "  +1", "1 ", "1,2", "0x10",
+                   "18446744073709551614", "18446744073709551615", "18446744073709551616",
+                   "9" * 200):
+        # join's existing field policy rejects overflow; cmp's decimal
+        # grammar intentionally lacks GNU's hex and implicit-one forms.
+        if len(number) < 20 or (len(number) == 20 and number <= "18446744073709551615"):
+            check("join", ["-1", number, str(source), str(source)])
+        for suffix in ("", "K", "KB", "KiB", "junk"):
+            if number != "0x10" and (number or not suffix or suffix == "junk"):
+                check("cmp", ["-n", number + suffix, str(source), str(source)])
     for delimiter in (b"\n", b"\0"):
         flags = ["-z"] if delimiter == b"\0" else []
         records = [b"", b"a one", b"a one", b"a two", b"b:one", b"b:two",

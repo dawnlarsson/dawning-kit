@@ -2658,8 +2658,7 @@ static bipolar process_replay_open(process_replay_reader address_to reader,
         return reader->handle;
 }
 
-static bipolar process_replay_byte(process_replay_reader address_to reader,
-                                   p8 address_to byte)
+static bipolar process_replay_fill(process_replay_reader address_to reader)
 {
         if (reader->at == reader->have)
         {
@@ -2675,8 +2674,7 @@ static bipolar process_replay_byte(process_replay_reader address_to reader,
                 reader->at = 0;
                 reader->have = (positive)got;
         }
-        address_to byte = reader->bytes[reader->at++];
-        return 1;
+        return (bipolar)(reader->have - reader->at);
 }
 
 static bipolar process_replay_line(process_replay_reader address_to reader,
@@ -2685,8 +2683,7 @@ static bipolar process_replay_line(process_replay_reader address_to reader,
         positive used = 0;
         for (;;)
         {
-                p8 byte;
-                bipolar got = process_replay_byte(reader, address_of byte);
+                bipolar got = process_replay_fill(reader);
                 if (got <= 0)
                 {
                         if (!got && !used)
@@ -2695,14 +2692,20 @@ static bipolar process_replay_line(process_replay_reader address_to reader,
                                 return -1;
                         break;
                 }
-                if (byte == '\n')
-                        break;
-                if (used + 1 >= room)
+                p8 address_to start = reader->bytes + reader->at;
+                p8 address_to newline = memory_first_of(start, '\n', (positive)got);
+                positive take = newline ? (positive)(newline - start) : (positive)got;
+                if (take >= room - used)
                 {
+                        reader->at += room - used;
                         reader->failed = true;
                         return -1;
                 }
-                line[used++] = byte;
+                memory_copy(line + used, start, take);
+                used += take;
+                reader->at += take + (newline != null);
+                if (newline)
+                        break;
         }
         if (used && line[used - 1] == '\r')
                 used--;
@@ -2715,16 +2718,24 @@ static bool process_replay_skip_header(
 {
         string_address prefix = (string_address)"Script started on ";
         bool matches = true;
-        for (positive used = 0; used < 65536; used++)
+        positive used = 0;
+        while (used < 65536)
         {
-                p8 byte;
-                bipolar got = process_replay_byte(reader, address_of byte);
+                bipolar got = process_replay_fill(reader);
                 if (got <= 0)
                         return false;
-                if (used < 18 && byte != prefix[used])
+                p8 address_to start = reader->bytes + reader->at;
+                positive room = min((positive)got, 65536 - used);
+                positive take = memory_span_without_byte(start, '\n', room);
+                if (used < 18 && memory_compare(start, prefix + used, min(take, 18 - used)))
                         matches = false;
-                if (byte == '\n')
+                reader->at += take;
+                used += take;
+                if (take < room)
+                {
+                        reader->at++;
                         return matches && used >= 18;
+                }
         }
         reader->failed = true;
         return false;
@@ -2831,18 +2842,10 @@ static bool process_replay_payload(process_replay_reader address_to reader,
 {
         while (length)
         {
-                if (reader->at == reader->have)
+                if (process_replay_fill(reader) <= 0)
                 {
-                        bipolar got = system_read_retry(
-                            (positive)reader->handle, reader->bytes,
-                            sizeof(reader->bytes));
-                        if (got <= 0)
-                        {
-                                reader->failed = true;
-                                return false;
-                        }
-                        reader->at = 0;
-                        reader->have = (positive)got;
+                        reader->failed = true;
+                        return false;
                 }
                 positive chunk = min(length, reader->have - reader->at);
                 if (emit)
@@ -3007,8 +3010,6 @@ static b32 process_scriptreplay()
                 if (opened < 0 || !process_replay_skip_header(address_of input))
                         goto replay_open_failed;
         }
-        else if (both_path)
-                input = output;
 
         bool advanced = false;
         bool failed = false;
@@ -3036,7 +3037,7 @@ static b32 process_scriptreplay()
                 if (kind == 'S')
                         continue;
 
-                process_replay_reader address_to source = kind == 'O'
+                process_replay_reader address_to source = both_path || kind == 'O'
                                                               ? address_of output
                                                               : address_of input;
                 if (source->handle < 0)
@@ -3047,8 +3048,6 @@ static b32 process_scriptreplay()
                         failed = true;
                         break;
                 }
-                if (both_path)
-                        output = input = *source;
         }
         if (got < 0 || timing.failed)
                 failed = true;

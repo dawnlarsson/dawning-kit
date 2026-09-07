@@ -1261,6 +1261,11 @@ same 'ignore one'       nproc --ignore=1
 same 'ignore plus'      nproc --ignore=+1
 same 'ignore huge'      nproc --ignore=999999999999999999999999
 same 'last ignore wins' nproc --ignore=1 --ignore=2
+for number in 0 42 18446744073709551614 18446744073709551615 \
+        18446744073709551616 9999999999999999999999999999999999999999 \
+        '' + -1 0x10 '  +1' '1 ' '1,2'; do
+        same "ignore numeric boundary $number" nproc "--ignore=$number"
+done
 answered 'invalid negative' nproc --ignore=-1
 answered 'invalid empty' nproc --ignore=
 answered 'extra operand' nproc extra

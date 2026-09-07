@@ -148,22 +148,7 @@ static positive storage_read(bipolar handle, p8 address_to bytes,
 static bipolar storage_write(bipolar handle, p8 address_to bytes,
                              positive length, p64 offset)
 {
-        positive used = 0;
-
-        while (used < length)
-        {
-                bipolar wrote = system_call_4(
-                    syscall(pwrite64), (positive)handle,
-                    (positive)(bytes + used), length - used,
-                    (positive)(offset + used));
-
-                if (wrote == -4) /* EINTR */
-                        continue;
-                if (wrote <= 0)
-                        return wrote ? wrote : -5; /* EIO */
-                used += (positive)wrote;
-        }
-        return (bipolar)used;
+        return file_transfer_exact(syscall(pwrite64), handle, bytes, length, offset);
 }
 
 static fn storage_trimmed(p8 address_to into, positive room,
