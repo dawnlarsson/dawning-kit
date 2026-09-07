@@ -251,6 +251,14 @@ compare bash 'readonly function listing carries attribute' \
         'f(){ :; }; readonly -f f; case $(readonly -fp) in *"declare -fr f"*) echo yes;; *) echo no;; esac'
 compare bash 'declare function attribute inventory is not silent' \
         'f(){ :; }; export -f f; case $(declare -fx) in *"declare -fx f"*) echo yes;; *) echo no;; esac'
+compare bash 'function name inventory filters without bodies' \
+        'z(){ :; }; a(){ :; }; both(){ :; }; plain(){ :; }; export -f z both; readonly -f a both; declare -Fx; declare -Fr; declare -Frx; declare -F'
+compare bash 'empty function filter remains successful' \
+        'z(){ :; }; declare -Fx; printf "export:%s\n" "$?"; declare -Fr; printf "readonly:%s\n" "$?"'
+compare bash 'function attribute inventory preserves named operands' \
+        'z(){ :; }; a(){ :; }; declare -Fx z a; declare -F a z; declare -Fx'
+compare bash 'removed and replaced functions retain sorted metadata' \
+        'z(){ :; }; a(){ :; }; middle(){ :; }; export -f z a; unset -f a; a(){ echo new; }; declare -F; declare -Fx'
 
 section loops
 group nested-items

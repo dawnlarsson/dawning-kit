@@ -18,6 +18,83 @@ def listing(rng):
     return "builtin-listing", ("bash", "posix"), script
 
 
+def query_namespaces(rng):
+    """Compose namespace precedence with PATH and per-name/aggregate status."""
+    # Verbose type deliberately retains dash's wording/status; terse queries
+    # share Bash's surface. Absolute PATH entries avoid POSIX path spelling.
+    query = rng.choice(("type -t", "type -at", "type -p", "type -P",
+                        "command -v", "command -pv"))
+    state = rng.choice(("", "mw_name() { :; }",
+                        "shopt -s expand_aliases; alias mw_name='printf alias'",
+                        "mw_name() { :; }; shopt -s expand_aliases; alias mw_name=echo",
+                        "hash -p /bin/true mw_name"))
+    # Standard-path lookup deliberately ignores the shell's hash override.
+    if query == "command -pv" and state.startswith("hash"):
+        query = "command -v"
+    names = rng.choice(("mw_name", "echo printf", "if case", "mw_missing",
+                        "mw_missing mw_name", "mw_name mw_missing", "-- '' mw_name"))
+    path = rng.choice(('"$PWD/first:$PWD/second"', '"$PWD/second:$PWD/first"',
+                       "/does/not/exist"))
+    script = ("/bin/mkdir first second\n"
+              "printf '#!/bin/sh\\nexit 0\\n' > first/mw_name\n"
+              "/bin/cp first/mw_name second/mw_name\n"
+              "/bin/chmod +x first/mw_name second/mw_name\n" +
+              "PATH=" + path + "\n" + state + "\n" + query + " " + names +
+              "\nprintf 'status:%s\\n' \"$?\"\n")
+    return "builtin-query-namespaces", ("bash", "posix"), script
+
+
+def declaration_lifecycle(rng):
+    """Local and declare share storage, but not scope and failure policies."""
+    setup = rng.choice(("mw_value=OLD", "export mw_value=OLD",
+                        "readonly mw_value=OLD", "declare -i mw_value=17"))
+    command = rng.choice(("local", "declare", "typeset"))
+    flags = rng.choice(("", "-x", "+x", "-i", "-r"))
+    # Compound/inherited-integer += and local -g have separate compatibility
+    # policies; this family varies the shared scalar assignment lifecycle.
+    operand = rng.choice(("mw_value", "mw_value=23"))
+    if not setup.startswith("readonly") and rng.getrandbits(1):
+        operand += " mw_tail=end"
+    inherit = rng.choice(("shopt -u localvar_inherit", "shopt -s localvar_inherit"))
+    report = "declare -p mw_value mw_tail; printf 'report:%s\\n' \"$?\""
+    script = (setup + "\n" + inherit + "\nf() {\n" + command + " " + flags + " " +
+              operand + "\nprintf 'declaration:%s\\n' \"$?\"\n" + report +
+              "\n}\nf\n" + report + "\n")
+    return "builtin-declaration-lifecycle", ("bash", "posix"), script
+
+
+def inventory_state(rng):
+    """Sort live names after removal/reinsertion, with independent attributes."""
+    functions = bool(rng.getrandbits(1))
+    names = ["mw_" + name for name in rng.sample(("z", "a", "middle", "aa", "B", "_"), 5)]
+    removed = rng.choice(names)
+    if functions:
+        setup = "\n".join(name + "() { :; }" for name in names)
+        setup += "\nunset -f " + removed
+        if rng.getrandbits(1):
+            setup += "\n" + removed + "() { echo replaced; }"
+        marked = rng.choice([name for name in names if name != removed])
+        setup += "\nexport -f " + marked
+        command = rng.choice(("declare -F", "declare -Fx", "export -pf"))
+        if command == "export -pf":
+            # Function formatting differs; exercise the emitted definition's
+            # semantics and attributes by round-tripping it, not its layout.
+            command = ('saved=$(export -pf); unset -f ' + marked +
+                       '; eval "$saved"; ' + marked + '; declare -Fx')
+            # Bash POSIX command substitution drops the export metadata.
+            return "builtin-inventory-state", ("bash",), setup + "\n" + command + "\n"
+        return "builtin-inventory-state", ("bash", "posix"), setup + "\n" + command + "\n"
+    setup = "\n".join(name + "='two words'" for name in names)
+    setup += "\nunset " + removed
+    if rng.getrandbits(1):
+        setup += "\n" + removed + "=replaced"
+    marked = rng.choice([name for name in names if name != removed])
+    setup += "\n" + rng.choice(("export ", "readonly ")) + marked
+    command = rng.choice(("declare -p", "export -p", "readonly -p"))
+    return "builtin-inventory-state", ("bash", "posix"), (
+        setup + "\n" + command + " | /bin/grep -E '^(declare [^ ]+|export|readonly) mw_'\n")
+
+
 def read_fields(rng):
     text = rng.choice((" a  b c ", "a::b:", ":a:b", "a\\ b c", "\\", "", "one\ntwo"))
     text += rng.choice(("", "\n"))
@@ -291,7 +368,8 @@ def getopts_scope(rng):
     return "builtin-getopts-scope", MODES, script
 
 
-GENERATORS = (listing, read_fields, read_ifs_snapshot, read_limit_state, read_array_state,
+GENERATORS = (listing, query_namespaces, declaration_lifecycle, inventory_state,
+              read_fields, read_ifs_snapshot, read_limit_state, read_array_state,
               printf_formats, printf_hex_roundtrip, printf_dynamic_fields,
               printf_collectors, option_walk, mapfile_records,
               getopts_state, getopts_reset, getopts_scope)

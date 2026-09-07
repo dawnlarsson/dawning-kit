@@ -6625,58 +6625,77 @@ static bool shell_declare_print_one(writer write, string_address name,
         so it naturally takes this same path instead of needing a second name
         registry.
 */
-static bool shell_names_sorted(writer write, b32 mark,
-                               shell_name_writer written)
+static inline INLINE bool shell_inventory_sorted(
+    writer write, b32 mark, shell_name_writer written, bool functions, bool bodies)
 {
-        positive count;
         shell_mark held = shell_store_mark(address_of expand_store);
-        string_address address_to names = null;
+        string_address address_to names;
+        positive count = 0;
+        positive at = 0;
+        string_address name;
 
-        // Materialize before taking the count and copying names. Doing it in
-        // a per-name callback cannot add an absent PIPESTATUS to the captured
-        // vector and may grow the environment while that vector is walked.
-        if (shell_bash_compat)
-                exec_pipe_status_wanted();
+        // Variable callbacks may publish PIPESTATUS, so capture it before
+        // the name vector. Function names already have stable storage.
+        if (functions)
+                while (exec_function_next(address_of at, null))
+                        count++;
+        else
+        {
+                if (shell_bash_compat)
+                        exec_pipe_status_wanted();
+                count = shell_var_count;
+        }
 
-        count = shell_var_count;
-
-        if (count > positive_max / sizeof(names[0]))
-                return false;
-
-        names = (string_address address_to)shell_store_take(
-            address_of expand_store,
-            count * sizeof(names[0]));
-
-        if (!names && count)
+        if (!count)
+                goto done;
+        if (count > positive_max / sizeof(names[0]) ||
+            !(names = (string_address address_to)shell_store_take(
+                  address_of expand_store, count * sizeof(names[0]))))
                 goto failed;
 
         count = 0;
-
-        for (positive at = 0; at < shell_var_count; at++)
+        if (functions)
         {
-                positive length = shell_vars[at].name_length;
-                p8 address_to name = shell_store_take(address_of expand_store,
-                                                        length + 1);
-
-                if (!name)
-                        goto failed;
-
-                memory_copy_end(name, shell_vars[at].text, length);
-                names[count++] = name;
+                at = 0;
+                while ((name = exec_function_next(address_of at, null)))
+                        names[count++] = name;
         }
+        else
+                for (at = 0; at < shell_var_count; at++)
+                {
+                        positive length = shell_vars[at].name_length;
+                        name = shell_store_take(address_of expand_store, length + 1);
+                        if (!name)
+                                goto failed;
+                        memory_copy_end(name, shell_vars[at].text, length);
+                        names[count++] = name;
+                }
 
         if (!expand_sort_names(names, count))
                 goto failed;
-
-        for (positive at = 0; at < count; at++)
-                written(write, names[at], string_length(names[at]), mark);
-
+        for (at = 0; at < count; at++)
+        {
+                if (bodies)
+                {
+                        if (!exec_function_write(write, names[at], mark))
+                                goto failed;
+                }
+                else
+                        written(write, names[at], string_length(names[at]), mark);
+        }
+done:
         shell_store_rewind(address_of expand_store, held);
         return true;
 
 failed:
         shell_store_rewind(address_of expand_store, held);
         return false;
+}
+
+static bool shell_names_sorted(writer write, b32 mark,
+                               shell_name_writer written)
+{
+        return shell_inventory_sorted(write, mark, written, false, false);
 }
 
 static fn shell_declare_written(writer write, string_address name,
@@ -6849,48 +6868,7 @@ static b32 shell_declare_value(string_address name, positive length,
 static bool shell_functions_sorted(writer write, b32 mark,
                                    shell_name_writer written, bool bodies)
 {
-        shell_mark held = shell_store_mark(address_of expand_store);
-        string_address address_to names;
-        positive at = 0;
-        positive count = 0;
-        string_address name;
-
-        while ((name = exec_function_next(address_of at, null)))
-                count++;
-
-        if (!count)
-                return true;
-        if (count > positive_max / sizeof(names[0]) ||
-            !(names = (string_address address_to)shell_store_take(
-                  address_of expand_store, count * sizeof(names[0]))))
-                goto failed;
-
-        at = 0;
-        count = 0;
-        while ((name = exec_function_next(address_of at, null)))
-                names[count++] = name;
-
-        if (!expand_sort_names(names, count))
-                goto failed;
-
-        for (at = 0; at < count; at++)
-        {
-                if (bodies)
-                {
-                        if (!exec_function_write(write, names[at], mark))
-                                goto failed;
-                }
-                else
-                        written(write, names[at], string_length(names[at]),
-                                mark);
-        }
-
-        shell_store_rewind(address_of expand_store, held);
-        return true;
-
-failed:
-        shell_store_rewind(address_of expand_store, held);
-        return false;
+        return shell_inventory_sorted(write, mark, written, true, bodies);
 }
 
 static COLD fn shell_declare_function_written(writer write,
@@ -6901,7 +6879,8 @@ static COLD fn shell_declare_function_written(writer write,
             memory_hash_33((address_any)name, length), length};
         b32 attributes = exec_function_attributes_hashed(name, named);
 
-        (void)mark;
+        if (mark && !(attributes & mark))
+                return;
         write("declare -f", 10);
         if (attributes & DECLARE_READONLY)
                 write("r", 1);
@@ -6958,10 +6937,210 @@ static COLD b32 shell_declare_functions(writer write, positive index,
                           ? 1 : -1);
 }
 
+/* Declaration operands share one save/write/mark/restore transaction.
+   local retains its stop-on-error and dash inheritance policy; declare
+   retains per-operand failures, global targets, and empty declarations. */
+static inline INLINE fn shell_declare_apply(shell_declare_state address_to state, bool local_mode)
+{
+        bool failed = false;
+
+        while (state->index < shell_argc)
+        {
+                string_address word = shell_argv[state->index++];
+                string_address mark = string_first_of(word, '=');
+                bool append = mark && mark > word && string_is(mark - 1, '+');
+                string_address name_end = mark ? mark - append : null;
+                positive length = mark ? (positive)(name_end - word)
+                                       : string_length(word);
+                bool scoped = local_mode || (local_depth && !(state->set & DECLARE_GLOBAL));
+                shell_local_entry address_to saved_global = null;
+                p8 delimiter = mark ? string_get(name_end) : 0;
+                p8 held_attributes;
+                bool readonly;
+
+                if (!shell_valid_name(word, length))
+                {
+                        if (local_mode)
+                        {
+                                shell_diagnostic("local: bad name\n", 0);
+                                return shell_answer(2);
+                        }
+                        shell_bad_name(shell_argv[0], word, length);
+                        return;
+                }
+
+                /*
+                        An array has one kind for its whole life. Bash
+                        refuses to reinterpret the subscripts it already
+                        holds rather than answering to both spellings.
+                */
+                held_attributes = local_mode ? 0 : shell_variable_attributes(word, length);
+
+                if (!local_mode && (state->attributes_set & SHELL_ARRAY_EITHER) &&
+                    (held_attributes & SHELL_ARRAY_EITHER) &&
+                    (held_attributes & SHELL_ARRAY_EITHER) !=
+                        (state->attributes_set & SHELL_ARRAY_EITHER))
+                {
+                        string_format(
+                            shell_diagnostic,
+                            "%s: %s: cannot convert %s to %s array\n",
+                            shell_argv[0], word,
+                            (held_attributes & SHELL_ARRAY_ASSOCIATIVE)
+                                ? "associative"
+                                : "indexed",
+                            (state->attributes_set & SHELL_ARRAY_ASSOCIATIVE)
+                                ? "associative"
+                                : "indexed");
+                        failed = true;
+                        continue;
+                }
+
+                if (mark)
+                        address_to name_end = end;
+
+                readonly = env_readonly(word);
+                saved_global = !local_mode && (state->set & DECLARE_GLOBAL)
+                                   ? local_saved_global(word)
+                                   : null;
+
+                /* Dynamic locals are stacked newest-last. The earliest entry
+                   for a name owns the saved global underneath every active
+                   local. Update that stable slot and leave the live local
+                   alone; the ordinary unwind publishes it at global scope. */
+                if (saved_global)
+                {
+                        if ((state->set & DECLARE_READONLY) ||
+                            ((state->clear & DECLARE_READONLY) &&
+                             readonly) || (mark && readonly))
+                        {
+                                string_format(shell_diagnostic,
+                                              "%s: %s: readonly variable\n",
+                                              shell_argv[0], word);
+                                failed = true;
+                        }
+                        else if (mark && !local_saved_assign(
+                                                 saved_global, mark + 1,
+                                                 append))
+                                goto no_room;
+                        else
+                        {
+                                saved_global->declared = true;
+                                if (state->clear & DECLARE_EXPORT)
+                                        saved_global->exported = false;
+                                if (state->set & DECLARE_EXPORT)
+                                        saved_global->exported = true;
+                        }
+
+                        goto next;
+                }
+
+                if (readonly && (scoped || (state->clear & DECLARE_READONLY)))
+                {
+                        string_format(shell_diagnostic,
+                                      "%s: %s: readonly variable\n",
+                                      shell_argv[0], word);
+                        if (local_mode)
+                        {
+                                if (mark)
+                                        *name_end = delimiter;
+                                return shell_answer(shell_bash_compat ? 1 : 2);
+                        }
+                        failed = true;
+                        goto next;
+                }
+
+                if (scoped)
+                {
+                        b32 fresh = local_remember(word);
+
+                        if (fresh < 0 ||
+                            (fresh && (!local_mode || shell_bash_compat) &&
+                             !shell_shopt_on(LOCALVAR_INHERIT) &&
+                             !local_hide_saved(word, length, mark != null)))
+                        {
+                                if (local_mode)
+                                {
+                                        if (mark)
+                                                *name_end = delimiter;
+                                        shell_diagnostic("local: too many\n", 0);
+                                        return shell_answer(2);
+                                }
+                                goto no_room;
+                        }
+                }
+
+                // The kind is decided before the value is written, because
+                // an associative array reads its subscripts as bytes and an
+                // indexed one as arithmetic, and the value about to be
+                // assigned is full of subscripts.
+                if ((state->attributes_set || state->attributes_clear) &&
+                    !shell_variable_attribute_set(word, length,
+                                                  state->attributes_set,
+                                                  state->attributes_clear))
+                        goto no_room;
+
+                if (mark && readonly)
+                {
+                        address_to name_end = delimiter;
+                        shell_readonly_refused(word, length);
+                        return;
+                }
+                b32 stored = shell_declare_value(
+                    word, length, mark, append,
+                    (state->attributes_set & SHELL_ARRAY_NAMEREF) != 0, !local_mode);
+                if (stored <= 0)
+                {
+                        if (local_mode && !stored && env_readonly(word))
+                        {
+                                shell_diagnostic(word, length);
+                                shell_diagnostic(": is read only\n", 0);
+                                if (mark)
+                                        *name_end = delimiter;
+                                return shell_answer(2);
+                        }
+                        goto no_room;
+                }
+
+                if (state->clear & DECLARE_EXPORT)
+                        env_export_restore(word, false);
+                if ((state->set & DECLARE_EXPORT) &&
+                    !(scoped ||
+                              (state->attributes_set & SHELL_ARRAY_NAMEREF)
+                          ? env_export_mark_direct(word)
+                          : env_export_mark(word)))
+                {
+                        if (local_mode)
+                                goto no_room;
+                        failed = true;
+                }
+                if ((state->set & DECLARE_READONLY) &&
+                    !(scoped ||
+                              (state->attributes_set & SHELL_ARRAY_NAMEREF)
+                          ? readonly_add_direct(word, length)
+                          : readonly_add(word, length)))
+                {
+                        if (local_mode)
+                                goto no_room;
+                        failed = true;
+                }
+
+        next:
+                if (mark)
+                        address_to name_end = delimiter;
+                continue;
+
+        no_room:
+                if (mark)
+                        address_to name_end = delimiter;
+                return shell_no_room(local_mode ? (string_address)"local" : (string_address)"declare");
+        }
+
+        shell_answer(failed ? 1 : 0);
+}
+
 COLD fn shell_local(writer write, string_address input)
 {
         shell_declare_state state = {1};
-        bool failed = false;
 
         if (!local_depth)
         {
@@ -6970,125 +7149,8 @@ COLD fn shell_local(writer write, string_address input)
                 return;
         }
 
-        // local takes declare's attribute letters, and a nameref given one
-        // is the whole point of local -n ref=$1.
-        if (!shell_declare_options(address_of state))
-                return;
-
-        while (state.index < shell_argc)
-        {
-                string_address word = shell_argv[state.index++];
-                string_address mark = string_first_of(word, '=');
-                bool append = mark && mark > word && string_is(mark - 1, '+');
-                string_address name_end = mark ? mark - append : null;
-                positive length = mark ? (positive)(name_end - word)
-                                       : string_length(word);
-                p8 delimiter = mark ? string_get(name_end) : 0;
-                bool readonly;
-
-                if (!shell_valid_name(word, length))
-                {
-                        shell_diagnostic("local: bad name\n", 0);
-                        shell_answer(2);
-                        failed = true;
-                        break;
-                }
-
-                if (mark)
-                        address_to name_end = end;
-
-                readonly = env_readonly(word);
-
-                // A readonly visible through dynamic scope cannot be hidden
-                // by a local declaration. This check precedes attribute and
-                // value changes so a failed local is exactly a failed local.
-                if (readonly)
-                {
-                        string_format(shell_diagnostic,
-                                      "local: %s: readonly variable\n", word);
-                        shell_answer(shell_bash_compat ? 1 : 2);
-                        failed = true;
-                        if (mark)
-                                address_to name_end = delimiter;
-                        break;
-                }
-
-                b32 fresh = local_remember(word);
-
-                if (fresh < 0 ||
-                    (fresh && shell_bash_compat &&
-                     !shell_shopt_on(LOCALVAR_INHERIT) &&
-                     !local_hide_saved(word, length, mark != null)))
-                {
-                        shell_diagnostic("local: too many\n", 0);
-                        shell_answer(2);
-                        failed = true;
-                        if (mark)
-                                address_to name_end = delimiter;
-                        break;
-                }
-
-                if ((state.attributes_set || state.attributes_clear) &&
-                    !shell_variable_attribute_set(word, length,
-                                                  state.attributes_set,
-                                                  state.attributes_clear))
-                {
-                        shell_no_room("local");
-                        failed = true;
-                }
-                else
-                {
-                        b32 stored = shell_declare_value(
-                            word, length, mark, append,
-                            (state.attributes_set & SHELL_ARRAY_NAMEREF) != 0,
-                            false);
-
-                        if (stored < 0)
-                        {
-                                shell_no_room("local");
-                                failed = true;
-                        }
-                        else if (!stored)
-                        {
-                                // A readonly name is the usual reason and
-                                // reads nothing like running out of room.
-                                if (env_readonly(word))
-                                {
-                                        shell_diagnostic(word, length);
-                                        shell_diagnostic(": is read only\n", 0);
-                                        shell_answer(2);
-                                }
-                                else
-                                        shell_no_room("local");
-
-                                failed = true;
-                        }
-                }
-
-                if (!failed && (state.clear & DECLARE_EXPORT))
-                        env_export_restore(word, false);
-                if (!failed && (state.set & DECLARE_EXPORT) &&
-                    !env_export_mark_direct(word))
-                {
-                        shell_no_room("local");
-                        failed = true;
-                }
-                if (!failed && (state.set & DECLARE_READONLY) &&
-                    !readonly_add_direct(word, length))
-                {
-                        shell_no_room("local");
-                        failed = true;
-                }
-
-                if (mark)
-                        address_to name_end = delimiter;
-
-                if (failed)
-                        break;
-        }
-
-        if (!failed)
-                shell_answer(0);
+        if (shell_declare_options(address_of state))
+                shell_declare_apply(address_of state, true);
 }
 
 static fn shell_declare(writer write, string_address input)
@@ -7132,8 +7194,10 @@ static fn shell_declare(writer write, string_address input)
                         {
                                 if (attributes)
                                         return shell_answer(
-                                            shell_function_bodies_sorted(
-                                                write, attributes)
+                                            shell_functions_sorted(
+                                                write, attributes,
+                                                shell_declare_function_written,
+                                                bodies)
                                                 ? 0 : 1);
                                 shell_diagnostic(
                                     "declare: function attribute removal wants a name\n",
@@ -7213,170 +7277,7 @@ static fn shell_declare(writer write, string_address input)
                 return;
         }
 
-        while (state.index < shell_argc)
-        {
-                string_address word = shell_argv[state.index++];
-                string_address mark = string_first_of(word, '=');
-                bool append = mark && mark > word && string_is(mark - 1, '+');
-                string_address name_end = mark ? mark - append : null;
-                positive length = mark ? (positive)(name_end - word)
-                                       : string_length(word);
-                bool scoped = local_depth && !(state.set & DECLARE_GLOBAL);
-                shell_local_entry address_to saved_global = null;
-                p8 delimiter = mark ? string_get(name_end) : 0;
-                p8 held_attributes;
-                bool readonly;
-
-                if (!shell_valid_name(word, length))
-                {
-                        shell_bad_name(shell_argv[0], word, length);
-                        return;
-                }
-
-                /*
-                        An array has one kind for its whole life. Bash
-                        refuses to reinterpret the subscripts it already
-                        holds rather than answering to both spellings.
-                */
-                held_attributes = shell_variable_attributes(word, length);
-
-                if ((state.attributes_set & SHELL_ARRAY_EITHER) &&
-                    (held_attributes & SHELL_ARRAY_EITHER) &&
-                    (held_attributes & SHELL_ARRAY_EITHER) !=
-                        (state.attributes_set & SHELL_ARRAY_EITHER))
-                {
-                        string_format(
-                            shell_diagnostic,
-                            "%s: %s: cannot convert %s to %s array\n",
-                            shell_argv[0], word,
-                            (held_attributes & SHELL_ARRAY_ASSOCIATIVE)
-                                ? "associative"
-                                : "indexed",
-                            (state.attributes_set & SHELL_ARRAY_ASSOCIATIVE)
-                                ? "associative"
-                                : "indexed");
-                        failed = true;
-                        continue;
-                }
-
-                if (mark)
-                        address_to name_end = end;
-
-                readonly = env_readonly(word);
-                saved_global = state.set & DECLARE_GLOBAL
-                                   ? local_saved_global(word)
-                                   : null;
-
-                /* Dynamic locals are stacked newest-last. The earliest entry
-                   for a name owns the saved global underneath every active
-                   local. Update that stable slot and leave the live local
-                   alone; the ordinary unwind publishes it at global scope. */
-                if (saved_global)
-                {
-                        if ((state.set & DECLARE_READONLY) ||
-                            ((state.clear & DECLARE_READONLY) &&
-                             readonly) || (mark && readonly))
-                        {
-                                string_format(shell_diagnostic,
-                                              "%s: %s: readonly variable\n",
-                                              shell_argv[0], word);
-                                failed = true;
-                        }
-                        else if (mark && !local_saved_assign(
-                                                 saved_global, mark + 1,
-                                                 append))
-                                goto no_room;
-                        else
-                        {
-                                saved_global->declared = true;
-                                if (state.clear & DECLARE_EXPORT)
-                                        saved_global->exported = false;
-                                if (state.set & DECLARE_EXPORT)
-                                        saved_global->exported = true;
-                        }
-
-                        goto next;
-                }
-
-                if (scoped && readonly)
-                {
-                        string_format(shell_diagnostic,
-                                      "%s: %s: readonly variable\n",
-                                      shell_argv[0], word);
-                        failed = true;
-                        goto next;
-                }
-
-                if ((state.clear & DECLARE_READONLY) && readonly)
-                {
-                        string_format(shell_diagnostic,
-                                      "%s: %s: readonly variable\n",
-                                      shell_argv[0], word);
-                        failed = true;
-                        goto next;
-                }
-
-                if (scoped)
-                {
-                        b32 fresh = local_remember(word);
-
-                        if (fresh < 0)
-                                goto no_room;
-
-                        if (fresh && !shell_shopt_on(LOCALVAR_INHERIT) &&
-                            !local_hide_saved(word, length, mark != null))
-                                goto no_room;
-                }
-
-                // The kind is decided before the value is written, because
-                // an associative array reads its subscripts as bytes and an
-                // indexed one as arithmetic, and the value about to be
-                // assigned is full of subscripts.
-                if ((state.attributes_set || state.attributes_clear) &&
-                    !shell_variable_attribute_set(word, length,
-                                                  state.attributes_set,
-                                                  state.attributes_clear))
-                        goto no_room;
-
-                if (mark && readonly)
-                {
-                        address_to name_end = delimiter;
-                        shell_readonly_refused(word, length);
-                        return;
-                }
-                else if (shell_declare_value(
-                             word, length, mark, append,
-                             (state.attributes_set & SHELL_ARRAY_NAMEREF) != 0,
-                             true) <= 0)
-                        goto no_room;
-
-                if (state.clear & DECLARE_EXPORT)
-                        env_export_restore(word, false);
-                if ((state.set & DECLARE_EXPORT) &&
-                    !(scoped ||
-                              (state.attributes_set & SHELL_ARRAY_NAMEREF)
-                          ? env_export_mark_direct(word)
-                          : env_export_mark(word)))
-                        failed = true;
-                if ((state.set & DECLARE_READONLY) &&
-                    !(scoped ||
-                              (state.attributes_set & SHELL_ARRAY_NAMEREF)
-                          ? readonly_add_direct(word, length)
-                          : readonly_add(word, length)))
-                        failed = true;
-
-        next:
-                if (mark)
-                        address_to name_end = delimiter;
-                continue;
-
-        no_room:
-                if (mark)
-                        address_to name_end = delimiter;
-                return shell_no_room("declare");
-        }
-
-        shell_answer(failed ? 1 : 0);
+        shell_declare_apply(address_of state, false);
 }
 
 /*
@@ -12792,18 +12693,150 @@ static COLD bipolar shell_type_paths(writer write, string_address name,
         names the kind in one word, -a says every place a name is, -p and -P
         want the file alone, and -f looks past the functions.
 */
+#define SHELL_QUERY_ALL 1
+#define SHELL_QUERY_PATH 2
+#define SHELL_QUERY_FORCE_PATH 4
+#define SHELL_QUERY_NO_FUNCTIONS 8
+#define SHELL_QUERY_COMMAND 16
+#define SHELL_QUERY_STANDARD_PATH 32
+
+/* One namespace/PATH query, with the frontends retaining their option and
+   status policies. command gives keywords precedence over aliases and asks
+   whether any operand was found; type reports each missing operand. */
+static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
+                                     b32 style)
+{
+        bool command = (flags & SHELL_QUERY_COMMAND) != 0;
+        bool every = (flags & SHELL_QUERY_ALL) != 0;
+        bool path_only = (flags & SHELL_QUERY_PATH) != 0;
+        bool no_functions = (flags & SHELL_QUERY_NO_FUNCTIONS) != 0;
+        bool terse = style == SHELL_KIND_TERSE;
+        p8 address_to found = null;
+        positive found_room = 0;
+        b32 bad = 0;
+        bool any = false;
+
+        while (index < shell_argc)
+        {
+                string_address name = shell_argv[index++];
+                bool keyword = shell_keyword_here(name);
+                bool alias = (!command || !keyword) && shell_alias_visible(name);
+                // These four bits are namespace precedence, not attributes.
+                b32 kinds = keyword;
+                bool matched = false;
+                bipolar located;
+
+                // A first-hit query must not walk the later namespaces once
+                // an earlier one answered. -a alone needs every live kind.
+                if (every || !(keyword || alias))
+                {
+                        positive2 named = string_hash_33_length(name);
+                        bool special = exec_special_builtin(name);
+                        bool builtin = special && shell_command_builtin_here(name, named);
+                        bool function = !no_functions && (every || !builtin) &&
+                                        exec_function_here_hashed(name, named);
+                        kinds |= (builtin << 1) | (function << 2);
+                        if (!special && (every || !function) &&
+                            shell_command_builtin_here(name, named))
+                                kinds |= 8;
+                }
+
+                if (path_only && !(flags & SHELL_QUERY_FORCE_PATH) &&
+                    (alias || kinds))
+                        continue;
+
+                if (!path_only)
+                {
+                        if (alias)
+                        {
+                                if (terse)
+                                        string_format(write, "alias\n");
+                                else if (style == SHELL_KIND_NAME)
+                                        string_format(write, "alias %s='%s'\n",
+                                                      name, alias_lookup(name));
+                                else
+                                        string_format(write,
+                                            "%s is aliased to `%s'\n",
+                                            name, alias_lookup(name));
+                                matched = true;
+                                if (!every)
+                                        goto found_name;
+                        }
+
+                        while (kinds)
+                        {
+                                b32 kind = every ? kinds & -kinds : kinds;
+                                shell_command_kind_written(
+                                    write, name,
+                                    kind == 1 ? (string_address)"keyword"
+                                    : kind == 4 ? (string_address)"function"
+                                                : (string_address)"builtin",
+                                    style);
+                                matched = true;
+                                if (!every)
+                                        goto found_name;
+                                kinds &= kinds - 1;
+                        }
+                }
+
+                located = every
+                    ? shell_type_paths(write, name, address_of found,
+                                       address_of found_room, terse, path_only)
+                    : flags & SHELL_QUERY_STANDARD_PATH
+                        ? shell_find_in_standard_path_alloc(
+                              name, address_of found, address_of found_room, true)
+                        : shell_find_in_path_query_alloc(
+                              name, address_of found, address_of found_room);
+
+                if (located < 0)
+                {
+                        string_format(shell_diagnostic, "%s: no room\n",
+                                      command ? "command" : "type");
+                        bad = 2;
+                        break;
+                }
+                if (located)
+                {
+                        if (!every)
+                        {
+                                if (terse)
+                                        string_format(write, "file\n");
+                                else if (path_only || style == SHELL_KIND_NAME)
+                                        string_format(write, "%s\n", found);
+                                else
+                                        string_format(write, "%s is %s\n",
+                                                      name, found);
+                        }
+                        goto found_name;
+                }
+                if (matched)
+                        goto found_name;
+
+                if (command ? style == SHELL_KIND_LONG
+                            : !terse && !path_only && !no_functions && !every)
+                        string_format(write, "%s: not found\n", name);
+                if (!command)
+                        bad = terse || path_only || no_functions || every ? 1 : 127;
+                continue;
+
+        found_name:
+                any = true;
+        }
+
+        if (found)
+                memory_free(found, found_room);
+        return bad ? bad : !command || any ? 0 : shell_bash_compat ? 1 : 127;
+}
+
 COLD fn shell_type(writer write, string_address input)
 {
         shell_option_walk walk = {1};
         positive index;
-        b32 bad = 0;
         bool terse = false;
         bool every = false;
         bool path_only = false;
         bool force_path = false;
         bool no_functions = false;
-        p8 address_to found = null;
-        positive found_room = 0;
         p8 which;
 
         while (shell_option_letter(address_of walk, address_of which))
@@ -12836,137 +12869,12 @@ COLD fn shell_type(writer write, string_address input)
         if (index >= shell_argc)
                 return shell_answer(0);
 
-        while (index < shell_argc)
-        {
-                string_address name = shell_argv[index++];
-                positive2 named = string_hash_33_length(name);
-                bool alias = shell_alias_visible(name);
-                bool keyword = shell_keyword_here(name);
-                bool function = !no_functions &&
-                                exec_function_here_hashed(name, named);
-                bool builtin = shell_command_builtin_here(name, named);
-                bool special = builtin && exec_special_builtin(name);
-                bool any = false;
-                bipolar located;
-
-                // -p wants a file and nothing else; only -P looks for one
-                // behind a name the shell would answer itself.
-                if (path_only && !force_path &&
-                    (alias || keyword || function || builtin))
-                        continue;
-
-                if (!path_only)
-                {
-                        if (alias)
-                        {
-                                if (terse)
-                                        string_format(write, "alias\n");
-                                else
-                                        string_format(
-                                            write, "%s is aliased to `%s'\n",
-                                            name, alias_lookup(name));
-
-                                any = true;
-
-                                if (!every)
-                                        continue;
-                        }
-
-                        if (keyword)
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"keyword",
-                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
-                                any = true;
-
-                                if (!every)
-                                        continue;
-                        }
-
-                        if (special)
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"builtin",
-                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
-                                any = true;
-
-                                if (!every)
-                                        continue;
-                        }
-
-                        if (function)
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"function",
-                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
-                                any = true;
-
-                                if (!every)
-                                        continue;
-                        }
-
-                        if (builtin && !special)
-                        {
-                                shell_command_kind_written(
-                                    write, name, (string_address)"builtin",
-                                    terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG);
-                                any = true;
-
-                                if (!every)
-                                        continue;
-                        }
-                }
-
-                if (every)
-                        located = shell_type_paths(write, name,
-                                                   address_of found,
-                                                   address_of found_room,
-                                                   terse, path_only);
-                else
-                        located = shell_find_in_path_query_alloc(
-                            name, address_of found, address_of found_room);
-
-                if (located < 0)
-                {
-                        string_format(shell_diagnostic, "type: no room\n");
-                        bad = 2;
-                        break;
-                }
-
-                if (located)
-                {
-                        if (!every)
-                        {
-                                if (terse)
-                                        string_format(write, "file\n");
-                                else if (path_only)
-                                        string_format(write, "%s\n", found);
-                                else
-                                        string_format(write, "%s is %s\n",
-                                                      name, found);
-                        }
-
-                        any = true;
-                        continue;
-                }
-
-                if (any)
-                        continue;
-
-                // -a, -t, -f and the two path forms say nothing on stdout
-                // about a name they cannot answer; the plain form does. They
-                // answer one rather than the reference shell's historical
-                // hundred and twenty-seven.
-                if (!terse && !path_only && !no_functions && !every)
-                        string_format(write, "%s: not found\n", name);
-
-                bad = terse || path_only || no_functions || every ? 1 : 127;
-        }
-
-        if (found)
-                memory_free(found, found_room);
-
-        shell_answer(bad);
+        shell_answer(shell_query(
+            write, index, (every ? SHELL_QUERY_ALL : 0) |
+                          (path_only ? SHELL_QUERY_PATH : 0) |
+                          (force_path ? SHELL_QUERY_FORCE_PATH : 0) |
+                          (no_functions ? SHELL_QUERY_NO_FUNCTIONS : 0),
+            terse ? SHELL_KIND_TERSE : SHELL_KIND_LONG));
 }
 
 /*
@@ -13010,94 +12918,10 @@ fn shell_command_builtin(writer write, string_address input)
                 return shell_answer(0);
 
         if (only_say)
-        {
-                p8 address_to found = null;
-                positive found_room = 0;
-                b32 bad = 0;
-                bool any = false;
-
-                while (index < shell_argc)
-                {
-                        string_address name = shell_argv[index++];
-                        positive2 named = string_hash_33_length(name);
-                        bool special = exec_special_builtin(name);
-                        string_address kind = null;
-                        bipolar located;
-
-                        // Before the builtins, because a grammar word is what
-                        // the parser sees first and `command -V if` has to
-                        // say so rather than call it missing.
-                        if (shell_keyword_here(name))
-                                kind = (string_address)"keyword";
-                        else if (shell_alias_visible(name))
-                        {
-                                if (at_length)
-                                        string_format(
-                                            write, "%s is aliased to `%s'\n",
-                                            name, alias_lookup(name));
-                                else
-                                        string_format(write, "alias %s='%s'\n",
-                                                      name,
-                                                      alias_lookup(name));
-
-                                any = true;
-                                continue;
-                        }
-                        else if (special &&
-                                 shell_command_builtin_here(name, named))
-                                kind = (string_address)"builtin";
-                        else if (exec_function_here_hashed(name, named))
-                                kind = (string_address)"function";
-                        else if (!special &&
-                                 shell_command_builtin_here(name, named))
-                                kind = (string_address)"builtin";
-
-                        if (kind)
-                        {
-                                shell_command_kind_written(
-                                    write, name, kind,
-                                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME);
-                                any = true;
-                                continue;
-                        }
-
-                        located = standard_path
-                                    ? shell_find_in_standard_path_alloc(
-                                          name, address_of found,
-                                          address_of found_room, true)
-                                    : shell_find_in_path_query_alloc(
-                                          name, address_of found,
-                                          address_of found_room);
-
-                        if (located < 0)
-                        {
-                                string_format(shell_diagnostic,
-                                              "command: no room\n");
-                                bad = 2;
-                                break;
-                        }
-
-                        if (located)
-                        {
-                                if (at_length)
-                                        string_format(write, "%s is %s\n",
-                                                      name, found);
-                                else
-                                        string_format(write, "%s\n", found);
-                                any = true;
-                        }
-                        else if (at_length)
-                                string_format(write, "%s: not found\n", name);
-                }
-
-                if (found)
-                        memory_free(found, found_room);
-
-                return shell_answer(bad ? bad
-                                        : (any ? 0
-                                               : (shell_bash_compat ? 1
-                                                                    : 127)));
-        }
+                return shell_answer(shell_query(
+                    write, index, SHELL_QUERY_COMMAND |
+                                  (standard_path ? SHELL_QUERY_STANDARD_PATH : 0),
+                    at_length ? SHELL_KIND_LONG : SHELL_KIND_NAME));
 
         // Running it is the executor's business, and it is told to skip the
         // function table by the words it is handed.
