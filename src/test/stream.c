@@ -70,6 +70,33 @@ static bool empty_mode_stays_bounded(void)
 
 static fn interrupt_write(b32 number) { (void)number; }
 
+static bool bounded_line_reads(void)
+{
+        p8 bytes[257], copied[260];
+        static const positive limits[] = {0, 1, 2, 3, 7, 16, 63, 127, 256, 257, 259};
+        for (positive delimiter = 0; delimiter < 256; delimiter++)
+                for (positive stop = 0; stop <= sizeof(bytes); stop++)
+                        for (positive row = 0; row < array_count(limits); row++)
+                        {
+                                positive limit = limits[row];
+                                memory_fill(bytes, (p8)(delimiter + 1), sizeof(bytes));
+                                if (stop < sizeof(bytes)) bytes[stop] = (p8)delimiter;
+                                memory_fill(copied, 0xa5, sizeof(copied));
+                                stream handle = {.descriptor = -1, .buffer = bytes,
+                                    .read_tail = sizeof(bytes)};
+                                bool found = true, ended = true;
+                                positive want = stop < sizeof(bytes) ? stop + 1 : stop;
+                                if (want > limit) want = limit;
+                                positive got = stream_take_line(&handle, copied, limit,
+                                    (b32)delimiter, &found, &ended);
+                                if (got != want || handle.read_head != want || ended ||
+                                    found != (stop < sizeof(bytes) && stop < limit) ||
+                                    memory_compare(copied, bytes, want) || copied[want] != 0xa5)
+                                        return false;
+                        }
+        return true;
+}
+
 static bool checked_write_errors(void)
 {
         system_write_result result = system_write_all_checked(-1, address_bad, 0);
@@ -175,7 +202,8 @@ b32 main(void)
                 return injected_write_stop((b32)string_to_positive(program_argument(2)));
         if (program_argument_count() > 1)
                 return body_allocation_failure();
-        if (!empty_mode_stays_bounded() || !checked_write_errors())
+        if (!empty_mode_stays_bounded() || !checked_write_errors() ||
+            !bounded_line_reads())
                 return 1;
         trace_body();
         bool fits = dynamic_buffer_fits_one_shelf();

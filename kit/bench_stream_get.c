@@ -92,6 +92,46 @@ static bench_work stream_get_named(string_address name)
         return null;
 }
 
+/* Resident fgets workloads: short destination buffers must not repeatedly
+   scan the unread suffix. No I/O or allocator is part of these timings. */
+static b32 stream_line_bench(void)
+{
+        static const positive rooms[] = {1, 2, 8, 64, 256, 4096};
+        static p8 output[STREAM_GET_BUFFER + 1];
+        for (positive spacing = 0; spacing <= 64; spacing += 8)
+        {
+                memory_fill(stream_get_bytes, 'x', sizeof(stream_get_bytes));
+                if (spacing)
+                        for (positive at = spacing - 1; at < STREAM_GET_BUFFER; at += spacing)
+                                stream_get_bytes[at] = '\n';
+                for (positive row = 0; row < array_count(rooms); row++)
+                {
+                        positive room = rooms[row], times[STREAM_GET_TRIES];
+                        positive rounds = (1u << 22) / room;
+                        if (rounds < 4096) rounds = 4096;
+                        for (positive trial = 0; trial < STREAM_GET_TRIES; trial++)
+                        {
+                                stream_get_handle.read_head = 0;
+                                positive start = get_cpu_time();
+                                for (positive at = 0; at < rounds; at++)
+                                {
+                                        if (STREAM_GET_BUFFER - stream_get_handle.read_head < room)
+                                                stream_get_handle.read_head = 0;
+                                        if (!stream_get_line(output, (b32)room + 1,
+                                                             &stream_get_handle)) return 1;
+                                        stream_get_sink += output[0];
+                                }
+                                times[trial] = get_cpu_time() - start;
+                        }
+                        order(times, STREAM_GET_TRIES);
+                        string_format(log, "line spacing=%p room=%p ticks=%p rounds=%p\n",
+                                      spacing, room, times[STREAM_GET_TRIES / 2], rounds);
+                }
+        }
+        log_flush();
+        return 0;
+}
+
 b32 main(void)
 {
         for (positive i = 0; i < STREAM_GET_BUFFER; i++)
@@ -107,6 +147,8 @@ b32 main(void)
 
         if (program_argument_count() > 1)
         {
+                if (string_equals(program_argument(1), "line"))
+                        return stream_line_bench();
                 bench_work work = stream_get_named(program_argument(1));
                 if (is_null(work))
                         return 2;

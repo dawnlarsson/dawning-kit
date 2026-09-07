@@ -1431,21 +1431,18 @@ static positive stream_take_line(stream address_to handle, p8 address_to into,
         }
 
         available = handle->read_tail - handle->read_head;
+        if (available > take_limit)
+                available = take_limit;
         found = (p8 address_to)memory_first_of(handle->buffer + handle->read_head,
                                                (b8)delimiter, available);
 
         if (found != null)
         {
                 take = (positive)(found - (handle->buffer + handle->read_head)) + 1;
-
-                if (take <= take_limit)
-                        address_to found_delimiter = true;
+                address_to found_delimiter = true;
         }
         else
                 take = available;
-
-        if (take > take_limit)
-                take = take_limit;
 
         memory_copy(into, handle->buffer + handle->read_head, take);
         handle->read_head += take;
