@@ -1413,6 +1413,11 @@ time.sleep(60)' "$fd_file" "$work" "$fd_state" &
                 subject 'additive output projection' lsfd \
                         '"$TOOL" -p "$1" -o +UID | head -1 | awk '\''{ exit $1!="COMMAND" || $NF!="UID" }'\''' \
                         sh "$fd_pid"
+                for fd_column in MODE XMODE POS UID USER NAME; do
+                        compare "projected regular descriptor $fd_column" lsfd \
+                                '"$TOOL" -p "$1" -n -r -o "FD,$2" | awk -v wanted="$3" '\''$1 == wanted { print }'\''' \
+                                sh "$fd_pid" "$fd_column" "$fd_regular"
+                done
         else
                 lost 'controlled descriptor fixture' 'holder did not publish its descriptor set'
         fi

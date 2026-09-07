@@ -5226,9 +5226,6 @@ static system_snapshot ul_lsfd_snapshot;
 static ul_lsfd_entry address_to ul_lsfd_entries;
 static positive ul_lsfd_entry_room;
 static positive ul_lsfd_entry_count;
-static positive address_to ul_lsfd_pids;
-static positive ul_lsfd_pid_room;
-static positive ul_lsfd_pid_count;
 
 static const file_long ul_lsfd_longs[] = {
     {(string_address)"threads", 'l'},
@@ -5255,48 +5252,48 @@ static fn ul_lsfd_release()
 {
         array_store_release(ul_lsfd_entries, ul_lsfd_entry_room,
                             ul_lsfd_entry_count);
-        array_store_release(ul_lsfd_pids, ul_lsfd_pid_room,
-                            ul_lsfd_pid_count);
 }
 
-/* Find the first scalar record with this name. Temporarily terminate only the
-   matching record so the shared checked number parser can be used without
-   changing the buffer between the three independent first-hit queries. */
-static bool ul_lsfd_fdinfo_value(p8 address_to bytes, positive length,
-                                 string_address field, positive base,
-                                 positive address_to value)
+/* Consume each fdinfo record once. Even a malformed first occurrence owns
+   its field; a later duplicate must not silently replace it. */
+static fn ul_lsfd_fdinfo_parse(ul_lsfd_entry address_to descriptor,
+                               p8 address_to bytes, positive length)
 {
-        positive field_length = string_length(field);
+        static const string_address fields[] = {"flags", "pos", "mnt_id"};
         p8 address_to cursor = bytes;
-        p8 address_to limit = bytes + length;
-
-        while (cursor < limit)
+        bool final_newline = length && bytes[length - 1] == '\n';
+        p8 seen = 0;
+        p8 address_to line;
+        while (seen != 7 &&
+               (line = storage_line_next(address_of cursor, bytes + length)))
         {
-                p8 address_to line = cursor;
-                p8 address_to stop = (p8 address_to)memory_first_of(
-                    line, '\n', (positive)(limit - line));
-                cursor = stop ? stop + 1 : limit;
-                if (!stop)
-                        stop = limit;
-
-                if (stop - line > field_length &&
-                    !memory_compare(line, field, field_length))
+                string_address colon = string_first_of(line, ':');
+                if (!colon || !colon[1])
+                        continue;
+                *colon = end;
+                positive field = string_table_find(line, fields, sizeof(fields[0]),
+                                                    array_count(fields));
+                if (field == array_count(fields) || (seen & (1 << field)))
+                        continue;
+                seen |= 1 << field;
+                string_address number = colon + 1;
+                while (byte_is_space(*number))
+                        number++;
+                positive value;
+                if (!string_digits_checked(address_of number, field ? 10 : 8,
+                                             address_of value) ||
+                    number != cursor - (cursor < bytes + length || final_newline))
+                        continue;
+                if (!field)
                 {
-                        string_address number = line + field_length;
-                        while (number < stop && byte_is_space(*number))
-                                number++;
-
-                        p8 saved = *stop;
-                        *stop = end;
-                        string_address parsed = number;
-                        bool okay = string_digits_checked(
-                                        address_of parsed, base, value) &&
-                                    parsed == stop;
-                        *stop = saved;
-                        return okay;
+                        descriptor->access = (p8)(value & 3);
+                        descriptor->access_known = descriptor->access <= 2;
                 }
+                else if (field == 1)
+                        descriptor->position = value, descriptor->position_known = true;
+                else
+                        descriptor->mount_id = value, descriptor->mount_known = true;
         }
-        return false;
 }
 
 static fn ul_lsfd_fdinfo(ul_lsfd_entry address_to descriptor)
@@ -5314,25 +5311,7 @@ static fn ul_lsfd_fdinfo(ul_lsfd_entry address_to descriptor)
                 return;
         bytes[got] = end;
 
-        positive value;
-        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "flags:", 8,
-                                 address_of value))
-        {
-                descriptor->access = (p8)(value & 3);
-                descriptor->access_known = descriptor->access <= 2;
-        }
-        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "pos:", 10,
-                                 address_of value))
-        {
-                descriptor->position = value;
-                descriptor->position_known = true;
-        }
-        if (ul_lsfd_fdinfo_value(bytes, (positive)got, "mnt_id:", 10,
-                                 address_of value))
-        {
-                descriptor->mount_id = value;
-                descriptor->mount_known = true;
-        }
+        ul_lsfd_fdinfo_parse(descriptor, bytes, (positive)got);
 }
 
 static PURE string_address ul_lsfd_type(p16 mode, string_address name)
@@ -5376,11 +5355,20 @@ static bipolar ul_lsfd_copy_name(ul_lsfd_entry address_to descriptor,
         return 1;
 }
 
-static bool ul_lsfd_process(struct snapshot_process address_to process)
+static bool ul_lsfd_process(struct snapshot_process address_to process, positive fields)
 {
         p8 directory[64];
         file_walk walk;
         string_address user = null;
+        bool names = (fields & ((positive)1 << UL_LSFD_USER)) != 0;
+        bool links = (fields & (((positive)1 << UL_LSFD_NAME) |
+                               ((positive)1 << UL_LSFD_KNAME) |
+                               ((positive)1 << UL_LSFD_TYPE) |
+                               ((positive)1 << UL_LSFD_DELETED))) != 0;
+        bool info = (fields & (((positive)1 << UL_LSFD_MODE) |
+                              ((positive)1 << UL_LSFD_XMODE) |
+                              ((positive)1 << UL_LSFD_POS) |
+                              ((positive)1 << UL_LSFD_MNTID))) != 0;
 
         system_process_path(directory, process->pid, null, "fd");
         if (!file_walk_open(address_of walk, AT_FDCWD, directory))
@@ -5421,8 +5409,8 @@ static bool ul_lsfd_process(struct snapshot_process address_to process)
                                            : facts.device_minor;
                 descriptor->fd = (p32)fd;
 
-                bipolar named = ul_lsfd_copy_name(descriptor, walk.handle,
-                                                  dirent->d_name);
+                bipolar named = links ? ul_lsfd_copy_name(descriptor, walk.handle,
+                                                           dirent->d_name) : 1;
                 if (named <= 0)
                 {
                         if (!named)
@@ -5435,9 +5423,10 @@ static bool ul_lsfd_process(struct snapshot_process address_to process)
 
                 descriptor->type = ul_lsfd_type(facts.mode,
                                                  descriptor->name);
-                ul_lsfd_fdinfo(descriptor);
+                if (info)
+                        ul_lsfd_fdinfo(descriptor);
                 if (!user)
-                        user = ps_name_of(process->uid);
+                        user = names ? ps_name_of(process->uid) : (string_address)"";
                 if (!user)
                 {
                         file_walk_close(address_of walk);
@@ -5578,22 +5567,31 @@ static b32 util_linux_lsfd()
                 output, ul_lsfd_columns, UL_LSFD_COLUMNS, defaults,
                 array_count(defaults), columns, address_of column_count))
                 return ul_bad_usage("lsfd", "unknown output column");
+        positive fields = 0;
+        for (positive at = 0; at < column_count; at++)
+                fields |= (positive)1 << columns[at];
 
         text_begin("lsfd");
         text_arena_used = 0;
 
+        /* ps_pid_list borrows the text arena; these are not independent mmap
+           allocations and must never be passed to array_store_release. */
+        positive address_to pids = null;
+        positive pid_count = 0, pid_room = 0;
         string_address pid_list = file_option_value(address_of taking, 'p');
         if (pid_list &&
-            !ps_pid_list(pid_list, address_of ul_lsfd_pids,
-                         address_of ul_lsfd_pid_count,
-                         address_of ul_lsfd_pid_room, false))
+            !ps_pid_list(pid_list, address_of pids, address_of pid_count,
+                         address_of pid_room, false))
         {
                 ul_lsfd_release();
                 return text_refuse(pid_list, "invalid PID list", 1);
         }
 
-        if (!system_snapshot_take(address_of ul_lsfd_snapshot,
-                                  SPARK_SNAPSHOT_PROCESS, true))
+        if (!system_snapshot_take_selected(address_of ul_lsfd_snapshot,
+                                           SPARK_SNAPSHOT_PROCESS,
+                                           (fields & (((positive)1 << UL_LSFD_USER) |
+                                                      ((positive)1 << UL_LSFD_UID))) != 0,
+                                           pids, pid_count))
         {
                 ul_lsfd_release();
                 return text_refuse("/proc", "cannot read", 1);
@@ -5605,11 +5603,7 @@ static b32 util_linux_lsfd()
                 struct snapshot_process address_to process =
                     ul_lsfd_snapshot.processes + i;
 
-                if (ul_lsfd_pid_count &&
-                    !ps_value_has(ul_lsfd_pids, ul_lsfd_pid_count,
-                                  process->pid))
-                        continue;
-                if (!ul_lsfd_process(process))
+                if (!ul_lsfd_process(process, fields))
                 {
                         failed = true;
                         break;
@@ -12690,55 +12684,24 @@ static bool ul_ipc_parse(p8 type, p8 address_to line,
         } while (0)
         UL_IPC_FIELD(id, 10);
         UL_IPC_FIELD(mode, 8);
-        if (type == UL_IPC_SHARED)
+        if (type != UL_IPC_SEMAPHORE)
         {
                 UL_IPC_FIELD(size, 10);
+                if (type == UL_IPC_MESSAGE)
+                        UL_IPC_FIELD(count, 10);
                 UL_IPC_FIELD(pid_one, 10);
                 UL_IPC_FIELD(pid_two, 10);
-                UL_IPC_FIELD(count, 10);
-                UL_IPC_FIELD(uid, 10);
-                UL_IPC_FIELD(gid, 10);
-                UL_IPC_FIELD(cuid, 10);
-                UL_IPC_FIELD(cgid, 10);
-                if (!ul_ipc_number(address_of cursor, 10,
-                                   address_of row->time_one) ||
-                    !ul_ipc_number(address_of cursor, 10,
-                                   address_of row->time_two) ||
-                    !ul_ipc_number(address_of cursor, 10,
-                                   address_of row->change_time))
-                        return false;
         }
-        else if (type == UL_IPC_MESSAGE)
-        {
-                UL_IPC_FIELD(size, 10);
+        if (type != UL_IPC_MESSAGE)
                 UL_IPC_FIELD(count, 10);
-                UL_IPC_FIELD(pid_one, 10);
-                UL_IPC_FIELD(pid_two, 10);
-                UL_IPC_FIELD(uid, 10);
-                UL_IPC_FIELD(gid, 10);
-                UL_IPC_FIELD(cuid, 10);
-                UL_IPC_FIELD(cgid, 10);
-                if (!ul_ipc_number(address_of cursor, 10,
-                                   address_of row->time_one) ||
-                    !ul_ipc_number(address_of cursor, 10,
-                                   address_of row->time_two) ||
-                    !ul_ipc_number(address_of cursor, 10,
-                                   address_of row->change_time))
-                        return false;
-        }
-        else
-        {
-                UL_IPC_FIELD(count, 10);
-                UL_IPC_FIELD(uid, 10);
-                UL_IPC_FIELD(gid, 10);
-                UL_IPC_FIELD(cuid, 10);
-                UL_IPC_FIELD(cgid, 10);
-                if (!ul_ipc_number(address_of cursor, 10,
-                                   address_of row->time_one) ||
-                    !ul_ipc_number(address_of cursor, 10,
-                                   address_of row->change_time))
-                        return false;
-        }
+        UL_IPC_FIELD(uid, 10);
+        UL_IPC_FIELD(gid, 10);
+        UL_IPC_FIELD(cuid, 10);
+        UL_IPC_FIELD(cgid, 10);
+        UL_IPC_FIELD(time_one, 10);
+        if (type != UL_IPC_SEMAPHORE)
+                UL_IPC_FIELD(time_two, 10);
+        UL_IPC_FIELD(change_time, 10);
 #undef UL_IPC_FIELD
         return true;
 }

@@ -148,6 +148,77 @@ done:
         if (out >= 0) system_close(out);
 }
 
+static fn storage_test_lsfd(void)
+{
+        string_address words[] = {"lsfd", "-p", "4294967295", "-n", "-o", "PID", null};
+        program_arguments_use(words, 6);
+        check("lsfd empty selection", util_linux_lsfd() == 0);
+        check("lsfd does not retain unrelated PID records",
+              !ul_lsfd_snapshot.header.process_count);
+        program_arguments_own();
+        p8 resident;
+        check("lsfd keeps borrowed arena mapped", text_arena &&
+              system_call_3(syscall(mincore), (positive)text_arena, 1,
+                            (positive)address_of resident) == 0);
+
+        static const string_address samples[] = {
+            "pos:\t123\nflags:\t0100002\nmnt_id:\t77\n",
+            "other: ignored\nmnt_id:77\nflags:0100002\npos:123",
+            "pos:123\npos:999\nflags:0100002\nflags:0\nmnt_id:77\n",
+        };
+        for (positive i = 0; i < array_count(samples); i++)
+        {
+                p8 bytes[128];
+                positive length = string_length(samples[i]);
+                memory_copy_apart_end(bytes, samples[i], length);
+                bytes[length] = end;
+                ul_lsfd_entry entry = {0};
+                ul_lsfd_fdinfo_parse(address_of entry, bytes, length);
+                check("fdinfo first fields and record boundaries",
+                      entry.access_known && entry.access == 2 &&
+                      entry.position_known && entry.position == 123 &&
+                      entry.mount_known && entry.mount_id == 77);
+        }
+        p8 invalid[] = "pos:123\0hidden\npos:12\nflags:8\nflags:0\nmnt_id:3 \nmnt_id:9\n";
+        ul_lsfd_entry entry = {.mount_id = 41, .mount_known = true};
+        ul_lsfd_fdinfo_parse(address_of entry, invalid, sizeof(invalid) - 1);
+        check("fdinfo malformed first occurrence is final",
+              !entry.access_known && !entry.position_known &&
+              entry.mount_known && entry.mount_id == 41);
+}
+
+static fn storage_test_consumed_mounts(void)
+{
+        storage_mount entries[] = {
+            {.source = "gone", .target = null},
+            {.source = "live", .target = "/live"},
+        };
+        storage_mount_table table = {.entry = entries, .count = array_count(entries)};
+        string_address missing = storage_umount_target(address_of table, "gone");
+        check("unmounted source cannot produce a null target",
+              missing && string_equals(missing, "gone"));
+        check("later target lookup skips consumed mount entries",
+              string_equals(storage_umount_target(address_of table, "/live"), "/live"));
+}
+
+static fn storage_test_link_state(void)
+{
+        net_holding held = {0};
+        check("new down interface can be configured", net_link_news(11, 0, address_of held));
+        check("initial carrier can be configured", net_link_news(11, IFF_RUNNING, address_of held));
+        held.index = 11;
+        check("unchanged carrier keeps lease", !net_link_news(11, IFF_RUNNING, address_of held));
+        check("second live interface keeps lease", !net_link_news(12, IFF_RUNNING, address_of held));
+        check("carrier loss invalidates the sole configured state",
+              net_link_news(11, 0, address_of held) && !held.index);
+        check("failed reconfiguration cannot revive lost interface",
+              net_auto(-1, address_of held) != 0 && !held.index);
+        check("new interface can retry after configuration failure",
+              net_link_news(13, 0, address_of held));
+        netlink_forget(address_of net_states);
+        net_state_count = 0;
+}
+
 b32 main(void)
 {
         storage_test_read(1, 32);
@@ -156,5 +227,8 @@ b32 main(void)
         storage_test_read(4, 7);
         storage_test_elf();
         storage_test_copy();
+        storage_test_lsfd();
+        storage_test_consumed_mounts();
+        storage_test_link_state();
         return test_report(null);
 }

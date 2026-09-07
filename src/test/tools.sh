@@ -1201,6 +1201,18 @@ compare_diff 'strip carriage return' --strip-trailing-cr "$work/crlf" "$work/tra
 compare_diff 'ignore tab expansion' -E "$work/tabexpand1" "$work/tabexpand2"
 compare_diff 'ignore tab expansion long' --ignore-tab-expansion \
         "$work/tabexpand1" "$work/tabexpand2"
+for left in 'x' 'X' ' x ' '\tx'; do
+        for right in 'x' 'y' ' X ' '       x'; do
+                for ending in '' '\n'; do
+                        printf 'prefix\0%b%b' "$left" "$ending" > "$work/nul-left"
+                        printf 'prefix\0%b%b' "$right" "$ending" > "$work/nul-right"
+                        for flags in '' '-w' '-b' '-Z' '-E' '-i' '-iw' '-ib'; do
+                                compare_diff "bounded text $left/$right/$ending/$flags" \
+                                        -a $flags "$work/nul-left" "$work/nul-right"
+                        done
+                done
+        done
+done
 compare_diff 'speed hint' --speed-large-files "$work/a" "$work/b"
 compare_diff 'explicit filename case default' --no-ignore-file-name-case \
         "$work/a" "$work/b"

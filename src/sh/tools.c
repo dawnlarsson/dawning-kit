@@ -8694,38 +8694,33 @@ static p8 diff_fold(p8 value)
 /*
         One line's worth of bytes, in the shape the ignore flags leave it.
 
-        The walk stops at the newline every line in the buffer has, so the
-        caller never has to know where a line ends.
+        The index supplies the bounded record span, including embedded NULs
+        when --text asks for binary bytes to be compared as text.
 */
 typedef struct
 {
         p8 address_to at;
         p8 address_to stop;
-        p8 held;
         positive column;
         positive tab_left;
-        bool done;
 } diff_scan;
 
-static fn diff_scan_open(diff_scan address_to scan, p8 address_to line)
+static fn diff_scan_open(diff_scan address_to scan, p8 address_to line,
+                          positive length)
 {
         scan->at = line;
-        scan->stop = (p8 address_to)string_first_of_or_end(line, '\n');
+        scan->stop = line + length;
 
         if (diff_trailing)
                 while (scan->stop > line && byte_is_space(scan->stop[-1]))
                         scan->stop--;
 
-        scan->done = false;
         scan->column = 0;
         scan->tab_left = 0;
 }
 
 static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
 {
-        if (scan->done)
-                return false;
-
         if (scan->tab_left)
         {
                 scan->tab_left--;
@@ -8734,60 +8729,20 @@ static bool diff_scan_next(diff_scan address_to scan, p8 address_to out)
                 return true;
         }
 
-        if (diff_space == DIFF_SPACE_ALL)
+        if (diff_space != DIFF_SPACE_NONE)
         {
-                while (scan->at < scan->stop && byte_is_space(address_to scan->at))
+                p8 address_to first = scan->at;
+                while (scan->at < scan->stop && byte_is_space(*scan->at))
                         scan->at++;
-
                 if (scan->at == scan->stop)
-                {
-                        scan->done = true;
                         return false;
-                }
-
-                address_to out = diff_fold(address_to scan->at);
-                scan->at++;
-
+                *out = first != scan->at && diff_space == DIFF_SPACE_CHANGE
+                           ? ' ' : diff_fold(*scan->at++);
                 return true;
         }
-
-        if (diff_space == DIFF_SPACE_CHANGE)
-        {
-                if (scan->at == scan->stop)
-                {
-                        scan->done = true;
-                        return false;
-                }
-
-                if (byte_is_space(address_to scan->at))
-                {
-                        while (scan->at < scan->stop && byte_is_space(address_to scan->at))
-                                scan->at++;
-
-                        if (scan->at == scan->stop)
-                        {
-                                scan->done = true;
-                                return false;
-                        }
-
-                        address_to out = ' ';
-
-                        return true;
-                }
-
-                address_to out = diff_fold(address_to scan->at);
-                scan->at++;
-
-                return true;
-        }
-
         if (scan->at == scan->stop)
-        {
-                scan->done = true;
                 return false;
-        }
-
-        if (diff_tabs && address_to scan->at == '\t')
+        if (diff_tabs && *scan->at == '\t')
         {
                 positive spaces = 8 - scan->column % 8;
 
@@ -8847,7 +8802,7 @@ static PURE positive diff_hash(diff_side address_to side, bipolar middle)
         positive value = 5381;
         p8 one;
 
-        diff_scan_open(address_of scan, diff_line(side, middle));
+        diff_scan_open(address_of scan, diff_line(side, middle), length);
 
         while (diff_scan_next(address_of scan, address_of one))
                 value = value * 33 + one;
@@ -8880,8 +8835,8 @@ static PURE bool diff_same(diff_side address_to a, bipolar i, diff_side address_
                                                length));
         }
 
-        diff_scan_open(address_of left, diff_line(a, i));
-        diff_scan_open(address_of right, diff_line(b, j));
+        diff_scan_open(address_of left, diff_line(a, i), diff_line_length(a, i));
+        diff_scan_open(address_of right, diff_line(b, j), diff_line_length(b, j));
 
         while (1)
         {

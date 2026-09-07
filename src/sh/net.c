@@ -876,14 +876,14 @@ typedef struct
 static netlink_buffer net_states;
 static positive net_state_count;
 
-//      Whether anything worth reacting to happened to this link, remembering
-//      its new state either way.
-static bool net_link_news(p32 index, p32 flags, bool address_to had_carrier)
+/* Remember every carrier transition, but reconfigure only when no lease is
+   active or its interface actually loses carrier. A newly probed down link
+   is actionable while unconfigured; a second live interface is not. */
+static bool net_link_news(p32 index, p32 flags, net_holding address_to held)
 {
         net_state address_to entry;
         positive at;
-
-        address_to had_carrier = false;
+        bool had_carrier = false;
 
         for (at = 0; at < net_state_count; at++)
         {
@@ -892,14 +892,14 @@ static bool net_link_news(p32 index, p32 flags, bool address_to had_carrier)
                 if (entry->index != index)
                         continue;
 
-                address_to had_carrier = (entry->flags & IFF_RUNNING) != 0;
+                had_carrier = (entry->flags & IFF_RUNNING) != 0;
 
                 if (((entry->flags ^ flags) & IFF_RUNNING) == 0)
                         return false;
 
                 entry->flags = flags;
 
-                return true;
+                goto changed;
         }
 
         if (!net_room(address_of net_states,
@@ -910,13 +910,10 @@ static bool net_link_news(p32 index, p32 flags, bool address_to had_carrier)
         entry->index = index;
         entry->flags = flags;
 
-        //      A link nobody has seen before is news whatever state it is
-        //      in. At boot the card is still being probed when init starts
-        //      watching, so the interface appears a moment later, down and
-        //      without carrier -- and it has to be acted on, because bringing
-        //      it up is the very thing that would give it carrier. Waiting
-        //      for a carrier event there waits forever.
-        return true;
+changed:
+        if (held->index == index && had_carrier && !(flags & IFF_RUNNING))
+                held->index = 0;
+        return held->index == 0;
 }
 
 static b32 net_watch(void)
@@ -925,7 +922,6 @@ static b32 net_watch(void)
         net_holding held;
         bipolar events;
         bipolar handle;
-        p32 configured = 0;
 
         //      O_WRONLY. A failure leaves the handle at -1 and net_out at
         //      log, which is exactly the old behaviour.
@@ -956,7 +952,6 @@ static b32 net_watch(void)
         if (handle >= 0)
         {
                 net_auto((b32)handle, address_of held);
-                configured = held.index;
                 socket_close((b32)handle);
         }
 
@@ -977,7 +972,7 @@ static b32 net_watch(void)
                 {
                         positive due = 0;
 
-                        if (configured && held.lease.seconds)
+                        if (held.index && held.lease.seconds)
                         {
                                 positive half = held.lease.seconds / 2;
                                 positive gone = net_seconds() - held.taken;
@@ -993,7 +988,7 @@ static b32 net_watch(void)
                                 //      if the server will not say yes, start
                                 //      over, which is what a client does when
                                 //      the lease finally runs out anyway.
-                                if (!configured || !held.lease.seconds)
+                                if (!held.index || !held.lease.seconds)
                                         continue;
 
                                 if (dhcp_renew(held.name, held.hardware,
@@ -1012,7 +1007,6 @@ static b32 net_watch(void)
                                 if (handle >= 0)
                                 {
                                         net_auto((b32)handle, address_of held);
-                                        configured = held.index;
                                         socket_close((b32)handle);
                                 }
 
@@ -1042,55 +1036,9 @@ static b32 net_watch(void)
                                 link = (netlink_link address_to)(message.bytes + at +
                                                                  NETLINK_HEADER);
 
-                                bool had_carrier = false;
-
-                                if (!(link->flags & IFF_LOOPBACK) &&
+                                interesting = !(link->flags & IFF_LOOPBACK) &&
                                     net_link_news(link->index, link->flags,
-                                                  address_of had_carrier))
-                                {
-                                        /*
-                                                Two things are worth acting
-                                                on, and nothing else is.
-
-                                                Anything at all, while nothing
-                                                is configured: a card that has
-                                                only just finished probing is
-                                                the ordinary case at boot, and
-                                                it arrives down and without
-                                                carrier because bringing it up
-                                                is what this is for.
-
-                                                The configured link losing
-                                                carrier: the cable came out,
-                                                and whatever else has carrier
-                                                should take over.
-
-                                                A link gaining carrier while
-                                                another already works is not
-                                                news. Acting there would take
-                                                a fresh lease for no reason,
-                                                including on the link this had
-                                                just brought up itself.
-                                        */
-                                        if (configured == 0)
-                                                interesting = true;
-                                        else if (link->index == configured &&
-                                                 had_carrier &&
-                                                 !(link->flags & IFF_RUNNING))
-                                        {
-                                                //      had_carrier matters.
-                                                //      Bringing a link up
-                                                //      produces an event
-                                                //      before the carrier
-                                                //      arrives, and reading
-                                                //      that as the cable
-                                                //      coming out made this
-                                                //      configure itself
-                                                //      twice at every boot.
-                                                configured = 0;
-                                                interesting = true;
-                                        }
-                                }
+                                                  address_of held);
                         }
 
                         at += netlink_align(header->length);
@@ -1104,7 +1052,6 @@ static b32 net_watch(void)
                                 continue;
 
                         net_auto((b32)handle, address_of held);
-                        configured = held.index;
                         socket_close((b32)handle);
                 }
         }

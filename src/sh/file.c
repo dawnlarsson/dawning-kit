@@ -10629,71 +10629,42 @@ static bool split_output_close(split_output address_to output)
         return true;
 }
 
-static bool split_regular_bytes(bipolar in, p64 length, positive piece,
-                                split_output address_to output)
+static bool split_fixed(bipolar in, p64 length, positive measure,
+                         bool distribute, split_output address_to output,
+                         p8 address_to bytes)
 {
         bool range_copy = true;
         bool send_copy = true;
+        positive chunks = distribute ? measure
+                            : length ? (positive)((length - 1) / measure) + 1 : 0;
+        p64 ordinary = distribute ? length / measure : measure;
+        positive extra = distribute ? (positive)(length % measure) : 0;
 
-        while (length)
+        for (positive i = 0; i < chunks; i++)
         {
-                positive here = length < (p64)piece ? (positive)length : piece;
+                positive here = (positive)min(length, ordinary + (i < extra));
 
                 if (!split_output_open(output) ||
-                    !file_copy_stream(in, output->handle, here, true,
-                                      address_of range_copy,
-                                      address_of send_copy, null))
+                    (here && !(bytes ? split_output_write(output, bytes, here)
+                                : file_copy_stream(in, output->handle, here, true,
+                                                   address_of range_copy,
+                                                   address_of send_copy, null))) ||
+                    !split_output_close(output))
                 {
-                        file_fail("split: read or write error\n", 0);
+                        if (!bytes)
+                                file_fail("split: read or write error\n", 0);
                         return false;
                 }
-                if (!split_output_close(output))
-                        return false;
                 length -= here;
+                if (bytes)
+                        bytes += here;
         }
 
         return true;
 }
 
-static bool split_stream_bytes(bipolar in, positive piece,
-                               split_output address_to output)
-{
-        positive filled = 0;
-
-        while (1)
-        {
-                positive ask = piece - filled;
-
-                if (ask > sizeof(file_transfer))
-                        ask = sizeof(file_transfer);
-
-                bipolar taken = system_read_retry((positive)in, file_transfer,
-                                                   ask);
-
-                if (taken < 0)
-                {
-                        file_fail("split: read error\n", 0);
-                        return false;
-                }
-                if (!taken)
-                        return split_output_close(output);
-                if (!split_output_write(output, file_transfer,
-                                        (positive)taken))
-                        return false;
-
-                filled += (positive)taken;
-
-                if (filled == piece)
-                {
-                        if (!split_output_close(output))
-                                return false;
-                        filled = 0;
-                }
-        }
-}
-
-static bool split_stream_lines(bipolar in, positive lines, p8 separator,
-                               split_output address_to output)
+static bool split_stream(bipolar in, positive piece, p8 separator, bool lines,
+                          split_output address_to output)
 {
         positive in_piece = 0;
 
@@ -10712,12 +10683,13 @@ static bool split_stream_lines(bipolar in, positive lines, p8 separator,
 
                 p8 address_to pending = file_transfer;
                 p8 address_to finish = file_transfer + (positive)taken;
+                positive records = lines
+                    ? memory_count(pending, (positive)taken, separator)
+                    : (positive)taken;
 
                 while (pending < finish)
                 {
-                        positive needed = lines - in_piece;
-                        positive records = memory_count(
-                            pending, (positive)(finish - pending), separator);
+                        positive needed = piece - in_piece;
 
                         /* The usual large-piece case has no boundary in this
                            refill.  memory_count is a vector-width pass, then
@@ -10734,21 +10706,23 @@ static bool split_stream_lines(bipolar in, positive lines, p8 separator,
                         }
 
                         p8 address_to scan = pending;
-
-                        for (positive found_count = 0;
-                             found_count < needed; found_count++)
+                        if (lines)
                         {
-                                p8 address_to found = memory_first_of(
-                                    scan, separator,
-                                    (positive)(finish - scan));
-                                scan = found + 1; /* records proved it exists */
+                                for (positive found_count = 0;
+                                     found_count < needed; found_count++)
+                                        scan = (p8 address_to)memory_first_of(
+                                            scan, separator,
+                                            (positive)(finish - scan)) + 1;
                         }
+                        else
+                                scan += needed;
 
                         if (!split_output_write(output, pending,
                                                 (positive)(scan - pending)) ||
                             !split_output_close(output))
                                 return false;
                         pending = scan;
+                        records -= needed;
                         in_piece = 0;
                 }
         }
@@ -10771,17 +10745,20 @@ static bool split_line_bytes_memory(p8 address_to input, positive length,
                 positive stop = found ? (positive)(found - input) + 1 : length;
                 positive record = stop - at;
 
-                if (record <= piece)
+                if (used && record > piece - used)
                 {
-                        if (used && record > piece - used)
-                        {
-                                if (!split_output_close(output))
-                                        return false;
-                                used = 0;
-                        }
-                        if (!split_output_write(output, input + at, record))
+                        if (!split_output_close(output))
                                 return false;
-                        used += record;
+                        used = 0;
+                }
+                while (record)
+                {
+                        positive here = min(record, piece - used);
+                        if (!split_output_write(output, input + at, here))
+                                return false;
+                        used += here;
+                        at += here;
+                        record -= here;
                         if (used == piece)
                         {
                                 if (!split_output_close(output))
@@ -10789,45 +10766,14 @@ static bool split_line_bytes_memory(p8 address_to input, positive length,
                                 used = 0;
                         }
                 }
-                else
-                {
-                        if (used)
-                        {
-                                if (!split_output_close(output))
-                                        return false;
-                                used = 0;
-                        }
-
-                        positive left = record;
-                        positive record_at = at;
-                        while (left >= piece)
-                        {
-                                if (!split_output_write(output,
-                                                        input + record_at,
-                                                        piece) ||
-                                    !split_output_close(output))
-                                        return false;
-                                record_at += piece;
-                                left -= piece;
-                        }
-                        if (left)
-                        {
-                                if (!split_output_write(output,
-                                                        input + record_at,
-                                                        left))
-                                        return false;
-                                used = left;
-                        }
-                }
-                at = stop;
         }
 
         return split_output_close(output);
 }
 
-static bool split_line_bytes(bipolar in, file_facts address_to facts,
-                             bool regular, positive piece, p8 separator,
-                             split_output address_to output)
+static bool split_materialized(bipolar in, file_facts address_to facts,
+                                bool regular, positive piece, p8 separator,
+                                bool distribute, split_output address_to output)
 {
         if (regular)
         {
@@ -10868,8 +10814,9 @@ static bool split_line_bytes(bipolar in, file_facts address_to facts,
                 return false;
         }
 
-        bool answer = split_line_bytes_memory(input, length, piece, separator,
-                                              output);
+        bool answer = distribute
+            ? split_fixed(in, length, piece, true, output, input)
+            : split_line_bytes_memory(input, length, piece, separator, output);
         text_arena_used = 0;
         return answer;
 }
@@ -10884,71 +10831,6 @@ static bool split_chunks(string_address text, positive address_to chunks)
                 return false;
         address_to chunks = value;
         return true;
-}
-
-static bool split_distribute_regular(bipolar in, p64 length, positive chunks,
-                                     split_output address_to output)
-{
-        bool range_copy = true;
-        bool send_copy = true;
-        p64 ordinary = length / chunks;
-        positive extra = (positive)(length % chunks);
-
-        for (positive i = 0; i < chunks; i++)
-        {
-                positive here = (positive)ordinary + (positive)(i < extra);
-
-                if (!split_output_open(output) ||
-                    (here && !file_copy_stream(in, output->handle, here, true,
-                                               address_of range_copy,
-                                               address_of send_copy, null)) ||
-                    !split_output_close(output))
-                {
-                        file_fail("split: read or write error\n", 0);
-                        return false;
-                }
-        }
-        return true;
-}
-
-static bool split_distribute_stream(bipolar in, positive chunks,
-                                    split_output address_to output)
-{
-        text_arena_used = 0;
-        positive length;
-        bool read_failed;
-        p8 address_to input = text_arena_read_all(
-            (positive)in, FILE_TRANSFER_SIZE, address_of length,
-            address_of read_failed);
-
-        if (!input)
-        {
-                file_fail(read_failed ? (string_address)"split: read error\n"
-                                      : (string_address)"split: input too large\n",
-                          0);
-                text_arena_used = 0;
-                return false;
-        }
-
-        positive ordinary = length / chunks;
-        positive extra = length % chunks;
-        positive at = 0;
-        bool answer = true;
-
-        for (positive i = 0; i < chunks; i++)
-        {
-                positive here = ordinary + (positive)(i < extra);
-                if (!split_output_open(output) ||
-                    (here && !split_output_write(output, input + at, here)) ||
-                    !split_output_close(output))
-                {
-                        answer = false;
-                        break;
-                }
-                at += here;
-        }
-        text_arena_used = 0;
-        return answer;
 }
 
 static bool split_separator(string_address text, p8 address_to separator)
@@ -11136,24 +11018,18 @@ static b32 file_split()
 
         bool regular = looked && (facts.mode & MODE_FORMAT) == MODE_FILE;
 
-        if (mode == 'b' && output.protect_input && facts.size)
-                complete = split_regular_bytes(in, facts.size, piece,
+        if (regular && (mode == 'n' || (mode == 'b' && facts.size)))
+                complete = split_fixed(in, facts.size,
+                                        mode == 'n' ? chunks : piece,
+                                        mode == 'n', address_of output, null);
+        else if (mode == 'C' || mode == 'n')
+                complete = split_materialized(in, address_of facts, regular,
+                                               mode == 'n' ? chunks : piece,
+                                               separator, mode == 'n',
                                                address_of output);
-        else if (mode == 'b')
-                complete = split_stream_bytes(in, piece, address_of output);
-        else if (mode == 'C')
-                complete = split_line_bytes(in, address_of facts, regular,
-                                            piece, separator,
-                                            address_of output);
-        else if (mode == 'n' && regular)
-                complete = split_distribute_regular(in, facts.size, chunks,
-                                                    address_of output);
-        else if (mode == 'n')
-                complete = split_distribute_stream(in, chunks,
-                                                   address_of output);
         else
-                complete = split_stream_lines(in, piece, separator,
-                                              address_of output);
+                complete = split_stream(in, piece, separator, mode == 'l',
+                                         address_of output);
 
         if (output.handle >= 0)
                 split_output_close(address_of output);
@@ -13659,71 +13535,46 @@ static positive shuf_uniform(file_random_state address_to random,
         return (positive)(value % width);
 }
 
+static COLD bool shuf_output_failed(shuf_output address_to output)
+{
+        string_format(file_fail, "shuf: write error%s%s\n",
+                      output->name ? (string_address)" on " : (string_address)"",
+                      output->name ? output->name : (string_address)"");
+        return false;
+}
+
 static bool shuf_output_flush(shuf_output address_to output)
 {
-        if (!output->used)
-                return true;
-
-        if (system_write_all((positive)output->handle, file_transfer,
-                             output->used) != output->used)
-        {
-                string_format(file_fail, "shuf: write error%s%s\n",
-                              output->name ? (string_address) " on "
-                                           : (string_address) "",
-                              output->name ? output->name
-                                           : (string_address) "");
-                return false;
-        }
-
-        output->used = 0;
-        return true;
+        return buffered_flush((positive)output->handle, file_transfer,
+                               address_of output->used) || shuf_output_failed(output);
 }
 
 static bool shuf_output_send(shuf_output address_to output,
                              string_address bytes, positive length)
 {
-        while (length)
-        {
-                if (!output->used && length >= sizeof(file_transfer))
-                {
-                        if (system_write_all((positive)output->handle, bytes,
-                                             length) != length)
-                        {
-                                string_format(file_fail,
-                                              "shuf: write error%s%s\n",
-                                              output->name
-                                                  ? (string_address) " on "
-                                                  : (string_address) "",
-                                              output->name
-                                                  ? output->name
-                                                  : (string_address) "");
-                                return false;
-                        }
-
-                        return true;
-                }
-
-                positive room = sizeof(file_transfer) - output->used;
-                positive copied = length < room ? length : room;
-
-                memory_copy_apart(file_transfer + output->used, bytes, copied);
-                output->used += copied;
-                bytes += copied;
-                length -= copied;
-
-                if (output->used == sizeof(file_transfer) &&
-                    !shuf_output_flush(output))
-                        return false;
-        }
-
-        return true;
+        return buffered_write((positive)output->handle, file_transfer,
+                               sizeof(file_transfer), address_of output->used,
+                               bytes, length) || shuf_output_failed(output);
 }
 
 static bool shuf_output_record(shuf_output address_to output,
                                shuf_record address_to record, p8 delimiter)
 {
+        if (record->length < sizeof(file_transfer))
+        {
+                p8 address_to bytes = buffered_reserve(
+                    (positive)output->handle, file_transfer, sizeof(file_transfer),
+                    address_of output->used, record->length + 1);
+                if (!bytes)
+                        return shuf_output_failed(output);
+                memory_copy_apart(bytes, record->text, record->length);
+                bytes[record->length] = delimiter;
+                return true;
+        }
         return shuf_output_send(output, record->text, record->length) &&
-               shuf_output_send(output, address_of delimiter, 1);
+               (buffered_write_byte((positive)output->handle, file_transfer,
+                                     sizeof(file_transfer), address_of output->used,
+                                     delimiter) || shuf_output_failed(output));
 }
 
 static bool shuf_output_number(shuf_output address_to output, positive number,
@@ -13731,9 +13582,8 @@ static bool shuf_output_number(shuf_output address_to output, positive number,
 {
         p8 text[32];
         positive length = positive_into_base(text, number, 10, false);
-
-        return shuf_output_send(output, text, length) &&
-               shuf_output_send(output, address_of delimiter, 1);
+        text[length++] = delimiter;
+        return shuf_output_send(output, text, length);
 }
 
 static shuf_record address_to shuf_file_records(string_address name,

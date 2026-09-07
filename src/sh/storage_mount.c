@@ -880,8 +880,9 @@ static PURE string_address storage_umount_target(storage_mount_table address_to 
 
         /* Last wins: stacked mounts are unmounted from the top. */
         for (positive at = 0; at < table->count; at++)
-                if (storage_word(table->entry[at].source, asked) ||
-                    storage_word(table->entry[at].target, asked))
+                if (table->entry[at].target &&
+                    (storage_word(table->entry[at].source, asked) ||
+                     storage_word(table->entry[at].target, asked)))
                         found = table->entry[at].target;
         return found;
 }

@@ -2077,6 +2077,12 @@ effect 'single range'       shuf '"$TOOL" -i 7-7 > said'
 effect 'head count'         shuf 'seq 1 100 > input; "$TOOL" -n17 input | wc -l > said'
 effect 'head clamps'        shuf 'seq 1 8 > input; "$TOOL" -n99 input | sort -n > said'
 effect 'repeat one'         shuf '"$TOOL" -r -n20 -e only > said'
+for shuf_length in 0 1 131070 131071 131072 131073 262145; do
+        for shuf_zero in '' -z; do
+                effect "repeated record buffer boundary $shuf_length $shuf_zero" shuf \
+                        'head -c "$shuf_length" /dev/zero | tr "\000" x > input; if [ -n "$shuf_zero" ]; then printf "\000"; else printf "\n"; fi >> input; "$TOOL" $shuf_zero -r -n3 input > said'
+        done
+done
 effect 'repeat count'       shuf '"$TOOL" -r -n200 -e a b c | wc -l > said'
 effect 'zero terminated'    shuf 'printf "c\0a\0b" > input; "$TOOL" -z input | sort -z > said'
 effect 'output file'        shuf 'printf "c\na\nb\n" > input; "$TOOL" -o mixed input; sort mixed > said; rm mixed'
@@ -2124,6 +2130,20 @@ effect 'line bytes nul records' split 'printf "one\0two\0three\0" > input; "$TOO
 effect 'byte distribution' split 'printf abcdefghij > input; "$TOOL" -n3 input dist-'
 effect 'distribution creates empty pieces' split ': > input; "$TOOL" --number=3 input empty-'
 effect 'distribution standard input' split 'printf abcdefghij | "$TOOL" -n3 - pipe-'
+for split_mode in b C l n; do
+        for split_measure in 1 3 7; do
+                for split_input in file pipe; do
+                        effect "binary boundaries $split_mode/$split_measure/$split_input" split \
+                                'printf "a\0b\n123456789\nc\0tail" > input; if [ "$split_input" = file ]; then "$TOOL" "-$split_mode$split_measure" input part-; else cat input | "$TOOL" "-$split_mode$split_measure" - part-; fi'
+                        case $split_mode in C|l)
+                                effect "nul boundaries $split_mode/$split_measure/$split_input" split \
+                                        'printf "a\0b\n123456789\nc\0tail" > input; if [ "$split_input" = file ]; then "$TOOL" -t "\0" "-$split_mode$split_measure" input part-; else cat input | "$TOOL" -t "\0" "-$split_mode$split_measure" - part-; fi'
+                        esac
+                done
+        done
+done
+effect 'many boundaries across refills' split \
+        'yes record | head -c 280009 > input; "$TOOL" -l173 input part-'
 rejected 'unsupported line-aware distribution' split -n l/2 "$fixture/alpha"
 rejected 'unsupported round-robin distribution' split -n r/2 "$fixture/alpha"
 answered 'zero byte count' split -b0 "$fixture/alpha"

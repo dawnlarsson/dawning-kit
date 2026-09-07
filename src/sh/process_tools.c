@@ -2061,10 +2061,7 @@ static b32 process_script_record(process_script_state address_to state,
         bipolar child = system_fork();
         if (child < 0)
         {
-                if (signal_fd >= 0)
-                        system_close((positive)signal_fd);
-                system_signal_mask(UL_SIGNAL_SET_MASK,
-                                   address_of previous_mask, null, 8);
+                process_timeout_cleanup(-1, signal_fd, previous_mask);
                 system_close((positive)slave);
                 system_close((positive)master);
                 string_format(file_fail, "script: cannot fork: %s\n",
@@ -2078,9 +2075,6 @@ static b32 process_script_record(process_script_state address_to state,
 
         system_close((positive)slave);
         bipolar pidfd = system_call_2(syscall(pidfd_open), (positive)child, 0);
-        if (signal_fd < 0)
-                system_signal_mask(UL_SIGNAL_SET_MASK,
-                                   address_of previous_mask, null, 8);
 
         state->began = state->last_event = clock_monotonic_nanoseconds();
         p8 input[4096], output[16384];
@@ -2096,7 +2090,7 @@ static b32 process_script_record(process_script_state address_to state,
                 positive master_index = count;
                 waited[count++] = (process_timeout_poll){
                     master, (b16)(PROCESS_POLL_IN |
-                                   ((input_at < input_length || eot)
+                                   ((input_at < input_length)
                                         ? PROCESS_POLL_OUT : 0)), 0};
                 positive input_index = positive_max;
                 if (!input_end && input_at == input_length)
@@ -2153,16 +2147,14 @@ static b32 process_script_record(process_script_state address_to state,
                                 input_at = 0;
                                 input_length = (positive)got;
                         }
-                        else if (!got)
-                        {
-                                input_end = true;
-                                eot = true;
-                        }
                         else if (got != -UL_ERROR_AGAIN &&
                                  got != UL_ERROR_INTERRUPTED)
                         {
                                 input_end = true;
                                 eot = true;
+                                input[0] = 4;
+                                input_at = 0;
+                                input_length = 1;
                         }
                 }
 
@@ -2175,7 +2167,7 @@ static b32 process_script_record(process_script_state address_to state,
                                     input_length - input_at);
                                 if (wrote > 0)
                                 {
-                                        if (!process_script_payload(
+                                        if (!eot && !process_script_payload(
                                                 state, 'I', input + input_at,
                                                 (positive)wrote))
                                         {
@@ -2184,17 +2176,6 @@ static b32 process_script_record(process_script_state address_to state,
                                         }
                                         input_at += (positive)wrote;
                                 }
-                                else if (wrote != -UL_ERROR_AGAIN &&
-                                         wrote != UL_ERROR_INTERRUPTED)
-                                        master_end = true;
-                        }
-                        else if (eot)
-                        {
-                                p8 control = 4;
-                                bipolar wrote = system_write_once(
-                                    (positive)master, address_of control, 1);
-                                if (wrote > 0)
-                                        eot = false;
                                 else if (wrote != -UL_ERROR_AGAIN &&
                                          wrote != UL_ERROR_INTERRUPTED)
                                         master_end = true;
@@ -2267,21 +2248,19 @@ static b32 process_script_record(process_script_state address_to state,
         {
                 positive deadline = clock_monotonic_nanoseconds() +
                                     1000000000;
-                for (;;)
+                while (!failed)
                 {
-                        bipolar reaped = system_wait4_retry(
-                            (b32)child, address_of status, 1, null);
-                        if (reaped == child)
+                        b32 forwarded = 0;
+                        bipolar waited = process_timeout_wait(
+                            (b32)child, pidfd, signal_fd, deadline,
+                            address_of status, address_of forwarded);
+                        if (waited != 2)
                         {
-                                child_done = true;
+                                child_done = waited == 1;
                                 break;
                         }
-                        if (reaped < 0 || failed ||
-                            clock_monotonic_nanoseconds() >= deadline)
-                                break;
-                        timespec nap = {0, 10000000};
-                        system_call_2(syscall(nanosleep),
-                                      (positive)address_of nap, 0);
+                        process_timeout_signal((b32)child, forwarded, false,
+                                               false, command_text);
                 }
                 if (!child_done)
                 {
