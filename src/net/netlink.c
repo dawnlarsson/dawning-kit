@@ -463,8 +463,9 @@ static bipolar netlink_walk(b32 handle, netlink_buffer address_to request,
                                 return 0;
 
                         if (header->type == NLMSG_IS_ERROR)
-                                return address_to(
-                                    (b32 address_to)(reply->bytes + at + NETLINK_HEADER));
+                                return header->length < NETLINK_HEADER + sizeof(b32)
+                                    ? -1 : memory_load_unaligned(b32,
+                                        reply->bytes + at + NETLINK_HEADER);
 
                         if (!enough && header->type != NLMSG_IS_NOOP && visit &&
                             !visit(header, context))

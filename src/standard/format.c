@@ -927,16 +927,10 @@ static fn format_round(format_number address_to number, bipolar keep)
         }
         else
         {
-                //      MEASURED, AND LEFT AS A BYTE LOOP ON PURPOSE.
-                //
-                //      "Are the digits after the tie all zeros" is a span of
-                //      one byte value and memory_span_byte answers exactly
-                //      that. It was called, and it lost 2.1% of the whole
-                //      %.6f benchmark: this loop is only entered when the
-                //      first discarded digit is a five, and the byte after a
-                //      five is not a zero about nine times in ten, so the
-                //      loop almost always stops on its first compare and the
-                //      call's setup is pure loss.
+                // A span call makes this leaf spill its rounding state even
+                // when the first byte rejects. The shared scanner plus inline
+                // first-byte guard was rechecked on the 9950X and lost the
+                // mixed decimal/hex workload; retain the local sticky policy.
                 positive after = index + 1;
 
                 up = false;

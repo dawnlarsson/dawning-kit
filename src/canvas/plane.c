@@ -133,9 +133,7 @@ static int plane_paint(struct output *output, unsigned int shape,
 
         // Transparent everywhere the shape does not cover, or it wears a box
         // of whatever the buffer was allocated holding.
-        canvas_painted += (unsigned long)t.width * t.height;
-        canvas_runs++;
-        canvas_rect_fill(t.pixels, t.pitch, t.width, t.height, 0x00000000);
+        target_rectangle(&t, 0, 0, t.width, t.height, 0x00000000);
 
         canvas_draw_cursor(&t, canvas_cursor_hot[shape][0] * (int)fitted_scale,
                            canvas_cursor_hot[shape][1] * (int)fitted_scale,

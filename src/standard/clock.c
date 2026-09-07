@@ -601,12 +601,10 @@ static positive clock_number_field(p8 address_to into, bipolar value,
                                    positive width)
 {
         p8 body[32];
-        positive length = clock_number_precision(body, value, 1);
-        positive at = 0;
+        positive length = bipolar_into(body, value);
+        positive at = width > length ? width - length : 0;
 
-        while (at + length < width)
-                into[at++] = ' ';
-
+        memory_fill(into, ' ', at);
         memory_copy_apart(into + at, body, length);
 
         return at + length;

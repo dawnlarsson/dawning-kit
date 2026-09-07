@@ -7962,7 +7962,6 @@ static byte_store printf_hold;
 // What printf writes without looking at it: everything but the terminator and
 // the one or two bytes that mean something where it is being read.
 static b8 printf_plain[STRING_SET_BYTES];
-static b8 printf_text[STRING_SET_BYTES];
 static b32 printf_sets_ready;
 
 static fn printf_sets_prepare()
@@ -7971,10 +7970,8 @@ static fn printf_sets_prepare()
                 return;
 
         memory_fill(printf_plain + 1, 1, STRING_SET_BYTES - 1);
-        memory_fill(printf_text + 1, 1, STRING_SET_BYTES - 1);
 
         printf_plain['\\'] = printf_plain['%'] = 0;
-        printf_text['\\'] = 0;
         printf_sets_ready = true;
 }
 
@@ -8157,11 +8154,9 @@ COLD fn printf_reusable(writer write, string_address text)
 
 fn printf_escaped(writer write, string_address text)
 {
-        printf_sets_prepare();
-
         while (string_get(text) && !printf_cut)
         {
-                positive run = string_span(text, printf_text);
+                positive run = (positive)(string_first_of_or_end(text, '\\') - text);
 
                 if (run)
                 {

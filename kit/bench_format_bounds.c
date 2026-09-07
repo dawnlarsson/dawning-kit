@@ -43,6 +43,20 @@ static p64 format_bounds_normal_once(void)
         return get_cpu_time() - began;
 }
 
+static p64 format_bounds_rounding_once(void)
+{
+        p64 began = get_cpu_time();
+        for (positive round = 0; round < FORMAT_BOUNDS_NORMAL_ROUNDS; round++)
+        {
+                p64 bits = 0x3ff0000000000000ull |
+                    ((round * 0x9e3779b97f4a7c15ull) & 0xfffffffffffffull);
+                decimal value = memory_cast(decimal, bits);
+                format_bounds_sink += snprintf(format_bounds_room,
+                    sizeof(format_bounds_room), "%.6f|%.6a|%.2f", value, value, value);
+        }
+        return get_cpu_time() - began;
+}
+
 static fn format_bounds_order(p64 address_to values)
 {
         for (positive at = 1; at < FORMAT_BOUNDS_TRIALS; at++)
@@ -64,8 +78,10 @@ b32 main(void)
 {
         p64 wide[FORMAT_BOUNDS_TRIALS];
         p64 normal[FORMAT_BOUNDS_TRIALS];
+        p64 rounding[FORMAT_BOUNDS_TRIALS];
         bool run_wide = true;
         bool run_normal = true;
+        bool run_rounding = true;
 
         if (program_argument_count() > 1)
         {
@@ -73,8 +89,10 @@ b32 main(void)
                                            (string_address) "wide");
                 run_normal = !string_compare(program_argument(1),
                                              (string_address) "normal");
+                run_rounding = !string_compare(program_argument(1),
+                                               (string_address) "rounding");
 
-                if (!run_wide && !run_normal)
+                if (!run_wide && !run_normal && !run_rounding)
                         return 2;
         }
 
@@ -84,6 +102,8 @@ b32 main(void)
                         wide[trial] = format_bounds_wide_once();
                 if (run_normal)
                         normal[trial] = format_bounds_normal_once();
+                if (run_rounding)
+                        rounding[trial] = format_bounds_rounding_once();
         }
 
         if (run_wide)
@@ -103,6 +123,14 @@ b32 main(void)
                     "  ordinary mixed format      %p ticks/%p calls median of %p\n",
                     normal[FORMAT_BOUNDS_TRIALS / 2],
                     FORMAT_BOUNDS_NORMAL_ROUNDS, FORMAT_BOUNDS_TRIALS);
+        }
+
+        if (run_rounding)
+        {
+                format_bounds_order(rounding);
+                string_format(log, "  decimal/hex sticky rounding %p ticks/%p calls median of %p\n",
+                    rounding[FORMAT_BOUNDS_TRIALS / 2], FORMAT_BOUNDS_NORMAL_ROUNDS,
+                    FORMAT_BOUNDS_TRIALS);
         }
 
         string_format(log, "  retained sink              %b\n",

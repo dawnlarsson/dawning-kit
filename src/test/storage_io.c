@@ -9,10 +9,52 @@ static positive storage_test_offset, storage_test_length, storage_test_used;
 static bool storage_test_arguments, storage_test_preclear;
 static p8 address_to storage_test_destination;
 
+typedef struct { bool send; bipolar result; positive ask; } copy_test_step;
+static const copy_test_step address_to copy_test_steps;
+static positive copy_test_count, copy_test_at, copy_test_used, copy_test_seeks;
+static positive copy_test_seek_failure;
+static bool copy_test_active, copy_test_explicit;
+
+static bipolar copy_test_transfer(bool send, positive in, positive out,
+                                  positive source, positive destination,
+                                  positive ask)
+{
+        check("copy cascade syscall order", copy_test_at < copy_test_count);
+        if (copy_test_at >= copy_test_count)
+                return -5; // EIO, before the utility errno names are included.
+        const copy_test_step address_to step = copy_test_steps + copy_test_at++;
+        check("copy cascade handles and remaining count",
+              send == step->send && in == 12345 && out == 54321 && ask == step->ask);
+        check("copy cascade pointer policy",
+              !!source == copy_test_explicit && !!destination == (copy_test_explicit && !send));
+        if (source)
+                check("copy cascade input offset", *(p64 address_to)source == 7 + copy_test_used);
+        if (destination)
+                check("copy cascade output offset", *(p64 address_to)destination == 13 + copy_test_used);
+        if (step->result > 0)
+        {
+                copy_test_used += (positive)step->result;
+                if (source) *(p64 address_to)source += step->result;
+                if (destination) *(p64 address_to)destination += step->result;
+        }
+        return step->result;
+}
+
+static bipolar storage_test_call6(positive number, positive in,
+    positive source, positive out, positive destination, positive ask, positive flags)
+{
+        if (!copy_test_active || number != syscall(copy_file_range))
+                return (system_call_6)(number, in, source, out, destination, ask, flags);
+        check("copy cascade range flags", !flags);
+        return copy_test_transfer(false, in, out, source, destination, ask);
+}
+
 static bipolar storage_test_call4(positive number, positive handle,
                                   positive into, positive length,
                                   positive offset)
 {
+        if (copy_test_active && number == syscall(sendfile))
+                return copy_test_transfer(true, into, handle, length, 0, offset);
         if (number != storage_test_number || !storage_test_mode)
                 return (system_call_4)(number, handle, into, length, offset);
 
@@ -55,6 +97,14 @@ static bipolar directory_test_result;
 static bipolar storage_test_call3(positive number, positive one,
                                   positive two, positive three)
 {
+        if (copy_test_active && number == syscall(lseek))
+        {
+                copy_test_seeks++;
+                check("copy cascade seek handle and position",
+                      (one == 12345 || one == 54321) && three == 0 &&
+                      two == (one == 12345 ? 7 : 13) + copy_test_used);
+                return copy_test_seeks == copy_test_seek_failure ? -22 : (bipolar)two;
+        }
         if (!directory_test_active || number != syscall(getdents64))
                 return (system_call_3)(number, one, two, three);
         directory_test_calls++;
@@ -71,9 +121,11 @@ static bipolar storage_test_call3(positive number, positive one,
 
 #define system_call_3(...) storage_test_call3(__VA_ARGS__)
 #define system_call_4(...) storage_test_call4(__VA_ARGS__)
+#define system_call_6(...) storage_test_call6(__VA_ARGS__)
 #include "../spark.c"
 #include "../sh/shell.c"
 #undef system_call_4
+#undef system_call_6
 #undef system_call_3
 
 static fn storage_test_directory(void)
@@ -313,6 +365,62 @@ done:
         if (out >= 0) system_close(out);
 }
 
+static fn storage_test_copy_faults(void)
+{
+        static const copy_test_step partial[] = {
+            {false, -4, 12}, {false, 5, 12}, {false, -38, 7},
+            {true, -4, 7}, {true, 4, 7}, {true, 3, 3},
+        };
+        static const copy_test_step range_eof[] = {{false, 0, 12}};
+        static const copy_test_step send_eof[] = {{false, -38, 12}, {true, 0, 12}};
+        static const copy_test_step range_error[] = {{false, 5, 12}, {false, -5, 7}};
+        static const copy_test_step send_error[] = {{false, -38, 12}, {true, 5, 12}, {true, -5, 7}};
+        static const copy_test_step seek_error[] = {{false, -38, 12}};
+        static const copy_test_step exhausted[] = {{false, -38, 12}, {true, -38, 12}};
+        static const struct {
+                const copy_test_step address_to steps;
+                positive count, copied, seek_failure, seeks;
+                bool okay, range, send;
+        } cases[] = {
+            {partial, array_count(partial), 12, 0, 1, true, false, true},
+            {range_eof, array_count(range_eof), 0, 0, 0, false, true, true},
+            {send_eof, array_count(send_eof), 0, 0, 1, false, false, true},
+            {range_error, array_count(range_error), 5, 0, 0, false, true, true},
+            {send_error, array_count(send_error), 5, 0, 1, false, false, true},
+            {seek_error, array_count(seek_error), 0, 1, 1, false, false, true},
+            {exhausted, array_count(exhausted), 0, 2, 2, false, false, false},
+        };
+        for (positive i = 0; i < array_count(cases); i++)
+        {
+                p64 offsets[] = {7, 13};
+                bool range = true, send = true;
+                copy_test_steps = cases[i].steps;
+                copy_test_count = cases[i].count;
+                copy_test_at = copy_test_used = copy_test_seeks = 0;
+                copy_test_seek_failure = cases[i].seek_failure;
+                copy_test_active = copy_test_explicit = true;
+                bool okay = file_copy_stream(12345, 54321, 12, true,
+                                             &range, &send, offsets);
+                copy_test_active = false;
+                check("copy cascade result and cached capability flags",
+                      okay == cases[i].okay && range == cases[i].range && send == cases[i].send);
+                check("copy cascade script exhausted and offsets retained",
+                      copy_test_at == copy_test_count && copy_test_used == cases[i].copied &&
+                      offsets[0] == 7 + copy_test_used && offsets[1] == 13 + copy_test_used &&
+                      copy_test_seeks == cases[i].seeks);
+        }
+        static const copy_test_step stream_eof[] = {{false, 0, FILE_KERNEL_COPY_SIZE}};
+        bool range = true, send = true;
+        copy_test_steps = stream_eof;
+        copy_test_count = 1;
+        copy_test_at = copy_test_used = copy_test_seeks = 0;
+        copy_test_active = true;
+        copy_test_explicit = false;
+        bool okay = file_copy_stream(12345, 54321, 0, false, &range, &send, null);
+        copy_test_active = false;
+        check("unbounded copy accepts EOF without descriptor seeks", okay && !copy_test_seeks);
+}
+
 static fn storage_test_lsfd(void)
 {
         string_address words[] = {"lsfd", "-p", "4294967295", "-n", "-o", "PID", null};
@@ -525,6 +633,7 @@ b32 main(void)
         utility_test_decimal();
         storage_test_elf();
         storage_test_copy();
+        storage_test_copy_faults();
         storage_test_lsfd();
         storage_test_consumed_mounts();
         storage_test_findmnt();

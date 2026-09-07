@@ -1342,8 +1342,44 @@ static fn streams(void)
         }
 }
 
+static fn shared_sticky_tails(void)
+{
+        p8 bytes[128];
+        check("zero-bound known byte span accepts null", !memory_span_byte(null, '0', 0));
+        for (positive size = 0; size <= sizeof(bytes); size++)
+                for (positive at = 0; at <= size; at++)
+                {
+                        memory_fill(bytes, '0', size);
+                        if (at < size) bytes[at] = '1';
+                        check("known byte span exact mismatch", memory_span_byte(bytes, '0', size) == at);
+                        memory_fill(bytes, 0, size);
+                        if (at < size) bytes[at] = 1;
+                        check("known zero span exact mismatch", memory_span_byte(bytes, 0, size) == at);
+                }
+        for (positive keep = 1; keep <= 20; keep++)
+                for (positive tail = 0; tail <= 32; tail++)
+                        for (positive sticky = 0; sticky <= tail; sticky++)
+                                for (positive odd = 0; odd < 2; odd++)
+                                {
+                                        format_number number = {0};
+                                        number.count = keep + 1 + tail;
+                                        number.exponent = 1;
+                                        memory_fill(number.digit, '2', keep);
+                                        number.digit[keep - 1] += odd;
+                                        number.digit[keep] = '5';
+                                        memory_fill(number.digit + keep + 1, '0', tail);
+                                        if (sticky < tail) number.digit[keep + 1 + sticky] = '1';
+                                        format_round(&number, keep);
+                                        check("decimal tie uses every bounded sticky position",
+                                              number.count == keep && number.exponent == 1 &&
+                                              number.digit[keep - 1] == '2' + odd +
+                                                  (sticky < tail || odd));
+                                }
+}
+
 b32 main(void)
 {
+        shared_sticky_tails();
         conversions();
         rules();
         floats();

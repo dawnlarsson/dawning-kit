@@ -29,7 +29,8 @@
         spelling a name twice -- two octets whose top bits are both set, the
         remaining fourteen an offset from the start of the message. A parser
         that does not follow those reads garbage on nearly every reply. Every
-        pointer must move backwards, so the cursor is also its own loop bound.
+        pointer lowers the traversal ceiling, so labels cannot lead back into
+        a pointer already followed.
 
         Truncation. A reply too big for the buffer arrives shortened, and a
         shortened answer section is indistinguishable from a short one. The
@@ -126,9 +127,9 @@ static bipolar dns_write_name(p8 address_to into, positive room, string_address 
 
         The answer is where the name ENDS in the message, which for a
         compressed name is two bytes on from where it began however far away
-        the pointer led. A jump must strictly lower the cursor, which both
-        rejects forward pointers and makes a cycle impossible without a
-        second counter in the hot parser.
+        the pointer led. Each jump lowers the bound to its own offset: merely
+        moving backwards is insufficient because labels can step forwards to
+        that same pointer again.
 */
 static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive at)
 {
@@ -153,14 +154,12 @@ static PURE bipolar dns_skip_name(p8 address_to message, positive size, positive
                         if (ended < 0)
                                 ended = (bipolar)(at + 2);
 
-                        target = (positive)(((length & 0x3f) << 8) | message[at + 1]);
+                        target = network_load_16(message + at) & 0x3fff;
 
-                        //      A pointer must lead backwards into the message
-                        //      that has already been seen. Anything else is a
-                        //      loop dressed as an offset.
                         if (target >= at)
                                 return DNS_MALFORMED;
 
+                        size = at;
                         at = target;
                         continue;
                 }

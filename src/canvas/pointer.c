@@ -61,6 +61,7 @@ static CONST int pointer_gain(int speed)
 
 static int accel_apply(int delta, int *remainder, int gain)
 {
+        s64 scaled;
         int whole;
 
         if (!delta)
@@ -69,12 +70,12 @@ static int accel_apply(int delta, int *remainder, int gain)
         // The remainder is what stops a gain that is not a whole number from
         // dropping the fraction of every movement: a slow drag would come up
         // short of where it was aimed.
-        *remainder += delta * gain;
-        whole = *remainder / ACCEL_ONE;
-        *remainder -= whole * ACCEL_ONE;
+        scaled = (s64)delta * gain + *remainder;
+        whole = (int)clamp_t(s64, scaled / ACCEL_ONE, INT_MIN, INT_MAX);
+        *remainder = (int)(scaled % ACCEL_ONE);
 
-        pointer_counts += abs(delta);
-        pointer_moved += abs(whole);
+        pointer_counts += delta < 0 ? -(s64)delta : delta;
+        pointer_moved += whole < 0 ? -(s64)whole : whole;
 
         return whole;
 }
@@ -97,7 +98,7 @@ static void pointer_shake(int delta)
         int direction;
         u64 now;
 
-        if (abs(delta) < SHAKE_STEP)
+        if (delta > -SHAKE_STEP && delta < SHAKE_STEP)
                 return;
 
         direction = delta > 0 ? 1 : -1;
@@ -275,10 +276,10 @@ static void pointer_apply(void)
                 pointer_latency_record(started);
 }
 
-static void pointer_commit(int x, int y)
+static void pointer_commit(s64 x, s64 y)
 {
-        atomic_set(&desktop.pending_x, clamp(x, 0, desktop.width - 1));
-        atomic_set(&desktop.pending_y, clamp(y, 0, desktop.height - 1));
+        atomic_set(&desktop.pending_x, (int)clamp_t(s64, x, 0, desktop.width - 1));
+        atomic_set(&desktop.pending_y, (int)clamp_t(s64, y, 0, desktop.height - 1));
 
         // Stamp only the first event of a burst, so the measurement is the age
         // of the oldest movement not yet on screen.
@@ -311,7 +312,8 @@ static void pointer_frame(void)
         int dx = desktop.raw_x;
         int dy = desktop.raw_y;
         u64 now, interval;
-        int gain, speed;
+        int gain;
+        u64 distance, speed;
 
         desktop.raw_x = 0;
         desktop.raw_y = 0;
@@ -326,14 +328,15 @@ static void pointer_frame(void)
         if (interval < NSEC_PER_MSEC)
                 interval = NSEC_PER_MSEC;
 
-        speed = (int)div_u64((u64)int_sqrt((unsigned long)(dx * dx + dy * dy)) *
-                                 NSEC_PER_MSEC,
-                             interval);
-        gain = pointer_gain(speed);
+        // The two INT_MIN squares sum to 2^63: widen each product and make
+        // their addition unsigned before taking the integer square root.
+        distance = int_sqrt((u64)((s64)dx * dx) + (u64)((s64)dy * dy));
+        speed = div64_u64(distance * NSEC_PER_MSEC, interval);
+        gain = pointer_gain((int)min_t(u64, speed, ACCEL_CEILING));
 
-        pointer_commit(atomic_read(&desktop.pending_x) +
+        pointer_commit((s64)atomic_read(&desktop.pending_x) +
                            accel_apply(dx, &desktop.accel_x, gain),
-                       atomic_read(&desktop.pending_y) +
+                       (s64)atomic_read(&desktop.pending_y) +
                            accel_apply(dy, &desktop.accel_y, gain));
 }
 
@@ -346,12 +349,14 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 // arrives before the device says the movement is over.
                 if (code == REL_X)
                 {
-                        desktop.raw_x += value;
+                        desktop.raw_x = (int)clamp_t(s64,
+                            (s64)desktop.raw_x + value, INT_MIN, INT_MAX);
                         pointer_shake(value);
                 }
                 else if (code == REL_Y)
                 {
-                        desktop.raw_y += value;
+                        desktop.raw_y = (int)clamp_t(s64,
+                            (s64)desktop.raw_y + value, INT_MIN, INT_MAX);
                 }
                 else if (code == REL_WHEEL_HI_RES ||
                          (code == REL_WHEEL &&
@@ -361,12 +366,16 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                         // wheel is not movement: nothing else in the report
                         // changes what it means, and holding it back only
                         // delays the line by a frame.
-                        // atomic_fetch_add and not atomic_add: library.c
-                        // above defines an atomic_add of its own, taking the
-                        // address first, and it shadows the kernel's here.
-                        atomic_fetch_add(code == REL_WHEEL_HI_RES ? value
-                                                                 : value * WHEEL_V120,
-                                         &desktop.wheel);
+                        // A consumer can exchange the pending distance with
+                        // zero while this input lock is held. Retry against
+                        // that new value instead of resurrecting drained input.
+                        s64 delta = code == REL_WHEEL_HI_RES ? value
+                                                              : (s64)value * WHEEL_V120;
+                        int held = atomic_read(&desktop.wheel), wanted;
+                        do {
+                                wanted = (int)clamp_t(s64, (s64)held + delta,
+                                                      INT_MIN, INT_MAX);
+                        } while (!atomic_try_cmpxchg(&desktop.wheel, &held, wanted));
                         canvas_thread_wake();
                 }
 

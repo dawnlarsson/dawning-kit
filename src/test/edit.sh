@@ -80,6 +80,173 @@ static bool edit_test_persistent;
 #include "src/test/terminal_fixture.inc"
 static p8 hostile_path[4096];
 
+// Independent byte oracle for the shared cursor/writer fronts. Include
+// wrapped coordinates, every byte (not just valid UTF-8), and both sides of
+// the display-width boundary so replacing byte padding with a fill stays exact.
+static positive render_decimal(p8 *into, positive value)
+{
+        p8 reverse[20];
+        positive count = 0, used = 0;
+        do {
+                reverse[count++] = '0' + value % 10;
+                value /= 10;
+        } while (value);
+        while (count) into[used++] = reverse[--count];
+        return used;
+}
+
+static positive check_render_reuse()
+{
+        static const positive values[] = {0, 1, 8, 9, 10, 99, 100, 999,
+                                         (positive)-2, (positive)-1};
+        static const positive lengths[] = {0, 1, 2, 31, 255, 256};
+        static const positive widths[] = {0, 1, 8, 40, EDIT_COLUMNS_MAX};
+        static const string_address extensions[] = {
+            ".c", ".h", ".cc", ".cpp", ".hpp", ".js", ".ts", ".go",
+            ".rs", ".inc", ".java", ".lua", ".sql"};
+        p8 expected[sizeof(edit_status_bytes)];
+        positive checks = 0;
+
+        for (positive y = 0; y < array_count(values); y++)
+                for (positive x = 0; x < array_count(values); x++)
+                {
+                        positive used = 2;
+                        expected[0] = 27;
+                        expected[1] = '[';
+                        used += render_decimal(expected + used, values[y] + 1);
+                        expected[used++] = ';';
+                        used += render_decimal(expected + used, values[x] + 1);
+                        expected[used++] = 'H';
+                        edit_emitted_length = 0;
+                        edit_say_at(values[y], values[x]);
+                        if (edit_emitted_length != used ||
+                            memory_compare(edit_emitted, expected, used))
+                                return 0;
+                        checks++;
+                }
+
+        edit_prompt_active = true;
+        edit_prompt_label = (string_address)"";
+        for (positive seed = 0; seed < 256; seed++)
+                for (positive n = 0; n < array_count(lengths); n++)
+                        for (positive w = 0; w < array_count(widths); w++)
+                        {
+                                positive used = 1, cells = 1;
+                                expected[0] = ' ';
+                                edit_prompt_length = lengths[n];
+                                edit_columns = widths[w];
+                                for (positive at = 0; at < lengths[n]; at++)
+                                {
+                                        p8 byte = (p8)(seed + at * 17);
+                                        edit_prompt_text[at] = byte;
+                                        expected[used++] = byte;
+                                        if (byte < 128 || byte >= 192) cells++;
+                                }
+                                while (cells < widths[w])
+                                {
+                                        expected[used++] = ' ';
+                                        cells++;
+                                }
+                                memory_fill(edit_status_bytes, 0xa5,
+                                            sizeof(edit_status_bytes));
+                                edit_status_build();
+                                if (edit_status_length != used ||
+                                    edit_status_cells != cells ||
+                                    memory_compare(edit_status_bytes, expected, used) ||
+                                    edit_status_bytes[used] != 0xa5)
+                                        return 0;
+                                checks++;
+                        }
+
+        for (positive at = 0; at < array_count(extensions); at++)
+        {
+                p8 path[32];
+                string_copy(path, (string_address)"file");
+                string_append(path, extensions[at]);
+                edit_path = path;
+                if (string_compare(edit_comment_marker(),
+                                   (string_address)(at < 11 ? "// " : "-- ")))
+                        return 0;
+                checks++;
+                string_append(path, (string_address)"x");
+                if (string_compare(edit_comment_marker(), (string_address)"# "))
+                        return 0;
+                checks++;
+        }
+        edit_path = null;
+        if (string_compare(edit_comment_marker(), (string_address)"# ")) return 0;
+        checks++;
+        edit_path = (string_address)"file.";
+        if (string_compare(edit_comment_marker(), (string_address)"# ")) return 0;
+        return checks + 1;
+}
+
+static unsigned word_kind(p8 byte)
+{
+        if (byte == ' ' || byte == '\t') return 0;
+        return byte >= 128 || byte == '_' || (byte >= 'a' && byte <= 'z') ||
+               (byte >= 'A' && byte <= 'Z') || (byte >= '0' && byte <= '9') ? 1 : 2;
+}
+
+static struct edit_place reference_word(struct edit_place from, bool backward)
+{
+        const struct edit_line *text = edit_lines + from.line;
+        if (backward ? from.column == 0 : from.column == text->length)
+        {
+                if (backward && from.line)
+                        return (struct edit_place){from.line - 1,
+                            edit_lines[from.line - 1].length};
+                if (!backward && from.line + 1 < edit_line_count)
+                        return (struct edit_place){from.line + 1, 0};
+                return from;
+        }
+        positive at = from.column;
+        while ((backward ? at != 0 : at != text->length) &&
+               !word_kind(text->text[backward ? at - 1 : at]))
+                at = backward ? at - 1 : at + 1;
+        unsigned kind = backward ? at ? word_kind(text->text[at - 1]) : 0
+                                 : at < text->length ? word_kind(text->text[at]) : 0;
+        while (kind && (backward ? at != 0 : at != text->length) &&
+               word_kind(text->text[backward ? at - 1 : at]) == kind)
+        {
+                at = backward ? at - 1 : at + 1;
+                while ((backward ? at != 0 : at != text->length) &&
+                       text->text[at] >= 128 && text->text[at] < 192)
+                        at = backward ? at - 1 : at + 1;
+        }
+        return (struct edit_place){from.line, at};
+}
+
+static positive check_word_reuse()
+{
+        static const positive lengths[] = {0, 1, 2, 7, 31, 63};
+        p8 bytes[64];
+        positive checks = 0;
+        if (!edit_load((string_address)"x\ny\nz", 5)) return 0;
+        for (positive seed = 0; seed < 256; seed++)
+                for (positive n = 0; n < array_count(lengths); n++)
+                {
+                        for (positive at = 0; at < lengths[n]; at++)
+                                bytes[at] = (p8)(seed + at * 17);
+                        for (positive line = 0; line < 3; line++)
+                                if (!edit_line_splice(line, 0, edit_lines[line].length,
+                                                      bytes, lengths[n])) return 0;
+                        for (positive line = 0; line < 3; line++)
+                                for (positive at = 0; at <= lengths[n]; at++)
+                                        for (positive back = 0; back < 2; back++)
+                                        {
+                                                struct edit_place from = {line, at};
+                                                struct edit_place want = reference_word(from, back);
+                                                struct edit_place got = back ? edit_word_left(from)
+                                                                            : edit_word_right(from);
+                                                if (want.line != got.line ||
+                                                    want.column != got.column) return 0;
+                                                checks++;
+                                        }
+                }
+        return checks;
+}
+
 // Stable coalescing must retain the first selected cursor at each position,
 // including its anchor and preferred display column. Build the oracle by
 // position, independently of the production sort and compaction walks.
@@ -1121,6 +1288,16 @@ b32 main()
 
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "render_reuse") == 0)
+                {
+                        say_number(check_render_reuse());
+                        say_byte('\n');
+                }
+                else if (string_compare(verb, (string_address) "word_reuse") == 0)
+                {
+                        say_number(check_word_reuse());
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "compaction") == 0)
                 {
                         say_number(check_cursor_compaction());
@@ -1220,7 +1397,7 @@ then
         exit 2
 fi
 
-edit() { "$work/edit" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }
+edit() { ${TEST_RUNNER:-} "$work/edit" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }
 
 same()
 {
@@ -1430,6 +1607,9 @@ same 'taken off'       'ab'             40 6 text 'ab' keys '\x1f\x1f' buffer
 same 'a block'         '# ab|# cd'      40 6 text 'ab\ncd' keys '^a\x1f' buffer
 same 'adjacent blocks independent' 'a|# b' 40 8 text '# a\nb' add 1,0 keys '\x1f' buffer
 same 'overlap covers every row' '# ab|# cd' 40 8 text 'ab\ncd' keys '<c-end><c-s-home>' add 0,2 keys '\x1f' buffer
+same 'shallowest block indent' '  #   ab|  # cd' 40 8 text '    ab\n  cd' keys '^a\x1f' buffer
+same 'empty first anchors left' '|#   ab' 40 8 text '\n  ab' keys '^a\x1f' buffer
+same 'bare marker removed' 'ab|  cd' 40 8 text '#ab\n  # cd' keys '^a\x1f' buffer
 
 #
 #       Moving about.
@@ -1591,6 +1771,8 @@ section painting
 
 group bounds
 same 'full status returns' ''             40 6 statusfull buffer
+same 'shared renderer variance' '7808'    40 6 render_reuse
+same 'shared word variance' '168960'      40 6 word_reuse
 
 group rows
 #       Typing a character writes the one row it changed. A full repaint of a

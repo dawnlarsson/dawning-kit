@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -67,6 +67,8 @@ describe()
         hex) echo "bounded hexadecimal encoding, alignment and guard pages on three machines" ;;
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
+        bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
+        reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
         table) echo "shared table escaping, field widths and multiline boundaries on three machines" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
         numbers)  echo "strtod and the integer conversions, in ULP against glibc" ;;
@@ -2091,6 +2093,8 @@ lane_socket() { freestanding_checks_lane socket src/test/socket.c; }
 #       which is how the mutation path is actually covered.
 #
 lane_net() { freestanding_checks_lane net src/test/net.c; }
+lane_bowl() { freestanding_checks_lane bowl src/test/bowl.c; }
+lane_reuse_shell() { freestanding_checks_lane reuse_shell src/test/reuse_shell.c; }
 
 
 lane_slurp()
@@ -2438,6 +2442,7 @@ lane_edit()
 lane_kit()
 {
         python3 src/test/core_state.py || return 1
+        python3 src/test/spark_entry.py || return 1
         python3 kit/function_audit.py --check || return 1
         python3 kit/surface.d/coreutils_gap.py || return 1
         sh src/test/kit.sh

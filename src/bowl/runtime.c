@@ -94,7 +94,7 @@ static bipolar bowl_mkdir(string_address path)
 {
         bipolar made = system_make_directory_at(AT_FDCWD, path, 0755);
 
-        return made == -ERROR_EXISTS ? 0 : made;
+        return made == -EEXIST ? 0 : made;
 }
 
 static bool bowl_root_path(p8 address_to into, positive room,
@@ -132,14 +132,10 @@ static bool bowl_name(string_address name, bool plus)
 static bool bowl_named_root(string_address root)
 {
         positive prefix = sizeof(BOWL_ROOT_PREFIX) - 1;
-        positive length;
         string_address name;
 
-        if (!root)
-                return false;
-
-        length = string_length(root);
-        if (length <= prefix || memory_compare(root, BOWL_ROOT_PREFIX, prefix))
+        if (!root || string_compare_max(root, BOWL_ROOT_PREFIX, prefix) ||
+            !root[prefix])
                 return false;
 
         name = root + prefix;
@@ -308,8 +304,7 @@ static bool bowl_launcher(string_address encoded, p8 address_to root,
                 return false;
 
         target = encoded + 1;
-        if (string_length(target) <= prefix ||
-            memory_compare(target, BOWL_ROOT_PREFIX, prefix))
+        if (string_compare_max(target, BOWL_ROOT_PREFIX, prefix))
                 return false;
 
         program = string_first_of(target + prefix, '/');
@@ -412,7 +407,7 @@ static bipolar bowl_fast_enter(string_address root)
                 struct bowl_layer address_to layer = bowl_fast_layers + i;
 
                 if (!bowl_root_path(source, sizeof(source), root, layer->path))
-                        return -ERROR_NAME_TOO_LONG;
+                        return -ENAMETOOLONG;
 
                 failed = system_access_at(AT_FDCWD, source, 0);
                 if (failed < 0)
@@ -556,12 +551,8 @@ static b32 bowl_launch(string_address root, string_address program,
         for (;;)
         {
                 positive status = 0;
-                bipolar reaped = system_call_4(syscall(wait4), -1,
-                                               (positive)address_of status,
-                                               0, 0);
-
-                if (reaped == ERROR_INTERRUPTED)
-                        continue;
+                bipolar reaped = system_wait4_retry(-1, address_of status,
+                                                    0, null);
                 if (reaped < 0)
                         return child_ended ? wait_status_code(ended) : 1;
                 if (reaped == child)

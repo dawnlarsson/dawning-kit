@@ -30,11 +30,8 @@ static const u32 canvas_terminal[16] = {
 
 static void canvas_palette(u32 *palette, u32 format)
 {
-        u32 opaque = format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0;
-        unsigned int i;
-
-        for (i = 0; i < INK_COUNT; i++)
-                palette[i] = canvas_ink[i] | opaque;
+        canvas_row_blit(palette, canvas_ink, INK_COUNT,
+                        format == DRM_FORMAT_ARGB8888 ? 0xff000000 : 0);
 }
 
 
@@ -77,7 +74,7 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
                 for (column = 0; column < w;)
                 {
                         unsigned int run = column;
-                        int px, x1, x2, line;
+                        int px, x1, x2, y1, y2;
 
                         if (!(line_bits[column / 8] & (0x80 >> (column % 8))))
                         {
@@ -94,14 +91,10 @@ static void bits_draw(const struct target *t, int x, int y, int scale,
                         x2 = min(min(px + (int)(run - column) * scale, t->clip.x2),
                                  t->width);
 
-                        for (line = 0; x2 > x1 && line < scale; line++)
-                        {
-                                int py = y + (int)row * scale + line;
-
-                                if (py >= max(t->clip.y1, 0) &&
-                                    py < min(t->clip.y2, t->height))
-                                        target_row(t, py, x1, x2, colour);
-                        }
+                        y1 = y + (int)row * scale;
+                        y2 = min(min(y1 + scale, t->clip.y2), t->height);
+                        y1 = max(max(y1, t->clip.y1), 0);
+                        target_rectangle(t, x1, y1, x2 - x1, y2 - y1, colour);
 
                         column = run;
                 }

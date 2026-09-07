@@ -256,14 +256,8 @@ static fn edit_say(address_any text, positive length)
 //      counting. Everything the renderer draws is placed rather than assumed,
 //      because a renderer that only ever moves relatively has no way back from
 //      a line the terminal wrapped.
-static fn edit_say_at(positive screen_row, positive screen_column)
-{
-        edit_say_literal(ANSI);
-        positive_to_string(edit_say, screen_row + 1);
-        edit_say((string_address)";", 1);
-        positive_to_string(edit_say, screen_column + 1);
-        edit_say((string_address)"H", 1);
-}
+#define edit_say_at(screen_row, screen_column) \
+        shell_set_cursor(edit_say, (screen_column) + 1, (screen_row) + 1)
 
 #define edit_table_room_for(table, room, want)                               \
         memory_resize_reserve((p8 address_to address_to)address_of (table),              \
@@ -1569,7 +1563,7 @@ static fn edit_follow()
 static p8 edit_row_bytes[EDIT_COLUMNS_MAX * 16];
 static positive edit_row_length;
 
-static fn edit_row_put(string_address text, positive length)
+static fn edit_row_put(address_any text, positive length)
 {
         if (edit_row_length + length > sizeof(edit_row_bytes))
                 return;
@@ -1580,20 +1574,6 @@ static fn edit_row_put(string_address text, positive length)
 
 #define edit_row_put_literal(literal) \
         edit_row_put((string_address)(literal), sizeof(literal) - 1)
-
-static fn edit_row_put_number(positive value, positive width)
-{
-        p8 digits[32];
-        positive length = positive_into(digits, value);
-
-        while (length < width)
-        {
-                edit_row_put((string_address)" ", 1);
-                width--;
-        }
-
-        edit_row_put(digits, length);
-}
 
 //      Whether a place is inside any cursor's selection, and whether any
 //      cursor's caret is sitting on it. Walked rather than indexed because the
@@ -1667,7 +1647,7 @@ static fn edit_row_build(positive screen_row)
         }
 
         edit_row_put_literal(TERM_GREY);
-        edit_row_put_number(line + 1, gutter - 1);
+        positive_to_padded(edit_row_put, line + 1, gutter - 1, ' ', 0);
         edit_row_put_literal(TERM_RESET);
         edit_row_put((string_address)" ", 1);
 
@@ -1715,15 +1695,8 @@ static fn edit_row_build(positive screen_row)
                                 edit_row_put((string_address)" ", 1);
                         else
                         {
-                                positive stop = at + 1;
-
-                                while (stop < edit_lines[line].length &&
-                                       edit_is_continuation(
-                                           edit_lines[line].text[stop]))
-                                        stop++;
-
                                 edit_row_put(edit_lines[line].text + at,
-                                             stop - at);
+                                             edit_step_forward(line, at) - at);
                         }
 
                         drawn++;
@@ -1752,10 +1725,11 @@ static p8 edit_status_bytes[EDIT_COLUMNS_MAX * 4];
 static positive edit_status_length;
 static positive edit_status_cells;
 
-static bool edit_status_put(string_address text, positive length)
+static fn edit_status_put(address_any data, positive length)
 {
+        p8 address_to text = data;
         if (edit_status_length + length > sizeof(edit_status_bytes))
-                return false;
+                return;
 
         memory_copy_apart(edit_status_bytes + edit_status_length, text, length);
         edit_status_length += length;
@@ -1763,8 +1737,6 @@ static bool edit_status_put(string_address text, positive length)
         for (positive at = 0; at < length; at++)
                 if (!edit_is_continuation((p8)text[at]))
                         edit_status_cells++;
-
-        return true;
 }
 
 static fn edit_status_put_text(string_address text)
@@ -1772,12 +1744,7 @@ static fn edit_status_put_text(string_address text)
         edit_status_put(text, string_length(text));
 }
 
-static fn edit_status_put_number(positive value)
-{
-        p8 digits[32];
-
-        edit_status_put(digits, positive_into(digits, value));
-}
+#define edit_status_put_number(value) positive_to_string(edit_status_put, (value))
 
 static fn edit_status_build()
 {
@@ -1821,10 +1788,11 @@ static fn edit_status_build()
                 }
         }
 
-        while (edit_status_cells < edit_columns &&
-               edit_status_length < sizeof(edit_status_bytes))
-                if (!edit_status_put((string_address) " ", 1))
-                        break;
+        positive padding = min(edit_columns - min(edit_status_cells, edit_columns),
+                               sizeof(edit_status_bytes) - edit_status_length);
+        memory_fill(edit_status_bytes + edit_status_length, ' ', padding);
+        edit_status_length += padding;
+        edit_status_cells += padding;
 
         edit_row_length = 0;
         edit_row_put_literal(TERM_REVERSE);
@@ -1993,13 +1961,7 @@ static bool edit_clip_add(p8 address_to text, positive length)
 static PURE positive edit_line_indent(positive line)
 {
         struct edit_line address_to text = edit_lines + line;
-        positive at = 0;
-
-        while (at < text->length &&
-               (text->text[at] == ' ' || text->text[at] == '\t'))
-                at++;
-
-        return at;
+        return string_span_max(text->text, text->length, string_set_blanks);
 }
 
 /*
@@ -2027,10 +1989,8 @@ static PURE struct edit_place edit_word_right(struct edit_place place)
         }
 
         text = edit_lines + place.line;
-
         while (place.column < text->length &&
-               (text->text[place.column] == ' ' ||
-                text->text[place.column] == '\t'))
+               byte_is_blank(text->text[place.column]))
                 place.column++;
 
         if (place.column < text->length && edit_is_word(text->text[place.column]))
@@ -2044,7 +2004,7 @@ static PURE struct edit_place edit_word_right(struct edit_place place)
 
         while (place.column < text->length &&
                !edit_is_word(text->text[place.column]) &&
-               text->text[place.column] != ' ' && text->text[place.column] != '\t')
+               !byte_is_blank(text->text[place.column]))
                 place.column = edit_step_forward(place.line, place.column);
 
         return place;
@@ -2066,9 +2026,7 @@ static PURE struct edit_place edit_word_left(struct edit_place place)
 
         text = edit_lines + place.line;
 
-        while (place.column &&
-               (text->text[place.column - 1] == ' ' ||
-                text->text[place.column - 1] == '\t'))
+        while (place.column && byte_is_blank(text->text[place.column - 1]))
                 place.column--;
 
         if (place.column && edit_is_word(text->text[place.column - 1]))
@@ -2080,8 +2038,7 @@ static PURE struct edit_place edit_word_left(struct edit_place place)
         }
 
         while (place.column && !edit_is_word(text->text[place.column - 1]) &&
-               text->text[place.column - 1] != ' ' &&
-               text->text[place.column - 1] != '\t')
+               !byte_is_blank(text->text[place.column - 1]))
                 place.column = edit_step_back(place.line, place.column);
 
         return place;
@@ -2779,45 +2736,15 @@ static fn edit_transfer_lines(bool up, bool copy)
 */
 static PURE string_address edit_comment_marker()
 {
-        string_address tail;
-
-        if (!edit_path)
-                return (string_address) "# ";
-
-        tail = string_last_of(edit_path, '.');
-
-        if (!tail)
-                return (string_address) "# ";
-
-        if (string_compare(tail, (string_address) ".c") == 0 ||
-            string_compare(tail, (string_address) ".h") == 0 ||
-            string_compare(tail, (string_address) ".cc") == 0 ||
-            string_compare(tail, (string_address) ".cpp") == 0 ||
-            string_compare(tail, (string_address) ".hpp") == 0 ||
-            string_compare(tail, (string_address) ".js") == 0 ||
-            string_compare(tail, (string_address) ".ts") == 0 ||
-            string_compare(tail, (string_address) ".go") == 0 ||
-            string_compare(tail, (string_address) ".rs") == 0 ||
-            string_compare(tail, (string_address) ".inc") == 0 ||
-            string_compare(tail, (string_address) ".java") == 0)
-                return (string_address) "// ";
-
-        if (string_compare(tail, (string_address) ".lua") == 0 ||
-            string_compare(tail, (string_address) ".sql") == 0)
-                return (string_address) "-- ";
-
-        return (string_address) "# ";
-}
-
-static PURE bool edit_line_commented(positive line, string_address marker,
-                                     positive bare)
-{
-        positive indent = edit_line_indent(line);
-
-        if (indent + bare > edit_lines[line].length)
-                return false;
-
-        return memory_compare(edit_lines[line].text + indent, marker, bare) == 0;
+        static const string_address names[] = {
+            ".c", ".h", ".cc", ".cpp", ".hpp", ".js", ".ts", ".go",
+            ".rs", ".inc", ".java", ".lua", ".sql"};
+        string_address tail = edit_path ? string_last_of(edit_path, '.') : null;
+        positive which = tail ? string_table_find(tail, names, sizeof(names[0]),
+                                                   array_count(names))
+                              : array_count(names);
+        return (string_address)(which < 11 ? "// "
+                                : which < array_count(names) ? "-- " : "# ");
 }
 
 static fn edit_toggle_comment()
@@ -2838,7 +2765,8 @@ static fn edit_toggle_comment()
         {
                 positive first = ranges.data[at - 1].first;
                 positive last = ranges.data[at - 1].last;
-                positive column = 0;
+                // An empty first line keeps the block at column zero.
+                positive column = edit_line_indent(first);
                 bool all = true;
                 bool any = false;
 
@@ -2848,31 +2776,16 @@ static fn edit_toggle_comment()
                                 continue;
 
                         any = true;
-
-                        if (!edit_line_commented(line, marker, marker_bare))
+                        positive indent = edit_line_indent(line);
+                        column = min(column, indent);
+                        if (indent + marker_bare > edit_lines[line].length ||
+                            memory_compare(edit_lines[line].text + indent,
+                                           marker, marker_bare))
                                 all = false;
                 }
 
                 if (!any)
                         continue;
-
-                // Everything goes on at the same column, which is the shallowest
-                // indent in the block. A marker put at each line's own indent
-                // makes a commented-out block that no longer lines up.
-                column = edit_lines[first].length ? edit_line_indent(first) : 0;
-
-                for (positive line = first; line <= last; line++)
-                {
-                        positive indent;
-
-                        if (!edit_lines[line].length)
-                                continue;
-
-                        indent = edit_line_indent(line);
-
-                        if (indent < column)
-                                column = indent;
-                }
 
                 for (positive line = last + 1; line > first; line--)
                 {

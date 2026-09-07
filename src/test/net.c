@@ -108,7 +108,7 @@ static fn building(void)
 static fn padding(void)
 {
         netlink_buffer request = {0};
-        p8 name[4] = {'e', 't', 'h', '0'};
+        p8 name[] = "eth0";
 
         netlink_begin(address_of request, RTM_NEWLINK, NLM_REQUEST, 7,
                       sizeof(netlink_link));
@@ -173,6 +173,38 @@ static fn attribute_growth(void)
               request.bytes[36] == 0x5a && request.bytes[4095] == 0x5a);
 
         netlink_forget(address_of request);
+}
+
+static fn error_frames(void)
+{
+        b32 pair[2];
+        netlink_buffer request = {0}, reply = {0};
+        struct { netlink_header header; b32 error; } frame = {
+            .header = {.type = NLMSG_IS_ERROR, .sequence = 91}, .error = -123};
+
+        bipolar opened = system_call_4(syscall(socketpair), AF_UNIX,
+                                        SOCK_DGRAM, 0, (positive)pair);
+        check("netlink framing test socket pair opens", opened == 0);
+        if (opened)
+                return;
+        if (netlink_begin(&request, RTM_GETLINK, NLM_REQUEST, 91, 0))
+                for (positive bytes = NETLINK_HEADER; bytes <= sizeof frame; bytes++)
+                {
+                        frame.header.length = bytes;
+                        check("netlink framing reply queues",
+                              socket_send(pair[1], &frame, bytes, 0, null, 0) == (bipolar)bytes);
+                        check("netlink errno needs all four payload bytes",
+                              netlink_walk(pair[0], &request, 91, &reply, null, null) ==
+                                  (bytes == sizeof frame ? -123 : -1));
+                        p8 discarded[NETLINK_HEADER];
+                        socket_receive(pair[1], discarded, sizeof discarded, 0, null, null);
+                }
+        else
+                check("netlink framing request allocates", false);
+        netlink_forget(&request);
+        netlink_forget(&reply);
+        socket_close(pair[0]);
+        socket_close(pair[1]);
 }
 
 static fn talking(void)
@@ -333,8 +365,8 @@ static fn resolving(void)
         length = dns_write_name(written, sizeof written, (string_address) "a.b.c.d.e");
         check("every label is counted", length == 11);
 
-        //      An empty label is what "a..b" and a trailing dot both produce,
-        //      and neither is a name.
+        //      Interior empty labels are refused; one trailing root dot is
+        //      accepted, as is the empty spelling of the root itself.
         check("an empty label is refused",
               dns_write_name(written, sizeof written, (string_address) "a..b") < 0);
         check("no room is refused",
@@ -377,6 +409,77 @@ static fn resolving(void)
         check("a transaction id is not always the same",
               dns_transaction() != dns_transaction() ||
                   dns_transaction() != dns_transaction());
+}
+
+static fn resolving_edges(void)
+{
+        p8 name[336], expected[336], written[344];
+
+        for (positive labels = 1; labels <= 5; labels++)
+        for (positive length = 0; length <= 65; length++)
+        for (positive trailing = 0; trailing < 2; trailing++)
+        {
+                positive text = 0, wire = 0;
+                for (positive label = 0; label < labels; label++)
+                {
+                        if (label)
+                                name[text++] = '.';
+                        expected[wire++] = length;
+                        for (positive at = 0; at < length; at++)
+                                expected[wire++] = name[text++] =
+                                    label & 1 ? (p8)(0x80 + at) : (p8)('a' + at % 26);
+                }
+                if (trailing)
+                        name[text++] = '.';
+                name[text] = 0;
+                if (!length && labels == 1 && !trailing)
+                        wire = 0;
+                expected[wire++] = 0;
+
+                for (positive room = 0; room <= wire + 1; room++)
+                {
+                        memory_fill(written, 0x5a, sizeof written);
+                        bipolar got = dns_write_name(written + 4, room, name);
+                        bool valid = length ? length <= 63 && wire <= 255 && room >= wire
+                                           : labels == 1 && !trailing && room > 0;
+                        bool intact = true;
+                        for (positive at = 0; at < sizeof written; at++)
+                                if (at < 4 || at >= room + 4)
+                                        intact &= written[at] == 0x5a;
+                        check("DNS label lengths, root dots, capacities and canaries",
+                              (valid ? got == (bipolar)wire &&
+                                           !memory_compare(written + 4, expected, wire)
+                                     : got == DNS_MALFORMED) && intact);
+                }
+        }
+
+        p8 packet[256];
+        for (positive base = 0; base < 32; base++)
+        for (positive length = 1; length <= 63; length++)
+        {
+                positive pointer = base + length + 1;
+                memory_fill(packet, 0, sizeof packet);
+                packet[base] = length;
+                packet[pointer] = 0xc0;
+                packet[pointer + 1] = base;
+                check("DNS backward pointer cannot cycle through a forward label",
+                      dns_skip_name(packet, pointer + 2, pointer) == DNS_MALFORMED);
+                check("DNS label-led cycle is refused too",
+                      dns_skip_name(packet, pointer + 2, base) == DNS_MALFORMED);
+                check("DNS one-byte compression pointer is refused",
+                      dns_skip_name(packet, pointer + 1, pointer) == DNS_MALFORMED);
+                check("DNS truncated label is refused",
+                      dns_skip_name(packet, pointer, base) == DNS_MALFORMED);
+        }
+
+        packet[0] = 0;
+        for (positive pointer = 1; pointer + 1 < sizeof packet; pointer += 2)
+        {
+                packet[pointer] = 0xc0;
+                packet[pointer + 1] = pointer == 1 ? 0 : pointer - 2;
+                check("DNS backward pointer chains retain the original wire end",
+                      dns_skip_name(packet, pointer + 2, pointer) == (bipolar)pointer + 2);
+        }
 }
 
 //      The URL, the headers and the chunk framing -- all of it pure.
@@ -519,6 +622,24 @@ static fn fetching(void)
 
                 check("the largest native chunk cannot wrap the bound",
                       http_unchunk(body, sizeof(body) - 1) < 0);
+        }
+
+        // Every byte in every SIMD lane, with CR/LF excluded because they
+        // delimit the line before extension validation is reached.
+        for (positive byte = 0; byte <= 255; byte++)
+        for (positive length = 1; length <= 65; length++)
+        {
+                if (byte == '\r' || byte == '\n')
+                        continue;
+                p8 body[96];
+                memory_copy(body, "1 \t;", 4);
+                memory_fill(body + 4, 'x', length);
+                body[3 + length] = byte;
+                memory_copy(body + 4 + length, "\r\na\r\n0\r\n\r\n", 10);
+                bool valid = (byte >= 32 && byte != 127) || byte == '\t';
+                bipolar got = http_unchunk(body, 14 + length);
+                check("HTTP extension byte classes and bounded SIMD tails",
+                      valid ? got == 1 && body[0] == 'a' : got == HTTP_MALFORMED);
         }
 }
 
@@ -982,8 +1103,10 @@ b32 main(void)
         padding();
         oversized();
         attribute_growth();
+        error_frames();
         talking();
         resolving();
+        resolving_edges();
         fetching();
         fetching_for_real();
         leasing();

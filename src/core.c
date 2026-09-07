@@ -30,6 +30,7 @@
 
 #ifdef CONFIG_X86_64
 #include <asm/cpufeature.h>
+#include <asm/fpu/xcr.h>
 #endif
 
 // The graphics headers must precede library.c: it defines "end" as a macro
@@ -181,6 +182,37 @@ static unsigned long stat_loads;
 static unsigned long stat_map_ns;
 
 static int execute_spark(struct linux_binprm *bprm);
+
+#ifdef CONFIG_X86_64
+static unsigned long __ro_after_init spark_cpu_features;
+
+/* Cache enabled instruction/state capabilities once, not on every exec.
+   xgetbv touches only general registers and runs after the OSXSAVE gate. */
+static void __init spark_cpu_features_start(void)
+{
+        if (!cpu_feature_enabled(X86_FEATURE_OSXSAVE) ||
+            !cpu_feature_enabled(X86_FEATURE_AVX))
+                return;
+
+        u64 state = xgetbv(XCR_XFEATURE_ENABLED_MASK);
+        if ((state & 6) != 6)
+                return;
+        if (cpu_feature_enabled(X86_FEATURE_FMA))
+                spark_cpu_features |= SPARK_CPU_FMA;
+        if (!cpu_feature_enabled(X86_FEATURE_AVX2))
+                return;
+        spark_cpu_features |= SPARK_CPU_AVX2;
+        if ((state & 0xe6) == 0xe6 &&
+            cpu_feature_enabled(X86_FEATURE_AVX512F) &&
+            cpu_feature_enabled(X86_FEATURE_AVX512BW) &&
+            cpu_feature_enabled(X86_FEATURE_AVX512VL))
+        {
+                spark_cpu_features |= SPARK_CPU_AVX512;
+                if (cpu_feature_enabled(X86_FEATURE_AVX512VBMI))
+                        spark_cpu_features |= SPARK_CPU_AVX512_VBMI;
+        }
+}
+#endif
 
 static struct linux_binfmt format = {
     .module = THIS_MODULE,
@@ -451,16 +483,8 @@ int execute_spark(struct linux_binprm *bprm)
            to _start; an image run by an older loader simply misses the magic
            and retains its userspace detection fallback. */
         regs->r12 = SPARK_START_MAGIC;
-        regs->r13 = 0;
+        regs->r13 = spark_cpu_features;
         regs->r14 = task_pid_nr(current);
-
-        if (cpu_feature_enabled(X86_FEATURE_AVX2))
-                regs->r13 |= SPARK_CPU_AVX2;
-
-        if (cpu_feature_enabled(X86_FEATURE_AVX512F) &&
-            cpu_feature_enabled(X86_FEATURE_AVX512BW) &&
-            cpu_feature_enabled(X86_FEATURE_AVX512VL))
-                regs->r13 |= SPARK_CPU_AVX512;
 
         regs->ip = header->entry;
         regs->sp = stack_addr;
@@ -1344,6 +1368,9 @@ static b32 __init start()
         */
         wait_for_initramfs();
 
+#ifdef CONFIG_X86_64
+        spark_cpu_features_start();
+#endif
         check_ticks();
         init_mount();
 

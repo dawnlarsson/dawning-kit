@@ -28,7 +28,8 @@ def canvas_sources(work, arch):
     cells += section(compose, "struct shape\n", "static _Bool shape_span")
     cells += paint[paint.index("static CONST int round_inset"):]
     cells += section(compose, "static _Bool shape_span", "static void shape_blit")
-    cells += section(paint, "static const u32 canvas_terminal", "static void canvas_palette")
+    cells += section(canvas, "enum\n{", "/*\n        A pane")
+    cells += section(paint, "static const u32 canvas_ink", "/*\n        A bitmap,")
     cells += section(paint, "static void bits_draw", "/*\n        Cursors.")
     cells += section(text, "static const struct font_desc", "/*\n        Where one line ends.")
     cells += section(compose, "static void cell_draw", "/*\n        A window made of text.\n\n        The rows")
@@ -75,6 +76,7 @@ typedef int64_t s64;
 #define min_t(t,a,b) min((t)(a),(t)(b))
 #define max_t(t,a,b) max((t)(a),(t)(b))
 #define clamp(a,b,c) min(max(a,b),c)
+#define clamp_t(t,a,b,c) clamp((t)(a),(t)(b),(t)(c))
 static unsigned allocations, fail_allocation, copies, fail_copy, failures, checks;
 static unsigned cpu_records, network_records, growing, captures;
 static void mutex_lock(int *lock) { assert(!*lock); *lock=1; }
@@ -89,7 +91,8 @@ static int user_copy(void *to, const void *from, size_t bytes) {
 }
 #define copy_from_user user_copy
 #define copy_to_user user_copy
-static unsigned long ktime_get_ns(void) { return 123; }
+static u64 mock_time=123;
+static unsigned long ktime_get_ns(void) { return mock_time; }
 static unsigned long ktime_get_real_seconds(void) { return 456; }
 static unsigned long ktime_get_boottime_ns(void) { return 789; }
 static void check(int okay, const char *name) {
@@ -168,6 +171,7 @@ static void canvas_rect_fill(u32 *at,unsigned long pitch,unsigned long w,
     for (unsigned long y=0;y<h;y++) for (unsigned long x=0;x<w;x++) at[y*pitch+x]=colour;
 }
 '''
+source += section(compose, "static void target_rectangle", "/*\n        The run of one row")
 source += section(compose, "#define DESKTOP_PIECES", "static HOT void compose_clip")
 source += r'''
 #define IS_ENABLED(x) largest
@@ -197,18 +201,204 @@ typedef unsigned refcount_t;
 source += section(core, "struct spawn_strings", "struct pane;")
 source += section(core, "static int copy_strings", "static long do_spawn")
 source += r'''
+#define EV_SYN 0
+#define EV_KEY 1
+#define EV_REL 2
 #define EV_ABS 3
+#define SYN_REPORT 0
+#define REL_X 0
+#define REL_Y 1
+#define REL_WHEEL 8
+#define REL_WHEEL_HI_RES 11
+#define BTN_LEFT 272
+#define BTN_TOUCH 330
 #define ABS_X 0
 #define ABS_Y 1
+#define NSEC_PER_MSEC 1000000ull
+typedef int atomic_t;
 struct input_absinfo { int minimum,maximum; };
-struct input_dev { struct input_absinfo absinfo[2]; };
+struct input_dev { struct input_absinfo absinfo[2]; unsigned long relbit[1]; };
 struct input_handle { struct input_dev *dev; };
-static struct { int width,height,abs_x,abs_y; unsigned abs_have; } desktop;
+static struct {
+    int width,height,abs_x,abs_y,raw_x,raw_y,accel_x,accel_y;
+    unsigned abs_have;
+    atomic_t pending_x,pending_y,motion_pending,shake_dir,shake_count,magnify,wheel;
+    atomic_t button_x,button_y,button_down,button_changed;
+    u64 accel_stamp,motion_stamp,shake_window;
+} desktop;
+static unsigned long pointer_counts,pointer_moved;
+static unsigned wakes,wheel_cas,drain_race;
+static void *canvas_thread;
+static int atomic_read(const atomic_t *p) { return *p; }
+static void atomic_set(atomic_t *p,int value) { *p=value; }
+static int atomic_xchg(atomic_t *p,int value) { int old=*p;*p=value;return old; }
+static int atomic_inc_return(atomic_t *p) { return ++*p; }
+static _Bool atomic_try_cmpxchg(atomic_t *p,int *old,int value) {
+    wheel_cas++;
+    if (drain_race) { drain_race=0;*p=0; }
+    if (*p!=*old) { *old=*p;return 0; }
+    *p=value;return 1;
+}
+static int test_bit(unsigned bit,const unsigned long *bits) { return (bits[bit/64]>>(bit%64))&1; }
+static void wake_up_process(void *thread) { (void)thread;wakes++; }
+static void canvas_thread_wake(void) { wakes++; }
+static void keyboard_event(unsigned code,int value) { (void)code;(void)value; }
 static u64 div_u64(u64 a,u32 b) { return a/b; }
-static void absolute_event(struct input_handle *handle,unsigned type,unsigned code,int value) {
+static u64 div64_u64(u64 a,u64 b) { assert(b);return a/b; }
+static unsigned long int_sqrt(unsigned long value) {
+    unsigned long root=0,bit=1ul<<62;
+    while (bit>value) bit>>=2;
+    while (bit) {
+        if (value>=root+bit) {value-=root+bit;root=(root>>1)+bit;}
+        else root>>=1;
+        bit>>=2;
+    }
+    return root;
+}
 '''
-source += section(pointer, "        if (type == EV_ABS)", "        if (type == EV_KEY)") + "}\n"
+source += section(drag, "#define WHEEL_LINES", "static void wheel_deliver")
+source += section(pointer, "#define ACCEL_ONE", "static void desktop_confine_cursor")
+source += section(pointer, "static void pointer_commit", "#define POINTER_OPEN_TRIES")
 source += r'''
+static int reference_int(s64 value) {
+    return value<INT_MIN?INT_MIN:value>INT_MAX?INT_MAX:(int)value;
+}
+static u64 reference_sqrt(u64 value) {
+    u64 low=0,high=1ull<<32;
+    while (low+1<high) {
+        u64 middle=low+(high-low)/2;
+        if (middle*middle>value) high=middle;else low=middle;
+    }
+    return low;
+}
+static int reference_gain(u64 speed) {
+    return speed<=1?1024:speed>=8?2560:1024+(2560-1024)*(int)(speed-1)/7;
+}
+static int reference_accel(int delta,int *remainder,int gain) {
+    s64 scaled=(s64)delta*gain+*remainder;
+    *remainder=(int)(scaled%1024);
+    return reference_int(scaled/1024);
+}
+static void check_pointer_state(struct input_handle *handle) {
+    static const int values[]={INT_MIN,INT_MIN+1,-1048576,-32768,-1025,-1,0,
+                               1,1023,32767,1048576,INT_MAX-1,INT_MAX};
+    static const int fractions[]={-1023,-513,-1,0,1,511,1023};
+    static const u64 intervals[]={0,1,999999,1000000,2000000,4294967295ull,
+                                  4294967296ull,4294967297ull,5000000000ull,
+                                  60000000000ull};
+    static const int dimensions[]={1,3840,INT_MAX};
+    for(unsigned d=0;d<13;d++)for(unsigned speed=0;speed<=8;speed++)
+    for(unsigned r=0;r<7;r++) {
+        int have=fractions[r],want=have,gain=reference_gain(speed);
+        int expected=reference_accel(values[d],&want,gain);
+        pointer_counts=pointer_moved=0;
+        check(accel_apply(values[d],&have,gain)==expected && have==want,
+              "relative acceleration and signed remainder");
+        check(pointer_counts==(u64)(values[d]<0?-(s64)values[d]:values[d]) &&
+              pointer_moved==(u64)(expected<0?-(s64)expected:expected),
+              "relative INT_MIN counter magnitude");
+    }
+    for(unsigned a=0;a<2;a++)for(unsigned initial=0;initial<13;initial++)
+    for(unsigned event=0;event<13;event++) {
+        memset(&desktop,0,sizeof(desktop));
+        int expected=values[initial];
+        int *raw=a?&desktop.raw_y:&desktop.raw_x;
+        *raw=expected;
+        for(unsigned repeat=0;repeat<16;repeat++) {
+            expected=reference_int((s64)expected+values[event]);
+            pointer_event_locked(handle,EV_REL,a?REL_Y:REL_X,values[event]);
+            check(*raw==expected && !(a?desktop.raw_x:desktop.raw_y),
+                  "relative repeated extreme accumulation and axis ownership");
+        }
+    }
+    for(unsigned initial=0;initial<13;initial++)for(unsigned event=0;event<13;event++)
+    for(unsigned fine=0;fine<2;fine++)for(unsigned capable=0;capable<2;capable++)
+    for(unsigned race=0;race<2;race++) {
+        desktop.wheel=values[initial];wakes=wheel_cas=0;drain_race=race;
+        handle->dev->relbit[0]=(unsigned long)capable<<REL_WHEEL_HI_RES;
+        int expected=values[initial];
+        for(unsigned repeat=0;repeat<8;repeat++) {
+            unsigned calls=wheel_cas;
+            if (fine || !capable) {
+                if (!repeat && race) expected=0;
+                expected=reference_int((s64)expected+(s64)values[event]*(fine?1:120));
+            }
+            pointer_event_locked(handle,EV_REL,fine?REL_WHEEL_HI_RES:REL_WHEEL,values[event]);
+            check(desktop.wheel==expected,"wheel saturated repeated distance");
+            check(fine || !capable ? wheel_cas>calls && wakes==repeat+1 && !drain_race
+                                   : wheel_cas==calls && !wakes,
+                  "wheel concurrent drain retry and coarse duplicate suppression");
+        }
+        int remainder=fractions[event%7]%120;
+        s64 scaled=(s64)expected*3+remainder;
+        check(wheel_lines(expected,&remainder)==scaled/120 && remainder==scaled%120,
+              "wheel saturated distance delivery keeps fraction");
+    }
+    handle->dev->relbit[0]=0;drain_race=0;
+    for(unsigned x=0;x<13;x++)for(unsigned y=0;y<13;y++)
+    for(unsigned delay=0;delay<10;delay++)for(unsigned geometry=0;geometry<3;geometry++)
+    for(unsigned position=0;position<3;position++) {
+        memset(&desktop,0,sizeof(desktop));
+        desktop.width=desktop.height=dimensions[geometry];
+        int px=position==0?0:position==1?desktop.width/2:desktop.width-1;
+        int py=desktop.height-1-px;
+        desktop.pending_x=px;desktop.pending_y=py;
+        desktop.raw_x=values[x];desktop.raw_y=values[y];
+        int rx=desktop.accel_x=fractions[x%7],ry=desktop.accel_y=fractions[y%7];
+        desktop.accel_stamp=123;mock_time=123+intervals[delay];
+        u64 squares=(u64)((s64)values[x]*values[x])+(u64)((s64)values[y]*values[y]);
+        u64 interval=intervals[delay]<1000000?1000000:intervals[delay];
+        int gain=reference_gain(reference_sqrt(squares)*1000000/interval);
+        int dx=reference_accel(values[x],&rx,gain),dy=reference_accel(values[y],&ry,gain);
+        s64 nx=(s64)px+dx,ny=(s64)py+dy;
+        int ex=nx<0?0:nx>=desktop.width?desktop.width-1:(int)nx;
+        int ey=ny<0?0:ny>=desktop.height?desktop.height-1:(int)ny;
+        wakes=0;pointer_counts=pointer_moved=0;
+        pointer_event_locked(handle,EV_SYN,SYN_REPORT,0);
+        check(desktop.pending_x==ex && desktop.pending_y==ey &&
+              desktop.accel_x==rx && desktop.accel_y==ry,
+              "relative frame wide square, elapsed interval and cursor bounds");
+        check(!desktop.raw_x && !desktop.raw_y &&
+              wakes==(unsigned)(values[x]!=0 || values[y]!=0),
+              "relative frame consumes one report and preserves empty frames");
+    }
+    // The old int arithmetic is defined for these small reports. Keep it as
+    // a differential oracle across repeated reports and signed remainders.
+    unsigned random=0x12345678;
+    for(unsigned trial=0;trial<128;trial++) {
+        memset(&desktop,0,sizeof(desktop));
+        desktop.width=3840;desktop.height=2160;
+        int px=desktop.pending_x=1920,py=desktop.pending_y=1080,rx=0,ry=0;
+        mock_time=123;desktop.accel_stamp=mock_time;
+        for(unsigned frame=0;frame<32;frame++) {
+            int dx=0,dy=0;
+            for(unsigned event=0;event<8;event++) {
+                random=random*1664525+1013904223;
+                int x=(int)((random>>16)%63)-31;
+                int y=(int)((random>>24)%63)-31;
+                dx+=x;dy+=y;
+                pointer_event_locked(handle,EV_REL,REL_X,x);
+                pointer_event_locked(handle,EV_REL,REL_Y,y);
+            }
+            u64 interval=(1+frame%17)*1000000ull;
+            mock_time+=interval;
+            int gain=reference_gain(reference_sqrt((unsigned)(dx*dx+dy*dy))*1000000/interval);
+            rx+=dx*gain;ry+=dy*gain;
+            int mx=rx/1024,my=ry/1024;rx-=mx*1024;ry-=my*1024;
+            px=clamp(px+mx,0,3839);py=clamp(py+my,0,2159);
+            pointer_event_locked(handle,EV_SYN,SYN_REPORT,0);
+            check(desktop.pending_x==px && desktop.pending_y==py &&
+                  desktop.accel_x==rx && desktop.accel_y==ry,
+                  "relative normal bursts match former integer math");
+        }
+    }
+    memset(&desktop,0,sizeof(desktop));mock_time=123;
+    pointer_shake(INT_MIN);
+    check(desktop.shake_dir==-1 && desktop.shake_count==1,"INT_MIN remains a negative shake");
+    for(int small=-5;small<=5;small++)pointer_shake(small);
+    check(desktop.shake_count==1,"shake ignores only subthreshold motion");
+}
+
 static void reset(void) {
     free(snapshot); snapshot=NULL; snapshot_room=0;
     allocations=fail_allocation=copies=fail_copy=0;
@@ -385,7 +575,7 @@ int main(void) {
         int low=coordinates[lo],high=coordinates[hi];
         input.absinfo[axis]=(struct input_absinfo){low,high};
         desktop.abs_x=123; desktop.abs_y=456; desktop.abs_have=0;
-        absolute_event(&handle,EV_ABS,axis,coordinates[value]);
+        pointer_event_locked(&handle,EV_ABS,axis,coordinates[value]);
         int expected=axis?456:123;
         if (high>low) expected=(int)(((uint64_t)((int64_t)clamp(coordinates[value],low,high)-low)*
                                       (axis?2160:3840))/((int64_t)high-low));
@@ -393,6 +583,7 @@ int main(void) {
               (axis?desktop.abs_x:desktop.abs_y)==(axis?123:456) &&
               desktop.abs_have==(high>low?(1u<<axis):0),"absolute axis range and ownership");
     }
+    check_pointer_state(&handle);
     free(output);
     printf("  core-state %u of %u\n",checks-failures,checks);
     const char *tally=getenv("TEST_TALLY");

@@ -7,11 +7,13 @@
    Keeping that change in the magic makes either side of a mixed old/new pair
    reject the private handoff and use the ordinary CPUID fallback instead of
    silently decoding the other version's feature layout. */
-/* One Boolean byte per runtime feature flag.  The x86 entry shim can publish
-   these two bytes directly instead of testing two bits through three
-   feature-publication branches. */
+/* Append-only Boolean byte lanes. Older loaders zero the complete feature
+   register before setting their two known lanes; older runtimes ignore the
+   extra lanes. Extending this word therefore keeps the version-2 ABI. */
 #define SPARK_CPU_AVX2 0x0001UL
 #define SPARK_CPU_AVX512 0x0100UL
+#define SPARK_CPU_AVX512_VBMI 0x010000UL
+#define SPARK_CPU_FMA 0x01000000UL
 
 /* Final exec still applies its rlimit-dependent argument ceiling. This is
    only the device-copy ceiling, kept at Linux's ordinary ARG_MAX floor. */

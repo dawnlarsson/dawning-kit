@@ -201,10 +201,12 @@ __asm__(
     "mov %r14, program_entry_identity(%rip)\n"
     /* The private feature word carries one already-normalised Boolean byte
        for each public runtime flag.  Publishing those bytes directly is the
-       hardware floor: two stores and the shift between them, with no policy
+       hardware floor: byte stores and shifts, with no policy
        branch left for userspace to rediscover. */
     "mov %r13b, cpu_has_avx2(%rip)\n   shr $8, %r13\n"
-    "mov %r13b, cpu_has_avx512(%rip)\n"
+    "mov %r13b, cpu_has_avx512(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_avx512_vbmi(%rip)\n   shr $8, %r13\n"
+    "mov %r13b, cpu_has_fma(%rip)\n"
     ".Lstart_x64_ready:\n   call main\n"
     "mov %eax, %edi\n   call exit\n   hlt\n"
     /* Put the compatibility detector behind the non-returning exit path.

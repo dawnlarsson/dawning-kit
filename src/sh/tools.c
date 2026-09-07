@@ -3980,8 +3980,7 @@ static b32 tools_tsort()
 
         while (at < length)
         {
-                while (at < length && !bytes[at])
-                        at++;
+                at += memory_span_byte(bytes + at, 0, length - at);
 
                 if (at == length)
                         break;
@@ -4780,11 +4779,9 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
 {
         p8 address_to original = bytes;
         positive original_length = length;
-        while (length && (*bytes == ' ' || *bytes == '\t'))
-        {
-                bytes++;
-                length--;
-        }
+        positive blanks = string_span_max(bytes, length, string_set_blanks);
+        bytes += blanks;
+        length -= blanks;
         positive stop = length;
 
         if (numfmt_span_ends(bytes, stop, numfmt.suffix))
@@ -5026,8 +5023,7 @@ static fn numfmt_record(p8 address_to bytes, positive length)
         while (at < length)
         {
                 positive prefix = at;
-                while (at < length && (bytes[at] == ' ' || bytes[at] == '\t'))
-                        at++;
+                at += string_span_max(bytes + at, length - at, string_set_blanks);
                 positive start = at;
 
                 if (at == length)
@@ -5039,8 +5035,7 @@ static fn numfmt_record(p8 address_to bytes, positive length)
                         break;
                 }
 
-                while (at < length && bytes[at] != ' ' && bytes[at] != '\t')
-                        at++;
+                at += string_span_max(bytes + at, length - at, text_inside());
 
                 field++;
 
@@ -5886,11 +5881,9 @@ static bool tools_uuidgen_namespace(string_address text,
             (string_address)"6ba7b814-9dad-11d1-80b4-00c04fd430c8",
         };
 
-        for (positive at = 0; at < array_count(shortcuts); at++)
-                if (string_equals(text, shortcuts[at]))
-                        return tools_uuid_parse(uuids[at], space);
-
-        return tools_uuid_parse(text, space);
+        positive at = string_table_find(text, shortcuts, sizeof(shortcuts[0]),
+                                        array_count(shortcuts));
+        return tools_uuid_parse(at < array_count(shortcuts) ? uuids[at] : text, space);
 }
 
 static bool tools_uuidgen_hex_name(string_address text,

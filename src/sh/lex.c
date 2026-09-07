@@ -164,13 +164,11 @@ static bool lex_room(positive want)
 /*
         The byte sets, built once.
 
-        blank        what separates one word from the next
         metachar     what ends a word without being part of it
         ordinary     everything a word may contain without further thought,
                      which is the complement of the two above plus the things
                      that begin a quote or an expansion
 */
-static b8 lex_blank[STRING_SET_BYTES];
 static b8 lex_ordinary[STRING_SET_BYTES];
 static b8 lex_operator[STRING_SET_BYTES];
 // What decides nothing inside a double quote: wider than lex_ordinary,
@@ -188,11 +186,9 @@ fn lex_prepare()
         if (lex_ready)
                 return;
 
-        memory_fill(lex_blank, 0, sizeof(lex_blank));
         memory_fill(lex_ordinary, 0, sizeof(lex_ordinary));
         memory_fill(lex_operator, 0, sizeof(lex_operator));
 
-        string_set_add(lex_blank, " \t");
         string_set_add(lex_operator, "|&;<>()");
 
         /*
@@ -1013,7 +1009,7 @@ b32 lex_unfinished(string_address line)
                                 return LEX_COMPLETE;
                 }
 
-                if (lex_blank[c] || lex_operator[c])
+                if (string_set_blanks[c] || lex_operator[c])
                 {
                         //      A process substitution holds a command, and
                         //      the line is not finished until it closes.
@@ -1295,7 +1291,7 @@ static b32 lex_word(string_address address_to at)
                         }
                 }
 
-                if (!c || lex_blank[c] || lex_operator[c] || c == '\n')
+                if (!c || string_set_blanks[c] || lex_operator[c] || c == '\n')
                         break;
 
                 if (!lex_room(lex_used + 3))
@@ -1397,7 +1393,7 @@ HOT b32 lex_line(string_address line)
                 positive length;
                 b32 op;
 
-                step += string_span(step, lex_blank);
+                step += string_span(step, string_set_blanks);
 
                 if (!string_get(step) || string_get(step) == '\n')
                         break;

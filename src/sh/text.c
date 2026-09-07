@@ -8889,13 +8889,7 @@ static bool text_blob_read(string_address path, text_blob address_to blob)
 
 static positive ptx_count_lines(text_blob address_to text)
 {
-        positive lines = text->length ? 1 : 0;
-
-        for (positive at = 0; at < text->length; at++)
-                if (text->bytes[at] == '\n')
-                        lines++;
-
-        return lines;
+        return (text->length != 0) + memory_count(text->bytes, text->length, '\n');
 }
 
 static positive ptx_skip_white(ptx_file address_to file, positive at,
@@ -9053,9 +9047,8 @@ static positive ptx_plan_contexts(bool fill)
                                 }
                         }
 
-                        for (positive at = cursor; at < after; at++)
-                                if (file->text.bytes[at] == '\n')
-                                        line++;
+                        line += memory_count(file->text.bytes + cursor,
+                                             after - cursor, '\n');
 
                         made++;
 
@@ -9085,8 +9078,8 @@ static bool ptx_list_has(text_blob address_to list, p8 address_to word,
         {
                 positive from = at;
 
-                while (at < list->length && list->bytes[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(list->bytes + at, '\n',
+                                                list->length - at);
 
                 if (at > from &&
                     ptx_word_equal(word, length, list->bytes + from,
@@ -9141,8 +9134,7 @@ static bool ptx_next_word(ptx_context address_to context,
 
         address_to start = at;
 
-        while (at < context->finish && fmt_word_bytes[bytes[at]])
-                at++;
+        at += string_span_max(bytes + at, context->finish - at, fmt_word_bytes);
 
         address_to finish = at;
         address_to cursor = at;
@@ -9152,13 +9144,8 @@ static bool ptx_next_word(ptx_context address_to context,
 static positive ptx_word_line(ptx_context address_to context, positive word)
 {
         ptx_file address_to file = ptx_files + context->file;
-        positive line = context->line;
-
-        for (positive at = context->start; at < word; at++)
-                if (file->text.bytes[at] == '\n')
-                        line++;
-
-        return line;
+        return context->line + memory_count(file->text.bytes + context->start,
+                                             word - context->start, '\n');
 }
 
 static positive ptx_scan_occurrences(bool fill)
@@ -10427,42 +10414,44 @@ static fn column_plain(bool fill_rows, bool spaces, positive spacing,
 
 static fn column_json_string(column_cell value, bool lower)
 {
+        static const p8 short_escape[32] = {
+            ['\b'] = 'b', ['\f'] = 'f', ['\n'] = 'n',
+            ['\r'] = 'r', ['\t'] = 't',
+        };
         text_put_character('"');
-
-        for (positive at = 0; at < value.length; at++)
+        positive at = 0;
+        while (at < value.length)
         {
-                p8 character = value.bytes[at];
-
-                if (lower && character >= 'A' && character <= 'Z')
-                        character += 'a' - 'A';
-
-                if (character == '"' || character == '\\')
+                positive plain = memory_escape_index(value.bytes + at,
+                    lower ? min(value.length - at, 256) : value.length - at, 64);
+                if (plain)
                 {
-                        text_put_character('\\');
-                        text_put_character(character);
+                        if (lower)
+                        {
+                                p8 lowered[256];
+                                plain = min(plain, sizeof(lowered));
+                                memory_copy(lowered, value.bytes + at, plain);
+                                memory_to_lower_ascii(lowered, plain);
+                                text_put(lowered, plain);
+                        }
+                        else
+                                text_put(value.bytes + at, plain);
+                        at += plain;
+                        continue;
                 }
-                else if (character == '\b')
-                        text_put_string("\\b");
-                else if (character == '\f')
-                        text_put_string("\\f");
-                else if (character == '\n')
-                        text_put_string("\\n");
-                else if (character == '\r')
-                        text_put_string("\\r");
-                else if (character == '\t')
-                        text_put_string("\\t");
-                else if (character < 32)
+                p8 character = value.bytes[at++], escaped[6];
+                positive length;
+                if (character < 32 && short_escape[character])
                 {
-                        static const p8 hex[] = "0123456789abcdef";
-                        p8 escaped[6] = {'\\', 'u', '0', '0',
-                                         hex[character >> 4],
-                                         hex[character & 15]};
-                        text_put(escaped, sizeof(escaped));
+                        escaped[0] = '\\';
+                        escaped[1] = short_escape[character];
+                        length = 2;
                 }
                 else
-                        text_put_character(character);
+                        length = memory_into_escaped(escaped, &character, 1,
+                                                      sizeof(escaped), 64).y;
+                text_put(escaped, length);
         }
-
         text_put_character('"');
 }
 
@@ -13241,15 +13230,10 @@ static b32 text_cut()
                                         continue;
                                 }
 
-                                bool split = false;
-
-                                for (positive c = 0; c < line_length; c++)
-                                        if (whitespace ? byte_is_blank(line[c])
-                                                       : line[c] == delimiter)
-                                        {
-                                                split = true;
-                                                break;
-                                        }
+                                bool split = whitespace
+                                    ? string_span_max(line, line_length,
+                                                      text_inside()) < line_length
+                                    : memory_first_of(line, delimiter, line_length) != null;
 
                                 // A line with no delimiter is one whole field,
                                 // and is printed unchanged unless -s says not
@@ -13311,9 +13295,8 @@ static b32 text_cut()
                                         at++;
 
                                         if (whitespace)
-                                                while (at < line_length &&
-                                                       byte_is_blank(line[at]))
-                                                        at++;
+                                                at += string_span_max(line + at,
+                                                    line_length - at, string_set_blanks);
 
                                         which++;
                                 }
@@ -13769,7 +13752,7 @@ static positive uniq_skipped(p8 address_to line, positive length,
 {
         positive skip = 0;
 
-        for (positive f = 0; f < fields; f++)
+        for (positive f = 0; f < fields && skip < length; f++)
         {
                 skip += string_span_max(line + skip, length - skip,
                                         string_set_blanks);
@@ -13777,9 +13760,7 @@ static positive uniq_skipped(p8 address_to line, positive length,
                                         text_inside());
         }
 
-        skip += characters;
-
-        return skip > length ? length : skip;
+        return skip + min(characters, length - skip);
 }
 
 static b32 text_uniq()
@@ -16424,8 +16405,8 @@ static fn sed_parse()
 
                 if (character == '#')
                 {
-                        while (sed_at < sed_script_length && sed_script[sed_at] != '\n')
-                                sed_at++;
+                        sed_at += memory_span_without_byte(sed_script + sed_at,
+                            '\n', sed_script_length - sed_at);
 
                         continue;
                 }

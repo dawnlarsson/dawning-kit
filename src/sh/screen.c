@@ -410,8 +410,7 @@ static b32 screen_window()
         {
                 struct window_key key;
                 unsigned int typed = 0;
-                char line[WINDOW_TITLE_MAX];
-                unsigned int at = 0;
+                char line[] = "typed:  ";
 
                 while (window_key(back, &key))
                         if ((key.flags & WINDOW_KEY_DOWN) && key.character >= ' ')
@@ -419,16 +418,7 @@ static b32 screen_window()
 
                 if (typed)
                 {
-                        const char *label = "typed: ";
-
-                        while (label[at])
-                        {
-                                line[at] = label[at];
-                                at++;
-                        }
-
-                        line[at++] = (char)typed;
-                        line[at] = 0;
+                        line[sizeof("typed: ") - 1] = (char)typed;
                         string_copy_max_end((p8 address_to)back->title,
                                             (string_address)line,
                                             WINDOW_TITLE_MAX - 1);

@@ -6841,30 +6841,12 @@ static bool expand_brace_number(string_address text, positive length,
 static positive expand_brace_number_text(p8 address_to out, bipolar value,
                                          positive width, bool padded)
 {
-        p8 made[32];
-        positive length = bipolar_into_string(made, value);
-        positive zeros;
-        positive at = 0;
-        positive from = 0;
-
-        if (!padded || length >= width)
-        {
-                memory_copy(out, made, length);
-                return length;
-        }
-
-        if (made[0] == '-')
-        {
-                out[at++] = '-';
-                from = 1;
-        }
-
-        zeros = width - length;
-        memory_fill(out + at, '0', zeros);
-        at += zeros;
-        memory_copy(out + at, made + from, length - from);
-
-        return at + length - from;
+        positive sign = value < 0;
+        if (sign)
+                out[0] = '-';
+        positive magnitude = sign ? (positive)0 - (positive)value : (positive)value;
+        return sign + positive_into_padded(out + sign, magnitude,
+            width > sign ? width - sign : 0, padded ? '0' : 0);
 }
 
 static positive shell_expand_braces(string_address word,

@@ -156,8 +156,7 @@ static fn storage_trimmed(p8 address_to into, positive room,
                           p8 address_to source, positive size,
                           bool trim_space)
 {
-        p8 address_to terminator = (p8 address_to)memory_first_of(source, 0, size);
-        positive used = terminator ? (positive)(terminator - source) : size;
+        positive used = memory_span_without_byte(source, 0, size);
 
         while (used && (source[used - 1] == 0 ||
                         (trim_space && source[used - 1] == ' ')))
@@ -175,31 +174,22 @@ static fn storage_trimmed(p8 address_to into, positive room,
                 address_to length = 0;
 }
 
-static p8 storage_hex_digit(p8 value, bool upper)
-{
-        return value < 10 ? (p8)('0' + value)
-                          : (p8)((upper ? 'A' : 'a') + value - 10);
-}
-
 static fn storage_uuid_bytes(p8 address_to into,
                              p8 address_to bytes)
 {
-        positive out = 0;
-
-        for (positive at = 0; at < 16; at++)
-        {
-                if (at == 4 || at == 6 || at == 8 || at == 10)
-                        into[out++] = '-';
-
-                into[out++] = storage_hex_digit(bytes[at] >> 4, false);
-                into[out++] = storage_hex_digit(bytes[at] & 15, false);
-        }
-
-        into[out] = end;
+        p8 digits[32];
+        memory_into_hex(digits, bytes, 16);
+        memory_copy(into, digits, 8);
+        memory_copy(into + 9, digits + 8, 4);
+        memory_copy(into + 14, digits + 12, 4);
+        memory_copy(into + 19, digits + 16, 4);
+        memory_copy(into + 24, digits + 20, 12);
+        into[8] = into[13] = into[18] = into[23] = '-';
+        into[36] = end;
 }
 
-static fn storage_hex_padded(p8 address_to into, positive value,
-                             positive width, bool upper)
+static positive storage_hex_padded(p8 address_to into, positive value,
+                                    positive width, bool upper)
 {
         p8 digits[2 * sizeof(positive)];
         positive count = positive_into_base(digits, value, 16, upper);
@@ -208,6 +198,7 @@ static fn storage_hex_padded(p8 address_to into, positive value,
         memory_fill(into, '0', padding);
         memory_copy(into + padding, digits, count);
         into[padding + count] = end;
+        return padding + count;
 }
 
 /* Fourteen recognisers name their type and six copy a sixteen-byte UUID;

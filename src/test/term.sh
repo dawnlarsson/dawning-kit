@@ -410,6 +410,16 @@ b32 main()
                         say_number(synchronized_output != 0);
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "tab_reset") == 0)
+                {
+                        positive wrong = 0;
+                        memory_fill(tab_stop, 0xa5, sizeof(tab_stop));
+                        tabs_reset();
+                        for (positive at = 0; at < sizeof(tab_stop); at++)
+                                wrong += tab_stop[at] != (at % 8 == 0);
+                        say_number(wrong);
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "resize") == 0)
                 {
                         positive at = 0;
@@ -448,7 +458,7 @@ fi
 
 #       Rows arrive one to a line and are joined by a bar, so a case that
 #       asks for several of them is still one string to compare.
-term() { "$work/term" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }
+term() { ${TEST_RUNNER:-} "$work/term" "$@" 2>&1 | tr '\n' '|' | sed 's/|$//'; }
 
 same()
 {
@@ -502,6 +512,7 @@ same 'off the bottom'   '[def]|[gh]'             3 2 in 'abcdefgh' dump
 same 'kept in the ring' '[abc]'                  3 2 in 'abcdefgh' back 1
 
 group tab
+same 'all reset stops'       '0'                    20 3 tab_reset
 #       Every eighth column to begin with. HTS puts a stop where the cursor
 #       is and TBC with a parameter of 3 takes them all away.
 same 'to the eighth'     '[a       b]'           20 3 in 'a\tb' row 0

@@ -84,7 +84,7 @@ static b32 saved_reverse;
 // Tab stops, one byte a column, which is what makes HTS and TBC mean
 // anything. Wide enough for a column of pixels on any screen this runs on.
 #define TAB_STOPS 1024
-static p8 tab_stop[TAB_STOPS];
+static p8 tab_stop[TAB_STOPS] __attribute__((aligned(8)));
 
 static fn touch(unsigned int at)
 {
@@ -468,8 +468,7 @@ static fn erase(unsigned int from_row, unsigned int from_column,
 
 static fn tabs_reset()
 {
-        for (unsigned int c = 0; c < TAB_STOPS; c++)
-                tab_stop[c] = (p8)(c % 8 == 0);
+        memory_fill_u64_aligned(tab_stop, TAB_STOPS / 8, 1);
 }
 
 static fn tab_forward()

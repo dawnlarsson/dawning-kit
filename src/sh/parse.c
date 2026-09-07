@@ -584,11 +584,11 @@ static bool parse_here_take_span(string_address line, positive length,
         document = here_documents + here_filled;
 
         if (document->strip)
-                while (length && string_is(line, '\t'))
-                {
-                        line++;
-                        length--;
-                }
+        {
+                positive tabs = memory_span_byte(line, '\t', length);
+                line += tabs;
+                length -= tabs;
+        }
 
         delimiter = here_names + document->delimiter;
         delimiter_length = string_length(delimiter);

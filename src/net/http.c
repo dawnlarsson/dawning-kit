@@ -214,19 +214,20 @@ static bipolar http_unchunk(p8 address_to bytes, positive size)
                 //      semicolon-led extension form while refusing an
                 //      arbitrary suffix after the checked length. The tail
                 //      is still bounded by the newline found above.
-                while (number < line_end &&
-                       (number[0] == ' ' || number[0] == '\t'))
-                        number++;
+                if (number < line_end && byte_is_blank(number[0]))
+                        number += string_span_max(number, line_end - number,
+                                                   string_set_blanks);
 
                 if (number < line_end)
                 {
                         if (number[0] != ';')
                                 return HTTP_MALFORMED;
 
-                        while (++number < line_end)
-                                if ((number[0] < ' ' && number[0] != '\t') ||
-                                    number[0] == 0x7f)
-                                        return HTTP_MALFORMED;
+                        positive extension = line_end - ++number;
+                        if (extension && (extension == 1
+                                ? escape_categories[number[0]] & 1
+                                : memory_escape_index(number, extension, 1) != extension))
+                                return HTTP_MALFORMED;
                 }
 
                 read++;
@@ -309,18 +310,14 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
                 used = fixed + path_length + name_length;
 
-#define HTTP_COPY(part, length)                                              \
-                do { memory_copy(into, (part), (length)); into += (length); } \
-                while (false)
-                HTTP_COPY("GET ", sizeof("GET ") - 1);
-                HTTP_COPY(path, path_length);
-                HTTP_COPY(" HTTP/1.0\r\nHost: ",
-                          sizeof(" HTTP/1.0\r\nHost: ") - 1);
-                HTTP_COPY(name, name_length);
-                HTTP_COPY("\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n",
-                          sizeof("\r\nUser-Agent: dawning\r\n"
-                                 "Connection: close\r\n\r\n") - 1);
-#undef HTTP_COPY
+                into = memory_copy_apart_end(into, "GET ", sizeof("GET ") - 1);
+                into = memory_copy_apart_end(into, path, path_length);
+                into = memory_copy_apart_end(into, " HTTP/1.0\r\nHost: ",
+                                             sizeof(" HTTP/1.0\r\nHost: ") - 1);
+                into = memory_copy_apart_end(into, name, name_length);
+                memory_copy_apart(into,
+                    "\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n",
+                    sizeof("\r\nUser-Agent: dawning\r\nConnection: close\r\n\r\n") - 1);
 
                 if (system_write_all((positive)handle, request, used) != used)
                 {
@@ -414,19 +411,13 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
                 if (value)
                 {
-                        positive from = 0;
-                        positive to = value_length;
                         bipolar plain;
 
-                        while (from < to &&
-                               (value[from] == ' ' || value[from] == '\t'))
-                                from++;
-                        while (to > from &&
-                               (value[to - 1] == ' ' || value[to - 1] == '\t'))
-                                to--;
-
-                        if (to - from != 7 ||
-                            memory_compare_ascii_case(value + from, "chunked", 7))
+                        // http_header already consumed leading blanks.
+                        if (value_length < 7 ||
+                            memory_compare_ascii_case(value, "chunked", 7) ||
+                            string_span_max(value + 7, value_length - 7,
+                                            string_set_blanks) != value_length - 7)
                                 goto done;
 
                         plain = http_unchunk(whole.bytes + header, length);
@@ -447,10 +438,8 @@ static bipolar http_get(p32 host, p16 port, string_address name,
 
                         at = (positive)(cursor - content_length);
 
-                        while (at < content_length_size &&
-                               (content_length[at] == ' ' ||
-                                content_length[at] == '\t'))
-                                at++;
+                        at += string_span_max(cursor, content_length_size - at,
+                                              string_set_blanks);
 
                         //      A short close is not a successful partial
                         //      download, and a numeric prefix is not a valid

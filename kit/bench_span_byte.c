@@ -68,14 +68,40 @@ static bool correctness(void)
 }
 
 static positive rounds_for(positive n){positive r=TARGET_BYTES/(n?n:1);if(r<8)r=8;if(r>(1u<<22))r=1u<<22;return r;}
-static p64 run(bool assembly,positive n,positive rounds){p64 start=get_cpu_time();while(rounds--)sink+=span_calls[assembly](block,'0',n);return get_cpu_time()-start;}
-static fn row(positive n,bool late){positive q[TRIES],r=rounds_for(n);memory_fill(block,'0',n);if(late&&n)block[n-1]='1';for(positive t=0;t<TRIES;t++){p64 a,b;if(t&1){b=run(true,n,r);a=run(false,n,r);}else{a=run(false,n,r);b=run(true,n,r);}q[t]=(positive)(b*10000/(a?a:1));}order(q,TRIES);string_format(log,"  %s %p bytes  asm/C %p.%p%%\n",late?(string_address)"late":(string_address)"equal",n,q[TRIES/2]/100,q[TRIES/2]%100);}
+static p64 run(positive implementation, positive n, positive rounds)
+{
+        p64 start = get_cpu_time();
+        while (rounds--) sink += span_calls[implementation](block, '0', n);
+        return get_cpu_time() - start;
+}
+
+static fn row(positive n, positive shape)
+{
+        positive raw[TRIES], rounds = rounds_for(n);
+        memory_fill(block, '0', n);
+        if (shape && n) block[shape == 1 ? n - 1 : 0] = '1';
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 elapsed[2];
+                for (positive i = 0; i < 2; i++)
+                {
+                        positive which = (i + trial) % 2;
+                        elapsed[which] = run(which, n, rounds);
+                }
+                raw[trial] = elapsed[1] * 10000 / max(elapsed[0], (p64)1);
+        }
+        order(raw, TRIES);
+        string_format(log, "  %s %p bytes  asm/C %p.%p%%\n",
+                      shape == 2 ? "first" : shape ? "late" : "equal", n,
+                      raw[TRIES / 2] / 100, raw[TRIES / 2] % 100);
+}
 
 b32 main(void)
 {
-        static const positive sizes[]={8,16,24,32,64,128,256,4096,MAXIMUM};
+        static const positive sizes[]={0,1,2,4,8,16,24,32,64,128,256,4096,MAXIMUM};
         if(!correctness()){string_format(log,"memory_span_byte correctness failed\n");log_flush();return 1;}
         string_format(log,"memory_span_byte, paired median of %p\n",(positive)TRIES);
-        for(positive i=0;i<sizeof(sizes)/sizeof(*sizes);i++){row(sizes[i],false);row(sizes[i],true);}
+        for (positive i = 0; i < array_count(sizes); i++)
+                for (positive shape = 0; shape < 3; shape++) row(sizes[i], shape);
         log_flush();return 0;
 }

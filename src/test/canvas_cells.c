@@ -20,6 +20,7 @@ typedef uint64_t u64;
 #define clamp(a,b,c) min(max(a,b),c)
 #define WINDOW_CELL_W 8
 #define WINDOW_CELL_H 16
+#define DRM_FORMAT_ARGB8888 0x34325241u
 static struct {unsigned scale;} desktop={1};
 #define canvas_cell_w (8*(int)desktop.scale)
 #define canvas_cell_h (16*(int)desktop.scale)
@@ -36,6 +37,7 @@ void *memory_copy_apart(void *to,const void *from,unsigned long n) {return memcp
 void canvas_rect_fill(u32 *,unsigned long,unsigned long,unsigned long,u32);
 void canvas_glyph(u32 *,unsigned long,const u8 *,unsigned long,unsigned long,u32);
 void canvas_cell(u32 *,unsigned long,const u8 *,unsigned long,u32,u32);
+void canvas_row_blit(u32 *,const u32 *,unsigned long,u32);
 #include "canvas-cells.inc"
 
 static unsigned checks;
@@ -78,6 +80,38 @@ static void record_row(const struct target *t,const struct shape *s,int x,int y,
 #undef compose_row
 
 int main(void) {
+    const u32 palette[]={0x1b2733,0x2f3f52,0x2b3a4c,0x4c6785,
+                         0x101820,0xdfe7ef,0xffffff,0x000000};
+    const u32 formats[]={0,DRM_FORMAT_ARGB8888,0x34325258,0xffffffff};
+    for(unsigned f=0;f<4;f++)for(unsigned a=0;a<4;a++) {
+        memset(pixels,0xa5,16*sizeof(*pixels));
+        memset(expected,0xa5,16*sizeof(*expected));
+        for(unsigned i=0;i<8;i++)
+            expected[a+i]=palette[i]|(formats[f]==DRM_FORMAT_ARGB8888?0xff000000:0);
+        canvas_palette(pixels+a,formats[f]);
+        check(!memcmp(pixels,expected,16*sizeof(*pixels)));
+    }
+    // Scaled bitmap runs must become one bounded rectangle, including clips
+    // through the middle of a scaled pixel and rows wholly outside the target.
+    for(unsigned trial=0;trial<2048;trial++) {
+        unsigned w=1+trial%19,h=1+(trial/19)%7,pitch=(w+7)/8,scale=1+(trial/133)%5;
+        unsigned char bits[21];
+        for(unsigned i=0;i<sizeof(bits);i++)bits[i]=(trial*31+i*47)&255;
+        int x=(int)(trial%13)-6,y=(int)(trial%11)-5;
+        struct target t={.pixels=pixels,.pitch=1024,.width=128,.height=64,
+            .clip={(int)(trial%17),(int)(trial%9),128-(int)(trial%23),64-(int)(trial%13)}};
+        memset(pixels,0xa5,sizeof(pixels));memset(expected,0xa5,sizeof(expected));
+        bits_draw(&t,x,y,scale,bits,pitch,w,h,0x12345678);
+        for(unsigned r=0;r<h;r++)for(unsigned c=0;c<w;c++)
+            if(bits[r*pitch+c/8]&(0x80>>(c%8)))
+                for(unsigned dy=0;dy<scale;dy++)for(unsigned dx=0;dx<scale;dx++) {
+                    int px=x+(int)(c*scale+dx),py=y+(int)(r*scale+dy);
+                    if(px>=max(t.clip.x1,0)&&px<min(t.clip.x2,t.width)&&
+                       py>=max(t.clip.y1,0)&&py<min(t.clip.y2,t.height))
+                        expected[py*t.pitch+px]=0x12345678;
+                }
+        check(!memcmp(pixels,expected,sizeof(pixels)));
+    }
     const u32 colors[]={0,1,0x80000000,0xffffffff,0xaabbccdd,0x10203040};
     for(unsigned a=0;a<6;a++)for(unsigned b=0;b<6;b++)for(unsigned pattern=0;pattern<256;pattern++) {
         unsigned rows=1+pattern%17,pitch=8+(pattern%10),align=(pattern/10)%2;

@@ -358,28 +358,23 @@ static bool ul_cpu_set(string_address text, bool list,
 static fn ul_cpu_mask_write(writer write, positive address_to set,
                             positive bytes, bool grouped)
 {
-        static p8 digits[] = "0123456789abcdef";
-        positive nibbles = bytes * 2;
-
-        while (nibbles > 1)
+        positive chunks = (bytes + 3) / 4;
+        bool first = true;
+        while (chunks)
         {
-                positive at = nibbles - 1;
-                positive digit = set[at / (positive_bits / 4)] >>
-                                 ((at % (positive_bits / 4)) * 4) & 15;
-                if (digit)
-                        break;
-                nibbles--;
-        }
+                positive at = --chunks;
+                p32 value = (p32)(set[at / 2] >> ((at % 2) * 32));
+                if (at == (bytes - 1) / 4 && bytes % 4)
+                        value &= ((p32)1 << ((bytes % 4) * 8)) - 1;
+                if (first && !value && at)
+                        continue;
 
-        for (positive left = nibbles; left; left--)
-        {
-                positive at = left - 1;
-                positive digit = set[at / (positive_bits / 4)] >>
-                                 ((at % (positive_bits / 4)) * 4) & 15;
-
-                if (grouped && left != nibbles && !(left % 8))
+                if (!first && grouped)
                         write((p8 address_to)",", 1);
-                write(digits + digit, 1);
+                p8 digits[9];
+                positive length = storage_hex_padded(digits, value, first ? 1 : 8, false);
+                write(digits, length);
+                first = false;
         }
 }
 
@@ -395,7 +390,7 @@ static bool ul_cpu_has(positive address_to set, positive cpu)
 }
 
 static fn ul_cpu_list_write(writer write, positive address_to set,
-                            positive bytes)
+                            positive bytes, bool strides)
 {
         bool comma = false;
         positive bits = bytes * 8;
@@ -406,7 +401,7 @@ static fn ul_cpu_list_write(writer write, positive address_to set,
                         continue;
 
                 positive second = first + 1;
-                while (second < bits && !ul_cpu_has(set, second))
+                while (strides && second < bits && !ul_cpu_has(set, second))
                         second++;
 
                 positive stride = second < bits ? second - first : 1;
@@ -427,7 +422,7 @@ static fn ul_cpu_list_write(writer write, positive address_to set,
                         count++;
                 }
 
-                if (count < 3)
+                if (strides && count < 3)
                 {
                         last = first;
                         count = 1;
@@ -455,7 +450,7 @@ static fn ul_cpu_list_write(writer write, positive address_to set,
 
 static fn ul_cpu_list_say(positive address_to set, positive bytes)
 {
-        ul_cpu_list_write(log, set, bytes);
+        ul_cpu_list_write(log, set, bytes, true);
 }
 
 // bits ------------------------------------------------------------
@@ -676,7 +671,7 @@ static b32 util_linux_bits()
                         any |= result[at] != 0;
                 if (any)
                 {
-                        ul_cpu_list_write(text_put, result, bytes);
+                        ul_cpu_list_write(text_put, result, bytes, true);
                         text_put_character('\n');
                 }
         }
@@ -3046,9 +3041,8 @@ static bipolar ul_signal_number(string_address text)
         positive length = string_length(text);
         if (length >= sizeof(name))
                 return -1;
-        for (positive i = 0; i < length; i++)
-                name[i] = byte_to_upper(string_get(text + i));
-        name[length] = 0;
+        memory_copy_end(name, text, length);
+        memory_to_upper_ascii(name, length);
         return kill_number(name);
 }
 
@@ -3548,19 +3542,16 @@ static PURE bipolar ul_lsns_order(ul_lsns_entry left, ul_lsns_entry right)
 
 static b32 ul_lsns_type(string_address name)
 {
-        for (positive i = 0; i < UL_NS_COUNT; i++)
-                if (string_equals(name, ul_namespaces[i].name))
-                        return (b32)i;
-
-        return -1;
+        positive at = string_table_find(name, ul_namespaces,
+                                        sizeof(ul_namespaces[0]), UL_NS_COUNT);
+        return at < UL_NS_COUNT ? (b32)at : -1;
 }
 
 static bool ul_table_column_add(p8 address_to columns, positive address_to count,
                                 positive maximum, p8 column)
 {
-        for (positive i = 0; i < address_to count; i++)
-                if (columns[i] == column)
-                        return true;
+        if (memory_first_of(columns, column, address_to count))
+                return true;
 
         if (address_to count == maximum)
                 return false;
@@ -4751,10 +4742,9 @@ static const string_address ul_lslocks_kinds[] = {
 
 static b32 ul_lslocks_kind(string_address text)
 {
-        for (positive i = 0; i < array_count(ul_lslocks_kinds); i++)
-                if (string_equals(text, ul_lslocks_kinds[i]))
-                        return (b32)i;
-        return -1;
+        positive at = string_table_find(text, ul_lslocks_kinds,
+            sizeof(ul_lslocks_kinds[0]), array_count(ul_lslocks_kinds));
+        return at < array_count(ul_lslocks_kinds) ? (b32)at : -1;
 }
 
 static struct snapshot_process address_to ul_lslocks_process(b32 pid)
@@ -9725,8 +9715,8 @@ static fn ul_lscpu_info_read()
         while (at < (positive)got)
         {
                 positive start = at;
-                while (at < (positive)got && ul_lscpu_cpuinfo[at] != '\n')
-                        at++;
+                at += memory_span_without_byte(ul_lscpu_cpuinfo + at, '\n',
+                                                (positive)got - at);
                 positive finish = at;
                 if (at < (positive)got)
                         ul_lscpu_cpuinfo[at++] = end;
@@ -10081,58 +10071,29 @@ static bool ul_lscpu_take()
         return true;
 }
 
-static positive ul_lscpu_set_text(p8 address_to text, positive room,
-                                  positive address_to set, bool hex)
+static p8 address_to ul_lscpu_set_into;
+static positive ul_lscpu_set_used, ul_lscpu_set_room;
+
+static fn ul_lscpu_set_write(address_any data, positive length)
 {
-        positive used = 0;
+        positive take = min(length, ul_lscpu_set_room - ul_lscpu_set_used);
+        memory_copy(ul_lscpu_set_into + ul_lscpu_set_used, data, take);
+        ul_lscpu_set_used += take;
+}
+
+static fn ul_lscpu_set_text(p8 address_to text, positive room,
+                           positive address_to set, bool hex)
+{
+        if (!room)
+                return;
+        ul_lscpu_set_into = text;
+        ul_lscpu_set_used = 0;
+        ul_lscpu_set_room = room - 1;
         if (hex)
-        {
-                positive nibbles = UL_CPU_BITS / 4;
-                while (nibbles > 1)
-                {
-                        positive n = nibbles - 1;
-                        if ((set[n / (positive_bits / 4)] >>
-                             ((n % (positive_bits / 4)) * 4)) & 15)
-                                break;
-                        nibbles--;
-                }
-                for (positive left = nibbles; left && used + 1 < room; left--)
-                {
-                        positive n = left - 1;
-                        positive digit = set[n / (positive_bits / 4)] >>
-                            ((n % (positive_bits / 4)) * 4) & 15;
-                        if (left != nibbles && !(left % 8))
-                                text[used++] = ',';
-                        text[used++] = storage_hex_digit((p8)digit, false);
-                }
-        }
+                ul_cpu_mask_write(ul_lscpu_set_write, set, sizeof(positive) * UL_CPU_WORDS, true);
         else
-        {
-                bool comma = false;
-                for (positive first = 0; first < UL_CPU_BITS; first++)
-                {
-                        if (!ul_cpu_has(set, first))
-                                continue;
-                        positive last = first;
-                        while (last + 1 < UL_CPU_BITS &&
-                               ul_cpu_has(set, last + 1))
-                                last++;
-                        if (comma)
-                                text[used++] = ',';
-                        used += positive_into_string(text + used, first);
-                        if (last != first)
-                        {
-                                text[used++] = '-';
-                                used += positive_into_string(text + used, last);
-                        }
-                        if (used + 24 >= room)
-                                break;
-                        comma = true;
-                        first = last;
-                }
-        }
-        text[min(used, room - 1)] = end;
-        return used;
+                ul_cpu_list_write(ul_lscpu_set_write, set, sizeof(positive) * UL_CPU_WORDS, false);
+        text[ul_lscpu_set_used] = end;
 }
 
 typedef struct
@@ -11122,12 +11083,7 @@ static fn ul_lsmem_ranges(positive split, bool every)
 static positive ul_lsmem_hex(p8 address_to text, positive value)
 {
         memory_copy(text, "0x", 2);
-        for (positive i = 0; i < 16; i++)
-        {
-                positive shift = (15 - i) * 4;
-                text[2 + i] = storage_hex_digit((p8)(value >> shift & 15),
-                                                 false);
-        }
+        storage_hex_padded(text + 2, value, 16, false);
         return 18;
 }
 
@@ -11635,10 +11591,9 @@ static PURE bipolar ul_lsblk_order(ul_lsblk_device left,
 
 static ul_lsblk_device address_to ul_lsblk_find(string_address name)
 {
-        for (positive i = 0; i < ul_lsblk.count; i++)
-                if (string_equals(ul_lsblk.devices[i].kname, name))
-                        return ul_lsblk.devices + i;
-        return null;
+        positive at = string_table_find(name, ul_lsblk.devices,
+                                        sizeof(ul_lsblk.devices[0]), ul_lsblk.count);
+        return at < ul_lsblk.count ? ul_lsblk.devices + at : null;
 }
 
 static fn ul_lsblk_parents()
@@ -12710,10 +12665,7 @@ static const ul_table_column ul_ipc_columns[] = {
 static string_address ul_ipc_key(p8 address_to text, p64 key)
 {
         memory_copy(text, "0x", 2);
-        for (positive digit = 0; digit < 8; digit++)
-                text[2 + digit] = storage_hex_digit(
-                    (p8)((key >> ((7 - digit) * 4)) & 15), false);
-        text[10] = end;
+        storage_hex_padded(text + 2, (p32)key, 8, false);
         return text;
 }
 

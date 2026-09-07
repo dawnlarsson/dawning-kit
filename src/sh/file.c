@@ -2861,55 +2861,37 @@ static inline INLINE bool file_copy_stream(
     bool address_to range_copy, bool address_to send_copy,
     p64 address_to offsets)
 {
-        while ((!bounded || length) && address_to range_copy)
+        for (positive stage = 0; stage < 2; stage++)
         {
-                positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
-                                   ? FILE_KERNEL_COPY_SIZE : (positive)length;
-                bipolar copied = file_copy_range_once(
-                    in, offsets, out, offsets ? offsets + 1 : null, ask);
-
-                if (copied > 0)
-                {
-                        if (bounded)
-                                length -= (positive)copied;
-                        continue;
-                }
-                if (!copied)
-                        return !bounded;
-                if (copied == -4)
-                        continue;
-                if (!file_copy_range_fallback(copied))
+                bool address_to enabled = stage ? send_copy : range_copy;
+                if (stage && (!bounded || length) && *enabled && offsets &&
+                    system_seek(out, offsets[1], FILE_SEEK_SET) < 0)
                         return false;
-
-                address_to range_copy = false;
-        }
-
-        if ((!bounded || length) && address_to send_copy && offsets &&
-            system_seek(out, offsets[1], FILE_SEEK_SET) < 0)
-                return false;
-
-        while ((!bounded || length) && address_to send_copy)
-        {
-                positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
-                                   ? FILE_KERNEL_COPY_SIZE : (positive)length;
-                bipolar copied = file_send_range_once(in, offsets, out, ask);
-
-                if (copied > 0)
+                while ((!bounded || length) && *enabled)
                 {
-                        if (offsets)
-                                offsets[1] += (positive)copied;
-                        if (bounded)
-                                length -= (positive)copied;
-                        continue;
-                }
-                if (!copied)
-                        return !bounded;
-                if (copied == -4)
-                        continue;
-                if (!file_copy_range_fallback(copied))
-                        return false;
+                        positive ask = !bounded || length > FILE_KERNEL_COPY_SIZE
+                            ? FILE_KERNEL_COPY_SIZE : (positive)length;
+                        bipolar copied = stage
+                            ? file_send_range_once(in, offsets, out, ask)
+                            : file_copy_range_once(in, offsets, out,
+                                                   offsets ? offsets + 1 : null, ask);
+                        if (copied > 0)
+                        {
+                                if (stage && offsets)
+                                        offsets[1] += (positive)copied;
+                                if (bounded)
+                                        length -= (positive)copied;
+                                continue;
+                        }
+                        if (!copied)
+                                return !bounded;
+                        if (copied == -4)
+                                continue;
+                        if (!file_copy_range_fallback(copied))
+                                return false;
 
-                address_to send_copy = false;
+                        *enabled = false;
+                }
         }
 
         if ((!bounded || length) && offsets &&
@@ -5169,15 +5151,8 @@ static bool find_holds_count(p8 comparison, b64 value, b64 wanted)
 
 static fn find_lowered(string_address text, p8 address_to into)
 {
-        positive i = 0;
-
-        while (string_get(text + i) && i < FILE_PATH_MAX - 1)
-        {
-                into[i] = (p8)byte_to_lower(string_get(text + i));
-                i++;
-        }
-
-        into[i] = end;
+        p8 address_to stop = string_copy_max_end(into, text, FILE_PATH_MAX - 1);
+        memory_to_lower_ascii(into, (positive)(stop - into));
 }
 
 /*
@@ -8871,12 +8846,10 @@ static bool whereis_compression(string_address suffix)
             (string_address)"gz",   (string_address)"bz2",
             (string_address)"xz",   (string_address)"zst",
             (string_address)"lz",   (string_address)"lzma",
-            (string_address)"lzo",  (string_address)"Z", null};
+            (string_address)"lzo",  (string_address)"Z"};
 
-        for (positive i = 0; names[i]; i++)
-                if (string_equals(suffix, names[i]))
-                        return true;
-        return false;
+        return string_table_find(suffix, names, sizeof(names[0]),
+                                  array_count(names)) < array_count(names);
 }
 
 /* One conventional suffix belongs to a source or manual name.  Manuals may

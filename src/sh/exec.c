@@ -3509,15 +3509,8 @@ fn history_remember(string_address line)
         while (length && (line[length - 1] == '\n' || line[length - 1] == '\r'))
                 length--;
 
-        {
-                positive at = 0;
-
-                while (at < length && (line[at] == ' ' || line[at] == '\t'))
-                        at++;
-
-                if (at == length)
-                        return;
-        }
+        if (string_span_max(line, length, string_set_blanks) == length)
+                return;
 
         {
                 static p8 address_to held;

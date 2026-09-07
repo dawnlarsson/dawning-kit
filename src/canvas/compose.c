@@ -62,6 +62,18 @@ static void target_row(const struct target *t, int y, int x1, int x2, u32 colour
                         (unsigned long)(x2 - x1), colour);
 }
 
+// Clipped solid rectangles share one accounting and strided-store floor.
+static void target_rectangle(const struct target *t, int x, int y, int w, int h,
+                              u32 colour)
+{
+        if (w <= 0 || h <= 0)
+                return;
+        canvas_painted += (unsigned long)w * h;
+        canvas_runs++;
+        canvas_rect_fill(t->pixels + (size_t)y * t->pitch + x, t->pitch,
+                         (unsigned long)w, (unsigned long)h, colour);
+}
+
 /*
         The run of one row of a shape that survives its band and the clip, or
         false when nothing does.
@@ -117,16 +129,8 @@ static void shape_fill(const struct target *t, const struct shape *shape,
                 x2 = min(min(shape->x + shape->w, band_x + band_w),
                          min(t->clip.x2, t->width));
 
-                if (x2 > x1)
-                {
-                        canvas_painted += (unsigned long)(x2 - x1) *
-                                          (curve_bottom - curve_top);
-                        canvas_runs++;
-                        canvas_rect_fill(t->pixels + (size_t)curve_top * t->pitch + x1,
-                                         t->pitch, (unsigned long)(x2 - x1),
-                                         (unsigned long)(curve_bottom - curve_top),
-                                         colour);
-                }
+                target_rectangle(t, x1, curve_top, x2 - x1,
+                                  curve_bottom - curve_top, colour);
         }
 
         for (y = curve_bottom; y < bottom; y++)
@@ -644,19 +648,9 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
         }
 
         for (i = 0; i < count; i++)
-        {
-                int w = piece[i].x2 - piece[i].x1;
-                int h = piece[i].y2 - piece[i].y1;
-
-                if (w <= 0 || h <= 0)
-                        continue;
-
-                canvas_painted += (unsigned long)w * h;
-                canvas_runs++;
-                canvas_rect_fill(t->pixels + (size_t)piece[i].y1 * t->pitch + piece[i].x1,
-                                 t->pitch, (unsigned long)w, (unsigned long)h,
-                                 t->ink[INK_DESKTOP]);
-        }
+                target_rectangle(t, piece[i].x1, piece[i].y1,
+                                  piece[i].x2 - piece[i].x1,
+                                  piece[i].y2 - piece[i].y1, t->ink[INK_DESKTOP]);
 }
 
 static HOT void compose_clip(const struct target *t)

@@ -19,18 +19,14 @@ static PURE _Bool canvas_is_virtual(struct drm_device *dev)
 {
         static const char *const guests[] = {
             "bochs-drm", "virtio_gpu", "qxl", "vmwgfx", "cirrus-qemu",
-            "hyperv_drm", "vkms", NULL};
-        unsigned int i;
+            "hyperv_drm", "vkms"};
 
         if (!dev->driver || !dev->driver->name)
                 return false;
 
-        for (i = 0; guests[i]; i++)
-                if (!string_compare((string_address)dev->driver->name,
-                                    (string_address)guests[i]))
-                        return true;
-
-        return false;
+        return string_table_find((string_address)dev->driver->name, guests,
+                                 sizeof(guests[0]), array_count(guests)) <
+               array_count(guests);
 }
 
 static PURE unsigned int output_mode_count(struct drm_connector *connector)
