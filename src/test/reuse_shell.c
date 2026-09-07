@@ -300,6 +300,38 @@ static fn reuse_benchmark(void)
 }
 #endif
 
+static fn reuse_lookup_contracts(void)
+{
+        for (positive byte = 0; byte < 256; byte++)
+        {
+                bool digit = byte >= '0' && byte <= '9';
+                bool name = digit || byte == '_' ||
+                            (byte >= 'A' && byte <= 'Z') ||
+                            (byte >= 'a' && byte <= 'z');
+                p8 text[] = {(p8)byte, 0};
+                check("prepared sets cover exactly ASCII names and digits",
+                      string_set_name[byte] == name &&
+                      string_set_digits[byte] == digit &&
+                      string_span_max(text, 1, string_set_name) == name &&
+                      string_span(text, string_set_digits) == digit);
+        }
+        const named_byte rows[] = {
+            {"Zero", 0}, {"VALUE", 7}, {"value", 9}, {null, 0}, {"later", 1}};
+        check("folded lookup returns first row with its full stride",
+              string_table_find_ascii_case("zErO", rows, sizeof(rows[0]), 5) == 0 &&
+              string_table_find_ascii_case("vAlUe", rows, sizeof(rows[0]), 5) == 1);
+        check("folded lookup preserves misses, null rows and empty tables",
+              string_table_find_ascii_case("later", rows, sizeof(rows[0]), 5) == 5 &&
+              string_table_find_ascii_case("", rows, sizeof(rows[0]), 5) == 5 &&
+              string_table_find_ascii_case("value", rows, sizeof(rows[0]), 1) == 1 &&
+              string_table_find_ascii_case("value", null, 0, 0) == 0);
+        check("syscall zero and large results are successes",
+              !system_failed(0) && !system_failed(1) &&
+              !system_failed((positive)1 << 63) && !system_failed(-4096));
+        check("syscall error window includes both boundaries",
+              system_failed(-1) && system_failed(-4095));
+}
+
 static fn reuse_counted_classes(void)
 {
         p8 address_to pages = memory(8192);
@@ -322,6 +354,7 @@ static fn reuse_counted_classes(void)
 
 b32 main(void)
 {
+        reuse_lookup_contracts();
         reuse_counted_classes();
         timespec span;
         check("read timeout keeps permissive zero spellings",

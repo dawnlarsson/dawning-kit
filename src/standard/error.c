@@ -635,36 +635,13 @@ static bool error_thread_storage_begin(address_any block, positive size)
 }
 #endif // STANDARD_ERROR_THREAD_LOCAL
 
-/*
-        Telling a failed trap from a large answer, once, so that sixty
-        wrappers cannot each get it slightly wrong.
-
-        Linux returns an error as the negated errno in the same register that
-        carries the result, and every errno is between 1 and 4095, so a return
-        in [-4095, -1] is a failure and everything else is a result. Testing
-        the sign instead is wrong twice over: several of these routines are
-        declared to return `positive` in library.c, where `result < 0` is a
-        comparison the compiler folds to false and deletes, and mmap
-        legitimately returns addresses whose top bit is set.
-
-        Written as one unsigned compare against the window rather than two
-        signed ones. A value reinterpreted as unsigned is at or above
-        0xfffffffffffff001 exactly when it is in the window.
-*/
-#define ERROR_WINDOW ((positive) - 4095)
-
-static bool error_failed(bipolar result)
-{
-        return (positive)result >= ERROR_WINDOW;
-}
-
 //      The three shapes a POSIX return takes, so the sign handling and the
 //      errno store appear once each rather than at every call.
 
 //      int-returning calls: a handle, a count that fits, a plain success.
 static b32 error_whole(bipolar result)
 {
-        if (error_failed(result))
+        if (system_failed(result))
         {
                 errno = (b32) - result;
                 return -1;
@@ -677,7 +654,7 @@ static b32 error_whole(bipolar result)
 //      file offset or address. Pointer results cast back at their boundary.
 static bipolar error_wide(bipolar result)
 {
-        if (error_failed(result))
+        if (system_failed(result))
         {
                 errno = (b32) - result;
                 return -1;
@@ -1303,7 +1280,7 @@ static b32 dup2(b32 from, b32 to)
         {
                 //      F_GETFD is 1 everywhere here, and asking for it is the
                 //      cheapest way to find out whether the descriptor exists.
-                if (error_failed(system_call_3(syscall(fcntl),
+                if (system_failed(system_call_3(syscall(fcntl),
                                                (positive)from, 1, 0)))
                 {
                         errno = EBADF;
@@ -1348,7 +1325,7 @@ b32 isatty(b32 handle)
         p8 attributes[64];
         bipolar answer = system_control(handle, 0x5401, attributes);
 
-        if (error_failed(answer))
+        if (system_failed(answer))
         {
                 errno = (b32) - answer;
                 return 0;
@@ -1495,7 +1472,7 @@ static string_address getcwd(string_address into, positive size)
 
         wrote = system_call_2(syscall(getcwd), (positive)into, size);
 
-        if (error_failed(wrote))
+        if (system_failed(wrote))
         {
                 errno = (b32) - wrote;
                 return null;

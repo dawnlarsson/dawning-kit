@@ -486,16 +486,8 @@ static bool expand_parameter_name(string_address name, positive length)
         if (!numeric && !expand_assignable_name(name))
                 return false;
 
-        for (positive at = 1; at < length; at++)
-        {
-                p8 value = string_get(name + at);
-
-                if (!expand_name_character(value) ||
-                    (numeric && (value < '0' || value > '9')))
-                        return false;
-        }
-
-        return true;
+        return string_span_max(name, length, numeric ? string_set_digits
+                                                     : string_set_name) == length;
 }
 
 /*
@@ -1965,10 +1957,7 @@ static bool arith_unset;
 
 static PURE inline INLINE string_address arith_skip_space(string_address at)
 {
-        while (string_is(at, ' ') || string_is(at, '\t') || string_is(at, '\n'))
-                at++;
-
-        return at;
+        return at + string_span_of_set(at, " \t\n");
 }
 
 static fn arith_space()
@@ -2441,11 +2430,8 @@ static bipolar arith_primary()
                 arith_space();
                 start = arith_at;
 
-                while (expand_name_character(string_get(arith_at)))
-                {
-                        length++;
-                        arith_at++;
-                }
+                length = string_span(arith_at, string_set_name);
+                arith_at += length;
 
                 if (length && string_is(arith_at, '['))
                 {
@@ -2495,8 +2481,7 @@ static bipolar arith_primary()
 
                 // What is in front of a # is a base and not a value, and only
                 // a run of plain decimal digits can be one: 0x10#1 is neither.
-                while (string_get(scan) >= '0' && string_get(scan) <= '9')
-                        scan++;
+                scan += string_span(scan, string_set_digits);
 
                 if (string_is(scan, '#'))
                         return arith_based(scan);
@@ -2523,11 +2508,8 @@ static bipolar arith_primary()
                 shell_mark held;
                 bipolar answer;
 
-                while (expand_name_character(string_get(arith_at)))
-                {
-                        length++;
-                        arith_at++;
-                }
+                length = string_span(arith_at, string_set_name);
+                arith_at += length;
 
                 if (string_is(arith_at, '['))
                 {
@@ -5145,21 +5127,11 @@ static string_address expand_braced(string_address step, bool quoted)
                 length = 1;
                 step++;
         }
-        else if (seen >= '0' && seen <= '9')
-        {
-                while (string_get(step) >= '0' && string_get(step) <= '9')
-                {
-                        length++;
-                        step++;
-                }
-        }
         else
         {
-                while (expand_name_character(string_get(step)))
-                {
-                        length++;
-                        step++;
-                }
+                length = string_span(step, byte_is_digit(seen)
+                                           ? string_set_digits : string_set_name);
+                step += length;
         }
 
         name = expand_hold(name_start, length, name_local,
@@ -5596,11 +5568,8 @@ static string_address expand_simple(string_address step, bool quoted)
                 return step + 1;
         }
 
-        while (expand_name_character(string_get(step)))
-        {
-                length++;
-                step++;
-        }
+        length = string_span(step, string_set_name);
+        step += length;
 
         // A dollar in front of nothing that could be a name is a dollar.
         if (!length)

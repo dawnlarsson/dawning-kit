@@ -368,8 +368,7 @@ static HOT bool system_snapshot_network(system_snapshot address_to sample)
                         string_address name = line;
                         string_address name_end = colon;
 
-                        while (name < name_end && (*name == ' ' || *name == '\t'))
-                                name++;
+                        name += string_span_max(name, name_end - name, string_set_blanks);
                         while (name_end > name &&
                                (name_end[-1] == ' ' || name_end[-1] == '\t'))
                                 name_end--;

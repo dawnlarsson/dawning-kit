@@ -1146,7 +1146,7 @@ static b32 clock_nanosleep(clockid_t which, b32 flags,
                                        (positive)request,
                                        (positive)remaining);
 
-        return error_failed(answer) ? (b32) - answer : 0;
+        return system_failed(answer) ? (b32) - answer : 0;
 }
 
 /*

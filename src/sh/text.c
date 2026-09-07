@@ -228,7 +228,7 @@ static address_any text_arena_take(positive bytes)
                 positive got = (positive)memory(TEXT_ARENA_BYTES);
 
                 // mmap answers a failure as a small negative, not as null.
-                if (!got || got >= (positive)-4095)
+                if (!got || system_failed(got))
                 {
                         text_error(null, "out of memory");
                         return null;
@@ -6247,7 +6247,7 @@ static b32 text_tee()
                 positive mapped =
                     (positive)memory(text_files_count * sizeof(positive));
 
-                if (!mapped || mapped >= (positive)-4095)
+                if (!mapped || system_failed(mapped))
                         return text_error(null, "too many operands"), text_done(1);
 
                 handles = (positive address_to)mapped;
@@ -7709,11 +7709,8 @@ static b32 text_fmt()
                                           ? file_option_value(address_of taking, 'p')
                                           : (string_address) "";
         positive prefix_total = string_length(prefix_value);
-        positive leading = 0;
+        positive leading = memory_span_byte(prefix_value, ' ', prefix_total);
         positive trailing = prefix_total;
-
-        while (leading < prefix_total && prefix_value[leading] == ' ')
-                leading++;
 
         while (trailing > leading && prefix_value[trailing - 1] == ' ')
                 trailing--;
@@ -7839,8 +7836,7 @@ static bool pr_pages(string_address value)
         if (!value)
                 return false;
 
-        while (byte_is_digit(value[used]))
-                used++;
+        used = string_span(value, string_set_digits);
 
         if (!used)
                 return false;
@@ -12610,7 +12606,7 @@ static b32 text_look()
                             syscall(mmap), 0, size, FILE_PROTECT_READ,
                             FILE_MAP_PRIVATE, text_input.handle, 0);
 
-                        if ((positive)mapped < (positive)-4095)
+                        if (!system_failed(mapped))
                         {
                                 found = look_mapped((p8 address_to)mapped,
                                                     size);
@@ -17705,15 +17701,7 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
 // leading zeros dropped, then the fraction, compared as text.
 static positive sort_zero_prefix(p8 address_to text, positive from, positive stop)
 {
-        positive length = stop - from;
-
-        if (length >= 64)
-                return from + memory_span_byte(text + from, '0', length);
-
-        while (from < stop && text[from] == '0')
-                from++;
-
-        return from;
+        return from + memory_span_byte(text + from, '0', stop - from);
 }
 
 typedef struct
@@ -17740,8 +17728,7 @@ static sort_number sort_number_of(p8 address_to text, positive length)
         at += minus;
         positive first = at;
 
-        while (at < length && byte_is_digit(text[at]))
-                at++;
+        at += string_span_max(text + at, length - at, string_set_digits);
 
         first = sort_zero_prefix(text, first, at);
         positive digits = at - first;
@@ -17751,8 +17738,7 @@ static sort_number sort_number_of(p8 address_to text, positive length)
         {
                 fraction = ++at;
 
-                while (at < length && byte_is_digit(text[at]))
-                        at++;
+                at += string_span_max(text + at, length - at, string_set_digits);
 
                 while (at > fraction && text[at - 1] == '0')
                         at--;
@@ -18068,11 +18054,9 @@ static PURE bipolar sort_version_walk(p8 address_to a, positive la, p8 address_t
                         j++;
                 }
 
-                while (i < la && a[i] == '0')
-                        i++;
+                i += memory_span_byte(a + i, '0', la - i);
 
-                while (j < lb && b[j] == '0')
-                        j++;
+                j += memory_span_byte(b + j, '0', lb - j);
 
                 while (i < la && j < lb && byte_is_digit(a[i]) &&
                        byte_is_digit(b[j]))
@@ -19443,7 +19427,7 @@ static string_address expr_keep(string_address from, positive length)
                         positive size = room > EXPR_ARENA ? room : EXPR_ARENA;
                         positive got = (positive)memory(sizeof(expr_block) + size);
 
-                        if (!got || got >= (positive)-4095)
+                        if (!got || system_failed(got))
                         {
                                 expr_stop("expression too long");
                                 return expr_empty;

@@ -701,11 +701,9 @@ static PURE bool lex_parameter_pattern(string_address at)
                 step++;
 
         if (byte_is_alpha(string_get(step)) || string_is(step, '_'))
-                while (byte_is_alnum(string_get(step)) || string_is(step, '_'))
-                        step++;
+                step += string_span(step, string_set_name);
         else if (byte_is_digit(string_get(step)))
-                while (byte_is_digit(string_get(step)))
-                        step++;
+                step += string_span(step, string_set_digits);
         else if (string_get(step))
                 step++;
 
@@ -1129,8 +1127,7 @@ static PURE bool lex_assignment_head(string_address text, positive length)
         if (!length || (text[0] >= '0' && text[0] <= '9'))
                 return false;
 
-        while (at < length && (byte_is_alnum(text[at]) || text[at] == '_'))
-                at++;
+        at = string_span_max(text, length, string_set_name);
 
         if (!at)
                 return false;

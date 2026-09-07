@@ -2710,8 +2710,6 @@ static bool awk_name_start(p8 character)
         return byte_is_alpha(character) || character == '_';
 }
 
-static b8 awk_name_bytes[STRING_SET_BYTES];
-
 static b32 awk_escape(string_address source, positive address_to at, positive stop)
 {
         p8 character = source[address_to at];
@@ -2829,7 +2827,7 @@ static fn awk_next_token()
 
                 awk_source_at += string_span_max(awk_source + awk_source_at,
                                                  awk_source_length - awk_source_at,
-                                                 awk_name_bytes);
+                                                 string_set_name);
 
                 positive length = awk_source_at - start;
 
@@ -5705,7 +5703,7 @@ static bool awk_assignment(string_address text, positive length)
         if (!length || !awk_name_start(text[0]))
                 return false;
 
-        at = string_span_max(text, length, awk_name_bytes);
+        at = string_span_max(text, length, string_set_name);
 
         if (at >= length || text[at] != '=')
                 return false;
@@ -5996,8 +5994,6 @@ static fn awk_start()
         awk_field_nothing.state = AWK_UNSET;
 
         string_set_add(awk_blank_bytes, " \t\n");
-        string_set_add(awk_name_bytes,
-                       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_0123456789");
         memory_fill(awk_field_bytes, 1, sizeof(awk_field_bytes));
         awk_field_bytes[' '] = 0;
         awk_field_bytes['\t'] = 0;

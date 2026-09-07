@@ -1312,8 +1312,7 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
         number->hex_sticky = false;
         number->hexadecimal = false;
 
-        while (byte_is_space(address_to scan))
-                scan++;
+        scan += string_span_of_set(scan, " \t\n\r\v\f");
 
         if (address_to scan == '+')
                 scan++;
@@ -1358,10 +1357,8 @@ static bool numbers_read(string_address input, numbers_scan address_to number)
                 if (address_to after == '(')
                 {
                         string_address inside = after + 1;
-                        string_address walk = inside;
-
-                        while (byte_is_alnum(address_to walk) || address_to walk == '_')
-                                walk++;
+                        string_address walk = inside +
+                                string_span(inside, string_set_name);
 
                         if (address_to walk == ')')
                         {

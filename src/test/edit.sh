@@ -182,6 +182,24 @@ static positive check_render_reuse()
         return checks + 1;
 }
 
+static positive check_step_bounds()
+{
+        static const struct { string_address text; positive column, want; } cases[] = {
+            {"", 0, 0}, {"", 1, 0}, {"", (positive)-1, 0},
+            {"abc", 1, 0}, {"abc", 3, 2}, {"abc", 4, 2},
+            {"abc", (positive)-1, 2},
+            {"a\xc3\xa9", 1, 0}, {"a\xc3\xa9", 3, 1}, {"a\xc3\xa9", 4, 1}};
+        positive checks = 0;
+        for (positive at = 0; at < array_count(cases); at++)
+        {
+                if (!edit_load(cases[at].text, string_length(cases[at].text)) ||
+                    edit_step_back(0, cases[at].column) != cases[at].want)
+                        return 0;
+                checks++;
+        }
+        return checks;
+}
+
 static unsigned word_kind(p8 byte)
 {
         if (byte == ' ' || byte == '\t') return 0;
@@ -1299,6 +1317,11 @@ b32 main()
                         say_number(check_word_reuse());
                         say_byte('\n');
                 }
+                else if (string_compare(verb, (string_address) "step_bounds") == 0)
+                {
+                        say_number(check_step_bounds());
+                        say_byte('\n');
+                }
                 else if (string_compare(verb, (string_address) "compaction") == 0)
                 {
                         say_number(check_cursor_compaction());
@@ -1774,6 +1797,7 @@ group bounds
 same 'full status returns' ''             40 6 statusfull buffer
 same 'shared renderer variance' '7808'    40 6 render_reuse
 same 'shared word variance' '168960'      40 6 word_reuse
+same 'reverse step boundaries' '10'      40 6 step_bounds
 
 group rows
 #       Typing a character writes the one row it changed. A full repaint of a

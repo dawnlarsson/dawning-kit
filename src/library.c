@@ -16564,7 +16564,7 @@ PURE address_any memory_search(address_any block, positive size,
 
 /*
         The length of the run at the start of a string whose bytes are all in a
-        set, where the set is 256 bits -- one for each byte value.
+        set, where the set is 256 bytes -- one for each byte value.
 
         This is what a lexer does almost all of: skip the blanks, take the word
         up to a metacharacter, run to the end of the line, scan to the closing
@@ -16576,26 +16576,24 @@ PURE address_any memory_search(address_any block, positive size,
 */
 #define STRING_SET_BYTES 256
 
-/*
-        The one set a scanner asks for over and over.
-
-        string_span and string_span_max take a set and not a predicate, and
-        until now every caller that wanted this one either built it at startup
-        or wrote the byte loop out by hand: twenty two places across the shell
-        and the utilities, all of them skipping blanks.
-
-        One and no more. A second with one caller costs a load and an
-        indirection to say what a compare already said, which is what became
-        of the complement and of the digits: byte_class_holds answers both.
-*/
-// A space or a tab: what POSIX calls a blank, and what IFS is by default.
+/* Prepared sets for shared scanners; none includes the terminator. Names
+   include digits, so callers retain their separate first-character policy. */
 extern const b8 string_set_blanks[STRING_SET_BYTES];
+extern const b8 string_set_name[STRING_SET_BYTES];
+extern const b8 string_set_digits[STRING_SET_BYTES];
 
 __asm__(
     ASM_RODATA_OBJECT_BEGIN(string_set_blanks, 16)
     ".zero 9\n   .byte 1\n   .zero 22\n   .byte 1\n"
     ".zero 223\n"
     ASM_OBJECT_END(string_set_blanks)
+    ASM_RODATA_OBJECT_BEGIN(string_set_name, 16)
+    ".zero 48\n   .fill 10,1,1\n   .zero 7\n   .fill 26,1,1\n"
+    ".zero 4\n   .byte 1\n   .zero 1\n   .fill 26,1,1\n   .zero 133\n"
+    ASM_OBJECT_END(string_set_name)
+    ASM_RODATA_OBJECT_BEGIN(string_set_digits, 16)
+    ".zero 48\n   .fill 10,1,1\n   .zero 198\n"
+    ASM_OBJECT_END(string_set_digits)
 );
 
 /*

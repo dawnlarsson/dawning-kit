@@ -233,7 +233,7 @@ static address_any shell_map(positive size)
 
         //      memory answers with the kernel's own negative errno, which as
         //      an address is the top page of the space and never a mapping.
-        if (!got || (positive)got >= (positive)-4095)
+        if (!got || system_failed(got))
         {
                 shell_memory_failed = true;
                 return null;
@@ -719,10 +719,7 @@ static fn token_push_bytes(address_any data, positive length)
 static p8 shell_assignment_kind(string_address word,
                                 positive address_to name_length)
 {
-        positive length = 0;
-
-        while (expand_name_character(string_get(word + length)))
-                length++;
+        positive length = string_span(word, string_set_name);
 
         if (!length || (string_get(word) >= '0' && string_get(word) <= '9'))
         {

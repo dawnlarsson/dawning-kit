@@ -1477,8 +1477,7 @@ static b32 scan_run(scan_source address_to source, string_address format,
 
                 if (byte_is_space(string_get(at)))
                 {
-                        while (byte_is_space(string_get(at)))
-                                at++;
+                        at += string_span_of_set(at, " \t\n\r\v\f");
 
                         scan_skip_white(source);
 

@@ -8236,25 +8236,18 @@ static PURE positive select_choice(b32 count)
 {
         string_address at = select_reply;
         positive value = 0;
-        bool any = false;
 
         at += string_span(at, string_set_blanks);
 
         if (string_is(at, '+'))
                 at++;
 
-        while (string_get(at) >= '0' && string_get(at) <= '9')
-        {
-                if (value <= (positive)count)
-                        value = value * 10 + (positive)(string_get(at) - '0');
-
-                any = true;
-                at++;
-        }
+        if (!string_digits_checked(address_of at, 10, address_of value))
+                return 0;
 
         at += string_span(at, string_set_blanks);
 
-        if (!any || string_get(at) || !value || value > (positive)count)
+        if (string_get(at) || !value || value > (positive)count)
                 return 0;
 
         return value;

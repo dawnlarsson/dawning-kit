@@ -1402,11 +1402,11 @@ static PURE positive edit_step_back(positive line, positive column)
 {
         struct edit_line address_to text = edit_lines + line;
 
-        if (!column)
-                return 0;
-
         if (column > text->length)
                 column = text->length;
+
+        if (!column)
+                return 0;
 
         column--;
 
@@ -1989,9 +1989,8 @@ static PURE struct edit_place edit_word_right(struct edit_place place)
         }
 
         text = edit_lines + place.line;
-        while (place.column < text->length &&
-               byte_is_blank(text->text[place.column]))
-                place.column++;
+        place.column += string_span_max(text->text + place.column,
+                                         text->length - place.column, string_set_blanks);
 
         if (place.column < text->length && edit_is_word(text->text[place.column]))
         {

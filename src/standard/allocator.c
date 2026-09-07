@@ -473,7 +473,7 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
                 //      memory() is the raw trap and returns the kernel's
                 //      answer unchanged, so a failure is a small negative
                 //      number wearing an unsigned hat.
-                if (!got || got >= (positive)-4095)
+                if (!got || system_failed(got))
                         return null;
 
                 address_any block = (address_any)(got + ALLOCATOR_HEADER_WIDE);
@@ -519,7 +519,7 @@ static address_any allocator_take(positive bytes, bool address_to fresh)
 
                 positive got = (positive)memory(chunk);
 
-                if (!got || got >= (positive)-4095)
+                if (!got || system_failed(got))
                         return null;
 
                 //      Eight bytes of the page go unused so that the first
@@ -796,7 +796,7 @@ pub address_any memory_resize(address_any block, positive bytes)
                         (positive)block - ALLOCATOR_HEADER_WIDE, have, whole,
                         ALLOCATOR_MREMAP_MAYMOVE);
 
-                if (moved && moved < (positive)-4095)
+                if (moved && !system_failed(moved))
                 {
                         address_any grown =
                                 (address_any)(moved + ALLOCATOR_HEADER_WIDE);

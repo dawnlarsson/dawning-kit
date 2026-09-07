@@ -165,7 +165,7 @@ bipolar shell_exec_file(string_address path,
         bytes = entries * sizeof(fallback[0]);
         fallback = (string_address address_to)memory(bytes);
 
-        if (!fallback || (positive)fallback >= (positive)-4095)
+        if (!fallback || system_failed(fallback))
                 return answered;
 
         fallback[0] = (string_address)"/proc/self/exe";
@@ -1606,14 +1606,9 @@ static PURE bool env_reference_element_span(
             byte_is_digit(string_get(name)))
                 return false;
 
-        while (open < length && string_get(name + open) != '[')
-        {
-                if (!expand_name_character(string_get(name + open)))
-                        return false;
-                open++;
-        }
+        open = string_span_max(env_reading(name), length, string_set_name);
 
-        if (!open || open >= length - 1)
+        if (!open || open >= length - 1 || string_get(name + open) != '[')
                 return false;
 
         address_to base_length = open;
@@ -3413,14 +3408,8 @@ static fn shell_readonly_refused(string_address name, positive length)
 
 static bool shell_valid_name(string_address name, positive length)
 {
-        if (!length || (string_get(name) >= '0' && string_get(name) <= '9'))
-                return false;
-
-        for (positive at = 0; at < length; at++)
-                if (!expand_name_character(string_get(name + at)))
-                        return false;
-
-        return true;
+        return length && !byte_is_digit(string_get(name)) &&
+               string_span_max(name, length, string_set_name) == length;
 }
 
 static fn shell_bad_name(string_address command, string_address name,
@@ -4377,9 +4366,7 @@ fn shell_echo(writer write, string_address input)
         {
                 string_address letter = shell_argv[index] + 1;
 
-                while (string_is(letter, 'n') || string_is(letter, 'e') ||
-                       string_is(letter, 'E'))
-                        letter++;
+                letter += string_span_of_set(letter, "neE");
 
                 // Anything else in the word makes the whole word an operand,
                 // which is what every shell prints for `echo -q`.
@@ -6421,23 +6408,22 @@ static fn shell_declare_quoted(writer write, string_address value)
 // the way a value is when it could not. Bash draws the line at a name.
 static COLD fn shell_declare_key(writer write, string_address key, positive length)
 {
-        for (positive at = 0; at < length; at++)
-                if (!expand_name_character(key[at]))
+        if (string_span_max(key, length, string_set_name) != length)
+        {
+                shell_mark held =
+                    shell_store_mark(address_of expand_store);
+                p8 address_to kept = shell_store_take(
+                    address_of expand_store, length + 1);
+
+                if (kept)
                 {
-                        shell_mark held =
-                            shell_store_mark(address_of expand_store);
-                        p8 address_to kept = shell_store_take(
-                            address_of expand_store, length + 1);
-
-                        if (kept)
-                        {
-                                memory_copy_end(kept, key, length);
-                                shell_declare_quoted(write, kept);
-                        }
-
-                        shell_store_rewind(address_of expand_store, held);
-                        return;
+                        memory_copy_end(kept, key, length);
+                        shell_declare_quoted(write, kept);
                 }
+
+                shell_store_rewind(address_of expand_store, held);
+                return;
+        }
 
         write(key, length);
 }
@@ -8379,9 +8365,7 @@ fn printf_one(writer write, string_address format)
 
                 // The length modifiers say nothing here: every number this
                 // reads is already as wide as the machine.
-                while (string_is(step, 'l') || string_is(step, 'h') ||
-                       string_is(step, 'z') || string_is(step, 'j'))
-                        step++;
+                step += string_span_of_set(step, "lhzj");
 
                 conversion = string_get(step);
 
@@ -10019,50 +10003,29 @@ bool trap_debug_here;
 */
 bipolar trap_number(string_address word)
 {
-        // Linux's own second spelling of 29; the reference shell and kill
-        // both say IO and both take POLL as well.
-        static const named_byte aliases[] = {{"POLL", 29}};
-        p8 upper[16];
-        positive length;
-        positive index = 0;
-        bool good;
-        bipolar value;
-
         if (!word)
                 return -1;
 
-        length = string_length_max(word, sizeof(upper));
+        string_address name = word;
+        if (!string_compare_folded_max(name, "SIG", 3))
+                name += 3;
 
-        if (length < sizeof(upper))
-        {
-                memory_copy_apart(upper, word, length + 1);
-                memory_to_upper_ascii(upper, length);
+        positive index = string_table_find_ascii_case(
+            name, trap_names, sizeof(trap_names[0]), TRAP_NAMES);
+        if (index < TRAP_NAMES)
+                return (bipolar)index;
 
-                string_address name = upper;
+        index = string_table_find_ascii_case(name, trap_condition_names,
+                                             sizeof(trap_condition_names[0]), 3);
+        if (index < 3)
+                return (bipolar)(TRAP_ERR + index);
 
-                if (string_is(name, 'S') && string_is(name + 1, 'I') &&
-                    string_is(name + 2, 'G'))
-                        name += 3;
+        // Linux's second spelling of IO, accepted by both trap and kill.
+        if (!string_compare_folded(name, "POLL"))
+                return 29;
 
-                index = string_table_find(name, trap_names,
-                                          sizeof(trap_names[0]), TRAP_NAMES);
-
-                if (index < TRAP_NAMES)
-                        return (bipolar)index;
-
-                index = string_table_find(name, trap_condition_names,
-                                          sizeof(trap_condition_names[0]), 3);
-
-                if (index < 3)
-                        return (bipolar)(TRAP_ERR + index);
-
-                for (index = 0; index < array_count(aliases); index++)
-                        if (string_equals(name, aliases[index].name))
-                                return aliases[index].value;
-        }
-
-        value = shell_signed(word, address_of good);
-
+        bool good;
+        bipolar value = shell_signed(word, address_of good);
         return good && value >= 0 && value <= TRAP_NUMBER_MAX ? value : -1;
 }
 

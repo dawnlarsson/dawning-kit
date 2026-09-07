@@ -3655,22 +3655,13 @@ static positive ls_escape_byte(p8 byte, p8 address_to into, bool c_style)
 
 static fn ls_name_text(string_address name)
 {
+        positive length = string_length(name);
         if (ls_escape)
         {
-                static b8 safe[STRING_SET_BYTES];
-                static bool ready;
-
-                if (!ready)
+                for (positive at = 0; at < length;)
                 {
-                        memory_fill(safe + 32, 1, STRING_SET_BYTES - 32);
-                        safe['\\'] = 0;
-                        safe[127] = 0;
-                        ready = true;
-                }
-
-                for (positive at = 0; string_get(name + at);)
-                {
-                        positive plain = string_span(name + at, safe);
+                        positive plain = memory_escape_index(name + at,
+                            length - at, HEX_CONTROL | HEX_TAB | HEX_SLASH);
 
                         if (plain)
                         {
@@ -3678,7 +3669,7 @@ static fn ls_name_text(string_address name)
                                 at += plain;
                         }
 
-                        if (!string_get(name + at))
+                        if (at == length)
                                 break;
 
                         p8 escaped[4];
@@ -3690,28 +3681,21 @@ static fn ls_name_text(string_address name)
                 return;
         }
 
-        bool quoted = false;
-
-        if (ls_terminal)
-                for (positive i = 0; string_get(name + i); i++)
-                        if (string_get(name + i) < 32 || string_get(name + i) == 127)
-                        {
-                                quoted = true;
-                                break;
-                        }
+        bool quoted = ls_terminal && memory_escape_index(
+            name, length, HEX_CONTROL | HEX_TAB) < length;
 
         if (!quoted)
         {
-                log(name, 0);
+                log(name, length);
                 return;
         }
 
-        for (positive at = 0; string_get(name + at);)
+        for (positive at = 0; at < length;)
         {
                 positive first = at;
 
-                while (string_get(name + at) >= 32 && string_get(name + at) != 127)
-                        at++;
+                at += memory_escape_index(name + at, length - at,
+                                           HEX_CONTROL | HEX_TAB);
 
                 if (at > first)
                 {
@@ -3720,15 +3704,15 @@ static fn ls_name_text(string_address name)
                         log("'", 1);
                 }
 
-                if (!string_get(name + at))
+                if (at == length)
                         break;
 
                 p8 escaped[4];
-                positive length = ls_escape_byte(string_get(name + at++),
+                positive escaped_length = ls_escape_byte(string_get(name + at++),
                                                  escaped, false);
 
                 log("$'", 2);
-                log(escaped, length);
+                log(escaped, escaped_length);
                 log("'", 1);
         }
 }
@@ -6723,7 +6707,7 @@ static bool du_seen_grow()
                                                 room * sizeof(du_seen_name))
                                           : null;
 
-        if (!made || (positive)made >= (positive)-4095)
+        if (!made || system_failed(made))
         {
                 shell_memory_failed = true;
                 file_fail("du: out of memory while tracking hard links\n", 0);
@@ -8585,11 +8569,6 @@ static bool namei_walk(string_address path, string_address base,
         return true;
 }
 
-static fn namei_put_padding(positive count)
-{
-        writer_fill(log, count, ' ');
-}
-
 static fn namei_show(bool modes, bool owners, bool vertical)
 {
         positive user_width = 0;
@@ -8614,14 +8593,14 @@ static fn namei_show(bool modes, bool owners, bool vertical)
         {
                 namei_row address_to row = namei_rows + i;
                 if (!vertical)
-                        namei_put_padding(1 + row->depth * 2);
+                        writer_fill(log, 1 + row->depth * 2, ' ');
 
                 positive metadata = modes ? 10 : 1;
                 if (owners)
                         metadata += 1 + user_width + 1 + group_width;
 
                 if (!row->known)
-                        namei_put_padding(metadata);
+                        writer_fill(log, metadata, ' ');
                 else
                 {
                         if (modes)
@@ -8654,9 +8633,9 @@ static fn namei_show(bool modes, bool owners, bool vertical)
                         }
                 }
 
-                namei_put_padding(row->known ? 1 : 2);
+                writer_fill(log, row->known ? 1 : 2, ' ');
                 if (vertical)
-                        namei_put_padding(row->depth * 2);
+                        writer_fill(log, row->depth * 2, ' ');
                 log(namei_text + row->name_at, 0);
                 if (row->target_at != positive_max)
                 {
@@ -12720,12 +12699,7 @@ static bool hardlink_replace(hardlink_file address_to keep,
 
 static fn hardlink_list_one(hardlink_file address_to file, p8 delimiter)
 {
-        p8 digits[32];
-        positive length = positive_into_base(digits, file->hash, 10, false);
-        if (length < 20)
-                for (positive i = length; i < 20; i++)
-                        log("0", 1);
-        log(digits, length);
+        positive_to_padded(log, file->hash, 20, '0', 0);
         log("\t", 1);
         log(hardlink_path(file), 0);
         log(address_of delimiter, 1);
@@ -16825,7 +16799,7 @@ static b32 file_yes()
 
         positive mapped = (positive)memory(length);
 
-        if (!mapped || mapped >= (positive)-4095)
+        if (!mapped || system_failed(mapped))
         {
                 file_fail("yes: out of memory\n", 0);
                 return 1;

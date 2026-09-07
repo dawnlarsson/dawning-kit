@@ -193,6 +193,10 @@ static inline INLINE CONST bipolar bipolar_from_magnitude(positive magnitude,
            }                                                                \
            _merge_from; })
 
+/* Linux raw errors occupy [-4095, -1]; zero succeeds. Allocations that reject
+   a null address check it separately. Evaluate the raw result once. */
+#define system_failed(result) ((positive)(result) >= (positive)-4095)
+
 /* Cleanup paths neither need nor want close(2)'s errno translation. */
 #define system_close(handle)                                                 \
         system_call_1(syscall(close), (positive)(handle))
@@ -479,6 +483,25 @@ static HOT bipolar file_slurp_once_at(bipolar directory, string_address path,
                 else                                                         \
                         *_fixed_failed = true;                               \
         } while (false)
+
+/* Like string_table_find, with ASCII case folding and a null-name sentinel.
+   The name pointer comes first; the remaining row shape belongs to callers. */
+#if !defined(KERNEL_MODE) && !defined(STANDARD_NO_PLATFORM)
+static inline INLINE PURE positive string_table_find_ascii_case(
+    string_address name, const address_any table, positive stride, positive count)
+{
+        for (positive i = 0; i < count; i++)
+        {
+                string_address entry = memory_load_unaligned(
+                    string_address, (const p8 address_to)table + i * stride);
+                if (!entry)
+                        break;
+                if (!string_compare_folded(name, entry))
+                        return i;
+        }
+        return count;
+}
+#endif
 
 /* Tables that turn a long name into one byte of grammar use this same row in
    both the shell and its utilities. */

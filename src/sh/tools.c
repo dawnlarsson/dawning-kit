@@ -78,14 +78,8 @@ static b32 tools_hostid()
                 return text_refuse(program_argument((b32)taking.first),
                                    "extra operand", 1);
 
-        p8 digits[8];
-        positive length = positive_into_base(digits, tools_hostid_value(), 16,
-                                             false);
-
-        for (positive i = length; i < sizeof(digits); i++)
-                text_put_character('0');
-
-        text_put(digits, length);
+        positive_to_base_field(text_put, tools_hostid_value(), 16, 8, -1,
+                               (positive)1 << 28);
         text_put_character('\n');
         return text_done(0);
 }
@@ -202,18 +196,7 @@ static fn logger_build_padded(logger_builder address_to build, positive value,
         logger_build_bytes(build, digits, length);
 }
 
-static bool logger_named(string_address given, string_address expected)
-{
-        return string_compare_folded(given, expected) == 0;
-}
-
-typedef struct
-{
-        string_address name;
-        p8 value;
-} logger_name;
-
-static const logger_name logger_facilities[] = {
+static const named_byte logger_facilities[] = {
     {(string_address)"kern", 0},       {(string_address)"user", 8},
     {(string_address)"mail", 16},      {(string_address)"daemon", 24},
     {(string_address)"auth", 32},      {(string_address)"security", 32},
@@ -227,7 +210,7 @@ static const logger_name logger_facilities[] = {
     {(string_address)"local7", 184},   {null, 0},
 };
 
-static const logger_name logger_levels[] = {
+static const named_byte logger_levels[] = {
     {(string_address)"emerg", 0},   {(string_address)"panic", 0},
     {(string_address)"alert", 1},   {(string_address)"crit", 2},
     {(string_address)"err", 3},     {(string_address)"error", 3},
@@ -237,23 +220,18 @@ static const logger_name logger_levels[] = {
 };
 
 static bipolar logger_decode(string_address word,
-                             const logger_name address_to names)
+                             const named_byte address_to names, positive count)
 {
         positive number;
-
         if (string_digits_exact(word, address_of number))
         {
-                for (positive at = 0; names[at].name; at++)
+                for (positive at = 0; at < count; at++)
                         if (names[at].value == number)
                                 return (bipolar)number;
                 return -1;
         }
-
-        for (positive at = 0; names[at].name; at++)
-                if (logger_named(word, names[at].name))
-                        return names[at].value;
-
-        return -1;
+        positive found = string_table_find_ascii_case(word, names, sizeof(*names), count);
+        return found < count ? names[found].value : -1;
 }
 
 static bool logger_priority(string_address word, positive address_to priority)
@@ -270,11 +248,13 @@ static bool logger_priority(string_address word, positive address_to priority)
                         return false;
                 memory_copy(facility_text, word, length);
                 facility_text[length] = end;
-                facility = logger_decode(facility_text, logger_facilities);
+                facility = logger_decode(facility_text, logger_facilities,
+                                         array_count(logger_facilities) - 1);
                 level_text = dot + 1;
         }
 
-        bipolar level = logger_decode(level_text, logger_levels);
+        bipolar level = logger_decode(level_text, logger_levels,
+                                      array_count(logger_levels) - 1);
         if (facility < 0 || level < 0)
                 return false;
 
@@ -1216,15 +1196,7 @@ static positive login_field(p8 address_to into, positive room,
 static fn login_put_width(string_address value, positive length,
                           positive width, bool right)
 {
-        if (right && length < width)
-                for (positive i = length; i < width; i++)
-                        text_put_character(' ');
-
-        text_put((p8 address_to)value, length);
-
-        if (!right && length < width)
-                for (positive i = length; i < width; i++)
-                        text_put_character(' ');
+        writer_field(text_put, value, length, width, ' ', !right);
 }
 
 static positive login_time(p8 address_to into, b32 seconds)
@@ -2376,11 +2348,7 @@ static bool login_utmpdump_visit(login_record address_to record)
         length = positive_into(number, record->type);
         text_put(number, length);
         text_put_string("] [");
-        length = positive_into(number, record->process);
-        if (length < 5)
-                for (positive at = length; at < 5; at++)
-                        text_put_character('0');
-        text_put(number, length);
+        positive_to_padded(text_put, record->process, 5, '0', 0);
         text_put_string("] ");
 
         length = login_field(identity, sizeof(identity), record->identity,
@@ -2826,8 +2794,7 @@ static fn login_last_line(string_address user, string_address line,
                                                  ? 53 : 55;
                 positive used = start_length + suffix;
                 if (used < duration_at)
-                        for (positive at = used; at < duration_at; at++)
-                                text_put_character(' ');
+                        writer_fill(text_put, duration_at - used, ' ');
                 text_put(duration, duration_length);
         }
         else if (end_kind == LOGIN_LAST_END_STILL)
@@ -2840,8 +2807,7 @@ static fn login_last_line(string_address user, string_address line,
                 positive gap = ended ? 5
                                      : end_kind == LOGIN_LAST_END_STILL ? 6
                                                                         : 2;
-                for (positive at = 0; at < gap; at++)
-                        text_put_character(' ');
+                writer_fill(text_put, gap, ' ');
                 text_put_string(host);
         }
         text_put_character('\n');
@@ -4379,10 +4345,7 @@ static bool numfmt_decimal(p8 address_to bytes, positive length,
                 return false;
 
         positive integral_end = point == positive_max ? length : point;
-        positive zeros = 0;
-
-        while (at + zeros < integral_end && bytes[at + zeros] == '0')
-                zeros++;
+        positive zeros = memory_span_byte(bytes + at, '0', integral_end - at);
 
         positive integral = integral_end - at - zeros;
         p8 normalized[48];
@@ -4719,13 +4682,13 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
         // its separator, scale and trailing blanks; the checked decimal
         // parser below still owns whether the number itself is valid.
         positive numeric_length = stop && bytes[0] == '-';
-        while (numeric_length < stop && byte_is_digit(bytes[numeric_length]))
-                numeric_length++;
+        numeric_length += string_span_max(bytes + numeric_length,
+                                          stop - numeric_length, string_set_digits);
         if (numeric_length < stop && bytes[numeric_length] == '.')
         {
                 numeric_length++;
-                while (numeric_length < stop && byte_is_digit(bytes[numeric_length]))
-                        numeric_length++;
+                numeric_length += string_span_max(bytes + numeric_length,
+                                                  stop - numeric_length, string_set_digits);
         }
 
         positive tail = numeric_length;
@@ -4761,8 +4724,7 @@ static bool numfmt_convert(p8 address_to bytes, positive length,
                 }
         }
 
-        while (tail < stop && byte_is_blank(bytes[tail]))
-                tail++;
+        tail += string_span_max(bytes + tail, stop - tail, string_set_blanks);
 
         seq_decimal number;
         positive numerator;

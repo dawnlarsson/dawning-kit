@@ -104,10 +104,6 @@ typedef struct
 #define STDLIB_ARENA_CHUNK 65536
 #define STDLIB_ARENA_ALIGN 16
 
-//      mmap reports failure by returning a small negative errno in the place
-//      an address would have gone, so anything in the last page is not memory.
-#define stdlib_memory_failed(address) ((positive)(address) > (positive) - 4096)
-
 static p8 address_to stdlib_arena_next = null;
 static positive stdlib_arena_left = 0;
 
@@ -143,7 +139,7 @@ static address_any stdlib_arena_take(positive size)
 
                 block = (p8 address_to)memory(want);
 
-                if (is_null(block) || stdlib_memory_failed(block))
+                if (is_null(block) || system_failed(block))
                         return stdlib_arena_failed();
 
                 //      Whatever was left of the previous chunk is abandoned.

@@ -8895,10 +8895,7 @@ static fn ul_wipefs_no_act(ul_wipefs_work address_to work,
                                 continue;
 
                         p8 where[2 * sizeof(positive) + 1];
-                        positive digits = positive_into_base(
-                            where, (positive)row->offset, 16, false);
-                        storage_hex_padded(where, (positive)row->offset,
-                                           max(digits, (positive)8), false);
+                        storage_hex_padded(where, (positive)row->offset, 8, false);
                         string_format(
                             log,
                             "%s: %p bytes were erased at offset 0x%s (%s):",

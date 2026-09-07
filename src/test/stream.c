@@ -49,7 +49,7 @@ static bool empty_mode_stays_bounded(void)
         // 64 KiB is a multiple of every supported Linux base page size.
         positive page = 64 * 1024;
         p8 address_to bytes = memory(page * 2);
-        if (!bytes || (positive)bytes >= ERROR_WINDOW)
+        if (!bytes || system_failed(bytes))
                 return false;
         if (system_call_3(syscall(mprotect), (positive)(bytes + page), page, 0))
         {

@@ -1742,8 +1742,8 @@ static bool clock_scan_number(clock_scan_state address_to state, bipolar least,
 {
         bipolar value = 0;
 
-        while (byte_is_space((p8)(address_to state->at)))
-                state->at++;
+        state->at += string_span_of_set(
+                (string_address)state->at, " \t\n\r\v\f");
 
         if (!byte_is_digit((p8)(address_to state->at)))
                 return false;
@@ -1979,8 +1979,8 @@ static bool clock_scan_core(clock_scan_state address_to state,
 
                 case 'n':
                 case 't':
-                        while (byte_is_space((p8)(address_to state->at)))
-                                state->at++;
+                        state->at += string_span_of_set(
+                                (string_address)state->at, " \t\n\r\v\f");
                         break;
 
                 case 'p':
@@ -2077,9 +2077,8 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         if (!byte_is_digit((p8)(address_to state->at)))
                                 return false;
 
-                        do
-                                state->at++;
-                        while (byte_is_digit((p8)(address_to state->at)));
+                        state->at += string_span((string_address)state->at,
+                                                 string_set_digits);
                         break;
 
                 case 'U':
@@ -2127,8 +2126,8 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         bool behind;
                         positive taken = 0;
 
-                        while (byte_is_space((p8)(address_to state->at)))
-                                state->at++;
+                        state->at += string_span_of_set(
+                                (string_address)state->at, " \t\n\r\v\f");
 
                         if (address_to state->at == 'Z')
                         {
@@ -2198,12 +2197,11 @@ static bool clock_scan_core(clock_scan_state address_to state,
                         because the zone ate the date.
                 */
                 case 'Z':
-                        while (byte_is_space((p8)(address_to state->at)))
-                                state->at++;
+                        state->at += string_span_of_set(
+                                (string_address)state->at, " \t\n\r\v\f");
 
-                        while (address_to state->at != end &&
-                               !byte_is_space((p8)(address_to state->at)))
-                                state->at++;
+                        state->at += string_span_without_set(
+                                (string_address)state->at, " \t\n\r\v\f");
                         break;
 
                 case '%':
