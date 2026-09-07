@@ -6308,46 +6308,11 @@ static COLD PURE string_address exec_compound_end(string_address at)
 {
         while (string_get(at))
         {
-                p8 value = string_get(at);
-                string_address stop;
-
-                if (value == ' ' || value == '\t' || value == '\n')
+                if (lex_is_space(string_get(at)))
                         break;
 
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
+                if (lex_skip_held(address_of at))
                         continue;
-                }
-
-                if (value == '$' && string_is(at + 1, '\''))
-                {
-                        at = expand_dollar_quoted_run(at);
-                        continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        at = expand_quoted_run(at, value);
-                        continue;
-                }
-
-                if (value == '`')
-                {
-                        stop = string_first_of(at + 1, '`');
-                        at = stop ? stop + 1 : at + 1;
-                        continue;
-                }
-
-                if (value == '$' &&
-                    (string_is(at + 1, '(') || string_is(at + 1, '{')))
-                {
-                        stop = string_is(at + 1, '(')
-                                   ? expand_paren_end(at + 2)
-                                   : expand_brace_end(at + 2);
-                        at = stop ? stop + 1 : at + 2;
-                        continue;
-                }
 
                 at++;
         }
@@ -8868,9 +8833,7 @@ static bool conditional_tokenize(string_address text)
                                 option is on, because what is in here is
                                 matched when the command runs.
                         */
-                        if (string_is(at + 1, '(') &&
-                            (value == '?' || value == '*' || value == '+' ||
-                             value == '@' || value == '!'))
+                        if (string_is(at + 1, '(') && lex_extended_head(value))
                         {
                                 string_address group = lex_nesting(at + 1);
 
@@ -8887,34 +8850,11 @@ static bool conditional_tokenize(string_address text)
                              (value == '(' || value == ')')))
                                 break;
 
-                        if (value == '\\' && string_get(at + 1))
-                        {
-                                at += 2;
+                        b32 skipped = lex_skip_held(address_of at);
+                        if (skipped == LEX_SKIP_UNCLOSED)
+                                return false;
+                        if (skipped)
                                 continue;
-                        }
-
-                        if (value == '\'' || value == '"')
-                        {
-                                string_address stop = lex_quote_end(at + 1, value);
-
-                                if (!string_get(stop))
-                                        return false;
-
-                                at = stop + 1;
-                                continue;
-                        }
-
-                        {
-                                string_address inner = lex_nested_at(at);
-                                string_address stop =
-                                    inner ? lex_nesting(inner) : null;
-
-                                if (stop && stop > inner)
-                                {
-                                        at = stop;
-                                        continue;
-                                }
-                        }
 
                         at++;
                 }

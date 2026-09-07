@@ -359,6 +359,8 @@ static __attribute__((noinline)) string_address
 lex_nesting(string_address at);
 static __attribute__((noinline)) string_address
 lex_nesting_double(string_address at);
+static string_address lex_nesting_at(string_address at, positive nesting,
+                                     bool posix_double);
 static string_address lex_quote_end(string_address at, p8 quote);
 static string_address parse_here_skip_bodies(string_address line,
                                               string_address newline);
@@ -619,7 +621,8 @@ static string_address lex_nested_at(string_address at)
         unclosed quote and the caller reading a line wants to tell them apart.
 */
 static string_address lex_quote_end_kind(string_address at, p8 quote,
-                                         bool address_to command_open)
+                                         bool address_to command_open,
+                                         positive nesting)
 {
         string_address step = at;
 
@@ -648,9 +651,8 @@ static string_address lex_quote_end_kind(string_address at, p8 quote,
                 {
                         string_address inner = lex_nested_at(step);
                         string_address stop =
-                            inner ? (string_is(inner, '{')
-                                         ? lex_nesting_double(inner)
-                                         : lex_nesting(inner))
+                            inner ? lex_nesting_at(inner, nesting,
+                                                   string_is(inner, '{'))
                                   : null;
 
                         if (stop && stop > inner)
@@ -676,7 +678,7 @@ static string_address lex_quote_end_kind(string_address at, p8 quote,
 
 static string_address lex_quote_end(string_address at, p8 quote)
 {
-        return lex_quote_end_kind(at, quote, null);
+        return lex_quote_end_kind(at, quote, null, 0);
 }
 
 /*
@@ -832,8 +834,6 @@ static string_address lex_nesting_at(string_address at, positive nesting,
                         continue;
                 }
 
-                // Stepped over, not looked into: a bracket in a string closes
-                // nothing, and lex_quote_end would call back in here.
                 if (c == '\'' && raw_single)
                 {
                         step++;
@@ -843,12 +843,13 @@ static string_address lex_nesting_at(string_address at, positive nesting,
 
                 if (c == '\'' || c == '"')
                 {
-                        step++;
-
-                        if (c == '\'')
-                                step = string_first_of_or_end(step, '\'');
-                        else
-                                step = lex_escaped_end(step, '"');
+                        /* Quotes inside nested commands use the same scanner
+                           as outer words. Carry depth through both scanners
+                           rather than restarting its recursion guard. Legacy
+                           backticks retain their raw escaped-quote grammar. */
+                        step = open == '`' && c == '"'
+                            ? lex_escaped_end(step + 1, c)
+                            : lex_quote_end_kind(step + 1, c, null, nesting + 1);
 
                         if (string_get(step))
                                 step++;
@@ -1075,7 +1076,7 @@ b32 lex_unfinished(string_address line)
                 {
                         bool command_open = false;
                         step = lex_quote_end_kind(step + 1, c,
-                                                  address_of command_open);
+                                                  address_of command_open, 0);
 
                         // A backslash at the end inside double quotes is still
                         // a continuation: the quote is open and the line is

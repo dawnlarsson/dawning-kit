@@ -1510,6 +1510,14 @@ bash_answer 'transform quote reads control back' \
 #       E reads the escapes in the value exactly as $'...' reads its own.
 bash_answer 'transform escapes' 'v='"'"'a\tb\x41\e[1m'"'"'; printf "%s\n" "${v@E}" | cat -A'
 bash_answer 'transform escapes unknown' 'v='"'"'\z'"'"'; printf "%s\n" "${v@E}"'
+
+bash_answer 'transform NUL preserves word suffix' 'for v in '"'"'\0hidden'"'"' '"'"'\x00hidden'"'"' '"'"'\c@hidden'"'"' '"'"'a\0hidden'"'"'; do printf '"'"'<%s>\n'"'"' "pre${v@E}post"; done'
+bash_answer 'transform control backslash grammar' 'v='"'"'\c\\tail'"'"'; printf '"'"'<%s><%s>\n'"'"' "${v@E}" $'"'"'\c\\tail'"'"''
+bash_answer 'array nested double-quoted command' 'a=("pre$(printf "%s" "x y")post" tail); printf '"'"'<%s>\n'"'"' "${a[@]}"'
+bash_answer 'array nested apostrophe in command' 'a=("pre$(printf "%s" '"'"'a'"'"'"'"'"'"'"'"'b'"'"')post" tail); printf '"'"'<%s>\n'"'"' "${a[@]}"'
+bash_answer 'brace command substitution commas' 'printf '"'"'<%s>\n'"'"' {$(printf %s a,b),tail} {`printf %s a,b`,tail}'
+bash_answer 'replacement backtick slash' 'x='"'"'a/b a/b'"'"'; printf '"'"'<%s>\n'"'"' "${x/`printf %s a/b`/Q}"'
+bash_answer 'conditional escaped ANSI quote' '[[ $'"'"'x\'"'"' y'"'"' == $'"'"'x\'"'"' y'"'"' ]]; printf '"'"'status:%s\n'"'"' "$?"'
 bash_answer 'transform escapes newline' 'v='"'"'a\nb'"'"'; printf "%s\n" "${v@E}" | cat -A'
 bash_answer 'transform case' 'v=abc; printf "%s %s %s\n" "${v@U}" "${v@u}" "${v@L}"'
 bash_answer 'transform case back' 'v=ABC; printf "%s %s\n" "${v@L}" "${v@u}"'

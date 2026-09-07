@@ -1721,6 +1721,16 @@ static b32 parse_if_tail()
         return index;
 }
 
+static b32 parse_do_body(b32 index)
+{
+        if (parse_state || !parse_expect_word("do"))
+                return 0;
+
+        parse_nodes[index].right = parse_list_required();
+
+        return parse_state || !parse_expect_word("done") ? 0 : index;
+}
+
 static b32 parse_loop(b32 kind)
 {
         b32 index = parse_node_new(kind);
@@ -1732,15 +1742,7 @@ static b32 parse_loop(b32 kind)
 
         parse_nodes[index].left = parse_list_required();
 
-        if (parse_state || !parse_expect_word("do"))
-                return 0;
-
-        parse_nodes[index].right = parse_list_required();
-
-        if (parse_state || !parse_expect_word("done"))
-                return 0;
-
-        return index;
+        return parse_do_body(index);
 }
 
 /*
@@ -1772,15 +1774,7 @@ static b32 parse_for(b32 kind)
 
                 parse_skip_newlines();
 
-                if (!parse_expect_word("do"))
-                        return 0;
-
-                parse_nodes[index].right = parse_list_required();
-
-                if (parse_state || !parse_expect_word("done"))
-                        return 0;
-
-                return index;
+                return parse_do_body(index);
         }
 
         if (parse_look(0)->kind != PT_WORD)
@@ -1825,15 +1819,7 @@ static b32 parse_for(b32 kind)
 
         parse_skip_separators();
 
-        if (parse_state || !parse_expect_word("do"))
-                return 0;
-
-        parse_nodes[index].right = parse_list_required();
-
-        if (parse_state || !parse_expect_word("done"))
-                return 0;
-
-        return index;
+        return parse_do_body(index);
 }
 
 static b32 parse_case()

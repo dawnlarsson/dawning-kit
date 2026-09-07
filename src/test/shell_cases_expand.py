@@ -510,6 +510,57 @@ def pattern_replacement(rng):
         'printf "source:<%s>\\n" "$x"')
 
 
+def held_scanner(rng):
+    # The same quoting/substitution boundaries reach several syntax scanners.
+    # Delimiters in the payload must never become delimiters of the caller.
+    payload = rng.choice(("a b", "a,b", "a/b", "a:b", "a;b", "a'b", "a)b"))
+    word = rng.choice((
+        '$(printf %s ' + quote(payload) + ')',
+        '`printf %s ' + quote(payload) + '`',
+        '"pre$(printf "%s" ' + quote(payload) + ')post"',
+        '${missing:-' + quote(payload) + '}',
+        "$'" + payload.replace("'", "\\'") + "'",
+    ))
+    site = rng.choice(("array", "brace", "replace", "conditional"))
+    if site == "array":
+        observe = 'a=(' + word + ' tail); printf "<%s>\\n" "${a[@]}"'
+    elif site == "brace":
+        observe = 'printf "<%s>\\n" {' + word + ',tail}'
+    elif site == "replace":
+        observe = 'printf "<%s>\\n" "${x/' + word + '/Q}"'
+    else:
+        observe = '[[ ' + word + ' == ' + word + ' ]]; echo status:$?'
+    return "held-scanner-" + site, ("bash", "posix"), program(
+        "unset missing", "x=" + quote("pre" + payload + "post " + payload), observe)
+
+
+def ansi_escape_transition(rng):
+    token = rng.choice(("\\" + format(rng.randrange(512), "03o"),
+                        "\\x" + format(rng.randrange(256), "02x"),
+                        "\\c" + rng.choice(("@", "?", "A", "[", "\\\\")),
+                        "\\x", "\\q", "\\e", "\\E", "\\n", "\\'", "\\\\"))
+    raw = (rng.choice(("", "lead", " " * 31, "x" * 257)) +
+           token * rng.choice((1, 2, 7, 31)) +
+           rng.choice(("", "tail", "\\nend", "`tick", "\\0hidden")))
+    return "ansi-escape-transition", ("bash", "posix"), program(
+        "x=" + quote(raw),
+        'printf "E:<%s>\\n" "pre${x@E}post"',
+        "printf 'S:<%s>\\n' pre$'" + raw + "'post")
+
+
+def ansi_quote_transition(rng):
+    # ASCII encoders must agree byte-for-byte, as well as round-trip. High
+    # bytes have separate locale-dependent quoting policy, not this oracle.
+    byte = rng.randrange(1, 128)
+    payload = (rng.choice(("", "x" * 31, "word" * 64)) +
+               ("\\%03o" % byte) * rng.choice((1, 2, 7, 31)) +
+               rng.choice(("", "tail", "\\nend", "\\\\quote")))
+    return "ansi-quote-transition", ("bash", "posix"), program(
+        "v=$'" + payload + "'",
+        'printf "Q:<%s>\\n" "${v@Q}"; printf "P:<%q>\\n" "$v"',
+        'declare -p v; eval "back=${v@Q}"; printf "R:<%s>\\n" "$back"')
+
+
 GENERATORS = (
     parameter_default,
     parameter_trim,
@@ -538,6 +589,9 @@ GENERATORS = (
     character_bracket,
     pattern_composition,
     pattern_replacement,
+    held_scanner,
+    ansi_escape_transition,
+    ansi_quote_transition,
 )
 
 

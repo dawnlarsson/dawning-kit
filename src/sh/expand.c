@@ -3162,13 +3162,7 @@ static string_address shell_expand_arithmetic_text(string_address text)
 */
 static PURE string_address expand_quoted_run(string_address at, p8 quote)
 {
-        at++;
-
-        while (string_get(at) && string_not(at, quote))
-                at += quote == '"' && string_is(at, '\\') && string_get(at + 1)
-                          ? 2
-                          : 1;
-
+        at = lex_quote_end(at + 1, quote);
         return string_get(at) ? at + 1 : at;
 }
 
@@ -4033,50 +4027,11 @@ static PURE string_address expand_replace_separator(string_address at)
 {
         while (string_get(at))
         {
-                p8 value = string_get(at);
-
-                if (value == '$' && string_is(at + 1, '\''))
-                {
-                        at = expand_dollar_quoted_run(at);
-                        continue;
-                }
-
-                if (value == '/')
+                if (string_is(at, '/'))
                         return at;
 
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
+                if (lex_skip_held(address_of at))
                         continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        at = expand_quoted_run(at, value);
-                        continue;
-                }
-
-                if (value == '$' && string_is(at + 1, '{'))
-                {
-                        string_address stop = expand_brace_end(at + 2);
-
-                        if (stop)
-                        {
-                                at = stop + 1;
-                                continue;
-                        }
-                }
-
-                if (value == '$' && string_is(at + 1, '('))
-                {
-                        string_address stop = expand_paren_end(at + 2);
-
-                        if (stop)
-                        {
-                                at = stop + 1;
-                                continue;
-                        }
-                }
 
                 at++;
         }
@@ -4382,22 +4337,8 @@ static PURE string_address expand_substring_separator(string_address at)
         {
                 p8 value = string_get(at);
 
-                if (value == '\\' && string_get(at + 1))
-                {
-                        at += 2;
+                if (lex_skip_held(address_of at))
                         continue;
-                }
-
-                if (value == '$' && string_is(at + 1, '{'))
-                {
-                        string_address stop = expand_brace_end(at + 2);
-
-                        if (stop)
-                        {
-                                at = stop + 1;
-                                continue;
-                        }
-                }
 
                 if (value == '(')
                         parentheses++;
@@ -4702,25 +4643,54 @@ static CONST bool transform_awkward(p8 value)
         return value < ' ' || value == 127;
 }
 
-// The escape $'...' spells this byte with, or nothing when the byte stands
-// for itself. Bash writes the seven it has names for and octal for the rest.
-static CONST p8 transform_named(p8 value)
+// Immutable scanner sets shared by parameter quoting and builtin writers.
+static const b8 shell_quote_value[STRING_SET_BYTES] = {
+        [32 ... 126] = 1, [128 ... 255] = 1
+};
+static const b8 shell_quote_printable[STRING_SET_BYTES] = {
+        [32 ... 126] = 1
+};
+static const b8 shell_quote_double[STRING_SET_BYTES] = {
+        [32 ... 33] = 1, [35] = 1, [37 ... 91] = 1,
+        [93 ... 95] = 1, [97 ... 126] = 1
+};
+static const b8 shell_quote_ansi[STRING_SET_BYTES] = {
+        [32 ... 38] = 1, [40 ... 91] = 1, [93 ... 126] = 1
+};
+
+// Shared by ${value@Q}, printf %q and declaration listings. Only declarations
+// also escape high bytes; quote selection and bulk runs stay with the caller.
+static inline INLINE positive shell_ansi_byte(p8 address_to into, p8 value, bool high)
 {
+        p8 named = 0;
         switch (value)
         {
-        case 7: return 'a';
-        case 8: return 'b';
-        case 27: return 'E';
-        case 12: return 'f';
-        case '\n': return 'n';
-        case '\r': return 'r';
-        case '\t': return 't';
-        case 11: return 'v';
-        case '\\': return '\\';
-        case '\'': return '\'';
+        case 7: named = 'a'; break;
+        case 8: named = 'b'; break;
+        case 27: named = 'E'; break;
+        case 12: named = 'f'; break;
+        case '\n': named = 'n'; break;
+        case '\r': named = 'r'; break;
+        case '\t': named = 't'; break;
+        case 11: named = 'v'; break;
+        case '\\': case '\'': named = value; break;
         }
-
-        return 0;
+        if (named)
+        {
+                into[0] = '\\';
+                into[1] = named;
+                return 2;
+        }
+        if (transform_awkward(value) || (high && value >= 128))
+        {
+                into[0] = '\\';
+                into[1] = (p8)('0' + (value >> 6));
+                into[2] = (p8)('0' + ((value >> 3) & 7));
+                into[3] = (p8)('0' + (value & 7));
+                return 4;
+        }
+        into[0] = value;
+        return 1;
 }
 
 /*
@@ -4734,30 +4704,29 @@ static CONST p8 transform_named(p8 value)
 */
 static fn transform_quoted(string_address value, positive length, p8 mark)
 {
-        positive at;
-        bool awkward = false;
-
-        for (at = 0; at < length; at++)
-                if (transform_awkward(value[at]))
-                        awkward = true;
+        positive at = 0;
+        bool awkward = string_span_max(value, length, shell_quote_value) < length;
 
         if (!awkward)
         {
                 expand_push('\'', mark);
 
-                for (at = 0; at < length; at++)
+                while (at < length)
                 {
+                        positive run = memory_span_without_byte(value + at,
+                                                                '\'', length - at);
+                        if (run)
+                                expand_push_run(value + at, run, mark);
+                        at += run;
                         // A quote cannot appear inside a quoted run, so the
                         // run is closed, the quote written escaped, and a
                         // fresh run opened behind it.
-                        if (value[at] == '\'')
+                        if (at < length)
                         {
                                 expand_push_run((string_address) "'\\''", 4,
                                                 mark);
-                                continue;
+                                at++;
                         }
-
-                        expand_push(value[at], mark);
                 }
 
                 expand_push('\'', mark);
@@ -4767,114 +4736,99 @@ static fn transform_quoted(string_address value, positive length, p8 mark)
 
         expand_push_run((string_address) "$'", 2, mark);
 
-        for (at = 0; at < length; at++)
+        while (at < length)
         {
-                p8 named = transform_named(value[at]);
-                p8 written[8];
-                positive shown;
-
-                if (named)
+                if (shell_quote_ansi[value[at]])
                 {
-                        expand_push('\\', mark);
-                        expand_push(named, mark);
+                        positive run = string_span_max(value + at, length - at,
+                                                        shell_quote_ansi);
+                        expand_push_run(value + at, run, mark);
+                        at += run;
                         continue;
                 }
-
-                if (!transform_awkward(value[at]))
-                {
-                        expand_push(value[at], mark);
-                        continue;
-                }
-
-                //      Three octal digits behind a backslash, which is
-                //      what $'...' reads back and the only spelling every
-                //      byte with no name of its own has.
-                written[0] = '\\';
-                written[1] = (p8)('0' + ((value[at] >> 6) & 7));
-                written[2] = (p8)('0' + ((value[at] >> 3) & 7));
-                written[3] = (p8)('0' + (value[at] & 7));
-                shown = 4;
-                expand_push_run(written, shown, mark);
+                p8 written[4];
+                expand_push_run(written,
+                                shell_ansi_byte(written, value[at++], false), mark);
         }
 
         expand_push('\'', mark);
 }
 
-// The value with its backslash escapes read, which is what $'...' does to
-// the bytes it holds.
-static fn transform_escaped(string_address value, positive length, p8 mark)
+static const b8 expand_ansi_plain[STRING_SET_BYTES] = {
+        [1 ... 38] = 1, [40 ... 91] = 1, [93 ... 255] = 1
+};
+
+/* $'...' and ${value@E} interpret the same escapes. Only source has a closing
+   quote and doubles a backslash used as a control operand. A decoded NUL
+   discards the rest of this value, never the following word's suffix. */
+static string_address expand_ansi(string_address at, p8 mark, bool source)
 {
-        positive at = 0;
+        bool discard = false;
 
-        while (at < length)
+        while (string_get(at) && !(source && string_is(at, '\'')))
         {
-                positive used;
-                positive number;
-                p8 seen = value[at];
-                p8 escaped;
-
-                if (seen != '\\' || at + 1 >= length)
+                if (expand_ansi_plain[string_get(at)])
                 {
-                        expand_push(seen, mark);
-                        at++;
+                        positive run = string_span(at, expand_ansi_plain);
+                        if (!discard)
+                                expand_push_run(at, run, mark);
+                        at += run;
                         continue;
                 }
-
-                seen = value[++at];
-
-                if (seen >= '0' && seen <= '7')
+                p8 value = string_get(at++);
+                if (value != '\\' || !string_get(at))
                 {
-                        number = string_digits_octal_escape_max(value + at, 3,
-                                                                address_of used);
+                        if (!discard)
+                                expand_push(value, mark);
+                        continue;
+                }
+                value = string_get(at);
+
+                if (value >= '0' && value <= '7')
+                {
+                        positive used;
+                        value = (p8)string_digits_octal_escape_max(
+                            at, 3, address_of used);
                         at += used;
-                        expand_push((p8)number, mark);
-                        continue;
                 }
-
-                if (seen == 'x')
+                else if (value == 'x')
                 {
-                        number = string_digits_hexadecimal_escape_max(
-                            value + at + 1, 2, address_of used);
-
-                        if (!used)
-                        {
-                                expand_push('\\', mark);
-                                expand_push(seen, mark);
-                                at++;
-                                continue;
-                        }
-
+                        positive used;
+                        positive number = string_digits_hexadecimal_escape_max(
+                            at + 1, 2, address_of used);
                         at += used + 1;
-                        expand_push((p8)number, mark);
-                        continue;
+                        if (!used && !discard)
+                                expand_push('\\', mark);
+                        if (used)
+                                value = (p8)number;
                 }
-
-                if (seen == 'c' && at + 1 < length)
+                else if (value == 'c' && string_get(at + 1))
                 {
-                        p8 control = value[at + 1];
-
-                        expand_push(control == '?' ? 127 : control & 31, mark);
+                        value = string_get(at + 1);
+                        if (source && value == '\\' && string_is(at + 2, '\\'))
+                                at++;
+                        value = value == '?' ? 127 : value & 31;
                         at += 2;
-                        continue;
                 }
-
-                at++;
-                escaped = byte_simple_escape(seen);
-
-                if (seen == 'e' || seen == 'E')
-                        expand_push(27, mark);
-                else if (seen == '?')
-                        expand_push('?', mark);
-                else if (escaped)
-                        expand_push(escaped, mark);
-                else if (seen == '\\' || seen == '\'' || seen == '"')
-                        expand_push(seen, mark);
                 else
                 {
-                        expand_push('\\', mark);
-                        expand_push(seen, mark);
+                        at++;
+                        p8 escaped = byte_simple_escape(value);
+                        if (value == 'e' || value == 'E')
+                                value = 27;
+                        else if (escaped)
+                                value = escaped;
+                        else if (value != '?' && value != '\\' &&
+                                 value != '\'' && value != '"' && !discard)
+                                expand_push('\\', mark);
                 }
+
+                if (!value)
+                        discard = true;
+                else if (!discard)
+                        expand_push(value, mark);
         }
+        return at;
 }
 
 /*
@@ -4981,7 +4935,7 @@ static COLD fn expand_transform(string_address name, string_address word,
         if (which == 'Q' && present)
                 transform_quoted(held, length, mark);
         else if (which == 'E')
-                transform_escaped(held, length, mark);
+                expand_ansi(held, mark, false);
 }
 
 /* Bash ${!prefix@} is a field list; ${!prefix*} is the same sorted names
@@ -6180,98 +6134,9 @@ static string_address expand_simple(string_address step, bool quoted)
 */
 static string_address expand_dollar_single(string_address step)
 {
-        string_address at = step + 2;
         positive begun = expand_length;
-        bool discard = false;
-
         expand_quoted_seen = true;
-
-        while (string_get(at) && string_not(at, '\''))
-        {
-                p8 value = string_get(at++);
-
-                if (value != '\\')
-                {
-                        if (!discard)
-                                expand_push(value, MARK_QUOTED);
-                        continue;
-                }
-
-                value = string_get(at);
-
-                if (!value)
-                        break;
-
-                if (value >= '0' && value <= '7')
-                {
-                        positive used;
-                        positive number = string_digits_octal_escape_max(
-                            at, 3, address_of used);
-
-                        at += used;
-                        value = (p8)number;
-                }
-                else if (value == 'x')
-                {
-                        positive used;
-                        positive number = string_digits_hexadecimal_escape_max(
-                            at + 1, 2, address_of used);
-
-                        if (!used)
-                        {
-                                if (!discard)
-                                {
-                                        expand_push('\\', MARK_QUOTED);
-                                        expand_push(value, MARK_QUOTED);
-                                }
-                                at++;
-                                continue;
-                        }
-
-                        at += used + 1;
-                        value = (p8)number;
-                }
-                else if (value == 'c' && string_get(at + 1))
-                {
-                        value = string_get(at + 1);
-
-                        // The operand backslash is itself escaped in source:
-                        // \c\\ denotes FS, not a control backslash followed by
-                        // another escape.
-                        if (value == '\\' && string_is(at + 2, '\\'))
-                                at++;
-
-                        value = value == '?' ? 127 : value & 31;
-                        at += 2;
-                }
-                else
-                {
-                        at++;
-                        p8 escaped = byte_simple_escape(value);
-
-                        // Escape and question mark are Bash's own two, kept
-                        // out of the shared table because printf, awk and tr
-                        // read that table and none of the three has them.
-                        if (value == 'e' || value == 'E')
-                                value = 27;
-                        else if (value == '?')
-                                value = '?';
-                        else if (escaped)
-                                value = escaped;
-                        else if (value != '\\' && value != '\'' && value != '"')
-                        {
-                                // Unspecified by POSIX: preserve the two
-                                // bytes, matching the common shell answer.
-                                if (!discard)
-                                        expand_push('\\', MARK_QUOTED);
-                        }
-                }
-
-                if (!value)
-                        discard = true;
-                else if (!discard)
-                        expand_push(value, MARK_QUOTED);
-        }
+        string_address at = expand_ansi(step + 2, MARK_QUOTED, true);
 
         if (expand_length == begun)
                 expand_push_empty();
@@ -7301,43 +7166,8 @@ static PURE string_address expand_brace_comma(string_address at,
         {
                 p8 value = string_get(at);
 
-                if (value == '$' && string_is(at + 1, '\''))
-                {
-                        at = expand_dollar_quoted_run(at);
+                if (lex_skip_held(address_of at))
                         continue;
-                }
-
-                if (value == '\\' && at + 1 < close)
-                {
-                        at += 2;
-                        continue;
-                }
-
-                if (value == '\'' || value == '"')
-                {
-                        p8 quote = value;
-
-                        at++;
-                        while (at < close && string_not(at, quote))
-                                at += quote == '"' && string_is(at, '\\') &&
-                                              at + 1 < close
-                                          ? 2
-                                          : 1;
-                        if (at < close)
-                                at++;
-                        continue;
-                }
-
-                if (value == '$' && string_is(at + 1, '{'))
-                {
-                        string_address stop = expand_brace_end(at + 2);
-
-                        if (stop && stop < close)
-                        {
-                                at = stop + 1;
-                                continue;
-                        }
-                }
 
                 if (value == '{')
                         depth++;

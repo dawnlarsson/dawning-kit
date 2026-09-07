@@ -795,8 +795,9 @@ static COLD fn array_element_forget(array_table address_to table, positive at)
 
         env_cell_drop(table->element[at].text);
 
-        for (positive step = 0; step < left; step++)
-                table->element[at + step] = table->element[at + step + 1];
+        if (left)
+                memory_copy(table->element + at, table->element + at + 1,
+                            left * sizeof(table->element[0]));
 
         table->count--;
 }
@@ -861,9 +862,9 @@ static COLD bool array_element_write(array_table address_to table, positive at,
                         return false;
                 }
 
-                for (positive step = 0; step < left; step++)
-                        table->element[table->count - step] =
-                            table->element[table->count - step - 1];
+                if (left)
+                        memory_copy(table->element + at + 1, table->element + at,
+                                    left * sizeof(table->element[0]));
 
                 table->count++;
         }
@@ -2697,29 +2698,9 @@ COLD bool shell_array_clear(const_string name, positive length)
         merging into it -- which is what an array the shell owns has to do,
         since a script may have left anything in it.
 */
-COLD bool shell_array_words(const_string name, positive length,
-                       string_address address_to words, positive count)
-{
-        p8 written[32];
-
-        if (!shell_variable_attribute_set(name, length,
-                                          SHELL_ARRAY_INDEXED |
-                                              SHELL_ARRAY_ASSIGNED,
-                                          SHELL_ARRAY_ASSOCIATIVE) ||
-            !shell_array_clear(name, length))
-                return false;
-
-        for (positive at = 0; at < count; at++)
-                if (!shell_array_set(name, length, written,
-                                     bipolar_into_string(written, (bipolar)at),
-                                     words[at], false))
-                        return false;
-
-        return true;
-}
-
-COLD bool shell_array_numbers(const_string name, positive length,
-                         bipolar address_to values, positive count)
+static COLD bool shell_array_replace(const_string name, positive length,
+                                     address_any items, positive count,
+                                     bool numbers)
 {
         p8 written[32];
         p8 number[32];
@@ -2733,15 +2714,35 @@ COLD bool shell_array_numbers(const_string name, positive length,
 
         for (positive at = 0; at < count; at++)
         {
-                number[bipolar_into_string(number, values[at])] = end;
+                string_address value;
+                if (numbers)
+                {
+                        number[bipolar_into_string(number,
+                            ((bipolar address_to)items)[at])] = end;
+                        value = number;
+                }
+                else
+                        value = ((string_address address_to)items)[at];
 
                 if (!shell_array_set(name, length, written,
                                      bipolar_into_string(written, (bipolar)at),
-                                     number, false))
+                                     value, false))
                         return false;
         }
 
         return true;
+}
+
+COLD bool shell_array_words(const_string name, positive length,
+                             string_address address_to words, positive count)
+{
+        return shell_array_replace(name, length, words, count, false);
+}
+
+COLD bool shell_array_numbers(const_string name, positive length,
+                               bipolar address_to values, positive count)
+{
+        return shell_array_replace(name, length, values, count, true);
 }
 
 /* Bash's PIPESTATUS keeps a sole explicitly selected nonzero subscript as
@@ -6518,20 +6519,6 @@ static bool shell_declare_options(shell_declare_state address_to state)
         return true;
 }
 
-/* The existing hardware-floor set scanner copies ordinary quote payloads
-   in runs. These immutable byte sets add no initialization or retained heap
-   state, and keep the two output quote styles on the same escape writer. */
-static const b8 shell_quote_printable[STRING_SET_BYTES] = {
-    [32 ... 126] = 1
-};
-static const b8 shell_quote_double[STRING_SET_BYTES] = {
-    [32 ... 33] = 1, [35] = 1, [37 ... 91] = 1,
-    [93 ... 95] = 1, [97 ... 126] = 1
-};
-static const b8 shell_quote_ansi[STRING_SET_BYTES] = {
-    [32 ... 38] = 1, [40 ... 91] = 1, [93 ... 126] = 1
-};
-
 static fn shell_declare_quoted(writer write, string_address value)
 {
         bool control = string_get(value +
@@ -6554,37 +6541,8 @@ static fn shell_declare_quoted(writer write, string_address value)
 
                 if (control)
                 {
-                        if (byte == '\n')
-                                write("\\n", 2);
-                        else if (byte == '\r')
-                                write("\\r", 2);
-                        else if (byte == '\t')
-                                write("\\t", 2);
-                        else if (byte == '\a')
-                                write("\\a", 2);
-                        else if (byte == '\b')
-                                write("\\b", 2);
-                        else if (byte == '\v')
-                                write("\\v", 2);
-                        else if (byte == '\f')
-                                write("\\f", 2);
-                        else if (byte == 27)
-                                write("\\E", 2);
-                        else if (byte < ' ' || byte >= 127)
-                        {
-                                p8 octal[4] = {'\\',
-                                               (p8)('0' + (byte >> 6)),
-                                               (p8)('0' + ((byte >> 3) & 7)),
-                                               (p8)('0' + (byte & 7))};
-
-                                write(octal, sizeof(octal));
-                        }
-                        else
-                        {
-                                if (byte == '\\' || byte == '\'')
-                                        write("\\", 1);
-                                write(address_of byte, 1);
-                        }
+                        p8 escaped[4];
+                        write(escaped, shell_ansi_byte(escaped, byte, true));
                 }
                 else
                 {
@@ -8438,67 +8396,27 @@ static COLD PURE bool printf_quote_wanted(p8 value)
 COLD fn printf_reusable(writer write, string_address text)
 {
         string_address step = text;
-        bool control = false;
+        bool control = string_get(text + string_span(text, shell_quote_value));
 
         if (!string_get(text))
                 return write("''", 2);
-
-        while (string_get(step))
-        {
-                p8 value = string_get(step++);
-
-                if (value < ' ' || value == 127)
-                        control = true;
-        }
 
         if (control)
         {
                 write("$'", 2);
 
-                for (step = text; string_get(step); step++)
+                while (string_get(step))
                 {
-                        p8 value = string_get(step);
-                        p8 letter = 0;
-
-                        if (value == '\n')
-                                letter = 'n';
-                        else if (value == '\t')
-                                letter = 't';
-                        else if (value == '\r')
-                                letter = 'r';
-                        else if (value == 7)
-                                letter = 'a';
-                        else if (value == 8)
-                                letter = 'b';
-                        else if (value == 12)
-                                letter = 'f';
-                        else if (value == 11)
-                                letter = 'v';
-                        else if (value == 27)
-                                letter = 'E';
-                        else if (value == '\'' || value == '\\')
-                                letter = value;
-
-                        if (letter)
+                        if (shell_quote_ansi[string_get(step)])
                         {
-                                p8 pair[2] = {'\\', letter};
-
-                                write(pair, 2);
+                                positive run = string_span(step, shell_quote_ansi);
+                                write(step, run);
+                                step += run;
                                 continue;
                         }
-
-                        if (value < ' ' || value == 127)
-                        {
-                                p8 octal[5] = {'\\', '0', '0', '0', 0};
-
-                                octal[1] = (p8)('0' + (value >> 6));
-                                octal[2] = (p8)('0' + ((value >> 3) & 7));
-                                octal[3] = (p8)('0' + (value & 7));
-                                write(octal, 4);
-                                continue;
-                        }
-
-                        write(address_of value, 1);
+                        p8 escaped[4];
+                        write(escaped,
+                              shell_ansi_byte(escaped, string_get(step++), false));
                 }
 
                 return write("'", 1);
