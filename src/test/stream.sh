@@ -108,6 +108,11 @@ $host -O2 -w -o "$work/b.reference" src/test/stream_buffering_reference.c \
         2>> "$work/ref.err" || exit 2
 
 "$work/t.reference" > "$work/t.reference.out" 2>&1
+if timeout 10 "$work/t.reference" --allocation; then
+        report ok 'reference allocation failure'
+else
+        report no 'reference allocation failure' 'fdopen lost descriptor or ENOMEM'
+fi
 
 printf 'alpha\nbeta\n\ngamma' > "$work/input.txt"
 
@@ -198,6 +203,14 @@ for target in x86_64 arm64 riscv64; do
                 "-DWORK=\"$work/$target\""; then
                 report no "$target build" "$(head -3 "$work/t.$target.err")"
                 continue
+        fi
+
+        if [ -z "$runner" ]; then
+                if timeout 10 "$work/t.$target" --allocation; then
+                        report ok "$target allocation failure"
+                else
+                        report no "$target allocation failure" 'fdopen lost descriptor or ENOMEM'
+                fi
         fi
 
         if ! build_ours src/test/stream_standard.c "$work/s.$target" "$target" \

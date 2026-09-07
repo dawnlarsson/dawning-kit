@@ -950,7 +950,11 @@ static stream address_to spool_open_memory(address_any bytes, sized size,
         bipolar handle;
         bipolar written;
 
-        if (is_null(bytes) || is_null(mode) || mode[0] != 'r')
+        b32 open_flags;
+        p32 stream_flags;
+        if (is_null(bytes) ||
+            !stream_read_mode(mode, address_of open_flags, address_of stream_flags) ||
+            stream_flags != STREAM_READABLE)
         {
                 errno = EINVAL;
                 return null;

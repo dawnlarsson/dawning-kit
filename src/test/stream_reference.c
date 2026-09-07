@@ -18,14 +18,20 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/resource.h>
 
 #define trace_number(label, value) \
         printf("%s %ld\n", (const char *)(label), (long)(value))
 
+#define body_limit_memory() (setrlimit(RLIMIT_AS, &(struct rlimit){1, 1}) == 0)
 #include "stream_body.c"
 
-int main(void)
+int main(int argc, char **argv)
 {
+        if (argc > 1)
+                return body_allocation_failure();
         trace_body();
         fflush(stdout);
         return 0;

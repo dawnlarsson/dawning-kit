@@ -66,9 +66,11 @@
         take the diagnostic path down with it.
 */
 address_any malloc(positive size);
+address_any calloc(positive count, positive size);
 fn free(address_any block);
 
 #define stream_allocate(size) malloc(size)
+#define stream_allocate_zeroed(size) calloc(1, size)
 #define stream_release(block) free(block)
 
 /*
@@ -356,14 +358,14 @@ positive stream_put_bytes(stream address_to handle, address_any data,
 /* A stream read retries signals and a stream write finishes short writes.
    Keep those policies named at each call without five forwarding bodies. */
 #define stream_trap_read(descriptor, into, length)                           \
-        system_read_retry((positive)(descriptor), (into), (length))
+        error_wide(system_read_retry((positive)(descriptor), (into), (length)))
 #define stream_trap_write(descriptor, from, length)                          \
         system_write_all((positive)(descriptor), (from), (length))
 #define stream_trap_seek(descriptor, offset, whence)                         \
-        system_seek((descriptor), (offset), (whence))
-#define stream_trap_close(descriptor) system_close(descriptor)
+        error_wide(system_seek((descriptor), (offset), (whence)))
+#define stream_trap_close(descriptor) error_whole(system_close(descriptor))
 #define stream_trap_open(path, flags, permissions)                           \
-        system_open_at_mode(AT_FDCWD, (path), (flags), (permissions))
+        error_wide(system_open_at_mode(AT_FDCWD, (path), (flags), (permissions)))
 
 /*
         Is this descriptor a terminal.
@@ -502,7 +504,7 @@ static fn stream_drop_input(stream address_to handle, bool restore_position)
                           handle->pushback_used;
 
         if (restore_position && unread != 0)
-                stream_trap_seek(handle->descriptor, -(bipolar)unread, SEEK_CUR);
+                system_seek(handle->descriptor, -(bipolar)unread, SEEK_CUR);
 
         handle->read_head = 0;
         handle->read_tail = 0;
@@ -645,8 +647,6 @@ static bool stream_read_mode(string_address mode, b32 address_to open_flags,
         return true;
 }
 
-// Newest first, because the order fflush walks the list in is not observable
-// and prepending is the only insertion with nothing to go wrong.
 static fn stream_register(stream address_to handle)
 {
         handle->next = stream_open_list;
@@ -674,7 +674,7 @@ static fn stream_forget(stream address_to handle)
 }
 
 /*
-        An append stream starts at the end of the file.
+        A write-only append stream starts at the end; a+ keeps its read position.
 
         Where an O_APPEND write actually lands is the kernel's decision at
         write time, so nothing here can move it; what this settles is what
@@ -689,8 +689,23 @@ static fn stream_forget(stream address_to handle)
 */
 static fn stream_land_at_end(stream address_to handle)
 {
-        if (handle->flags & STREAM_APPEND)
+        if ((handle->flags & (STREAM_APPEND | STREAM_READABLE)) == STREAM_APPEND)
                 stream_trap_seek(handle->descriptor, 0, SEEK_END);
+}
+
+static stream address_to stream_attach(b32 descriptor, p32 flags)
+{
+        stream address_to handle = (stream address_to)stream_allocate_zeroed(sizeof(stream));
+        if (handle)
+        {
+                handle->descriptor = descriptor;
+                handle->flags = flags | STREAM_STRUCT_OURS;
+                stream_land_at_end(handle);
+                stream_register(handle);
+        }
+        else
+                errno = ENOMEM;
+        return handle;
 }
 
 static inline INLINE fn stream_reset_buffer(stream address_to handle)
@@ -728,52 +743,39 @@ stream address_to stream_open(string_address path, string_address mode)
         if (descriptor < 0)
                 return null;
 
-        handle = (stream address_to)stream_allocate(sizeof(stream));
-
+        handle = stream_attach((b32)descriptor, stream_flags);
         if (handle == null)
         {
                 stream_trap_close((b32)descriptor);
-                return null;
+                errno = ENOMEM;
         }
-
-        memory_zero(handle, sizeof(stream));
-        handle->descriptor = (b32)descriptor;
-        handle->flags = stream_flags | STREAM_STRUCT_OURS;
-        stream_land_at_end(handle);
-        stream_register(handle);
         return handle;
 }
 
-/*
-        fdopen: the same stream around a descriptor somebody else opened.
-
-        No open call, so the create and truncate bits in the mode are simply
-        not acted on -- the descriptor already is what it is. The access mode
-        is not verified against the descriptor either: asking the kernel would
-        mean fcntl, and a mode that lies produces EBADF from the first read or
-        write, which is the same diagnosis one call later.
-*/
+/* Adopt without creating or truncating; access must agree with the open
+   descriptor, and append must remain true even after a later seek. */
 stream address_to stream_adopt(b32 descriptor, string_address mode)
 {
         b32 open_flags = 0;
         p32 stream_flags = 0;
-        stream address_to handle;
 
-        if (descriptor < 0 || !stream_read_mode(mode, address_of open_flags,
-                                                address_of stream_flags))
+        if (!stream_read_mode(mode, address_of open_flags, address_of stream_flags))
                 return null;
-
-        handle = (stream address_to)stream_allocate(sizeof(stream));
-
-        if (handle == null)
+        bipolar flags = error_wide(system_call_3(syscall(fcntl),
+                                                  (positive)descriptor, 3, 0));
+        if (flags < 0)
                 return null;
-
-        memory_zero(handle, sizeof(stream));
-        handle->descriptor = descriptor;
-        handle->flags = stream_flags | STREAM_STRUCT_OURS;
-        stream_land_at_end(handle);
-        stream_register(handle);
-        return handle;
+        if (((stream_flags & STREAM_READABLE) && (flags & 3) == 1) ||
+            ((stream_flags & STREAM_WRITABLE) && (flags & 3) == 0))
+        {
+                errno = EINVAL;
+                return null;
+        }
+        if ((stream_flags & STREAM_APPEND) && !(flags & stream_open_append) &&
+            error_whole(system_call_3(syscall(fcntl), (positive)descriptor, 4,
+                                        (positive)flags | stream_open_append)) < 0)
+                return null;
+        return stream_attach(descriptor, stream_flags);
 }
 
 /*
@@ -1562,14 +1564,10 @@ bipolar stream_get_line_allocated(address_any line, sized address_to capacity,
 /*
         fseek.
 
-        Three things have to happen and the order of the first two matters.
         Staged output goes to the file before the position moves, or it lands
-        wherever the seek left the offset. Buffered input is thrown away
-        without seeking back, because the absolute seek that follows makes the
-        position right regardless -- but a relative seek has to have the
-        buffered bytes subtracted from its offset first, since the caller's
-        idea of "here" is behind the kernel's by exactly what the buffer and
-        the pushback are holding.
+        wherever the seek left the offset. Relative offsets are corrected by
+        unread and pushed-back bytes. Discard those bytes only after the seek
+        succeeds; a refused seek must not consume input.
 
         The end-of-file indicator is cleared. It says "a read hit the end",
         and after a seek no read has hit anything. The error indicator is not
@@ -1591,13 +1589,12 @@ b32 stream_seek(stream address_to handle, bipolar offset, b32 whence)
                 offset -= (bipolar)((handle->read_tail - handle->read_head) +
                                     handle->pushback_used);
 
-        stream_drop_input(handle, false);
-
         landed = stream_trap_seek(handle->descriptor, offset, whence);
 
         if (landed < 0)
                 return -1;
 
+        stream_drop_input(handle, false);
         handle->flags &= ~STREAM_AT_END;
         return 0;
 }

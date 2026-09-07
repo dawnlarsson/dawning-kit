@@ -37,6 +37,30 @@ static long body_length(const char *text)
         return n;
 }
 
+/* A fresh native subprocess exhausts allocation, never the parent or emulator. */
+static int body_allocation_failure(void)
+{
+        int descriptor = open("/dev/null", 1, 0);
+        if (descriptor < 0 || !body_limit_memory()) return 2;
+        __typeof__(&malloc) volatile take = &malloc;
+        while (take(sizeof(FILE))) {}
+        errno = 0;
+        FILE *f = fdopen(descriptor, "a");
+        int saved = errno;
+        int flags = fcntl(descriptor, 3, 0UL);
+        int failed = f != 0 || saved != ENOMEM || flags < 0;
+        if (f) fclose(f); else close(descriptor);
+        descriptor = dup(1);
+        close(descriptor);
+        errno = 0;
+        f = fopen("/dev/null", "r");
+        saved = errno;
+        if (f) fclose(f);
+        int next = dup(1);
+        close(next);
+        return failed || f != 0 || saved != ENOMEM || next != descriptor;
+}
+
 static void trace_run(const char *label, const unsigned char *data, long length)
 {
         long i;
@@ -413,15 +437,76 @@ static void body_buffering(void)
         fclose(f);
 }
 
-/*      Append, which is the one place ftell is allowed to be surprising:
-        where an O_APPEND write lands is decided by the kernel at write time
-        and is not knowable before it. */
+/* Invalid whence retains pushback; an unseekable pipe retains unread data. */
+static void body_failed_seek(void)
+{
+        for (int piped = 0; piped < 2; piped++)
+        {
+                int ends[2];
+                FILE *f;
+                if (piped)
+                {
+                        if (pipe(ends)) return;
+                        write(ends[1], "abc", 3);
+                        close(ends[1]);
+                        f = fdopen(ends[0], "r");
+                }
+                else
+                        f = fopen(WORK "/three.txt", "r");
+                trace_number("failed-seek: first", fgetc(f));
+                if (!piped)
+                        trace_number("failed-seek: pushback", ungetc('Z', f));
+                errno = 0;
+                trace_number("failed-seek: rejected", fseek(f, 0, piped ? SEEK_SET : 999) != 0);
+                trace_number("failed-seek: errno", errno);
+                trace_number("failed-seek: next byte retained", fgetc(f));
+                trace_number("failed-seek: unread byte retained", fgetc(f));
+                fclose(f);
+        }
+}
+
+static void body_descriptor_errors(void)
+{
+        errno = 0;
+        FILE *f = fopen(WORK "/missing", "r");
+        trace_number("open-error: rejected", f == 0);
+        trace_number("open-error: errno", errno);
+        errno = 0;
+        f = fdopen(-1, "r");
+        trace_number("adopt-error: rejected", f == 0);
+        trace_number("adopt-error: errno", errno);
+        f = fopen(WORK "/three.txt", "r");
+        int descriptor = dup(fileno(f));
+        fclose(f);
+        errno = 0;
+        f = fdopen(descriptor, "w");
+        trace_number("adopt-access: rejected", f == 0);
+        trace_number("adopt-access: errno", errno);
+        if (f) fclose(f); else close(descriptor);
+        f = fopen(WORK, "r");
+        errno = 0;
+        trace_number("read-error: byte", fgetc(f));
+        trace_number("read-error: errno", errno);
+        fclose(f);
+}
+
 static void body_append(void)
 {
         FILE *f = fopen(WORK "/append.txt", "w");
 
         fwrite("one\n", 1, 4, f);
         fclose(f);
+
+        f = fopen(WORK "/adopt-append.txt", "w+");
+        fwrite("abc", 1, 3, f);
+        fflush(f);
+        int descriptor = dup(fileno(f));
+        fclose(f);
+        f = fdopen(descriptor, "a");
+        trace_number("adopt-append: seek start", fseek(f, 0, SEEK_SET));
+        trace_number("adopt-append: write", fputc('X', f));
+        trace_number("adopt-append: close", fclose(f));
+        trace_number("adopt-append: size", body_file_size(WORK "/adopt-append.txt"));
 
         f = fopen(WORK "/append.txt", "a");
         trace_state("append: freshly opened", f);
@@ -431,6 +516,11 @@ static void body_append(void)
         trace_state("append: after flush", f);
         fclose(f);
         trace_number("append: size", body_file_size(WORK "/append.txt"));
+
+        f = fopen(WORK "/append.txt", "a+");
+        trace_number("append-update: initial position", ftell(f));
+        trace_number("append-update: initial read", fgetc(f));
+        fclose(f);
 
         f = fopen(WORK "/append.txt", "r");
         {
@@ -557,6 +647,8 @@ static void trace_body(void)
         body_ungetc_at_the_start();
         body_ungetc_at_the_end();
         body_seeking();
+        body_failed_seek();
+        body_descriptor_errors();
         body_rewind();
         body_update_stream();
         body_fgets();

@@ -58,6 +58,13 @@ static bool line_buffer_fits_one_shelf(void)
 
 b32 main(void)
 {
+        char bytes[] = "read only";
+        errno = 0;
+        stream address_to update = fmemopen(bytes, sizeof(bytes), "r+");
+        if (update)
+                fclose(update);
+        if (update || errno != EINVAL)
+                return 1;
         trace_body();
         bool fits = line_buffer_fits_one_shelf();
 

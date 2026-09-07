@@ -22,6 +22,9 @@
         string_format(log, "%s %b\n", (string_address)(label),        \
                       (b32)(long)(value))
 
+#define body_limit_memory() \
+        (system_call_4(syscall(prlimit64), 0, 9, \
+                        (positive)(p64[]){1, 1}, 0) == 0)
 #include "stream_body.c"
 
 static bool dynamic_buffer_fits_one_shelf(void)
@@ -67,6 +70,8 @@ static bool empty_mode_stays_bounded(void)
 
 b32 main(void)
 {
+        if (program_argument_count() > 1)
+                return body_allocation_failure();
         if (!empty_mode_stays_bounded())
                 return 1;
         trace_body();
