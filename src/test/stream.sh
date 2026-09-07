@@ -211,6 +211,19 @@ for target in x86_64 arm64 riscv64; do
                 else
                         report no "$target allocation failure" 'fdopen lost descriptor or ENOMEM'
                 fi
+                if command -v strace > /dev/null 2>&1; then
+                        for stop in retval=0:0 error=ENOSPC:28 error=EINTR:4; do
+                                if timeout 10 strace -qq -o "$work/write-stop.trace" \
+                                        -e "inject=write:${stop%:*}:when=1+" \
+                                        "$work/t.$target" --write-stop "${stop#*:}"; then
+                                        report ok "$target write stop $stop"
+                                else
+                                        report no "$target write stop $stop" 'checked result, errno or spool descriptor leak'
+                                fi
+                        done
+                else
+                        printf '  %-10s %s\n' stream 'no strace, write-stop injections skipped'
+                fi
         fi
 
         if ! build_ours src/test/stream_standard.c "$work/s.$target" "$target" \
@@ -225,7 +238,7 @@ for target in x86_64 arm64 riscv64; do
                 continue
         fi
 
-        if $runner "$work/t.$target" > "$work/t.$target.out" 2>&1; then
+        if timeout 30 $runner "$work/t.$target" > "$work/t.$target.out" 2>&1; then
                 report ok "$target internal invariants"
         else
                 report no "$target internal invariants" "test returned failure"

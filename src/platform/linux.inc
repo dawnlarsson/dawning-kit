@@ -24,7 +24,10 @@ struct linux_dirent64
 };
 
 positive2 term_size();
+typedef struct { positive bytes; bipolar error; } system_write_result;
 positive system_write_all(positive handle, address_any data, positive length);
+system_write_result system_write_all_checked(positive handle, address_any data,
+                                             positive length);
 bipolar system_read_retry(positive handle, address_any data, positive length);
 bipolar system_wait4_retry(bipolar process, address_any status,
                            positive options, address_any usage);
@@ -50,6 +53,11 @@ positive program_initial_identity(void);
         any other negative result. A zero length makes no syscall. That is the
         common contract of the shell's former write loops, not a stronger I/O
         policy hidden behind their name.
+
+        system_write_all_checked aliases that same loop and also returns the
+        last nonpositive syscall result: zero on completion, zero length, or
+        zero progress; negative errno on failure, even after a written prefix.
+        The byte count distinguishes completion from a zero-progress stop.
 
         system_read_retry is the complementary single-read primitive: it
         retries exactly EINTR, including for a zero length, and returns every
@@ -86,13 +94,17 @@ __asm__(
     "jz .Lsystem_write_all_x64_done\n"
     ".Lsystem_write_all_x64_more:\n"
     "mov $" LINUX_RUNTIME_TEXT(syscall(write)) ", %eax\n   syscall\n"
-    "test %rax, %rax\n   jle .Lsystem_write_all_x64_done\n"
+    "test %rax, %rax\n   jle .Lsystem_write_all_x64_failed\n"
     "add %rax, %r8\n   add %rax, %rsi\n   sub %rax, %rdx\n"
     "jnz .Lsystem_write_all_x64_more\n"
     ".Lsystem_write_all_x64_done:\n"
     "mov %r8, %rax\n"
     ASM_RET
+    ".Lsystem_write_all_x64_failed:\n"
+    "mov %rax, %rdx\n   mov %r8, %rax\n"
+    ASM_RET
     ASM_END(system_write_all)
+    ASM_ALIAS(system_write_all_checked, system_write_all)
 
     ASM_FUNC(system_read_retry)
     ".Lsystem_read_retry_x64_more:\n"
@@ -211,13 +223,17 @@ __asm__(
     "mov x0, x3\n"
     "mov " SYSCALL_NUMBER_REGISTER ", #" LINUX_RUNTIME_TEXT(syscall(write)) "\n"
     SYSCALL_INSTRUCTION "\n   cmp x0, #0\n"
-    "b.le .Lsystem_write_all_arm64_done\n"
+    "b.le .Lsystem_write_all_arm64_failed\n"
     "add x4, x4, x0\n   add x1, x1, x0\n   sub x2, x2, x0\n"
     "cbnz x2, .Lsystem_write_all_arm64_more\n"
     ".Lsystem_write_all_arm64_done:\n"
-    "mov x0, x4\n"
+    "mov x1, xzr\n   mov x0, x4\n"
+    ASM_RET
+    ".Lsystem_write_all_arm64_failed:\n"
+    "mov x1, x0\n   mov x0, x4\n"
     ASM_RET
     ASM_END(system_write_all)
+    ASM_ALIAS(system_write_all_checked, system_write_all)
 
     ASM_FUNC(system_read_retry)
     "mov x3, x0\n"
@@ -332,13 +348,17 @@ __asm__(
     "mv t0, a0\n   li t1, 0\n   beqz a2, .Lsystem_write_all_riscv64_done\n"
     ".Lsystem_write_all_riscv64_more:\n"
     "mv a0, t0\n   li a7, " LINUX_RUNTIME_TEXT(syscall(write)) "\n   ecall\n"
-    "blez a0, .Lsystem_write_all_riscv64_done\n"
+    "blez a0, .Lsystem_write_all_riscv64_failed\n"
     "add t1, t1, a0\n   add a1, a1, a0\n   sub a2, a2, a0\n"
     "bnez a2, .Lsystem_write_all_riscv64_more\n"
     ".Lsystem_write_all_riscv64_done:\n"
-    "mv a0, t1\n"
+    "li a1, 0\n   mv a0, t1\n"
+    ASM_RET
+    ".Lsystem_write_all_riscv64_failed:\n"
+    "mv a1, a0\n   mv a0, t1\n"
     ASM_RET
     ASM_END(system_write_all)
+    ASM_ALIAS(system_write_all_checked, system_write_all)
 
     ASM_FUNC(system_read_retry)
     "mv t1, a0\n   li a7, " LINUX_RUNTIME_TEXT(syscall(read)) "\n"

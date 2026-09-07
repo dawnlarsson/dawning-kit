@@ -68,11 +68,114 @@ static bool empty_mode_stays_bounded(void)
         return bounded;
 }
 
+static fn interrupt_write(b32 number) { (void)number; }
+
+static bool checked_write_errors(void)
+{
+        system_write_result result = system_write_all_checked(-1, address_bad, 0);
+        if (result.bytes || result.error) return false;
+        result = system_write_all_checked(-1, "x", 1);
+        if (result.bytes || result.error != -EBADF) return false;
+        b32 sink = open("/dev/null", O_WRONLY, 0);
+        if (sink < 0) return false;
+        errno = EDOM;
+        result = system_write_all_checked(sink, "x", 1);
+        bool correct = result.bytes == 1 && !result.error && errno == EDOM;
+        FILE *closed = fdopen(sink, "w");
+        if (!closed || setvbuf(closed, 0, _IONBF, 0)) return false;
+        close(sink);
+        errno = 0;
+        correct &= fputc('x', closed) == EOF && errno == EBADF && ferror(closed);
+        fclose(closed);
+        sink = open("/dev/full", O_WRONLY, 0);
+        if (sink < 0) return false;
+        result = system_write_all_checked(sink, "x", 1);
+        correct &= !result.bytes && result.error == -ENOSPC;
+        close(sink);
+
+        b32 ends[2];
+        if (pipe2(ends, O_NONBLOCK)) return false;
+        result = system_write_all_checked(ends[1], address_bad, 1);
+        correct &= !result.bytes && result.error == -EFAULT;
+        bipolar capacity = fcntl(ends[1], 1032, 0UL);
+        if (capacity <= 0) return false;
+        positive length = (positive)capacity + 4096;
+        p8 *bytes = malloc(length);
+        if (!bytes) return false;
+        memory_fill(bytes, 0x5a, length);
+        result = system_write_all_checked(ends[1], bytes, length);
+        correct &= result.bytes == (positive)capacity && result.error == -EAGAIN;
+        correct &= read(ends[0], bytes, length) == capacity;
+        FILE *f = fdopen(ends[1], "w");
+        if (!f || setvbuf(f, 0, _IONBF, 0)) return false;
+        errno = 0;
+        correct &= fwrite(bytes, 1, length, f) == (positive)capacity &&
+                   errno == EAGAIN && ferror(f);
+        clearerr(f);
+
+        /* Leave the pipe full, block, and interrupt without SA_RESTART. The
+           periodic timer also prevents a lost first signal hanging the test. */
+        signal_action wanted = { .handler = interrupt_write }, previous;
+        if (sigaction(SIGALRM, &wanted, &previous) ||
+            fcntl(ends[1], 4, 0UL)) return false;
+        p64 timer[4] = {0, 20000, 0, 20000};
+        if (system_call_3(syscall(setitimer), 0, (positive)timer, 0)) return false;
+        correct &= system_write_all(ends[1], "x", 1) == 0;
+        result = system_write_all_checked(ends[1], "x", 1);
+        correct &= !result.bytes && result.error == -EINTR;
+        errno = 0;
+        correct &= fputc('x', f) == EOF && errno == EINTR && ferror(f);
+        memory_fill(timer, 0, sizeof(timer));
+        system_call_3(syscall(setitimer), 0, (positive)timer, 0);
+        sigaction(SIGALRM, &previous, 0);
+        clearerr(f);
+        correct &= read(ends[0], bytes, length) == capacity;
+        for (positive i = 0; i < (positive)capacity; i++)
+                correct &= bytes[i] == 0x5a;
+        close(ends[0]);
+        wanted.handler = SIG_IGN;
+        if (sigaction(SIGPIPE, &wanted, &previous)) return false;
+        result = system_write_all_checked(ends[1], "x", 1);
+        correct &= !result.bytes && result.error == -EPIPE;
+        errno = 0;
+        correct &= fputc('x', f) == EOF && errno == EPIPE && ferror(f);
+        sigaction(SIGPIPE, &previous, 0);
+        fclose(f);
+        free(bytes);
+        return correct;
+}
+
+/* Native strace injects every write; no trace output can mask a failure. */
+static b32 injected_write_stop(b32 expected)
+{
+        b32 sink = open("/dev/null", O_WRONLY, 0);
+        if (sink < 0) return 1;
+        system_write_result result = system_write_all_checked(sink, "x", 1);
+        bool correct = !result.bytes && result.error == -expected &&
+                       system_write_all(sink, "x", 1) == 0;
+        errno = 0;
+        correct &= stream_trap_write(sink, "x", 1) == 0 &&
+                   errno == (expected ? expected : EIO);
+        close(sink);
+        b32 next = dup(1);
+        close(next);
+        errno = 0;
+        FILE *f = fmemopen("x", 1, "r");
+        correct &= !f && errno == (expected ? expected : EIO);
+        if (f) fclose(f);
+        sink = dup(1);
+        correct &= sink == next;
+        close(sink);
+        return correct ? 0 : 1;
+}
+
 b32 main(void)
 {
+        if (program_argument_count() > 2)
+                return injected_write_stop((b32)string_to_positive(program_argument(2)));
         if (program_argument_count() > 1)
                 return body_allocation_failure();
-        if (!empty_mode_stays_bounded())
+        if (!empty_mode_stays_bounded() || !checked_write_errors())
                 return 1;
         trace_body();
         bool fits = dynamic_buffer_fits_one_shelf();

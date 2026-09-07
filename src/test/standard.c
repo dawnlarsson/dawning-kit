@@ -3763,6 +3763,11 @@ test(absolute_value) {
 test(system_write_all_zero_and_fault) {
         fail_not_equals(system_write_all((positive)-1, address_bad, 0), 0);
         fail_not_equals(system_write_all((positive)-1, (address_any)"x", 1), 0);
+        system_write_result result =
+                system_write_all_checked((positive)-1, address_bad, 0);
+        fail(result.bytes == 0 && result.error == 0);
+        result = system_write_all_checked((positive)-1, (address_any)"x", 1);
+        fail(result.bytes == 0 && result.error == -EBADF);
 
         return true;
 }
@@ -3857,11 +3862,14 @@ test(system_write_all_retries_short_progress) {
 
         positive wrote = system_write_all((positive)sink,
                                            (address_any)(positive)mapped, span);
+        system_write_result result = system_write_all_checked((positive)sink,
+                                            (address_any)(positive)mapped, span);
 
         system_call_1(syscall(close), sink);
         system_call_2(syscall(munmap), (positive)mapped, span);
 
         fail_not_equals(wrote, span);
+        fail(result.bytes == span && result.error == 0);
         return true;
 }
 

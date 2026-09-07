@@ -612,7 +612,9 @@ static void body_write_failure(void)
         if (!f)
                 return;
 
+        errno = 0;
         trace_number("full-device: fwrite items", (long)fwrite(block, 1, 9000, f));
+        trace_number("full-device: fwrite errno", errno);
         trace_number("full-device: ferror", (long)ferror(f));
         trace_number("full-device: fflush", (long)fflush(f));
         trace_number("full-device: ferror after flush", (long)ferror(f));
@@ -620,7 +622,9 @@ static void body_write_failure(void)
         clearerr(f);
         trace_number("full-device: cleared", (long)ferror(f));
         trace_number("full-device: fputc", (long)fputc('q', f));
+        errno = 0;
         trace_number("full-device: fclose", (long)fclose(f));
+        trace_number("full-device: fclose errno", errno);
 }
 
 static void trace_body(void)

@@ -355,17 +355,24 @@ b32 stream_put_string(string_address text, stream address_to handle);
 positive stream_put_bytes(stream address_to handle, address_any data,
                           positive length);
 
-/* A stream read retries signals and a stream write finishes short writes.
-   Keep those policies named at each call without five forwarding bodies. */
+/* Keep syscall policies named at each call; only writes need both the
+   accepted prefix and the terminal error from the shared assembly loop. */
 #define stream_trap_read(descriptor, into, length)                           \
         error_wide(system_read_retry((positive)(descriptor), (into), (length)))
-#define stream_trap_write(descriptor, from, length)                          \
-        system_write_all((positive)(descriptor), (from), (length))
 #define stream_trap_seek(descriptor, offset, whence)                         \
         error_wide(system_seek((descriptor), (offset), (whence)))
 #define stream_trap_close(descriptor) error_whole(system_close(descriptor))
 #define stream_trap_open(path, flags, permissions)                           \
         error_wide(system_open_at_mode(AT_FDCWD, (path), (flags), (permissions)))
+
+static positive stream_trap_write(b32 descriptor, address_any from, positive length)
+{
+        system_write_result result =
+                system_write_all_checked((positive)descriptor, from, length);
+        if (result.bytes != length)
+                errno = result.error < 0 ? (b32)-result.error : EIO;
+        return result.bytes;
+}
 
 /*
         Is this descriptor a terminal.

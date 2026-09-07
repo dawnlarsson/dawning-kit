@@ -970,12 +970,13 @@ static stream address_to spool_open_memory(address_any bytes, sized size,
                 return null;
         }
 
-        written = system_write_all((positive)handle, bytes, (positive)size);
+        written = stream_trap_write((b32)handle, bytes, (positive)size);
 
         if ((positive)written != (positive)size)
         {
+                b32 saved = errno;
                 close((b32)handle);
-                errno = EIO;
+                errno = saved;
                 return null;
         }
 
