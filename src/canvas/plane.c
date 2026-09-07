@@ -129,7 +129,7 @@ static int plane_paint(struct output *output, unsigned int shape,
         t.y = 0;
         t.opaque = 0xff000000;
         t.ink = opaque_ink;
-        rect_set(&t.clip, 0, 0, t.width, t.height);
+        drm_rect_init(&t.clip, 0, 0, t.width, t.height);
 
         // Transparent everywhere the shape does not cover, or it wears a box
         // of whatever the buffer was allocated holding.

@@ -562,8 +562,6 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
 */
 static int canvas_start(struct canvas *canvas)
 {
-        int ret = canvas_build(canvas, IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE));
-
         /*
                 A refused commit means the mode, not the moment.
 
@@ -574,53 +572,33 @@ static int canvas_start(struct canvas *canvas)
                 threw away every mode this ever chose and quietly took the
                 probe's, which is the opposite of the point.
         */
-        int set;
-
-        if (!ret)
-                desktop_attach_buffers();
-
-        set = ret ? 0 : drm_client_modeset_commit(&canvas->client);
-
-        if (!ret && set && set != -EBUSY)
+        for (unsigned int attempt = 0; ; attempt++)
         {
-                log_canvas("that mode would not set (%d), taking the offered one\n", set);
-                canvas_release(canvas);
-                ret = canvas_build(canvas, false);
+                int ret = canvas_build(canvas, !attempt &&
+                    IS_ENABLED(CONFIG_MOONWATER_CANVAS_LARGEST_MODE));
 
-                if (!ret)
+                if (ret)
                 {
-                        desktop_attach_buffers();
-                        set = drm_client_modeset_commit(&canvas->client);
+                        log_canvas_error("no screen to draw on (%d), leaving the display alone\n",
+                                         ret);
+                        return ret;
                 }
-        }
 
-        /*
-                Standing aside.
+                desktop_attach_buffers();
+                ret = drm_client_modeset_commit(&canvas->client);
+                if (!ret || ret == -EBUSY)
+                        break;
 
-                Nothing below will put a picture on this screen, and holding it
-                anyway is a black display and no way to find out why: the
-                kernel log reaches a machine with no serial port through fbcon,
-                and fbcon only has something to bind to while the fbdev client
-                still owns the display. So the outputs go back and started
-                stays false, which leaves whatever was on the screen on it and
-                the reason above readable there.
-
-                Boot the image without drm_client_lib.active= and this is the
-                difference between a log on the monitor and a guess.
-        */
-        if (!ret && set && set != -EBUSY)
-        {
-                log_canvas_error("no mode would set (%d), leaving the display alone\n",
-                                 set);
+                // A rejected mode owns no useful picture. Release its outputs
+                // before retrying, or standing aside for the console client.
+                if (attempt)
+                        log_canvas_error("no mode would set (%d), leaving the display alone\n",
+                                         ret);
+                else
+                        log_canvas("that mode would not set (%d), taking the offered one\n", ret);
                 canvas_release(canvas);
-                return set;
-        }
-
-        if (ret)
-        {
-                log_canvas_error("no screen to draw on (%d), leaving the display alone\n",
-                                 ret);
-                return ret;
+                if (attempt)
+                        return ret;
         }
 
         // The cursor is drawn from a bitmap like everything else, so it is the

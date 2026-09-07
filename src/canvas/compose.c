@@ -16,20 +16,12 @@
         curve, and a band that is not at a corner is a plain run of pixels.
 */
 
-static void rect_set(struct drm_rect *rect, int x, int y, int w, int h)
-{
-        rect->x1 = x;
-        rect->y1 = y;
-        rect->x2 = x + w;
-        rect->y2 = y + h;
-}
-
 // The cell the cursor occupies on the desktop, which moves with the hotspot of
 // whichever shape it is wearing.
 static void cursor_cell(struct drm_rect *rect, int x, int y,
                         unsigned int shape, unsigned int scale)
 {
-        rect_set(rect, x - canvas_cursor_hot[shape][0] * (int)scale,
+        drm_rect_init(rect, x - canvas_cursor_hot[shape][0] * (int)scale,
                  y - canvas_cursor_hot[shape][1] * (int)scale,
                  CURSOR_W * (int)scale, CURSOR_H * (int)scale);
 }
@@ -571,20 +563,20 @@ static unsigned int rect_subtract(struct drm_rect *out, const struct drm_rect *a
         }
 
         if (b->y1 > a->y1)
-                rect_set(&out[n++], a->x1, a->y1, a->x2 - a->x1, b->y1 - a->y1);
+                drm_rect_init(&out[n++], a->x1, a->y1, a->x2 - a->x1, b->y1 - a->y1);
 
         if (b->y2 < a->y2)
-                rect_set(&out[n++], a->x1, b->y2, a->x2 - a->x1, a->y2 - b->y2);
+                drm_rect_init(&out[n++], a->x1, b->y2, a->x2 - a->x1, a->y2 - b->y2);
 
         {
                 int top = max(a->y1, b->y1);
                 int bottom = min(a->y2, b->y2);
 
                 if (b->x1 > a->x1)
-                        rect_set(&out[n++], a->x1, top, b->x1 - a->x1, bottom - top);
+                        drm_rect_init(&out[n++], a->x1, top, b->x1 - a->x1, bottom - top);
 
                 if (b->x2 < a->x2)
-                        rect_set(&out[n++], b->x2, top, a->x2 - b->x2, bottom - top);
+                        drm_rect_init(&out[n++], b->x2, top, a->x2 - b->x2, bottom - top);
         }
 
         return n;
@@ -592,11 +584,12 @@ static unsigned int rect_subtract(struct drm_rect *out, const struct drm_rect *a
 
 static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
 {
-        struct drm_rect piece[DESKTOP_PIECES], spare[DESKTOP_PIECES];
+        struct drm_rect storage[2][DESKTOP_PIECES];
+        struct drm_rect *piece = storage[0], *spare = storage[1], *swap;
         unsigned int count = 1, i;
         struct pane *pane;
 
-        rect_set(&piece[0], x1, y1, x2 - x1, y2 - y1);
+        drm_rect_init(&piece[0], x1, y1, x2 - x1, y2 - y1);
 
         list_for_each_entry_reverse(pane, &desktop.windows, link)
         {
@@ -612,7 +605,7 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
 
                 pane_frame(pane, &fx, &fy, &fw, &fh);
                 radius = min(pane->edge, min(fw, fh) / 2);
-                rect_set(&cut, fx + radius - t->x, fy + radius - t->y,
+                drm_rect_init(&cut, fx + radius - t->x, fy + radius - t->y,
                          fw - radius * 2, fh - radius * 2);
 
                 for (i = 0; i < count; i++)
@@ -641,7 +634,9 @@ static void desktop_fill(const struct target *t, int x1, int y1, int x2, int y2)
                         kept += n;
                 }
 
-                memory_copy_apart(piece, spare, kept * sizeof(*piece));
+                swap = piece;
+                piece = spare;
+                spare = swap;
                 count = kept;
         }
 

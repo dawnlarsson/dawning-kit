@@ -309,6 +309,7 @@ esac
 if [ -n "${MOONWATER_STOCK:-}" ]; then
         claims=
         displaces=
+        fold_header=
         echo "  MOONWATER_STOCK: the kernel keeps its own"
 fi
 
@@ -406,10 +407,14 @@ want_src="$(pwd)/src"
 have_src=$(readlink linux/kernel/moonwater 2>/dev/null || true)
 
 if [ "$have_src" != "$want_src" ]; then
+        if [ -e linux/kernel/moonwater ] && [ ! -L linux/kernel/moonwater ]; then
+                die "linux/kernel/moonwater is not a symlink; preserving it"
+        fi
+
         if [ -n "$have_src" ]; then
                 echo "  the kernel module link pointed at $have_src"
                 echo "  it should be $want_src -- repointing it"
         fi
-        sudo rm -rf linux/kernel/moonwater
+        sudo rm -f linux/kernel/moonwater
         sudo ln -s "$want_src" linux/kernel/moonwater || die "linking kernel module source"
 fi

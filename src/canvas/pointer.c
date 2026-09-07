@@ -414,20 +414,15 @@ static void pointer_event_locked(struct input_handle *handle, unsigned int type,
                 if (abs->maximum <= abs->minimum)
                         return;
 
-                if (code == ABS_X)
-                {
-                        desktop.abs_x = (int)div_u64(
-                            (u64)(value - abs->minimum) * (u32)desktop.width,
-                            abs->maximum - abs->minimum);
-                        desktop.abs_have |= 1;
-                }
-                else
-                {
-                        desktop.abs_y = (int)div_u64(
-                            (u64)(value - abs->minimum) * (u32)desktop.height,
-                            abs->maximum - abs->minimum);
-                        desktop.abs_have |= 2;
-                }
+                // Input ranges may span the signed domain. Widen before
+                // subtracting and clamp an out-of-range report before scaling.
+                _Bool horizontal = code == ABS_X;
+                u64 offset = (s64)clamp(value, abs->minimum, abs->maximum) - abs->minimum;
+                u32 span = (s64)abs->maximum - abs->minimum;
+                int *position = horizontal ? &desktop.abs_x : &desktop.abs_y;
+
+                *position = (int)div_u64(offset * (u32)(horizontal ? desktop.width : desktop.height), span);
+                desktop.abs_have |= horizontal ? 1 : 2;
 
                 return;
         }

@@ -649,7 +649,6 @@ static int spawn_enter(void *data)
         if (ret == -ENOEXEC && work->shell_fallback)
         {
                 const char **script_argv;
-                unsigned int i;
 
                 script_argv = kcalloc((size_t)work->argc + 2,
                                       sizeof(*script_argv), GFP_KERNEL);
@@ -661,8 +660,8 @@ static int spawn_enter(void *data)
                         script_argv[0] = "/bin/sh";
                         script_argv[1] = work->path;
 
-                        for (i = 1; i < work->argc; i++)
-                                script_argv[i + 1] = work->arguments->vector[i];
+                        memory_copy_apart(script_argv + 2, work->arguments->vector + 1,
+                                          (work->argc - 1) * sizeof(*script_argv));
 
                         ret = kernel_execve(script_argv[0], script_argv,
                                             work->environment
@@ -737,14 +736,8 @@ static int copy_strings(unsigned long user_block, unsigned int bytes,
         walk = block;
         for (i = 0; i < count; i++)
         {
-                size_t remaining;
-                size_t length;
-
-                if (walk >= block + bytes)
-                        goto malformed;
-
-                remaining = (size_t)(block + bytes - walk);
-                length = strnlen(walk, remaining);
+                size_t remaining = (size_t)(block + bytes - walk);
+                size_t length = strnlen(walk, remaining);
 
                 if (length == remaining)
                         goto malformed;

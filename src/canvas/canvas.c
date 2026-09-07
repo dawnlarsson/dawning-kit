@@ -337,7 +337,6 @@ static void canvas_thread_wake(void);
 static void desktop_redraw(void);
 static void desktop_repaint(void);
 static void cursor_plane_recover(void);
-static void rect_set(struct drm_rect *rect, int x, int y, int w, int h);
 static void desktop_watch(void);
 static void cursor_move(int x, int y);
 

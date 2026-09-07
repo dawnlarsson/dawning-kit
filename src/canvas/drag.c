@@ -97,7 +97,7 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
         int fx, fy, fw, fh;
 
         pane_frame(pane, &fx, &fy, &fw, &fh);
-        rect_set(&damage[0], fx, fy, fw, fh);
+        drm_rect_init(&damage[0], fx, fy, fw, fh);
 
         pane->x = x;
         pane->y = y;
@@ -106,7 +106,7 @@ static void pane_reshape(struct pane *pane, int x, int y, int w, int h)
 
         pane_regrid(pane);
         pane_frame(pane, &fx, &fy, &fw, &fh);
-        rect_set(&damage[1], fx, fy, fw, fh);
+        drm_rect_init(&damage[1], fx, fy, fw, fh);
 
         // The cursor is dragging this, so where it was and where it is are
         // damaged too, and its cell reaches outside the frame.
@@ -284,8 +284,8 @@ static void pane_maximize(struct pane *pane, int at_x, int at_y)
                 WRITE_ONCE(pane->shared->display, display);
 
         pane_limits(pane, &max_w, &max_h);
-        width = min((int)output->width - border * 2, max_w);
-        height = min((int)output->height - title - border * 3, max_h);
+        width = clamp((int)output->width - border * 2, 0, max_w);
+        height = clamp((int)output->height - title - border * 3, 0, max_h);
 
         pane_reshape(pane, output->x + border, output->y + border, width, height);
 }

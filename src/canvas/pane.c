@@ -149,10 +149,11 @@ static void pane_free(struct pane *pane)
         two it did, and came out taller than the display, centred to a negative
         y with its titlebar off the top of it.
 */
-static void desktop_grid(unsigned int *columns, unsigned int *rows)
+static void desktop_grid(int width, int height,
+                          unsigned int *columns, unsigned int *rows)
 {
-        int width = desktop.width - canvas_border * 2;
-        int height = desktop.height - (canvas_title + canvas_border * 3);
+        width -= canvas_border * 2;
+        height -= canvas_title + canvas_border * 3;
 
         *columns = (unsigned int)(max(width, 0) / canvas_cell_w);
         *rows = (unsigned int)(max(height, 0) / canvas_cell_h);
@@ -188,16 +189,6 @@ static void desktop_grid(unsigned int *columns, unsigned int *rows)
 */
 #define PANE_CEILING_W 3840
 #define PANE_CEILING_H 2160
-
-static void desktop_grid_ceiling(unsigned int *columns, unsigned int *rows)
-{
-        int width = max(desktop.width, PANE_CEILING_W) - canvas_border * 2;
-        int height = max(desktop.height, PANE_CEILING_H) -
-                     (canvas_title + canvas_border * 3);
-
-        *columns = (unsigned int)(max(width, 0) / canvas_cell_w);
-        *rows = (unsigned int)(max(height, 0) / canvas_cell_h);
-}
 
 /*
         How long a ring is, and how far apart its lines are.
@@ -444,8 +435,9 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
         unsigned long bytes;
 
         // What it may be built for, and what there is room to show right now.
-        desktop_grid_ceiling(&max_columns, &max_rows);
-        desktop_grid(&fit_columns, &fit_rows);
+        desktop_grid(max(desktop.width, PANE_CEILING_W),
+                     max(desktop.height, PANE_CEILING_H), &max_columns, &max_rows);
+        desktop_grid(desktop.width, desktop.height, &fit_columns, &fit_rows);
 
         // A screen with no room for one cell has no room for a window of
         // cells, whatever the ring could hold.
@@ -897,7 +889,7 @@ static void desktop_damage(int x, int y, int w, int h)
                 return;
         }
 
-        rect_set(&desktop.damage[desktop.damage_count++], x, y, w, h);
+        drm_rect_init(&desktop.damage[desktop.damage_count++], x, y, w, h);
 }
 
 // The rectangle a run of changed cell rows covers, in desktop coordinates.

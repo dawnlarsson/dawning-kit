@@ -7,7 +7,7 @@
 #> make_flags ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 #> virt qemu-system-aarch64
 
-#> post sh profile/post/rpi.sh
+#> post sh kernel/profile/post/rpi.sh
 
 # Architecture selection
 CONFIG_64BIT=y
