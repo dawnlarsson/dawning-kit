@@ -443,9 +443,11 @@ cover('folds_already', 'unit', 'memory_release',
       'a free and three stores; the unit is foldable and removes nothing')
 cover('folds_already', 'length', '''
 buffered_write buffered_write_deferred_equal log log_direct log_error
-system_write_all
 ''', 'a literal length is common and the work is the copy into the buffer, '
      'which memory_copy_apart already expands from inside these')
+cover('folds_already', 'length', 'system_write_all system_write_all_checked',
+      'one shared syscall-progress loop; a literal length cannot predict short '
+      'writes or terminal errno, and zero length already exits before trapping')
 cover('folds_already', 'length', 'buffered_reserve',
       'callers commonly know the requested span, but the public hot path is '
       'already only two capacity checks, one count update and the returned '
