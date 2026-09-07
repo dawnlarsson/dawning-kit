@@ -48,10 +48,70 @@ static bipolar storage_test_call4(positive number, positive handle,
         return (bipolar)take;
 }
 
+static bool directory_test_active;
+static positive directory_test_calls, directory_test_capacity;
+static bipolar directory_test_result;
+
+static bipolar storage_test_call3(positive number, positive one,
+                                  positive two, positive three)
+{
+        if (!directory_test_active || number != syscall(getdents64))
+                return (system_call_3)(number, one, two, three);
+        directory_test_calls++;
+        check("directory refill retains handle and capacity",
+              one == 12345 && three == directory_test_capacity);
+        if (directory_test_result <= 0)
+                return directory_test_result;
+        p8 address_to block = (p8 address_to)two;
+        memory_zero(block, 56);
+        ((struct linux_dirent64 address_to)block)->d_reclen = 24;
+        ((struct linux_dirent64 address_to)(block + 24))->d_reclen = 32;
+        return 56;
+}
+
+#define system_call_3(...) storage_test_call3(__VA_ARGS__)
 #define system_call_4(...) storage_test_call4(__VA_ARGS__)
 #include "../spark.c"
 #include "../sh/shell.c"
 #undef system_call_4
+#undef system_call_3
+
+static fn storage_test_directory(void)
+{
+        p8 guarded[4112] __attribute__((aligned(8)));
+        for (positive capacity = 2048; capacity <= 4096; capacity *= 2)
+                for (bipolar finish = 0; finish >= -5; finish--)
+                {
+                        memory_fill(guarded, 0xa5, sizeof(guarded));
+                        positive have = 0, at = 0;
+                        bipolar error = 0;
+                        directory_test_calls = 0;
+                        directory_test_capacity = capacity;
+                        directory_test_result = 56;
+                        directory_test_active = true;
+                        for (positive record = 0; record < 4; record++)
+                        {
+                                struct linux_dirent64 address_to entry =
+                                    file_directory_next(12345, guarded + 8, capacity,
+                                                        address_of have, address_of at,
+                                                        address_of error);
+                                check("directory record and refill boundary",
+                                      (p8 address_to)entry == guarded + 8 + (record % 2 ? 24 : 0) &&
+                                      at == (record % 2 ? 56 : 24) && have == 56 && !error);
+                                check("resident records do not issue another syscall",
+                                      directory_test_calls == record / 2 + 1);
+                        }
+                        directory_test_result = finish;
+                        check("directory EOF/error stops without implicit retry",
+                              !file_directory_next(12345, guarded + 8, capacity,
+                                                   address_of have, address_of at,
+                                                   address_of error) &&
+                              directory_test_calls == 3 && error == finish);
+                        directory_test_active = false;
+                        check("directory refill preserves guards", guarded[7] == 0xa5 &&
+                              guarded[capacity + 8] == 0xa5);
+                }
+}
 
 static fn storage_test_begin(positive mode, positive length, positive offset,
                              p8 address_to bytes)
@@ -331,6 +391,7 @@ b32 main(void)
         storage_test_read(3, 0);
         storage_test_read(4, 7);
         storage_test_exact();
+        storage_test_directory();
         storage_test_replay();
         utility_test_decimal();
         storage_test_elf();

@@ -771,7 +771,6 @@ static bool file_resolve_as(string_address path, p8 address_to into,
 {
         p8 rest[FILE_PATH_MAX];
         p8 link[FILE_PATH_MAX];
-        p8 merged[FILE_PATH_MAX];
         positive at = 0;
         positive length = 0;
         positive hops = 0;
@@ -923,12 +922,11 @@ static bool file_resolve_as(string_address path, p8 address_to into,
 
                 link[seen] = end;
 
-                positive fill = (positive)seen;
+                bool separator = rest[at] != end;
+                positive fill = (positive)seen + separator;
 
-                memory_copy_apart(merged, link, fill);
-
-                if (rest[at] && fill + 1 < FILE_PATH_MAX)
-                        merged[fill++] = '/';
+                if (fill >= FILE_PATH_MAX)
+                        return false;
 
                 positive left = string_length_max(rest + at, FILE_PATH_MAX - fill);
 
@@ -937,10 +935,12 @@ static bool file_resolve_as(string_address path, p8 address_to into,
                 if (left >= FILE_PATH_MAX - fill)
                         return false;
 
-                fill = (positive)(memory_copy_apart_end(
-                    merged + fill, rest + at, left) - merged);
-
-                memory_copy_apart(rest, merged, fill + 1);
+                /* The unread tail can move in either direction. Preserve it
+                   with the overlap-safe floor, then prepend the link once. */
+                memory_copy(rest + fill, rest + at, left + 1);
+                memory_copy_apart(rest, link, (positive)seen);
+                if (separator)
+                        rest[seen] = '/';
 
                 at = 0;
 
@@ -1960,30 +1960,40 @@ bool file_walk_open(file_walk address_to walk, bipolar directory, string_address
         return walk->handle >= 0;
 }
 
-struct linux_dirent64 address_to file_walk_next(file_walk address_to walk)
+/* Callers keep their chosen buffer size and error policy. Kernel getdents
+   records are trusted here; storage's defensive input walk is separate. */
+static inline INLINE struct linux_dirent64 address_to file_directory_next(
+    bipolar handle, p8 address_to block, positive capacity,
+    positive address_to have, positive address_to at, bipolar address_to error)
 {
-        if (walk->at >= walk->have)
+        if (address_to at >= address_to have)
         {
-                bipolar taken = system_read_directory(
-                    walk->handle, walk->block, FILE_BLOCK);
+                bipolar taken = system_read_directory(handle, block, capacity);
 
                 if (taken <= 0)
                 {
                         if (taken < 0)
-                                walk->error = taken;
+                                address_to error = taken;
                         return null;
                 }
 
-                walk->have = (positive)taken;
-                walk->at = 0;
+                address_to have = (positive)taken;
+                address_to at = 0;
         }
 
         struct linux_dirent64 address_to entry =
-            (struct linux_dirent64 address_to)(walk->block + walk->at);
+            (struct linux_dirent64 address_to)(block + address_to at);
 
-        walk->at += entry->d_reclen;
+        address_to at += entry->d_reclen;
 
         return entry;
+}
+
+struct linux_dirent64 address_to file_walk_next(file_walk address_to walk)
+{
+        return file_directory_next(walk->handle, walk->block, sizeof(walk->block),
+                                   address_of walk->have, address_of walk->at,
+                                   address_of walk->error);
 }
 
 fn file_walk_close(file_walk address_to walk)
@@ -9612,11 +9622,18 @@ static b32 file_realpath()
         else if (file_real(against, against_real))
                 against = against_real;
 
+        p8 policy = allow_missing ? FILE_RESOLVE_UNRESOLVED
+                    : FILE_RESOLVE_DIRECTORIES |
+                          (written_name ? FILE_RESOLVE_MISSING_TAIL
+                                        : FILE_RESOLVE_FINAL_MISSING);
+
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
                 p8 answer[FILE_PATH_MAX];
-                p8 above[FILE_PATH_MAX];
+                p8 scratch[FILE_PATH_MAX];
+                string_address source = path;
+                string_address reason = (string_address) "Invalid argument";
 
                 /*
                         -L takes the .. out of the name before any link in it
@@ -9626,46 +9643,13 @@ static b32 file_realpath()
                 */
                 if (logical && !written_name)
                 {
-                        p8 lexical[FILE_PATH_MAX];
-                        p8 policy = allow_missing
-                                        ? FILE_RESOLVE_UNRESOLVED
-                                        : FILE_RESOLVE_DIRECTORIES |
-                                              FILE_RESOLVE_FINAL_MISSING;
-
-                        if (!file_resolve_as(path, lexical, false, policy) ||
-                            !file_resolve_as(lexical, answer, true, policy))
-                        {
-                                if (!quiet)
-                                        string_format(file_fail,
-                                                      "realpath: %s: Invalid argument\n", path);
-
-                                status = 1;
-                                continue;
-                        }
+                        if (!file_resolve_as(path, scratch, false, policy))
+                                goto failed;
+                        source = scratch;
                 }
-                else
-                {
-                        p8 policy = allow_missing
-                                        ? FILE_RESOLVE_UNRESOLVED
-                                    : written_name
-                                        ? FILE_RESOLVE_DIRECTORIES |
-                                              FILE_RESOLVE_MISSING_TAIL
-                                        : FILE_RESOLVE_DIRECTORIES |
-                                              FILE_RESOLVE_FINAL_MISSING;
 
-                        if (!file_resolve_as(path, answer, !written_name,
-                                             policy))
-                        {
-                                if (!quiet)
-                                        string_format(
-                                            file_fail,
-                                            "realpath: %s: Invalid argument\n",
-                                            path);
-
-                                status = 1;
-                                continue;
-                        }
-                }
+                if (!file_resolve_as(source, answer, !written_name, policy))
+                        goto failed;
 
                 /* -s preserves the spelling of links, but it does not hide
                    kernel traversal failures.  Default -E alone tolerates
@@ -9680,52 +9664,42 @@ static b32 file_realpath()
                             (realpath_missing_option == 'e' ||
                              looked != -ERROR_NO_ENTRY))
                         {
-                                if (!quiet)
-                                        string_format(
-                                            file_fail, "realpath: %s: %s\n",
-                                            path, file_reason(looked));
-
-                                status = 1;
-                                continue;
+                                reason = file_reason(looked);
+                                goto failed;
                         }
                 }
 
-                path_head_copy(above, FILE_PATH_MAX, answer);
+                path_head_copy(scratch, FILE_PATH_MAX, answer);
 
                 if (!written_name &&
-                    ((!allow_missing && !file_is_directory_through(above)) ||
+                    ((!allow_missing && !file_is_directory_through(scratch)) ||
                      (realpath_missing_option == 'e' &&
                       !file_exists(AT_FDCWD, answer))))
                 {
-                        if (!quiet)
-                                string_format(file_fail, "realpath: %s: No such file or directory\n",
-                                              path);
-
-                        status = 1;
-                        continue;
+                        reason = (string_address) "No such file or directory";
+                        goto failed;
                 }
 
                 // --relative-base names where the shorthand stops being worth
                 // it: a path outside that directory is said in full.
                 if (against && (!base || realpath_under(base, answer)))
                 {
-                        p8 relative[FILE_PATH_MAX];
-
-                        if (!realpath_relative(against, answer, relative))
+                        if (!realpath_relative(against, answer, scratch))
                         {
-                                if (!quiet)
-                                        string_format(file_fail,
-                                                      "realpath: %s: File name too long\n",
-                                                      path);
-
-                                status = 1;
-                                continue;
+                                reason = (string_address) "File name too long";
+                                goto failed;
                         }
 
-                        file_written(relative, zero);
+                        file_written(scratch, zero);
                 }
                 else
                         file_written(answer, zero);
+                continue;
+
+failed:
+                if (!quiet)
+                        string_format(file_fail, "realpath: %s: %s\n", path, reason);
+                status = 1;
         }
 
         log_flush();

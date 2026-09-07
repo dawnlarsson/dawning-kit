@@ -1142,6 +1142,11 @@ answered 'existing then missing' realpath -e -m "$fixture/nothing/at/all"
 answered 'logical then physical' realpath -L -P "$fixture/sub/away/.."
 answered 'physical then logical' realpath -P -L "$fixture/sub/away/.."
 answered 'overlong path' realpath "$long_path"
+if python3 src/test/file_paths.py "$binaries"; then
+        report ok
+else
+        report bad 'procedural path splices' 'symlink/tail/policy combinations'
+fi
 relative_from=$(python3 - <<'PY'
 print("/" + "/".join(["a"] * 1300))
 PY
