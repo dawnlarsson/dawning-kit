@@ -871,6 +871,17 @@ static bool ul_meta(file_taking address_to taking, string_address syntax,
         return false;
 }
 
+/* Ordinary applets share parse/help/version ordering and failure status.
+   Keep custom parsing and status policies (setarch/getopt/flock) explicit. */
+static bool ul_options_done(file_taking address_to taking, string_address syntax,
+                             b32 address_to answer)
+{
+        if (file_take(taking))
+                return ul_meta(taking, syntax, answer);
+        address_to answer = 1;
+        return true;
+}
+
 // taskset ---------------------------------------------------------
 typedef struct
 {
@@ -968,9 +979,7 @@ static b32 util_linux_taskset()
         bool by_pid;
         bool all;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] [mask | cpu-list] [pid | command ...]",
                     address_of answer))
                 return answer;
@@ -1207,6 +1216,33 @@ static b32 util_linux_renice()
                                               : ul_bad_usage("renice", "no process ID specified");
 }
 
+typedef struct
+{
+        string_address name;
+        string_address heading;
+        positive width;
+        bool number;
+        p8 json;
+        bool multiline;
+        bool decimal; // Getter returns only decimal digits (no escaping needed).
+        bool printable; // Getter and heading are printable ASCII, without newlines.
+} ul_table_column;
+
+#define UL_TABLE_STRING 0
+#define UL_TABLE_NUMBER 1
+#define UL_TABLE_BOOLEAN 2
+#define UL_TABLE_NULL_STRING 3
+#define UL_TABLE_NULL_NUMBER 4
+
+typedef string_address (*ul_table_field)(address_any row, p8 column,
+                                         p8 address_to scratch);
+
+static fn ul_table_out(address_any rows, positive row_size, positive count,
+                       const ul_table_column address_to definitions,
+                       positive definition_count, p8 address_to columns,
+                       positive column_count, bool headings, bool raw,
+                       ul_table_field field_of);
+
 // prlimit ---------------------------------------------------------
 static bipolar ul_prlimit(b32 pid, positive resource,
                           ul_limit_pair address_to in,
@@ -1322,8 +1358,12 @@ enum
         UL_LIMIT_COLUMNS
 };
 
-static string_address ul_limit_headers[] = {
-    "RESOURCE", "DESCRIPTION", "SOFT", "HARD", "UNITS",
+static const ul_table_column ul_limit_definitions[] = {
+    {"RESOURCE", "RESOURCE", 0, false, .printable = true},
+    {"DESCRIPTION", "DESCRIPTION", 0, false, .printable = true},
+    {"SOFT", "SOFT", 0, true, .printable = true},
+    {"HARD", "HARD", 0, true, .printable = true},
+    {"UNITS", "UNITS", 0, false, .printable = true},
 };
 
 static bool ul_limit_columns(string_address text, p8 address_to columns,
@@ -1331,7 +1371,7 @@ static bool ul_limit_columns(string_address text, p8 address_to columns,
 {
         address_to count = 0;
         return name_list_select(
-            text, ul_limit_headers, sizeof(ul_limit_headers[0]),
+            text, ul_limit_definitions, sizeof(ul_limit_definitions[0]),
             UL_LIMIT_COLUMNS, columns, count, UL_LIMIT_COLUMNS, 0);
 }
 
@@ -1346,43 +1386,36 @@ static positive ul_limit_text(p64 value, p8 address_to into)
         return positive_into_string(into, (positive)value);
 }
 
-static fn ul_limit_raw(string_address text)
+typedef struct
 {
-        while (string_get(text))
-        {
-                if (string_is(text, ' '))
-                        log("\\x20", 4);
-                else
-                        log(text, 1);
-                text++;
-        }
+        ul_resource const address_to resource;
+        ul_limit_pair pair;
+} ul_limit_row;
+
+static string_address ul_limit_field(address_any opaque, p8 column,
+                                      p8 address_to scratch)
+{
+        ul_limit_row address_to row = opaque;
+        if (column == UL_LIMIT_RESOURCE)
+                return row->resource->name;
+        if (column == UL_LIMIT_DESCRIPTION)
+                return row->resource->description;
+        if (column == UL_LIMIT_UNITS)
+                return row->resource->units;
+        ul_limit_text(column == UL_LIMIT_SOFT ? row->pair.soft : row->pair.hard,
+                      scratch);
+        return scratch;
 }
 
-static fn ul_limit_field(p8 column, ul_resource const address_to resource,
-                         ul_limit_pair pair, positive width, bool raw)
+/* Specialize the shared engine for fixed resource metadata and its getter;
+   the other inventories keep the out-of-line, size-shared renderer. */
+static __attribute__((flatten)) fn ul_limit_table(ul_limit_row address_to rows,
+    positive count, p8 address_to columns, positive column_count,
+    bool headings, bool raw)
 {
-        p8 number[32];
-        string_address text;
-
-        if (column == UL_LIMIT_RESOURCE)
-                text = resource->name;
-        else if (column == UL_LIMIT_DESCRIPTION)
-                text = resource->description;
-        else if (column == UL_LIMIT_UNITS)
-                text = resource->units;
-        else
-        {
-                ul_limit_text(column == UL_LIMIT_SOFT ? pair.soft : pair.hard,
-                              number);
-                text = number;
-        }
-
-        if (raw)
-                ul_limit_raw(text);
-        else
-                string_to_field(log, text, width, ' ',
-                                column != UL_LIMIT_SOFT &&
-                                column != UL_LIMIT_HARD);
+        ul_table_out(rows, sizeof(rows[0]), count, ul_limit_definitions,
+                     UL_LIMIT_COLUMNS, columns, column_count, headings, raw,
+                     ul_limit_field);
 }
 
 static b32 util_linux_prlimit()
@@ -1396,9 +1429,7 @@ static b32 util_linux_prlimit()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] [--resource[=limit]] [command ...]",
                     address_of answer))
                 return answer;
@@ -1488,91 +1519,31 @@ static b32 util_linux_prlimit()
                               columns, address_of column_count))
                 return ul_bad_usage("prlimit", "unknown column");
 
-        bool headings = !(taking.flags & FILE_FLAG('H'));
-        bool raw = (taking.flags & FILE_FLAG('R')) != 0;
-        positive widths[UL_LIMIT_COLUMNS] = {0, 0, 0, 0, 0};
-        ul_limit_pair pairs[UL_RESOURCES];
-        bool show[UL_RESOURCES];
-        bool any_show = false;
-
-        for (positive column = 0; column < UL_LIMIT_COLUMNS; column++)
-                if (headings)
-                        widths[column] = string_length(ul_limit_headers[column]);
+        ul_limit_row rows[UL_RESOURCES];
+        positive shown = 0;
 
         for (positive at = 0; at < UL_RESOURCES; at++)
         {
                 ul_resource const address_to resource = ul_resources + at;
-                show[at] = (!selected ||
-                            (taking.flags & FILE_FLAG(resource->letter))) &&
-                           !file_option_value(address_of taking,
-                                              resource->letter);
-                if (!show[at])
+                if ((selected && !(taking.flags & FILE_FLAG(resource->letter))) ||
+                    file_option_value(address_of taking, resource->letter))
                         continue;
 
                 bipolar got = ul_prlimit(pid, resource->resource, null,
-                                         pairs + at);
+                                         address_of rows[shown].pair);
                 if (got < 0)
                 {
                         string_format(file_fail, "prlimit: failed to get %s: %s\n",
                                       resource->name, file_reason(got));
-                        show[at] = false;
                         failed = 1;
                         continue;
                 }
-                any_show = true;
-
-                positive lengths[UL_LIMIT_COLUMNS];
-                p8 number[32];
-                lengths[UL_LIMIT_RESOURCE] = string_length(resource->name);
-                lengths[UL_LIMIT_DESCRIPTION] =
-                    string_length(resource->description);
-                lengths[UL_LIMIT_SOFT] =
-                    ul_limit_text(pairs[at].soft, number);
-                lengths[UL_LIMIT_HARD] =
-                    ul_limit_text(pairs[at].hard, number);
-                lengths[UL_LIMIT_UNITS] = string_length(resource->units);
-
-                for (positive column = 0; column < UL_LIMIT_COLUMNS; column++)
-                        if (lengths[column] > widths[column])
-                                widths[column] = lengths[column];
+                rows[shown++].resource = resource;
         }
 
-        if (headings && any_show)
-        {
-                for (positive at = 0; at < column_count; at++)
-                {
-                        if (at)
-                                log(" ", 1);
-                        string_to_field(log, ul_limit_headers[columns[at]],
-                                        raw || (at + 1 == column_count &&
-                                                columns[at] != UL_LIMIT_SOFT &&
-                                                columns[at] != UL_LIMIT_HARD)
-                                            ? 0 : widths[columns[at]], ' ',
-                                        columns[at] != UL_LIMIT_SOFT &&
-                                        columns[at] != UL_LIMIT_HARD);
-                }
-                log("\n", 1);
-        }
-
-        for (positive at = 0; at < UL_RESOURCES; at++)
-        {
-                ul_resource const address_to resource = ul_resources + at;
-                if (!show[at])
-                        continue;
-
-                for (positive field = 0; field < column_count; field++)
-                {
-                        if (field)
-                                log(" ", 1);
-                        ul_limit_field(columns[field], resource, pairs[at],
-                                       raw || (field + 1 == column_count &&
-                                               columns[field] != UL_LIMIT_SOFT &&
-                                               columns[field] != UL_LIMIT_HARD)
-                                           ? 0 : widths[columns[field]], raw);
-                }
-                log("\n", 1);
-        }
-
+        ul_limit_table(rows, shown, columns, column_count,
+                       !(taking.flags & FILE_FLAG('H')),
+                       (taking.flags & FILE_FLAG('R')) != 0);
         log_flush();
         return failed;
 }
@@ -1740,9 +1711,7 @@ static b32 util_linux_chrt()
         b32 answer;
 
         ul_chrt_policy = 0;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] [priority] command | -p [priority] PID",
                     address_of answer))
                 return answer;
@@ -1932,9 +1901,7 @@ static b32 util_linux_uclampset()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] --pid PID | command [argument ...] | --system",
                     address_of answer))
                 return answer;
@@ -2864,9 +2831,7 @@ static b32 util_linux_waitpid()
         b32 answer;
 
         file_operands_begin();
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] PID[:inode]...",
+        if (ul_options_done(address_of taking, "[options] PID[:inode]...",
                     address_of answer))
                 return answer;
         if (file_operand_failed)
@@ -3295,8 +3260,7 @@ static b32 util_linux_setpriv()
         b32 answer;
         ul_setpriv_seen = ul_setpriv_total = ul_setpriv_dumps = 0;
         ul_setpriv_group_option = 0;
-        if (!file_take(address_of taking)) return 1;
-        if (ul_meta(address_of taking, "[options] program [argument ...]", address_of answer)) return answer;
+        if (ul_options_done(address_of taking, "[options] program [argument ...]", address_of answer)) return answer;
 
         if (ul_setpriv_dumps)
         {
@@ -3529,23 +3493,6 @@ enum
         UL_LSNS_COLUMNS,
 };
 
-typedef struct
-{
-        string_address name;
-        string_address heading;
-        positive width;
-        bool number;
-        p8 json;
-        bool multiline;
-        bool decimal; // Getter returns only decimal digits (no escaping needed).
-} ul_table_column;
-
-#define UL_TABLE_STRING 0
-#define UL_TABLE_NUMBER 1
-#define UL_TABLE_BOOLEAN 2
-#define UL_TABLE_NULL_STRING 3
-#define UL_TABLE_NULL_NUMBER 4
-
 static const ul_table_column ul_lsns_columns[] = {
     {(string_address)"ns", (string_address)"NS", 10, true, UL_TABLE_NUMBER, .decimal = true},
     {(string_address)"type", (string_address)"TYPE", 0, false, UL_TABLE_STRING},
@@ -3680,9 +3627,6 @@ static string_address ul_lsns_field(ul_lsns_entry address_to entry,
         }
 }
 
-typedef string_address (*ul_table_field)(address_any row, p8 column,
-                                         p8 address_to scratch);
-
 static string_address ul_lsns_table_field(address_any row, p8 column,
                                           p8 address_to scratch)
 {
@@ -3752,8 +3696,10 @@ static fn ul_lsns_safe_span(string_address text, positive bytes)
 }
 
 static fn ul_lsns_safe_span_field(string_address text, positive bytes,
-                                  positive width, bool left)
+                                  positive width, bool left, bool printable)
 {
+        if (printable)
+                return writer_field(log, text, bytes, width, ' ', left);
         positive length = ul_lsns_safe_span_length(text, bytes);
         positive padding = width > length ? width - length : 0;
         if (!left)
@@ -3761,6 +3707,23 @@ static fn ul_lsns_safe_span_field(string_address text, positive bytes,
         ul_lsns_safe_span(text, bytes);
         if (left)
                 writer_fill(log, padding, ' ');
+}
+
+static fn ul_table_json_value(string_address value, p8 kind)
+{
+        if ((kind == UL_TABLE_NULL_STRING || kind == UL_TABLE_NULL_NUMBER) &&
+            !string_get(value))
+                log("null", 4);
+        else if (kind == UL_TABLE_BOOLEAN)
+        {
+                bool false_value = string_equals(value, "0") ||
+                                   string_equals(value, "no");
+                log(false_value ? "false" : "true", false_value ? 5 : 4);
+        }
+        else if (kind == UL_TABLE_NUMBER || kind == UL_TABLE_NULL_NUMBER)
+                log(value, string_length(value));
+        else
+                writer_json_string(log, value);
 }
 
 static fn ul_table_json(string_address name, address_any rows,
@@ -3787,24 +3750,7 @@ static fn ul_table_json(string_address name, address_any rows,
                                 log(",\n", 2);
                         string_format(log, "         \"%s\": ",
                                       definitions[column].name);
-                        p8 json = definitions[column].json;
-
-                        if ((json == UL_TABLE_NULL_STRING ||
-                             json == UL_TABLE_NULL_NUMBER) &&
-                            !string_get(value))
-                                log("null", 4);
-                        else if (json == UL_TABLE_BOOLEAN)
-                        {
-                                bool false_value = string_equals(value, "0") ||
-                                                   string_equals(value, "no");
-                                log(false_value ? "false" : "true",
-                                    false_value ? 5 : 4);
-                        }
-                        else if (json == UL_TABLE_NUMBER ||
-                                 json == UL_TABLE_NULL_NUMBER)
-                                log(value, string_length(value));
-                        else
-                                writer_json_string(log, value);
+                        ul_table_json_value(value, definitions[column].json);
                 }
                 log("\n      }", 8);
         }
@@ -3820,7 +3766,8 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                        positive column_count, bool headings, bool raw,
                        ul_table_field field_of)
 {
-        positive widths[64] = {0};
+        positive widths[64];
+        bool multiline = false;
 
         if (!count || definition_count > array_count(widths))
                 return;
@@ -3829,6 +3776,7 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
         {
                 p8 column = columns[i];
                 widths[column] = definitions[column].width;
+                multiline |= definitions[column].multiline;
         }
 
         if (headings)
@@ -3848,11 +3796,12 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                         {
                                 p8 column = columns[field];
                                 p8 scratch[96];
-                                positive length = ul_table_safe_width(
-                                    field_of((p8 address_to)rows +
-                                                 row * row_size,
-                                             column, scratch),
-                                    definitions[column].multiline);
+                                string_address value = field_of(
+                                    (p8 address_to)rows + row * row_size, column, scratch);
+                                positive length = definitions[column].printable ||
+                                                  definitions[column].decimal
+                                    ? string_length(value)
+                                    : ul_table_safe_width(value, definitions[column].multiline);
 
                                 if (length > widths[column])
                                         widths[column] = length;
@@ -3865,7 +3814,7 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                     (heading ? 0 : row - (headings ? 1 : 0)) * row_size;
 
                 positive lines = 1;
-                if (!heading && !raw)
+                if (!heading && !raw && multiline)
                         for (positive field = 0; field < column_count; field++)
                         {
                                 p8 column = columns[field];
@@ -3887,7 +3836,7 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                     ? definitions[column].heading
                                     : field_of(entry, column, scratch);
                                 positive bytes = string_length(value);
-                                if (!raw && !heading)
+                                if (!raw && !heading && lines > 1)
                                 {
                                         if (definitions[column].multiline)
                                                 value = ul_table_line(
@@ -3922,7 +3871,8 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                             value, bytes,
                                             (last_text || empty_last)
                                                 ? 0 : widths[column],
-                                            !number);
+                                            !number, definitions[column].printable ||
+                                                (!heading && definitions[column].decimal));
                                 }
                         }
                         log("\n", 1);
@@ -4481,9 +4431,7 @@ static b32 util_linux_lsns()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] [namespace]",
+        if (ul_options_done(address_of taking, "[options] [namespace]",
                     address_of answer))
                 return answer;
 
@@ -4975,9 +4923,7 @@ static b32 util_linux_lslocks()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options]", address_of answer))
+        if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("lslocks", "unexpected operand");
@@ -5514,9 +5460,7 @@ static b32 util_linux_lsfd()
         b32 answer;
 
         ul_lsfd_release();
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options]", address_of answer))
+        if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("lsfd", "unexpected operand");
@@ -6196,9 +6140,7 @@ static b32 util_linux_unshare()
         ul_unshare_uid_ranges = uid_ranges;
         ul_unshare_gid_ranges = gid_ranges;
         ul_unshare_uid_range_count = ul_unshare_gid_range_count = 0;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] [program [argument ...]]",
+        if (ul_options_done(address_of taking, "[options] [program [argument ...]]",
                     address_of answer))
                 return answer;
 
@@ -6416,9 +6358,7 @@ static b32 util_linux_nsenter()
         b32 answer;
         positive count = (positive)program_argument_count();
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] [program [argument ...]]",
+        if (ul_options_done(address_of taking, "[options] [program [argument ...]]",
                     address_of answer))
                 return answer;
 
@@ -6683,9 +6623,7 @@ static b32 util_linux_setsid()
         bipolar pid;
         bool waiting;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] program [argument ...]", address_of answer))
                 return answer;
         if (taking.first >= (positive)program_argument_count())
@@ -6750,9 +6688,7 @@ static b32 util_linux_setpgid()
         b32 answer;
         bipolar changed;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] program [argument ...]", address_of answer))
                 return answer;
         if (taking.first >= (positive)program_argument_count())
@@ -6839,9 +6775,7 @@ static b32 util_linux_fallocate()
         positive mode = 0;
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] filename", address_of answer))
+        if (ul_options_done(address_of taking, "[options] filename", address_of answer))
                 return answer;
         if (taking.first >= count)
                 return ul_bad_usage("fallocate", "no filename specified");
@@ -7069,9 +7003,7 @@ static b32 util_linux_copyfilerange()
         positive count = (positive)program_argument_count();
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] source destination range...",
                     address_of answer))
                 return answer;
@@ -7172,9 +7104,7 @@ static b32 util_linux_fadvise()
         b32 answer;
         bool close_handle = false;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] file | --fd descriptor", address_of answer))
                 return answer;
 
@@ -7351,9 +7281,7 @@ static b32 util_linux_ionice()
         bool tolerant;
 
         ul_ionice_identity = 0;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] [-p pid ... | command]", address_of answer))
                 return answer;
 
@@ -7472,9 +7400,7 @@ static b32 util_linux_choom()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] -p PID | -n NUMBER command [argument ...]",
                     address_of answer))
                 return answer;
@@ -7554,9 +7480,7 @@ static b32 util_linux_exch()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] OLDPATH NEWPATH",
+        if (ul_options_done(address_of taking, "[options] OLDPATH NEWPATH",
                     address_of answer))
                 return answer;
 
@@ -7602,9 +7526,7 @@ static b32 util_linux_getino()
         b32 answer;
 
         file_operands_begin();
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] PID[:inode]...",
+        if (ul_options_done(address_of taking, "[options] PID[:inode]...",
                     address_of answer))
                 return answer;
         if (file_operand_failed)
@@ -8808,9 +8730,7 @@ static b32 util_linux_blockdev()
             .supersedes = ul_blockdev_supersedes,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[-v|-q] commands devices",
+        if (ul_options_done(address_of taking, "[-v|-q] commands devices",
                     address_of answer))
                 return answer;
 
@@ -8865,9 +8785,7 @@ static b32 util_linux_isosize()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] <iso9660_image_file> ...",
+        if (ul_options_done(address_of taking, "[options] <iso9660_image_file> ...",
                     address_of answer))
                 return answer;
 
@@ -9161,9 +9079,7 @@ static b32 util_linux_wipefs()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] <device>",
+        if (ul_options_done(address_of taking, "[options] <device>",
                     address_of answer))
                 return answer;
         if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('f') |
@@ -9377,9 +9293,7 @@ static b32 util_linux_mkswap()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] device [size]",
+        if (ul_options_done(address_of taking, "[options] device [size]",
                     address_of answer))
                 return answer;
         if (taking.flags & (FILE_FLAG('c') | FILE_FLAG('F') |
@@ -9540,9 +9454,7 @@ static b32 util_linux_swaplabel()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] <device>",
+        if (ul_options_done(address_of taking, "[options] <device>",
                     address_of answer))
                 return answer;
         positive count = (positive)program_argument_count();
@@ -10805,9 +10717,7 @@ static b32 util_linux_lscpu()
             .longs = ul_lscpu_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options]", address_of answer))
+        if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("lscpu", "unexpected operand");
@@ -11326,9 +11236,7 @@ static b32 util_linux_lsmem()
             .longs = ul_lsmem_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options]", address_of answer))
+        if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("lsmem", "unexpected operand");
@@ -12347,23 +12255,6 @@ static fn ul_lsblk_rows(bool list, bool dependencies, bool all, bool noempty,
         }
 }
 
-static fn ul_lsblk_json_scalar(ul_lsblk_device address_to device, p8 column)
-{
-        p8 scratch[96];
-        string_address value = ul_lsblk_field(device, column, scratch);
-        p8 kind = ul_lsblk_columns[column].json;
-        if ((kind == UL_TABLE_NULL_STRING || kind == UL_TABLE_NULL_NUMBER) &&
-            !string_get(value))
-                log("null", 4);
-        else if (kind == UL_TABLE_BOOLEAN)
-                log(string_equals(value, "0") ? "false" : "true",
-                    string_equals(value, "0") ? 5 : 4);
-        else if (kind == UL_TABLE_NUMBER || kind == UL_TABLE_NULL_NUMBER)
-                log(value, string_length(value));
-        else
-                writer_json_string(log, value);
-}
-
 static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                                    positive column_count, positive indent)
 {
@@ -12388,7 +12279,11 @@ static positive ul_lsblk_json_row(positive row, p8 address_to columns,
                         log("]", 1);
                 }
                 else
-                        ul_lsblk_json_scalar(device, column);
+                {
+                        p8 scratch[96];
+                        ul_table_json_value(ul_lsblk_field(device, column, scratch),
+                                            ul_lsblk_columns[column].json);
+                }
         }
 
         positive next = row + 1;
@@ -12469,9 +12364,7 @@ static b32 util_linux_lsblk()
             .valued = "os", .longs = ul_lsblk_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] [device ...]",
+        if (ul_options_done(address_of taking, "[options] [device ...]",
                     address_of answer))
                 return answer;
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('z')))
@@ -13028,9 +12921,7 @@ static b32 util_linux_ipcmk()
             .valued = "MmSpn", .longs = ul_ipcmk_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options]", address_of answer))
+        if (ul_options_done(address_of taking, "[options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("ipcmk", "unexpected operand");
@@ -13162,9 +13053,7 @@ static b32 util_linux_ipcrm()
             .valued = "mMqQsSxyz", .longs = ul_ipcrm_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] | shm|msg|sem id ...",
+        if (ul_options_done(address_of taking, "[options] | shm|msg|sem id ...",
                     address_of answer))
                 return answer;
         if (taking.flags &
@@ -13258,9 +13147,7 @@ static b32 util_linux_lsipc()
             .valued = "iNFo", .longs = ul_lsipc_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "-m|-q|-s [options]", address_of answer))
+        if (ul_options_done(address_of taking, "-m|-q|-s [options]", address_of answer))
                 return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("lsipc", "unexpected operand");
@@ -13388,84 +13275,42 @@ static b32 util_linux_lsipc()
         return have_id && !ul_ipc.count ? 1 : 0;
 }
 
-typedef struct
-{
-        const ul_table_column address_to definitions;
-        const p8 address_to map;
-} ul_ipcs_view;
-
-static ul_ipcs_view ul_ipcs_current;
-
-static string_address ul_ipcs_field(address_any row, p8 column,
-                                    p8 address_to scratch)
-{
-        return ul_ipc_field(row, ul_ipcs_current.map[column], scratch);
-}
-
-static const ul_table_column ul_ipcs_msg_columns[] = {
-    {"key", "key", 10, false, UL_TABLE_STRING},
-    {"id", "msqid", 10, false, UL_TABLE_STRING},
-    {"owner", "owner", 10, false, UL_TABLE_STRING},
-    {"perms", "perms", 10, false, UL_TABLE_STRING},
-    {"used", "used-bytes", 12, false, UL_TABLE_STRING},
-    {"messages", "messages", 0, false, UL_TABLE_STRING},
-};
-static const p8 ul_ipcs_msg_map[] = {
-    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
-    UL_IPC_USEDBYTES, UL_IPC_MSGS,
-};
-static const ul_table_column ul_ipcs_shm_columns[] = {
-    {"key", "key", 10, false, UL_TABLE_STRING},
-    {"id", "shmid", 10, false, UL_TABLE_STRING},
-    {"owner", "owner", 10, false, UL_TABLE_STRING},
-    {"perms", "perms", 10, false, UL_TABLE_STRING},
-    {"bytes", "bytes", 10, false, UL_TABLE_STRING},
-    {"nattch", "nattch", 10, false, UL_TABLE_STRING},
-    {"status", "status", 0, false, UL_TABLE_STRING},
-};
-static const p8 ul_ipcs_shm_map[] = {
-    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_SIZE,
-    UL_IPC_NATTCH, UL_IPC_STATUS,
-};
-static const ul_table_column ul_ipcs_sem_columns[] = {
-    {"key", "key", 10, false, UL_TABLE_STRING},
-    {"id", "semid", 10, false, UL_TABLE_STRING},
-    {"owner", "owner", 10, false, UL_TABLE_STRING},
-    {"perms", "perms", 10, false, UL_TABLE_STRING},
-    {"nsems", "nsems", 0, false, UL_TABLE_STRING},
-};
-static const p8 ul_ipcs_sem_map[] = {
-    UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_NSEMS,
+/* The legacy projection has different headings/alignment, not different
+   fields. Keep the shared IPC column IDs and getter instead of remapping
+   every row through three duplicate schemas. */
+static ul_table_column ul_ipcs_columns[UL_IPC_COLUMNS] = {
+    [UL_IPC_KEY] = {"key", "key", 10},
+    [UL_IPC_ID] = {"id", null, 10},
+    [UL_IPC_OWNER] = {"owner", "owner", 10},
+    [UL_IPC_PERMS] = {"perms", "perms", 10},
+    [UL_IPC_SIZE] = {"bytes", "bytes", 10},
+    [UL_IPC_NATTCH] = {"nattch", "nattch", 10},
+    [UL_IPC_STATUS] = {"status", "status", 0},
+    [UL_IPC_USEDBYTES] = {"used", "used-bytes", 12},
+    [UL_IPC_MSGS] = {"messages", "messages", 0},
+    [UL_IPC_NSEMS] = {"nsems", "nsems", 0},
 };
 
 static fn ul_ipcs_table(p8 type)
 {
-        string_address title;
-        const ul_table_column address_to definitions;
-        const p8 address_to map;
-        positive count;
-        if (type == UL_IPC_MESSAGE)
+        static const struct
         {
-                title = "Message Queues";
-                definitions = ul_ipcs_msg_columns;
-                map = ul_ipcs_msg_map;
-                count = array_count(ul_ipcs_msg_columns);
-        }
-        else if (type == UL_IPC_SHARED)
-        {
-                title = "Shared Memory Segments";
-                definitions = ul_ipcs_shm_columns;
-                map = ul_ipcs_shm_map;
-                count = array_count(ul_ipcs_shm_columns);
-        }
-        else
-        {
-                title = "Semaphore Arrays";
-                definitions = ul_ipcs_sem_columns;
-                map = ul_ipcs_sem_map;
-                count = array_count(ul_ipcs_sem_columns);
-        }
-        string_format(log, "\n------ %s --------\n", title);
+                string_address title, id, empty_heading;
+                p8 count, columns[7];
+        } views[] = {
+            {"Message Queues", "msqid",
+             "key        msqid      owner      perms      used-bytes   messages    \n",
+             6, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
+                 UL_IPC_USEDBYTES, UL_IPC_MSGS}},
+            {"Shared Memory Segments", "shmid",
+             "key        shmid      owner      perms      bytes      nattch     status      \n",
+             7, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS,
+                 UL_IPC_SIZE, UL_IPC_NATTCH, UL_IPC_STATUS}},
+            {"Semaphore Arrays", "semid",
+             "key        semid      owner      perms      nsems     \n",
+             5, {UL_IPC_KEY, UL_IPC_ID, UL_IPC_OWNER, UL_IPC_PERMS, UL_IPC_NSEMS}},
+        };
+        string_format(log, "\n------ %s --------\n", views[type].title);
         positive first = 0;
         while (first < ul_ipc.count && ul_ipc.rows[first].type != type) first++;
         positive rows = 0;
@@ -13473,23 +13318,14 @@ static fn ul_ipcs_table(p8 type)
                ul_ipc.rows[first + rows].type == type) rows++;
         if (!rows)
         {
-                if (type == UL_IPC_MESSAGE)
-                        log("key        msqid      owner      perms      used-bytes   messages    \n",
-                            sizeof("key        msqid      owner      perms      used-bytes   messages    \n") - 1);
-                else if (type == UL_IPC_SHARED)
-                        log("key        shmid      owner      perms      bytes      nattch     status      \n",
-                            sizeof("key        shmid      owner      perms      bytes      nattch     status      \n") - 1);
-                else
-                        log("key        semid      owner      perms      nsems     \n",
-                            sizeof("key        semid      owner      perms      nsems     \n") - 1);
+                log(views[type].empty_heading, 0);
                 return;
         }
-        p8 columns[8];
-        for (positive at = 0; at < count; at++) columns[at] = (p8)at;
-        ul_ipcs_current = (ul_ipcs_view){definitions, map};
+        ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
-                     definitions, count, columns, count, true, false,
-                     ul_ipcs_field);
+                     ul_ipcs_columns, UL_IPC_COLUMNS,
+                     (p8 address_to)views[type].columns, views[type].count,
+                     true, false, ul_ipc_field);
 }
 
 static const file_long ul_ipcs_longs[] = {
@@ -13507,8 +13343,7 @@ static b32 util_linux_ipcs()
             .valued = "i", .longs = ul_ipcs_longs,
         };
         b32 answer;
-        if (!file_take(address_of taking)) return 1;
-        if (ul_meta(address_of taking, "[-m|-q|-s] [options]",
+        if (ul_options_done(address_of taking, "[-m|-q|-s] [options]",
                     address_of answer)) return answer;
         if (taking.first != (positive)program_argument_count())
                 return ul_bad_usage("ipcs", "unexpected operand");
@@ -13555,9 +13390,7 @@ static b32 util_linux_mesg()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking, "[options] [y | n]",
+        if (ul_options_done(address_of taking, "[options] [y | n]",
                     address_of answer))
                 return answer;
 
@@ -14045,9 +13878,7 @@ static b32 util_linux_rfkill()
         };
         b32 answer;
 
-        if (!file_take(address_of taking))
-                return 1;
-        if (ul_meta(address_of taking,
+        if (ul_options_done(address_of taking,
                     "[options] command [identifier ...]",
                     address_of answer))
                 return answer;
@@ -14096,57 +13927,38 @@ static b32 util_linux_rfkill()
         string_address selected = file_option_value(address_of taking, 'o');
         bool legacy = explicit_list && !selected &&
                       !(taking.flags & FILE_FLAG('J'));
+        positive view_count = 0;
+        positive selectors = arguments - taking.first;
+        for (positive selector = 0; selector < max(selectors, (positive)1); selector++)
+        {
+                positive value = 0;
+                p8 kind = UL_RFKILL_MATCH_ALL;
+                if (selectors)
+                {
+                        string_address identifier =
+                            program_argument((b32)(taking.first + selector));
+                        kind = ul_rfkill_match_kind(identifier, rows, count,
+                                                    address_of value);
+                        if (kind == UL_RFKILL_MATCH_INVALID)
+                        {
+                                string_format(file_fail,
+                                              "rfkill: invalid identifier: %s\n",
+                                              identifier);
+                                return 1;
+                        }
+                }
+                if (legacy)
+                        ul_rfkill_legacy(rows, count, kind, value);
+                else
+                        for (positive i = 0; i < count; i++)
+                                if (ul_rfkill_matches(rows + i, kind, value))
+                                        ul_rfkill_views[view_count++].row = rows + i;
+        }
         if (legacy)
         {
-                if (taking.first == arguments)
-                        ul_rfkill_legacy(rows, count, UL_RFKILL_MATCH_ALL, 0);
-                else
-                        for (positive argument = taking.first;
-                             argument < arguments; argument++)
-                        {
-                                positive value;
-                                p8 kind = ul_rfkill_match_kind(
-                                    program_argument((b32)argument), rows,
-                                    count, address_of value);
-                                if (kind == UL_RFKILL_MATCH_INVALID)
-                                {
-                                        string_format(
-                                            file_fail,
-                                            "rfkill: invalid identifier: %s\n",
-                                            program_argument((b32)argument));
-                                        return 1;
-                                }
-                                ul_rfkill_legacy(rows, count, kind, value);
-                        }
                 log_flush();
                 return 0;
         }
-
-        positive view_count = 0;
-        if (taking.first == arguments)
-                for (positive i = 0; i < count; i++)
-                        ul_rfkill_views[view_count++].row = rows + i;
-        else
-                for (positive argument = taking.first;
-                     argument < arguments; argument++)
-                {
-                        positive value;
-                        p8 kind = ul_rfkill_match_kind(
-                            program_argument((b32)argument), rows, count,
-                            address_of value);
-                        if (kind == UL_RFKILL_MATCH_INVALID)
-                        {
-                                string_format(
-                                    file_fail,
-                                    "rfkill: invalid identifier: %s\n",
-                                    program_argument((b32)argument));
-                                return 1;
-                        }
-                        for (positive i = 0; i < count; i++)
-                                if (ul_rfkill_matches(rows + i, kind, value))
-                                        ul_rfkill_views[view_count++].row =
-                                            rows + i;
-                }
 
         static const p8 defaults[] = {
             UL_RFKILL_ID, UL_RFKILL_TYPE, UL_RFKILL_DEVICE,

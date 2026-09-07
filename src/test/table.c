@@ -308,7 +308,7 @@ typedef struct
 // Paired benchmarks define TABLE_BASELINE on both revisions so these
 // reference-only call sites do not change the optimizer's decisions.
 #ifndef TABLE_BASELINE
-_Static_assert(sizeof(ul_table_column) == 32, "numeric flag must fit column padding");
+_Static_assert(sizeof(ul_table_column) == 32, "field facts must fit column padding");
 
 static fn table_projection_modes(address_any row,
     const ul_table_column address_to columns, positive count,
@@ -497,11 +497,173 @@ static fn table_projection_checks(void)
 #undef PROJECTIONS
 }
 
+/* Build the legacy prlimit projection independently: width comes from the
+   complete resource set, duplicate selected columns remain significant,
+   only spaces need escaping in these fixed metadata/decimal fields. */
+static fn table_limit_checks(void)
+{
+        ul_limit_row rows[UL_RESOURCES];
+        p8 scratch[96], expected[8192], selected[5];
+        static const p64 values[] = {0, 1, 999, 10000000000ull,
+                                     UL_LIMIT_INFINITE - 1, UL_LIMIT_INFINITE};
+        for (positive shape = 0; shape < 32; shape++)
+        {
+                positive count = shape % (UL_RESOURCES + 1);
+                for (positive row = 0; row < count; row++)
+                        rows[row] = (ul_limit_row){ul_resources + row,
+                            {values[(row + shape) % array_count(values)],
+                             values[(row * 3 + shape) % array_count(values)]}};
+                for (positive field = 0; field < array_count(selected); field++)
+                        selected[field] = (p8)((field * (shape % 5) + shape) % 5);
+                for (positive mode = 0; mode < 4; mode++)
+                {
+                        bool headings = mode & 1, raw = mode & 2;
+                        positive widths[5] = {0}, used = 0;
+                        for (positive field = 0; field < 5; field++)
+                        {
+                                if (headings)
+                                        widths[field] = string_length(ul_limit_definitions[field].heading);
+                                for (positive row = 0; row < count; row++)
+                                        widths[field] = max(widths[field],
+                                            string_length(ul_limit_field(rows + row, field, scratch)));
+                        }
+                        for (positive row = 0; count && row < count + headings; row++)
+                        {
+                                bool heading = headings && !row;
+                                for (positive field = 0; field < 5; field++)
+                                {
+                                        p8 column = selected[field];
+                                        string_address value = heading
+                                            ? ul_limit_definitions[column].heading
+                                            : ul_limit_field(rows + row - headings, column, scratch);
+                                        positive length = string_length(value);
+                                        bool number = column == UL_LIMIT_SOFT || column == UL_LIMIT_HARD;
+                                        positive pad = raw || (field == 4 && !number) ? 0
+                                            : widths[column] - length;
+                                        if (field) expected[used++] = ' ';
+                                        if (number) while (pad) expected[used++] = ' ', pad--;
+                                        for (positive at = 0; at < length; at++)
+                                                if (raw && value[at] == ' ')
+                                                {
+                                                        memory_copy_apart(expected + used, "\\x20", 4);
+                                                        used += 4;
+                                                }
+                                                else expected[used++] = value[at];
+                                        while (pad) expected[used++] = ' ', pad--;
+                                }
+                                expected[used++] = '\n';
+                        }
+                        table_reset();
+                        ul_limit_table(rows, count, selected, 5, headings, raw);
+                        check("prlimit shared rendering exact bytes", !table_overflow &&
+                              table_used == used && !memory_compare(table_output, expected, used));
+                }
+        }
+        positive count = 0;
+        check("prlimit preserves duplicate selected columns",
+              ul_limit_columns("soft,SOFT,units", selected, &count) &&
+              count == 3 && selected[0] == UL_LIMIT_SOFT &&
+              selected[1] == UL_LIMIT_SOFT && selected[2] == UL_LIMIT_UNITS);
+        check("prlimit rejects appended defaults syntax",
+              !ul_limit_columns("+SOFT", selected, &count));
+}
+
+static string_address table_pair_field(address_any opaque, p8 column,
+                                       p8 address_to scratch)
+{
+        (void)scratch;
+        return ((string_address address_to)opaque)[column];
+}
+
+static fn table_printable_checks(void)
+{
+        p8 value[97], expected[8192], selected[] = {0, 1, 0};
+        string_address row[] = {value, "one\ntwo\n"};
+        ul_table_column columns[] = {
+            {"value", "VALUE", 0, false, UL_TABLE_STRING},
+            {"lines", "LINES", 0, false, UL_TABLE_STRING, .multiline=true},
+        };
+        for (positive length = 0; length <= 95; length++)
+        {
+                for (positive at = 0; at < length; at++) value[at] = (p8)(' ' + at);
+                value[length] = 0;
+                for (positive mode = 0; mode < 8; mode++)
+                {
+                        columns[0].number = (mode & 4) != 0;
+                        positive wanted = 0;
+                        for (positive fast = 0; fast < 2; fast++)
+                        {
+                                columns[0].printable = fast;
+                                table_reset();
+                                ul_table_out(row, sizeof(row), 1, columns, 2,
+                                             selected, 3, mode & 1, mode & 2, table_pair_field);
+                                if (!fast)
+                                {
+                                        wanted = table_used;
+                                        memory_copy_apart(expected, table_output, wanted);
+                                }
+                                else
+                                        check("printable fields match escaped path with multiline neighbors",
+                                              !table_overflow && table_used == wanted &&
+                                              !memory_compare(table_output, expected, wanted));
+                        }
+                }
+        }
+}
+
+static fn table_ipcs_checks(void)
+{
+        ul_ipc_row rows[3] = {
+            {.key=1, .id=11, .mode=0600, .uid=4294967295u, .size=17,
+             .count=2, .type=UL_IPC_MESSAGE},
+            {.key=2, .id=22, .mode=0600, .uid=4294967295u, .size=4096,
+             .count=3, .type=UL_IPC_SHARED},
+            {.key=3, .id=33, .mode=0600, .uid=4294967295u,
+             .count=4, .type=UL_IPC_SEMAPHORE},
+        };
+        static const string_address expected[] = {
+            "\n------ Message Queues --------\n"
+            "key        msqid      owner      perms      used-bytes   messages\n"
+            "0x00000001 11         4294967295 600        17           2\n",
+            "\n------ Shared Memory Segments --------\n"
+            "key        shmid      owner      perms      bytes      nattch     status\n"
+            "0x00000002 22         4294967295 600        4096       3          \n",
+            "\n------ Semaphore Arrays --------\n"
+            "key        semid      owner      perms      nsems\n"
+            "0x00000003 33         4294967295 600        4\n",
+        };
+        static const string_address empty[] = {
+            "\n------ Message Queues --------\n"
+            "key        msqid      owner      perms      used-bytes   messages    \n",
+            "\n------ Shared Memory Segments --------\n"
+            "key        shmid      owner      perms      bytes      nattch     status      \n",
+            "\n------ Semaphore Arrays --------\n"
+            "key        semid      owner      perms      nsems     \n",
+        };
+        ul_ipc.rows = rows;
+        ul_ipc_bytes = ul_ipc_numeric_permissions = true;
+        // Revisit each resource after changing the ID heading for another.
+        for (positive visit = 0; visit < 18; visit++)
+        {
+                p8 type = (p8)(visit % 3);
+                ul_ipc.count = visit < 9 ? array_count(rows) : 0;
+                string_address want = visit < 9 ? expected[type] : empty[type];
+                table_reset();
+                ul_ipcs_table(type);
+                check("legacy IPC shared field IDs", !table_overflow &&
+                      table_used == string_length(want) &&
+                      !memory_compare(table_output, want, table_used));
+        }
+}
+
 b32 main(void)
 {
         name_list_checks();
         table_checks();
         table_projection_checks();
+        table_limit_checks();
+        table_printable_checks();
+        table_ipcs_checks();
 #ifdef TABLE_BENCHMARK
         if (!failures)
         {

@@ -819,6 +819,12 @@ compare 'missing identity' renice '"$TOOL" 0 -p'
 
 group prlimit
 compare 'query all resources' prlimit '"$TOOL" -p $$'
+for columns in SOFT UNITS,SOFT HARD,SOFT,RESOURCE RESOURCE,RESOURCE DESCRIPTION,UNITS; do
+        for mode in '' '--raw' '--noheadings' '--raw --noheadings'; do
+                compare "projection $columns $mode" prlimit \
+                        '"$TOOL" -p $$ '"$mode"' --nice --rtprio -o '"$columns"
+        done
+done
 compare 'query nofile' prlimit '"$TOOL" -p $$ --nofile'
 compare 'selected columns' prlimit \
         '"$TOOL" -p $$ --nofile --output RESOURCE,SOFT,HARD'
