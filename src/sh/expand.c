@@ -2735,6 +2735,11 @@ static bipolar arith_power()
         return arith_power_of(value, arith_power());
 }
 
+// Consume the matched operator, combine its operand, and resume this level.
+// This is a lexical block: continue belongs to the enclosing precedence loop.
+#define ARITH_STEP(width, result) \
+        { arith_at += (width); value = (result); continue; }
+
 static bipolar arith_multiply()
 {
         bipolar value = arith_power();
@@ -2744,19 +2749,13 @@ static bipolar arith_multiply()
                 arith_space();
 
                 if (string_is(arith_at, '*'))
-                {
-                        arith_at++;
-                        value = arith_product(value, arith_power());
-                        continue;
-                }
+                        ARITH_STEP(1, arith_product(value, arith_power()));
 
                 if (string_is(arith_at, '/') || string_is(arith_at, '%'))
                 {
                         bool remainder = string_is(arith_at, '%');
 
-                        arith_at++;
-                        value = arith_divide(value, arith_power(), remainder);
-                        continue;
+                        ARITH_STEP(1, arith_divide(value, arith_power(), remainder));
                 }
 
                 return value;
@@ -2772,18 +2771,10 @@ static bipolar arith_add()
                 arith_space();
 
                 if (string_is(arith_at, '+'))
-                {
-                        arith_at++;
-                        value = arith_addition(value, arith_multiply());
-                        continue;
-                }
+                        ARITH_STEP(1, arith_addition(value, arith_multiply()));
 
                 if (string_is(arith_at, '-'))
-                {
-                        arith_at++;
-                        value = arith_subtraction(value, arith_multiply());
-                        continue;
-                }
+                        ARITH_STEP(1, arith_subtraction(value, arith_multiply()));
 
                 return value;
         }
@@ -2807,19 +2798,11 @@ static bipolar arith_shift()
 
                 if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
                     !string_is(arith_at + 2, '='))
-                {
-                        arith_at += 2;
-                        value = arith_shift_left(value, arith_add());
-                        continue;
-                }
+                        ARITH_STEP(2, arith_shift_left(value, arith_add()));
 
                 if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
                     !string_is(arith_at + 2, '='))
-                {
-                        arith_at += 2;
-                        value = arith_shift_right(value, arith_add());
-                        continue;
-                }
+                        ARITH_STEP(2, arith_shift_right(value, arith_add()));
 
                 return value;
         }
@@ -2834,32 +2817,16 @@ static bipolar arith_compare()
                 arith_space();
 
                 if (string_is(arith_at, '<') && string_get(arith_at + 1) == '=')
-                {
-                        arith_at += 2;
-                        value = value <= arith_shift();
-                        continue;
-                }
+                        ARITH_STEP(2, value <= arith_shift());
 
                 if (string_is(arith_at, '>') && string_get(arith_at + 1) == '=')
-                {
-                        arith_at += 2;
-                        value = value >= arith_shift();
-                        continue;
-                }
+                        ARITH_STEP(2, value >= arith_shift());
 
                 if (string_is(arith_at, '<') && string_get(arith_at + 1) != '<')
-                {
-                        arith_at++;
-                        value = value < arith_shift();
-                        continue;
-                }
+                        ARITH_STEP(1, value < arith_shift());
 
                 if (string_is(arith_at, '>') && string_get(arith_at + 1) != '>')
-                {
-                        arith_at++;
-                        value = value > arith_shift();
-                        continue;
-                }
+                        ARITH_STEP(1, value > arith_shift());
 
                 return value;
         }
@@ -2874,22 +2841,16 @@ static bipolar arith_equal()
                 arith_space();
 
                 if (string_is(arith_at, '=') && string_get(arith_at + 1) == '=')
-                {
-                        arith_at += 2;
-                        value = value == arith_compare();
-                        continue;
-                }
+                        ARITH_STEP(2, value == arith_compare());
 
                 if (string_is(arith_at, '!') && string_get(arith_at + 1) == '=')
-                {
-                        arith_at += 2;
-                        value = value != arith_compare();
-                        continue;
-                }
+                        ARITH_STEP(2, value != arith_compare());
 
                 return value;
         }
 }
+
+#undef ARITH_STEP
 
 /*
         The bitwise three, in the order POSIX puts them: & binds tighter than

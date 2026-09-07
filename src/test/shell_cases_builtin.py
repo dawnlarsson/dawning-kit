@@ -31,6 +31,27 @@ def read_fields(rng):
     return "builtin-read-fields", MODES, script
 
 
+def read_ifs_snapshot(rng):
+    """Classify once, even when the first assignment replaces IFS itself."""
+    separator = rng.choice(("", ":", " \t:", "," * 4097 + ":", "é:"))
+    text = rng.choice(("one:two::three:", " first\tsecond:third ",
+                       "left\\:quoted:right", "aébé:c", "", "tail\\"))
+    text += rng.choice(("", "\n"))
+    first = rng.choice(("a", "IFS"))
+    raw = rng.choice(("", "-r"))
+    setup = ("unset IFS" if rng.randrange(5) == 0 else
+             "IFS=" + shlex.quote(separator))
+    script = ("printf '%s' " + shlex.quote(text) + " > feed\n" +
+              "a=old; b=old; c=old\n" + setup + "\n" +
+              f"read {raw} {first} b c < feed\ns=$?\n" +
+              "printf '%s:<%s>:<%s>:<%s>\\n' \"$s\" \"$" + first +
+              "\" \"$b\" \"$c\"\n")
+    # dash disables splitting on an invalid multibyte IFS in the C locale;
+    # Bash and our byte-oriented reader instead classify its individual bytes.
+    modes = ("bash", "posix") if "é" in separator else MODES
+    return "builtin-read-ifs-snapshot", modes, script
+
+
 def read_limit_state(rng):
     """Compose Bash's byte/count/delimiter options over one retained fd."""
     shape = rng.randrange(4)
@@ -270,7 +291,7 @@ def getopts_scope(rng):
     return "builtin-getopts-scope", MODES, script
 
 
-GENERATORS = (listing, read_fields, read_limit_state, read_array_state,
+GENERATORS = (listing, read_fields, read_ifs_snapshot, read_limit_state, read_array_state,
               printf_formats, printf_hex_roundtrip, printf_dynamic_fields,
               printf_collectors, option_walk, mapfile_records,
               getopts_state, getopts_reset, getopts_scope)

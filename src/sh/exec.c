@@ -2410,36 +2410,39 @@ static PURE string_address history_file()
         return path && string_get(path) ? path : null;
 }
 
-static fn history_drop_at(positive at)
+static fn history_drop(positive at, positive count)
 {
-        if (at >= history_used)
+        if (at >= history_used || !count)
                 return;
 
-        if (history_text[at])
-                memory_free(history_text[at], history_bytes[at]);
+        count = min(count, history_used - at);
+        for (positive step = at; step < at + count; step++)
+                if (history_text[step])
+                        memory_free(history_text[step], history_bytes[step]);
 
-        history_used--;
+        history_used -= count;
 
-        for (positive step = at; step < history_used; step++)
+        if (at < history_used)
         {
-                history_text[step] = history_text[step + 1];
-                history_bytes[step] = history_bytes[step + 1];
+                memory_copy(history_text + at, history_text + at + count,
+                            (history_used - at) * sizeof(history_text[0]));
+                memory_copy(history_bytes + at, history_bytes + at + count,
+                            (history_used - at) * sizeof(history_bytes[0]));
         }
 
         if (!at)
-                history_first++;
+                history_first += count;
 
         if (history_saved > at)
-                history_saved--;
+                history_saved -= min(count, history_saved - at);
 }
 
-static fn history_trim()
+static fn history_trim(string_address setting)
 {
-        positive limit = history_number((string_address) "HISTSIZE",
-                                        HISTORY_DEFAULT);
+        positive limit = history_number(setting, HISTORY_DEFAULT);
 
-        while (history_used > limit)
-                history_drop_at(0);
+        if (history_used > limit)
+                history_drop(0, history_used - limit);
 }
 
 static bool history_hold(string_address text, positive length)
@@ -3480,7 +3483,7 @@ static bool history_wanted(string_address text, positive length)
         if (erase)
                 for (positive at = 0; at < history_used;)
                         if (!string_compare(history_text[at], text))
-                                history_drop_at(at);
+                                history_drop(at, 1);
                         else
                                 at++;
 
@@ -3532,7 +3535,7 @@ fn history_remember(string_address line)
                 history_hold(held, length);
         }
 
-        history_trim();
+        history_trim((string_address) "HISTSIZE");
 }
 
 // The whole of a file, however long it is. A history file is lines, and a
@@ -3595,7 +3598,7 @@ static positive history_read(string_address path, positive skip)
                 at = stop + 1;
         }
 
-        history_trim();
+        history_trim((string_address) "HISTSIZE");
 
         return seen;
 }
@@ -3645,7 +3648,6 @@ fn history_start()
 fn history_leaving()
 {
         string_address path;
-        positive limit;
 
         /* A subshell of an interactive shell is still interactive, and it did
            not read any of these lines: letting it write the file would have a
@@ -3658,12 +3660,7 @@ fn history_leaving()
         if (!path)
                 return;
 
-        limit = history_number((string_address) "HISTFILESIZE",
-                               HISTORY_DEFAULT);
-
-        while (history_used > limit)
-                history_drop_at(0);
-
+        history_trim((string_address) "HISTFILESIZE");
         history_write(path, 0, false);
 }
 
@@ -3711,8 +3708,7 @@ fn shell_history(writer write, string_address input)
                 switch (letter)
                 {
                 case 'c':
-                        while (history_used)
-                                history_drop_at(history_used - 1);
+                        history_drop(0, history_used);
 
                         history_first = 1;
                         history_saved = 0;
@@ -3746,7 +3742,7 @@ fn shell_history(writer write, string_address input)
                                 return shell_answer(1);
                         }
 
-                        history_drop_at((positive)offset);
+                        history_drop((positive)offset, 1);
 
                         return shell_answer(0);
                 }

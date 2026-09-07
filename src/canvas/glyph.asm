@@ -119,38 +119,14 @@ SYM_FUNC_START(canvas_cell)
         or      %r9, %r8                # ink then paper
 
         sub     $256, %rsp
-        mov     %rax, 0(%rsp)
-        mov     %rax, 8(%rsp)
-        mov     %rax, 16(%rsp)
-        mov     %r10, 24(%rsp)
-        mov     %rax, 32(%rsp)
-        mov     %r8, 40(%rsp)
-        mov     %rax, 48(%rsp)
-        mov     %r11, 56(%rsp)
-        mov     %r10, 64(%rsp)
-        mov     %rax, 72(%rsp)
-        mov     %r10, 80(%rsp)
-        mov     %r10, 88(%rsp)
-        mov     %r10, 96(%rsp)
-        mov     %r8, 104(%rsp)
-        mov     %r10, 112(%rsp)
-        mov     %r11, 120(%rsp)
-        mov     %r8, 128(%rsp)
-        mov     %rax, 136(%rsp)
-        mov     %r8, 144(%rsp)
-        mov     %r10, 152(%rsp)
-        mov     %r8, 160(%rsp)
-        mov     %r8, 168(%rsp)
-        mov     %r8, 176(%rsp)
-        mov     %r11, 184(%rsp)
-        mov     %r11, 192(%rsp)
-        mov     %rax, 200(%rsp)
-        mov     %r11, 208(%rsp)
-        mov     %r10, 216(%rsp)
-        mov     %r11, 224(%rsp)
-        mov     %r8, 232(%rsp)
-        mov     %r11, 240(%rsp)
-        mov     %r11, 248(%rsp)
+        .set .Lcell_pair, 0
+        .irp left, %rax, %r10, %r8, %r11
+        .irp right, %rax, %r10, %r8, %r11
+        mov     \left, .Lcell_pair(%rsp)
+        mov     \right, .Lcell_pair+8(%rsp)
+        .set .Lcell_pair, .Lcell_pair+16
+        .endr
+        .endr
 
 1:      movzbl  (%rdx), %eax
         inc     %rdx
@@ -190,22 +166,13 @@ SYM_FUNC_START(canvas_cell)
         orr     x9, x4, x4, lsl #32     // ink then ink
 
         sub     sp, sp, #256
-        stp     x6, x6, [sp, #0]
-        stp     x6, x7, [sp, #16]
-        stp     x6, x8, [sp, #32]
-        stp     x6, x9, [sp, #48]
-        stp     x7, x6, [sp, #64]
-        stp     x7, x7, [sp, #80]
-        stp     x7, x8, [sp, #96]
-        stp     x7, x9, [sp, #112]
-        stp     x8, x6, [sp, #128]
-        stp     x8, x7, [sp, #144]
-        stp     x8, x8, [sp, #160]
-        stp     x8, x9, [sp, #176]
-        stp     x9, x6, [sp, #192]
-        stp     x9, x7, [sp, #208]
-        stp     x9, x8, [sp, #224]
-        stp     x9, x9, [sp, #240]
+        .set .Lcell_pair, 0
+        .irp left, x6, x7, x8, x9
+        .irp right, x6, x7, x8, x9
+        stp     \left, \right, [sp, #.Lcell_pair]
+        .set .Lcell_pair, .Lcell_pair+16
+        .endr
+        .endr
 
 1:      ldrb    w6, [x2], #1
         and     x7, x6, #0xf0           // the top nibble, times sixteen
@@ -243,38 +210,14 @@ SYM_FUNC_START(canvas_cell)
         or      t3, a4, t5              # ink then ink
 
         addi    sp, sp, -256
-        sd      t0, 0(sp)
-        sd      t0, 8(sp)
-        sd      t0, 16(sp)
-        sd      t1, 24(sp)
-        sd      t0, 32(sp)
-        sd      t2, 40(sp)
-        sd      t0, 48(sp)
-        sd      t3, 56(sp)
-        sd      t1, 64(sp)
-        sd      t0, 72(sp)
-        sd      t1, 80(sp)
-        sd      t1, 88(sp)
-        sd      t1, 96(sp)
-        sd      t2, 104(sp)
-        sd      t1, 112(sp)
-        sd      t3, 120(sp)
-        sd      t2, 128(sp)
-        sd      t0, 136(sp)
-        sd      t2, 144(sp)
-        sd      t1, 152(sp)
-        sd      t2, 160(sp)
-        sd      t2, 168(sp)
-        sd      t2, 176(sp)
-        sd      t3, 184(sp)
-        sd      t3, 192(sp)
-        sd      t0, 200(sp)
-        sd      t3, 208(sp)
-        sd      t1, 216(sp)
-        sd      t3, 224(sp)
-        sd      t2, 232(sp)
-        sd      t3, 240(sp)
-        sd      t3, 248(sp)
+        .set .Lcell_pair, 0
+        .irp left, t0, t1, t2, t3
+        .irp right, t0, t1, t2, t3
+        sd      \left, .Lcell_pair(sp)
+        sd      \right, .Lcell_pair+8(sp)
+        .set .Lcell_pair, .Lcell_pair+16
+        .endr
+        .endr
 
         # A pixel pointer is only aligned to four, and there is no Zbb and no
         # promise that a misaligned sd is anything but a trap into firmware.

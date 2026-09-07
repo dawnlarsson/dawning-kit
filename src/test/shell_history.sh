@@ -241,6 +241,61 @@ else
                 "stdout/status mismatch $advanced_want_status/$advanced_got_status"
 fi
 
+section retention
+group ranges
+
+# Prefix trimming must move both parallel tables once, preserve logical
+# event numbers, and translate the already-appended marker into the retained
+# suffix. The oracle works on records, independently of those table indices.
+command cat > "$work/retention.input" <<'CASE'
+history -c
+HISTSIZE=10000
+history -r "$INITIAL"
+history -a "$SAVED"
+HISTSIZE=$KEEP
+history -r "$EXTRA"
+history -a "$APPENDED"
+history -w "$RETAINED"
+history
+history -c
+history -s reset
+history
+CASE
+printf 'new-a\nnew-b\nnew-c\n' > "$work/extra"
+for total in 0 1 7 31 4097; do
+        awk -v n="$total" 'BEGIN {for (i=1; i<=n; i++) print "old-" i}' \
+                > "$work/initial"
+        command cat "$work/initial" "$work/extra" > "$work/whole"
+        for keep in 0 1 2 7 31 4097; do
+                kept=$keep
+                [ "$kept" -le "$((total + 3))" ] || kept=$((total + 3))
+                fresh=$keep
+                [ "$fresh" -le 3 ] || fresh=3
+                tail -n "$kept" "$work/whole" > "$work/retained.want"
+                tail -n "$fresh" "$work/extra" > "$work/appended.want"
+                awk -v skipped="$((total + 3 - kept))" \
+                        '{printf "%5d  %s\n", NR + skipped, $0}' \
+                        "$work/retained.want" > "$work/listed.want"
+                printf '    1  reset\n' >> "$work/listed.want"
+                : > "$work/saved"
+                : > "$work/appended"
+                if env INITIAL="$work/initial" EXTRA="$work/extra" \
+                        SAVED="$work/saved" APPENDED="$work/appended" \
+                        RETAINED="$work/retained" KEEP="$keep" \
+                        "$work/bash" "$work/retention.input" \
+                        > "$work/listed" 2> "$work/retention.err" &&
+                        cmp -s "$work/listed.want" "$work/listed" &&
+                        cmp -s "$work/retained.want" "$work/retained" &&
+                        cmp -s "$work/appended.want" "$work/appended" &&
+                        cmp -s "$work/initial" "$work/saved"; then
+                        won
+                else
+                        lost "trim $total to $keep" \
+                                "record, event number, clear or saved-marker mismatch"
+                fi
+        done
+done
+
 section ""
 printf '  shell history %s of %s checks\n' "$pass" "$((pass + fail))"
 [ "$fail" -eq 0 ]

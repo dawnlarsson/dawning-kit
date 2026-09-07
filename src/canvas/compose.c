@@ -322,22 +322,26 @@ static void compose_cells(struct pane *pane, const struct target *t,
         unsigned int line = pane_view_at(pane, pane->view, &skip);
         int row = 0;
 
-        while (row < rows && line != pane->head)
+        while (row < last_row && line != pane->head)
         {
                 unsigned int slot = line % pane->history;
                 unsigned int length = min(pane->lengths[slot], pane->stride);
                 unsigned int folds = length ? (length + width - 1) / width : 1;
                 const struct window_cell *cells =
                     pane->cells + (size_t)slot * pane->stride;
-                unsigned int fold;
+                unsigned int fold = skip;
 
-                for (fold = skip; fold < folds && row < rows; fold++, row++)
+                if (row < first_row && folds > skip)
+                {
+                        unsigned int omitted = min((unsigned int)(first_row - row),
+                                                   folds - skip);
+                        fold += omitted;
+                        row += omitted;
+                }
+                for (; fold < folds && row < last_row; fold++, row++)
                 {
                         unsigned int from = fold * width;
                         int used = (int)min(length > from ? length - from : 0, width);
-
-                        if (row < first_row || row >= last_row)
-                                continue;
 
                         compose_row(t, shape, x, y + row * canvas_cell_h,
                                     cells + from,
@@ -350,10 +354,9 @@ static void compose_cells(struct pane *pane, const struct target *t,
 
         // Below the newest line, for a window with more room in it than there
         // is anything to put there.
-        for (; row < rows; row++)
-                if (row >= first_row && row < last_row)
-                        compose_row(t, shape, x, y + row * canvas_cell_h, NULL,
-                                    0, first, last);
+        for (row = max(row, first_row); row < last_row; row++)
+                compose_row(t, shape, x, y + row * canvas_cell_h, NULL,
+                            0, first, last);
 }
 
 /*

@@ -21,6 +21,33 @@ def section(source, first, following):
     return source[source.index(first):source.index(following)]
 
 
+def canvas_sources(work, arch):
+    paint = (root / "src/canvas/paint.c").read_text()
+    text = (root / "src/canvas/text.c").read_text()
+    cells = section(canvas, "struct target\n", "static void target_row")
+    cells += section(compose, "struct shape\n", "static _Bool shape_span")
+    cells += paint[paint.index("static CONST int round_inset"):]
+    cells += section(compose, "static _Bool shape_span", "static void shape_blit")
+    cells += section(paint, "static const u32 canvas_terminal", "static void canvas_palette")
+    cells += section(paint, "static void bits_draw", "/*\n        Cursors.")
+    cells += section(text, "static const struct font_desc", "/*\n        Where one line ends.")
+    cells += section(compose, "static void cell_draw", "/*\n        A window made of text.\n\n        The rows")
+    (work / "canvas-cells.inc").write_text(cells)
+    (work / "canvas-ring.inc").write_text(section(compose, "static void compose_cells", "/*\n        A pane, in target coordinates."))
+    # kit/asm supplies the function macros; these empty include files replace
+    # only the kernel declarations, never the renderer's assembly bodies.
+    (work / "linux").mkdir(exist_ok=True)
+    for name in ("export.h", "linkage.h"):
+        (work / "linux" / name).write_text("")
+    inputs = [str(root / "src/test/canvas_cells.c")]
+    for name in ("glyph", "fill"):
+        target = work / f"{name}.S"
+        subprocess.run(["sh", str(root / "kit/asm"), arch,
+                        str(root / f"src/canvas/{name}.asm"), str(target)], check=True)
+        inputs.append(str(target))
+    return inputs
+
+
 source = r'''
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
@@ -436,4 +463,13 @@ line_add_padded() { line_add "$@"; }
     executable = str(Path(work) / "core-state")
     subprocess.run([os.environ.get("CC", "cc"), "-std=c11", "-O2", "-Wall", "-Wextra",
                     "-x", "c", "-", "-o", executable], input=source, text=True, check=True)
-    raise SystemExit(subprocess.run([executable]).returncode)
+    subprocess.run([executable], check=True)
+    # The existing kit lane now also checks real pixel stores without a GPU,
+    # DRM device, module load, or writable prepared kernel tree.
+    if os.uname().sysname == "Linux":
+        inputs = canvas_sources(Path(work), os.uname().machine)
+        executable = str(Path(work) / "canvas-cells")
+        subprocess.run([os.environ.get("CC", "cc"), "-std=gnu11", "-O2", "-fno-builtin",
+                        "-DMOONWATER_FREESTANDING_ASM", "-I", work,
+                        *inputs, "-o", executable], check=True)
+        subprocess.run([executable], check=True)
