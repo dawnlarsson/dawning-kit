@@ -6352,9 +6352,6 @@ static fn text_head_short(positive count, bool by_bytes)
                 return;
         }
 
-        if (!text_lines_ready())
-                return;
-
         if (by_bytes)
         {
                 positive have;
@@ -6537,9 +6534,6 @@ static inline INLINE b32 text_head_tail(bool tail)
                 {
                         // Bytes rather than lines, so the whole input is held
                         // and the tail of it handed back.
-                        if (!text_lines_ready())
-                                return text_done(1);
-
                         positive have;
                         p8 address_to held = text_arena_hold_rest(address_of have);
 
@@ -9262,56 +9256,16 @@ static bool ptx_failed;
    bridge from the streaming reader, not a second input engine. */
 static bool text_blob_read(string_address path, text_blob address_to blob)
 {
-        bool failed = false;
-
         if (path && !path[0])
                 path = null;
 
         if (!text_open(path))
                 return false;
 
-        if (!text_arena_take(0))
-        {
-                text_close();
-                return false;
-        }
-
-        blob->bytes = text_arena + text_arena_used;
-        blob->length = 0;
-
-        while (text_fill())
-        {
-                positive left = text_input.filled - text_input.position;
-
-                if (text_arena_used > TEXT_ARENA_BYTES ||
-                    left > TEXT_ARENA_BYTES - text_arena_used)
-                {
-                        text_error(null, "input too large");
-                        text_status = text_status ? text_status : 1;
-                        failed = true;
-                        break;
-                }
-
-                memory_copy_apart(text_arena + text_arena_used,
-                                  text_input.buffer + text_input.position,
-                                  left);
-                text_arena_used += left;
-                blob->length += left;
-                text_input.position = text_input.filled;
-        }
-
+        blob->bytes = text_arena_hold_rest(address_of blob->length);
+        bool okay = blob->bytes && !text_input.failed;
         text_close();
-
-        if (text_arena_used > positive_max - 15 ||
-            ((text_arena_used + 15) & ~(positive)15) > TEXT_ARENA_BYTES)
-        {
-                text_error(null, "input too large");
-                text_status = text_status ? text_status : 1;
-                return false;
-        }
-
-        text_arena_used = (text_arena_used + 15) & ~(positive)15;
-        return !failed;
+        return okay;
 }
 
 static positive ptx_count_lines(text_blob address_to text)
@@ -10385,6 +10339,7 @@ enum
         COLUMN_NOEXTREME = 4,
         COLUMN_WRAP = 8,
         COLUMN_TRUNCATE = 16,
+        COLUMN_ORDERED = 32,
 };
 
 static text_blob address_to column_files;
@@ -10425,33 +10380,16 @@ static positive column_fields(p8 address_to bytes, positive length,
         if (!length)
                 return 0;
 
-        if (!column_custom_separator)
+        for (;;)
         {
-                while (at < length)
+                if (!column_custom_separator)
                 {
                         while (at < length && column_is_separator(bytes[at]))
                                 at++;
-
                         if (at == length)
                                 break;
-
-                        positive start = at;
-
-                        while (at < length && !column_is_separator(bytes[at]))
-                                at++;
-
-                        if (into && made < room)
-                                into[made] =
-                                    (column_cell){bytes + start, at - start};
-
-                        made++;
                 }
 
-                return made;
-        }
-
-        for (;;)
-        {
                 positive start = at;
 
                 while (at < length && !column_is_separator(bytes[at]))
@@ -10467,15 +10405,6 @@ static positive column_fields(p8 address_to bytes, positive length,
                         break;
 
                 at++;
-
-                if (at == length)
-                {
-                        if (into && made < room)
-                                into[made] =
-                                    (column_cell){bytes + at, 0};
-                        made++;
-                        break;
-                }
         }
 
         return made;
@@ -10516,32 +10445,27 @@ static fn column_accept_record(p8 address_to bytes, positive length,
                 return;
         }
 
-        positive fields = column_fields(bytes, length, null, 0);
-
         if (column_header_as_names && !column_header_taken)
         {
                 column_header_taken = true;
-
-                if (fill)
-                        column_fields(bytes, length, column_names,
-                                      column_name_count);
-                else
+                positive fields = column_fields(bytes, length,
+                    fill ? column_names : null, column_name_count);
+                if (!fill)
                         column_name_count = fields;
 
                 return;
         }
 
+        positive fields = column_fields(bytes, length,
+            fill && column_cells ? column_cells + column_cell_at : null,
+            fill ? column_cell_count - column_cell_at : 0);
+
         if (!fill && fields > column_count)
                 column_count = fields;
 
         if (fill)
-        {
                 column_rows[column_row_at] =
                     (column_row){column_cell_at, fields};
-                column_fields(bytes, length,
-                              fields ? column_cells + column_cell_at : null,
-                              fields);
-        }
 
         column_row_at++;
         column_cell_at += fields;
@@ -10735,45 +10659,52 @@ static bool column_make_order(string_address list,
                               positive address_to visible)
 {
         positive made = 0;
-        positive at = 0;
+        positive stop = 0;
 
+        // util-linux considers at most one request per available column.
+        // Moving a requested column again gives its last occurrence priority.
+        // Read that bounded prefix backwards, marking the existing property
+        // byte, then reverse once instead of searching the growing order.
         if (list)
-                while (list[at])
+                for (positive count = 0; count < column_count && list[stop]; count++)
                 {
-                        positive start = at;
-                        positive col;
-
-                        while (list[at] && list[at] != ',')
-                                at++;
-
-                        if (!column_resolve((p8 address_to)list + start,
-                                            at - start, address_of col))
-                                return false;
-
-                        bool repeated = false;
-
-                        for (positive prior = 0; prior < made; prior++)
-                                if (order[prior] == col)
-                                        repeated = true;
-
-                        if (!repeated && !(properties[col] & COLUMN_HIDDEN))
-                                order[made++] = col;
-
-                        if (list[at])
-                                at++;
+                        while (list[stop] && list[stop] != ',')
+                                stop++;
+                        if (list[stop] && list[stop + 1] && count + 1 < column_count)
+                                stop++;
+                        else
+                                break;
                 }
 
-        for (positive col = 0; col < column_count; col++)
+        while (stop)
         {
-                bool repeated = false;
+                p8 address_to comma = memory_last_of(list, ',', stop);
+                positive start = comma ? (positive)(comma - list) + 1 : 0;
+                positive col;
 
-                for (positive prior = 0; prior < made; prior++)
-                        if (order[prior] == col)
-                                repeated = true;
+                if (!column_resolve((p8 address_to)list + start,
+                                    stop - start, address_of col))
+                        return false;
 
-                if (!repeated && !(properties[col] & COLUMN_HIDDEN))
+                if (!(properties[col] & (COLUMN_HIDDEN | COLUMN_ORDERED)))
+                {
                         order[made++] = col;
+                        properties[col] |= COLUMN_ORDERED;
+                }
+
+                stop = comma ? start - 1 : 0;
         }
+
+        for (positive at = 0; at < made / 2; at++)
+        {
+                positive other = order[made - 1 - at];
+                order[made - 1 - at] = order[at];
+                order[at] = other;
+        }
+
+        for (positive col = 0; col < column_count; col++)
+                if (!(properties[col] & (COLUMN_HIDDEN | COLUMN_ORDERED)))
+                        order[made++] = col;
 
         address_to visible = made;
         return true;
@@ -11053,7 +10984,24 @@ static fn column_table_line(column_row address_to row, bool header,
                                 text_tab_repeat_character(' ', pad);
 
                         if (shown + 1 < visible)
+                        {
+                                // A no-extreme field may remain wider than
+                                // its slot. Continue at the following column
+                                // on a fresh physical line, keeping custom
+                                // separators in the blank prefix as well.
+                                if (length > widths[col] &&
+                                    !(properties[col] & COLUMN_RIGHT))
+                                {
+                                        text_put_character('\n');
+                                        for (positive prior = 0; prior < shown; prior++)
+                                        {
+                                                text_tab_repeat_character(' ', widths[order[prior]]);
+                                                text_put_string(separator);
+                                        }
+                                        text_tab_repeat_character(' ', widths[col]);
+                                }
                                 text_put_string(separator);
+                        }
                 }
 
                 text_put_character('\n');
@@ -11110,15 +11058,6 @@ static fn column_table_output(bool noheadings, positive width,
 
                 if (total > width)
                 {
-                        /* libsmartcols marks the last visible column this way
-                           by default.  Ignore its one extreme only when width
-                           pressure exists; an overlong final value remains
-                           lossless, exactly as the native renderer does. */
-                        if (!(properties[order[visible - 1]] &
-                              (COLUMN_WRAP | COLUMN_TRUNCATE)))
-                                properties[order[visible - 1]] |=
-                                    COLUMN_NOEXTREME;
-
                         for (positive shown = 0; shown < visible; shown++)
                         {
                                 positive col = order[shown];
@@ -11373,6 +11312,19 @@ static b32 text_column()
         COLUMN_LIST('T', COLUMN_TRUNCATE, false);
         COLUMN_LIST('W', COLUMN_WRAP, false);
 #undef COLUMN_LIST
+
+        // The default no-extreme policy belongs to the last visible INPUT
+        // column, before --table-order moves it. An explicit -E replaces it.
+        if (!(flags & FILE_FLAG('E')))
+                for (positive col = column_count; col;)
+                {
+                        col--;
+                        if (properties[col] & COLUMN_HIDDEN)
+                                continue;
+                        if (!(properties[col] & (COLUMN_WRAP | COLUMN_TRUNCATE)))
+                                properties[col] |= COLUMN_NOEXTREME;
+                        break;
+                }
 
         positive visible;
 

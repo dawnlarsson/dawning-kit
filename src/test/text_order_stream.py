@@ -113,6 +113,26 @@ for iteration in range(50):
     for flags in ([], ["-b", "-x"], ["-f"], ["-p"]):
         check("col", flags, data)
 
+for separator in (None, ":", ",", "|"):
+    joiner = (separator or " \t").encode()
+    rows = [joiner.join(fields) for fields in
+            ([b"A", b"B", b"C", b"D"], [b"", b"x", b"", b"z"],
+             [b"q", b"", b"r", b""], [b"one"], [], [b" \t"]) ]
+    data = b"\n".join(rows) + b"\n"
+    split = ["-s", separator] if separator is not None else []
+    for options in ([], ["-L"], ["-N", "A,B,C,D"],
+                    ["-N", "A,B,C,D", "-O", "3,1,3,2", "-H", "2"],
+                    ["-N", "A,B,C,D", "-O", "D,A,D", "-R", "A"],
+                    ["-K"], ["-K", "-O", "D,B,D", "-H", "A"],
+                    ["-J", "-N", "A,B,C,D", "-O", "4,1,4", "-H", "2"]):
+        check("column", ["-t", *split, *options], data)
+for width in (65534, 65535, 65536, 65537):
+    data = b"a:" + b"x" * width + b":\nz::tail"
+    check("column", ["-t", "-s", ":", "-N", "A,B,C", "-O", "C,A,C"], data)
+for flags in ([], ["-o", "|"], ["-R", "C"], ["-E", "B"], ["-c", "unlimited"]):
+    check("column", ["-t", "-s", ":", "-N", "A,B,C", "-O", "C,A,C", *flags],
+          b"a:" + b"x" * 100 + b":\nz::tail")
+
 with tempfile.TemporaryDirectory() as directory:
     first, second = Path(directory) / "a", Path(directory) / "b"
     for iteration in range(80):
@@ -133,6 +153,34 @@ with tempfile.TemporaryDirectory() as directory:
             check("diff", [*flags, str(first), str(second)])
 
 if "--capacity" in sys.argv[2:]:
+    # Byte-only head/tail streams need no million-entry line-index reservation.
+    # Feed in bounded blocks so this regression does not require a second
+    # input-sized allocation in the test runner itself.
+    for tool, flags in (("head", ["-c", "-1"]), ("tail", ["-c", "1"])):
+        block = b"x" * (1 << 20)
+        with tempfile.TemporaryFile() as output:
+            process = subprocess.Popen([str(farm / tool), *flags], stdin=subprocess.PIPE,
+                                       stdout=output, stderr=subprocess.PIPE, env=env)
+            try:
+                for _ in range(176):
+                    process.stdin.write(block)
+                process.stdin.close()
+            except BrokenPipeError:
+                pass
+            process.stdin = None
+            _, diagnostic = process.communicate(timeout=30)
+            expected_size = 176 * len(block) - 1 if tool == "head" else 1
+            exact = output.tell() == expected_size
+            output.seek(0)
+            while chunk := output.read(len(block)):
+                exact &= chunk == block[:len(chunk)]
+        if process.returncode == 0 and not diagnostic and exact:
+            passed += 1
+        else:
+            failed += 1
+            print("  want byte-only capacity", tool, "status 0 and exact output; got",
+                  process.returncode, repr(diagnostic[:96]), "exact", exact)
+
     # Per-line scratch fits this stream; a vertical rewind needs the full
     # scratch vector. Both ordering-allocation failures must be loud failures,
     # not an empty successful result after the diagnostic was printed.

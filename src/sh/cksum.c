@@ -417,26 +417,6 @@ static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
 }
 
 #if defined(LINUX)
-/* cksum's digest spelling is tagged by default, unlike the standalone
-   *sum aliases.  The hash operation and portable filename escaping remain
-   the checksum engine's; this is only the cksum-specific line wrapper. */
-static fn cksum_digest_put(const checksum_algorithm address_to algorithm,
-                           p8 address_to digest, string_address name)
-{
-        name = name ? name : (string_address) "-";
-        bool escaped = checksum_filename_escaped(name);
-
-        if (escaped)
-                text_put_character('\\');
-
-        text_put_string(algorithm->label);
-        text_put_string(" (");
-        checksum_filename_put(name, escaped);
-        text_put_string(") = ");
-        checksum_hex_put(digest, algorithm->bytes);
-        text_put_character('\n');
-}
-
 static b32 cksum_digest(const checksum_algorithm address_to algorithm)
 {
         bipolar transform = checksum_kernel_open(algorithm);
@@ -447,27 +427,7 @@ static b32 cksum_digest(const checksum_algorithm address_to algorithm)
                     "kernel AF_ALG hash support or requested algorithm is unavailable",
                     1);
 
-        b32 inputs = text_input_count();
-        b32 answer = 0;
-
-        for (b32 i = 0; i < inputs; i++)
-        {
-                string_address name = text_file_name(i);
-                p8 digest[64];
-                bipolar hashed = checksum_hash_path(
-                    transform, name, digest, algorithm->bytes);
-
-                if (hashed < 0)
-                {
-                        text_error(name ? name : (string_address) "-",
-                                   file_reason(hashed));
-                        answer = 1;
-                        continue;
-                }
-
-                cksum_digest_put(algorithm, digest, name);
-        }
-
+        b32 answer = checksum_generate(algorithm, transform, 0, true);
         system_close((positive)transform);
         return text_done(answer);
 }

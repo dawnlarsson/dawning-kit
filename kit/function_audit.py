@@ -35,8 +35,7 @@ Definition = namedtuple('Definition', 'path line name kind')
 GENERATORS = {
     ('src/core.c', 'REPORT_CANVAS'): ('{}',),
     ('src/compiler_memory.c', 'SEARCH_KNOWN'): ('{}',),
-    ('src/sh/awk.c', 'AWK_LOGICAL_LEVEL'): ('{}',),
-    ('src/sh/awk.c', 'AWK_ARITH_LEVEL'): ('{}',),
+    ('src/sh/awk.c', 'AWK_BINARY_LEVEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_EVALUATOR'): ('{}',),
     ('src/sh/awk.c', 'AWK_TRIG_KERNEL'): ('{}',),
     ('src/sh/awk.c', 'AWK_TRIG'): ('{}',),

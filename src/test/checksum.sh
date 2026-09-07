@@ -220,6 +220,22 @@ printf '%s  absent\n' "$digest" > missing.list
 same 'check missing' sha256sum -c missing.list
 same 'check ignore missing' sha256sum -c --ignore-missing missing.list
 
+sha256sum abc > valid.list
+for policy in --quiet --status --strict --warn --ignore-missing; do
+        same "valid then malformed $policy" sha256sum -c "$policy" valid.list malformed.list
+        same "malformed then valid $policy" sha256sum -c "$policy" malformed.list valid.list
+        same "valid then empty $policy" sha256sum -c "$policy" valid.list empty
+        same "valid then missing $policy" sha256sum -c "$policy" valid.list missing.list
+done
+same 'missing manifest alone' sha256sum -c absent.list
+same 'malformed manifests separate' sha256sum -c --warn malformed.list malformed.list
+fed 'stdin manifest consumed twice' valid.list sha256sum -c - -
+fed 'stdin malformed warn status' malformed.list sha256sum -c --warn --status -
+fed 'stdin malformed status warn' malformed.list sha256sum -c --status --warn -
+fed 'stdin malformed warn quiet' malformed.list sha256sum -c --warn --quiet -
+fed 'stdin malformed quiet warn' malformed.list sha256sum -c --quiet --warn -
+same 'missing ignored status' sha256sum -c --status --ignore-missing missing.list
+
 for words in 'sha256sum --tag abc' 'sha256sum --zero abc' \
              'b2sum --length=256 abc'; do
         # shellcheck disable=SC2086

@@ -1482,6 +1482,7 @@ typedef struct
         bool live;
         bool pipe;
         bool ended;
+        bool failed;
         bipolar child;
         p8 address_to data;
         positive room;
@@ -1693,6 +1694,7 @@ static bool awk_reader_fill(awk_reader address_to which)
         if (got <= 0)
         {
                 which->ended = true;
+                which->failed = got < 0;
                 return false;
         }
 
@@ -1725,6 +1727,7 @@ static awk_reader address_to awk_reader_for(awk_text address_to name, bool pipe)
         made->at = 0;
         made->filled = 0;
         made->ended = false;
+        made->failed = false;
         made->pipe = pipe;
         made->child = 0;
 
@@ -1854,7 +1857,14 @@ static fn awk_close_everything()
         character is itself. Anything longer is a pattern, which is not what
         POSIX says and is what the awk on this machine does.
 */
-static bool awk_read_record(awk_reader address_to which, awk_text address_to address_to into)
+static b32 awk_reader_end(awk_reader address_to which)
+{
+        b32 answer = which->failed ? -1 : 0;
+        which->failed = false;
+        return answer;
+}
+
+static b32 awk_read_record(awk_reader address_to which, awk_text address_to address_to into)
 {
         positive length;
         string_address separator = awk_separator(awk_where_rs, address_of length);
@@ -1871,7 +1881,7 @@ static bool awk_read_record(awk_reader address_to which, awk_text address_to add
                 }
 
                 if (which->at >= which->filled)
-                        return false;
+                        return awk_reader_end(which);
 
                 positive scan = 0;
                 bool found = false;
@@ -1932,7 +1942,7 @@ static bool awk_read_record(awk_reader address_to which, awk_text address_to add
                 positive here = which->at + scan;
 
                 if (!scan && here >= which->filled)
-                        return false;
+                        return awk_reader_end(which);
 
                 address_to into = awk_text_new(which->data + which->at, scan);
                 which->at = here < which->filled ? here + 1 : here;
@@ -1970,7 +1980,7 @@ static bool awk_read_record(awk_reader address_to which, awk_text address_to add
         if (cut == TEXT_UNSET)
         {
                 if (which->at >= which->filled)
-                        return false;
+                        return awk_reader_end(which);
 
                 address_to into = awk_text_new(which->data + which->at,
                                                which->filled - which->at);
@@ -2715,9 +2725,9 @@ static bool awk_name_start(p8 character)
 
 static b8 awk_name_bytes[STRING_SET_BYTES];
 
-static b32 awk_escape(positive address_to at, positive stop)
+static b32 awk_escape(string_address source, positive address_to at, positive stop)
 {
-        p8 character = awk_source[address_to at];
+        p8 character = source[address_to at];
         p8 escaped;
 
         address_to at += 1;
@@ -2737,7 +2747,7 @@ static b32 awk_escape(positive address_to at, positive stop)
                         limit = 3;
 
                 positive value = string_digits_octal_escape_max(
-                    awk_source + first, limit, address_of used);
+                    source + first, limit, address_of used);
 
                 address_to at = first + used;
 
@@ -2753,7 +2763,7 @@ static b32 awk_escape(positive address_to at, positive stop)
                         limit = 2;
 
                 positive value = string_digits_hexadecimal_escape_max(
-                    awk_source + address_to at, limit, address_of used);
+                    source + address_to at, limit, address_of used);
 
                 if (used)
                 {
@@ -2892,7 +2902,7 @@ static fn awk_next_token()
                         {
                                 awk_source_at++;
                                 awk_builder_char(address_of build,
-                                                 (p8)awk_escape(address_of awk_source_at,
+                                                 (p8)awk_escape(awk_source, address_of awk_source_at,
                                                                 awk_source_length));
                                 continue;
                         }
@@ -3050,9 +3060,7 @@ enum
         S_PRINTF,
         S_EXPRESSION,
         S_IF,
-        S_WHILE,
-        S_DO,
-        S_FOR,
+        S_LOOP,
         S_FORIN,
         S_BLOCK,
         S_NEXT,
@@ -3565,20 +3573,21 @@ static awk_node address_to awk_unary()
         return awk_power_level();
 }
 
-/* The two left-associative arithmetic precedence levels are one parser
-   transition.  Conditions and operator maps remain literal at each expansion
-   so the compiler sees the same specialized loops as hand-written bodies. */
-#define AWK_ARITH_LEVEL(name, lower, accepts, operation)                     \
+/* Left-associative binary levels share one parser transition. Conditions,
+   operator maps and newline policy remain literal at each expansion. */
+#define AWK_BINARY_LEVEL(name, lower, kind, accepts, operation, newlines)    \
         static awk_node address_to name()                                   \
         {                                                                   \
                 awk_node address_to node = lower();                         \
                                                                             \
                 while (accepts)                                             \
                 {                                                           \
-                        awk_node address_to made = awk_node_new(N_ARITH);    \
+                        awk_node address_to made = awk_node_new(kind);       \
                                                                             \
                         made->sub = (p8)(operation);                         \
                         awk_next_token();                                   \
+                        if (newlines)                                       \
+                                awk_skip_newlines();                        \
                         made->a = node;                                     \
                         made->b = lower();                                  \
                         node = made;                                        \
@@ -3587,14 +3596,13 @@ static awk_node address_to awk_unary()
                 return node;                                                \
         }
 
-AWK_ARITH_LEVEL(awk_multiply_level, awk_unary,
+AWK_BINARY_LEVEL(awk_multiply_level, awk_unary, N_ARITH,
                 awk_token == T_TIMES || awk_token == T_DIVIDE ||
                     awk_token == T_MODULO,
-                awk_token == T_TIMES ? '*' : (awk_token == T_DIVIDE ? '/' : '%'))
-AWK_ARITH_LEVEL(awk_add_level, awk_multiply_level,
+                awk_token == T_TIMES ? '*' : (awk_token == T_DIVIDE ? '/' : '%'), false)
+AWK_BINARY_LEVEL(awk_add_level, awk_multiply_level, N_ARITH,
                 awk_token == T_PLUS || awk_token == T_MINUS,
-                awk_token == T_PLUS ? '+' : '-')
-#undef AWK_ARITH_LEVEL
+                awk_token == T_PLUS ? '+' : '-', false)
 
 static awk_node address_to awk_concat_level()
 {
@@ -3728,27 +3736,9 @@ static awk_node address_to awk_pipe_level()
         return node;
 }
 
-#define AWK_LOGICAL_LEVEL(name, lower, token, kind)                           \
-        static awk_node address_to name()                                    \
-        {                                                                    \
-                awk_node address_to node = lower();                          \
-                                                                             \
-                while (awk_token == token)                                   \
-                {                                                            \
-                        awk_node address_to made = awk_node_new(kind);        \
-                                                                             \
-                        awk_next_token();                                    \
-                        awk_skip_newlines();                                 \
-                        made->a = node;                                      \
-                        made->b = lower();                                   \
-                        node = made;                                         \
-                }                                                            \
-                                                                             \
-                return node;                                                 \
-        }
-
-AWK_LOGICAL_LEVEL(awk_and_level, awk_compare_level, T_AND, N_AND)
-AWK_LOGICAL_LEVEL(awk_or_level, awk_and_level, T_OR, N_OR)
+AWK_BINARY_LEVEL(awk_and_level, awk_compare_level, N_AND, awk_token == T_AND, 0, true)
+AWK_BINARY_LEVEL(awk_or_level, awk_and_level, N_OR, awk_token == T_OR, 0, true)
+#undef AWK_BINARY_LEVEL
 
 static awk_node address_to awk_expression()
 {
@@ -3784,7 +3774,8 @@ static awk_node address_to awk_expression()
 
                 awk_node address_to made = awk_node_new(N_ASSIGN);
 
-                made->sub = (p8)awk_token;
+                made->sub = awk_token == T_ASSIGN ? 0
+                                : (p8)"+-*/%^"[awk_token - T_ASSIGN_ADD];
                 awk_next_token();
                 awk_skip_newlines();
                 made->a = node;
@@ -3966,8 +3957,8 @@ static awk_node address_to awk_statement()
         case T_WHILE:
                 awk_next_token();
                 awk_expect(T_OPEN, "expected ( after while");
-                node = awk_node_new(S_WHILE);
-                node->a = awk_expression();
+                node = awk_node_new(S_LOOP);
+                node->b = awk_expression();
                 awk_expect(T_CLOSE, "expected ) after the condition");
                 awk_skip_newlines();
 
@@ -3978,18 +3969,19 @@ static awk_node address_to awk_statement()
                         return node;
                 }
 
-                node->b = awk_statement();
+                node->d = awk_statement();
                 return node;
 
         case T_DO:
                 awk_next_token();
                 awk_skip_newlines();
-                node = awk_node_new(S_DO);
-                node->b = awk_statement();
+                node = awk_node_new(S_LOOP);
+                node->sub = 1;
+                node->d = awk_statement();
                 awk_skip_terminators();
                 awk_expect(T_WHILE, "expected while after do");
                 awk_expect(T_OPEN, "expected ( after while");
-                node->a = awk_expression();
+                node->b = awk_expression();
                 awk_expect(T_CLOSE, "expected ) after the condition");
                 return node;
 
@@ -4030,7 +4022,7 @@ static awk_node address_to awk_statement()
                         awk_text_drop(name);
                 }
 
-                node = awk_node_new(S_FOR);
+                node = awk_node_new(S_LOOP);
 
                 if (awk_token != T_SEMICOLON)
                         node->a = awk_simple_statement();
@@ -4246,7 +4238,7 @@ static positive awk_seed_state = 1;
 
 static fn awk_eval(awk_node address_to node, awk_value address_to out);
 static b32 awk_run(awk_node address_to node);
-static bool awk_main_next_record(awk_text address_to address_to into);
+static b32 awk_main_next_record(awk_text address_to address_to into);
 
 #define awk_value_start(which)          \
         do                              \
@@ -4335,6 +4327,25 @@ static bool awk_eval_truth(awk_node address_to node)
         return value;
 }
 
+static inline INLINE decimal awk_arithmetic(p8 operation, decimal left, decimal right)
+{
+        switch (operation)
+        {
+        case '+': return left + right;
+        case '-': return left - right;
+        case '*': return left * right;
+        case '/':
+                if (right == 0)
+                        awk_fatal(null, "division by zero attempted");
+                return left / right;
+        case '%':
+                if (right == 0)
+                        awk_fatal(null, "division by zero attempted in %");
+                return decimal_modulo(left, right);
+        }
+        return awk_power(left, right);
+}
+
 static decimal awk_eval_number(awk_node address_to node)
 {
         // Numeric consumers need no owned values along an arithmetic tree.
@@ -4359,21 +4370,7 @@ static decimal awk_eval_number(awk_node address_to node)
                 decimal left = awk_eval_number(node->a);
                 decimal right = awk_eval_number(node->b);
 
-                switch (node->sub)
-                {
-                case '+': return left + right;
-                case '-': return left - right;
-                case '*': return left * right;
-                case '/':
-                        if (right == 0)
-                                awk_fatal(null, "division by zero attempted");
-                        return left / right;
-                case '%':
-                        if (right == 0)
-                                awk_fatal(null, "division by zero attempted in %");
-                        return decimal_modulo(left, right);
-                }
-                return awk_power(left, right);
+                return awk_arithmetic(node->sub, left, right);
         }
         case N_BUILTIN:
                 if (node->index >= B_SIN && node->index <= B_INT)
@@ -4541,7 +4538,7 @@ static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
 {
         awk_target target;
 
-        if (node->sub == T_ASSIGN)
+        if (!node->sub)
         {
                 awk_value right;
                 awk_value_start(right);
@@ -4562,28 +4559,7 @@ static fn awk_do_assign(awk_node address_to node, awk_value address_to out)
         awk_target_of(node->a, address_of target);
         decimal left = awk_to_number(awk_target_slot(address_of target));
 
-        switch (node->sub)
-        {
-        case T_ASSIGN_ADD: left = left + value; break;
-        case T_ASSIGN_SUB: left = left - value; break;
-        case T_ASSIGN_MUL: left = left * value; break;
-
-        case T_ASSIGN_DIV:
-                if (value == 0)
-                        awk_fatal(null, "division by zero attempted");
-
-                left = left / value;
-                break;
-
-        case T_ASSIGN_MOD:
-                if (value == 0)
-                        awk_fatal(null, "division by zero attempted in %");
-
-                left = decimal_modulo(left, value);
-                break;
-
-        case T_ASSIGN_POWER: left = awk_power(left, value); break;
-        }
+        left = awk_arithmetic(node->sub, left, value);
 
         awk_set_number(awk_target_slot(address_of target), left);
         awk_target_written(address_of target);
@@ -5353,14 +5329,7 @@ static fn awk_getline(awk_node address_to node, awk_value address_to out)
         b32 answer = 0;
 
         if (node->sub == G_MAIN)
-        {
-                if (awk_main_next_record(address_of record))
-                {
-                        awk_getline_store(node, record);
-                        awk_text_drop(record);
-                        answer = 1;
-                }
-        }
+                answer = awk_main_next_record(address_of record);
         else
         {
                 awk_text address_to name = awk_eval_text(node->b);
@@ -5368,14 +5337,13 @@ static fn awk_getline(awk_node address_to node, awk_value address_to out)
 
                 awk_text_drop(name);
 
-                if (!from)
-                        answer = -1;
-                else if (awk_read_record(from, address_of record))
-                {
-                        awk_getline_store(node, record);
-                        awk_text_drop(record);
-                        answer = 1;
-                }
+                answer = from ? awk_read_record(from, address_of record) : -1;
+        }
+
+        if (answer > 0)
+        {
+                awk_getline_store(node, record);
+                awk_text_drop(record);
         }
 
         awk_set_number(out, (decimal)answer);
@@ -5543,38 +5511,10 @@ static b32 awk_run(awk_node address_to node)
                         break;
                 }
 
-                case S_WHILE:
-                        while (!awk_exiting && awk_eval_truth(node->a))
-                        {
-                                b32 answer = node->b ? awk_run(node->b) : RUN_ON;
-
-                                if (answer == RUN_BREAK)
-                                        break;
-
-                                if (answer != RUN_ON && answer != RUN_CONTINUE)
-                                        return answer;
-                        }
-
-                        break;
-
-                case S_DO:
-                        for (;;)
-                        {
-                                b32 answer = node->b ? awk_run(node->b) : RUN_ON;
-
-                                if (answer == RUN_BREAK)
-                                        break;
-
-                                if (answer != RUN_ON && answer != RUN_CONTINUE)
-                                        return answer;
-
-                                if (awk_exiting || !awk_eval_truth(node->a))
-                                        break;
-                        }
-
-                        break;
-
-                case S_FOR:
+                // All counted loops share init / test / step / body slots.
+                // A do-loop enters the body once before its first test;
+                // continue still reaches the step and then the condition.
+                case S_LOOP:
                 {
                         if (node->a)
                         {
@@ -5584,8 +5524,12 @@ static b32 awk_run(awk_node address_to node)
                                         return answer;
                         }
 
+                        if (node->sub)
+                                goto loop_body;
+
                         while (!awk_exiting && (!node->b || awk_eval_truth(node->b)))
                         {
+                        loop_body:;
                                 b32 answer = node->d ? awk_run(node->d) : RUN_ON;
 
                                 if (answer == RUN_BREAK)
@@ -5740,43 +5684,20 @@ static awk_text address_to awk_unescape(string_address text, positive length)
 
         awk_builder_start(address_of build);
 
-        for (positive i = 0; i < length; i++)
+        for (positive i = 0; i < length;)
         {
-                if (text[i] != '\\' || i + 1 >= length)
+                p8 address_to slash = memory_first_of(text + i, '\\', length - i);
+                positive plain = slash && slash + 1 < text + length
+                                     ? (positive)(slash - text - i) : length - i;
+                awk_builder_put(address_of build, text + i, plain);
+                i += plain;
+
+                if (i < length)
                 {
-                        awk_builder_char(address_of build, text[i]);
-                        continue;
+                        i++;
+                        awk_builder_char(address_of build,
+                                         (p8)awk_escape(text, address_of i, length));
                 }
-
-                i++;
-
-                p8 character = text[i];
-
-                p8 escaped = byte_simple_escape(character);
-
-                if (escaped)
-                {
-                        awk_builder_char(address_of build, escaped);
-                        continue;
-                }
-
-                if (character >= '0' && character <= '7')
-                {
-                        positive limit = length - i;
-                        positive used;
-
-                        if (limit > 3)
-                                limit = 3;
-
-                        positive value = string_digits_octal_escape_max(
-                            text + i, limit, address_of used);
-
-                        i += used - 1;
-                        awk_builder_char(address_of build, (p8)(value & 0xff));
-                        continue;
-                }
-
-                awk_builder_char(address_of build, character);
         }
 
         return awk_builder_text(address_of build);
@@ -5834,6 +5755,7 @@ static bool awk_open_next_input()
                         awk_main.live = true;
                         awk_main.pipe = false;
                         awk_main.ended = false;
+                        awk_main.failed = false;
                         awk_main.at = 0;
                         awk_main.filled = 0;
                         awk_main.name = awk_text_hold(address_of awk_empty_text);
@@ -5867,6 +5789,7 @@ static bool awk_open_next_input()
                 awk_input_used = true;
                 awk_main.pipe = false;
                 awk_main.ended = false;
+                awk_main.failed = false;
                 awk_main.at = 0;
                 awk_main.filled = 0;
                 awk_main.live = true;
@@ -5912,20 +5835,23 @@ static fn awk_close_main()
         awk_main_live = false;
 }
 
-static bool awk_main_next_record(awk_text address_to address_to into)
+static b32 awk_main_next_record(awk_text address_to address_to into)
 {
         for (;;)
         {
                 if (!awk_main_live && !awk_open_next_input())
                         return false;
 
-                if (awk_read_record(address_of awk_main, into))
+                b32 answer = awk_read_record(address_of awk_main, into);
+                if (answer > 0)
                 {
                         awk_set_global_number(awk_where_nr, awk_global_number(awk_where_nr) + 1);
                         awk_set_global_number(awk_where_fnr,
                                               awk_global_number(awk_where_fnr) + 1);
                         return true;
                 }
+                if (answer < 0)
+                        return answer;
 
                 awk_close_main();
         }
@@ -5961,8 +5887,13 @@ static b32 awk_run_rules()
         {
                 awk_text address_to record;
 
-                if (!awk_main_next_record(address_of record))
+                b32 got = awk_main_next_record(address_of record);
+                if (got <= 0)
+                {
+                        if (got < 0)
+                                awk_fatal(awk_main.name->text, "error reading input file");
                         break;
+                }
 
                 awk_record_set(record->text, record->length);
                 awk_text_drop(record);

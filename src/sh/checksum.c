@@ -98,6 +98,7 @@ static const file_long checksum_b2_longs[] = {
 };
 
 static bool checksum_binary;
+static bool checksum_warn;
 
 static bool checksum_option_seen(p8 letter, string_address value)
 {
@@ -107,6 +108,8 @@ static bool checksum_option_seen(p8 letter, string_address value)
                 checksum_binary = true;
         else if (letter == 't')
                 checksum_binary = false;
+        if (letter == 'w' || letter == 'q' || letter == 's')
+                checksum_warn = letter == 'w';
 
         return true;
 }
@@ -329,57 +332,43 @@ static bipolar checksum_hash_descriptor(bipolar transform, bipolar input,
         regular = regular && start >= 0;
         bipolar moved = CHECKSUM_ERROR_IO;
 
-        if (regular)
+        for (positive attempt = 0; regular && attempt < 2; attempt++)
         {
-                p64 remaining = facts.size > (p64)start
-                                    ? facts.size - (p64)start
-                                    : 0;
-
-                if (remaining < FILE_KERNEL_COPY_SIZE)
+                if (!attempt)
                 {
+                        p64 remaining = facts.size > (p64)start
+                                            ? facts.size - (p64)start : 0;
+
                         /* Asking for the ceiling, rather than the sampled
                            size, includes a file that grows before this trap.
                            A ceiling-sized answer was not EOF and is retried
                            through the streaming path. */
-                        moved = file_send_range_once(
-                            input, null, operation, FILE_KERNEL_COPY_SIZE);
-
-                        if (moved >= (bipolar)remaining &&
-                            moved < FILE_KERNEL_COPY_SIZE)
-                                goto digest;
-
-                        if (moved < 0 &&
-                            !file_copy_range_fallback(moved))
+                        if (remaining < FILE_KERNEL_COPY_SIZE)
                         {
-                                system_close((positive)operation);
-                                return moved;
+                                moved = file_send_range_once(
+                                    input, null, operation, FILE_KERNEL_COPY_SIZE);
+                                if (moved >= (bipolar)remaining &&
+                                    moved < FILE_KERNEL_COPY_SIZE)
+                                        goto digest;
+                                if (moved < 0 && !file_copy_range_fallback(moved))
+                                        goto done;
                         }
                 }
-
-                system_close((positive)operation);
-                if (system_seek(input, start, FILE_SEEK_SET) < 0)
-                        return CHECKSUM_ERROR_IO;
-
-                operation = checksum_operation_open(transform);
-                if (operation < 0)
-                        return operation;
-
-                moved = checksum_splice(input, operation);
-                if (!moved)
-                        goto digest;
-
-                if (!file_copy_range_fallback(moved))
+                else
                 {
-                        system_close((positive)operation);
-                        return moved;
+                        moved = checksum_splice(input, operation);
+                        if (!moved)
+                                goto digest;
+                        if (!file_copy_range_fallback(moved))
+                                goto done;
                 }
 
-                /* splice can be unavailable under seccomp even while AF_ALG
-                   is allowed.  Reset both stream and digest before using the
-                   existing buffered floor. */
+                // Each failed transport discards its accepted digest before
+                // rewinding the input, whether the next try is splice or the
+                // buffered floor. No partial prefix survives into a retry.
                 system_close((positive)operation);
                 if (system_seek(input, start, FILE_SEEK_SET) < 0)
-                        return moved;
+                        return attempt ? moved : CHECKSUM_ERROR_IO;
 
                 operation = checksum_operation_open(transform);
                 if (operation < 0)
@@ -388,13 +377,11 @@ static bipolar checksum_hash_descriptor(bipolar transform, bipolar input,
 
         moved = checksum_buffered(input, operation);
         if (moved < 0)
-        {
-                system_close((positive)operation);
-                return moved;
-        }
+                goto done;
 
 digest:
         moved = checksum_digest_read(operation, digest, digest_length);
+done:
         system_close((positive)operation);
         return moved;
 }
@@ -523,19 +510,63 @@ static fn checksum_hex_put(p8 address_to digest, positive length)
         text_put(text, memory_into_hex(text, digest, length));
 }
 
-static fn checksum_line_put(p8 address_to digest, positive length,
-                            string_address name)
+static fn checksum_line_put(const checksum_algorithm address_to algorithm,
+                            p8 address_to digest, string_address name, bool tagged)
 {
         bool escaped = checksum_filename_escaped(name);
 
         if (escaped)
                 text_put_character('\\');
 
-        checksum_hex_put(digest, length);
-        text_put_character(' ');
-        text_put_character(checksum_binary ? '*' : ' ');
+        if (tagged)
+        {
+                text_put_string(algorithm->label);
+                text_put_string(" (");
+        }
+        else
+        {
+                checksum_hex_put(digest, algorithm->bytes);
+                text_put_character(' ');
+                text_put_character(checksum_binary ? '*' : ' ');
+        }
         checksum_filename_put(name, escaped);
+        if (tagged)
+        {
+                text_put_string(") = ");
+                checksum_hex_put(digest, algorithm->bytes);
+        }
         text_put_character('\n');
+}
+
+/* cksum's collected operands and the named sums' argv tail differ only at
+   the input boundary; hashing, errors and escaped line output are shared. */
+static b32 checksum_generate(const checksum_algorithm address_to algorithm,
+                             bipolar transform, positive first, bool tagged)
+{
+        positive count = (positive)program_argument_count();
+        positive inputs = tagged ? (positive)text_input_count()
+                                 : first < count ? count - first : 1;
+        b32 answer = 0;
+
+        for (positive i = 0; i < inputs; i++)
+        {
+                string_address name = tagged ? text_file_name(i)
+                    : first < count ? program_argument((b32)(first + i)) : null;
+                name = name ? name : (string_address) "-";
+                p8 digest[64];
+                bipolar hashed = checksum_hash_path(
+                    transform, name, digest, algorithm->bytes);
+
+                if (hashed < 0)
+                {
+                        text_error(name, file_reason(hashed));
+                        answer = 1;
+                        continue;
+                }
+
+                checksum_line_put(algorithm, digest, name, tagged);
+        }
+        return answer;
 }
 
 static fn checksum_check_result_put(string_address name,
@@ -557,7 +588,7 @@ static fn checksum_error_number(string_address command,
         text_flush();
         text_error_raw(command);
         text_error_raw(": ");
-        text_error_raw(manifest ? manifest : (string_address) "-");
+        text_error_raw(manifest);
         text_error_raw(": ");
         positive used = positive_into(digits, line);
         system_write_all(2, digits, used);
@@ -655,16 +686,10 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
         bool quiet = (taking->flags & FILE_FLAG('q')) != 0;
         bool status = (taking->flags & FILE_FLAG('s')) != 0;
         bool strict = (taking->flags & FILE_FLAG('S')) != 0;
-        bool warn = (taking->flags & FILE_FLAG('w')) != 0;
         bool ignore_missing = (taking->flags & FILE_FLAG('i')) != 0;
         positive manifests = taking->first < (positive)program_argument_count()
                                  ? (positive)program_argument_count() - taking->first
                                  : 1;
-        positive malformed = 0;
-        positive formatted = 0;
-        positive mismatched = 0;
-        positive unreadable = 0;
-        positive verified = 0;
         bool failed = false;
 
         for (positive m = 0; m < manifests; m++)
@@ -679,8 +704,15 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         failed = true;
                         continue;
                 }
+                if (!manifest || (manifest[0] == '-' && !manifest[1]))
+                        manifest = (string_address) "'standard input'";
 
                 positive line = 0;
+                positive malformed = 0;
+                positive formatted = 0;
+                positive mismatched = 0;
+                positive unreadable = 0;
+                positive verified = 0;
 
                 while (text_line_next())
                 {
@@ -693,7 +725,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                                  address_of filename))
                         {
                                 malformed++;
-                                if (warn && !status)
+                                if (checksum_warn)
                                         checksum_error_number(algorithm->command,
                                                               manifest, line,
                                                               algorithm->label);
@@ -713,14 +745,11 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                 unreadable++;
                                 failed = true;
 
+                                text_error(filename, file_reason(hashed));
                                 if (!status)
-                                {
-                                        text_error(filename,
-                                                   file_reason(hashed));
                                         checksum_check_result_put(
                                             filename,
                                             (string_address) "FAILED open or read");
-                                }
                                 continue;
                         }
 
@@ -742,39 +771,37 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         failed = true;
 
                 text_close();
-        }
 
-        if (!status)
-        {
-                if (malformed && formatted)
-                        checksum_warning(algorithm->command, malformed,
-                                         (string_address) " line is improperly formatted",
-                                         (string_address) " lines are improperly formatted");
-                if (unreadable)
-                        checksum_warning(algorithm->command, unreadable,
-                                         (string_address) " listed file could not be read",
-                                         (string_address) " listed files could not be read");
-                if (mismatched)
-                        checksum_warning(algorithm->command, mismatched,
-                                         (string_address) " computed checksum did NOT match",
-                                         (string_address) " computed checksums did NOT match");
-        }
-
-        if (!verified && !unreadable)
-        {
-                failed = true;
+                // Every manifest has its own format/verification contract;
+                // a valid earlier file cannot make an empty later one valid.
                 if (!status)
-                        text_error(taking->first <
-                                           (positive)program_argument_count()
-                                       ? program_argument((b32)taking->first)
-                                       : (string_address) "-",
-                                   ignore_missing
-                                       ? (string_address) "no file was verified"
-                                       : (string_address) "no properly formatted checksum lines found");
-        }
+                {
+                        if (malformed && formatted)
+                                checksum_warning(algorithm->command, malformed,
+                                                 (string_address) " line is improperly formatted",
+                                                 (string_address) " lines are improperly formatted");
+                        if (unreadable)
+                                checksum_warning(algorithm->command, unreadable,
+                                                 (string_address) " listed file could not be read",
+                                                 (string_address) " listed files could not be read");
+                        if (mismatched)
+                                checksum_warning(algorithm->command, mismatched,
+                                                 (string_address) " computed checksum did NOT match",
+                                                 (string_address) " computed checksums did NOT match");
+                }
 
-        if (strict && malformed)
-                failed = true;
+                if (!verified && !unreadable)
+                {
+                        failed = true;
+                        if (!status || !formatted)
+                                text_error(manifest, ignore_missing && formatted
+                                                         ? (string_address) "no file was verified"
+                                                         : (string_address) "no properly formatted checksum lines found");
+                }
+
+                if (strict && malformed)
+                        failed = true;
+        }
 
         return failed ? 1 : 0;
 }
@@ -790,6 +817,7 @@ static b32 checksum_main()
 
         text_begin(command);
         checksum_binary = false;
+        checksum_warn = false;
 
         file_taking taking = {
             .program = command,
@@ -848,30 +876,7 @@ static b32 checksum_main()
                 answer = checksum_verify(algorithm, transform,
                                          address_of taking);
         else
-        {
-                positive count = (positive)program_argument_count();
-                positive operands = taking.first < count ? count - taking.first
-                                                         : 1;
-
-                for (positive i = 0; i < operands; i++)
-                {
-                        string_address path = taking.first < count
-                                                  ? program_argument((b32)(taking.first + i))
-                                                  : (string_address) "-";
-                        p8 digest[64];
-                        bipolar hashed = checksum_hash_path(
-                            transform, path, digest, algorithm->bytes);
-
-                        if (hashed < 0)
-                        {
-                                text_error(path, file_reason(hashed));
-                                answer = 1;
-                                continue;
-                        }
-
-                        checksum_line_put(digest, algorithm->bytes, path);
-                }
-        }
+                answer = checksum_generate(algorithm, transform, taking.first, false);
 
         system_close((positive)transform);
         return text_done(answer);

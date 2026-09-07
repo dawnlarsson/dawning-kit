@@ -340,6 +340,14 @@ compare 'while' /dev/null 'BEGIN{i=0; while (i<3) {print i; i++}}'
 compare 'while empty body' /dev/null 'BEGIN{i=0; while (i++ < 3) ; print i}'
 compare 'do while' /dev/null 'BEGIN{i=0; do {print i; i++} while (i<3)}'
 compare 'do while once' /dev/null 'BEGIN{i=9; do print i; while (0)}'
+compare 'while condition side effects' /dev/null 'BEGIN{while(++i<6){if(i==2)continue;if(i==4)break;s=s i} print i,s}'
+compare 'do continue reaches test' /dev/null 'BEGIN{do{++i;if(i==2)continue;s=s i}while(++tests<4);print i,tests,s}'
+compare 'do break skips test' /dev/null 'BEGIN{do{++i;if(i==2)break;s=s i}while(++tests<4);print i,tests,s}'
+compare 'do empty body tests' /dev/null 'BEGIN{do;while(++i<4);print i}'
+compare 'for continue reaches step' /dev/null 'BEGIN{for(i=0;i<6;i+=1+0*steps++){if(i==2)continue;if(i==4)break;s=s i}print i,steps,s}'
+compare 'loop return propagation' /dev/null 'function f(k){do{while(1){for(;;){return k+3}}}while(0)}BEGIN{print f(4)}'
+compare 'loop next propagation' "$work/letters" 'function f(){do{while(1){next}}while(0)}{if(NR%2)f();print NR,$0}END{print "end",NR}'
+compare 'loop exit propagation' "$work/letters" '{do{while(1){for(;;){exit 3}}}while(0)}END{print "end",NR}'
 compare 'for' /dev/null 'BEGIN{for (i=0;i<3;i++) print i}'
 compare 'for no parts' /dev/null 'BEGIN{i=0; for (;;) {if (i>2) break; print i; i++}}'
 compare 'for in sorted' /dev/null 'BEGIN{a["b"]=1;a["a"]=2;a["c"]=3; n=0; for (k in a) n++; print n}'
@@ -535,6 +543,27 @@ compare 'from a command into the record' /dev/null 'BEGIN{"echo a b" | getline; 
 compare 'command in a loop' /dev/null 'BEGIN{while (("printf \"1\\n2\\n3\\n\"" | getline l) > 0) n++; print n}'
 compare 'command status' /dev/null 'BEGIN{cmd="echo x"; cmd | getline; print close(cmd)}'
 compare 'main input in a loop' "$work/letters" 'NR==1{while ((getline line) > 0) n++; print n, NR}'
+for record_width in 65534 65535 65536 65537; do
+        head -c "$record_width" /dev/zero | tr '\0' x > "$work/record-refill"
+        printf '\n\na\n\n\nb\n' >> "$work/record-refill"
+        for record_separator in '\n' '' 'x+'; do
+                compare "record scanner $record_width [$record_separator]" \
+                        "$work/record-refill" -v "RS=$record_separator" \
+                        '{print NR,length($0),NF}'
+        done
+done
+if [ -r /proc/self/mem ]; then
+        for record_separator in '\n' '' 'x+'; do
+                compare "redirected read error [$record_separator]" /dev/null \
+                        -v "RS=$record_separator" \
+                        'BEGIN{print(getline x < "/proc/self/mem");print(getline x < "/proc/self/mem");print close("/proc/self/mem");print(getline x < "/proc/self/mem")}'
+                compare "main getline read error [$record_separator]" /dev/null \
+                        -v "RS=$record_separator" \
+                        'BEGIN{print getline x;print getline x}' /proc/self/mem
+                compare "implicit read error [$record_separator]" /dev/null \
+                        -v "RS=$record_separator" '{print}' /proc/self/mem
+        done
+fi
 
 #
 #       Redirection.
@@ -686,6 +715,16 @@ compare 'anchors' /dev/null 'BEGIN{print ("abc" ~ /^abc$/), ("abc" ~ /^b/), ("" 
 compare 'string escapes' /dev/null 'BEGIN{print "a\tb", "c\\d", "e\"f", length("\061\x41")}'
 compare 'escape digit caps' /dev/null 'BEGIN{print "\1012", "\x414", "\1q", "\x@z"}'
 compare 'assignment escapes' /dev/null -v 'x=\1412' 'BEGIN{print x}'
+for escaped_value in '\x41' '\x4142' '\xFF' '\x' '\xZ' '\000' '\400' '\777' '\0777' '\a\b\f\n\r\t\v' '\q' '\\' '' plain; do
+        compare "dash-v shared escape [$escaped_value]" /dev/null \
+                -v "x=$escaped_value" 'BEGIN{printf "<%s> %d\n",x,length(x)}'
+        compare "operand shared escape [$escaped_value]" /dev/null \
+                'END{printf "<%s> %d\n",x,length(x)}' "x=$escaped_value"
+done
+for arithmetic in + - '*' / % '^' '**'; do
+        compare "compound operator [$arithmetic]" "$work/five" \
+                "{x=8;a[1]=8; print (x ${arithmetic}= 2),x,(a[1] ${arithmetic}= 2),a[1]; print (\$1 ${arithmetic}= 2),\$0}"
+done
 
 case_start edges
 compare 'nextfile' /dev/null 'FNR==1{nextfile} {print FILENAME, $0}' "$work/letters" "$work/grid"
