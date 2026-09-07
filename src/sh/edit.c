@@ -1481,8 +1481,7 @@ static p8 edit_prompt_kind;
 
 static fn edit_repaint_all()
 {
-        for (positive at = 0; at < EDIT_ROWS_MAX; at++)
-                edit_row_known[at] = false;
+        memory_zero(edit_row_known, sizeof(edit_row_known));
 }
 
 static fn edit_status_say(string_address text)

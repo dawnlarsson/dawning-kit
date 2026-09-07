@@ -704,16 +704,11 @@ static PURE bool lex_parameter_pattern(string_address at)
         if (string_is(step, '#'))
                 step++;
 
-        if ((string_get(step) >= 'a' && string_get(step) <= 'z') ||
-            (string_get(step) >= 'A' && string_get(step) <= 'Z') ||
-            string_is(step, '_'))
-                while ((string_get(step) >= 'a' && string_get(step) <= 'z') ||
-                       (string_get(step) >= 'A' && string_get(step) <= 'Z') ||
-                       (string_get(step) >= '0' && string_get(step) <= '9') ||
-                       string_is(step, '_'))
+        if (byte_is_alpha(string_get(step)) || string_is(step, '_'))
+                while (byte_is_alnum(string_get(step)) || string_is(step, '_'))
                         step++;
-        else if (string_get(step) >= '0' && string_get(step) <= '9')
-                while (string_get(step) >= '0' && string_get(step) <= '9')
+        else if (byte_is_digit(string_get(step)))
+                while (byte_is_digit(string_get(step)))
                         step++;
         else if (string_get(step))
                 step++;

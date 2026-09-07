@@ -171,8 +171,9 @@ bipolar shell_exec_file(string_address path,
         fallback[0] = (string_address)"/proc/self/exe";
         fallback[1] = path;
 
-        for (positive at = 1; at < count; at++)
-                fallback[at + 1] = arguments[at];
+        if (count > 1)
+                memory_copy_apart(fallback + 2, arguments + 1,
+                                  (count - 1) * sizeof(arguments[0]));
 
         fallback[count + 1] = null;
 
@@ -3471,16 +3472,6 @@ static fn shell_readonly_refused(string_address name, positive length)
         shell_answer(shell_bash_compat ? 1 : 2);
 }
 
-/* Whether this stops the script is likewise a property of the direct command,
-   not of the variable engine doing the refusal. */
-static fn shell_unset_readonly(string_address name, positive length)
-{
-        shell_diagnostic(name, length);
-        shell_diagnostic(": is read only\n", 0);
-        exec_special_error_note();
-        shell_answer(shell_bash_compat ? 1 : 2);
-}
-
 static bool shell_valid_name(string_address name, positive length)
 {
         if (!length || (string_get(name) >= '0' && string_get(name) <= '9'))
@@ -3506,7 +3497,7 @@ static fn shell_bad_name(string_address command, string_address name,
 /*
         The next option letter, and where the words stop being options.
 
-        Six builtins walked their -abc words with the same loop, and one of
+        Builtins used to walk their -abc words with separate loops, and one of
         them fell off the end of it in silence: `command -x foo` skipped the
         word it did not understand and ran foo. This is that loop once.
         Answers false with index on the first operand: at a word that does
@@ -3528,8 +3519,8 @@ typedef struct
         bool plus_too;
 } shell_option_walk;
 
-static bool shell_option_letter(shell_option_walk address_to walk,
-                                p8 address_to letter)
+static inline INLINE bool shell_option_letter(shell_option_walk address_to walk,
+                                              p8 address_to letter)
 {
         while (1)
         {
@@ -3892,7 +3883,8 @@ static PURE b32 shell_cd_failed_status()
 
 COLD fn shell_cd(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 letter;
         bool physical = shell_physical_on();
         bool error_if_unnamed = false;
         bool physical_named = true;
@@ -3913,38 +3905,23 @@ COLD fn shell_cd(writer write, string_address input)
                 }
         }
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of letter))
         {
-                string_address option = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (letter == 'L')
+                        physical = false;
+                else if (letter == 'P')
+                        physical = true;
+                else if (letter == 'e')
+                        error_if_unnamed = true;
+                else
                 {
-                        index++;
-                        break;
+                        string_format(shell_diagnostic,
+                                      "cd: bad option: -%c\n", letter);
+                        return shell_answer(2);
                 }
-
-                while (string_get(option))
-                {
-                        p8 letter = string_get(option++);
-
-                        if (letter == 'L')
-                                physical = false;
-                        else if (letter == 'P')
-                                physical = true;
-                        else if (letter == 'e')
-                                error_if_unnamed = true;
-                        else
-                        {
-                                string_format(shell_diagnostic,
-                                              "cd: bad option: -%c\n", letter);
-                                return shell_answer(2);
-                        }
-                }
-
-                index++;
         }
 
+        positive index = walk.index;
         if (index < shell_argc)
                 name = shell_argv[index++];
 
@@ -4286,8 +4263,7 @@ COLD fn shell_pushd(writer write, string_address input)
                         return shell_answer(1);
                 }
 
-                for (positive at = 0; at < count; at++)
-                        rotated[at] = list[at];
+                memory_copy_apart(rotated, list, count * sizeof(list[0]));
 
                 rotated[0] = list[1];
                 rotated[1] = list[0];
@@ -4300,10 +4276,11 @@ COLD fn shell_pushd(writer write, string_address input)
                         return shell_answer(0);
                 }
 
-                // A rotation names a new top and drops nothing, so the walk
-                // goes once round the list from the entry asked for.
-                for (positive at = 0; at < count; at++)
-                        rotated[at] = list[(at + index) % count];
+                // A rotation is the suffix followed by the prefix.
+                memory_copy_apart(rotated, list + index,
+                                  (count - index) * sizeof(list[0]));
+                memory_copy_apart(rotated + count - index, list,
+                                  index * sizeof(list[0]));
         }
         else if (string_is(shell_argv[1], '+') || string_is(shell_argv[1], '-'))
         {
@@ -4322,8 +4299,9 @@ COLD fn shell_pushd(writer write, string_address input)
 
                 rotated[0] = previous;
 
-                for (positive at = 1; at < count; at++)
-                        rotated[at] = list[at];
+                if (count > 1)
+                        memory_copy_apart(rotated + 1, list + 1,
+                                          (count - 1) * sizeof(list[0]));
 
                 if (!shell_dirstack_move(wanted))
                 {
@@ -4529,64 +4507,37 @@ COLD fn shell_exec(writer write, string_address input)
         string_address named = null;
         bool clear = false;
         bool login = false;
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 which;
         bipolar located;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-                bool wanted = false;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 'c')
+                        clear = true;
+                else if (which == 'l')
+                        login = true;
+                else if (which == 'a')
                 {
-                        index++;
-                        break;
-                }
-
-                while (string_get(letter))
-                {
-                        p8 which = string_get(letter++);
-
-                        if (which == 'c')
-                                clear = true;
-                        else if (which == 'l')
-                                login = true;
-                        else if (which == 'a')
+                        named = shell_option_argument(address_of walk);
+                        if (!named)
                         {
-                                wanted = true;
-                                break;
-                        }
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "exec: -%s: invalid option\n",
-                                              said);
+                                shell_diagnostic("exec: -a: option requires an "
+                                                 "argument\n", 0);
                                 exec_special_error_note();
                                 return shell_answer(2);
                         }
                 }
-
-                index++;
-
-                if (!wanted)
-                        continue;
-
-                if (string_get(letter))
-                        named = letter;
-                else if (index < shell_argc)
-                        named = shell_argv[index++];
                 else
                 {
-                        shell_diagnostic("exec: -a: option requires an "
-                                         "argument\n", 0);
+                        string_format(shell_diagnostic,
+                                      "exec: -%c: invalid option\n", which);
                         exec_special_error_note();
                         return shell_answer(2);
                 }
         }
 
+        positive index = walk.index;
         // Moved down over the options, so everything below is about the
         // command and its own arguments alone.
         if (index > 1)
@@ -4698,36 +4649,24 @@ STORAGE_ADAPTER(findfs, storage_findfs_run)
 COLD fn shell_pwd(writer write, string_address input)
 {
         p8 out_buffer[4096];
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 letter;
         bool physical = shell_physical_on();
 
         (void)input;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of letter))
         {
-                string_address option = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
-                        break;
-
-                while (string_get(option))
+                if (letter == 'L')
+                        physical = false;
+                else if (letter == 'P')
+                        physical = true;
+                else
                 {
-                        p8 letter = string_get(option++);
-
-                        if (letter == 'L')
-                                physical = false;
-                        else if (letter == 'P')
-                                physical = true;
-                        else
-                        {
-                                string_format(shell_diagnostic,
-                                              "pwd: bad option: -%c\n", letter);
-                                return shell_answer(2);
-                        }
+                        string_format(shell_diagnostic,
+                                      "pwd: bad option: -%c\n", letter);
+                        return shell_answer(2);
                 }
-
-                index++;
         }
 
         if (!physical && shell_directory_holds())
@@ -5548,7 +5487,8 @@ static COLD fn shell_shopt_option_said(writer write, string_address name,
 
 COLD fn shell_shopt(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 which;
         bool set = false;
         bool unset = false;
         bool quiet = false;
@@ -5557,45 +5497,27 @@ COLD fn shell_shopt(writer write, string_address input)
         bool all_on = true;
         bool bad = false;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 's')
+                        set = true;
+                else if (which == 'u')
+                        unset = true;
+                else if (which == 'q')
+                        quiet = true;
+                else if (which == 'p')
+                        as_commands = true;
+                else if (which == 'o')
+                        set_options = true;
+                else
                 {
-                        index++;
-                        break;
+                        string_format(shell_diagnostic,
+                                      "shopt: -%c: invalid option\n", which);
+                        return shell_answer(2);
                 }
-
-                while (string_get(letter))
-                {
-                        p8 which = string_get(letter++);
-
-                        if (which == 's')
-                                set = true;
-                        else if (which == 'u')
-                                unset = true;
-                        else if (which == 'q')
-                                quiet = true;
-                        else if (which == 'p')
-                                as_commands = true;
-                        else if (which == 'o')
-                                set_options = true;
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "shopt: -%s: invalid option\n",
-                                              said);
-                                return shell_answer(2);
-                        }
-                }
-
-                index++;
         }
 
+        positive index = walk.index;
         // Both directions at once has no answer, so it is refused rather
         // than resolved into whichever was written last.
         if (set && unset)
@@ -6024,7 +5946,7 @@ COLD fn shell_unset(writer write, string_address input)
 
                         if (attributes & SHELL_ARRAY_READONLY)
                         {
-                                shell_unset_readonly(word, word_length);
+                                shell_readonly_refused(word, word_length);
                                 return;
                         }
 
@@ -6053,7 +5975,7 @@ COLD fn shell_unset(writer write, string_address input)
                                 env_reference resolved =
                                     env_reference_span(word, base);
 
-                                shell_unset_readonly(
+                                shell_readonly_refused(
                                     (string_address)resolved.name,
                                     resolved.length);
                                 return;
@@ -6110,7 +6032,7 @@ COLD fn shell_unset(writer write, string_address input)
                             (shell_vars[resolved.index].attributes &
                              SHELL_ARRAY_READONLY))
                         {
-                                shell_unset_readonly(
+                                shell_readonly_refused(
                                     (string_address)resolved.name,
                                     resolved.length);
                                 return;
@@ -8126,23 +8048,9 @@ bool test_short(positive from, positive to, bool address_to handled)
 
                 if (kind)
                         return test_compare(kind, shell_argv[from], shell_argv[from + 2]);
-
-                if (word_is(shell_argv[from], "!"))
-                {
-                        bool value = !test_short(from + 1, to, address_of inner);
-
-                        address_to handled = inner;
-                        return inner ? value : false;
-                }
-
-                if (word_is(shell_argv[from], "(") && word_is(shell_argv[to - 1], ")"))
-                        return test_short(from + 1, to - 1, handled);
-
-                address_to handled = false;
-                return false;
         }
 
-        if (count == 4)
+        if (count == 3 || count == 4)
         {
                 if (word_is(shell_argv[from], "!"))
                 {
@@ -8228,9 +8136,7 @@ static fn printf_format_failed()
         printf_cut = true;
 }
 
-static p8 address_to printf_hold;
-static positive printf_hold_room;
-static positive printf_held;
+static byte_store printf_hold;
 
 // What printf writes without looking at it: everything but the terminator and
 // the one or two bytes that mean something where it is being read.
@@ -8259,14 +8165,13 @@ static fn printf_sets_prepare()
         to nothing, which would throw away everything the format had already
         produced.
 */
-static p8 address_to printf_kept;
-static positive printf_kept_room;
-static positive printf_kept_used;
+static byte_store printf_kept;
 
-static fn printf_keeper(address_any data, positive length)
+static inline INLINE fn printf_collect(byte_store address_to store,
+                                       address_any data, positive length)
 {
-        if (length > positive_max - printf_kept_used ||
-            !shell_array_room(printf_kept, printf_kept_room, printf_kept_used + length))
+        if (length > positive_max - store->used ||
+            !shell_array_room(store->bytes, store->room, store->used + length))
         {
                 if (!printf_cut)
                         shell_diagnostic("printf: no room\n", 0);
@@ -8276,25 +8181,18 @@ static fn printf_keeper(address_any data, positive length)
                 return;
         }
 
-        memory_copy_apart(printf_kept + printf_kept_used, data, length);
-        printf_kept_used += length;
+        memory_copy_apart(store->bytes + store->used, data, length);
+        store->used += length;
+}
+
+static fn printf_keeper(address_any data, positive length)
+{
+        printf_collect(address_of printf_kept, data, length);
 }
 
 static fn printf_holder(address_any data, positive length)
 {
-        if (length > positive_max - printf_held ||
-            !shell_array_room(printf_hold, printf_hold_room, printf_held + length))
-        {
-                if (!printf_cut)
-                        shell_diagnostic("printf: no room\n", 0);
-
-                printf_status = 2;
-                printf_cut = true;
-                return;
-        }
-
-        memory_copy_apart(printf_hold + printf_held, data, length);
-        printf_held += length;
+        printf_collect(address_of printf_hold, data, length);
 }
 
 static PURE bool printf_took_argument()
@@ -8761,7 +8659,7 @@ fn printf_one(writer write, string_address format)
 
                         if (conversion == 'b')
                         {
-                                printf_held = 0;
+                                printf_hold.used = 0;
                                 printf_in_b = true;
                                 printf_escaped(printf_holder, value);
                                 printf_in_b = false;
@@ -8769,8 +8667,8 @@ fn printf_one(writer write, string_address format)
                                 // \c ends the output, but what stood in front
                                 // of it is still written, in its field; the
                                 // loop stops on the flag afterwards.
-                                value = printf_hold;
-                                length = printf_held;
+                                value = printf_hold.bytes;
+                                length = printf_hold.used;
                         }
                         else
                         {
@@ -8997,7 +8895,7 @@ fn shell_printf(writer write, string_address input)
 
         if (into)
         {
-                printf_kept_used = 0;
+                printf_kept.used = 0;
                 write = printf_keeper;
         }
 
@@ -9014,15 +8912,15 @@ fn shell_printf(writer write, string_address input)
 
         if (into)
         {
-                if (!shell_array_room(printf_kept, printf_kept_room, printf_kept_used + 1))
+                if (!shell_array_room(printf_kept.bytes, printf_kept.room, printf_kept.used + 1))
                 {
                         shell_diagnostic("printf: no room\n", 0);
                         return shell_answer(2);
                 }
 
-                printf_kept[printf_kept_used] = end;
+                printf_kept.bytes[printf_kept.used] = end;
 
-                if (!env_assign(into, printf_kept))
+                if (!env_assign(into, printf_kept.bytes))
                 {
                         string_format(shell_diagnostic,
                                       "printf: %s: cannot assign\n", into);
@@ -9775,11 +9673,15 @@ COLD fn shell_mapfile(writer write, string_address input)
         while (at < used)
         {
                 positive begin = at;
+                positive short_stop = at + min(used - at, 16);
                 positive stop;
                 p8 held;
 
-                while (at < used && mapfile_text[at] != delimiter)
+                // Short records avoid a wide-scan setup on every element.
+                while (at < short_stop && mapfile_text[at] != delimiter)
                         at++;
+                if (at == short_stop && at < used)
+                        at += memory_span_without_byte(mapfile_text + at, delimiter, used - at);
 
                 stop = at;
 
@@ -12464,7 +12366,8 @@ static bool hash_drop(string_address name)
 
 fn shell_hash(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 which;
         b32 bad = 0;
         bool as_commands = false;
         bool only_path = false;
@@ -12480,59 +12383,35 @@ fn shell_hash(writer write, string_address input)
                 return shell_answer(1);
         }
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 'r')
+                        hash_forget();
+                else if (which == 'l')
+                        as_commands = true;
+                else if (which == 't')
+                        only_path = true;
+                else if (which == 'd')
+                        forget = true;
+                else if (which == 'p')
                 {
-                        index++;
-                        break;
-                }
-
-                while (string_get(letter))
-                {
-                        p8 which = string_get(letter++);
-
-                        if (which == 'r')
-                                hash_forget();
-                        else if (which == 'l')
-                                as_commands = true;
-                        else if (which == 't')
-                                only_path = true;
-                        else if (which == 'd')
-                                forget = true;
-                        else if (which == 'p')
+                        given = shell_option_argument(address_of walk);
+                        if (!given)
                         {
-                                if (string_get(letter))
-                                        given = letter;
-                                else if (index + 1 < shell_argc)
-                                        given = shell_argv[++index];
-                                else
-                                {
-                                        shell_diagnostic("hash: -p: option "
-                                                         "requires an "
-                                                         "argument\n", 0);
-                                        return shell_answer(2);
-                                }
-
-                                letter = (string_address) "";
-                        }
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "hash: -%s: invalid option\n",
-                                              said);
+                                shell_diagnostic("hash: -p: option requires an "
+                                                 "argument\n", 0);
                                 return shell_answer(2);
                         }
                 }
-
-                index++;
+                else
+                {
+                        string_format(shell_diagnostic,
+                                      "hash: -%c: invalid option\n", which);
+                        return shell_answer(2);
+                }
         }
 
+        positive index = walk.index;
         if (index >= shell_argc)
         {
                 positive at = 0;
@@ -13709,56 +13588,36 @@ fn shell_builtin_run(writer write, string_address input)
 */
 fn shell_enable(writer write, string_address input)
 {
-        positive index = 1;
+        shell_option_walk walk = {1};
+        p8 which;
         bool off = false;
         bool as_commands = false;
         bool every = false;
         b32 bad = 0;
 
-        while (index < shell_argc && string_is(shell_argv[index], '-') &&
-               string_get(shell_argv[index] + 1))
+        while (shell_option_letter(address_of walk, address_of which))
         {
-                string_address letter = shell_argv[index] + 1;
-
-                if (word_is(shell_argv[index], "--"))
+                if (which == 'n')
+                        off = true;
+                else if (which == 'p')
+                        as_commands = true;
+                else if (which == 'a')
+                        every = true;
+                else if (which == 'f' || which == 'd' || which == 's')
                 {
-                        index++;
-                        break;
+                        // Dynamic builtin loading is not supported.
+                        shell_diagnostic("enable: not supported\n", 0);
+                        return shell_answer(2);
                 }
-
-                while (string_get(letter))
+                else
                 {
-                        p8 which = string_get(letter++);
-
-                        if (which == 'n')
-                                off = true;
-                        else if (which == 'p')
-                                as_commands = true;
-                        else if (which == 'a')
-                                every = true;
-                        else if (which == 'f' || which == 'd' || which == 's')
-                        {
-                                // Loading a builtin out of a shared object is
-                                // a thing this shell cannot do and will not
-                                // pretend to.
-                                string_format(shell_diagnostic,
-                                              "enable: not supported\n");
-                                return shell_answer(2);
-                        }
-                        else
-                        {
-                                p8 said[2] = {which, end};
-
-                                string_format(shell_diagnostic,
-                                              "enable: -%s: invalid option\n",
-                                              said);
-                                return shell_answer(2);
-                        }
+                        string_format(shell_diagnostic,
+                                      "enable: -%c: invalid option\n", which);
+                        return shell_answer(2);
                 }
-
-                index++;
         }
 
+        positive index = walk.index;
         if (index >= shell_argc)
         {
                 shell_command address_to command = shell_commands;

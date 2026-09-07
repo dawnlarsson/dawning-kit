@@ -152,6 +152,44 @@ with tempfile.TemporaryDirectory() as directory:
                       ["-u", "-L", "a", "-L", "b"]):
             check("diff", [*flags, str(first), str(second)])
 
+# The ordinary line copier and multi-input views share their spill engine.
+# Vary its exact bound, termination, embedded non-delimiter NUL/newline and
+# retained duplicate records rather than only repeating tiny sorted inputs.
+with tempfile.TemporaryDirectory() as directory:
+    source = Path(directory) / "spill"
+    for delimiter in (b"\n", b"\0"):
+        flags = ["-z"] if delimiter == b"\0" else []
+        records = [b"", b"a one", b"a one", b"a two", b"b:one", b"b:two",
+                   b"m" + (b"\0" if delimiter == b"\n" else b"\n") + b"n"]
+        for terminated in (False, True):
+            source.write_bytes(delimiter.join(records) + (delimiter if terminated else b""))
+            for separators in (("",), ("\n",), ("", ""), ("", "\n"), ("\n", ""),
+                               (":", ":"), ("", ":"), (":", ""), (":", ","),
+                               ("ab",), ("é",), ("ab", ""), ("", "ab"), (":", "ab")):
+                options = [item for separator in separators for item in ("-t", separator)]
+                check("join", [*flags, "--nocheck-order", *options, str(source), str(source)])
+    for byte in (9, 10, 11, 12, 13, 32, 128, 255):
+        source.write_bytes(b"m" + bytes([byte]) + b"n\0")
+        for options in ([], ["-t", ":"], ["-t", "\n"], ["-o", "1.2,2.2"]):
+            check("join", ["-z", *options, str(source), str(source)])
+    for width in (0, 1, 65535, 65536, 65537, (1 << 20) - 1, 1 << 20):
+        for delimiter in (b"\n", b"\0"):
+            payload = b"m" * width
+            if width > 1:
+                middle = width // 2
+                payload = payload[:middle] + (b"\0" if delimiter == b"\n" else b"\n") + payload[middle + 1:]
+            records = sorted([b"a", payload, payload, b"z"])
+            flags = ["-z"] if delimiter == b"\0" else []
+            for terminated in (False, True):
+                data = delimiter.join(records) + (delimiter if terminated else b"")
+                source.write_bytes(data)
+                for tool, options in (("cut", ["-c1-3"]), ("sed", ["-n", "p"]),
+                                      ("uniq", [])):
+                    check(tool, [*flags, *options], data)
+                for tool, options in (("comm", ["--nocheck-order"]),
+                                      ("paste", []), ("join", ["--nocheck-order"])):
+                    check(tool, [*flags, *options, str(source), str(source)])
+
 if "--capacity" in sys.argv[2:]:
     # Byte-only head/tail streams need no million-entry line-index reservation.
     # Feed in bounded blocks so this regression does not require a second

@@ -1536,10 +1536,11 @@ static fn line_clear_screen()
 
         erase(0, 0, ROWS - 1, COLUMNS - 1);
 
-        for (unsigned int at = 0; at < kept; at++)
+        if (kept)
         {
-                reach(0, at + 1);
-                row_cells(0)[at] = line_prompt[at];
+                reach(0, kept);
+                memory_copy_apart(row_cells(0), line_prompt,
+                                  kept * sizeof(line_prompt[0]));
         }
 
         line_anchor = window->head - ROWS;
@@ -1636,19 +1637,17 @@ static b32 line_key(unsigned int character, unsigned int code)
         switch (code)
         {
         case KEY_LEFT:
-                if (line_point)
-                        line_point--;
-                return true;
+                character = 2;
+                break;
         case KEY_RIGHT:
-                if (line_point < line_length)
-                        line_point++;
-                return true;
+                character = 6;
+                break;
         case KEY_HOME:
-                line_point = 0;
-                return true;
+                character = 1;
+                break;
         case KEY_END:
-                line_point = line_length;
-                return true;
+                character = 5;
+                break;
         case KEY_DELETE:
                 if (line_point < line_length)
                         line_take(line_point, line_point + 1);

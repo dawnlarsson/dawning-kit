@@ -436,11 +436,7 @@ static fn checksum_filename_put(string_address name, bool escaped)
 
         while (string_get(from))
         {
-                string_address slash = string_first_of(from, '\\');
-                string_address newline = string_first_of(from, '\n');
-                string_address stop = !slash ? newline
-                                      : !newline || slash < newline ? slash
-                                                                    : newline;
+                string_address stop = string_first_of_set(from, "\\\n");
 
                 if (!stop)
                 {
@@ -583,32 +579,17 @@ static fn checksum_error_number(string_address command,
                                 positive line,
                                 string_address label)
 {
-        p8 digits[24];
-
         text_flush();
-        text_error_raw(command);
-        text_error_raw(": ");
-        text_error_raw(manifest);
-        text_error_raw(": ");
-        positive used = positive_into(digits, line);
-        system_write_all(2, digits, used);
-        text_error_raw(": improperly formatted ");
-        text_error_raw(label);
-        text_error_raw(" checksum line\n");
+        string_format(file_fail, "%s: %s: %p: improperly formatted %s checksum line\n",
+                      command, manifest, line, label);
 }
 
 static fn checksum_warning(string_address command, positive count,
                            string_address one, string_address many)
 {
-        p8 digits[24];
-
         text_flush();
-        text_error_raw(command);
-        text_error_raw(": WARNING: ");
-        positive used = positive_into(digits, count);
-        system_write_all(2, digits, used);
-        text_error_raw(count == 1 ? one : many);
-        text_error_raw("\n");
+        string_format(file_fail, "%s: WARNING: %p%s\n", command, count,
+                      count == 1 ? one : many);
 }
 
 /* Decode a normal GNU checksum record in place.  Tagged and NUL records are

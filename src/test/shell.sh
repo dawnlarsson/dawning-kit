@@ -1564,7 +1564,7 @@ bash_answer 'coproc is waited for' \
         'coproc C { echo x; }; read v <&${C[0]}; echo "$v"; wait; echo "wait:$?"'
 bash_answer 'coproc status' 'coproc C { exit 3; }; wait "$C_PID"; echo "st:$?"'
 bash_answer 'coproc many lines' \
-        'coproc C { printf "l1\nl2\n"; }; while read -r l <&${C[0]}; do echo "[$l]"; done'
+        'coproc C { read ready; printf "l1\nl2\n"; }; exec 3<&${C[0]}; printf "go\n" >&${C[1]}; while read -r l <&3; do echo "[$l]"; done; exec 3<&-; wait'
 bash_answer 'coproc in a function' \
         'f() { coproc C { echo inside; }; read v <&${C[0]}; echo "$v"; }; f'
 bash_answer 'coproc redirected' 'coproc C { echo x >&2; } 2>/dev/null; echo "st:$?"'

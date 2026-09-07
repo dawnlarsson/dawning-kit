@@ -1761,36 +1761,10 @@ static positive storage_show_tag(string_address tag, positive length)
 static fn storage_write_hex_escaped(writer output, string_address value,
                                     bool escape_space, bool escape_quote)
 {
-        string_address start = value;
-        p8 first = escape_space ? 0x21 : 0x20;
-
-        while (*value)
-        {
-                p8 byte = *value;
-
-                if (byte >= first && byte < 0x7f && byte != '\\' &&
-                    (!escape_quote || byte != '"'))
-                {
-                        value++;
-                        continue;
-                }
-
-                if (value > start)
-                        output(start, (positive)(value - start));
-
-                {
-                        p8 escaped[4] = {'\\', 'x',
-                                         storage_hex_digit(byte >> 4, false),
-                                         storage_hex_digit(byte & 15, false)};
-                        output(escaped, sizeof(escaped));
-                }
-
-                value++;
-                start = value;
-        }
-
-        if (value > start)
-                output(start, (positive)(value - start));
+        writer_hex_escaped(output, value, string_length(value),
+                           HEX_CONTROL | HEX_TAB | HEX_SLASH | HEX_HIGH |
+                           (escape_space ? HEX_SPACE : 0) |
+                           (escape_quote ? HEX_QUOTE : 0));
 }
 
 static fn storage_write_encoded(writer output, string_address value)

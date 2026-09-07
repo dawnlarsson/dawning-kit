@@ -84,6 +84,22 @@ def arithmetic_side_effect(rng):
     return "arithmetic-effects", ("bash", "posix"), script
 
 
+def arithmetic_precedence(rng):
+    """Vary adjacent grammar levels and mutations of the right operand."""
+    operation = rng.choice(("+", "-", "*", "/", "%", "<<", ">>",
+                            "<", "<=", ">", ">=", "==", "!="))
+    left, right = rng.randrange(-20, 21), rng.randrange(1, 6)
+    tail = rng.randrange(1, 5)
+    operand = f"(i += {tail})" if operation not in ("<<", ">>") else "(i %= 4)"
+    expression = rng.choice((f"x {operation} {operand} + 2 * 3",
+                             f"(x {operation} {operand}) == (x < i)",
+                             f"0 && (x {operation} {operand})",
+                             f"1 || (x {operation} {operand})"))
+    return "arithmetic-precedence", ("bash", "posix"), program(
+        f"x={left}; i={right}", f"r=$(({expression}))",
+        "printf 'r=%s x=%s i=%s\\n' \"$r\" \"$x\" \"$i\"")
+
+
 def arithmetic_comma(rng):
     first = rng.randrange(0, 8)
     second = rng.randrange(1, 8)
@@ -566,6 +582,7 @@ GENERATORS = (
     parameter_trim,
     splitting_and_glob,
     arithmetic,
+    arithmetic_precedence,
     arithmetic_side_effect,
     arithmetic_comma,
     arithmetic_array,

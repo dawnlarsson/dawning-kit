@@ -2587,6 +2587,18 @@ bool parse_release(parse_marks address_to from, parse_marks address_to to)
         return true;
 }
 
+static string_address parse_keep_text(string_address text, positive length)
+{
+        if (parse_kept_used >= PARSE_KEPT_TEXT ||
+            length >= PARSE_KEPT_TEXT - parse_kept_used)
+                return null;
+
+        string_address kept = parse_kept_text + parse_kept_used;
+        memory_copy_end(kept, text, length);
+        parse_kept_used += length + 1;
+        return kept;
+}
+
 static b32 parse_keep_words(b32 first, b32 count)
 {
         b32 base;
@@ -2604,21 +2616,19 @@ static b32 parse_keep_words(b32 first, b32 count)
         for (index = 0; index < count; index++)
         {
                 positive text_length = parse_word_lengths[first + index];
-                positive length = text_length + 1;
+                string_address kept = parse_keep_text(parse_words[first + index],
+                                                       text_length);
 
-                if (parse_kept_used + length > PARSE_KEPT_TEXT)
+                if (!kept)
                         return -1;
 
-                memory_copy(parse_kept_text + parse_kept_used,
-                            parse_words[first + index], length);
-                parse_words[base + index] = parse_kept_text + parse_kept_used;
+                parse_words[base + index] = kept;
                 parse_word_lengths[base + index] = text_length;
                 parse_word_name_lengths[base + index] =
                     parse_word_name_lengths[first + index];
                 parse_word_name_hashes[base + index] =
                     parse_word_name_hashes[first + index];
                 parse_word_flags[base + index] = parse_word_flags[first + index];
-                parse_kept_used += length;
         }
 
         return base;
@@ -2642,19 +2652,12 @@ static b32 parse_keep_redirects(b32 first, b32 count)
         {
                 parse_redirects[base + index] = parse_redirects[first + index];
 
-                if (parse_kept_used +
-                        parse_redirects[first + index].text_length + 1 >
-                    PARSE_KEPT_TEXT)
-                        return -1;
-
-                memory_copy_end(
-                    parse_kept_text + parse_kept_used,
+                parse_redirects[base + index].text = parse_keep_text(
                     parse_redirects[first + index].text,
                     parse_redirects[first + index].text_length);
-                parse_redirects[base + index].text =
-                    parse_kept_text + parse_kept_used;
-                parse_kept_used +=
-                    parse_redirects[first + index].text_length + 1;
+
+                if (!parse_redirects[base + index].text)
+                        return -1;
 
                 // A here-document body lives in storage the next line reuses,
                 // so a kept redirection carries a copy of its own -- taken
@@ -2664,20 +2667,17 @@ static b32 parse_keep_redirects(b32 first, b32 count)
                 // body from some other line, or none.
                 if (parse_redirects[first + index].body_length)
                 {
-                        positive length = parse_redirects[first + index].body_length;
+                        positive body = parse_kept_used;
 
-                        if (parse_kept_used + length + 1 > PARSE_KEPT_TEXT)
-                                return -1;
-
-                        memory_copy_end(parse_kept_text + parse_kept_used,
-                                        (parse_redirects[first + index].kept
+                        if (!parse_keep_text((parse_redirects[first + index].kept
                                              ? parse_kept_text
                                              : here_text) +
                                             parse_redirects[first + index].body,
-                                        length);
-                        parse_redirects[base + index].body = parse_kept_used;
+                                             parse_redirects[first + index].body_length))
+                                return -1;
+
+                        parse_redirects[base + index].body = body;
                         parse_redirects[base + index].kept = true;
-                        parse_kept_used += length + 1;
                 }
         }
 

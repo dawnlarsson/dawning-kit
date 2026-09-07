@@ -246,7 +246,7 @@ static address_any shell_map(positive size)
 static bool shell_room(address_any address_to held, positive address_to have,
                        positive want, positive unit)
 {
-        if (memory_reserve(held, have, *have, want, unit, 64))
+        if (want <= *have || memory_reserve(held, have, *have, want, unit, 64))
                 return true;
 
         shell_memory_failed = true;

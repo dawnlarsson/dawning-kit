@@ -3748,21 +3748,7 @@ static PURE positive ul_table_safe_width(string_address text, bool multiline)
    raw mode instead reuses storage_write_hex_escaped's stricter field policy. */
 static fn ul_lsns_safe_span(string_address text, positive bytes)
 {
-        positive start = 0;
-        for (positive i = 0; i < bytes; i++)
-        {
-                p8 byte = string_get(text + i);
-                if (byte >= ' ' && byte != 0x7f)
-                        continue;
-                if (i > start)
-                        log(text + start, i - start);
-                p8 escaped[4] = {'\\', 'x'};
-                memory_into_hex(escaped + 2, address_of byte, 1);
-                log(escaped, sizeof(escaped));
-                start = i + 1;
-        }
-        if (bytes > start)
-                log(text + start, bytes - start);
+        writer_hex_escaped(log, text, bytes, HEX_CONTROL | HEX_TAB);
 }
 
 static fn ul_lsns_safe_span_field(string_address text, positive bytes,
@@ -9138,14 +9124,9 @@ static fn ul_wipefs_no_act(ul_wipefs_work address_to work,
                             row->type);
                         for (positive byte = 0; byte < row->length; byte++)
                         {
-                                p8 pair[3] = {
-                                    storage_hex_digit(row->magic[byte] >> 4,
-                                                      false),
-                                    storage_hex_digit(row->magic[byte] & 15,
-                                                      false),
-                                    end,
-                                };
-                                string_format(log, " %s", pair);
+                                p8 pair[3] = {' '};
+                                memory_into_hex(pair + 1, row->magic + byte, 1);
+                                log(pair, sizeof(pair));
                         }
                         log("\n", 1);
                 }

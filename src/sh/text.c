@@ -493,19 +493,6 @@ static fn text_close()
         text_close_handle(address_of text_input.opened, text_input.handle);
 }
 
-static bool text_fill()
-{
-        if (text_reader_fill(address_of text_input))
-                return true;
-
-        // Set on every later call as well as the one that failed, which
-        // cannot change it: the first failure already made it one.
-        if (text_input.failed)
-                text_status = text_status ? text_status : 1;
-
-        return false;
-}
-
 static bool text_fill_amount(positive amount)
 {
         if (text_reader_fill_amount(address_of text_input, amount))
@@ -517,65 +504,71 @@ static bool text_fill_amount(positive amount)
         return false;
 }
 
-// A line without its newline, and whether it had one. A file whose last line
-// is unterminated is the reason the second answer exists: every tool here has
-// to put back exactly what it was given.
+static inline INLINE bool text_fill()
+{
+        return text_input.position < text_input.filled ||
+               text_fill_amount(TEXT_READ_MAX);
+}
+
+/* The copying edge shared by ordinary lines and multi-input record views.
+   Complete views bypass this; split records retain exact NUL/delimiter bytes. */
+static bool text_reader_spill(text_reader address_to reader, p8 delimiter,
+                               p8 address_to storage, positive address_to length,
+                               bool address_to ended, string_address about)
+{
+        positive used = address_to length;
+        if (!text_reader_fill(reader))
+                return used != 0;
+
+        for (;;)
+        {
+                p8 address_to at = reader->buffer + reader->position;
+                positive left = reader->filled - reader->position;
+                p8 address_to found = memory_first_of(at, delimiter, left);
+                positive take = found ? (positive)(found - at) : left;
+
+                if (take > TEXT_LINE_MAX - used)
+                {
+                        // A later sed N must not mistake the rejected tail
+                        // for another record, nor expose a truncated prefix.
+                        reader->position = reader->filled;
+                        reader->finished = true;
+                        reader->failed = true;
+                        address_to length = 0;
+                        text_error(about, "line too long");
+                        return false;
+                }
+
+                memory_copy(storage + used, at, take);
+                used += take;
+                reader->position += take;
+
+                if (found)
+                {
+                        reader->position++;
+                        address_to length = used;
+                        address_to ended = true;
+                        return true;
+                }
+
+                if (!text_reader_fill(reader))
+                {
+                        address_to length = used;
+                        return used != 0;
+                }
+        }
+}
+
 static bool text_line_next()
 {
         text_line_length = 0;
         text_line_ended = false;
-
-        if (!text_fill())
-                return false;
-
-        for (;;)
-        {
-                p8 address_to at = text_input.buffer + text_input.position;
-                positive left = text_input.filled - text_input.position;
-                /*
-                        Where the line ends, found by the library rather than
-                        here. This is the loop under every tool in this file
-                        that works a line at a time, so it is the one worth
-                        handing over: memory_first_of compares thirty two bytes
-                        at once where this compared one, and it is the same
-                        answer either way.
-                */
-                string_address found = memory_first_of(at, text_delimiter, left);
-                positive take = found ? (positive)(found - at) : left;
-
-                positive room = TEXT_LINE_MAX - text_line_length;
-
-                if (take > room)
-                {
-                        /*
-                                Stop this input here. Merely returning false
-                                while bytes remain in the reader would let a
-                                nested sed N, or another caller that asks
-                                again, treat the dropped tail as a new line.
-                        */
-                        text_input.position = text_input.filled;
-                        text_input.finished = true;
-                        text_line_length = 0;
-                        text_line_ended = false;
-                        text_error(null, "line too long");
-                        text_status = text_status ? text_status : 1;
-                        return false;
-                }
-
-                memory_copy(text_line + text_line_length, at, take);
-                text_line_length += take;
-                text_input.position += take;
-
-                if (found)
-                {
-                        text_input.position++;
-                        text_line_ended = true;
-                        return true;
-                }
-
-                if (!text_fill())
-                        return text_line_length != 0;
-        }
+        bool have = text_reader_spill(address_of text_input, text_delimiter,
+                                      text_line, address_of text_line_length,
+                                      address_of text_line_ended, null);
+        if (text_input.failed)
+                text_status = text_status ? text_status : 1;
+        return have;
 }
 
 /*
@@ -585,15 +578,12 @@ static bool text_line_next()
         storage. This preserves the ordinary line reader as the bounded edge
         path while removing one full copy from the common path.
 */
-static fn text_line_preserve(p8 address_to address_to previous,
-                             positive previous_length,
-                             p8 address_to storage)
+static fn text_record_preserve(p8 address_to address_to previous,
+                               positive bytes, p8 address_to storage)
 {
         if (previous && address_to previous && address_to previous != storage)
         {
-                // The terminator is part of the view contract. Keeping it
-                // with the bytes also makes later output one buffered write.
-                memory_copy(storage, address_to previous, previous_length + 1);
+                memory_copy(storage, address_to previous, bytes);
                 address_to previous = storage;
         }
 }
@@ -605,7 +595,7 @@ static bool text_line_view(p8 address_to address_to line,
                            p8 address_to previous_storage)
 {
         if (text_input.position >= text_input.filled)
-                text_line_preserve(previous, previous_length,
+                text_record_preserve(previous, previous_length + 1,
                                    previous_storage);
 
         if (!text_fill())
@@ -626,7 +616,7 @@ static bool text_line_view(p8 address_to address_to line,
 
         // text_line_next refills the reader and reuses text_line. Preserve a
         // prior view from either store before it can be overwritten.
-        text_line_preserve(previous, previous_length, previous_storage);
+        text_record_preserve(previous, previous_length + 1, previous_storage);
 
         if (!text_line_next())
                 return false;
@@ -3608,16 +3598,6 @@ static fn text_record_close(text_record_cursor address_to cursor)
                           cursor->reader.handle);
 }
 
-static fn text_record_preserve(p8 address_to address_to record,
-                               positive length, p8 address_to storage)
-{
-        if (!record || !address_to record || address_to record == storage)
-                return;
-
-        memory_copy(storage, address_to record, length);
-        address_to record = storage;
-}
-
 static bool text_record_next(text_record_cursor address_to cursor,
                              p8 delimiter,
                              p8 address_to address_to previous,
@@ -3625,7 +3605,6 @@ static bool text_record_next(text_record_cursor address_to cursor,
                              p8 address_to previous_storage)
 {
         text_reader address_to reader = address_of cursor->reader;
-        positive used = 0;
         p8 address_to found = null;
 
         cursor->record = null;
@@ -3652,60 +3631,33 @@ static bool text_record_next(text_record_cursor address_to cursor,
         if (!text_reader_fill(reader))
                 return false;
 
-        for (;;)
+        p8 address_to at = reader->buffer + reader->position;
+        positive left = reader->filled - reader->position;
+        // A successful preservation probe already located this record.
+        if (!found)
+                found = memory_first_of(at, delimiter, left);
+        if (found)
         {
-                p8 address_to at = reader->buffer + reader->position;
-                positive left = reader->filled - reader->position;
-                /* A successful preservation probe also located this record.
-                   Its unread bytes prevent fill from replacing the buffer. */
-                if (!found)
-                        found = memory_first_of(at, delimiter, left);
-                positive take = found ? (positive)(found - at) : left;
-
-                if (!used && found)
-                {
-                        cursor->record = at;
-                        cursor->length = take;
-                        cursor->ended = true;
-                        cursor->have = true;
-                        reader->position += take + 1;
-                        return true;
-                }
-
-                if (take > TEXT_LINE_MAX - used)
-                {
-                        reader->position = reader->filled;
-                        reader->finished = true;
-                        reader->failed = true;
-                        text_error(reader->name, "line too long");
-                        return false;
-                }
-
-                memory_copy(cursor->spill + used, at, take);
-                used += take;
-                reader->position += take;
-
-                if (found)
-                {
-                        reader->position++;
-                        cursor->record = cursor->spill;
-                        cursor->length = used;
-                        cursor->ended = true;
-                        cursor->have = true;
-                        return true;
-                }
-
-                if (!text_reader_fill(reader))
-                {
-                        if (!used)
-                                return false;
-
-                        cursor->record = cursor->spill;
-                        cursor->length = used;
-                        cursor->have = true;
-                        return true;
-                }
+                cursor->record = at;
+                cursor->length = (positive)(found - at);
+                cursor->ended = true;
+                reader->position += cursor->length + 1;
         }
+        else
+        {
+                // This fill was already scanned. Retain it once, then enter
+                // the shared spill loop at the next refill without rescanning.
+                memory_copy(cursor->spill, at, left);
+                cursor->length = left;
+                reader->position = reader->filled;
+                if (!text_reader_spill(reader, delimiter, cursor->spill,
+                                       address_of cursor->length,
+                                       address_of cursor->ended, reader->name))
+                        return false;
+                cursor->record = cursor->spill;
+        }
+        cursor->have = true;
+        return true;
 }
 
 /* A lookahead that is free when the next record is already in this refill.
@@ -4253,6 +4205,7 @@ static join_output join_outputs[JOIN_OUTPUT_MAX];
 static positive join_output_count;
 static bool join_output_auto;
 static positive join_order_mode;
+static b32 join_separator;
 
 static bool join_order_check(bool unpaired)
 {
@@ -4351,7 +4304,16 @@ static bool join_side(string_address value, positive address_to mask)
 
 static bool join_option_seen(p8 letter, string_address value)
 {
-        if (letter == '1' || letter == '2')
+        if (letter == 't')
+        {
+                if (value[0] && value[1])
+                        return false;
+                b32 separator = value[0] ? value[0] : '\n';
+                if (join_separator >= 0 && join_separator != separator)
+                        return false;
+                join_separator = separator;
+        }
+        else if (letter == '1' || letter == '2')
         {
                 positive field;
 
@@ -4412,6 +4374,12 @@ static fn join_fields_begin(join_fields address_to fields,
         fields->done = false;
 }
 
+static inline INLINE bool join_blank(p8 byte)
+{
+        // With -z, LF remains a field separator; CR/VT/FF do not.
+        return byte_is_blank(byte) || byte == '\n';
+}
+
 static bool join_field_next(join_fields address_to fields,
                             p8 address_to address_to value,
                             positive address_to length)
@@ -4424,7 +4392,7 @@ static bool join_field_next(join_fields address_to fields,
 
         if (!fields->separated)
         {
-                while (at < fields->length && byte_is_blank(fields->bytes[at]))
+                while (at < fields->length && join_blank(fields->bytes[at]))
                         at++;
                 if (at == fields->length)
                 {
@@ -4433,16 +4401,18 @@ static bool join_field_next(join_fields address_to fields,
                 }
 
                 start = at;
-                while (at < fields->length && !byte_is_blank(fields->bytes[at]))
+                while (at < fields->length && !join_blank(fields->bytes[at]))
                         at++;
                 fields->position = at;
         }
         else
         {
                 start = at;
-                while (at < fields->length &&
-                       fields->bytes[at] != fields->separator)
-                        at++;
+                // -t LF selects the whole record, including with -z.
+                at += fields->separator == '\n' ? fields->length - at
+                    : memory_span_without_byte(fields->bytes + at,
+                                               fields->separator,
+                                               fields->length - at);
 
                 if (at < fields->length)
                         fields->position = at + 1;
@@ -4760,6 +4730,7 @@ static b32 text_join()
         join_output_count = 0;
         join_output_auto = false;
         join_order_mode = RELATION_ORDER_DEFAULT;
+        join_separator = -1;
 
         if (!file_take(address_of taking) || !text_files_ready())
                 return text_refuse(null, "invalid option value", 1);
@@ -4775,17 +4746,8 @@ static b32 text_join()
         if (string_equals(left_name, "-") && string_equals(right_name, "-"))
                 return text_refuse(null, "both files cannot be standard input", 1);
 
-        string_address separator_text = file_option_value(address_of taking, 't');
-        bool separated = separator_text != null;
-        p8 separator = ' ';
-
-        if (separated)
-        {
-                if (!separator_text[0] || separator_text[1])
-                        return text_refuse(separator_text,
-                                           "separator must be one byte", 1);
-                separator = separator_text[0];
-        }
+        bool separated = join_separator >= 0;
+        p8 separator = separated ? (p8)join_separator : ' ';
 
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';

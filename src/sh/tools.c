@@ -3462,16 +3462,6 @@ struct login_name
 static login_name address_to login_users_head;
 static positive login_users_count;
 
-static bipolar login_name_compare(string_address left, string_address right)
-{
-        while (*left && *left == *right)
-        {
-                left++;
-                right++;
-        }
-        return (bipolar)*left - (bipolar)*right;
-}
-
 static bool login_users_visit(login_record address_to record)
 {
         if (record->type != LOGIN_USER_PROCESS)
@@ -3486,7 +3476,7 @@ static bool login_users_visit(login_record address_to record)
                     sizeof(record->user), true);
         login_name address_to address_to at = address_of login_users_head;
 
-        while (*at && login_name_compare((*at)->text, node->text) <= 0)
+        while (*at && string_compare((*at)->text, node->text) <= 0)
                 at = address_of (*at)->next;
 
         node->next = *at;
@@ -5772,14 +5762,6 @@ typedef struct
         p8 bytes[16];
 } tools_uuid;
 
-static bipolar tools_uuid_nibble(p8 byte)
-{
-        if (byte >= '0' && byte <= '9')
-                return byte - '0';
-        byte = byte_to_lower(byte);
-        return byte >= 'a' && byte <= 'f' ? byte - 'a' + 10 : -1;
-}
-
 static bool tools_uuid_parse(string_address text,
                              tools_uuid address_to uuid)
 {
@@ -5795,9 +5777,9 @@ static bool tools_uuid_parse(string_address text,
                                 return false;
                 }
 
-                bipolar high = tools_uuid_nibble(text[from++]);
-                bipolar low = tools_uuid_nibble(text[from++]);
-                if (high < 0 || low < 0)
+                positive high = digit_known(text[from++], 16);
+                positive low = digit_known(text[from++], 16);
+                if (high >= 16 || low >= 16)
                         return false;
                 uuid->bytes[at] = (p8)((positive)high << 4 | (positive)low);
         }
@@ -5946,9 +5928,9 @@ static bool tools_uuidgen_hex_name(string_address text,
 
         for (positive at = 0; at < count; at += 2)
         {
-                bipolar high = tools_uuid_nibble(text[at]);
-                bipolar low = tools_uuid_nibble(text[at + 1]);
-                if (high < 0 || low < 0)
+                positive high = digit_known(text[at], 16);
+                positive low = digit_known(text[at + 1], 16);
+                if (high >= 16 || low >= 16)
                         return false;
                 decoded[at / 2] = (p8)((positive)high << 4 | (positive)low);
         }
@@ -6282,19 +6264,8 @@ static string_address tools_uuid_cell(tools_uuid_record address_to record,
 
 static fn tools_uuid_safe_cell(string_address value)
 {
-        while (string_get(value))
-        {
-                p8 byte = string_get(value++);
-                if (byte <= ' ' || byte == 0x7f || byte == '\\')
-                {
-                        p8 escaped[4] = {'\\', 'x',
-                                         storage_hex_digit(byte >> 4, false),
-                                         storage_hex_digit(byte & 15, false)};
-                        text_put(escaped, sizeof(escaped));
-                }
-                else
-                        text_put_character(byte);
-        }
+        writer_hex_escaped(text_put, value, string_length(value),
+                           HEX_CONTROL | HEX_TAB | HEX_SPACE | HEX_SLASH);
 }
 
 static const file_long tools_uuidparse_longs[] = {
@@ -6562,14 +6533,12 @@ static b32 tools_mcookie()
                 (void)file_random_word(address_of random);
         tools_uuid cookie;
         tools_uuid_random_bytes(address_of random, address_of cookie);
-        for (positive at = 0; at < sizeof(cookie.bytes); at++)
+        p8 address_to encoded = text_reserve(sizeof(cookie.bytes) * 2 + 1);
+        if (encoded)
         {
-                text_put_character(storage_hex_digit(cookie.bytes[at] >> 4,
-                                                     false));
-                text_put_character(storage_hex_digit(cookie.bytes[at] & 15,
-                                                     false));
+                memory_into_hex(encoded, cookie.bytes, sizeof(cookie.bytes));
+                encoded[sizeof(cookie.bytes) * 2] = '\n';
         }
-        text_put_character('\n');
         return text_done(0);
 }
 
@@ -12070,20 +12039,10 @@ static fn tools_dmesg_calendar(tools_dmesg_state address_to state,
 static fn tools_dmesg_message(p8 address_to bytes, positive length,
                               bool noescape)
 {
-        for (positive i = 0; i < length; i++)
-        {
-                p8 byte = bytes[i];
-
-                if (noescape || byte == '\t' || (byte >= ' ' && byte != 0x7f))
-                        text_put_character(byte);
-                else
-                {
-                        p8 escaped[4] = {'\\', 'x',
-                            storage_hex_digit(byte >> 4, false),
-                            storage_hex_digit(byte & 15, false)};
-                        text_put(escaped, sizeof(escaped));
-                }
-        }
+        if (noescape)
+                text_put(bytes, length);
+        else
+                writer_hex_escaped(text_put, bytes, length, HEX_CONTROL);
 }
 
 static fn tools_dmesg_emit(tools_dmesg_state address_to state,
@@ -12224,11 +12183,9 @@ static fn tools_dmesg_buffer(tools_dmesg_state address_to state,
 
         while (at < length)
         {
-                positive stop = at;
                 p8 delimiter = kmsg ? '\0' : '\n';
-
-                while (stop < length && bytes[stop] != delimiter)
-                        stop++;
+                positive stop = at + memory_span_without_byte(
+                    bytes + at, delimiter, length - at);
                 positive record_length = stop - at;
                 if (kmsg && record_length && bytes[stop - 1] == '\n')
                         record_length--;

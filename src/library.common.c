@@ -607,6 +607,39 @@ static const p8 byte_simple_escapes[256] = {
 
 #define byte_simple_escape(value) byte_simple_escapes[(p8)(value)]
 
+enum {
+        HEX_CONTROL = 1, HEX_TAB = 2, HEX_SPACE = 4,
+        HEX_QUOTE = 8, HEX_SLASH = 16, HEX_HIGH = 32,
+};
+
+/* One bounded byte policy for storage, table cells and kernel messages.
+   Category bits share one table; NUL is an ordinary escapable control byte. */
+static fn writer_hex_escaped(writer output, address_any data, positive length,
+                              p8 policy)
+{
+        static const p8 categories[256] = {
+            [0 ... 8] = HEX_CONTROL, [9] = HEX_TAB,
+            [10 ... 31] = HEX_CONTROL, [' '] = HEX_SPACE,
+            ['"'] = HEX_QUOTE, ['\\'] = HEX_SLASH, [127] = HEX_CONTROL,
+            [128 ... 255] = HEX_HIGH,
+        };
+        p8 address_to bytes = data;
+        positive start = 0;
+        for (positive at = 0; at < length; at++)
+        {
+                if (!(categories[bytes[at]] & policy))
+                        continue;
+                if (at > start)
+                        output(bytes + start, at - start);
+                p8 escaped[4] = {'\\', 'x'};
+                memory_into_hex(escaped + 2, bytes + at, 1);
+                output(escaped, sizeof(escaped));
+                start = at + 1;
+        }
+        if (length > start)
+                output(bytes + start, length - start);
+}
+
 /* JSON byte-string policy shared by UUID output and util-linux tables.
    Controls use the exact \u00xx spelling expected by those interfaces;
    printable spans cross the writer once, not once per byte. */

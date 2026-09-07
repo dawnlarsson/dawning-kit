@@ -867,6 +867,9 @@ group control
 same 'ctrl a'        '0,0'                       20 3 edit on keys 'abcdef^A' cursor
 same 'ctrl e'        '0,6'                       20 3 edit on keys 'abcdef^A^E' cursor
 same 'ctrl b and f'  '0,5'                       20 3 edit on keys 'abcdef^B^B^F' cursor
+same 'mixed left boundary' '0,0'                 20 3 edit on keys 'abc<home>^B<left>' cursor
+same 'mixed right boundary' '0,3'                20 3 edit on keys 'abc^A<end>^F<right>' cursor
+same 'mixed movement inserts' '[aXbcY\x0a]'       20 3 edit on keys 'abc<home>^F' keys 'X^E<left>^F' keys 'Y\r' sent
 same 'ctrl k'        '[abc   ]'                  20 3 edit on keys 'abcdef^A^F^F^F^K' row 0
 same 'ctrl u'        '[def   ]'                  20 3 edit on keys 'abcdef^A^F^F^F^U' row 0
 same 'ctrl w'        '[one two      ]'           20 3 edit on keys 'one two three^W' row 0

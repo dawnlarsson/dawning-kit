@@ -186,6 +186,63 @@ def getopts_state(rng):
     return "builtin-getopts-state", MODES, script
 
 
+def printf_collectors(rng):
+    """The output and %b field stores must never overwrite one another."""
+    value = rng.choice(("", "a\\nb", "x\\ty", "\\141\\142", "x\\cy", "tail\\"))
+    width, precision = rng.choice((-20, -1, 0, 2, 12)), rng.choice((-1, 0, 1, 7))
+    form = "prefix:<%*.*b>:<%s>|"
+    operands = [str(width), str(precision), value, "kept"] * rng.randrange(1, 4)
+    return "builtin-printf-collectors", ("bash", "posix"), (
+        "out=before\nprintf -v out " + shlex.quote(form) + " " +
+        " ".join(map(shlex.quote, operands)) +
+        "\nprintf 'first:%s:<%s>\\n' \"$?\" \"$out\"\n"
+        "printf -v out '%b:%s' 'z\\n' again\nprintf 'next:<%s>\\n' \"$out\"\n")
+
+
+def option_walk(rng):
+    """Bundled letters, attached operands, --, and the next option word."""
+    command = rng.choice(("cd", "pwd", "exec", "shopt", "hash", "enable"))
+    if command == "cd":
+        words = rng.choice(("-LP dir", "-PL -- dir", "-- dir", "-L -P dir", "-Lz dir"))
+        script = f"cd {words}\nprintf 'status:%s\\n' \"$?\"\npwd\n"
+    elif command == "pwd":
+        words = rng.choice(("-LP", "-PL -- -z", "-- -z", "-L -P", "-Lz"))
+        script = f"pwd {words}\nprintf 'status:%s\\n' \"$?\"\n"
+    elif command == "exec":
+        words = rng.choice(("-a named", "-anamed", "-la named", "-a first -a second",
+                            "-a '' --", "--", "-a", "-az -Q"))
+        tail = "" if words == "-a" else " /bin/bash -c 'printf \"zero:<%s> argc:%s\\n\" \"$0\" \"$#\"' x y"
+        script = f"exec {words}{tail}\necho survived\n"
+    elif command == "shopt":
+        words = rng.choice(("-sq extglob", "-s -q -- extglob", "-uq extglob", "-qz extglob"))
+        script = f"shopt {words}\nprintf 'status:%s\\n' \"$?\"\nshopt -q extglob; echo $?\n"
+    elif command == "hash":
+        words = rng.choice(("-p /bin/true", "-p/bin/true", "-rp /bin/true",
+                            "-p /bin/false -p/bin/true", "-p /bin/true --", "-Q"))
+        script = f"hash {words} named\nprintf 'status:%s\\n' \"$?\"\nhash -t named\n"
+    else:
+        words = rng.choice(("-n true", "-- true", "-n -- true", "-Q true"))
+        script = f"enable {words}\nprintf 'status:%s\\n' \"$?\"\ntype -t true\n"
+    return "builtin-option-walk-" + command, ("bash", "posix"), script
+
+
+def mapfile_records(rng):
+    """Delimiter positions around the short scan and input refill fences."""
+    length = rng.choice((0, 1, 15, 16, 17, 31, 32, 33, 4095, 4096, 4097))
+    delimiter = rng.choice(("\n", ":", "\0"))
+    records = ["x" * length, "", "tail"]
+    payload = delimiter.join(records) + (delimiter if rng.choice((False, True)) else "")
+    encoded = payload.replace("\0", "\\000")
+    trim = rng.choice(("", "-t"))
+    origin = rng.choice(("", "-O 3"))
+    skip = rng.choice((0, 1))
+    options = f"{trim} {origin} -s {skip} -d " + shlex.quote("" if delimiter == "\0" else delimiter)
+    return "builtin-mapfile-records", ("bash", "posix"), (
+        "printf %b " + shlex.quote(encoded) + " > records\na=(old old old old old)\n"
+        f"mapfile {options} a < records\n"
+        "printf 'status:%s n:%s\\n' \"$?\" \"${#a[@]}\"; printf '<%s>\\n' \"${a[@]}\"\n")
+
+
 def getopts_reset(rng):
     reset = rng.choice(("OPTIND=0", "OPTIND=1", "OPTIND=2", "unset OPTIND", ":"))
     word = rng.choice(("-ab", "-abc", "-abvalue"))
@@ -215,6 +272,7 @@ def getopts_scope(rng):
 
 GENERATORS = (listing, read_fields, read_limit_state, read_array_state,
               printf_formats, printf_hex_roundtrip, printf_dynamic_fields,
+              printf_collectors, option_walk, mapfile_records,
               getopts_state, getopts_reset, getopts_scope)
 
 

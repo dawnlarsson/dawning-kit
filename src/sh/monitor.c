@@ -365,11 +365,9 @@ static HOT fn monitor_top_insert(monitor_top address_to top, positive rows,
         positive stop = address_to count < rows ? address_to count
                                                  : rows - 1;
 
-        while (stop > at)
-        {
-                top[stop] = top[stop - 1];
-                stop--;
-        }
+        if (stop > at)
+                memory_copy(top + at + 1, top + at,
+                            (stop - at) * sizeof(top[0]));
 
         top[at].process = process;
         top[at].tenths = tenths;

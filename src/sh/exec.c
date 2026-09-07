@@ -579,8 +579,9 @@ static fn job_drop_at(positive at)
 
         job_count--;
 
-        for (positive step = at; step < job_count; step++)
-                job_table[step] = job_table[step + 1];
+        if (at < job_count)
+                memory_copy(job_table + at, job_table + at + 1,
+                            (job_count - at) * sizeof(job_table[0]));
 
         job_marks_settle();
 
@@ -5310,33 +5311,24 @@ static bool exec_function_text_node(exec_function_text address_to made,
                 return exec_function_text_redirects(made, node);
         }
 
-        if (node->kind == NODE_PIPELINE)
+        if (node->kind == NODE_PIPELINE || node->kind == NODE_ANDOR)
         {
-                if (node->flags)
+                bool pipeline = node->kind == NODE_PIPELINE;
+
+                if (pipeline && node->flags)
                         exec_function_text_literal(made, "! ");
                 for (child = node->left; child; child = parse_nodes[child].next)
                 {
                         if (child != node->left)
-                                exec_function_text_literal(made, " | ");
-                        if (!exec_function_text_node(made, child, depth + 1))
-                                return false;
-                }
-                return exec_function_text_redirects(made, node);
-        }
-
-        if (node->kind == NODE_ANDOR)
-        {
-                for (child = node->left; child; child = parse_nodes[child].next)
-                {
-                        if (child != node->left)
                                 exec_function_text_add(
-                                    made, parse_nodes[child].op == OP_AND_IF
-                                              ? (const_string)" && "
-                                              : (const_string)" || ", 4);
+                                    made, pipeline ? (const_string)" | "
+                                          : parse_nodes[child].op == OP_AND_IF
+                                                ? (const_string)" && "
+                                                : (const_string)" || ", pipeline ? 3 : 4);
                         if (!exec_function_text_node(made, child, depth + 1))
                                 return false;
                 }
-                if (node->flags)
+                if (!pipeline && node->flags)
                         exec_function_text_literal(made, " &");
                 return exec_function_text_redirects(made, node);
         }
@@ -7810,8 +7802,8 @@ static b32 exec_simple(b32 index)
                         goto fail;
                 }
 
-                for (at = 0; at < first; at++)
-                        assignments[at] = shell_argv[at];
+                memory_copy_apart(assignments, shell_argv,
+                                  (positive)first * sizeof(assignments[0]));
         }
 
         if (assignments &&
@@ -8239,39 +8231,13 @@ static bool exec_built_fill(p8 value, positive times)
 */
 static bool select_menu_indent(positive from, positive to)
 {
-        positive at = from;
+        if (from >= to)
+                return true;
 
-        while (at < to)
-        {
-                if (at / 8 < to / 8)
-                {
-                        if (!exec_built_fill('\t', 1))
-                                return false;
-
-                        at = (at / 8 + 1) * 8;
-                        continue;
-                }
-
-                if (!exec_built_fill(' ', to - at))
-                        return false;
-
-                at = to;
-        }
-
-        return true;
-}
-
-static CONST positive select_digits(positive value)
-{
-        positive width = 1;
-
-        while (value >= 10)
-        {
-                value /= 10;
-                width++;
-        }
-
-        return width;
+        positive tabs = to / 8 - from / 8;
+        positive spaces = tabs ? to % 8 : to - from;
+        return (!tabs || exec_built_fill('\t', tabs)) &&
+               (!spaces || exec_built_fill(' ', spaces));
 }
 
 /*
@@ -8320,7 +8286,7 @@ static fn select_menu_write(positive base, b32 count)
                         longest = length;
         }
 
-        numbered = select_digits((positive)count);
+        numbered = positive_digits((positive)count);
         cell = longest + numbered + 4;
         columns = width / cell;
 
@@ -8336,7 +8302,7 @@ static fn select_menu_write(positive base, b32 count)
                 columns = 1;
         }
 
-        first = select_digits(rows);
+        first = positive_digits(rows);
         exec_built_used = 0;
 
         for (row = 0; row < rows; row++)
