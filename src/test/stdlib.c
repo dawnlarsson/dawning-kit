@@ -894,7 +894,24 @@ test(system_runs_a_command)
         return true;
 }
 
+test(environment_arena_rejects_wrapping_sizes)
+{
+        p8 *next = stdlib_arena_next;
+        positive left = stdlib_arena_left;
+
+        for (positive tail = 0; tail < STDLIB_ARENA_ALIGN; tail++)
+                fail(stdlib_arena_take((positive)-1 - tail) == null);
+        fail(stdlib_arena_take(((positive)1 << 63) + STDLIB_ARENA_ALIGN) == null);
+        fail(stdlib_arena_next == next && stdlib_arena_left == left);
+        p8 *small = stdlib_arena_take(17);
+        fail(small != null && ((positive)small & (STDLIB_ARENA_ALIGN - 1)) == 0);
+        memory_fill(small, 0xa5, 17);
+        fail(stdlib_arena_take(1) == small + 32);
+        return true;
+}
+
 test_case test_cases[] = {
+        case(environment_arena_rejects_wrapping_sizes),
         case(exit_runs_handlers_and_flushes),
         case(exit_runs_handlers_in_reverse),
         case(quick_exit_does_not_flush),

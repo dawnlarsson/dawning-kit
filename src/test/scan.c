@@ -1128,8 +1128,37 @@ static fn entries(void)
               sscanf(null, (string_address) "%d", address_of first) == EOF);
 }
 
+static fn scan_set_ranges(void)
+{
+        static const p8 edges[] = {1, 9, 31, 32, 33, 45, 48, 57, 65, 90,
+                                  97, 122, 126, 127, 128, 254, 255};
+        for (positive first = 0; first < sizeof edges; first++)
+                for (positive last = 0; last < sizeof edges; last++)
+                        for (positive inverse = 0; inverse < 2; inverse++)
+                        {
+                                p8 low = edges[first], high = edges[last];
+                                p8 format[] = {'^', low, '-', high, ']', 'X', 0};
+                                b8 table[258];
+                                bool negated = !inverse, intact = true;
+                                memory_fill(table, 0x5a, sizeof table);
+                                string_address after = scan_build_set(
+                                        format + !inverse, table + 1, &negated);
+                                for (positive byte = 0; byte < 256; byte++)
+                                {
+                                        bool member = low <= high
+                                                ? byte >= low && byte <= high
+                                                : byte == low || byte == high || byte == '-';
+                                        intact &= table[byte + 1] == (member != inverse);
+                                }
+                                check("scanset range bytes and negation",
+                                      intact && negated == inverse && after == format + 5);
+                                check("scanset table bounds", table[0] == 0x5a && table[257] == 0x5a);
+                        }
+}
+
 b32 main(void)
 {
+        scan_set_ranges();
         generated();
         modifiers();
         wide_decimal();

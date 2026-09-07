@@ -1168,7 +1168,28 @@ test(circular_identities)
         return true;
 }
 
+test(modulo_subnormal_bit_ranges)
+{
+        for (positive bit = 0; bit < MATH_MANTISSA_BITS; bit++)
+                for (positive low = 0; low < 32; low++)
+                        for (positive divisor = 1; divisor < 64; divisor++)
+                                for (positive sign = 0; sign < 4; sign++)
+                                {
+                                        p64 numerator = ((p64)1 << bit) | low;
+                                        p64 top_sign = (p64)(sign & 1) << 63;
+                                        p64 bottom_sign = (p64)(sign >> 1) << 63;
+                                        p64 quotient = 0;
+                                        decimal got = math_modulo_quotient(
+                                                math_test_value(numerator | top_sign),
+                                                math_test_value(divisor | bottom_sign), &quotient);
+                                        fail(math_test_bits(got) == ((numerator % divisor) | top_sign));
+                                        fail(quotient == numerator / divisor);
+                                }
+        return true;
+}
+
 static test_case test_cases[] = {
+        case(modulo_subnormal_bit_ranges),
         case(sine),
         case(cosine),
         case(tangent),

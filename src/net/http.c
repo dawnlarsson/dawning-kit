@@ -56,7 +56,7 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
                           p16 address_to port, string_address address_to path)
 {
         string_address at = url;
-        positive length = 0;
+        positive length;
 
         address_to port = HTTP_PORT;
 
@@ -66,25 +66,12 @@ static bipolar http_split(string_address url, p8 address_to host, positive room,
         if (!string_compare_max(url, (string_address) "http://", 7))
                 at = url + 7;
 
-        //      The authority ends at the first slash or colon. One walk is
-        //      enough; asking for each byte separately scanned every normal
-        //      hostname twice.
-        {
-                string_address stop = at;
+        length = string_span_without_set(at, "/:");
+        if (length + 1 >= room)
+                return HTTP_BAD_URL;
 
-                while (string_get(stop) && !string_is(stop, '/') &&
-                       !string_is(stop, ':'))
-                        stop++;
-
-                length = (positive)(stop - at);
-
-                if (length + 1 >= room)
-                        return HTTP_BAD_URL;
-
-                memory_copy(host, at, length);
-                at = stop;
-        }
-
+        memory_copy(host, at, length);
+        at += length;
         host[length] = end;
 
         if (!length)

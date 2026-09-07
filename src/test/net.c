@@ -427,6 +427,28 @@ static fn fetching(void)
                          name, sizeof name, address_of port,
                          address_of path) == HTTP_BAD_URL);
 
+        for (positive length = 1; length < 52; length++)
+                for (positive ending = 0; ending < 3; ending++)
+                        for (positive capacity = 0; capacity <= sizeof name; capacity++)
+                        {
+                                static string_address tails[] = {"", "/x", ":81/x"};
+                                p8 input[64];
+                                p8 byte = length & 1 ? 'a' : 0xe9;
+                                memory_fill(input, byte, length);
+                                string_copy(input + length, tails[ending]);
+                                memory_fill(name, 0x5a, sizeof name);
+                                bipolar result = http_split(input, name, capacity, &port, &path);
+                                bool fits = length + 1 < capacity, intact = true;
+                                for (positive at = 0; at < sizeof name; at++)
+                                        intact &= name[at] == (fits && at <= length
+                                                ? at == length ? 0 : byte : 0x5a);
+                                check("URL capacity matrix and untouched tail",
+                                      result == (fits ? HTTP_OK : HTTP_BAD_URL) && intact);
+                                check("URL terminator and port variants", !fits ||
+                                      (port == (ending == 2 ? 81 : 80) &&
+                                       string_equals(path, ending ? "/x" : "/")));
+                        }
+
         {
                 p8 head[] = "HTTP/1.0 200 OK\r\n"
                             "Content-Type: text/html\r\n"

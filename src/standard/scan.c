@@ -1044,8 +1044,8 @@ static string_address scan_build_set(string_address at, b8 address_to set,
                                      bool address_to negated)
 {
         b32 previous = -1;
+        b8 included;
 
-        memory_zero(set, 256);
         address_to negated = false;
 
         if (string_get(at) == '^')
@@ -1054,9 +1054,12 @@ static string_address scan_build_set(string_address at, b8 address_to set,
                 at++;
         }
 
+        included = !address_to negated;
+        memory_fill(set, address_to negated, 256);
+
         if (string_get(at) == ']')
         {
-                set[']'] = 1;
+                set[']'] = included;
                 previous = ']';
                 at++;
         }
@@ -1071,16 +1074,12 @@ static string_address scan_build_set(string_address at, b8 address_to set,
                         b32 last = (b32)at[1];
 
                         if (previous <= last)
-                        {
-                                b32 value;
-
-                                for (value = previous; value <= last; value++)
-                                        set[value] = 1;
-                        }
+                                memory_fill(set + previous, included,
+                                            (positive)(last - previous + 1));
                         else
                         {
-                                set['-'] = 1;
-                                set[last] = 1;
+                                set['-'] = included;
+                                set[last] = included;
                         }
 
                         previous = last;
@@ -1089,21 +1088,13 @@ static string_address scan_build_set(string_address at, b8 address_to set,
                         continue;
                 }
 
-                set[member] = 1;
+                set[member] = included;
                 previous = member;
                 at++;
         }
 
         if (string_get(at) != ']')
                 return null;
-
-        if (address_to negated)
-        {
-                positive value;
-
-                for (value = 0; value < 256; value++)
-                        set[value] = !set[value];
-        }
 
         return at + 1;
 }

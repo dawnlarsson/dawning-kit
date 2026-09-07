@@ -977,10 +977,8 @@ static b32 execvpe(string_address name, string_address address_to arguments,
 
         while (1)
         {
-                string_address next = string_first_of(segment, ':');
-                positive length = is_null(next)
-                                          ? string_length(segment)
-                                          : (positive)(next - segment);
+                string_address next = string_first_of_or_end(segment, ':');
+                positive length = (positive)(next - segment);
 
                 if (length == 0)
                 {
@@ -990,11 +988,12 @@ static b32 execvpe(string_address name, string_address address_to arguments,
                 }
                 else if (length + name_length + 2 <= PATH_MAX)
                 {
-                        p8 directory[PATH_MAX];
+                        string_address tail = memory_copy_apart_end(
+                                candidate, segment, length);
 
-                        memory_copy(directory, segment, length);
-                        directory[length] = end;
-                        path_join(candidate, PATH_MAX, directory, name);
+                        if (tail[-1] != '/')
+                                *tail++ = '/';
+                        memory_copy_apart(tail, name, name_length + 1);
                 }
                 else
                 {
@@ -1016,7 +1015,7 @@ static b32 execvpe(string_address name, string_address address_to arguments,
                         return -1;
 
         process_execute_next:
-                if (is_null(next))
+                if (*next == end)
                         break;
 
                 segment = next + 1;
@@ -1371,7 +1370,6 @@ static string_address realpath(string_address path, string_address into)
 
         while (rest[at] != end)
         {
-                string_address slash;
                 positive piece;
 
                 //      Skip the separators between components, which also
@@ -1389,9 +1387,8 @@ static string_address realpath(string_address path, string_address into)
                         continue;
                 }
 
-                slash = string_first_of(rest + at, '/');
-                piece = is_null(slash) ? string_length(rest + at)
-                                       : (positive)(slash - (rest + at));
+                piece = (positive)(string_first_of_or_end(rest + at, '/') -
+                                   (rest + at));
 
                 if (piece == 1 && rest[at] == '.')
                 {

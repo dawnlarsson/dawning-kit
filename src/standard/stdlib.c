@@ -92,15 +92,9 @@ typedef struct
         of entries in the life of most programs, and the total is measured in
         hundreds of bytes.
 
-        malloc is being written by somebody else in this same round of work.
-        Calling it from here would make two families that have to land in the
-        same commit to link, so this takes pages from memory() -- the mmap the
-        library already owns -- and hands out aligned slices of them. It never
-        frees. unsetenv therefore leaks the entry it drops, and overwriting a
-        variable leaks the string it replaced. That is the honest cost of not
-        depending on a free() that does not exist yet, and the arena is a
-        dozen lines that a later commit can replace with the real allocator
-        without any caller noticing.
+        Aligned slices avoid per-entry allocator metadata and calls. Old
+        strings remain valid after unsetenv or replacement; chunks are kept
+        until process exit, including their unused tails.
 
         Sixty four kilobytes at a time because that is one mmap for an
         environment far larger than any program here will build, and a program
@@ -121,15 +115,17 @@ static address_any stdlib_arena_take(positive size)
 {
         address_any given;
 
+        if (size > (positive)-1 - (STDLIB_ARENA_ALIGN - 1))
+                return null;
         size = (size + (STDLIB_ARENA_ALIGN - 1)) & ~(positive)(STDLIB_ARENA_ALIGN - 1);
 
         if (size > stdlib_arena_left)
         {
-                positive want = STDLIB_ARENA_CHUNK;
+                positive want = memory_growth(0, size, STDLIB_ARENA_CHUNK);
                 p8 address_to block;
 
-                while (want < size)
-                        want += want;
+                if (want == 0)
+                        return null;
 
                 block = (p8 address_to)memory(want);
 

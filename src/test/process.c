@@ -629,8 +629,60 @@ static b32 test_run(string_address address_to words, bool by_path)
         return WEXITSTATUS(status);
 }
 
+static fn test_exec_paths(void)
+{
+        static string_address formats[] = {"%s", "%s/", "%s//", ":%s",
+                "/pd-no-such-directory:%s", "%s:", "", ":", ".", "./"};
+        static string_address names[] = {"exec-link", "exec-script", "exec-denied"};
+        p8 path[PATH_MAX], search[PATH_MAX * 2];
+
+        test_path(path, names[0]);
+        same("exec PATH fixture link", symlink((string_address)"/bin/sh", path), 0);
+        for (positive at = 1; at < 3; at++)
+        {
+                test_path(path, names[at]);
+                b32 handle = creat(path, at == 1 ? 0700 : 0600);
+                same("exec PATH fixture script", write(handle, "exit 7\n", 7), 7);
+                close(handle);
+        }
+        for (positive shape = 0; shape <= sizeof(formats) / sizeof(formats[0]); shape++)
+        {
+                if (shape == sizeof(formats) / sizeof(formats[0]))
+                {
+                        memory_fill(search, 'x', PATH_MAX);
+                        search[PATH_MAX] = ':';
+                        string_copy(search + PATH_MAX + 1, test_root);
+                }
+                else
+                        snprintf(search, sizeof search, formats[shape], test_root);
+                for (positive kind = 0; kind < 3; kind++)
+                {
+                        b32 status = 0;
+                        log_flush();
+                        b32 child = fork();
+                        if (child == 0)
+                        {
+                                string_address words[] = {names[kind], "-c", "exit 7", null};
+                                if (chdir(test_root) || setenv((string_address)"PATH", search, 1))
+                                        _exit(99);
+                                execvp(words[0], words);
+                                _exit(100 + errno);
+                        }
+                        same("exec PATH fixture child", waitpid(child, &status, 0), child);
+                        same("exec PATH separators, fallback and denied", WIFEXITED(status)
+                                ? WEXITSTATUS(status) : -1, kind == 2 ? 100 + EACCES : 7);
+                }
+        }
+        for (positive at = 0; at < 3; at++)
+        {
+                test_path(path, names[at]);
+                unlink(path);
+        }
+}
+
 static fn test_exec(void)
 {
+        test_exec_paths();
         string_address words[5];
         b32 status = 0;
         b32 child;

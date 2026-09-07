@@ -413,6 +413,34 @@ static void text_case_append_bounded(void)
         check("strlcat onto an empty destination answer", answer == 2);
         check("strlcat onto an empty destination content",
               text_equal(buffer, TX("cd")));
+
+        /* Every truncation point, including a destination with no bounded
+           terminator; compare all bytes so padding and overruns cannot hide. */
+        for (text_size held = 0; held < 16; held++)
+                for (text_size length = 0; length < 16; length++)
+                        for (text_size capacity = 0; capacity <= 16; capacity++)
+                        {
+                                text_byte source[16], expected[16];
+                                text_size seen = held < capacity ? held : capacity;
+                                text_size fits = seen < capacity ? capacity - seen - 1 : 0;
+                                if (fits > length) fits = length;
+                                text_fill(source, 's', length);
+                                source[length] = 0;
+                                text_fill(buffer, 'd', sizeof buffer);
+                                text_fill(expected, 'd', sizeof expected);
+                                buffer[held] = expected[held] = 0;
+                                if (seen < capacity)
+                                {
+                                        text_fill(expected + held, 's', fits);
+                                        expected[held + fits] = 0;
+                                }
+                                answer = text_append_bounded(buffer, source, capacity);
+                                check("strlcat capacity matrix length", answer == seen + length);
+                                int intact = 1;
+                                for (text_size at = 0; at < sizeof buffer; at++)
+                                        intact &= buffer[at] == expected[at];
+                                check("strlcat capacity matrix bytes", intact);
+                        }
 }
 
 /*

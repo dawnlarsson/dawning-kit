@@ -422,24 +422,17 @@ positive string_copy_bounded(string_address destination, string_address source,
         the whole source, again the length that was wanted rather than the one
         that fit.
 */
-positive string_append_bounded(string_address destination,
+// Keep the shared copy body inline: an extra call loses on short strings.
+FLAT positive string_append_bounded(string_address destination,
                                string_address source, positive capacity)
 {
         positive held = string_length_max(destination, capacity);
-        positive length = string_length(source);
-        positive room;
-        positive fits;
 
         if (held == capacity)
-                return capacity + length;
+                return capacity + string_length(source);
 
-        room = capacity - held;
-        fits = length < room ? length : room - 1;
-
-        memory_copy_apart(destination + held, source, fits);
-        destination[held + fits] = end;
-
-        return held + length;
+        return held + string_copy_bounded(destination + held, source,
+                                           capacity - held);
 }
 
 /*
