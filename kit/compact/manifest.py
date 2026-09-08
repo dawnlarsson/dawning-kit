@@ -65,19 +65,33 @@ def reconcile(rows, errors):
 
 
 def anchor(row, cache, errors):
-    """The row's evidence file exists and carries the named token.
+    """The row's evidence exists and carries the named token.
 
-    Says whether the file was readable at all, so a caller can skip its own
-    follow-up checks against a file that is not there.
+    Evidence is a file, or one section of test/checks.c spelled
+    test/checks.c#CHECK_<name>: the text between #ifdef CHECK_<name> and its
+    #endif is what has to carry the token, so a token another section
+    happens to use does not vouch for this one.
+
+    Says whether the evidence was readable at all, so a caller can skip its
+    own follow-up checks against a file that is not there.
     """
-    evidence_path = ROOT / row.evidence
+    file, _, section = row.evidence.partition('#')
+    evidence_path = ROOT / file
     if not evidence_path.is_file():
         errors.append('%s: missing evidence file %s' %
-                      (row.routine, row.evidence))
+                      (row.routine, file))
         return False
     if row.evidence not in cache:
-        cache[row.evidence] = evidence_path.read_text(
-            encoding='utf-8', errors='replace')
+        text = evidence_path.read_text(encoding='utf-8', errors='replace')
+        if section:
+            begin = text.find('#ifdef %s\n' % section)
+            end = text.find('#endif /* %s */\n' % section)
+            if begin < 0 or end < begin:
+                errors.append('%s: no section %s in %s' %
+                              (row.routine, section, file))
+                return False
+            text = text[begin:end]
+        cache[row.evidence] = text
     if not token_present(cache[row.evidence], row.anchor):
         errors.append('%s: anchor %s absent from %s' %
                       (row.routine, row.anchor, row.evidence))

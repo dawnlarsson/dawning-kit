@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-#       Writes test/exact.c.
+#       Writes the CHECK_exact section of test/checks.c.
 #
 #       The compiler_memory.c layer expands sizes known where the call is
 #       written to a straight line of moves instead of a call, and which line
@@ -12,7 +12,9 @@
 #       Sizes run past the point where the expansion stops and the routine
 #       takes over again, so the seam is covered from both sides.
 #
-#           python3 kit/exact.py > test/exact.c
+#           python3 kit/exact.py    goes between #ifdef CHECK_exact and its
+#                                   #endif in test/checks.c; the exact lane
+#                                   diffs that section against this output
 #
 import sys
 
