@@ -62,7 +62,7 @@ def area(path):
     if path.startswith('src/sh/'):
         stem = Path(path).stem
         if stem in {'text', 'file', 'tools', 'util_linux', 'process_tools',
-                    'awk', 'cksum', 'checksum'} or stem.startswith('storage_'):
+                    'awk', 'cksum', 'checksum', 'regex_graph'} or stem.startswith('storage_'):
             return 'Utility implementations'
         if stem in {'term', 'pty', 'screen', 'edit', 'monitor', 'net', 'system'}:
             return 'Terminal, editor and system tools'

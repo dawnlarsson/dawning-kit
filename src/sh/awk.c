@@ -954,9 +954,7 @@ static regex_program awk_regex_cache[AWK_REGEX_CACHED];
 static awk_text address_to awk_regex_cache_key[AWK_REGEX_CACHED];
 static b32 awk_regex_cache_count;
 
-static b32 awk_regex_mark_code;
-static b32 awk_regex_mark_sets;
-static b32 awk_regex_mark_first;
+static rx_mark awk_regex_mark_pool;
 
 static fn awk_regex_build(regex_program address_to into, string_address pattern)
 {
@@ -977,12 +975,6 @@ static regex_program address_to awk_regex_keep(string_address pattern)
         return into;
 }
 
-static fn awk_regex_mark()
-{
-        awk_regex_mark_code = regex_pool_used;
-        awk_regex_mark_sets = regex_pool_sets;
-        awk_regex_mark_first = regex_first_used;
-}
 
 static regex_program address_to awk_regex_dynamic(awk_text address_to pattern)
 {
@@ -997,9 +989,8 @@ static regex_program address_to awk_regex_dynamic(awk_text address_to pattern)
                         awk_text_drop(awk_regex_cache_key[i]);
 
                 awk_regex_cache_count = 0;
-                regex_pool_used = awk_regex_mark_code;
-                regex_pool_sets = awk_regex_mark_sets;
-                regex_first_used = awk_regex_mark_first;
+                regex_retained = awk_regex_mark_pool;
+                regex_pool.used = regex_retained;
         }
 
         b32 which = awk_regex_cache_count++;
@@ -1149,7 +1140,7 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
         positive at = 0;
 
         awk_text_drop(pattern);
-        regex_select(program);
+        regex_current = *program;
 
         while (at < length)
         {
@@ -1942,7 +1933,7 @@ static b32 awk_read_record(awk_reader address_to which, awk_text address_to addr
 
         for (;;)
         {
-                regex_select(awk_regex_dynamic(pattern));
+                regex_current = *awk_regex_dynamic(pattern);
 
                 bool got = regex_find(REGEX_LONGEST, which->data + which->at,
                                                 which->filled - which->at, 0) &&
@@ -4530,7 +4521,7 @@ static regex_program address_to awk_program_of(awk_node address_to node)
 
 static bool awk_matches(awk_node address_to pattern, awk_text address_to subject)
 {
-        regex_select(awk_program_of(pattern));
+        regex_current = *awk_program_of(pattern);
         return regex_find(REGEX_FIRST, subject->text, subject->length, 0);
 }
 
@@ -4805,7 +4796,7 @@ static awk_text address_to awk_replace(awk_text address_to subject, regex_progra
 
         while (at <= subject->length)
         {
-                regex_select(program);
+                regex_current = *program;
 
                 if (!regex_find(REGEX_LONGEST, subject->text, subject->length, at))
                         break;
@@ -5108,7 +5099,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         {
                 awk_text address_to text = awk_eval_text(first);
 
-                regex_select(awk_program_of(second));
+                regex_current = *awk_program_of(second);
 
                 if (regex_find(REGEX_LONGEST, text->text, text->length, 0))
                 {
@@ -6168,7 +6159,7 @@ static b32 text_awk()
         awk_source_length = program.used;
         awk_source_at = 0;
         awk_parse_program();
-        awk_regex_mark();
+        awk_regex_mark_pool = regex_retained;
 
         if (awk_field_split)
         {

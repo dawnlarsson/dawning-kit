@@ -1,5 +1,11 @@
 # Plan for major architectural folds
 
+**Execution update, 2026-09-08:** the regex experiment qualified and was applied.
+It removes 762 production lines; source tokens are essentially unchanged.
+See [implementation, validation and measured tradeoffs](REGEX_PROOF.md).
+The remaining proposals are still held. The text below preserves the original
+planning estimates and decision gates against their pinned baseline.
+
 This is a planning audit, not a production rewrite. Source is pinned to
 `10d043364f0f3b40e34e09848621e1588ee11faa8b2e16209c37e32c2584a029`.
 All 80 production files match the function atlas. Test-runner work proceeded

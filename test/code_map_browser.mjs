@@ -59,9 +59,11 @@ try {
   if(width===1200||width===360)await screenshot(`detail-${width}-${theme}`);
   for(const v of ['files','similarity','method']){await click(`[data-view="${v}"]`);l=await layout();check(`${v} layout ${width} ${theme}`,!l.overflow,l);if(v==='files'&&((width===1200&&theme==='light')||(width===360&&theme==='dark'))){await evaluate("document.getElementById('files-view').scrollIntoView({block:'start'})");await screenshot(`files-${width}-${theme}`);}}
  }
+ // Pinned to the counted-regex refresh: 44 old C entries removed, 25 added;
+ // one production file and one ordinary reuse-test helper added.
  // Scope values are an independently specified integration contract.
  await reset();await click('[data-view="functions"]');
- for(const [scope,want] of Object.entries({production:4264,c:3915,assembly:349,support:1569,all:5833})){
+ for(const [scope,want] of Object.entries({production:4245,c:3896,assembly:349,support:1570,all:5815})){
   await select('scope',scope);const got=await meta();check('scope '+scope,got.count===want,{expected:want,...got});
  }
  await reset();await click('[data-view="files"]');
@@ -69,7 +71,7 @@ try {
   await select('scope',scope);
   const files=await evaluate(`(()=>{const scope=document.getElementById('scope').value;const symbolFiles=new Set(F.filter(f=>f.production&&(scope==='c'?!f.kind.startsWith('assembly'):f.kind.startsWith('assembly'))).map(f=>f.file));const expected=DATA.files.filter(f=>scope==='all'||scope==='production'&&f.production||scope==='support'&&!f.production||(scope==='c'||scope==='assembly')&&f.production&&symbolFiles.has(f.file));return {scope,rendered:[...document.querySelectorAll('#files-body [data-file]')].map(x=>x.dataset.file),expected:expected.map(f=>f.file),label:document.getElementById('view-meta').textContent,total:expected.reduce((n,f)=>n+f.physical_loc,0),metricHidden:document.getElementById('metric').closest('label').hidden};})()`);
   check('files scope '+scope,JSON.stringify(files.rendered.slice().sort())===JSON.stringify(files.expected.slice().sort())&&files.metricHidden&&files.label.includes(Number(files.total).toLocaleString('en-US')),{scope,renderedCount:files.rendered.length,expectedCount:files.expected.length,label:files.label});
-  if(scope==='production')check('production file count',files.rendered.length===80,{count:files.rendered.length});
+  if(scope==='production')check('production file count',files.rendered.length===81,{count:files.rendered.length});
  }
  await reset();await click('[data-view="files"]');
  const fileArea=await evaluate("DATA.files.find(f=>f.file==='src/canvas/canvas.c').area");await select('area',fileArea);
@@ -87,7 +89,7 @@ try {
  const fileNav=await evaluate("({view:document.getElementById('view-title').textContent,query:document.getElementById('query').value,cleared:['family','role','basis'].every(id=>!document.getElementById(id).value),count:Number(document.getElementById('view-meta').textContent.split(' matching')[0].replaceAll(',','')),expected:F.filter(f=>f.production&&f.file==='src/standard/allocator.c').length})");
  check('file to function navigation',fileNav.view==='Functions'&&fileNav.query==='src/standard/allocator.c'&&fileNav.cleared&&fileNav.count===fileNav.expected,fileNav);
  await click('[data-view="files"]');await query('__atlas_no_matching_file_917771__');check('files empty query',await evaluate("document.querySelectorAll('#files-body [data-file]').length===0&&document.getElementById('view-meta').textContent.startsWith('0 matching files')"));
- await click('#clear');check('files clear filters',await evaluate("document.querySelectorAll('#files-body [data-file]').length===80"));
+ await click('#clear');check('files clear filters',await evaluate("document.querySelectorAll('#files-body [data-file]').length===81"));
  await reset();await click('[data-view="functions"]');
  for(const scope of ['assembly','support']){
   await select('scope',scope);await click('#functions-body [data-function]');
@@ -120,7 +122,7 @@ try {
  const caller=await evaluate(`(()=>{const h=[...document.querySelectorAll('#detail h3')].find(x=>x.textContent.startsWith('Possible callers'));const b=h?.nextElementSibling?.querySelector('button[data-function]');if(!b)return null;return {name:b.textContent,index:b.dataset.function};})()`);
  check('possible caller link exists',!!caller,caller||{});
  if(caller){await click(`#detail [data-function="${caller.index}"]`);const name=await evaluate("document.querySelector('#detail h2').textContent");check('possible caller navigation',name===caller.name,{expected:caller.name,actual:name});}
- await click('#clear');got=await meta();check('clear restores production count',got.count===4264,got);
+ await click('#clear');got=await meta();check('clear restores production count',got.count===4245,got);
  const first=await evaluate("document.querySelector('#functions-body [data-function]').textContent");
  await click('#next');let page=await evaluate("({label:document.getElementById('page-label').textContent,first:document.querySelector('#functions-body [data-function]').textContent,prev:document.getElementById('prev').disabled})");
  check('next page',page.label.startsWith('76–150')&&page.first!==first&&!page.prev,page);
@@ -134,7 +136,7 @@ try {
  check('similarity view',sim.title==='Similarity leads'&&sim.rows>0&&sim.notice.includes('does not establish'),sim);
  if(sim.links){const name=await evaluate("document.querySelector('#similarity-body [data-function]').textContent");await click('#similarity-body [data-function]');check('similarity function navigation',await evaluate("document.querySelector('#detail h2').textContent")==name,{expected:name});}
  await click('[data-view="method"]');const method=await evaluate("document.getElementById('method-view').textContent");
- check('method and exports',method.includes('Coverage is not review completion')&&method.includes('Data exports')&&method.includes('3,915'),{characters:method.length});
+ check('method and exports',method.includes('Coverage is not review completion')&&method.includes('Data exports')&&method.includes('3,896'),{characters:method.length});
  for(const filename of ['functions.csv','functions.json','summary.json']){const stat=await fs.stat(join(dir,filename));check('export '+filename,stat.size>0,{bytes:stat.size});}
  check('no runtime exceptions',exceptions.length===0,{count:exceptions.length});
  check('no browser error log',logs.length===0,{count:logs.length});

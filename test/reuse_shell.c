@@ -430,8 +430,77 @@ static fn reuse_utility_numbers(void)
         }
 }
 
+/* Retained programs own their metadata; transient and failed compilations
+   must not replace it. Exercise the production matcher and library floor. */
+static fn reuse_regex(void)
+{
+        regex_program kept[3];
+        string_address patterns[] = {"(ab){2,4}", "[a-z]+", "x|yz"};
+        string_address subjects[] = {"ababab", "alpha", "yz"};
+        for (positive i = 0; i < 3; i++)
+        {
+                check("retained regex compiles",
+                      regex_compile(patterns[i], true, false, false, REGEX_POLICY_DEFAULT));
+                regex_keep(kept + i);
+        }
+        for (positive round = 0; round < 80; round++)
+        {
+                check("transient regex compiles above retained programs",
+                      regex_compile("temporary", true, false, false, REGEX_POLICY_DEFAULT));
+                for (positive i = 0; i < 3; i++)
+                {
+                        regex_current = kept[i];
+                        check("selected regex retains graph and prepared metadata",
+                              regex_find(REGEX_LONGEST, subjects[i], string_length(subjects[i]), 0) &&
+                              regex_slots[0] == 0 && regex_slots[1] == string_length(subjects[i]));
+                }
+        }
+        regex_retained = regex_pool.used = (rx_mark){0};
+        static p8 repeated[30002];
+        for (positive i = 0; i < 4090; i++)
+        {
+                repeated[i * 2] = 'a';
+                repeated[i * 2 + 1] = '*';
+        }
+        repeated[8180] = 0;
+        check("long simple-repeat chains retain the old accepted capacity",
+              regex_compile(repeated, true, false, false, REGEX_POLICY_DEFAULT) &&
+              regex_find(REGEX_LONGEST, "", 0, 0));
+        repeated[0] = 'a';
+        for (positive i = 0; i < 10000; i++)
+                memory_copy_apart(repeated + 1 + i * 3, "{1}", 3);
+        repeated[30001] = 0;
+        check("identity intervals do not consume extra graph nodes",
+              regex_compile(repeated, true, false, false, REGEX_POLICY_DEFAULT) &&
+              regex_find(REGEX_LONGEST, "a", 1, 0));
+        memory_copy_apart(repeated, "(){0}", 5);
+        for (positive i = 0; i < 25; i++)
+                memory_copy_apart(repeated + 5 + i * 3, "{2}", 3);
+        repeated[80] = 0;
+        check("mandatory repeats of erased groups stay empty without exponential work",
+              regex_compile(repeated, true, false, false, REGEX_POLICY_DEFAULT) &&
+              regex_find(REGEX_LONGEST, "", 0, 0) && regex_slots[2] == positive_max);
+        rx_mark mark = regex_pool.used;
+        regex_program published = regex_current;
+        check("invalid compile does not publish partial state",
+              !rx_compile(&regex_pool, &regex_current, "([", true, false, false,
+                          REGEX_POLICY_DEFAULT) && regex_current.first == published.first &&
+              regex_current.hints == published.hints &&
+              regex_pool.used.nodes == mark.nodes && regex_pool.used.sets == mark.sets &&
+              regex_pool.used.hints == mark.hints);
+        check("capture-bearing search succeeds",
+              regex_compile("(a)", true, false, false, REGEX_POLICY_DEFAULT) &&
+              regex_find(REGEX_LONGEST, "a", 1, 0) && regex_slots[2] == 0);
+        check("literal shortcut clears captures removed by a zero count",
+              regex_compile("(b){0}x", true, false, false, REGEX_POLICY_DEFAULT) &&
+              regex_find(REGEX_LONGEST, "x", 1, 0) &&
+              regex_slots[2] == positive_max && regex_slots[3] == positive_max);
+        regex_retained = regex_pool.used = (rx_mark){0};
+}
+
 b32 main(void)
 {
+        reuse_regex();
         reuse_utility_numbers();
         reuse_lookup_contracts();
         reuse_counted_classes();

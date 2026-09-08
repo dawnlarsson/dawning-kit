@@ -8772,56 +8772,26 @@ static COLD fn conditional_regex_captures(string_address text)
 static bool conditional_regex_match(string_address text, string_address pattern,
                                     bool address_to valid)
 {
-        regex_program saved;
-        b32 code_mark = regex_pool_used;
-        b32 set_mark = regex_pool_sets;
-        b32 first_mark = regex_first_used;
-        b32 set_count = regex_set_count;
-        bool escapes = regex_escapes;
-        bool broken = regex_broken;
-        string_address saved_pattern = regex_pattern;
-        positive saved_pattern_length = regex_pattern_length;
-        positive saved_pattern_at = regex_pattern_at;
-        string_address saved_text = regex_text;
-        positive saved_text_length = regex_text_length;
-        positive slots[REGEX_SLOT_MAX];
-        p8 first[256];
-        p8 last[256];
-        p8 literal[REGEX_LITERAL_MAX];
+        regex_program saved = regex_current;
+        rx_mark mark = regex_pool.used;
+        positive slots[RX_SLOT_MAX];
+        bool demand = regex_demand;
         bool matched = false;
 
-        regex_capture(address_of saved);
         memory_copy_apart(slots, regex_slots, sizeof(slots));
-        memory_copy_apart(first, saved.state.first, sizeof(first));
-        memory_copy_apart(last, saved.state.last, sizeof(last));
-        memory_copy_apart(literal, saved.state.literal, sizeof(literal));
-
-        address_to valid = regex_compile(pattern, true, false, false,
-                                         REGEX_POLICY_DEFAULT);
-
+        /* Compile above any live transient program; rewind only our own work. */
+        address_to valid = rx_compile(&regex_pool, &regex_current, pattern,
+                                      true, false, false, REGEX_POLICY_DEFAULT);
+        regex_demand = true;
         if (address_to valid)
         {
                 matched = regex_find(REGEX_FIRST, text, string_length(text), 0);
-
                 if (matched)
                         conditional_regex_captures(text);
         }
-
-        regex_pool_used = code_mark;
-        regex_pool_sets = set_mark;
-        regex_first_used = first_mark;
-        memory_copy_apart(saved.state.first, first, sizeof(first));
-        memory_copy_apart(saved.state.last, last, sizeof(last));
-        memory_copy_apart(saved.state.literal, literal, sizeof(literal));
-        regex_select(address_of saved);
-        regex_set_count = set_count;
-        regex_escapes = escapes;
-        regex_broken = broken;
-        regex_pattern = saved_pattern;
-        regex_pattern_length = saved_pattern_length;
-        regex_pattern_at = saved_pattern_at;
-        regex_text = saved_text;
-        regex_text_length = saved_text_length;
+        regex_pool.used = mark;
+        regex_current = saved;
+        regex_demand = demand;
         memory_copy_apart(regex_slots, slots, sizeof(slots));
         return matched;
 }

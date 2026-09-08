@@ -701,11 +701,11 @@ refuses_long_tr_set()
 
 refuses_many_alternatives()
 {
-        pattern=x0
+        pattern=x
         i=1
 
-        while [ "$i" -lt 34 ]; do
-                pattern="$pattern|x$i"
+        while [ "$i" -lt 4200 ]; do
+                pattern="$pattern|x"
                 i=$((i + 1))
         done
 
@@ -978,6 +978,17 @@ compare 'long context'   grep a  --context 1 alpha
 compare 'long word'      grep a  --word-regexp beta
 compare 'long fixed'     grep a  --fixed-strings 'alpha beta'
 compare 'long extended'  grep -  --extended-regexp 'delta|zeta' "$work/a"
+# These used to fail because alternatives and counted groups copied bytecode.
+pattern=x0
+i=1
+while [ "$i" -lt 34 ]; do
+        pattern="$pattern|x$i"
+        i=$((i + 1))
+done
+printf 'x33\nmiss\n' > "$work/graph-alternatives"
+compare '34 alternatives' grep graph-alternatives -E "$pattern"
+awk 'BEGIN { for (i = 0; i < 256; i++) printf "a"; printf "\n" }' > "$work/graph-count"
+compare '256 counted groups' grep graph-count -Eo '(a){256}'
 compare 'long quiet'     grep a  --quiet alpha
 compare 'long joined'    grep a  --regexp=alpha
 compare 'long unknown'   grep a  --nosuchflag a
