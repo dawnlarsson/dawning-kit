@@ -1252,7 +1252,6 @@ fn job_report()
         ambiguous rather than one of them, because guessing which of two
         running commands to kill is not a service.
 */
-#define JOB_SPEC_NONE 0
 #define JOB_SPEC_FOUND 1
 #define JOB_SPEC_UNKNOWN 2
 #define JOB_SPEC_AMBIGUOUS 3
@@ -4818,12 +4817,8 @@ typedef struct
         positive name_hash;
         positive name_length;
         b32 body;
-        // Where this body sits in the kept arenas, so that redefining it can
-        // hand the space back rather than leaving it behind.
-        parse_marks from;
-        parse_marks to;
-        // How many calls of it are on the stack. A body being walked is not
-        // given back, because the next definition would be written over it.
+        // Active calls keep this slot and its name stable. Each call holds
+        // its own body independently when a definition replaces this one.
         positive active;
         bool readonly;
         bool exported;
@@ -5577,10 +5572,7 @@ b32 exec_function_unset(string_address name)
                 if (exec_functions[slot].readonly)
                         return -1;
 
-                // A function unsetting itself is still running its body.
-                if (!exec_functions[slot].active)
-                        parse_release(address_of exec_functions[slot].from,
-                                      address_of exec_functions[slot].to);
+                parse_release(exec_functions[slot].body);
 
                 if (exec_functions[slot].exported)
                         exec_function_environment_changed();
@@ -5611,9 +5603,6 @@ static COLD b32 exec_function_no_room(string_address name)
 static b32 exec_define(b32 index)
 {
         string_address name = parse_words[parse_nodes[index].word];
-        parse_marks before;
-        parse_marks after;
-        bool released = false;
         b32 body;
         positive slot;
         positive2 named = string_hash_33_length(name);
@@ -5680,52 +5669,10 @@ static b32 exec_define(b32 index)
                     exec_special_kind(name);
         }
 
-        /*
-                The body this one replaces, given back where it can be.
-
-                The kept arenas are a stack, so only the last definition taken
-                can be handed back -- which is the one a script redefining a
-                function in a loop keeps making, and the reason such a script
-                used to run the arena out and then walk over what was left.
-
-                A body still being run is not handed back at all. It is the
-                last one taken when a function redefines itself from inside,
-                and the new body was copied over the tree the executor was
-                standing in: the rest of the old body ran from the new one.
-                That block is left behind instead, which is what a function
-                that keeps replacing itself costs.
-        */
-        if (exec_functions[slot].body && !exec_functions[slot].active)
-                released = parse_release(address_of exec_functions[slot].from,
-                                         address_of exec_functions[slot].to);
-
-        // Into locals, because a keep that fails must leave the slot saying
-        // exactly what it said before: half the new marks beside half the old
-        // ones describes a block that was never taken, and giving that back
-        // hands away whatever was kept in between.
-        parse_mark(address_of before);
-        body = parse_keep(parse_nodes[index].right, address_of after);
-
+        body = parse_keep(parse_nodes[index].right, exec_functions[slot].body);
         if (!body)
-        {
-                // What was there was written over by the attempt, so saying
-                // the name is gone is the honest answer.
-                if (released)
-                {
-                        exec_functions[slot].body = 0;
-                        exec_functions[slot].environment_valid = false;
-                        if (exec_functions[slot].exported)
-                        {
-                                exec_functions[slot].exported = false;
-                                exec_function_environment_changed();
-                        }
-                }
-
                 return exec_function_no_room(name);
-        }
 
-        exec_functions[slot].from = before;
-        exec_functions[slot].to = after;
         exec_functions[slot].body = body;
         exec_functions[slot].environment_valid = false;
         exec_function_recent = slot;
@@ -6114,6 +6061,7 @@ static b32 exec_call(positive slot)
         // grow the table, and the table may move when it does.
         exec_function_depth++;
         exec_functions[slot].active++;
+        parse_kept_bodies[body].references++;
 
         if (shell_array_room(exec_frames, exec_frame_room,
                              exec_frame_count + 1))
@@ -6148,6 +6096,7 @@ static b32 exec_call(positive slot)
         }
 
         exec_functions[slot].active--;
+        parse_release(body);
         shell_local_leave();
         exec_function_depth--;
 
@@ -8772,56 +8721,23 @@ static COLD fn conditional_regex_captures(string_address text)
 static bool conditional_regex_match(string_address text, string_address pattern,
                                     bool address_to valid)
 {
-        regex_program saved;
-        b32 code_mark = regex_pool_used;
-        b32 set_mark = regex_pool_sets;
-        b32 first_mark = regex_first_used;
-        b32 set_count = regex_set_count;
-        bool escapes = regex_escapes;
-        bool broken = regex_broken;
-        string_address saved_pattern = regex_pattern;
-        positive saved_pattern_length = regex_pattern_length;
-        positive saved_pattern_at = regex_pattern_at;
-        string_address saved_text = regex_text;
-        positive saved_text_length = regex_text_length;
-        positive slots[REGEX_SLOT_MAX];
-        p8 first[256];
-        p8 last[256];
-        p8 literal[REGEX_LITERAL_MAX];
+        regex_program saved = regex_current;
+        rx_mark mark = regex_pool.used;
+        positive slots[RX_SLOT_MAX];
         bool matched = false;
 
-        regex_capture(address_of saved);
         memory_copy_apart(slots, regex_slots, sizeof(slots));
-        memory_copy_apart(first, saved.state.first, sizeof(first));
-        memory_copy_apart(last, saved.state.last, sizeof(last));
-        memory_copy_apart(literal, saved.state.literal, sizeof(literal));
-
-        address_to valid = regex_compile(pattern, true, false, false,
-                                         REGEX_POLICY_DEFAULT);
-
+        /* Compile above any live transient program; rewind only our own work. */
+        address_to valid = rx_compile(&regex_pool, &regex_current, pattern,
+                                      true, false, false, REGEX_POLICY_DEFAULT);
         if (address_to valid)
         {
-                matched = regex_find(REGEX_FIRST, text, string_length(text), 0);
-
+                matched = regex_find(REGEX_FIRST | REGEX_CAPTURES, text, string_length(text), 0);
                 if (matched)
                         conditional_regex_captures(text);
         }
-
-        regex_pool_used = code_mark;
-        regex_pool_sets = set_mark;
-        regex_first_used = first_mark;
-        memory_copy_apart(saved.state.first, first, sizeof(first));
-        memory_copy_apart(saved.state.last, last, sizeof(last));
-        memory_copy_apart(saved.state.literal, literal, sizeof(literal));
-        regex_select(address_of saved);
-        regex_set_count = set_count;
-        regex_escapes = escapes;
-        regex_broken = broken;
-        regex_pattern = saved_pattern;
-        regex_pattern_length = saved_pattern_length;
-        regex_pattern_at = saved_pattern_at;
-        regex_text = saved_text;
-        regex_text_length = saved_text_length;
+        regex_pool.used = mark;
+        regex_current = saved;
         memory_copy_apart(regex_slots, slots, sizeof(slots));
         return matched;
 }
@@ -10513,8 +10429,6 @@ static b32 exec_node_kind(b32 index)
 
         return status;
 }
-
-#define WAIT_NO_HANG 1
 
 static b32 exec_depth;
 

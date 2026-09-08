@@ -292,8 +292,11 @@ static void output_drop(struct output *output)
 {
         plane_drop(output);
 
-        if (output->buffer)
-                drm_client_buffer_delete(output->buffer);
+        // A failed disable leaves a client buffer that recovery can no longer
+        // reach after this output is gone. RMFB drops the client ownership;
+        // atomic plane state keeps scanout alive even if removal also fails.
+        drm_client_buffer_delete(output->cursor_buffer);
+        drm_client_buffer_delete(output->buffer);
 
         list_del(&output->link);
         kfree(output);

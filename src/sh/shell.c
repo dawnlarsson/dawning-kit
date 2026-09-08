@@ -592,7 +592,6 @@ positive shell_shopt_state = SHELL_SHOPT_STARTED;
 #endif
 
 COLD string_address shell_dynamic_value(const_string name, positive length,
-                                        positive hash,
                                         positive address_to value_length);
 COLD bool shell_dynamic_assign(const_string name, positive length,
                                const_string value);

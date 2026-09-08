@@ -637,6 +637,17 @@ compare_dd 'bs before ibs'     "$work/ten" 's/x/x/' bs=4 ibs=2 status=noxfer
 compare_dd 'bs before obs'     "$work/ten" 's/x/x/' bs=4 obs=2 status=noxfer
 compare_dd 'bs after both'     "$work/ten" 's/x/x/' ibs=2 obs=3 bs=4 status=noxfer
 
+# Numeric operands are applied as encountered: a later quantity replaces its
+# byte-unit suffix, while an invalid earlier operand cannot be repaired later.
+compare_dd 'count returns to blocks' "$work/ten" 's/x/x/' bs=4 count=1B count=2 status=noxfer
+compare_dd 'count changes to bytes' "$work/ten" 's/x/x/' bs=4 count=2 count=3B status=noxfer
+compare_dd 'skip alias replaces unit' "$work/ten" 's/x/x/' bs=4 skip=1B iseek=2 status=noxfer
+compare_dd 'seek alias replaces unit' "$work/ten" 's/x/x/' bs=4 seek=1B oseek=2 status=noxfer
+compare_dd 'last block size dominates' "$work/ten" 's/x/x/' bs=2 ibs=3 bs=4 obs=7 status=noxfer
+compare_dd_reject 'earlier invalid block size' bs=bad bs=4 status=none
+compare_dd_reject 'earlier invalid quantity' count=bad count=1 status=none
+compare_dd_reject 'earlier invalid cbs' cbs=bad cbs=1 status=none
+
 #       conv=sync pads the short block out to the input size, which turns a
 #       partial record in into a whole record out.
 compare_dd 'conv sync'        "$work/ten"  's/x/x/' bs=16 conv=sync status=noxfer

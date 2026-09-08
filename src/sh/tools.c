@@ -6773,6 +6773,8 @@ static b32 tools_dd(void)
         positive count = TEXT_UNSET;
         positive skip = 0;
         positive seek = 0;
+        // cbs has no effect until block or unblock is chosen,
+        // but it remains a number and nonsense must not pass.
         positive cbs = 0;
         positive conv = 0;
         positive iflags = 0;
@@ -6783,6 +6785,21 @@ static b32 tools_dd(void)
         bool skip_bytes = false;
         bool seek_bytes = false;
         b32 status = 0;
+        struct {
+                string_address name;
+                positive address_to value;
+                bool address_to bytes, address_to seen;
+        } numbers[] = {
+            {"ibs", &ibs, null, null},
+            {"obs", &obs, null, null},
+            {"bs", &bs, null, &bs_set},
+            {"count", &count, &count_bytes, &count_set},
+            {"skip", &skip, &skip_bytes, null},
+            {"iseek", &skip, &skip_bytes, null},
+            {"seek", &seek, &seek_bytes, null},
+            {"oseek", &seek, &seek_bytes, null},
+            {"cbs", &cbs, null, null},
+        };
 
         text_begin("dd");
 
@@ -6804,49 +6821,24 @@ static b32 tools_dd(void)
                 string_address argument = program_argument(i);
                 string_address value;
 
-                if (dd_operand(argument, "if", address_of value))
+                positive n = 0;
+
+                while (n < array_count(numbers) &&
+                       !dd_operand(argument, numbers[n].name, address_of value))
+                        n++;
+                if (n < array_count(numbers))
+                {
+                        if (numbers[n].bytes
+                                ? !dd_quantity(value, numbers[n].value, numbers[n].bytes)
+                                : !dd_size(value, numbers[n].value))
+                                return text_error(argument, "invalid number"), 1;
+                        if (numbers[n].seen)
+                                *numbers[n].seen = true;
+                }
+                else if (dd_operand(argument, "if", address_of value))
                         input = value;
                 else if (dd_operand(argument, "of", address_of value))
                         output = value;
-                else if (dd_operand(argument, "ibs", address_of value))
-                {
-                        if (!dd_size(value, address_of ibs))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "obs", address_of value))
-                {
-                        if (!dd_size(value, address_of obs))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "bs", address_of value))
-                {
-                        if (!dd_size(value, address_of bs))
-                                return text_error(argument, "invalid number"), 1;
-
-                        bs_set = true;
-                }
-                else if (dd_operand(argument, "count", address_of value))
-                {
-                        if (!dd_quantity(value, address_of count,
-                                         address_of count_bytes))
-                                return text_error(argument, "invalid number"), 1;
-
-                        count_set = true;
-                }
-                else if (dd_operand(argument, "skip", address_of value) ||
-                         dd_operand(argument, "iseek", address_of value))
-                {
-                        if (!dd_quantity(value, address_of skip,
-                                         address_of skip_bytes))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "seek", address_of value) ||
-                         dd_operand(argument, "oseek", address_of value))
-                {
-                        if (!dd_quantity(value, address_of seek,
-                                         address_of seek_bytes))
-                                return text_error(argument, "invalid number"), 1;
-                }
                 else if (dd_operand(argument, "status", address_of value))
                 {
                         if (string_equals(value, "none"))
@@ -6872,13 +6864,6 @@ static b32 tools_dd(void)
                 {
                         if (!dd_flags(value, 2, address_of oflags))
                                 return 1;
-                }
-                else if (dd_operand(argument, "cbs", address_of value))
-                {
-                        // cbs has no effect until block or unblock is chosen,
-                        // but it remains a number and nonsense must not pass.
-                        if (!dd_size(value, address_of cbs))
-                                return text_error(argument, "invalid number"), 1;
                 }
                 else
                 {

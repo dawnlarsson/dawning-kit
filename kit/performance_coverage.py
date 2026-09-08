@@ -80,7 +80,7 @@ cover('direct_benchmark', 'kit/bench_codec.c', '''
 memory_encode_power2 memory_decode_power2
 ''', 'bounded codec quanta against independent scalar bit loops; native timing required')
 
-cover('correctness_only', 'test/codec.c', 'memory_into_hex_case',
+cover('correctness_only', 'test/checks.c#CHECK_codec', 'memory_into_hex_case',
       'case-selectable entry shares the existing hexadecimal assembly core')
 
 cover('direct_benchmark', 'kit/bench_padded.c', '''
@@ -234,7 +234,7 @@ memory_sum_bytes memory_checksum_bsd16
 
 # Direct correctness references in the exhaustive assembly verifier. None of
 # these references supplies isolated timing evidence.
-cover('correctness_only', 'test/verify.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_verify', '''
 bipolar_into bipolar_into_string bipolar_to_string byte_class_holds
 byte_class_index decimal_to_string fast_sin file_close file_get_status
 file_load file_new file_read file_valid file_write memory memory_copy_end
@@ -253,44 +253,44 @@ string_span_max string_table_find string_to_bipolar string_to_positive
 wait_status_code_base working_directory_get working_directory_set writer_fill
 ''', 'direct correctness coverage in the assembly verifier')
 
-cover('correctness_only', 'test/needle.c', 'memory_search_prepare',
+cover('correctness_only', 'test/checks.c#CHECK_needle', 'memory_search_prepare',
       'prepared-anchor ABI and empty, one-byte, long, exact and folded needles on all architectures')
 
-cover('correctness_only', 'test/utf8.c', 'memory_utf8_span',
+cover('correctness_only', 'test/checks.c#CHECK_utf8', 'memory_utf8_span',
       'bounded scalar reference, invalid sequences, alignment and guard pages '
       'on all architecture floors; no isolated timing claim')
 
-cover('correctness_only', 'test/number.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_number', '''
 string_to_number_checked string_to_number_unsigned_checked
 ''', 'single-scan overflow status, end pointers, and folded/dynamic parity; '
      'no shipped isolated timing harness')
 
-cover('correctness_only', 'test/verify.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_verify', '''
 file_new_lazy library_close library_get library_open shell_set_cursor
 ''', 'focused ABI, error-path and writer-output coverage on all three architectures')
 
 # Indirect correctness anchors and focused subsystem tests. The anchor is named
 # separately whenever the private/helper routine itself is not in the test.
-cover('correctness_only', 'test/verify.c', 'bipolar_into_core file_unload',
+cover('correctness_only', 'test/checks.c#CHECK_verify', 'bipolar_into_core file_unload',
       'correctness exercised through a public wrapper, not timed',
       {'bipolar_into_core': 'bipolar_into', 'file_unload': 'file_close'})
-cover('correctness_only', 'test/slurp.c', 'file_slurp',
+cover('correctness_only', 'test/checks.c#CHECK_slurp', 'file_slurp',
       'focused file-slurp correctness and error-path test')
-cover('correctness_only', 'test/socket.c', 'host_into string_to_host',
+cover('correctness_only', 'test/checks.c#CHECK_socket', 'host_into string_to_host',
       'focused socket conversion correctness test')
-cover('correctness_only', 'test/writer_buffer.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_writer_buffer', '''
 log_direct log_failed log_failure_reset log_flush
 ''', 'focused deferred, flush, direct, sticky and reset failure checks')
-cover('correctness_only', 'test/probe.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_probe', '''
 log_error program_argument program_argument_count term_size
 ''', 'focused runtime/probe behavior checks; no isolated timing')
-cover('correctness_only', 'test/wait_retry.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_wait_retry', '''
 system_read_retry system_wait4_retry system_write_all wait_status_code
 ''', 'focused retry/status correctness and signal-interruption checks')
-cover('correctness_only', 'test/stream.c', 'system_write_all_checked',
+cover('correctness_only', 'test/checks.c#CHECK_stream', 'system_write_all_checked',
       'checked aggregate ABI, partial writes and errno on all three floors; '
       'no shipped isolated timing harness')
-cover('correctness_only', 'test/native_reserve.c', '''
+cover('correctness_only', 'test/checks.c#CHECK_native_reserve', '''
 memory_growth memory_release
 ''', 'exact lifted ARM64 growth, overflow, failure and release checks')
 

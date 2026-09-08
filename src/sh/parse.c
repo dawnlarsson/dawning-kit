@@ -174,7 +174,6 @@ static b32 parse_redirect_used;
 static b32 parse_redirect_top;
 
 static p8 parse_kept_text[PARSE_KEPT_TEXT];
-static positive parse_kept_used;
 
 #define PARSE_OK 0
 #define PARSE_INCOMPLETE 1
@@ -2492,238 +2491,213 @@ b32 parse_program()
         return root;
 }
 
-/*
-        A subtree moved out of the way of the next line.
-
-        Everything above is thrown away when the line has run, and a function
-        body must not be. The copy goes to the far end of the same three arrays
-        and the text to storage of its own, so the tree the executor walks a
-        hundred lines later points at nothing that has been reused.
-
-        The far end is a stack, and one definition is one contiguous block in
-        each of the four arenas. Where a block ends is therefore enough to say
-        whether it is the last one taken, and where it began is enough to give
-        it back -- which is what a redefinition does with the body it replaces.
-*/
+/* Retained bodies own independent ranges in the existing arenas. Occupancy
+   maps make adjacent free ranges one gap without moving a live node or word.
+   A definition and every active call each hold the immutable body, so unset
+   or replacement cannot discard the tail that an older call still walks. */
 typedef struct
 {
-        b32 node, word, redirect;
-        positive text;
-} parse_marks;
+        b32 start[4], count[4];
+        positive references;
+} parse_kept_body;
 
-fn parse_mark(parse_marks address_to marks)
+static parse_kept_body parse_kept_bodies[PARSE_NODES];
+static b8 parse_node_kept[PARSE_NODES], parse_word_kept[PARSE_WORDS];
+static b8 parse_redirect_kept[PARSE_REDIRECTS], parse_text_kept[PARSE_KEPT_TEXT];
+static const struct
 {
-        marks->node = parse_node_top;
-        marks->word = parse_word_top;
-        marks->redirect = parse_redirect_top;
-        marks->text = parse_kept_used;
+        b8 address_to occupied;
+        b32 room;
+} parse_kept_arenas[] = {
+    {parse_node_kept, PARSE_NODES}, {parse_word_kept, PARSE_WORDS},
+    {parse_redirect_kept, PARSE_REDIRECTS}, {parse_text_kept, PARSE_KEPT_TEXT},
+};
+
+static fn parse_kept_mark(parse_kept_body address_to body, p8 occupied)
+{
+        for (positive i = 0; i < array_count(parse_kept_arenas); i++)
+                memory_fill(parse_kept_arenas[i].occupied + body->start[i],
+                            occupied, body->count[i]);
 }
 
-static fn parse_give_back(parse_marks address_to from)
+static fn parse_kept_frontiers()
 {
-        parse_node_top = from->node;
-        parse_word_top = from->word;
-        parse_redirect_top = from->redirect;
-        parse_kept_used = from->text;
+        parse_node_top = memory_span_byte(parse_node_kept, 0, PARSE_NODES);
+        parse_word_top = memory_span_byte(parse_word_kept, 0, PARSE_WORDS);
+        parse_redirect_top = memory_span_byte(parse_redirect_kept, 0, PARSE_REDIRECTS);
 }
 
-// A block still on top of the stack, taken back. One that is not stays where
-// it is: its space is lost, and nothing that points into it is.
-bool parse_release(parse_marks address_to from, parse_marks address_to to)
+static fn parse_release(b32 index)
 {
-        if (parse_node_top != to->node || parse_word_top != to->word ||
-            parse_redirect_top != to->redirect || parse_kept_used != to->text)
+        if (!index || --parse_kept_bodies[index].references)
+                return;
+        parse_kept_body address_to body = parse_kept_bodies + index;
+        parse_kept_mark(body, 0);
+        // Compound-assignment lookup scans the retained word region. A free
+        // word must not masquerade as text later reused by another body.
+        memory_fill(parse_words + body->start[1], 0,
+                    body->count[1] * sizeof(parse_words[0]));
+        parse_kept_frontiers();
+}
+
+static bool parse_keep_amount(parse_kept_body address_to body, positive arena,
+                              positive amount)
+{
+        if (amount > (positive)(parse_kept_arenas[arena].room - body->count[arena]))
                 return false;
-
-        parse_give_back(from);
-
+        body->count[arena] += (b32)amount;
         return true;
 }
 
-static string_address parse_keep_text(string_address text, positive length)
+static bool parse_keep_measure(b32 index, parse_kept_body address_to body)
 {
-        if (parse_kept_used >= PARSE_KEPT_TEXT ||
-            length >= PARSE_KEPT_TEXT - parse_kept_used)
-                return null;
+        if (!index)
+                return true;
+        parse_node address_to node = parse_nodes + index;
+        if (!parse_keep_amount(body, 0, 1) ||
+            !parse_keep_amount(body, 1, node->word_count) ||
+            !parse_keep_amount(body, 2, node->redirect_count))
+                return false;
+        for (b32 i = 0; i < node->word_count; i++)
+        {
+                positive length = parse_word_lengths[node->word + i];
+                if (length >= PARSE_KEPT_TEXT || !parse_keep_amount(body, 3, length + 1))
+                        return false;
+        }
+        for (b32 i = 0; i < node->redirect_count; i++)
+        {
+                parse_redirect address_to redirect = parse_redirects + node->redirect + i;
+                if (redirect->text_length >= PARSE_KEPT_TEXT ||
+                    !parse_keep_amount(body, 3, redirect->text_length + 1) ||
+                    (redirect->body_length && (redirect->body_length >= PARSE_KEPT_TEXT ||
+                     !parse_keep_amount(body, 3, redirect->body_length + 1))))
+                        return false;
+        }
+        return parse_keep_measure(node->left, body) &&
+               parse_keep_measure(node->right, body) &&
+               parse_keep_measure(node->extra, body) &&
+               parse_keep_measure(node->next, body);
+}
 
-        string_address kept = parse_kept_text + parse_kept_used;
+// Choose the highest fitting gap, leaving the low end for transient parsing.
+static b32 parse_keep_reserve(positive arena, b32 count, b32 floor)
+{
+        if (!count)
+                return 0;
+        b8 address_to occupied = parse_kept_arenas[arena].occupied;
+        b32 room = parse_kept_arenas[arena].room;
+        b32 chosen = -1;
+        for (b32 at = floor; at < room;)
+        {
+                at += memory_span_without_byte(occupied + at, 0, room - at);
+                b32 free = memory_span_byte(occupied + at, 0, room - at);
+                if (free >= count)
+                        chosen = at + free - count;
+                at += free;
+        }
+        if (chosen >= 0)
+                memory_fill(occupied + chosen, 1, count);
+        return chosen;
+}
+
+static string_address parse_keep_text(b32 address_to cursor, string_address text,
+                                      positive length)
+{
+        string_address kept = parse_kept_text + cursor[3];
         memory_copy_end(kept, text, length);
-        parse_kept_used += length + 1;
+        cursor[3] += (b32)length + 1;
         return kept;
 }
 
-static b32 parse_keep_words(b32 first, b32 count)
+/* Measurement and all four reservations precede this copy. It cannot fail,
+   and its source is either below the transient frontier or held by a call. */
+static b32 parse_keep_tree(b32 index, b32 address_to cursor)
 {
-        b32 base;
-        b32 index;
-
-        if (!count)
-                return 0;
-
-        if (parse_word_top - count <= parse_word_used)
-                return -1;
-
-        parse_word_top -= count;
-        base = parse_word_top;
-
-        for (index = 0; index < count; index++)
-        {
-                positive text_length = parse_word_lengths[first + index];
-                string_address kept = parse_keep_text(parse_words[first + index],
-                                                       text_length);
-
-                if (!kept)
-                        return -1;
-
-                parse_words[base + index] = kept;
-                parse_word_lengths[base + index] = text_length;
-                parse_word_name_lengths[base + index] =
-                    parse_word_name_lengths[first + index];
-                parse_word_name_hashes[base + index] =
-                    parse_word_name_hashes[first + index];
-                parse_word_flags[base + index] = parse_word_flags[first + index];
-        }
-
-        return base;
-}
-
-static b32 parse_keep_redirects(b32 first, b32 count)
-{
-        b32 base;
-        b32 index;
-
-        if (!count)
-                return 0;
-
-        if (parse_redirect_top - count <= parse_redirect_used)
-                return -1;
-
-        parse_redirect_top -= count;
-        base = parse_redirect_top;
-
-        for (index = 0; index < count; index++)
-        {
-                parse_redirects[base + index] = parse_redirects[first + index];
-
-                parse_redirects[base + index].text = parse_keep_text(
-                    parse_redirects[first + index].text,
-                    parse_redirects[first + index].text_length);
-
-                if (!parse_redirects[base + index].text)
-                        return -1;
-
-                // A here-document body lives in storage the next line reuses,
-                // so a kept redirection carries a copy of its own -- taken
-                // from the kept text again when the command it belongs to
-                // was itself kept, which is a function defined inside one:
-                // an offset into the kept text read against here_text is a
-                // body from some other line, or none.
-                if (parse_redirects[first + index].body_length)
-                {
-                        positive body = parse_kept_used;
-
-                        if (!parse_keep_text((parse_redirects[first + index].kept
-                                             ? parse_kept_text
-                                             : here_text) +
-                                            parse_redirects[first + index].body,
-                                             parse_redirects[first + index].body_length))
-                                return -1;
-
-                        parse_redirects[base + index].body = body;
-                        parse_redirects[base + index].kept = true;
-                }
-        }
-
-        return base;
-}
-
-/*
-        Whether the copy ran out anywhere in it.
-
-        Nought is a child that is not there as much as a child that would not
-        fit, and the recursion below hands its parent one for the other. A
-        body whose loop failed to copy came back as a body that does nothing,
-        and the definition was recorded as good.
-*/
-static bool parse_keep_short;
-
-static b32 parse_keep_tree(b32 index)
-{
-        b32 copy;
-
         if (!index)
                 return 0;
-
-        if (parse_node_top - 1 <= parse_node_used)
+        b32 copy = cursor[0]++;
+        parse_node address_to from = parse_nodes + index;
+        parse_node address_to into = parse_nodes + copy;
+        *into = *from;
+        if (from->word_count)
+                into->word = cursor[1];
+        for (b32 i = 0; i < from->word_count; i++)
         {
-                parse_keep_short = true;
-                return 0;
+                b32 source = from->word + i;
+                b32 target = cursor[1]++;
+                parse_words[target] = parse_keep_text(cursor, parse_words[source],
+                                                       parse_word_lengths[source]);
+                parse_word_lengths[target] = parse_word_lengths[source];
+                parse_word_name_lengths[target] = parse_word_name_lengths[source];
+                parse_word_name_hashes[target] = parse_word_name_hashes[source];
+                parse_word_flags[target] = parse_word_flags[source];
         }
-
-        copy = --parse_node_top;
-        parse_nodes[copy] = parse_nodes[index];
-
-        if (parse_nodes[index].word_count)
+        if (from->redirect_count)
+                into->redirect = cursor[2];
+        for (b32 i = 0; i < from->redirect_count; i++)
         {
-                b32 base = parse_keep_words(parse_nodes[index].word,
-                                            parse_nodes[index].word_count);
-
-                if (base < 0)
+                parse_redirect address_to source = parse_redirects + from->redirect + i;
+                parse_redirect address_to target = parse_redirects + cursor[2]++;
+                *target = *source;
+                target->text = parse_keep_text(cursor, source->text, source->text_length);
+                if (source->body_length)
                 {
-                        parse_keep_short = true;
-                        return 0;
+                        target->body = cursor[3];
+                        parse_keep_text(cursor, (source->kept ? parse_kept_text : here_text) +
+                                        source->body, source->body_length);
+                        target->kept = true;
                 }
-
-                parse_nodes[copy].word = base;
         }
-
-        if (parse_nodes[index].redirect_count)
-        {
-                b32 base = parse_keep_redirects(parse_nodes[index].redirect,
-                                                parse_nodes[index].redirect_count);
-
-                if (base < 0)
-                {
-                        parse_keep_short = true;
-                        return 0;
-                }
-
-                parse_nodes[copy].redirect = base;
-        }
-
-        parse_nodes[copy].left = parse_keep_tree(parse_nodes[index].left);
-        parse_nodes[copy].right = parse_keep_tree(parse_nodes[index].right);
-        parse_nodes[copy].extra = parse_keep_tree(parse_nodes[index].extra);
-        parse_nodes[copy].next = parse_keep_tree(parse_nodes[index].next);
-
+        into->left = parse_keep_tree(from->left, cursor);
+        into->right = parse_keep_tree(from->right, cursor);
+        into->extra = parse_keep_tree(from->extra, cursor);
+        into->next = parse_keep_tree(from->next, cursor);
         return copy;
 }
 
-/*
-        The same copy, and the marks it ends on.
-
-        The recursion gives up wherever it runs out, which leaves four tops
-        somewhere in the middle of a tree that will never be walked. Putting
-        them back is what turns running out into a message: without it the
-        space was gone for good and, worse, the next definition was written
-        into the middle of the one that failed.
-*/
-b32 parse_keep(b32 index, parse_marks address_to marks)
+/* A uniquely held old body can contribute its space without risking a
+   partial overwrite: reserve every destination before clearing or copying.
+   A failed reservation restores its occupancy and leaves the definition live. */
+static b32 parse_keep(b32 index, b32 replaced)
 {
-        parse_marks before;
-        b32 copy;
-
-        parse_mark(address_of before);
-        parse_keep_short = false;
-        copy = parse_keep_tree(index);
-
-        if (parse_keep_short)
-                copy = 0;
-
-        if (!copy)
-                parse_give_back(address_of before);
-
-        parse_mark(marks);
-
+        parse_kept_body made = {0};
+        if (!index || !parse_keep_measure(index, &made))
+                return 0;
+        parse_kept_body previous = parse_kept_bodies[replaced];
+        bool reuse = replaced && previous.references == 1;
+        if (reuse)
+                parse_kept_mark(&previous, 0);
+        b32 floors[] = {parse_node_used + 1, parse_word_used + 1,
+                        parse_redirect_used + 1, 0};
+        positive arena = 0;
+        for (; arena < array_count(parse_kept_arenas); arena++)
+        {
+                made.start[arena] = parse_keep_reserve(arena, made.count[arena], floors[arena]);
+                if (made.start[arena] < 0)
+                        break;
+        }
+        if (arena < array_count(parse_kept_arenas))
+        {
+                while (arena--)
+                        memory_fill(parse_kept_arenas[arena].occupied + made.start[arena],
+                                    0, made.count[arena]);
+                if (reuse)
+                        parse_kept_mark(&previous, 1);
+                return 0;
+        }
+        if (reuse)
+        {
+                memory_fill(parse_words + previous.start[1], 0,
+                            previous.count[1] * sizeof(parse_words[0]));
+                parse_kept_bodies[replaced].references = 0;
+        }
+        else
+                parse_release(replaced);
+        b32 cursor[4];
+        memory_copy(cursor, made.start, sizeof(cursor));
+        b32 copy = parse_keep_tree(index, cursor);
+        made.references = 1;
+        parse_kept_bodies[copy] = made;
+        parse_kept_frontiers();
         return copy;
 }

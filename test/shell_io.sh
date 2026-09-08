@@ -1,6 +1,6 @@
 #!/bin/sh
 #
-# Focused read/printf builtin compatibility at option, numeric and I/O error
+# Focused read/mapfile/printf compatibility at option, numeric and I/O error
 # boundaries.
 #
 #     sh test/shell_io.sh [moonwater-shell]
@@ -190,6 +190,37 @@ for data in 'a\\:b:tail' 'a\\\nb:tail' 'a:b\nrest' '\\' ''; do
                 case_compare "read byte transitions $option/$data" "$B" "$MB" \
                         "printf '%b' '$data' | { read $option a b; printf '%s:<%s>:<%s>\n' \"\$?\" \"\$a\" \"\$b\"; }"
         done
+done
+
+group mapfile
+mkfifo "$work/mapfile-ready"
+case_compare 'mapfile limited pipe completes before producer EOF' "$B" "$MB" \
+        "{ printf 'first\\n'; read -r ready < '$work/mapfile-ready'; } | { mapfile -tn 1 a; printf 'done\\n' > '$work/mapfile-ready'; printf '%s\\n' \"\${a[0]}\"; }"
+case_compare 'mapfile explicit zero origin preserves tail' "$B" "$MB" \
+        'a=(old keep); mapfile -t -O 0 a <<< new; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile implicit closed stdin compatibility' "$B" "$MB" \
+        'a=(old keep); mapfile a <&-; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile explicit closed descriptor preserves array' "$B" "$MB" \
+        'a=(old keep); mapfile -u 0 a <&-; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile wide descriptor cannot wrap to stdin' "$B" "$MB" \
+        'a=(old keep); mapfile -u 4294967296 a < /dev/null; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile overflowing descriptor preserves array' "$B" "$MB" \
+        'a=(old keep); mapfile -u 999999999999999999999999 a < /dev/null; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile open descriptor read-error compatibility' "$B" "$MB" \
+        'a=(old keep); mapfile a < .; printf "%s:%s\n" "$?" "${#a[@]}"; exec 3>/dev/null; a=(old); mapfile -u 3 a; printf "%s:%s\n" "$?" "${#a[@]}"'
+case_compare 'mapfile readonly leaves input unread' "$B" "$MB" \
+        'printf "first\nsecond\n" | { a=(old keep); readonly a; mapfile -tn 1 a; echo "$?"; read -r rest; printf "%s:%s\n" "${a[*]}" "$rest"; }'
+case_compare 'mapfile associative target leaves input unread' "$B" "$MB" \
+        'printf "first\nsecond\n" | { declare -A a=([old]=keep); mapfile -tn 1 a; echo "$?"; read -r rest; printf "%s:%s\n" "${a[old]}" "$rest"; }'
+case_compare 'mapfile nameref preserves indexed target tail' "$B" "$MB" \
+        'a=(old keep); declare -n ref=a; mapfile -tO 0 ref <<< new; printf "%s:%s\n" "$?" "${a[*]}"'
+case_compare 'mapfile nameref rejects readonly target' "$B" "$MB" \
+        'a=(old keep); readonly a; declare -n ref=a; mapfile -t ref <<< new; printf "%s:%s\n" "$?" "${a[*]}"'
+for options in '-tn 1' '-tn 2 -s 1' '-n 1 -d :' '-tn 1 -d ""'; do
+        case_compare "mapfile pipe remainder $options" "$B" "$MB" \
+                "printf 'first\\nsecond\\nthird:fourth\\000last\\n' | { mapfile $options a; printf '<%s>\\n' \"\${a[@]}\"; cat; }"
+        case_compare "mapfile file remainder $options" "$B" "$MB" \
+                "printf 'first\\nsecond\\nthird:fourth\\000last\\n' > '$work/records'; exec 3<'$work/records'; mapfile -u 3 $options a; printf '<%s>\\n' \"\${a[@]}\"; cat <&3"
 done
 
 section ""
