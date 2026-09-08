@@ -740,6 +740,15 @@ def option_ledger(rows, case):
 # ----------------------------------------------------------------------------
 
 def load_spec(domain):
+    """The grammar of one domain: inlined below when SPECS exists, else a
+    spec_<domain>.py module beside this file while a grammar is being written."""
+    specs = globals().get("SPECS")
+    if specs is not None and domain in specs:
+        utilities, families = specs[domain]
+        namespace = type("Spec", (), {})()
+        namespace.UTILITIES = utilities
+        namespace.FAMILIES = families
+        return namespace
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
     try:
@@ -845,10 +854,18 @@ def main(argv=None):
                              "the block at the end of this program")
     parser.add_argument("--list", action="store_true", help="print the cases and stop")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--harness", nargs=argparse.REMAINDER,
+                        help="run one of the folded standalone checks: --harness NAME [ARGS]")
     args = parser.parse_args(argv)
 
     if args.self_test:
         return self_test()
+    if args.harness is not None:
+        entry = globals().get("harness_entry")
+        if entry is None:
+            parser.error("no harness is folded into this file")
+        sys.argv = [sys.argv[0]] + args.harness
+        return entry()
     if args.pins:
         globals()["PIN_FILE"] = args.pins.resolve()
     if not args.farm and not args.list:
@@ -1213,6 +1230,8 @@ def self_test():
             globals_["PIN_FILE"] = pins
             sys.path.insert(0, str(spec_dir))
             sys.modules.pop("spec_text", None)
+            saved_specs = globals_.get("SPECS")
+            globals_["SPECS"] = None
             try:
                 import io
                 import contextlib
@@ -1250,6 +1269,7 @@ def self_test():
                 self.assertIn("recorded", out.getvalue())
             finally:
                 globals_["PIN_FILE"] = saved
+                globals_["SPECS"] = saved_specs
                 sys.path.remove(str(spec_dir))
                 sys.modules.pop("spec_text", None)
 
@@ -1263,6 +1283,8 @@ def self_test():
             sys.modules.pop("spec_text", None)
             old = os.environ.get("TEST_TALLY")
             os.environ["TEST_TALLY"] = str(tally)
+            saved_specs = globals().get("SPECS")
+            globals()["SPECS"] = None
             try:
                 import io
                 import contextlib
@@ -1272,6 +1294,7 @@ def self_test():
                 self.assertEqual(status, 0)
                 self.assertRegex(tally.read_text(), r"text-echoer (\d+) \1\n")
             finally:
+                globals()["SPECS"] = saved_specs
                 if old is None:
                     del os.environ["TEST_TALLY"]
                 else:
