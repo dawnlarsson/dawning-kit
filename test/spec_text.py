@@ -1,0 +1,32 @@
+"""Seed grammar for the text utilities; the text agent replaces this."""
+from differential import Utility, Option
+
+UTILITIES = (
+    Utility("cat", options=(Option("-n"), Option("-b"), Option("-s"), Option("-E"), Option("-T"),
+                            Option("-v"), Option("-A"), Option("-e"), Option("-t"), Option("-u")),
+            operands=((), ("a.txt",), ("a.txt", "b.txt"), ("-",), ("a.txt", "-", "b.txt"), ("nonl",),
+                      ("empty",), ("missing",), ("dir",), ("binary",)),
+            stdin=("text", "empty", "nonl", "blanks", "tabs", "controls", "high", "edge_65536", "blank_runs")),
+    Utility("wc", options=(Option("-l"), Option("-w"), Option("-c"), Option("-m"), Option("-L")),
+            operands=((), ("a.txt",), ("a.txt", "b.txt", "empty"), ("-",), ("missing",), ("dir",)),
+            stdin=("text", "empty", "nonl", "tabs", "high", "long", "edge_65535")),
+    Utility("head", options=(Option("-n", ("0", "1", "2", "-1", "-2", "100"), None), Option("-c", ("0", "1", "5", "-3", "70000"), None),
+                             Option("-q"), Option("-v"), Option("-z")),
+            operands=((), ("a.txt",), ("a.txt", "b.txt"), ("-", "a.txt"), ("missing",), ("empty",)),
+            stdin=("text", "empty", "nonl", "nul", "edge_65537", "many_lines")),
+    Utility("tail", options=(Option("-n", ("0", "1", "2", "+2", "+1", "100"), None), Option("-c", ("0", "1", "5", "+3", "70000"), None),
+                             Option("-q"), Option("-v"), Option("-z")),
+            operands=((), ("a.txt",), ("a.txt", "b.txt"), ("-", "a.txt"), ("missing",), ("empty",)),
+            stdin=("text", "empty", "nonl", "nul", "edge_65537", "many_lines")),
+    Utility("rev", operands=((), ("a.txt",), ("a.txt", "nonl"), ("missing",)),
+            stdin=("text", "empty", "nonl", "high", "long", "edge_65536")),
+    Utility("uniq", options=(Option("-c"), Option("-d"), Option("-u"), Option("-i"), Option("-z"),
+                             Option("-f", ("1", "2"), None), Option("-s", ("1", "3"), None), Option("-w", ("1", "3"), None),
+                             Option("-D"), Option("--group", ("prepend", "append", "both", "separate"), True)),
+            operands=((), ("repeats",), ("repeats", "-"), ("repeats", "out"), ("missing",)),
+            stdin=("repeats", "text", "empty", "nonl", "mixed_case", "nul", "edge_65536")),
+    Utility("tr", options=(Option("-d"), Option("-s"), Option("-c"), Option("-C"), Option("-t")),
+            operands=(("a-z", "A-Z"), ("a", "b"), ("abc", "x"), ("[:lower:]", "[:upper:]"), ("\\n", " "),
+                      ("a-c", "\\0"), ("[:space:]",), ("a",), (), ("a", "b", "c"), ("[a*3]", "xyz"), ("z-a", "b")),
+            stdin=("text", "empty", "nonl", "high", "nul", "edge_65537", "spaces")),
+)
