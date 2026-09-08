@@ -6566,6 +6566,23 @@ static b32 util_linux_setpgid()
         return ul_exec(taking.first, "setpgid");
 }
 
+/* util-linux omits .0 from binary sizes; dd retains the shared nearest
+   formatter's decimal spelling. The trim includes the overlapping tail. */
+static fn ul_human_size(p8 address_to into, positive bytes)
+{
+        positive length = positive_into_human_nearest_string(into, bytes,
+                                                              true);
+
+        for (positive at = 0; at + 2 < length; at++)
+                if (into[at] == '.' && into[at + 1] == '0' &&
+                    into[at + 2] == ' ')
+                {
+                        memory_copy(into + at, into + at + 2,
+                                          length - at - 1);
+                        break;
+                }
+}
+
 static const file_long ul_fallocate_longs[] = {
     {(string_address)"collapse-range", 'c'},
     {(string_address)"insert-range", 'i'},
@@ -6681,20 +6698,7 @@ static b32 util_linux_fallocate()
         if (flags & FILE_FLAG('v'))
         {
                 p8 human[16];
-                positive human_length =
-                    positive_into_human_nearest_string(human, length, true);
-
-                /* util-linux omits a meaningless trailing decimal zero: its
-                   8192-byte spelling is "8 KiB", while the shared nearest
-                   formatter intentionally says "8.0 KiB" for dd. */
-                for (positive at = 0; at + 2 < human_length; at++)
-                        if (human[at] == '.' && human[at + 1] == '0' &&
-                            human[at + 2] == ' ')
-                        {
-                                memory_copy_apart(human + at, human + at + 2,
-                                                  human_length - at - 1);
-                                break;
-                        }
+                ul_human_size(human, length);
 
                 string_format(log, "%s: %s (", path, human);
                 positive_to_string(log, length);
@@ -9088,20 +9092,6 @@ static bool ul_swap_uuid(string_address text, tools_uuid address_to uuid,
         return true;
 }
 
-static fn ul_swap_human(p8 address_to into, positive bytes)
-{
-        positive length = positive_into_human_nearest_string(into, bytes,
-                                                              true);
-
-        for (positive at = 0; at + 2 < length; at++)
-                if (into[at] == '.' && into[at + 1] == '0' &&
-                    into[at + 2] == ' ')
-                {
-                        memory_copy_apart(into + at, into + at + 2,
-                                          length - at - 1);
-                        break;
-                }
-}
 
 static const file_long ul_mkswap_longs[] = {
     {"check", 'c'}, {"force", 'f'}, {"quiet", 'q'},
@@ -9253,7 +9243,7 @@ static b32 util_linux_mkswap()
                 positive usable = (positive)((pages - 1) * page);
                 p8 human[24];
                 p8 uuid_out[37];
-                ul_swap_human(human, usable);
+                ul_human_size(human, usable);
                 storage_uuid_bytes(uuid_out, uuid.bytes);
                 string_format(log,
                               "Setting up swapspace version 1, size = %s (%p bytes)\n",
@@ -9480,12 +9470,17 @@ static bool ul_lscpu_set_read(string_address path, positive address_to set)
                ul_cpu_list(text, set);
 }
 
+static bool ul_lscpu_failed;
+
 static string_address ul_lscpu_keep(string_address text)
 {
         positive length = string_length(text);
         p8 address_to copy = text_arena_take(length + 1);
         if (!copy)
+        {
+                ul_lscpu_failed = true;
                 return (string_address)"";
+        }
         memory_copy(copy, text, length + 1);
         return copy;
 }
@@ -9953,13 +9948,24 @@ static const ul_table_column ul_lscpu_summary_columns[] = {
     {"data", "DATA", 0, false, UL_TABLE_STRING},
 };
 
-static fn ul_lscpu_summary_add(ul_lscpu_summary_item address_to items,
-                               positive address_to count,
+typedef struct
+{
+        ul_lscpu_summary_item address_to items;
+        positive count, room;
+} ul_lscpu_summary_rows;
+
+static fn ul_lscpu_summary_add(ul_lscpu_summary_rows address_to rows,
                                string_address field, string_address data)
 {
-        if (data && string_get(data))
-                items[(address_to count)++] =
-                    (ul_lscpu_summary_item){field, data};
+        if (ul_lscpu_failed || !data || !string_get(data))
+                return;
+        if (!array_arena_reserve(rows->items, rows->room, rows->count,
+                                 rows->count + 1, 96, text_arena_grow))
+        {
+                ul_lscpu_failed = true;
+                return;
+        }
+        rows->items[rows->count++] = (ul_lscpu_summary_item){field, data};
 }
 
 static string_address ul_lscpu_cache_size(positive size, bool bytes,
@@ -10048,35 +10054,31 @@ static string_address ul_lscpu_cache_summary(ul_lscpu_cache address_to cache,
 
 static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
 {
-        ul_lscpu_summary_item address_to items = text_arena_take(
-            96 * sizeof(ul_lscpu_summary_item));
-        if (!items)
-                return;
-        positive count = 0;
+        ul_lscpu_summary_rows rows = {0};
         ul_lscpu_info address_to info = address_of ul_lscpu.info;
 
-        ul_lscpu_summary_add(items, address_of count, "Architecture:",
+        ul_lscpu_summary_add(address_of rows, "Architecture:",
                              ul_lscpu.machine.machine);
-        ul_lscpu_summary_add(items, address_of count, "CPU op-mode(s):",
+        ul_lscpu_summary_add(address_of rows, "CPU op-mode(s):",
 #if X64 || X86
                              "32-bit, 64-bit"
 #else
                              "64-bit"
 #endif
         );
-        ul_lscpu_summary_add(items, address_of count, "Byte Order:",
+        ul_lscpu_summary_add(address_of rows, "Byte Order:",
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
                              "Little Endian"
 #else
                              "Big Endian"
 #endif
         );
-        ul_lscpu_summary_add(items, address_of count, "CPU(s):",
+        ul_lscpu_summary_add(address_of rows, "CPU(s):",
                              ul_lscpu_number(ul_lscpu.present_count));
 
         p8 set[FILE_PATH_MAX];
         ul_lscpu_set_text(set, sizeof(set), ul_lscpu_online, hex);
-        ul_lscpu_summary_add(items, address_of count,
+        ul_lscpu_summary_add(address_of rows,
                              "On-line CPU(s) list:", ul_lscpu_keep(set));
         for (positive i = 0; i < UL_CPU_WORDS; i++)
                 ul_lscpu_scratch_set[i] =
@@ -10084,63 +10086,63 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
         if (ul_lscpu_set_count(ul_lscpu_scratch_set))
         {
                 ul_lscpu_set_text(set, sizeof(set), ul_lscpu_scratch_set, hex);
-                ul_lscpu_summary_add(items, address_of count,
+                ul_lscpu_summary_add(address_of rows,
                                      "Off-line CPU(s) list:",
                                      ul_lscpu_keep(set));
         }
 
-        ul_lscpu_summary_add(items, address_of count, "Vendor ID:",
+        ul_lscpu_summary_add(address_of rows, "Vendor ID:",
                              info->vendor ? info->vendor
                                           : (string_address)"-");
-        ul_lscpu_summary_add(items, address_of count, "Model name:",
+        ul_lscpu_summary_add(address_of rows, "Model name:",
                              info->model_name ? info->model_name
                                               : (string_address)"-");
-        ul_lscpu_summary_add(items, address_of count, "CPU family:",
+        ul_lscpu_summary_add(address_of rows, "CPU family:",
                              info->family);
-        ul_lscpu_summary_add(items, address_of count, "Model:", info->model);
+        ul_lscpu_summary_add(address_of rows, "Model:", info->model);
         positive threads = ul_lscpu.core_count
                                ? ul_lscpu.present_count / ul_lscpu.core_count
                                : 1;
-        ul_lscpu_summary_add(items, address_of count, "Thread(s) per core:",
+        ul_lscpu_summary_add(address_of rows, "Thread(s) per core:",
                              ul_lscpu_number(max(threads, (positive)1)));
         if (ul_lscpu.socket_count)
         {
                 ul_lscpu_summary_add(
-                    items, address_of count, "Core(s) per socket:",
+                    address_of rows, "Core(s) per socket:",
                     ul_lscpu_number(ul_lscpu.core_count /
                                     ul_lscpu.socket_count));
-                ul_lscpu_summary_add(items, address_of count, "Socket(s):",
+                ul_lscpu_summary_add(address_of rows, "Socket(s):",
                                      ul_lscpu_number(ul_lscpu.socket_count));
         }
         else
-                ul_lscpu_summary_add(items, address_of count, "Socket(s):",
+                ul_lscpu_summary_add(address_of rows, "Socket(s):",
                                      "-");
         if (ul_lscpu.cluster_count)
         {
                 ul_lscpu_summary_add(
-                    items, address_of count, "Core(s) per cluster:",
+                    address_of rows, "Core(s) per cluster:",
                     ul_lscpu_number(ul_lscpu.core_count /
                                     ul_lscpu.cluster_count));
-                ul_lscpu_summary_add(items, address_of count, "Cluster(s):",
+                ul_lscpu_summary_add(address_of rows, "Cluster(s):",
                                      ul_lscpu_number(ul_lscpu.cluster_count));
         }
-        ul_lscpu_summary_add(items, address_of count, "Stepping:",
+        ul_lscpu_summary_add(address_of rows, "Stepping:",
                              info->stepping);
-        ul_lscpu_summary_add(items, address_of count, "Microcode version:",
+        ul_lscpu_summary_add(address_of rows, "Microcode version:",
                              info->microcode);
-        ul_lscpu_summary_add(items, address_of count, "BogoMIPS:",
+        ul_lscpu_summary_add(address_of rows, "BogoMIPS:",
                              info->bogomips);
-        ul_lscpu_summary_add(items, address_of count, "Flags:", info->flags);
+        ul_lscpu_summary_add(address_of rows, "Flags:", info->flags);
 
         if (info->flags &&
             (string_search(info->flags, " svm") ||
              !string_compare_max(info->flags, "svm ", 4)))
-                ul_lscpu_summary_add(items, address_of count, "Virtualization:",
+                ul_lscpu_summary_add(address_of rows, "Virtualization:",
                                      "AMD-V");
         else if (info->flags &&
                  (string_search(info->flags, " vmx") ||
                   !string_compare_max(info->flags, "vmx ", 4)))
-                ul_lscpu_summary_add(items, address_of count, "Virtualization:",
+                ul_lscpu_summary_add(address_of rows, "Virtualization:",
                                      "VT-x");
 
         for (positive i = 0; i < ul_lscpu.cache_count; i++)
@@ -10153,12 +10155,12 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 memory_copy(label, cache->name, used);
                 memory_copy(label + used, " cache:", 8);
                 label[used + 7] = end;
-                ul_lscpu_summary_add(items, address_of count,
+                ul_lscpu_summary_add(address_of rows,
                                      ul_lscpu_keep(label),
                                      ul_lscpu_cache_summary(cache, bytes));
         }
 
-        ul_lscpu_summary_add(items, address_of count, "NUMA node(s):",
+        ul_lscpu_summary_add(address_of rows, "NUMA node(s):",
                              ul_lscpu_number(ul_lscpu.node_count));
         for (positive i = 0; i < ul_lscpu.cpu_count; i++)
         {
@@ -10184,7 +10186,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                 used += positive_into_string(label + used, (positive)node);
                 memory_copy(label + used, " CPU(s):", 9);
                 label[used + 8] = end;
-                ul_lscpu_summary_add(items, address_of count,
+                ul_lscpu_summary_add(address_of rows,
                                      ul_lscpu_keep(label), ul_lscpu_keep(set));
         }
 
@@ -10193,7 +10195,7 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                            "/sys/devices/system/cpu/vulnerabilities"))
         {
                 struct linux_dirent64 address_to entry;
-                while (count < 96 && (entry = file_walk_next(address_of walk)))
+                while (rows.count < 96 && (entry = file_walk_next(address_of walk)))
                 {
                         string_address name = entry->d_name;
                         if (string_is(name, '.'))
@@ -10216,15 +10218,17 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                         }
                         label[used++] = ':';
                         label[used] = end;
-                        ul_lscpu_summary_add(items, address_of count,
+                        ul_lscpu_summary_add(address_of rows,
                                              ul_lscpu_keep(label),
                                              ul_lscpu_keep(value));
                 }
                 file_walk_close(address_of walk);
         }
 
+        if (ul_lscpu_failed)
+                return;
         p8 columns[] = {0, 1};
-        ul_table(json ? "lscpu" : null, items, count, ul_lscpu_summary_columns,
+        ul_table(json ? "lscpu" : null, rows.items, rows.count, ul_lscpu_summary_columns,
                  columns, array_count(columns), false, false, ul_lscpu_summary_field);
 }
 
@@ -10557,6 +10561,7 @@ static b32 util_linux_lscpu()
                     "lscpu", "physical-address/configured columns are not supported");
 
         text_arena_used = 0;
+        ul_lscpu_failed = false;
         if (!ul_lscpu_take())
                 return ul_bad_usage("lscpu", "cannot read CPU topology");
         ul_lscpu_columns[UL_LSCPU_CACHE].heading = ul_lscpu_cache_heading;
@@ -10629,7 +10634,7 @@ static b32 util_linux_lscpu()
                 }
         }
         log_flush();
-        return 0;
+        return ul_lscpu_failed ? 1 : 0;
 }
 
 // lsmem ------------------------------------------------------------
@@ -12192,16 +12197,16 @@ static b32 util_linux_lsblk()
                 return ul_bad_usage(
                     "lsblk", "unknown or unsupported output column");
 
+        bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
         bool identity = false;
         bool permissions = false;
-        bool metadata = false;
+        bool metadata = scsi;
         for (positive i = 0; i < column_count; i++)
         {
                 identity |= ul_lsblk_column_needs_identity(columns[i]);
                 permissions |= ul_lsblk_column_needs_permissions(columns[i]);
                 metadata |= ul_lsblk_column_needs_metadata(columns[i]);
         }
-        bool scsi = (taking.flags & FILE_FLAG('S')) != 0;
         text_arena_used = 0;
         if (!ul_lsblk_take(identity, permissions, metadata))
                 return ul_bad_usage("lsblk", "block-device sysfs is unavailable");

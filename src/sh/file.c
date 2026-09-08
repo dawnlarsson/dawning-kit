@@ -1465,17 +1465,19 @@ static bipolar file_name_among(string_address text, positive length,
         return -1;
 }
 
-bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
-                            positive address_to nanoseconds)
+static bool file_moment_read_from(string_address text, b64 now, positive fraction,
+                                   b64 address_to out,
+                                   positive address_to nanoseconds)
 {
         positive at = 0;
 
-        address_to nanoseconds = 0;
+        address_to nanoseconds = fraction;
 
         at += string_span(text + at, string_set_blanks);
 
         if (string_is(text + at, '@'))
         {
+                address_to nanoseconds = 0;
                 bool below = string_is(text + at + 1, '-');
                 positive digits;
                 b64 value;
@@ -1601,6 +1603,7 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                                         hour = 0;
                                         minute = 0;
                                         second = 0;
+                                        address_to nanoseconds = 0;
                                 }
 
                                 if (string_is(text + at, 'T') || string_is(text + at, 't'))
@@ -1617,6 +1620,8 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
 
                                 if (timed)
                                         return false;
+
+                                address_to nanoseconds = 0;
 
                                 at = file_read_number(text, at + 1, address_of rest,
                                                       address_of wide);
@@ -1716,6 +1721,7 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                                                 hour = 0;
                                                 minute = 0;
                                                 second = 0;
+                                                address_to nanoseconds = 0;
                                         }
 
                                         at += length;
@@ -1817,6 +1823,7 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                                 hour = 0;
                                 minute = 0;
                                 second = 0;
+                                address_to nanoseconds = 0;
                         }
 
                         if (string_is(text + at, ','))
@@ -1895,6 +1902,7 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                 hour = 0;
                 minute = 0;
                 second = 0;
+                address_to nanoseconds = 0;
         }
 
         b64 reach = year * 12 + (b64)month - 1 + months;
@@ -1916,6 +1924,7 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                         hour = 0;
                         minute = 0;
                         second = 0;
+                        address_to nanoseconds = 0;
                 }
         }
 
@@ -1923,6 +1932,12 @@ bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
                          (b64)second + shift - zone;
 
         return true;
+}
+
+bool file_moment_read_exact(string_address text, b64 now, b64 address_to out,
+                            positive address_to nanoseconds)
+{
+        return file_moment_read_from(text, now, 0, out, nanoseconds);
 }
 
 bool file_moment_read(string_address text, b64 now, b64 address_to out)
@@ -4960,6 +4975,8 @@ static bool find_size_holds(find_node address_to test, file_facts address_to fac
 
         if (test->unit == 'c')
                 divisor = 1;
+        else if (test->unit == 'w')
+                divisor = 2;
         else if (test->unit == 'k')
                 divisor = 1024;
         else if (test->unit == 'M')
@@ -4969,7 +4986,7 @@ static bool find_size_holds(find_node address_to test, file_facts address_to fac
 
         // find rounds up: a file of one byte is one block, and "-size 1" is
         // meant to find it.
-        p64 units = (facts->size + divisor - 1) / divisor;
+        p64 units = facts->size / divisor + (facts->size % divisor != 0);
 
         if (test->comparison == '+')
                 return units > (p64)test->number;
@@ -5310,10 +5327,13 @@ static b32 find_parse_primary()
         {
         case '>':
         case '<':
-                if (node->kind == '>')
-                        find_maximum = string_digits(value, null);
-                else
-                        find_minimum = string_digits(value, null);
+                if (!file_unsigned_decimal(value, node->kind == '>'
+                                                      ? address_of find_maximum
+                                                      : address_of find_minimum))
+                {
+                        string_format(file_fail, "find: invalid depth '%s'\n", value);
+                        goto bad;
+                }
                 node->kind = 'v';
                 break;
 
@@ -5387,11 +5407,23 @@ static b32 find_parse_primary()
         case 'i':
         case 'T':
         {
-                positive taken;
+                positive number;
                 value = find_marked(value, address_of node->comparison);
-                node->number = (b64)string_digits(value, address_of taken);
+                string_address after = value;
+                if (!string_digits_checked(address_of after, 10, address_of number) ||
+                    number > (positive)b64_max)
+                        goto bad_number;
                 if (node->kind == 'z')
-                        node->unit = value[taken] ? value[taken] : 'b';
+                {
+                        node->unit = string_get(after) ? string_get(after++) : 'b';
+                        if (node->unit != 'b' && node->unit != 'c' &&
+                            node->unit != 'w' && node->unit != 'k' &&
+                            node->unit != 'M' && node->unit != 'G')
+                                goto bad_number;
+                }
+                if (string_get(after))
+                        goto bad_number;
+                node->number = (b64)number;
                 if (node->kind == 'T')
                 {
                         node->unit = word[1];
@@ -5443,6 +5475,8 @@ static b32 find_parse_primary()
         }
         return index;
 
+bad_number:
+        string_format(file_fail, "find: invalid number '%s' for %s\n", value, word);
 bad:
         find_bad = true;
         return -1;
@@ -5744,7 +5778,8 @@ static bool find_true(b32 which)
                                (positive)node->number;
 
                 if (node->comparison == '/')
-                        return ((positive)find_facts->mode & (positive)node->number) != 0;
+                        return !node->number ||
+                               ((positive)find_facts->mode & (positive)node->number) != 0;
 
                 return (find_facts->mode & 07777) == (positive)node->number;
 
@@ -6347,18 +6382,18 @@ static fn stat_one_specifier(p8 letter, string_address path, address_any given)
                                               -1, (positive)1 << 28);
 
         case 'X':
-                return positive_to_string(log, (positive)facts->accessed.seconds);
+                return bipolar_to_string(log, facts->accessed.seconds);
 
         case 'Y':
-                return positive_to_string(log, (positive)facts->modified.seconds);
+                return bipolar_to_string(log, facts->modified.seconds);
 
         case 'Z':
-                return positive_to_string(log, (positive)facts->changed.seconds);
+                return bipolar_to_string(log, facts->changed.seconds);
 
         case 'W':
-                return positive_to_string(log, (facts->mask & STATX_BIRTH)
-                                            ? (positive)facts->created.seconds
-                                            : 0);
+                return bipolar_to_string(log, (facts->mask & STATX_BIRTH)
+                                            ? facts->created.seconds
+                                            : (b64)0);
 
         case 'x':
                 return file_stamp(log, facts->accessed.seconds, facts->accessed.nanoseconds);
@@ -15275,6 +15310,8 @@ static bool rm_ask;
 static bool rm_loud;
 static bool rm_one_system;
 static bool rm_careful;
+static bool rm_preserve_root;
+static file_facts rm_root;
 static p32 rm_device_major;
 static p32 rm_device_minor;
 static b32 rm_status;
@@ -15329,10 +15366,19 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
                 file_walk walk;
 
                 walk.handle = directory;
+                walk.error = 0;
                 walk.have = 0;
                 walk.at = 0;
 
-                system_seek(directory, 0, FILE_SEEK_SET);
+                bipolar sought = system_seek(directory, 0, FILE_SEEK_SET);
+
+                if (sought < 0)
+                {
+                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                                      file_reason(sought));
+                        rm_status = 1;
+                        return false;
+                }
 
                 struct linux_dirent64 address_to entry;
                 positive removed = 0;
@@ -15361,6 +15407,14 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
                                 removed++;
                         else
                                 complete = false;
+                }
+
+                if (walk.error < 0)
+                {
+                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                                      file_reason(walk.error));
+                        rm_status = 1;
+                        return false;
                 }
 
                 if (seen == 0 || removed == 0)
@@ -15472,7 +15526,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
                 if (inside < 0)
                 {
-                        if (!rm_force)
+                        if (!rm_force || inside != -ERROR_NO_ENTRY)
                         {
                                 string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
                                               file_reason(inside));
@@ -15480,6 +15534,25 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         }
 
                         return false;
+                }
+
+                // Check the opened object as well as the operand: a name
+                // can change between the initial lookup and this open.
+                if (rm_preserve_root)
+                {
+                        bipolar looked = file_look_code(inside, "", AT_EMPTY_PATH,
+                                                        address_of facts);
+                        if (looked < 0 || file_same_identity(address_of facts,
+                                                             address_of rm_root))
+                        {
+                                string_format(file_fail,
+                                              "rm: refusing to read '%s': %s\n", shown,
+                                              looked < 0 ? file_reason(looked)
+                                                         : (string_address) "preserved root directory");
+                                rm_status = 1;
+                                system_close(inside);
+                                return false;
+                        }
                 }
 
                 complete = rm_contents(inside, shown, depth - 1);
@@ -15496,7 +15569,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
         if (gone < 0)
         {
-                if (!rm_force || (!rm_recursive && gone == -ERROR_NOT_EMPTY))
+                if (!rm_force || gone != -ERROR_NO_ENTRY)
                 {
                         string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
                                       file_reason(gone));
@@ -15550,6 +15623,7 @@ static b32 file_rm()
         rm_empty_directories = (flags & FILE_FLAG('d')) != 0;
         rm_recursive = (flags & (FILE_FLAG('r') | FILE_FLAG('R'))) != 0;
         rm_careful = rm_ask || rm_loud || rm_one_system;
+        rm_preserve_root = rm_recursive && !(flags & FILE_FLAG('N'));
 
         if (first >= count)
         {
@@ -15557,6 +15631,17 @@ static b32 file_rm()
                         return 0;
 
                 return file_missing((string_address) "rm");
+        }
+
+        if (rm_preserve_root)
+        {
+                bipolar looked = file_look_code(AT_FDCWD, "/", 0, address_of rm_root);
+                if (looked < 0)
+                {
+                        string_format(file_fail, "rm: cannot preserve '/': %s\n",
+                                      file_reason(looked));
+                        return 1;
+                }
         }
 
         while (first < count)
@@ -15583,8 +15668,8 @@ static b32 file_rm()
 
                 bool here = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
 
-                if (here && rm_recursive && !(flags & FILE_FLAG('N')) &&
-                    string_is(path, '/') && string_is(path + 1, end))
+                if (here && rm_preserve_root &&
+                    file_same_identity(address_of facts, address_of rm_root))
                 {
                         file_fail("rm: it is dangerous to operate recursively on '/'\n", 0);
                         file_fail("rm: use --no-preserve-root to override this failsafe\n", 0);
@@ -15637,7 +15722,8 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
                 positive wide;
 
                 if (file_read_number(text, digits + 1, address_of fraction,
-                                     address_of wide) != digits + 3 || wide != 2)
+                                     address_of wide) != digits + 3 || wide != 2 ||
+                    string_get(text + digits + 3) || fraction > 60)
                         return false;
 
                 has_fraction = true;
@@ -15683,7 +15769,8 @@ static bool touch_stamp(string_address text, b64 now, b64 address_to out)
         else
                 year = field[0] * 100 + field[1];
 
-        if (field[2] < 1 || field[2] > 12 || field[3] < 1 || field[3] > 31 ||
+        if (field[2] < 1 || field[2] > 12 || field[3] < 1 ||
+            field[3] > (b64)file_month_days(year, field[2]) ||
             field[4] > 23 || field[5] > 59)
                 return false;
 
@@ -15723,9 +15810,7 @@ static b32 file_touch()
         bool modify = (flags & FILE_FLAG('m')) != 0;
         bool no_create = (flags & FILE_FLAG('c')) != 0;
         bool through = (flags & FILE_FLAG('h')) == 0;
-        bool given = false;
-        b64 seconds = 0;
-        p32 nanoseconds = 0;
+        p64 times[4] = {0, UTIME_NOW, 0, UTIME_NOW};
 
         string_address which = file_option_value(address_of taking, 'T');
 
@@ -15758,42 +15843,47 @@ static b32 file_touch()
                         return 1;
                 }
 
-                seconds = facts.modified.seconds;
-                nanoseconds = facts.modified.nanoseconds;
-                given = true;
+                file_times_of(address_of facts, times);
         }
 
         string_address written = file_option_value(address_of taking, 'd');
 
         if (written)
         {
-                // The fraction a written date carries is kept, so that what
-                // stat printed for one file can be given to another whole.
-                positive fraction;
-
-                if (!file_moment_read_exact(written, given ? seconds : file_now(),
-                                            address_of seconds, address_of fraction))
+                // Relative dates start from each reference timestamp,
+                // including its own fraction; absolute dates replace it.
+                b64 now = from ? 0 : file_now();
+                for (positive at = 0; at < 4; at += 2)
                 {
-                        string_format(file_fail, "touch: invalid date format '%s'\n", written);
-                        return 1;
+                        b64 seconds;
+                        positive fraction;
+                        if (!file_moment_read_from(written,
+                                                   from ? (b64)times[at] : now,
+                                                   from ? times[at + 1] : 0,
+                                                   address_of seconds,
+                                                   address_of fraction))
+                        {
+                                string_format(file_fail, "touch: invalid date format '%s'\n", written);
+                                return 1;
+                        }
+                        times[at] = (p64)seconds;
+                        times[at + 1] = fraction;
                 }
-
-                nanoseconds = (p32)fraction;
-                given = true;
         }
 
         string_address older = file_option_value(address_of taking, 't');
 
         if (older)
         {
+                b64 seconds;
                 if (!touch_stamp(older, file_now(), address_of seconds))
                 {
                         string_format(file_fail, "touch: invalid date format '%s'\n", older);
                         return 1;
                 }
 
-                nanoseconds = 0;
-                given = true;
+                times[0] = times[2] = (p64)seconds;
+                times[1] = times[3] = 0;
         }
 
         if (first >= count)
@@ -15808,12 +15898,10 @@ static b32 file_touch()
                 modify = true;
         }
 
-        p64 times[4];
-
-        times[0] = given ? (p64)seconds : 0;
-        times[1] = access ? (given ? (p64)nanoseconds : (p64)UTIME_NOW) : (p64)UTIME_OMIT;
-        times[2] = given ? (p64)seconds : 0;
-        times[3] = modify ? (given ? (p64)nanoseconds : (p64)UTIME_NOW) : (p64)UTIME_OMIT;
+        if (!access)
+                times[1] = UTIME_OMIT;
+        if (!modify)
+                times[3] = UTIME_OMIT;
 
         b32 status = 0;
 

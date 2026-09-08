@@ -12749,12 +12749,16 @@ static bool text_list_parse(string_address spec)
 
         while (spec[at])
         {
-                positive taken;
-                positive first = string_digits(spec + at, address_of taken);
-                bool have_first = taken != 0;
+                string_address cursor = spec + at;
+                positive first = 0;
+                bool have_first = byte_is_digit(cursor[0]);
                 bool open = false;
 
-                at += taken;
+                if (have_first && !string_digits_checked(
+                        address_of cursor, 10, address_of first))
+                        return false;
+
+                at = (positive)(cursor - spec);
 
                 positive last = 0;
                 bool have_last = false;
@@ -12763,9 +12767,14 @@ static bool text_list_parse(string_address spec)
                 {
                         at++;
 
-                        last = string_digits(spec + at, address_of taken);
-                        have_last = taken != 0;
-                        at += taken;
+                        cursor = spec + at;
+                        have_last = byte_is_digit(cursor[0]);
+
+                        if (have_last && !string_digits_checked(
+                                address_of cursor, 10, address_of last))
+                                return false;
+
+                        at = (positive)(cursor - spec);
 
                         if (!have_first && !have_last)
                                 return false;
@@ -17054,6 +17063,55 @@ static bool sed_option_seen(p8 letter, string_address value)
         return true;
 }
 
+/* The temporary is owned until replacement succeeds.  A failed backup must
+   leave the input alone; a failed replacement must leave its data recoverable.
+   linkat restores a moved input only if its pathname is still absent, keeping
+   the backup even when another writer or the filesystem prevents recovery. */
+static bool sed_commit(string_address name, string_address temporary)
+{
+        p8 kept[TEXT_PATH_MAX];
+        bool backup = sed_in_place[0] != '\0';
+
+        if (backup)
+        {
+                positive length = string_length(name);
+                positive extra = string_length(sed_in_place);
+
+                if (length >= TEXT_PATH_MAX || extra >= TEXT_PATH_MAX - length)
+                {
+                        text_error(name, "backup path too long");
+                        goto failed;
+                }
+
+                memory_copy(kept, name, length);
+                memory_copy_apart_end(kept + length, sed_in_place, extra);
+
+                bipolar moved = system_rename_at(
+                    AT_FDCWD, name, AT_FDCWD, kept, 0);
+
+                if (moved < 0)
+                {
+                        text_error(kept, file_reason(moved));
+                        goto failed;
+                }
+        }
+
+        bipolar moved = system_rename_at(
+            AT_FDCWD, temporary, AT_FDCWD, name, 0);
+
+        if (moved >= 0)
+                return true;
+
+        text_error(name, file_reason(moved));
+
+        if (backup && system_link_at(AT_FDCWD, kept, AT_FDCWD, name, 0) < 0)
+                text_error(kept, "backup retained; cannot restore input");
+
+failed:
+        system_remove_at(AT_FDCWD, temporary, 0);
+        return false;
+}
+
 static b32 text_sed()
 {
         b32 leaving = -1;
@@ -17401,32 +17459,23 @@ cycle_done:
                         closed = system_close(written);
 
                         /* Never replace the input with a partial temporary. */
-                        if (text_out_failed || closed < 0)
+                        if (text_out_failed || closed < 0 || text_input.failed ||
+                            sed_space_full || sed_failed || sed_io_failed)
                         {
                                 system_remove_at(AT_FDCWD,
                                               temporary, 0);
-                                text_error(name, "write error");
-                                text_status = 4;
+                                if (text_out_failed || closed < 0)
+                                        text_error(name, "write error");
+                                if (!sed_failed)
+                                        text_status = 4;
                                 break;
                         }
 
-                        if (sed_in_place[0])
+                        if (!sed_commit(name, temporary))
                         {
-                                p8 kept[TEXT_PATH_MAX];
-                                positive length = string_length(name);
-                                positive extra = string_length(sed_in_place);
-
-                                if (length + extra + 1 < TEXT_PATH_MAX)
-                                {
-                                        memory_copy(kept, name, length);
-                                        memory_copy_apart_end(
-                                            kept + length, sed_in_place, extra);
-                                        system_rename_at(AT_FDCWD, name,
-                                                         AT_FDCWD, kept, 0);
-                                }
+                                text_status = 4;
+                                break;
                         }
-
-                        system_rename_at(AT_FDCWD, temporary, AT_FDCWD, name, 0);
                 }
 
                 if (sed_failed || sed_io_failed)
@@ -17444,7 +17493,7 @@ cycle_done:
         if (sed_failed)
                 return text_refuse(null, "no previous regular expression", 1);
 
-        return text_done(leaving > 0 ? leaving : text_status);
+        return text_done(text_status ? text_status : leaving > 0 ? leaving : 0);
 }
 
 /*
@@ -18807,7 +18856,7 @@ static b32 text_sort()
         else
         {
                 if (!sort_key_count && !sort_kind && !sort_how &&
-                    !sort_reverse && !sort_stable && !sort_unique)
+                    !sort_reverse && !sort_stable && !sort_unique && !sort_skip_blanks)
                         sort_radix(0, text_lines_count, 0);
                 else
                         sort_run(text_lines_count);

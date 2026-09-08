@@ -1142,6 +1142,7 @@ bool shell_builtin(string_address arguments, positive2 named)
 
         if (!arguments && shell_command_name_stable &&
             shell_argv[0] == shell_command_name_address && remembered &&
+            !shell_disabled[remembered - shell_commands] &&
             remembered_length == shell_command_name_length &&
             !memory_compare(shell_argv[0], remembered->name,
                             remembered_length))

@@ -11795,11 +11795,8 @@ PURE positive shell_line_now();
 // caller reads the call frames, which live beside the executor.
 fn shell_caller(writer write, string_address input);
 fn shell_help(writer write, string_address input);
-COLD fn shell_bind(writer write, string_address input);
 COLD fn shell_builtin_run(writer write, string_address input);
 COLD fn shell_compgen(writer write, string_address input);
-COLD fn shell_complete(writer write, string_address input);
-COLD fn shell_compopt(writer write, string_address input);
 COLD fn shell_enable(writer write, string_address input);
 COLD fn shell_which(writer write, string_address input);
 fn shell_type(writer write, string_address input);
@@ -11841,19 +11838,28 @@ typedef struct
         shell_command_function function;
 } shell_command;
 
+/*
+        complete, compopt and bind: taken, and doing nothing.
+
+        Programmable completion needs a terminal and a reader that offers it,
+        and this shell's line editor has neither. A profile that sets a
+        hundred completions must still get to its last line, so the names are
+        here and answer the way Bash answers a shell with no completion loaded.
+        Compopt answers one because no completion is being executed.
+*/
 shell_command shell_commands[] = {
     {":", shell_true},
     {".", shell_dot},
     {"[", shell_test},
     {"alias", shell_alias},
     {"bg", shell_bg},
-    {"bind", shell_bind},
+    {"bind", shell_true},
     {"blkid", shell_blkid},
     {"caller", shell_caller},
     {"builtin", shell_builtin_run},
     {"compgen", shell_compgen},
-    {"complete", shell_complete},
-    {"compopt", shell_compopt},
+    {"complete", shell_true},
+    {"compopt", shell_false},
     {"cd", shell_cd},
     {"clear", shell_clear},
     {"command", shell_command_builtin},
@@ -11922,45 +11928,36 @@ _Static_assert(SHELL_COMMAND_COUNT < SHELL_COMMAND_INDEX_ROOM,
                "the command index needs a free slot for every builtin");
 static bool shell_command_index_ready;
 
-/*
-        The builtins a script has switched off.
-
-        `enable -n echo` makes the shell forget it has one, so that the file
-        on PATH is what runs. Kept as a short list of names and asked about
-        only when the list is not empty, which is what keeps the ordinary
-        dispatch at one comparison against zero.
-*/
-#define SHELL_DISABLED_MAX 32
-#define SHELL_DISABLED_BYTES 512
-
-static string_address shell_disabled[SHELL_DISABLED_MAX];
-static p8 shell_disabled_pool[SHELL_DISABLED_BYTES];
+/* Disabled state follows registry identity, so aliases remain independent
+   and repeated enable/disable cycles need no copied names or capacity limit. */
+static bool shell_disabled[SHELL_COMMAND_COUNT];
 static positive shell_disabled_count;
-static positive shell_disabled_used;
 
-static inline INLINE PURE bool shell_builtin_disabled(string_address name)
+static positive shell_command_index_hashed(string_address name,
+                                            positive2 named)
 {
-        return shell_disabled_count &&
-               string_table_find(name, shell_disabled,
-                                 sizeof(shell_disabled[0]),
-                                 shell_disabled_count) < shell_disabled_count;
+        return shell_name_index_find(
+            name, shell_commands, sizeof(shell_commands[0]),
+            SHELL_COMMAND_COUNT, shell_command_index,
+            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready,
+            named);
+}
+
+static inline INLINE bool shell_builtin_disabled(string_address name)
+{
+        if (!shell_disabled_count)
+                return false;
+        positive which = shell_command_index_hashed(
+            name, string_hash_33_length(name));
+        return which < SHELL_COMMAND_COUNT && shell_disabled[which];
 }
 
 static shell_command address_to shell_command_named_hashed(string_address name,
                                                            positive2 named)
 {
-        positive which = shell_name_index_find(
-            name, shell_commands, sizeof(shell_commands[0]),
-            SHELL_COMMAND_COUNT, shell_command_index,
-            SHELL_COMMAND_INDEX_ROOM, address_of shell_command_index_ready,
-            named);
-
-        if (which >= SHELL_COMMAND_COUNT)
-                return null;
-
-        // A name switched off is a name the shell does not have, for
-        // dispatch, for type and for command alike.
-        return shell_builtin_disabled(name) ? null : shell_commands + which;
+        positive which = shell_command_index_hashed(name, named);
+        return which < SHELL_COMMAND_COUNT && !shell_disabled[which]
+                   ? shell_commands + which : null;
 }
 
 bool shell_tool_only_here(string_address name, positive2 named)
@@ -13240,9 +13237,9 @@ fn shell_enable(writer write, string_address input)
 
                 while (command->name)
                 {
-                        bool here = !shell_builtin_disabled(command->name);
+                        bool here = !shell_disabled[command - shell_commands];
 
-                        if (here != !off || every)
+                        if (here == !off || every)
                                 string_format(write, "enable %s%s\n",
                                               here ? "" : "-n ",
                                               command->name);
@@ -13258,12 +13255,10 @@ fn shell_enable(writer write, string_address input)
         while (index < shell_argc)
         {
                 string_address name = shell_argv[index++];
-                positive length = string_length(name);
-                positive at;
+                positive at = shell_command_index_hashed(
+                    name, string_hash_33_length(name));
 
-                if (!shell_command_named_hashed(name,
-                                                string_hash_33_length(name)) &&
-                    !shell_builtin_disabled(name))
+                if (at >= SHELL_COMMAND_COUNT)
                 {
                         string_format(shell_diagnostic,
                                       "enable: %s: not a shell builtin\n",
@@ -13272,40 +13267,12 @@ fn shell_enable(writer write, string_address input)
                         continue;
                 }
 
-                at = string_table_find(name, shell_disabled,
-                                       sizeof(shell_disabled[0]),
-                                       shell_disabled_count);
-
-                if (!off)
+                if (shell_disabled[at] != off)
                 {
-                        if (at < shell_disabled_count)
-                        {
-                                memory_copy(shell_disabled + at,
-                                            shell_disabled + at + 1,
-                                            (shell_disabled_count - at - 1) *
-                                                sizeof(shell_disabled[0]));
-                                shell_disabled_count--;
-                        }
-
-                        continue;
+                        shell_disabled[at] = off;
+                        if (off) shell_disabled_count++;
+                        else shell_disabled_count--;
                 }
-
-                if (at < shell_disabled_count)
-                        continue;
-
-                if (shell_disabled_count >= SHELL_DISABLED_MAX ||
-                    shell_disabled_used + length + 1 > SHELL_DISABLED_BYTES)
-                {
-                        shell_diagnostic("enable: too many\n", 0);
-                        bad = 1;
-                        continue;
-                }
-
-                shell_disabled[shell_disabled_count++] =
-                    shell_disabled_pool + shell_disabled_used;
-                memory_copy(shell_disabled_pool + shell_disabled_used, name,
-                            length + 1);
-                shell_disabled_used += length + 1;
         }
 
         shell_answer(bad);
@@ -13513,40 +13480,6 @@ fn shell_compgen(writer write, string_address input)
         }
 
         shell_answer(compgen_shown ? 0 : 1);
-}
-
-/*
-        complete, compopt and bind: taken, and doing nothing.
-
-        Programmable completion needs a terminal and a reader that offers it,
-        and this shell's line editor has neither. A profile that sets a
-        hundred completions must still get to its last line, so the names are
-        here and answer the way Bash answers a shell with no completion loaded.
-*/
-fn shell_complete(writer write, string_address input)
-{
-        (void)write;
-        (void)input;
-
-        shell_answer(0);
-}
-
-fn shell_compopt(writer write, string_address input)
-{
-        (void)write;
-        (void)input;
-
-        // No completion is being executed, which is the one thing compopt
-        // needs and the reason Bash answers one here too.
-        shell_answer(1);
-}
-
-fn shell_bind(writer write, string_address input)
-{
-        (void)write;
-        (void)input;
-
-        shell_answer(0);
 }
 
 /*

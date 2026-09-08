@@ -50,7 +50,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
 
 describe()
 {
@@ -68,6 +68,7 @@ describe()
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
         bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
+        audit) echo "verified utility repairs with mocked failure paths and owned files" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
         table) echo "shared table escaping, field widths and multiline boundaries on three machines" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
@@ -2106,6 +2107,33 @@ lane_socket() { freestanding_checks_lane socket src/test/socket.c; }
 lane_net() { freestanding_checks_lane net src/test/net.c; }
 lane_bowl() { freestanding_checks_lane bowl src/test/bowl.c; }
 lane_reuse_shell() { freestanding_checks_lane reuse_shell src/test/reuse_shell.c; }
+
+# The root-preservation probes stay entirely inside mocked filesystems.
+lane_audit()
+{
+        if ! command -v python3 >/dev/null 2>&1 || ! command -v clang >/dev/null 2>&1; then
+                note "audit source fixtures need python3 and clang"
+                return 2
+        fi
+        for audit_fixture in file_regressions util_regressions text_sed text_sort text_cut; do
+                if ! python3 "src/test/audit_$audit_fixture.py" > "$work/audit-$audit_fixture.out" 2>&1; then
+                        cat "$work/audit-$audit_fixture.out"
+                        return 1
+                fi
+        done
+        tally audit-source-fixtures 5 5
+        freestanding_checks_lane audit-builtin src/test/audit_builtin_regressions.c || return $?
+        python3 src/test/audit_lsblk_regressions.py "$work/audit-lsblk.c" || return 1
+        freestanding_checks_lane audit-lsblk "$work/audit-lsblk.c" || return $?
+        [ "$host_system" = Linux ] || { note "audit CLI fixtures need Linux"; return 2; }
+        need_shell || return 1
+        if ! python3 src/test/audit_enable_regressions.py "$shell_binary" > "$work/audit-enable.out" 2>&1 ||
+           ! python3 src/test/audit_file_runtime.py --shell "$shell_binary" > "$work/audit-files.out" 2>&1; then
+                cat "$work"/audit-*.out
+                return 1
+        fi
+        tally audit-cli-fixtures 2 2
+}
 
 
 lane_slurp()

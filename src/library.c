@@ -17511,7 +17511,7 @@ typedef b64 ptrdiff_t;
 
 #define SIGTRAP 5
 #define SIGKILL 9
-#define SIGSTOP 20
+#define SIGSTOP 19
 #define SIGCHLD 17
 
 #define O_NOCTTY 0400
