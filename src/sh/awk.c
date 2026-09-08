@@ -1185,23 +1185,9 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
                         }
                 }
 
-                if (paragraph)
-                {
-                        p8 address_to newline = (p8 address_to)memory_first_of(
-                            text + at, '\n', length - at);
-
-                        if (newline)
-                        {
-                                positive scan = (positive)(newline - text);
-
-                                if (cut == TEXT_UNSET || scan < cut)
-                                {
-                                        cut = scan;
-                                        stop = scan + 1;
-                                }
-                        }
-                }
-
+                // Paragraph mode adds no newline here: with a pattern for
+                // FS the newline is only a byte, in the reference awk as in
+                // its POSIX mode; the one-byte separators above add it.
                 if (cut == TEXT_UNSET)
                         break;
 
@@ -2228,13 +2214,23 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 case 'i':
                 {
                         bool negative;
+                        decimal value = awk_to_number(argument);
 
-                        body = awk_integer_digits(awk_to_number(argument), room,
-                                                  sizeof(room), address_of negative);
+                        body = awk_integer_digits(value, room, sizeof(room), address_of negative);
 
-                        // A precision of zero on a value of zero writes no
-                        // digits at all, which is C's rule and awk's.
-                        if (!precision && body == 1 && room[0] == '0')
+                        // Not a number: the name carries its own sign and
+                        // takes no zero fill.
+                        if (!decimal_is_finite(value))
+                        {
+                                zero = false;
+                                break;
+                        }
+
+                        // A precision of zero on a value of exactly zero
+                        // writes no digits at all, which is C's rule; a
+                        // value that only rounds to zero writes the zero, as
+                        // the reference does.
+                        if (!precision && body == 1 && room[0] == '0' && value == 0)
                                 body = 0;
 
                         if (negative)
@@ -2270,12 +2266,13 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
 
                                         body = string_length(name);
                                         memory_copy(room, name, (positive)body);
+                                        zero = false;
                                         break;
                                 }
 
                                 body = awk_write_decimal(
                                     exact, precision < 0 ? 6 : precision, room,
-                                    sizeof(room), 'g', alternate);
+                                    sizeof(room), 'g', alternate && conversion != 'u');
 
                                 if (room[0] == '-')
                                 {
@@ -2283,10 +2280,19 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         body--;
                                         body_at = room + 1;
                                 }
+                                else if (sign)
+                                        prefix[prefixed++] = '+';
+                                else if (space)
+                                        prefix[prefixed++] = ' ';
 
                                 // The precision was %g's; it is not a count
                                 // of digits to pad the text out to, which
-                                // made %.10x of 1.2e23 "0001.2e+23".
+                                // made %.10x of 1.2e23 "0001.2e+23". It did
+                                // take the zero flag with it, as on any
+                                // integer conversion.
+                                if (precision >= 0)
+                                        zero = false;
+
                                 precision = -1;
                                 break;
                         }
@@ -2310,7 +2316,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                                                           false)
                                              : 1;
                         }
-                        else if (whole || precision != 0)
+                        else if (whole || precision != 0 || exact != 0)
                                 body = positive_into_base(room, whole, base,
                                                                conversion == 'X');
 
@@ -2326,8 +2332,19 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 case 'c':
                 {
                         if (awk_numeric_side(argument))
-                                room[body++] =
-                                    (p8)((positive)awk_whole_wide(awk_to_number(argument)) & 0xff);
+                        {
+                                decimal value = awk_to_number(argument);
+
+                                // The low byte of the machine's conversion:
+                                // a value with no place in sixty four signed
+                                // bits, or not a number, is the byte 0, as
+                                // the reference has it.
+                                room[body++] = !decimal_is_finite(value) ||
+                                                       value >= 9223372036854775808.0 ||
+                                                       value < -9223372036854775808.0
+                                                   ? (p8)0
+                                                   : (p8)((positive)(bipolar)value & 0xff);
+                        }
                         else
                         {
                                 awk_text address_to text = awk_to_text(argument);
@@ -2422,6 +2439,14 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                 // padded with spaces, as the reference awk pads them.
                 if (from_string || conversion == 'c')
                         zero = false;
+
+                // %E, %F, %G and %X write INF and NAN in capitals, as the
+                // reference does.
+                if ((conversion == 'E' || conversion == 'F' || conversion == 'G' ||
+                     conversion == 'X') && body_at == room)
+                        for (positive i = 0; i < body; i++)
+                                if (room[i] >= 'a' && room[i] <= 'z')
+                                        room[i] = (p8)(room[i] - 'a' + 'A');
 
                 positive total = awk_size_add(awk_size_add(prefixed, zeros), body);
                 positive padding = width > total ? width - total : 0;
@@ -3334,6 +3359,8 @@ static awk_node address_to awk_subscript_list(b32 array)
         return node;
 }
 
+static bool awk_statement_ends();
+
 static awk_node address_to awk_primary()
 {
         awk_node address_to node;
@@ -3444,6 +3471,13 @@ static awk_node address_to awk_primary()
 
                 if (count == 1)
                         return first;
+
+                // A list in parentheses is what in takes, or all that print
+                // and printf take; printf("%d", 1) (2) is a syntax error.
+                if (awk_token != T_IN &&
+                    !(kept && (awk_statement_ends() || awk_token == T_GREATER ||
+                               awk_token == T_APPEND || awk_token == T_PIPE)))
+                        awk_syntax("a parenthesized list wants in or print");
 
                 node = awk_node_new(N_GROUP);
                 node->a = first;
@@ -3695,52 +3729,58 @@ static awk_node address_to awk_pipe_level();
 // A comparison's operands can each be a "cmd" | getline, which is how the
 // reference grammar puts it: the pipe binds tighter than the comparison, so
 // while ("cmd" | getline line > 0) reads until the command is done.
+static awk_node address_to awk_relational_level();
+
+// ~ and !~ bind looser than a comparison, so "a" ~ "a" == 1 matches against
+// the comparison's answer; a chain of them reads left to right, as the
+// reference reads it.
 static awk_node address_to awk_compare_level()
+{
+        awk_node address_to node = awk_relational_level();
+
+        while (awk_token == T_MATCH || awk_token == T_UNMATCH)
+        {
+                awk_node address_to made = awk_node_new(N_MATCH);
+
+                made->sub = (p8)(awk_token == T_UNMATCH);
+                awk_next_token();
+                made->a = node;
+                made->b = awk_relational_level();
+                node = made;
+        }
+
+        return node;
+}
+
+static bool awk_relational_token(b32 which)
+{
+        if (which == T_GREATER && awk_print_depth)
+                return false;
+
+        return which == T_LESS || which == T_LESS_EQUAL || which == T_GREATER ||
+               which == T_GREATER_EQUAL || which == T_EQUAL || which == T_UNEQUAL;
+}
+
+// The comparisons do not associate: 1 == 1 == 1 is a syntax error, in the
+// grammar and in the reference.
+static awk_node address_to awk_relational_level()
 {
         awk_node address_to node = awk_pipe_level();
 
-        for (;;)
-        {
-                b32 which = awk_token;
-
-                if (which == T_GREATER && awk_print_depth)
-                        return node;
-
-                switch (which)
-                {
-                case T_LESS:
-                case T_LESS_EQUAL:
-                case T_GREATER:
-                case T_GREATER_EQUAL:
-                case T_EQUAL:
-                case T_UNEQUAL:
-                {
-                        awk_node address_to made = awk_node_new(N_COMPARE);
-
-                        made->sub = (p8)which;
-                        awk_next_token();
-                        made->a = node;
-                        made->b = awk_pipe_level();
-                        node = made;
-                        continue;
-                }
-
-                case T_MATCH:
-                case T_UNMATCH:
-                {
-                        awk_node address_to made = awk_node_new(N_MATCH);
-
-                        made->sub = (p8)(which == T_UNMATCH);
-                        awk_next_token();
-                        made->a = node;
-                        made->b = awk_in_level();
-                        node = made;
-                        continue;
-                }
-                }
-
+        if (!awk_relational_token(awk_token))
                 return node;
-        }
+
+        awk_node address_to made = awk_node_new(N_COMPARE);
+
+        made->sub = (p8)awk_token;
+        awk_next_token();
+        made->a = node;
+        made->b = awk_pipe_level();
+
+        if (awk_relational_token(awk_token))
+                awk_syntax("a comparison cannot be compared again");
+
+        return made;
 }
 
 // "command" | getline sits between && and a comparison, which is where the
@@ -4145,12 +4185,29 @@ static awk_node address_to awk_statement_list(b32 stop)
         return first;
 }
 
+// The variables awk itself defines: no function or parameter may be one.
+static bool awk_special_name(awk_text address_to name)
+{
+        static string_address specials[] = {
+            "FS", "OFS", "ORS", "RS", "NR", "NF", "FNR", "FILENAME", "SUBSEP",
+            "RSTART", "RLENGTH", "CONVFMT", "OFMT", "ENVIRON", "ARGV", "ARGC"};
+
+        for (positive i = 0; i < array_count(specials); i++)
+                if (awk_name_is(name, specials[i]))
+                        return true;
+
+        return false;
+}
+
 static fn awk_parse_function()
 {
         awk_next_token();
 
         if (awk_token != T_NAME && awk_token != T_CALL_NAME)
                 awk_syntax("function wants a name");
+
+        if (awk_special_name(awk_token_text))
+                awk_syntax("function name is a variable awk defines");
 
         b32 which = awk_function_named(awk_token_text);
 
@@ -4169,6 +4226,18 @@ static fn awk_parse_function()
 
                 if (awk_local_count == AWK_LOCALS_MAX)
                         awk_syntax("too many parameters");
+
+                // Not the function's own name, not a variable awk defines,
+                // and not a name already among the parameters.
+                if (awk_special_name(awk_token_text) ||
+                    awk_text_is(awk_functions[which].name, awk_token_text->text,
+                                awk_token_text->length))
+                        awk_syntax("parameter name is taken");
+
+                for (b32 i = 0; i < awk_local_count; i++)
+                        if (awk_text_is(awk_local_names[i], awk_token_text->text,
+                                        awk_token_text->length))
+                                awk_syntax("parameter named twice");
 
                 awk_local_names[awk_local_count++] = awk_text_hold(awk_token_text);
                 awk_next_token();
@@ -4197,14 +4266,31 @@ static fn awk_parse_function()
 
 static fn awk_parse_program()
 {
+        bool after_rule = false;
+
         awk_next_token();
 
         for (;;)
         {
-                awk_skip_terminators();
+                awk_skip_newlines();
+
+                // A semicolon ends the rule before it, across newlines; on
+                // its own, or twice, it is a rule with nothing in it, which
+                // the reference refuses.
+                if (awk_token == T_SEMICOLON)
+                {
+                        if (!after_rule)
+                                awk_syntax("each rule must have a pattern or an action");
+
+                        after_rule = false;
+                        awk_next_token();
+                        continue;
+                }
 
                 if (awk_token == T_END)
                         break;
+
+                after_rule = true;
 
                 if (awk_token == T_FUNCTION)
                 {
@@ -4251,6 +4337,11 @@ static fn awk_parse_program()
                         rule->action = awk_statement_list(T_CLOSE_BRACE);
                         awk_parsing_rule = RULE_PLAIN;
                         awk_expect(T_CLOSE_BRACE, "expected } after an action");
+
+                        // An action with nothing in it still is one: the
+                        // record is not printed.
+                        if (!rule->action)
+                                rule->action = awk_node_new(S_BLOCK);
                 }
                 else if (!awk_statement_ends())
                         awk_syntax("expected an action or the end of the rule");
@@ -5678,8 +5769,10 @@ static b32 awk_run(awk_node address_to node)
                                 }
 
                                 awk_target_of(address_of holder, address_of target);
-                                awk_set_input(awk_target_slot(address_of target),
-                                              awk_text_hold(keys[i]));
+                                // A subscript is a string, and so is the key
+                                // it comes back as: "10" sorts before "9".
+                                awk_set_text(awk_target_slot(address_of target),
+                                             awk_text_hold(keys[i]));
                                 awk_target_written(address_of target);
 
                                 b32 got = node->b ? awk_run(node->b) : RUN_ON;
@@ -6289,7 +6382,13 @@ static bool awk_option_seen(p8 letter, string_address value)
                 p8 room[65536];
                 bipolar got = system_read_retry((positive)handle, room, sizeof(room));
 
-                if (got <= 0)
+                if (got < 0)
+                {
+                        text_error(value, "cannot read the program file");
+                        awk_leave(1);
+                }
+
+                if (!got)
                         break;
 
                 awk_builder_put(awk_reading, room, (positive)got);
@@ -6367,6 +6466,17 @@ static b32 text_awk()
         awk_source_at = 0;
         awk_parsing = true;
         awk_parse_program();
+
+        // A name is a function or a variable, not both, and a use as a
+        // variable anywhere in the program has made a global of it.
+        for (b32 i = 0; i < awk_function_count; i++)
+                if (awk_functions[i].defined)
+                        for (b32 g = 0; g < awk_global_count; g++)
+                                if (awk_text_is(awk_global_names[g],
+                                                awk_functions[i].name->text,
+                                                awk_functions[i].name->length))
+                                        awk_syntax("function name used as a variable");
+
         awk_parsing = false;
         awk_regex_mark_pool = regex_retained;
 
