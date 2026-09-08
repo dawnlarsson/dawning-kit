@@ -728,15 +728,15 @@ static bool logger_stream(logger_control address_to control,
         return answer;
 }
 
-static bool logger_operands(logger_control address_to control, positive first)
+static bool logger_operands(logger_control address_to control)
 {
-        positive count = (positive)program_argument_count();
+        positive count = file_operand_count;
         positive used = 0;
         bool answer = true;
 
-        for (positive index = first; index < count; index++)
+        for (positive index = 0; index < count; index++)
         {
-                string_address word = program_argument((b32)index);
+                string_address word = file_operand_at(index);
                 positive length = string_length(word);
 
                 if (length > control->maximum)
@@ -848,6 +848,8 @@ static b32 tools_logger()
             {(string_address)"34", address_of chosen_protocol},
             {null, null},
         };
+        // Options after the message are still options, as with getopt.
+        file_operands_begin();
         file_taking taking = {
             .program = (string_address)"logger",
             .allowed = (string_address)"efipSstudTnP",
@@ -856,11 +858,12 @@ static b32 tools_logger()
             .long_optional = (string_address)"I4J",
             .longs = logger_longs,
             .supersedes = supersedes,
+            .operand = file_operand,
         };
 
         text_begin("logger");
         text_delimiter = '\n';
-        if (!file_take(address_of taking))
+        if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
 
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('X')))
@@ -992,9 +995,8 @@ static b32 tools_logger()
                 return text_done(1);
 
         bool answer;
-        positive count = (positive)program_argument_count();
-        if (taking.first < count)
-                answer = logger_operands(address_of control, taking.first);
+        if (file_operand_count)
+                answer = logger_operands(address_of control);
         else
                 answer = logger_stream(address_of control,
                                        file_option_value(address_of taking, 'f'));
@@ -2034,8 +2036,11 @@ static b32 tools_wall()
                 if (!system_call(syscall(geteuid)))
                         banner = false;
                 else
+                {
                         file_fail("wall: --nobanner is available only for root\n",
                                   0);
+                        return text_done(1);
+                }
         }
 
         login_message_selection_clear();
@@ -2316,17 +2321,16 @@ static bool login_utmpdump_visit(login_record address_to record)
         length = login_field(identity, sizeof(identity), record->identity,
                              sizeof(record->identity), false);
         login_utmpdump_field(identity, length, 4);
+        /* util-linux pads these three to a column but prints a longer
+           value whole; only the four-byte id is cut. */
         length = login_field(user, sizeof(user), record->user,
                              sizeof(record->user), false);
-        if (length > 8) length = 8;
         login_utmpdump_field(user, length, 8);
         length = login_field(line, sizeof(line), record->line,
                              sizeof(record->line), false);
-        if (length > 12) length = 12;
         login_utmpdump_field(line, length, 12);
         length = login_field(host, sizeof(host), record->host,
                              sizeof(record->host), false);
-        if (length > 20) length = 20;
         login_utmpdump_field(host, length, 20);
 
         length = login_address_text(address, record->address);
@@ -2405,6 +2409,7 @@ enum
         LOGIN_LAST_END_CRASH,
         LOGIN_LAST_END_STILL,
         LOGIN_LAST_END_GONE,
+        LOGIN_LAST_END_LOGGED,
 };
 
 enum
@@ -2412,6 +2417,7 @@ enum
         LOGIN_LAST_TIME_SHORT,
         LOGIN_LAST_TIME_FULL,
         LOGIN_LAST_TIME_ISO,
+        LOGIN_LAST_TIME_NONE,
 };
 
 typedef struct
@@ -2693,7 +2699,9 @@ static fn login_last_line(string_address user, string_address line,
                                  separator);
 
         p8 start_text[64], end_text[64], duration[64];
-        positive start_length = login_last_time(start_text, start, false);
+        bool timeless = login_last.time_format == LOGIN_LAST_TIME_NONE;
+        positive start_length = timeless
+            ? 0 : login_last_time(start_text, start, false);
         text_put(start_text, start_length);
 
         bool ended = end_kind == LOGIN_LAST_END_LOGOUT ||
@@ -2702,7 +2710,26 @@ static fn login_last_line(string_address user, string_address line,
         positive duration_length = ended
             ? login_last_duration(duration, start, finish) : 0;
 
-        if (login_last.tabs)
+        if (timeless)
+        {
+                // Both time columns are empty but keep their separators;
+                // the last word is the one the wide layouts spell after
+                // "still" or "gone -".
+                text_put_character(separator);
+                text_put_character(separator);
+                if (ended)
+                {
+                        text_put_character(' ');
+                        text_put(duration, duration_length);
+                }
+                else if (end_kind == LOGIN_LAST_END_STILL)
+                        text_put_string("running");
+                else if (end_kind == LOGIN_LAST_END_LOGGED)
+                        text_put_string("logged in");
+                else
+                        text_put_string("no logout");
+        }
+        else if (login_last.tabs)
         {
                 text_put_character('\t');
                 if (end_kind == LOGIN_LAST_END_LOGOUT)
@@ -2724,6 +2751,8 @@ static fn login_last_line(string_address user, string_address line,
                 }
                 else if (end_kind == LOGIN_LAST_END_STILL)
                         text_put_string("  still\trunning");
+                else if (end_kind == LOGIN_LAST_END_LOGGED)
+                        text_put_string("  still\tlogged in");
                 else
                         text_put_string("   gone\t- no logout");
         }
@@ -2761,18 +2790,49 @@ static fn login_last_line(string_address user, string_address line,
         }
         else if (end_kind == LOGIN_LAST_END_STILL)
                 text_put_string("   still running");
+        else if (end_kind == LOGIN_LAST_END_LOGGED)
+                text_put_string("   still logged in");
         else
                 text_put_string("    gone - no logout");
 
         if (!login_last.no_host && login_last.host_last && *host)
         {
-                positive gap = ended ? 5
-                                     : end_kind == LOGIN_LAST_END_STILL ? 6
-                                                                        : 2;
-                writer_fill(text_put, gap, ' ');
+                // The closing word sits in a twelve-wide column.
+                positive word = ended ? 1 + duration_length
+                                : end_kind == LOGIN_LAST_END_STILL ? 7
+                                : end_kind == LOGIN_LAST_END_LOGGED ? 9
+                                                                     : 11;
+                writer_fill(text_put, word < 13 ? 13 - word : 1, ' ');
                 text_put_string(host);
         }
         text_put_character('\n');
+}
+
+/* util-linux calls a login with no logout a phantom when it predates the
+   running system's boot, names no account, or its terminal is no longer
+   that account's; only otherwise is the user still logged in. */
+static bool login_last_alive(login_record address_to record,
+                             string_address user, string_address line)
+{
+        p64 real = system_clock_ns(0);
+        p64 boot = system_clock_ns(7);
+        b64 booted = real > boot ? (b64)((real - boot) / SYSTEM_NANOSECONDS)
+                                 : 0;
+
+        if (record->seconds < booted)
+                return false;
+
+        bipolar owner = file_user_id(user);
+
+        if (owner < 0)
+                return false;
+
+        p8 path[FILE_PATH_MAX];
+        file_facts facts;
+
+        path_join(path, FILE_PATH_MAX, (string_address)"/dev", line);
+        return file_look_at(path, address_of facts) &&
+               (positive)facts.owner == (positive)owner;
 }
 
 static bool login_last_emit(login_record address_to record,
@@ -2809,6 +2869,8 @@ static b32 tools_last()
             .valued = (string_address)"fnpstz",
             .longs = login_last_longs,
             .operand = file_operand,
+            // last -3 is the line limit said without its letter.
+            .digits = 'n',
         };
         text_begin("last");
         if (!file_take(address_of taking) || file_operand_failed)
@@ -2841,9 +2903,11 @@ static b32 tools_last()
                         login_last.time_format = LOGIN_LAST_TIME_FULL;
                 else if (string_equals(format, "iso"))
                         login_last.time_format = LOGIN_LAST_TIME_ISO;
+                else if (string_equals(format, "notime"))
+                        login_last.time_format = LOGIN_LAST_TIME_NONE;
                 else
                         return text_refuse(format,
-                            "time format is unsupported (use short, full, or iso)",
+                            "time format is unsupported (use notime, short, full, or iso)",
                             1);
         }
         login_last.full_names = (taking.flags & FILE_FLAG('w')) != 0;
@@ -2933,12 +2997,11 @@ static b32 tools_last()
                                 kind = login_last.boundary_kind;
                                 finish = login_last.boundary;
                         }
-                        if (!kind && login_last.latest_boot >
-                                         login_last.latest_shutdown &&
-                            record.seconds >= login_last.latest_boot)
-                                kind = LOGIN_LAST_END_STILL;
                         if (!kind)
-                                kind = LOGIN_LAST_END_GONE;
+                                kind = login_last_alive(address_of record, user,
+                                                        line)
+                                           ? LOGIN_LAST_END_LOGGED
+                                           : LOGIN_LAST_END_GONE;
                         login_last_emit(address_of record, user, line, host,
                                         kind, finish);
                         ending = login_last_end_for(line, true);
@@ -2957,7 +3020,9 @@ static b32 tools_last()
                                                     login_last.latest_shutdown
                                             ? LOGIN_LAST_END_STILL
                                             : LOGIN_LAST_END_GONE;
-                        login_last_emit(address_of record, "reboot",
+                        // The record's own user, which init writes as
+                        // reboot; util-linux prints whatever is there.
+                        login_last_emit(address_of record, user,
                                         "system boot", host, kind,
                                         login_last.boundary);
                         login_last.newer_boot = record.seconds;
@@ -7318,7 +7383,12 @@ static b32 tools_dd(void)
         Canonical hexdump is a special row; all the integer and character
         rows share the same loader and field emitters.
 */
-#define DUMP_BLOCK 16
+/* The widest row od -w accepts, the canonical hexdump row, and a line
+   that holds the widest row in any format with its printable tail. */
+#define DUMP_BLOCK 256
+#define DUMP_CANONICAL_WIDTH 16
+#define DUMP_DEFAULT_WIDTH 16
+#define DUMP_LINE_MAX (DUMP_BLOCK * 6 + 64)
 #define DUMP_FORMAT_MAX 16
 #define DUMP_INTEGER 0
 #define DUMP_CHARACTER 1
@@ -7345,12 +7415,17 @@ typedef struct
         positive count;
         positive skip;
         positive limit;
+        // Bytes per output row: hexdump's fixed sixteen, od's -w or the
+        // sixteen rounded to a multiple of the widest type.
+        positive width;
         p8 address_base;
         p8 address_width;
         bool address_none;
         bool duplicates;
         bool od;
         bool failed;
+        bool width_given;
+        bool big_endian;
 } dump_options;
 
 static dump_options dump_arguments;
@@ -7517,8 +7592,41 @@ static const file_long dump_od_longs[] = {
     {(string_address) "read-bytes", 'N'},
     {(string_address) "format", 't'},
     {(string_address) "output-duplicates", 'v'},
+    {(string_address) "width", 'w'},
+    {(string_address) "endian", 'E'},
     {null, 0},
 };
+
+/* GNU rounds the row to the widest type: sixteen bytes made a multiple of
+   the least common multiple of the sizes, or the multiple itself when it is
+   wider. A requested width that is not such a multiple is a warning and
+   the multiple is used instead. */
+static bool dump_od_row_width()
+{
+        positive unit = 1;
+
+        for (positive at = 0; at < dump_arguments.count; at++)
+                if (dump_arguments.format[at].size > unit)
+                        unit = dump_arguments.format[at].size;
+
+        if (!dump_arguments.width_given)
+        {
+                dump_arguments.width = unit < DUMP_DEFAULT_WIDTH
+                                           ? unit * (DUMP_DEFAULT_WIDTH / unit)
+                                           : unit;
+                return true;
+        }
+
+        if (dump_arguments.width % unit)
+        {
+                string_format(file_fail,
+                              "od: warning: invalid width %p; using %p instead\n",
+                              dump_arguments.width, unit);
+                dump_arguments.width = unit;
+        }
+
+        return true;
+}
 
 static bool dump_od_seen(p8 letter, string_address value)
 {
@@ -7561,9 +7669,11 @@ static const file_long dump_hex_longs[] = {
     {(string_address) "two-bytes-decimal", 'd'},
     {(string_address) "two-bytes-octal", 'o'},
     {(string_address) "two-bytes-hex", 'x'},
+    {(string_address) "one-byte-hex", 'X'},
     {(string_address) "length", 'n'},
     {(string_address) "skip", 's'},
     {(string_address) "no-squeezing", 'v'},
+    {(string_address) "color", 'L'},
     {null, 0},
 };
 
@@ -7582,6 +7692,7 @@ static bool dump_hex_seen(p8 letter, string_address value)
         case 'd': dump_add_integer(10, 2, 5, 3, false, true, false, true); break;
         case 'o': dump_add_integer(8, 2, 6, 2, false, true, false, true); break;
         case 'x': dump_add_integer(16, 2, 4, 4, false, true, false, true); break;
+        case 'X': dump_add_integer(16, 1, 2, 2, false, true, false, true); break;
         }
 
         if (dump_arguments.failed)
@@ -7645,7 +7756,17 @@ static positive dump_value(p8 address_to bytes, positive have, positive size)
                 have = size;
 
         /* All three supported ABIs are little-endian.  Loading explicitly
-           also avoids an unaligned word load at every field. */
+           also avoids an unaligned word load at every field.  --endian=big
+           reads the bytes the other way round, a short final unit padding
+           its low end with zeros as GNU does. */
+        if (dump_arguments.big_endian)
+        {
+                for (positive at = 0; at < size; at++)
+                        value = (value << 8) | (at < have ? bytes[at] : 0);
+
+                return value;
+        }
+
         for (positive at = 0; at < have; at++)
                 value |= (positive)bytes[at] << (at * 8);
 
@@ -7721,14 +7842,14 @@ static fn dump_canonical_line(p8 address_to bytes, positive length,
                               positive address)
 {
         p8 line[96];
-        p8 hex[DUMP_BLOCK * 2];
+        p8 hex[DUMP_CANONICAL_WIDTH * 2];
         memory_into_hex(hex, bytes, length);
         positive made = dump_unsigned_field(line, address, 16, 8, '0');
 
         line[made++] = ' ';
         line[made++] = ' ';
 
-        for (positive at = 0; at < DUMP_BLOCK; at++)
+        for (positive at = 0; at < DUMP_CANONICAL_WIDTH; at++)
         {
                 if (at == 8)
                         line[made++] = ' ';
@@ -7758,10 +7879,10 @@ static fn dump_regular_line(dump_format address_to format,
                             p8 address_to bytes, positive length,
                             positive address, bool first)
 {
-        p8 line[192];
+        p8 line[DUMP_LINE_MAX];
         positive made = 0;
         positive fields = (length + format->size - 1) / format->size;
-        positive full_fields = DUMP_BLOCK / format->size;
+        positive full_fields = dump_arguments.width / format->size;
         positive gap = format->gap;
 
         /* With several od formats GNU aligns their value columns to the
@@ -7781,7 +7902,7 @@ static fn dump_regular_line(dump_format address_to format,
                                 continue;
 
                         positive span = (other->gap + other->width) *
-                                        (DUMP_BLOCK / other->size);
+                                        (dump_arguments.width / other->size);
 
                         if (span > widest)
                                 widest = span;
@@ -7924,6 +8045,7 @@ static b32 dump_run(positive first)
 {
         p8 block[DUMP_BLOCK];
         p8 previous[DUMP_BLOCK];
+        positive width = dump_arguments.width;
         positive held = 0;
         positive offset = 0;
         positive skip = dump_arguments.skip;
@@ -7973,7 +8095,7 @@ static b32 dump_run(positive first)
 
                         while (available)
                         {
-                                positive take = DUMP_BLOCK - held;
+                                positive take = width - held;
 
                                 if (take > available)
                                         take = available;
@@ -7987,15 +8109,15 @@ static b32 dump_run(positive first)
                                 available -= take;
                                 left -= take;
 
-                                if (held == DUMP_BLOCK)
+                                if (held == width)
                                 {
                                         positive row_address = offset;
-                                        offset += DUMP_BLOCK;
+                                        offset += width;
 
                                         if (!dump_arguments.duplicates &&
                                             have_previous &&
                                             !memory_compare(previous, block,
-                                                            DUMP_BLOCK))
+                                                            width))
                                         {
                                                 if (!starred)
                                                 {
@@ -8005,10 +8127,10 @@ static b32 dump_run(positive first)
                                         }
                                         else
                                         {
-                                                dump_row(block, DUMP_BLOCK,
+                                                dump_row(block, width,
                                                          row_address);
                                                 memory_copy(previous, block,
-                                                            DUMP_BLOCK);
+                                                            width);
                                                 have_previous = true;
                                                 starred = false;
                                                 wrote = true;
@@ -8062,8 +8184,10 @@ static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AaBbcDdeFfhHiIjlLNoOstvxX",
-            .valued = (string_address) "AjNt",
+            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOstvwxX",
+            .valued = (string_address) "AEjNt",
+            .optional = (string_address) "w",
+            .long_optional = (string_address) "w",
             .longs = dump_od_longs,
             .seen = dump_od_seen,
         };
@@ -8077,6 +8201,40 @@ static b32 tools_od(void)
 
         if (!file_take(address_of taking))
                 return text_done(1);
+
+        if (taking.flags & FILE_FLAG('w'))
+        {
+                string_address width = file_option_value(address_of taking, 'w');
+
+                dump_arguments.width_given = true;
+                if (!width)
+                        dump_arguments.width = 32;
+                else if (!dump_number(width, address_of dump_arguments.width) ||
+                         !dump_arguments.width ||
+                         dump_arguments.width > DUMP_BLOCK)
+                {
+                        string_format(file_fail, "od: invalid -w argument '%s'\n",
+                                      width);
+                        return text_done(1);
+                }
+        }
+
+        string_address order = file_option_value(address_of taking, 'E');
+
+        if (order)
+        {
+                if (string_equals(order, "big"))
+                        dump_arguments.big_endian = true;
+                else if (!string_equals(order, "little"))
+                {
+                        string_format(file_fail,
+                                      "od: invalid argument '%s' for '--endian'\n"
+                                      "Valid arguments are:\n  - 'big'\n  - 'little'\n"
+                                      "Try 'od --help' for more information.\n",
+                                      order);
+                        return text_done(1);
+                }
+        }
 
         string_address radix = file_option_value(address_of taking, 'A');
 
@@ -8114,6 +8272,8 @@ static b32 tools_od(void)
         if (!dump_arguments.count)
                 dump_add_integer(8, 2, 6, 1, false, true, false, false);
 
+        dump_od_row_width();
+
         return dump_run(taking.first);
 }
 
@@ -8121,8 +8281,10 @@ static b32 tools_hexdump(void)
 {
         file_taking taking = {
             .program = (string_address) "hexdump",
-            .allowed = (string_address) "bcCdoxnsv",
+            .allowed = (string_address) "bcCdoxXnsvL",
             .valued = (string_address) "ns",
+            .optional = (string_address) "L",
+            .long_optional = (string_address) "L",
             .longs = dump_hex_longs,
             .seen = dump_hex_seen,
         };
@@ -8130,11 +8292,20 @@ static b32 tools_hexdump(void)
         text_begin("hexdump");
         memory_fill(address_of dump_arguments, 0, sizeof(dump_arguments));
         dump_arguments.limit = TEXT_UNSET;
+        dump_arguments.width = DUMP_DEFAULT_WIDTH;
         dump_arguments.address_base = 16;
         dump_arguments.address_width = 7;
 
         if (!file_take(address_of taking))
                 return text_done(1);
+
+        /* --color only interprets the specifiers of a custom -e format, and
+           the stock displays carry none, so the mode is checked and inert. */
+        if ((taking.flags & FILE_FLAG('L')) &&
+            file_color_when(file_option_value(address_of taking, 'L'),
+                            FILE_COLOR_AUTO) < 0)
+                return text_refuse(file_option_value(address_of taking, 'L'),
+                                   "invalid color mode", 1);
 
         if ((taking.flags & FILE_FLAG('n')) &&
             !dump_number(file_option_value(address_of taking, 'n'),
@@ -10847,6 +11018,7 @@ static b32 tools_ps(void)
         positive command_room = 0;
         bool every = false;
         bool full = false;
+        bool jobs = false;
         bool no_headers = false;
         bool force_headers = false;
         bool reverse = false;
@@ -10905,7 +11077,7 @@ static b32 tools_ps(void)
                               option == 's' || option == 'C';
                 if (!option || (long_option && cursor.attached && !valued) ||
                     (!long_option && (option > 255 ||
-                     !string_first_of("eAfwhopC", (p8)option) ||
+                     !string_first_of("eAfjwhopC", (p8)option) ||
                      (option == 'C' && *cursor.word != '-'))))
                 {
                         // Other BSD personalities also change the display
@@ -10919,6 +11091,7 @@ static b32 tools_ps(void)
                 case 'e':
                 case 'A': every = true; break;
                 case 'f': full = true; break;
+                case 'j': jobs = true; break;
                 case 'w': break;
                 case 'H': force_headers = true; no_headers = false; break;
                 case 'h':
@@ -10984,9 +11157,24 @@ static b32 tools_ps(void)
                     {PS_FIELD_PID, null, false},   {PS_FIELD_TTY, null, false},
                     {PS_FIELD_TIME, null, false},  {PS_FIELD_COMM, "CMD", true},
                 };
-                const ps_selected address_to preset = full ? ps_full_preset
-                                                           : ps_plain_preset;
-                positive presets = full ? 8 : 4;
+                // -j adds the process group and session: after the parent
+                // in the full listing, ahead of the terminal otherwise.
+                static const ps_selected ps_full_jobs_preset[] = {
+                    {PS_FIELD_USER, "UID", true},  {PS_FIELD_PID, null, false},
+                    {PS_FIELD_PPID, null, false},  {PS_FIELD_PGID, null, false},
+                    {PS_FIELD_SID, null, false},   {PS_FIELD_CPU, null, false},
+                    {PS_FIELD_STIME, null, false}, {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_ARGS, "CMD", true},
+                };
+                static const ps_selected ps_jobs_preset[] = {
+                    {PS_FIELD_PID, null, false},   {PS_FIELD_PGID, null, false},
+                    {PS_FIELD_SID, null, false},   {PS_FIELD_TTY, null, false},
+                    {PS_FIELD_TIME, null, false},  {PS_FIELD_COMM, "CMD", true},
+                };
+                const ps_selected address_to preset =
+                    full ? (jobs ? ps_full_jobs_preset : ps_full_preset)
+                         : (jobs ? ps_jobs_preset : ps_plain_preset);
+                positive presets = full ? (jobs ? 10 : 8) : (jobs ? 6 : 4);
 
                 ps_columns[PS_FIELD_TTY].header = "TTY";
                 ps_columns[PS_FIELD_TTY].width = 8;

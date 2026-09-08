@@ -2999,6 +2999,32 @@ static b32 process_ctrlaltdel()
         b32 answer;
         if (ul_options_done(address_of taking, "hard|soft", address_of answer))
                 return answer;
+
+        /* Without an operand util-linux reports the current setting, which
+           the kernel publishes as 0 (soft) or 1 (hard). */
+        if (taking.first == count)
+        {
+                string_address knob = (string_address)"/proc/sys/kernel/ctrl-alt-del";
+                p8 setting[16];
+                bipolar handle = system_open_at(AT_FDCWD, knob,
+                                                FILE_READ | O_CLOEXEC);
+                bipolar got = handle < 0
+                                  ? handle
+                                  : system_read_retry((positive)handle, setting,
+                                                      sizeof(setting) - 1);
+
+                if (handle >= 0)
+                        system_close(handle);
+                if (got < 0)
+                {
+                        string_format(file_fail, "ctrlaltdel: cannot read %s: %s\n",
+                                      knob, file_reason(got));
+                        return 1;
+                }
+                log(got > 0 && setting[0] == '1' ? "hard\n" : "soft\n", 5);
+                log_flush();
+                return 0;
+        }
         if (taking.first + 1 != count)
                 return ul_bad_usage((string_address)"ctrlaltdel",
                                     (string_address)"expected hard or soft");

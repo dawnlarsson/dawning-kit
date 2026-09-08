@@ -578,35 +578,62 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                                 string_address address_to filename)
 {
         positive at = 0;
+
+        // A record from a Windows editor ends in CR LF; GNU drops the CR.
+        if (text_line_length && text_line[text_line_length - 1] == '\r')
+                text_line_length--;
+
         bool escaped = text_line_length && text_line[0] == '\\';
 
         if (escaped)
                 at++;
 
         positive digits = algorithm->bytes * 2;
+        positive label_length = string_length(algorithm->label);
+        positive digest_at = at;
+        p8 address_to name;
 
-        if (text_line_length < at + digits + 2)
-                return false;
+        if (text_line_length >= at + label_length + 6 + digits &&
+            !string_compare_max(text_line + at, algorithm->label, label_length) &&
+            text_line[at + label_length] == ' ' &&
+            text_line[at + label_length + 1] == '(' &&
+            !memory_compare(text_line + text_line_length - digits - 4, ") = ", 4))
+        {
+                // The BSD tagged record: LABEL (name) = digest.
+                name = text_line + at + label_length + 2;
+                digest_at = text_line_length - digits;
+                text_line[digest_at - 4] = end;
+        }
+        else
+        {
+                if (text_line_length < at + digits + 2)
+                        return false;
+
+                digest_at = at;
+                at += digits;
+                // One space, then an optional mode marker: a second space
+                // or the asterisk of a binary record.
+                if (text_line[at] != ' ')
+                        return false;
+
+                at++;
+                if (text_line[at] == ' ' || text_line[at] == '*')
+                        at++;
+
+                text_line[text_line_length] = end;
+                name = text_line + at;
+        }
 
         for (positive i = 0; i < algorithm->bytes; i++)
         {
-                positive high = digit_known(text_line[at + i * 2], 16);
-                positive low = digit_known(text_line[at + i * 2 + 1], 16);
+                positive high = digit_known(text_line[digest_at + i * 2], 16);
+                positive low = digit_known(text_line[digest_at + i * 2 + 1], 16);
 
                 if (high >= 16 || low >= 16)
                         return false;
 
                 expected[i] = (p8)((high << 4) | low);
         }
-
-        at += digits;
-        if (text_line[at] != ' ' ||
-            (text_line[at + 1] != ' ' && text_line[at + 1] != '*'))
-                return false;
-
-        at += 2;
-        text_line[text_line_length] = end;
-        p8 address_to name = text_line + at;
 
         if (escaped)
         {

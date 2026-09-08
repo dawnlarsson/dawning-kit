@@ -249,28 +249,34 @@ def covering_array(parameters, strength, rng):
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
+    column_sets = list(itertools.combinations(range(len(sizes)), strength))
     uncovered = set()
-    for columns in itertools.combinations(range(len(sizes)), strength):
+    for columns in column_sets:
         for values in itertools.product(*(range(sizes[c]) for c in columns)):
             uncovered.add((columns, values))
+
+    # A row covers one tuple per column set, so its score is that many set
+    # lookups rather than a scan of everything still uncovered.
+    def hits(row):
+        return sum(1 for columns in column_sets
+                   if (columns, tuple(row[c] for c in columns)) in uncovered)
+
     rows = []
     while uncovered:
         best, best_hits = None, -1
         for _ in range(24):
             row = [rng.randrange(size) for size in sizes]
-            hits = sum(1 for columns, values in uncovered
-                       if all(row[c] == v for c, v in zip(columns, values)))
-            if hits > best_hits:
-                best, best_hits = row, hits
+            count = hits(row)
+            if count > best_hits:
+                best, best_hits = row, count
         # Improve the candidate greedily one column at a time.
         for column in rng.sample(range(len(sizes)), len(sizes)):
             for value in range(sizes[column]):
                 trial = list(best)
                 trial[column] = value
-                hits = sum(1 for columns, values in uncovered
-                           if all(trial[c] == v for c, v in zip(columns, values)))
-                if hits > best_hits:
-                    best, best_hits = trial, hits
+                count = hits(trial)
+                if count > best_hits:
+                    best, best_hits = trial, count
         if best_hits <= 0:
             columns, values = next(iter(uncovered))
             best = [0] * len(sizes)
@@ -742,6 +748,11 @@ def option_ledger(rows, case):
 def load_spec(domain):
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
+    # A spec imports this module by its file name. Run as the program (or
+    # as a pool worker's __mp_main__) that name would be a second copy with
+    # its own INPUTS and FIXTURES, and what a spec adds to them would be
+    # lost. Point the name at the module that is running.
+    sys.modules.setdefault("differential", sys.modules[__name__])
     try:
         return importlib.import_module(f"spec_{domain}")
     except ModuleNotFoundError as error:
