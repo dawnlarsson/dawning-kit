@@ -258,7 +258,9 @@ def ul_words(argv):
 
 
 def ul_live(name, body, wrap=None, observe=False):
-    """A bash-mode script. The system tool serves the reference shell; the
+    """A bash-mode script. Fixture tools are spelled `env NAME`: under our
+    shell a bare name would dispatch to our own implementation, and the
+    fixture must be built by the system tools on both sides. The system tool serves the reference shell; the
     multicall binary, invoked under NAME, serves ours. wrap re-executes the
     body inside a namespace so effects never touch shared kernel state."""
     prelude = ('exe=$(readlink /proc/$$/exe)\n'
@@ -270,7 +272,7 @@ def ul_live(name, body, wrap=None, observe=False):
     if wrap is None:
         return prelude + setup + run + body
     return (prelude + setup + "cat > ul_inner.sh <<'UL_EOF'\n" + 'tool=$1\nshift\n' + run + body +
-            "UL_EOF\n" + 'exec %s "$exe" ul_inner.sh "$tool"\n' % wrap)
+            "UL_EOF\n" + 'exec env %s "$exe" ul_inner.sh "$tool"\n' % wrap)
 
 
 def ul_script(name, before, after="", wrap=None, observe=False, status="status=$?"):
@@ -334,30 +336,32 @@ printf 'tmpfs %s/fstab\\040target tmpfs nodev,nosuid 0 0\ntmpfs %s/noauto tmpfs 
 printf 'tmpfs %s/a tmpfs defaults 0 0\nmalformed\ntmpfs %s/b tmpfs defaults 0 0\n' "$PWD" "$PWD" > fstab-malformed
 ln -s c clink
 """
-UL_MOUNT_PREMOUNT = r"""mount -t tmpfs tmpfs c && mkdir -p c/sub && mount -t tmpfs -o ro tmpfs c/sub
-mount --bind c b
+# The storage tools are builtins of our shell: `env` reaches the system ones
+# from either shell, so the fixture is built and viewed identically.
+UL_MOUNT_PREMOUNT = r"""env mount -t tmpfs tmpfs c && mkdir -p c/sub && env mount -t tmpfs -o ro tmpfs c/sub
+env mount --bind c b
 """
-UL_MOUNT_VIEW = r"""findmnt -n -r -o TARGET,SOURCE,FSTYPE,OPTIONS,FSROOT,PROPAGATION | grep -F "$PWD" | sort
-for p in a b c c/sub "fstab target" noauto; do mountpoint -q "$p" && echo "mounted $p"; done
+UL_MOUNT_VIEW = r"""env findmnt -n -r -o TARGET,SOURCE,FSTYPE,OPTIONS,FSROOT,PROPAGATION | grep -F "$PWD" | sort
+for p in a b c c/sub "fstab target" noauto; do env mountpoint -q "$p" && echo "mounted $p"; done
 """
 
-UL_IPC_SETUP = r"""q=$(ipcmk -Q -p 0640 | awk '{print $NF}')
-m=$(ipcmk -M 4096 -p 0640 | awk '{print $NF}')
-s=$(ipcmk -S 2 -p 0640 | awk '{print $NF}')
+UL_IPC_SETUP = r"""q=$(env ipcmk -Q -p 0640 | env awk '{print $NF}')
+m=$(env ipcmk -M 4096 -p 0640 | env awk '{print $NF}')
+s=$(env ipcmk -S 2 -p 0640 | env awk '{print $NF}')
 """
-UL_IPC_VIEW = "ipcs -q -m -s\n"
+UL_IPC_VIEW = "env ipcs -q -m -s\n"
 
 UL_LOCK_SETUP = r""": > lock
-flock -x lock sleep 2 </dev/null >/dev/null 2>&1 &
+env flock -x lock sleep 2 </dev/null >/dev/null 2>&1 &
 holder=$!
 python3 -c 'import fcntl,time; f=open("lock","r+"); fcntl.lockf(f, fcntl.LOCK_EX, 4, 2); time.sleep(2)' </dev/null >/dev/null 2>&1 &
 posix=$!
 i=0
-until [ "$(lslocks -n -p $holder -o PID 2>/dev/null)" ] && [ "$(lslocks -n -p $posix -o PID 2>/dev/null)" ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
-flock -x lock true </dev/null >/dev/null 2>&1 &
+until [ "$(env lslocks -n -p $holder -o PID 2>/dev/null)" ] && [ "$(env lslocks -n -p $posix -o PID 2>/dev/null)" ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
+env flock -x lock true </dev/null >/dev/null 2>&1 &
 waiter=$!
 i=0
-until grep -q -- "->.* $waiter " /proc/locks 2>/dev/null || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
+until env grep -q -- "->.* $waiter " /proc/locks 2>/dev/null || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
 """
 UL_LOCK_TEARDOWN = "kill $holder $posix $waiter 2>/dev/null; wait $holder $posix $waiter 2>/dev/null\n"
 
@@ -369,22 +373,22 @@ until [ -e /proc/$pid/fd/8 ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
 """
 UL_FD_TEARDOWN = "kill $pid 2>/dev/null; wait $pid 2>/dev/null\n"
 
-UL_TARGET_SETUP = r"""unshare -Urnm sleep 3 </dev/null >/dev/null 2>&1 &
+UL_TARGET_SETUP = r"""env unshare -Urnm sleep 3 </dev/null >/dev/null 2>&1 &
 a=$!
-unshare -U --map-user=7 --map-group=8 sleep 3 </dev/null >/dev/null 2>&1 &
+env unshare -U --map-user=7 --map-group=8 sleep 3 </dev/null >/dev/null 2>&1 &
 b=$!
 mkdir -p dir
-unshare -Ur sh -c 'cd dir && exec sleep 3' </dev/null >/dev/null 2>&1 &
+env unshare -Ur sh -c 'cd dir && exec sleep 3' </dev/null >/dev/null 2>&1 &
 c=$!
 i=0
-until [ "$(readlink /proc/$a/ns/user 2>/dev/null)" != "$(readlink /proc/$$/ns/user)" ] && [ "$(cat /proc/$b/uid_map 2>/dev/null | awk '{print $1}')" = 7 ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
+until [ "$(env readlink /proc/$a/ns/user 2>/dev/null)" != "$(env readlink /proc/$$/ns/user)" ] && [ "$(env awk '{print $1}' /proc/$b/uid_map 2>/dev/null)" = 7 ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done
 sleep .05
 """
 UL_TARGET_TEARDOWN = "kill $a $b $c 2>/dev/null; wait $a $b $c 2>/dev/null\n"
 
-UL_WAIT_SETUP = r"""sleep .05 </dev/null &
+UL_WAIT_SETUP = r"""env sleep .05 </dev/null &
 pid=$!
-sleep .3 </dev/null &
+env sleep .3 </dev/null &
 two=$!
 true &
 gone=$!
@@ -1004,7 +1008,7 @@ UTILITIES = (
                       ("-T", "clink"), ("c",), ("-M", "b")),
             stdin=("empty",), max_flags=3),
     Utility("lsns_live", modes=("bash",), stderr="loose", normalize=ul_norm_live,
-            script=ul_script("lsns", "self=$$\nns=$(stat -Lc %i /proc/$$/ns/mnt)\n", "", wrap="unshare -Urn"),
+            script=ul_script("lsns", "self=$$\nns=$(env stat -Lc %i /proc/$$/ns/mnt)\n", "", wrap="unshare -Urn"),
             options=(*ul_flags("-n", "-r", "-J", "-l", "-u"),
                      Option("-o", ("NS,TYPE", "NS,TYPE,PID,PPID,UID,USER", "TYPE,PATH", "NS,TYPE,NPROCS,UID,USER", "TYPE,NETNSID,NSFS",
                                    "TYPE,PNS,ONS"), False),
@@ -1024,14 +1028,14 @@ UTILITIES = (
                       ("--target", "@A", UL_OBS, "exit7"), ("-t", "@C", "-U", "--preserve-credentials", "-w", UL_OBS, "pwd")),
             stdin=("empty",), max_flags=3),
     Utility("renice_live", modes=("bash",), stderr="loose", normalize=ul_norm_pids,
-            script=ul_script("renice", "sleep 2 </dev/null &\npid=$!\n", "ps -o ni= -p $pid | tr -d ' '\nkill $pid; wait $pid 2>/dev/null\n"),
+            script=ul_script("renice", "env sleep 2 </dev/null &\npid=$!\n", "env ps -o ni= -p $pid | tr -d ' '\nkill $pid; wait $pid 2>/dev/null\n"),
             options=(Option("-n", ("0", "5", "19", "-5", "20", "bad"), False), Option("--priority", ("3",), True),
                      Option("--relative", ("0", "2", "9223372036854775807", "-1"), True)),
             operands=(("-p", "@PID"), ("5", "-p", "@PID"), ("5", "@PID"), ("1", "-p", "@PID", "@PID"), ("-p", "@PID", "-n", "4"),
                       ("--relative", "1", "-p", "@PID")),
             stdin=("empty",), max_flags=2),
     Utility("flock_live", modes=("bash",), stderr="loose", normalize=ul_norm_flock,
-            script=ul_script("flock", ": > lock\nflock -x lock sleep 2 </dev/null >/dev/null 2>&1 &\nholder=$!\ni=0\nuntil [ \"$(lslocks -n -p $holder -o PID 2>/dev/null)\" ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done\n",
+            script=ul_script("flock", ": > lock\nenv flock -x lock sleep 2 </dev/null >/dev/null 2>&1 &\nholder=$!\ni=0\nuntil [ \"$(env lslocks -n -p $holder -o PID 2>/dev/null)\" ] || [ $i -ge 150 ]; do sleep .02; i=$((i+1)); done\n",
                              "kill $holder 2>/dev/null; wait $holder 2>/dev/null\n", observe=True),
             options=(*ul_flags("-x", "-s", "-u", "-n", "-o", "-F", "--fcntl", "--verbose"),
                      Option("-w", ("0.05", "0", "1e-2"), False), Option("-E", ("42", "0", "300"), False)),
@@ -1044,7 +1048,7 @@ UTILITIES = (
             extra=(("on",), ("off",), ("on", "-v", "n"), ("off", "-v", "y"), ("off", "yes"), ("on", "no"), ("on", "-v"),
                    ("off", "-v"), ("on", "x"), ("off", "y", "n"))),
     Utility("lsblk_live", modes=("bash",), stderr="loose", normalize=ul_norm_lsblk,
-            script=ul_script("lsblk", "dev=$(lsblk -d -n -r -o PATH | sed -n 1p)\n", ""),
+            script=ul_script("lsblk", "dev=$(env lsblk -d -n -r -o PATH | env sed -n 1p)\n", ""),
             options=(*ul_flags("-d", "-n", "-r", "-J", "-p", "-b", "-l", "-P", "-f", "-m", "-t", "-S"),
                      Option("-o", ("PATH", "NAME,SIZE", "KNAME,TYPE,MOUNTPOINTS", "NAME,MAJ:MIN,RM,RO"), False)),
             operands=(("@DEV",), ("@DEV", "@DEV"), ("@DEV", "missing")), stdin=("empty",), max_flags=3),

@@ -54,6 +54,11 @@ import concurrent.futures
 
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
+# A spec says `from differential import ...`. When this file is the program,
+# or a worker's re-import of it, that name must mean this very module, so the
+# INPUTS and FIXTURES a spec adds are the ones the runner reads.
+if __name__ in ("__main__", "__mp_main__"):
+    sys.modules.setdefault("differential", sys.modules[__name__])
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
 PIN_END = "# ---- pinned rows end ----"
 OUTPUT_LIMIT = 1 << 20

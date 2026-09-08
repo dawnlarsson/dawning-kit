@@ -43,6 +43,7 @@
 #define STORAGE_MNT_EXPIRE      4
 #define STORAGE_UMOUNT_NOFOLLOW 8
 
+#define STORAGE_ERROR_PERMISSION 1
 #define STORAGE_ERROR_NO_ENTRY  2
 #define STORAGE_ERROR_IO        5
 #define STORAGE_ERROR_NO_MEMORY 12
@@ -93,6 +94,7 @@ typedef struct
         bool noauto;
         bool nofail;
         bool unsupported_loop;
+        bool fake;
 } storage_mount_options;
 
 static fn storage_options_free(storage_mount_options address_to options)
@@ -356,6 +358,9 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 return answer;
         if (options->unsupported_loop)
                 return -STORAGE_ERROR_INVALID;
+        /* --fake does everything but the mount-related system calls. */
+        if (options->fake)
+                return 0;
 
         /* mount(2) itself does not implement util-linux's `-t auto`. */
         if ((!type || storage_word(type, (string_address)"auto")) &&
@@ -367,7 +372,10 @@ static bipolar storage_mount_one(string_address source, string_address target,
         if (options->flags & STORAGE_MS_MOVE)
                 return system_mount(resolved, target, 0, STORAGE_MS_MOVE, 0);
 
-        if (options->propagation &&
+        /* A propagation change alone names only a target; combined with a
+           real mount it follows that mount as a second call below. */
+        if (options->propagation && !type &&
+            storage_word(source, (string_address)"none") &&
             !(options->flags & ~(STORAGE_MS_REC)))
                 return system_mount(0, target, 0,
                                      options->propagation, 0);
@@ -454,6 +462,8 @@ static b32 storage_mount_fstab_record(string_address program,
                 string_format(diagnostic, "%s: no memory\n", program);
                 return 1;
         }
+        if (extra)
+                options.fake = extra->fake;
 
         /* With one fstab operand, util-linux treats a single positive -t as
            an override.  Under -a it is a filter. */
@@ -481,7 +491,7 @@ static b32 storage_mount_fstab_record(string_address program,
                 storage_mount_error(diagnostic, program, record->source,
                                     record->target, answer);
         storage_options_free(address_of options);
-        return answer && !tolerated ? 1 : 0;
+        return answer && !tolerated ? 32 : 0;
 }
 
 static b32 storage_mount_fstab(string_address program, string_address wanted,
@@ -494,6 +504,7 @@ static b32 storage_mount_fstab(string_address program, string_address wanted,
                                                diagnostic);
         b32 failed = 0;
         bool found = false;
+        positive mounted = 0;
         storage_mount_table active;
         bool have_active = false;
 
@@ -516,13 +527,19 @@ static b32 storage_mount_fstab(string_address program, string_address wanted,
                     !storage_option_has(record->options,
                                         (string_address)"remount"))
                         continue;
-                failed |= storage_mount_fstab_record(program, record,
-                                                     extra, type_filter,
-                                                     !all, diagnostic);
+                b32 one = storage_mount_fstab_record(program, record, extra,
+                                                     type_filter, !all,
+                                                     diagnostic);
+                failed |= one;
+                if (!one)
+                        mounted++;
                 if (!all)
                         break;
         }
 
+        /* util-linux: 64 when some of -a succeeded, 32 when a mount failed. */
+        if (all && failed && mounted)
+                failed = 64;
         if (!all && !found)
         {
                 string_format(diagnostic, "%s: %s not found in %s\n", program,
@@ -590,6 +607,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("no-canonicalize", 'c'),
             STORAGE_ARGUMENT("internal-only", 'i'),
             STORAGE_ARGUMENT("sloppy", 's'),
+            STORAGE_ARGUMENT("fake", 'f'),
         };
         string_address type = null;
         string_address fstab = (string_address)"/etc/fstab";
@@ -609,7 +627,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         memory_fill(address_of options, 0, sizeof(options));
 
         while ((option = storage_argument_next(
-                    address_of taking, (string_address)"arwBRMvncistoTLU",
+                    address_of taking, (string_address)"arwBRMvncistofTLU",
                     (string_address)"toTLUSX", arguments,
                     array_count(arguments), address_of value)) !=
                ARGUMENT_END)
@@ -630,9 +648,12 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                          ((option == 'S' || option == 'X') && !*value))
                 {
                         if (taking.letters)
+                        {
+                                p8 letter[2] = {(p8)taking.letters[-1], end};
                                 string_format(diagnostic,
-                                              "mount: unknown option: -%c\n",
-                                              taking.letters[-1]);
+                                              "mount: unknown option: -%s\n",
+                                              letter);
+                        }
                         else
                                 string_format(diagnostic,
                                               "mount: unknown option: %s\n",
@@ -641,6 +662,8 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 }
                 else if (option == 'a')
                         all = true;
+                else if (option == 'f')
+                        options.fake = true;
                 else if (option == 'r' || option == 'w')
                 {
                         if (!storage_options_parse(
@@ -776,7 +799,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                 storage_mount_error(diagnostic,
                                                     (string_address)"mount",
                                                     null, operand[0], answer);
-                        status = answer ? 1 : 0;
+                        status = answer ? 32 : 0;
                 }
                 else if (options.flags & STORAGE_MS_REMOUNT)
                 {
@@ -793,7 +816,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                         string_format(diagnostic,
                                                       "mount: %s is not mounted\n",
                                                       operand[0]);
-                                        status = 1;
+                                        status = 32;
                                 }
                                 else
                                 {
@@ -807,7 +830,7 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                     (string_address)"mount",
                                                     live->source, live->target,
                                                     answer);
-                                        status = answer ? 1 : 0;
+                                        status = answer ? 32 : 0;
                                 }
                                 storage_mount_table_release(address_of table);
                         }
@@ -823,13 +846,15 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
         {
                 bipolar answer;
 
+                /* util-linux answers 32 for a mount(2) that failed, 1 for
+                   an invocation it could not make sense of. */
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
                         storage_mount_error(diagnostic,
                                             (string_address)"mount", operand[0],
                                             operand[1], answer);
-                status = answer ? 1 : 0;
+                status = answer ? 32 : 0;
                 goto done;
         }
 
@@ -858,10 +883,11 @@ static bool storage_path_below(string_address path, string_address root)
         return (length == 1 && root[0] == '/') || path[length] == '/';
 }
 
+/* The mounted target a spelling names, or null when the table has none. */
 static PURE string_address storage_umount_target(storage_mount_table address_to table,
                                             string_address asked)
 {
-        string_address found = asked;
+        string_address found = null;
 
         /* Last wins: stacked mounts are unmounted from the top. */
         for (positive at = 0; at < table->count; at++)
@@ -872,9 +898,13 @@ static PURE string_address storage_umount_target(storage_mount_table address_to 
         return found;
 }
 
+/* known says the target came from the mount table. util-linux answers 32
+   for an umount(2) that failed and 1 for a target it never found mounted;
+   an unknown spelling still reaches the kernel, which resolves relative
+   paths, and only its "not a mount" answers count as unmounted. */
 static b32 storage_umount_one(writer diagnostic, string_address program,
                              string_address target, positive flags,
-                             bool read_only)
+                             bool read_only, bool known)
 {
         bipolar answer = system_call_2(syscall(umount2), (positive)target, flags);
 
@@ -894,8 +924,13 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
                                          (b32)answer;
                 string_format(diagnostic, "%s: %s failed: %s\n", program,
                               target, strerror(number));
+                if (!known && (number == STORAGE_ERROR_INVALID ||
+                               number == STORAGE_ERROR_NO_ENTRY ||
+                               number == STORAGE_ERROR_PERMISSION))
+                        return 1;
+                return 32;
         }
-        return answer ? 1 : 0;
+        return 0;
 }
 
 static b32 storage_umount_recursive(writer diagnostic, string_address program,
@@ -948,7 +983,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                 found = true;
                                 failed |= storage_umount_one(diagnostic, program,
                                                              record->target, flags,
-                                                             read_only);
+                                                             read_only, true);
                                 record->target = null;
                         }
                 }
@@ -1013,9 +1048,12 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                 else if (option == ARGUMENT_UNKNOWN)
                 {
                         if (taking.letters)
+                        {
+                                p8 letter[2] = {(p8)taking.letters[-1], end};
                                 string_format(diagnostic,
-                                              "umount: unknown option: -%c\n",
-                                              taking.letters[-1]);
+                                              "umount: unknown option: -%s\n",
+                                              letter);
+                        }
                         else
                                 string_format(diagnostic,
                                               "umount: unknown option: %s\n",
@@ -1063,14 +1101,15 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                             storage_type_match(types, record->type))
                                 failed |= storage_umount_one(
                                     diagnostic, (string_address)"umount",
-                                    record->target, flags, read_only);
+                                    record->target, flags, read_only, true);
                 }
         }
 
         for (positive i = 0; i < operands; i++)
         {
-                string_address target = storage_umount_target(address_of table,
-                                                               operand[i]);
+                string_address found = storage_umount_target(address_of table,
+                                                              operand[i]);
+                string_address target = found ? found : operand[i];
                 if (recursive)
                         failed |= storage_umount_recursive(diagnostic,
                                                            (string_address)"umount",
@@ -1079,7 +1118,7 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                 else
                         failed |= storage_umount_one(
                             diagnostic, (string_address)"umount", target,
-                            flags, read_only);
+                            flags, read_only, found != null);
         }
 
         storage_mount_table_release(address_of table);

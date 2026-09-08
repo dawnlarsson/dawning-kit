@@ -2330,14 +2330,14 @@ static b32 util_linux_flock()
                 return 1;
         }
 
-        if (!close_child)
-                system_close(handle);
-
+        /* The parent holds the lock until the command has exited, as
+           util-linux does: the lock survives a command that closes its
+           inherited descriptors, and lslocks resolves the path through
+           the holder. */
         positive status = 0;
         answer = system_wait4_retry(child, address_of status, 0, null) < 0
                    ? 1 : wait_status_code(status);
-        if (close_child)
-                system_close(handle);
+        system_close(handle);
         return answer;
 }
 
@@ -7418,9 +7418,13 @@ static const file_long ul_getopt_longs[] = {
     {"name", 'n'},        {"options", 'o'},
     {"quiet", 'q'},       {"quiet-output", 'Q'},
     {"shell", 's'},       {"test", 'T'},
-    {"unquoted", 'u'},    {"help", 'h'},
-    {"version", 'V'},     {null, 0},
+    {"unquoted", 'u'},    {"unknown", 'U'},
+    {"help", 'h'},        {"version", 'V'},
+    {null, 0},
 };
+
+/* -U keeps an option getopt(3) rejects as a quoted word in the output. */
+static bool ul_getopt_keep_unknown;
 
 /* file_taking deliberately keeps only the last value for an option.  getopt
    is the exception: each -l contributes another comma-separated name list.
@@ -7679,6 +7683,11 @@ static bool ul_getopt_short(string_address word, string_address next,
                 if (letter == '?' || letter == ':')
                 {
                         okay = false;
+                        /* As upstream: the cluster once getopt has stepped
+                           past it, otherwise the name it stands under. */
+                        if (ul_getopt_keep_unknown)
+                                ul_getopt_value(optind >= 2 ? word : name,
+                                                unquoted, csh, output);
                         if (optind >= 2)
                                 break;
                         continue;
@@ -7725,11 +7734,15 @@ static bool ul_getopt_long(string_address word, p8 dashes,
                         string_format(log_error,
                                       "%s: unrecognized option '%s'\n",
                                       name, word);
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 return false;
         }
 
         if (match.matches > 1 && !match.exact)
         {
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
                         string_format(log_error, "%s: option '%s' is ambiguous",
@@ -7751,6 +7764,8 @@ static bool ul_getopt_long(string_address word, p8 dashes,
 
         if (!match.argument && equal)
         {
+                if (ul_getopt_keep_unknown)
+                        ul_getopt_value(word, unquoted, csh, output);
                 if (!quiet)
                 {
                         string_format(log_error, "%s: option '", name);
@@ -7765,6 +7780,8 @@ static bool ul_getopt_long(string_address word, p8 dashes,
         {
                 if (!has_next)
                 {
+                        if (ul_getopt_keep_unknown)
+                                ul_getopt_value(word, unquoted, csh, output);
                         if (!quiet)
                         {
                                 string_format(log_error, "%s: option '", name);
@@ -7810,6 +7827,7 @@ static b32 util_linux_getopt()
         string_address diagnostic_name = "getopt";
 
         text_arena_used = 0;
+        ul_getopt_keep_unknown = false;
         ul_getopt_long_count = 0;
         ul_getopt_long_room = count;
         ul_getopt_long_lists = count
@@ -7827,7 +7845,7 @@ static b32 util_linux_getopt()
         else
         {
                 file_taking taking = {
-                    .program = "getopt", .allowed = "alnoqQsTuhV",
+                    .program = "getopt", .allowed = "alnoqQsTuUhV",
                     .valued = "lnos", .longs = ul_getopt_longs,
                     .seen = ul_getopt_seen,
                 };
@@ -7856,7 +7874,9 @@ static b32 util_linux_getopt()
                 }
 
                 alternative = (taking.flags & FILE_FLAG('a')) != 0;
-                quiet = (taking.flags & FILE_FLAG('q')) != 0;
+                ul_getopt_keep_unknown = (taking.flags & FILE_FLAG('U')) != 0;
+                quiet = (taking.flags & FILE_FLAG('q')) != 0 ||
+                        ul_getopt_keep_unknown;
                 quiet_output = (taking.flags & FILE_FLAG('Q')) != 0;
                 unquoted = (taking.flags & FILE_FLAG('u')) != 0;
                 if (file_option_value(address_of taking, 'n'))
@@ -8597,10 +8617,12 @@ static b32 util_linux_isosize()
         if (taking.first == count)
                 return ul_bad_usage("isosize", "no device specified");
 
-        positive divisor = 0;
+        /* util-linux takes a signed 32-bit divisor: a negative one divides. */
+        bipolar divisor = 0;
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (divisor_text &&
-            !ul_unsigned(divisor_text, positive_max, address_of divisor))
+            !ul_signed(divisor_text, -(bipolar)2147483648, 2147483647,
+                       address_of divisor))
                 return ul_bad_usage("isosize", "invalid divisor argument");
 
         bool several = count - taking.first > 1;
@@ -8633,9 +8655,11 @@ static b32 util_linux_isosize()
                                       path);
                 if (read_bytes != sizeof(descriptor))
                 {
+                        /* A short descriptor has no size to report. */
                         string_format(file_fail,
                                       "isosize: read error on %s\n", path);
                         status = 32;
+                        continue;
                 }
 
                 if (several)
@@ -8647,10 +8671,10 @@ static b32 util_linux_isosize()
                                       (positive)volume.sector_size);
                 else
                 {
-                        positive bytes = (positive)volume.sectors *
-                                         (positive)volume.sector_size;
-                        positive_to_string(log, divisor ? bytes / divisor : bytes);
-                        log("\n", 1);
+                        bipolar bytes = (bipolar)volume.sectors *
+                                        (bipolar)volume.sector_size;
+                        string_format(log, "%b\n",
+                                      divisor ? bytes / divisor : bytes);
                 }
         }
 
