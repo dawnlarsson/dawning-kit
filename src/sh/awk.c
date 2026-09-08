@@ -2219,10 +2219,11 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                         body = awk_integer_digits(value, room, sizeof(room), address_of negative);
 
                         // Not a number: the name carries its own sign and
-                        // takes no zero fill.
+                        // takes no zero fill and no precision.
                         if (!decimal_is_finite(value))
                         {
                                 zero = false;
+                                precision = -1;
                                 break;
                         }
 
@@ -2267,6 +2268,7 @@ static awk_text address_to awk_sprintf(string_address format, positive length,
                                         body = string_length(name);
                                         memory_copy(room, name, (positive)body);
                                         zero = false;
+                                        precision = -1;
                                         break;
                                 }
 
@@ -6345,21 +6347,6 @@ static bool awk_option_seen(p8 letter, string_address value)
 
         if (letter == 'v')
         {
-                positive length = string_length(value);
-
-                // Not var=value: without an = it is a usage error, with one
-                // and a name that is not a name it is fatal, as the
-                // reference awk grades them.
-                if (awk_assignment_split(value, length) >= length)
-                {
-                        text_error(value, "argument to -v is not in var=value form");
-
-                        if (!memory_first_of(value, '=', length))
-                                awk_usage();
-
-                        awk_leave(2);
-                }
-
                 if (!shell_array_room(awk_pending, awk_pending_room,
                                       (positive)awk_pending_count + 1))
                         awk_fatal(null, "no room for assignments");
@@ -6489,7 +6476,23 @@ static b32 text_awk()
 
         for (b32 i = 0; i < awk_pending_count; i++)
         {
-                awk_assignment(awk_pending[i]->text, awk_pending[i]->length);
+                // Not var=value: without an = it is a usage error, with one
+                // and a name that is not a name it is fatal, as the
+                // reference awk grades them -- after the program files were
+                // read and the program parsed, which is the reference's
+                // order too.
+                if (!awk_assignment(awk_pending[i]->text, awk_pending[i]->length))
+                {
+                        text_error(awk_pending[i]->text,
+                                   "argument to -v is not in var=value form");
+
+                        if (!memory_first_of(awk_pending[i]->text, '=',
+                                             awk_pending[i]->length))
+                                awk_usage();
+
+                        awk_leave(2);
+                }
+
                 awk_text_drop(awk_pending[i]);
         }
 
