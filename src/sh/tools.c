@@ -19,6 +19,16 @@
 static bipolar dns_resolve_any(string_address path, string_address name,
                                p32 address_to found, positive seconds);
 
+/* coreutils' complaint about a surplus word, with the usage hint. */
+static b32 tools_extra_operand(string_address program, string_address word)
+{
+        text_flush();
+        string_format(file_fail,
+                      "%s: extra operand '%s'\nTry '%s --help' for more information.\n",
+                      program, word, program);
+        return text_done(1);
+}
+
 // hostid ----------------------------------------------------
 
 /* Linux gethostid first accepts the native four-byte /etc/hostid.  Without
@@ -75,8 +85,8 @@ static b32 tools_hostid()
                 return text_done(1);
 
         if (taking.first < (positive)program_argument_count())
-                return text_refuse(program_argument((b32)taking.first),
-                                   "extra operand", 1);
+                return tools_extra_operand("hostid",
+                                           program_argument((b32)taking.first));
 
         positive_to_base_field(text_put, tools_hostid_value(), 16, 8, -1,
                                (positive)1 << 28);
@@ -133,6 +143,7 @@ enum
 typedef struct
 {
         bipolar handle;
+        bipolar last_error;
         positive priority;
         positive process;
         positive maximum;
@@ -558,18 +569,36 @@ static bool logger_connect(logger_control address_to control)
         if (control->transport != LOGGER_TRANSPORT_STREAM)
                 control->handle = logger_connect_kind(control,
                                                      LOGGER_TRANSPORT_DGRAM);
+        if (control->handle < 0)
+                control->last_error = control->handle;
         if (control->handle < 0 && control->transport != LOGGER_TRANSPORT_DGRAM)
+        {
                 control->handle = logger_connect_kind(control,
                                                      LOGGER_TRANSPORT_STREAM);
+                if (control->handle < 0)
+                        control->last_error = control->handle;
+        }
 
         if (control->handle >= 0)
                 return true;
 
-        if (control->server || control->socket_errors)
+        if (control->server)
         {
-                text_error(control->server ? control->server
-                                           : control->socket_path,
-                           "cannot connect to logging socket");
+                string_format(file_fail,
+                              "logger: failed to connect to %s port %s\n",
+                              control->server,
+                              control->port ? control->port
+                              : control->transport == LOGGER_TRANSPORT_STREAM
+                                  ? (string_address)"601"
+                                  : (string_address)"514");
+                return false;
+        }
+        if (control->socket_errors)
+        {
+                string_format(file_fail, "logger: socket %s: %s\n",
+                              control->socket_path ? control->socket_path
+                                                   : (string_address)"/dev/log",
+                              file_reason(control->last_error));
                 return false;
         }
         return true;
@@ -675,6 +704,16 @@ static bool logger_stream(logger_control address_to control,
 {
         if (!text_open(path))
                 return false;
+
+        // util-linux reads a directory as an empty file, without a word.
+        file_facts facts;
+        if (path && file_look(text_input.handle, (string_address)"",
+                              AT_EMPTY_PATH, address_of facts) &&
+            (facts.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                text_close();
+                return true;
+        }
 
         bool answer = true;
         positive default_priority = control->priority;
@@ -930,8 +969,15 @@ static b32 tools_logger()
                         return text_refuse(socket_errors,
                                            "invalid socket error mode", 1);
         }
-        else
-                control.socket_errors = control.standard_error || control.no_action;
+        if (!socket_errors || !string_compare(socket_errors, "auto"))
+        {
+                // util-linux's auto: report when the journal's socket says a
+                // logging daemon is expected to be there.
+                file_facts journal;
+                control.socket_errors = file_look_at(
+                    (string_address)"/run/systemd/journal/socket",
+                    address_of journal);
+        }
 
         if (taking.flags & FILE_FLAG('i'))
                 control.process = (positive)system_call(syscall(getpid));
@@ -942,7 +988,12 @@ static b32 tools_logger()
                 {
                         if (!string_digits_exact(identity, address_of control.process) ||
                             !control.process || control.process > p32_max)
-                                return text_refuse(identity, "invalid process id", 1);
+                        {
+                                string_format(file_fail,
+                                              "logger: failed to parse id: '%s'\n",
+                                              identity);
+                                return text_done(1);
+                        }
                 }
                 else
                         control.process = (positive)system_call(syscall(getpid));
@@ -1127,6 +1178,11 @@ static bool login_records(string_address path, bool check_processes,
                 bipolar got = system_read_retry((positive)input,
                                                 file_transfer + held,
                                                 sizeof(file_transfer) - held);
+
+                // A directory opens and then has no records: the system
+                // readers walk it as an empty database, without a word.
+                if (got == -ERROR_IS_DIRECTORY)
+                        break;
 
                 if (got < 0)
                 {
@@ -2033,14 +2089,12 @@ static b32 tools_wall()
         bool banner = true;
         if (taking.flags & FILE_FLAG('n'))
         {
+                // util-linux warns and goes on with the banner.
                 if (!system_call(syscall(geteuid)))
                         banner = false;
                 else
-                {
                         file_fail("wall: --nobanner is available only for root\n",
                                   0);
-                        return text_done(1);
-                }
         }
 
         login_message_selection_clear();
@@ -2305,6 +2359,16 @@ static fn login_utmpdump_field(p8 address_to field, positive length,
         text_put_string("] ");
 }
 
+/* util-linux shows a byte that is not printable, or that would be taken
+   for a field bracket, as a question mark. */
+static fn login_utmpdump_cleanse(p8 address_to field, positive length)
+{
+        for (positive at = 0; at < length; at++)
+                if (!byte_is_printable(field[at]) || field[at] == '[' ||
+                    field[at] == ']')
+                        field[at] = '?';
+}
+
 static bool login_utmpdump_visit(login_record address_to record)
 {
         p8 number[32], identity[5], user[33], line[33], host[257];
@@ -2320,17 +2384,21 @@ static bool login_utmpdump_visit(login_record address_to record)
 
         length = login_field(identity, sizeof(identity), record->identity,
                              sizeof(record->identity), false);
+        login_utmpdump_cleanse(identity, length);
         login_utmpdump_field(identity, length, 4);
         /* util-linux pads these three to a column but prints a longer
            value whole; only the four-byte id is cut. */
         length = login_field(user, sizeof(user), record->user,
                              sizeof(record->user), false);
+        login_utmpdump_cleanse(user, length);
         login_utmpdump_field(user, length, 8);
         length = login_field(line, sizeof(line), record->line,
                              sizeof(record->line), false);
+        login_utmpdump_cleanse(line, length);
         login_utmpdump_field(line, length, 12);
         length = login_field(host, sizeof(host), record->host,
                              sizeof(record->host), false);
+        login_utmpdump_cleanse(host, length);
         login_utmpdump_field(host, length, 20);
 
         length = login_address_text(address, record->address);
@@ -2352,23 +2420,47 @@ static const file_long login_utmpdump_longs[] = {
     {null, 0},
 };
 
+static bipolar login_utmpdump_output;
+
+/* util-linux opens each -o file as the option is read, so a bad one is
+   refused before a later good one could supersede it. */
+static bool login_utmpdump_seen(p8 letter, string_address value)
+{
+        if (letter != 'o')
+                return true;
+        if (login_utmpdump_output > 2)
+                system_close(login_utmpdump_output);
+        login_utmpdump_output = text_open_handle(value, FILE_WRITE, 0666);
+        if (login_utmpdump_output < 0)
+        {
+                string_format(file_fail, "utmpdump: cannot open %s: %s\n", value,
+                              file_reason(login_utmpdump_output));
+                return false;
+        }
+        return true;
+}
+
 static b32 tools_utmpdump()
 {
         file_operands_begin();
+        login_utmpdump_output = -1;
         file_taking taking = {
             .program = (string_address)"utmpdump",
             .allowed = (string_address)"frohV",
             .valued = (string_address)"o",
             .longs = login_utmpdump_longs,
             .operand = file_operand,
+            .seen = login_utmpdump_seen,
         };
         text_begin("utmpdump");
         if (!file_take(address_of taking) || file_operand_failed)
+        {
+                if (login_utmpdump_output > 2)
+                        system_close(login_utmpdump_output);
                 return text_done(1);
+        }
         if (file_meta(address_of taking, "[options] [filename]", text_put))
                 return text_done(0);
-        if (file_operand_count > 1)
-                return text_refuse(file_operand_at(1), "extra operand", 1);
         if (taking.flags & FILE_FLAG('r'))
                 return text_refuse(null,
                     "reverse import is not supported; binary login state is never mutated",
@@ -2376,14 +2468,12 @@ static b32 tools_utmpdump()
         if (taking.flags & FILE_FLAG('f'))
                 return text_refuse(null, "follow mode is not supported", 1);
 
+        // util-linux dumps the first operand and ignores any others.
         positive output_handle = 1;
         string_address output = file_option_value(address_of taking, 'o');
         if (output)
         {
-                bipolar opened = text_open_handle(output, FILE_WRITE, 0666);
-                if (opened < 0)
-                        return text_refuse(output, file_reason(opened), 1);
-                output_handle = (positive)opened;
+                output_handle = (positive)login_utmpdump_output;
                 text_out_to(output_handle);
         }
 
@@ -2895,6 +2985,12 @@ static b32 tools_last()
                                      ? LOGIN_LAST_TIME_FULL
                                      : LOGIN_LAST_TIME_SHORT;
         string_address format = file_option_value(address_of taking, 'z');
+        if (format && (taking.flags & FILE_FLAG('F')))
+        {
+                file_fail("last: options --fulltimes and --time-format cannot be combined\n",
+                          0);
+                return text_done(1);
+        }
         if (format)
         {
                 if (string_equals(format, "short"))
@@ -2927,6 +3023,18 @@ static b32 tools_last()
         {
                 text_error(path, file_reason(loaded));
                 return text_done(1);
+        }
+
+        // util-linux warns about a directory and goes on to say when the
+        // (empty) database begins.
+        file_facts kind;
+        if (file_look(reader.handle, (string_address)"", AT_EMPTY_PATH,
+                      address_of kind) &&
+            (kind.mode & MODE_FORMAT) == MODE_DIRECTORY)
+        {
+                string_format(file_fail, "last: cannot read %s: Is a directory\n",
+                              path);
+                reader.records = 0;
         }
 
         login_record record;
@@ -3013,13 +3121,14 @@ static b32 tools_last()
                 }
                 if (record.type == LOGIN_BOOT_TIME)
                 {
-                        p8 kind = login_last.boundary
+                        // A boot ends at the shutdown that followed it; a
+                        // later boot without one is a crash and util-linux
+                        // leaves the earlier system "still running".
+                        p8 kind = login_last.boundary &&
+                                          login_last.boundary_kind ==
+                                              LOGIN_LAST_END_DOWN
                                       ? LOGIN_LAST_END_LOGOUT
-                                      : record.seconds == login_last.latest_boot &&
-                                                login_last.latest_boot >
-                                                    login_last.latest_shutdown
-                                            ? LOGIN_LAST_END_STILL
-                                            : LOGIN_LAST_END_GONE;
+                                      : LOGIN_LAST_END_STILL;
                         // The record's own user, which init writes as
                         // reboot; util-linux prints whatever is there.
                         login_last_emit(address_of record, user,
@@ -3053,9 +3162,11 @@ static b32 tools_last()
                         p8 wanted = (p8)record.process;
                         if (byte_is_printable(wanted))
                                 level[8] = wanted;
-                        p8 kind = login_last.boundary
+                        p8 kind = login_last.boundary &&
+                                          login_last.boundary_kind ==
+                                              LOGIN_LAST_END_DOWN
                                       ? LOGIN_LAST_END_LOGOUT
-                                      : LOGIN_LAST_END_GONE;
+                                      : LOGIN_LAST_END_STILL;
                         login_last_emit(address_of record, "runlevel", level,
                                         host, kind, login_last.boundary);
                 }
@@ -3190,10 +3301,7 @@ static bool login_who_visit(login_record address_to record)
         if (record->type == LOGIN_BOOT_TIME)
                 login_who.boottime = (b64)record->seconds;
 
-        if (login_who.my_line &&
-            (!login_who.tty || !login_ends_with(line, login_who.tty)))
-                return true;
-
+        // -q counts every login name whatever else was asked, -m included.
         if (login_who.count)
         {
                 if (record->type == LOGIN_USER_PROCESS)
@@ -3206,6 +3314,10 @@ static bool login_who_visit(login_record address_to record)
                 }
                 return true;
         }
+
+        if (login_who.my_line &&
+            (!login_who.tty || !login_ends_with(line, login_who.tty)))
+                return true;
 
         login_time(time, record->seconds);
 
@@ -3332,7 +3444,7 @@ static b32 tools_who()
                 return text_done(1);
 
         if (file_operand_count > 2)
-                return text_refuse(file_operand_at(2), "extra operand", 1);
+                return tools_extra_operand("who", file_operand_at(2));
 
         positive flags = taking.flags;
         bool all = (flags & FILE_FLAG('a')) != 0;
@@ -3447,7 +3559,7 @@ static b32 tools_users()
         if (!file_take(address_of taking) || file_operand_failed)
                 return text_done(1);
         if (file_operand_count > 1)
-                return text_refuse(file_operand_at(1), "extra operand", 1);
+                return tools_extra_operand("users", file_operand_at(1));
 
         string_address path = file_operand_count
                                   ? file_operand_at(0)
@@ -3831,8 +3943,8 @@ static b32 tools_tsort()
         positive arguments = (positive)program_argument_count() - taking.first;
 
         if (arguments > 1)
-                return text_refuse(program_argument((b32)taking.first + 1),
-                                   "extra operand", 1);
+                return tools_extra_operand("tsort",
+                                           program_argument((b32)taking.first + 1));
 
         string_address path = arguments
                                   ? program_argument((b32)taking.first)
@@ -4679,7 +4791,48 @@ static fn numfmt_invalid_value(p8 address_to bytes, positive length)
                 positive take = min(length, sizeof(shown) - 1);
                 memory_copy(shown, bytes, take);
                 shown[take] = end;
-                text_error(shown, "invalid number");
+
+                /* GNU names the failure: no number at all, a scale letter
+                   refused for want of --from, a scale lacking the i of
+                   --from=iec-i, or a suffix that is no scale. */
+                positive at = length && bytes[0] == '-';
+                positive digits = string_span_max(bytes + at, length - at,
+                                                  string_set_digits);
+                positive rest = at + digits;
+                if (rest < length && bytes[rest] == '.')
+                {
+                        rest++;
+                        digits++;
+                        rest += string_span_max(bytes + rest, length - rest,
+                                                string_set_digits);
+                }
+                string_address reason = "invalid number";
+                string_address note = "";
+                positive power;
+
+                text_flush();
+                if (digits && rest < length &&
+                    numfmt_power_letter(bytes[rest], address_of power))
+                {
+                        if (numfmt.from == NUMFMT_SCALE_NONE)
+                        {
+                                reason = "rejecting suffix in input";
+                                note = " (consider using --from)";
+                        }
+                        else if (numfmt.from == NUMFMT_SCALE_IEC_I &&
+                                 !(rest + 1 < length && bytes[rest + 1] == 'i'))
+                        {
+                                reason = "missing 'i' suffix in input";
+                                note = " (e.g Ki/Mi/Gi)";
+                        }
+                        else
+                                reason = "invalid suffix in input";
+                }
+                else if (digits && rest < length)
+                        reason = "invalid suffix in input";
+
+                string_format(file_fail, "numfmt: %s: '%s'%s\n", reason, shown,
+                              note);
         }
 
         if (numfmt.invalid == NUMFMT_INVALID_ABORT ||
@@ -4973,6 +5126,31 @@ static fn numfmt_record(p8 address_to bytes, positive length)
         }
 }
 
+/* GNU refuses a bad delimiter or header count as it reads the option, even
+   when a later one would supersede it. */
+static bool numfmt_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'd' && value && string_length(value) != 1)
+        {
+                text_flush();
+                file_fail("numfmt: the delimiter must be a single character\n", 0);
+                return false;
+        }
+        if (letter == 'h' && value)
+        {
+                positive header;
+
+                if (!string_digits_exact(value, address_of header) || !header)
+                {
+                        text_flush();
+                        string_format(file_fail,
+                                      "numfmt: invalid header value '%s'\n", value);
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 tools_numfmt()
 {
         file_operands_begin();
@@ -4983,6 +5161,7 @@ static b32 tools_numfmt()
             .long_optional = (string_address) "h",
             .longs = numfmt_longs,
             .operand = file_operand,
+            .seen = numfmt_option_seen,
         };
 
         text_begin("numfmt");
@@ -5090,6 +5269,9 @@ static b32 tools_numfmt()
         value = file_option_value(address_of taking, 'f');
         if (!value)
                 value = (string_address) "1";
+        // A lone dash is every field.
+        if (string_equals(value, "-"))
+                value = (string_address) "1-";
         if (!text_list_parse(value))
                 return text_refuse(value, "invalid field specification", 1);
 
@@ -5105,12 +5287,25 @@ static b32 tools_numfmt()
 
         text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
 
+        // GNU's two warnings about options that another option overrides.
+        if (numfmt.have_format && numfmt.format.width && numfmt.padding)
+        {
+                text_flush();
+                file_fail("numfmt: --format padding overriding --padding\n", 0);
+        }
+        if ((flags & FILE_FLAG('h')) && file_operand_count)
+        {
+                text_flush();
+                file_fail("numfmt: --header ignored with command-line input\n", 0);
+        }
+
         if (file_operand_count)
         {
+                // Each operand is a record: fields and their padding apply.
                 for (positive at = 0; at < file_operand_count && !numfmt.stop; at++)
                 {
                         string_address word = file_operand_at(at);
-                        numfmt_convert(word, string_length(word), 0);
+                        numfmt_record((p8 address_to)word, string_length(word));
                         if (!numfmt.stop)
                                 text_put_character(text_delimiter);
                 }
@@ -5121,12 +5316,20 @@ static b32 tools_numfmt()
 
                 while (!numfmt.stop && text_line_next())
                 {
+                        // With NUL records a newline is ordinary blank space
+                        // and comes out as a space, as GNU has it.
+                        if (text_delimiter == '\0')
+                                for (positive at = 0; at < text_line_length; at++)
+                                        if (text_line[at] == '\n')
+                                                text_line[at] = ' ';
+
                         if (records++ < numfmt.header)
                                 text_put(text_line, text_line_length);
                         else
                                 numfmt_record(text_line, text_line_length);
 
-                        if (!numfmt.stop)
+                        // A last record the input left unterminated stays so.
+                        if (!numfmt.stop && text_line_ended)
                                 text_put_character(text_delimiter);
                 }
 
@@ -5527,8 +5730,22 @@ invalid:
                 positive take = min(length, sizeof(shown) - 1);
                 memory_copy(shown, bytes, take);
                 shown[take] = end;
-                text_error(shown,
-                           "not a valid positive native-word integer");
+
+                // Digits alone overflowed the native word, this factor's
+                // stated ceiling; anything else is GNU's own complaint.
+                positive digits = start;
+                while (digits < length && byte_is_digit(bytes[digits]))
+                        digits++;
+
+                text_flush();
+                if (digits == length && length > start)
+                        string_format(file_fail,
+                                      "factor: %s: not a valid positive native-word integer\n",
+                                      shown);
+                else
+                        string_format(file_fail,
+                                      "factor: '%s' is not a valid positive integer\n",
+                                      shown);
         }
         return false;
 }
@@ -5590,8 +5807,11 @@ static b32 tools_factor()
                                                            exponents))
                                         {
                                                 if (excess)
-                                                        text_error(null,
-                                                                   "integer exceeds native-word ceiling");
+                                                {
+                                                        text_flush();
+                                                        file_fail("factor: integer exceeds native-word ceiling\n",
+                                                                  0);
+                                                }
                                                 failed = true;
                                         }
                                         length = 0;
@@ -5609,8 +5829,11 @@ static b32 tools_factor()
                         if (excess || !factor_number(token, length, exponents))
                         {
                                 if (excess)
-                                        text_error(null,
-                                                   "integer exceeds native-word ceiling");
+                                {
+                                        text_flush();
+                                        file_fail("factor: integer exceeds native-word ceiling\n",
+                                                  0);
+                                }
                                 failed = true;
                         }
                 }
@@ -6104,7 +6327,7 @@ static bool tools_uuid_columns(string_address text, p8 address_to columns,
         return name_list_select(
             text, tools_uuid_column_names, sizeof(tools_uuid_column_names[0]),
             array_count(tools_uuid_column_names), columns, count, 32,
-            NAME_LIST_CASE_SENSITIVE | NAME_LIST_REJECT_TRAILING);
+            NAME_LIST_REJECT_TRAILING);
 }
 
 static string_address tools_uuid_cell(tools_uuid_record address_to record,
@@ -6161,9 +6384,15 @@ static b32 tools_uuidparse()
         };
         positive column_count = 4;
         string_address output = file_option_value(address_of taking, 'o');
+        // util-linux fails an empty list without a word.
+        if (output && !string_get(output))
+                return text_done(1);
         if (output && !tools_uuid_columns(output, columns, address_of column_count))
                 return text_refuse(output, "unknown or excessive output column",
                                    1);
+        // Nothing to parse prints nothing, not even the heading.
+        if (!file_operand_count)
+                return text_done(0);
 
         if (json)
         {
@@ -6281,6 +6510,24 @@ static fn tools_mcookie_mix(file_random_state address_to random,
         }
 }
 
+/* util-linux parses each --max-size as it is read, so a bad one is refused
+   even when a later one would supersede it. */
+static bool tools_mcookie_seen(p8 letter, string_address value)
+{
+        positive maximum;
+
+        if (letter == 'm' && value &&
+            !(string_is(value, '0') && !string_get(value + 1)) &&
+            !split_size(value, address_of maximum))
+        {
+                string_format(file_fail,
+                              "mcookie: failed to parse length: '%s': Invalid argument\n",
+                              value);
+                return false;
+        }
+        return true;
+}
+
 static b32 tools_mcookie()
 {
         file_taking taking = {
@@ -6288,6 +6535,7 @@ static b32 tools_mcookie()
             .allowed = (string_address)"fmv",
             .valued = (string_address)"fm",
             .longs = tools_mcookie_longs,
+            .seen = tools_mcookie_seen,
         };
 
         text_begin("mcookie");
@@ -6330,6 +6578,8 @@ static b32 tools_mcookie()
                         text_error(path, file_reason(handle));
                 else
                 {
+                        // A seed that cannot be read contributes nothing;
+                        // util-linux says so only under --verbose.
                         while (mixed < maximum)
                         {
                                 positive want = min(maximum - mixed,
@@ -6337,10 +6587,7 @@ static b32 tools_mcookie()
                                 bipolar got = system_read_retry(
                                     (positive)handle, file_transfer, want);
                                 if (got < 0)
-                                {
-                                        text_error(path, file_reason(got));
                                         break;
-                                }
                                 if (!got)
                                         break;
                                 tools_mcookie_mix(address_of random,
@@ -6394,6 +6641,17 @@ static b32 tools_mcookie()
 #define DD_LCASE 0x080
 #define DD_UCASE 0x100
 #define DD_SWAB 0x200
+// Accepted for GNU's sake: a regular file comes out the same either way.
+#define DD_SPARSE 0x400
+// open(2) flags shared by iflag and oflag, above each group's own bits.
+#define DD_DIRECTORY 0x008
+#define DD_DSYNC 0x010
+#define DD_SYNC_IO 0x020
+#define DD_NONBLOCK 0x040
+#define DD_NOATIME 0x080
+#define DD_NOCACHE 0x100
+#define DD_NOCTTY 0x200
+#define DD_NOFOLLOW 0x400
 
 #define DD_FULLBLOCK 0x001
 #define DD_COUNT_BYTES 0x002
@@ -6668,9 +6926,19 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
             {"fsync", DD_FSYNC, 0}, {"excl", DD_EXCL, 0},
             {"nocreat", DD_NOCREAT, 0}, {"lcase", DD_LCASE, 0},
             {"ucase", DD_UCASE, 0}, {"swab", DD_SWAB, 0},
+            {"sparse", DD_SPARSE, 0},
             {"fullblock", DD_FULLBLOCK, 1}, {"count_bytes", DD_COUNT_BYTES, 1},
             {"skip_bytes", DD_SKIP_BYTES, 1},
             {"append", DD_APPEND, 2}, {"seek_bytes", DD_SEEK_BYTES, 2},
+            // The open(2) flags, meaningful for either side.
+            {"directory", DD_DIRECTORY, 1}, {"directory", DD_DIRECTORY, 2},
+            {"dsync", DD_DSYNC, 1}, {"dsync", DD_DSYNC, 2},
+            {"sync", DD_SYNC_IO, 1}, {"sync", DD_SYNC_IO, 2},
+            {"nonblock", DD_NONBLOCK, 1}, {"nonblock", DD_NONBLOCK, 2},
+            {"noatime", DD_NOATIME, 1}, {"noatime", DD_NOATIME, 2},
+            {"nocache", DD_NOCACHE, 1}, {"nocache", DD_NOCACHE, 2},
+            {"noctty", DD_NOCTTY, 1}, {"noctty", DD_NOCTTY, 2},
+            {"nofollow", DD_NOFOLLOW, 1}, {"nofollow", DD_NOFOLLOW, 2},
         };
 
         do
@@ -6744,13 +7012,31 @@ static fn dd_complain(string_address before, string_address name,
 static positive dd_output(positive handle, string_address name,
                           p8 address_to bytes, positive length, bool copied)
 {
-        positive wrote = system_write_all(handle, bytes, length);
+        positive wrote = 0;
+        bipolar code = 0;
+
+        // Written a piece at a time so the kernel's reason for a refusal
+        // reaches the complaint, as coreutils' does.
+        while (wrote < length)
+        {
+                bipolar got = system_write_once(handle, bytes + wrote,
+                                                length - wrote);
+
+                if (got == LOGIN_ERROR_INTERRUPTED)
+                        continue;
+                if (got <= 0)
+                {
+                        code = got;
+                        break;
+                }
+                wrote += (positive)got;
+        }
 
         if (copied)
                 dd_written += wrote;
 
         if (wrote != length)
-                dd_complain("error writing", name, "standard output", null, 0);
+                dd_complain("error writing", name, "standard output", null, code);
 
         return wrote;
 }
@@ -7489,9 +7775,92 @@ static fn dump_add_canonical()
         });
 }
 
+/* GNU's byte counts take a 0x prefix for hexadecimal, and the multiplier
+   suffixes after it; dd's x is a product there, so hex is read here. */
 static bool dump_number(string_address source, positive address_to value)
 {
-        return source && dd_size(source, value);
+        if (!source)
+                return false;
+
+        if (source[0] == '0' && (source[1] == 'x' || source[1] == 'X'))
+        {
+                string_address at = source + 2;
+                positive parsed;
+
+                if (!string_digits_checked(address_of at, 16, address_of parsed))
+                        return false;
+
+                if (!string_get(at))
+                {
+                        address_to value = parsed;
+                        return true;
+                }
+
+                p8 rest[16] = "1";
+                positive length = string_length(at);
+                positive multiple;
+
+                if (length >= sizeof(rest) - 1)
+                        return false;
+
+                memory_copy(rest + 1, at, length + 1);
+                if (!dd_size(rest, address_of multiple) ||
+                    (multiple && parsed > positive_max / multiple))
+                        return false;
+
+                address_to value = parsed * multiple;
+                return true;
+        }
+
+        return dd_size(source, value);
+}
+
+/* od's traditional offset operand: octal unless a 0x prefix (hex) or a
+   trailing . (decimal) says otherwise, and a trailing b counts blocks. */
+static bool dump_od_offset(string_address text, positive address_to value)
+{
+        positive base = 8;
+        positive multiple = 1;
+        p8 digits[64];
+        positive length;
+
+        if (string_is(text, '+'))
+                text++;
+        length = string_length(text);
+        if (!length || length >= sizeof(digits))
+                return false;
+        memory_copy(digits, text, length + 1);
+
+        if (digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
+        {
+                base = 16;
+                memory_copy(digits, digits + 2, length - 1);
+                length -= 2;
+        }
+        if (length && digits[length - 1] == 'b')
+        {
+                multiple = 512;
+                digits[--length] = end;
+        }
+        if (length && digits[length - 1] == '.')
+        {
+                if (base == 16)
+                        return false;
+                base = 10;
+                digits[--length] = end;
+        }
+        if (!length)
+                return false;
+
+        string_address at = digits;
+        positive parsed;
+
+        if (!string_digits_checked(address_of at, base, address_of parsed) ||
+            string_get(at) || parsed > positive_max / multiple)
+                return false;
+
+        address_to value = parsed * multiple;
+        return true;
 }
 
 /* GNU's integer type widths are the width of the widest value, including a
@@ -7594,6 +7963,7 @@ static const file_long dump_od_longs[] = {
     {(string_address) "output-duplicates", 'v'},
     {(string_address) "width", 'w'},
     {(string_address) "endian", 'E'},
+    {(string_address) "strings", 'S'},
     {null, 0},
 };
 
@@ -7635,6 +8005,10 @@ static bool dump_od_seen(p8 letter, string_address value)
                 text_error(value, "unsupported output format");
                 return false;
         }
+
+        // -E is --endian, read after the walk; -e is GNU's float alias.
+        if (letter == 'E')
+                return true;
 
         if (letter == 'e' || letter == 'F' || letter == 'f')
         {
@@ -8041,7 +8415,28 @@ static positive dump_skip_input(positive wanted)
         return taken;
 }
 
-static b32 dump_run(positive first)
+/* A directory opens and then refuses to be read.  GNU od says so and fails;
+   util-linux hexdump says so and goes on with its status unchanged. */
+static bool dump_input_is_directory(string_address name)
+{
+        file_facts facts;
+
+        if (!file_look(text_input.handle, (string_address)"", AT_EMPTY_PATH,
+                       address_of facts) ||
+            (facts.mode & MODE_FORMAT) != MODE_DIRECTORY)
+                return false;
+
+        text_flush();
+        string_format(file_fail, "%s: %s: Is a directory\n",
+                      dump_arguments.od ? (string_address)"od"
+                                        : (string_address)"hexdump",
+                      name ? name : (string_address)"standard input");
+        if (dump_arguments.od)
+                text_status = 1;
+        return true;
+}
+
+static b32 dump_run(positive first, positive count)
 {
         p8 block[DUMP_BLOCK];
         p8 previous[DUMP_BLOCK];
@@ -8054,8 +8449,7 @@ static b32 dump_run(positive first)
         bool starred = false;
         bool wrote = false;
         bool opened = false;
-        bool read_failed = false;
-        positive count = (positive)text_argument_count;
+        bool any_read = false;
         positive inputs = first < count ? count - first : 1;
 
         for (positive which = 0; which < inputs; which++)
@@ -8067,10 +8461,25 @@ static b32 dump_run(positive first)
                                           ? program_argument((b32)(first + which))
                                           : null;
 
+                // util-linux hexdump knows no dash for standard input.
+                if (!dump_arguments.od && name && string_equals(name, "-"))
+                {
+                        text_flush();
+                        file_fail("hexdump: -: No such file or directory\n", 0);
+                        text_status = 1;
+                        continue;
+                }
+
                 if (!text_open(name))
                         continue;
 
                 opened = true;
+
+                if (dump_input_is_directory(name))
+                {
+                        text_close();
+                        continue;
+                }
 
                 if (skip)
                 {
@@ -8142,9 +8551,9 @@ static b32 dump_run(positive first)
                 }
 
                 /* An input that could not be read leaves od with no offset to
-                   report, so the closing address line goes away with it. */
-                if (text_input.failed)
-                        read_failed = true;
+                   report; one that was read, even to nothing, has one. */
+                if (!text_input.failed)
+                        any_read = true;
 
                 text_close();
         }
@@ -8155,6 +8564,13 @@ static b32 dump_run(positive first)
                 return text_done(1);
         }
 
+        if (!dump_arguments.od && first < count && !opened)
+        {
+                text_flush();
+                file_fail("hexdump: all input file arguments failed\n", 0);
+                text_status = 1;
+        }
+
         if (held)
         {
                 dump_row(block, held, offset);
@@ -8162,7 +8578,7 @@ static b32 dump_run(positive first)
                 wrote = true;
         }
 
-        if ((dump_arguments.od && opened && !read_failed) || wrote ||
+        if ((dump_arguments.od && any_read) || wrote ||
             (!dump_arguments.od && opened && dump_arguments.skip))
         {
                 if (!dump_arguments.address_none)
@@ -8180,14 +8596,122 @@ static b32 dump_run(positive first)
         return text_done(text_status);
 }
 
+#define DUMP_STRING_MAX 65536
+
+static fn dump_string_line(positive offset, p8 address_to bytes, positive length)
+{
+        if (!dump_arguments.address_none)
+        {
+                p8 field[32];
+                positive made = dump_unsigned_field(field, offset,
+                                                    dump_arguments.address_base,
+                                                    dump_arguments.address_width, '0');
+
+                field[made++] = ' ';
+                text_put(field, made);
+        }
+
+        text_put(bytes, length);
+        text_put_character('\n');
+}
+
+/* od -S: every NUL-terminated run of at least MINIMUM printable bytes with
+   the offset it starts at.  GNU resumes after the byte that broke a run
+   rather than one past the run's start, stops once no more than a run's
+   worth of bytes remains within -N, and prints a run that -N cuts short.
+   Only 0x20 through 0x7e are printable in the C locale, so no escapes. */
+static b32 dump_strings(positive first, positive count, positive minimum)
+{
+        static p8 held[DUMP_STRING_MAX];
+        positive have = 0;
+        positive address = 0;
+        positive skip = dump_arguments.skip;
+        positive left = dump_arguments.limit;
+        bool limited = left != TEXT_UNSET;
+        positive inputs = first < count ? count - first : 1;
+        bool done = false;
+
+        for (positive which = 0; which < inputs && !done; which++)
+        {
+                string_address name = first < count
+                                          ? program_argument((b32)(first + which))
+                                          : null;
+
+                if (!text_open(name))
+                        continue;
+
+                if (dump_input_is_directory(name))
+                {
+                        text_close();
+                        continue;
+                }
+
+                if (skip)
+                {
+                        positive taken = dump_skip_input(skip);
+
+                        skip -= taken;
+                        address += taken;
+                }
+
+                while (!skip && !done && text_fill())
+                {
+                        positive available = text_input.filled - text_input.position;
+
+                        while (available && !done)
+                        {
+                                if (!have && limited && left <= minimum)
+                                {
+                                        done = true;
+                                        break;
+                                }
+
+                                p8 byte = text_input.buffer[text_input.position++];
+
+                                available--;
+                                address++;
+                                if (limited)
+                                        left--;
+
+                                if (byte >= ' ' && byte <= '~' && have < DUMP_STRING_MAX)
+                                        held[have++] = byte;
+                                else if (!byte && have >= minimum)
+                                {
+                                        dump_string_line(address - have - 1, held, have);
+                                        have = 0;
+                                }
+                                else
+                                        have = 0;
+
+                                if (limited && !left)
+                                {
+                                        if (have >= minimum)
+                                                dump_string_line(address - have, held, have);
+                                        done = true;
+                                }
+                        }
+                }
+
+                text_close();
+        }
+
+        if (skip)
+        {
+                text_error(null, "cannot skip past end of combined input");
+                return text_done(1);
+        }
+
+        return text_done(text_status);
+}
+
 static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOstvwxX",
-            .valued = (string_address) "AEjNt",
+            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOSstvwxX",
+            .valued = (string_address) "AEjNSt",
             .optional = (string_address) "w",
-            .long_optional = (string_address) "w",
+            .long_optional = (string_address) "Sw",
             .longs = dump_od_longs,
             .seen = dump_od_seen,
         };
@@ -8269,12 +8793,53 @@ static b32 tools_od(void)
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
+        /* The traditional second form: a last operand beginning with + (or
+           a digit, when it is the second of two) is an offset, not a file. */
+        positive stop = (positive)text_argument_count;
+        positive operands = stop - taking.first;
+
+        if (operands >= 1 && operands <= 2)
+        {
+                string_address last = program_argument((b32)(stop - 1));
+
+                if (string_is(last, '+') ||
+                    (operands == 2 && byte_is_digit(string_get(last))))
+                {
+                        positive offset;
+
+                        if (!dump_od_offset(last, address_of offset))
+                        {
+                                string_format(file_fail,
+                                              "od: invalid offset '%s'\n", last);
+                                return text_done(1);
+                        }
+                        dump_arguments.skip += offset;
+                        stop--;
+                }
+        }
+
+        if (taking.flags & FILE_FLAG('S'))
+        {
+                string_address wanted = file_option_value(address_of taking, 'S');
+                positive minimum = 3;
+
+                if (wanted && !dump_number(wanted, address_of minimum))
+                {
+                        string_format(file_fail,
+                                      "od: invalid minimum string length: '%s'\n",
+                                      wanted);
+                        return text_done(1);
+                }
+
+                return dump_strings(taking.first, stop, minimum);
+        }
+
         if (!dump_arguments.count)
                 dump_add_integer(8, 2, 6, 1, false, true, false, false);
 
         dump_od_row_width();
 
-        return dump_run(taking.first);
+        return dump_run(taking.first, stop);
 }
 
 static b32 tools_hexdump(void)
@@ -8321,13 +8886,15 @@ static b32 tools_hexdump(void)
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
+        // The stock display is two-byte hex a single space apart; -x is the
+        // same numbers spread three spaces apart.
         if (!dump_arguments.count)
-                dump_add_integer(16, 2, 4, 4, false, true, false, true);
+                dump_add_integer(16, 2, 4, 1, false, true, false, true);
 
         if (dump_arguments.format[0].kind == DUMP_CANONICAL)
                 dump_arguments.address_width = 8;
 
-        return dump_run(taking.first);
+        return dump_run(taking.first, (positive)text_argument_count);
 }
 
 // diff ------------------------------------------------------
@@ -9274,6 +9841,66 @@ static fn diff_put_line(diff_side address_to side, bipolar middle, string_addres
                 text_put_string("\n\\ No newline at end of file\n");
 }
 
+fn shell_quoted(writer write, string_address value);
+
+/* GNU quotes a name a shell would not take whole: C-style in the command
+   line it writes as a title, shell-style in an "Only in" report. */
+static bool diff_name_special(string_address name)
+{
+        for (string_address at = name; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte <= ' ' || byte >= 127 ||
+                    string_first_of("!\"#$&'()*;<=>?[\\]^`{|}~", byte))
+                        return true;
+        }
+        return false;
+}
+
+static fn diff_name_c_quoted(string_address name)
+{
+        if (!diff_name_special(name))
+        {
+                text_put_string(name);
+                return;
+        }
+
+        text_put_character('"');
+        for (string_address at = name; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte == '"' || byte == '\\')
+                {
+                        text_put_character('\\');
+                        text_put_character(byte);
+                }
+                else if (byte == '\n')
+                        text_put_string("\\n");
+                else if (byte == '\t')
+                        text_put_string("\\t");
+                else if (byte < ' ' || byte == 127)
+                {
+                        p8 octal[5] = {'\\', (p8)('0' + (byte >> 6)),
+                                       (p8)('0' + ((byte >> 3) & 7)),
+                                       (p8)('0' + (byte & 7)), end};
+                        text_put_string(octal);
+                }
+                else
+                        text_put_character(byte);
+        }
+        text_put_character('"');
+}
+
+static fn diff_name_shell_quoted(string_address name)
+{
+        if (diff_name_special(name))
+                shell_quoted(text_put, name);
+        else
+                text_put_string(name);
+}
+
 static fn diff_title(string_address left, string_address right)
 {
         if (!diff_titled)
@@ -9282,9 +9909,9 @@ static fn diff_title(string_address left, string_address right)
         text_put_string("diff");
         text_put(diff_switches, diff_switches_used);
         text_put_character(' ');
-        text_put_string(left);
+        diff_name_c_quoted(left);
         text_put_character(' ');
-        text_put_string(right);
+        diff_name_c_quoted(right);
         text_put_character('\n');
 }
 
@@ -9878,9 +10505,9 @@ static b32 diff_one_sided(string_address left, string_address right,
         }
 
         text_put_string("Only in ");
-        text_put_string(inside);
+        diff_name_shell_quoted(inside);
         text_put_string(": ");
-        text_put_string(name);
+        diff_name_shell_quoted(name);
         text_put_character('\n');
         text_flush();
 
@@ -10209,15 +10836,39 @@ static b32 tools_diff(void)
                 }
         }
 
-        if (text_argument_count - first != 2)
+        if (text_argument_count - first < 2)
         {
-                text_error(null, "missing operand");
+                text_flush();
+                string_format(file_fail,
+                              "diff: missing operand after '%s'\n"
+                              "diff: Try 'diff --help' for more information.\n",
+                              text_argument_count - first == 1
+                                  ? program_argument(first)
+                                  : (string_address) "diff");
+                return text_done(2);
+        }
+        if (text_argument_count - first > 2)
+        {
+                text_flush();
+                string_format(file_fail,
+                              "diff: extra operand '%s'\n"
+                              "diff: Try 'diff --help' for more information.\n",
+                              program_argument(first + 2));
                 return text_done(2);
         }
 
         string_address left = program_argument(first);
         string_address right = program_argument(first + 1);
         string_address joined;
+
+        // The same directory twice is identical without a walk.
+        file_facts left_facts, right_facts;
+        if (file_look_at(left, address_of left_facts) &&
+            file_look_at(right, address_of right_facts) &&
+            (left_facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+            (right_facts.mode & MODE_FORMAT) == MODE_DIRECTORY &&
+            file_same_identity(address_of left_facts, address_of right_facts))
+                return text_done(0);
 
         // diff dir file and diff file dir both mean the same file inside the
         // directory, which is the one place the two names are not the pair.
@@ -10754,7 +11405,9 @@ static bool ps_pid_list(string_address list, ps_ids address_to ids,
 {
         ps_list_cursor item = {.at = list};
         bool any = false;
-        positive before = ids->count;
+        positive address_to fresh = null;
+        positive fresh_count = 0;
+        positive fresh_room = 0;
 
         while (ps_list_next(address_of item, (string_address) ", "))
         {
@@ -10774,19 +11427,35 @@ static bool ps_pid_list(string_address list, ps_ids address_to ids,
                         but repeated selection operands are unioned. Other
                         numeric selectors are sets in both shapes.
                 */
-                bool seen = ps_value_has(ids->values,
-                                         pid_selector
-                                             ? before
-                                             : ids->count,
-                                         value);
-
-                if (!seen && !ps_value_add(&ids->values, &ids->count, &ids->room, value))
-                        return false;
-
                 any = true;
+                if (ps_value_has(ids->values, ids->count, value) ||
+                    (!pid_selector && ps_value_has(fresh, fresh_count, value)))
+                        continue;
+
+                if (!ps_value_add(&fresh, &fresh_count, &fresh_room, value))
+                        return false;
         }
 
-        return any;
+        if (!any)
+                return false;
+
+        // procps lists the processes of a later selector before those of
+        // an earlier one, each list in its own order.
+        positive address_to merged = null;
+        positive merged_count = 0;
+        positive merged_room = 0;
+
+        for (positive at = 0; at < fresh_count; at++)
+                if (!ps_value_add(&merged, &merged_count, &merged_room, fresh[at]))
+                        return false;
+        for (positive at = 0; at < ids->count; at++)
+                if (!ps_value_add(&merged, &merged_count, &merged_room, ids->values[at]))
+                        return false;
+
+        ids->values = merged;
+        ids->count = merged_count;
+        ids->room = merged_room;
+        return true;
 }
 
 static bool ps_string_add(string_address address_to address_to values,
@@ -11023,6 +11692,7 @@ static b32 tools_ps(void)
         bool force_headers = false;
         bool reverse = false;
         bool sorted = false;
+        positive heading_options = 0;
 
         text_begin("ps");
         text_arena_used = 0;
@@ -11093,10 +11763,15 @@ static b32 tools_ps(void)
                 case 'f': full = true; break;
                 case 'j': jobs = true; break;
                 case 'w': break;
-                case 'H': force_headers = true; no_headers = false; break;
+                case 'H':
+                        force_headers = true;
+                        no_headers = false;
+                        heading_options++;
+                        break;
                 case 'h':
                         no_headers = true;
                         if (long_option) force_headers = false;
+                        heading_options++;
                         break;
                 case 'p':
                 case 'P':
@@ -11130,10 +11805,29 @@ static b32 tools_ps(void)
                                                             : "option requires an argument -- o");
                                 return text_done(1);
                         }
+                        if (!string_get(value))
+                        {
+                                text_error(null, "format specification must follow -o");
+                                return text_done(1);
+                        }
+                        // An empty item anywhere in the list is a syntax
+                        // error to procps, not an absent column.
+                        if (string_is(value, ',') || string_search(value, ",,") ||
+                            value[string_length(value) - 1] == ',')
+                        {
+                                text_error(null, "improper format list");
+                                return text_done(1);
+                        }
                         if (!ps_format_list(value, &fields, &field_count, &field_room))
                                 return text_done(1);
                         break;
                 }
+        }
+
+        if (heading_options > 1)
+        {
+                text_error(null, "only one heading option may be specified");
+                return text_done(1);
         }
 
         /*
@@ -11282,6 +11976,35 @@ static b32 tools_ps(void)
 
         bool matched = false;
 
+        // Processes named by -p alone come out in the order they were
+        // named, repeats included; procps reads exactly those entries.
+        if (pids.count && !alternate_selectors && !every && !sorted)
+        {
+                for (positive at = 0; at < pids.count; at++)
+                        for (positive p = 0; p < ps_count; p++)
+                        {
+                                struct snapshot_process address_to process =
+                                    ps_snapshot.processes + p;
+
+                                if (process->pid != pids.values[at])
+                                        continue;
+
+                                matched = true;
+                                ps_detail detail = {0};
+
+                                for (positive f = 0; f < field_count; f++)
+                                        ps_column_out(process, address_of detail,
+                                                      fields[f].field,
+                                                      ps_column_width(fields + f, null),
+                                                      f + 1 == field_count);
+
+                                text_put_character('\n');
+                                break;
+                        }
+
+                return text_done(ps_failed || !matched ? 1 : 0);
+        }
+
         for (positive at = 0; at < ps_count; at++)
         {
                 positive p = reverse ? ps_count - at - 1 : at;
@@ -11310,9 +12033,12 @@ static b32 tools_ps(void)
                         if (!repeats)
                                 continue;
                 }
+                // Without a terminal of its own, procps' default selection
+                // (same user, same terminal) matches nothing at all.
                 else if (!every &&
-                         !(process->uid == ps_own_uid &&
-                           (positive)process->tty == ps_own_tty))
+                         (!ps_own_tty ||
+                          !(process->uid == ps_own_uid &&
+                            (positive)process->tty == ps_own_tty)))
                         continue;
 
                 matched = true;
@@ -11333,7 +12059,8 @@ static b32 tools_ps(void)
                 }
         }
 
-        return text_done(ps_failed || (selectors && !matched) ? 1 : 0);
+        // procps fails when no process was listed, whatever selected them.
+        return text_done(ps_failed || !matched ? 1 : 0);
 }
 
 // dmesg -----------------------------------------------------
@@ -11907,6 +12634,15 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
         if (!bytes)
                 return text_done(1);
 
+        // util-linux maps the file, and an empty one cannot be mapped.
+        if (!length)
+        {
+                text_flush();
+                string_format(file_fail, "dmesg: cannot mmap: %s: Invalid argument\n",
+                              path);
+                return text_done(1);
+        }
+
         if (state->json)
                 text_put_string("{\n   \"dmesg\": [\n");
         tools_dmesg_buffer(state, bytes, length, kmsg);
@@ -11981,6 +12717,7 @@ static b32 tools_dmesg_main()
             .program = (string_address)"dmesg",
             .allowed = (string_address)"CcDEFKfHjkLlnoPprSsuwWxdeTtJVh",
             .valued = (string_address)"FKflnsqab",
+            .optional = (string_address)"L",
             .long_optional = (string_address)"L",
             .longs = tools_dmesg_longs,
         };
@@ -12003,6 +12740,22 @@ static b32 tools_dmesg_main()
             (flags & (FILE_FLAG('x') | FILE_FLAG('t') | FILE_FLAG('T') |
                       FILE_FLAG('e') | FILE_FLAG('d') | FILE_FLAG('J'))))
                 return text_refuse(null, "--raw cannot be combined with decoded output", 1);
+        // util-linux filters raw records only where the kernel supplies
+        // their priority in a form it trusts.
+        if ((flags & FILE_FLAG('r')) && (flags & (FILE_FLAG('F') | FILE_FLAG('K'))) &&
+            (flags & (FILE_FLAG('l') | FILE_FLAG('f') | FILE_FLAG('k') | FILE_FLAG('u'))))
+        {
+                text_flush();
+                file_fail("dmesg: --raw can be used together with --level or --facility only when reading messages from /dev/kmsg\n",
+                          0);
+                return text_done(1);
+        }
+        if ((flags & FILE_FLAG('p')) && (flags & FILE_FLAG('F')))
+        {
+                text_flush();
+                file_fail("dmesg: only kmsg supports multi-line messages\n", 0);
+                return text_done(1);
+        }
         if ((flags & FILE_FLAG('J')) &&
             (flags & (FILE_FLAG('T') | FILE_FLAG('e') | FILE_FLAG('d'))))
                 return text_refuse(null, "JSON time transformations are not supported", 1);
@@ -12114,12 +12867,15 @@ static b32 tools_dmesg_main()
         string_address kmsg_file = file_option_value(address_of taking, 'K');
         if (file || kmsg_file)
         {
-                if (flags & (FILE_FLAG('c') | FILE_FLAG('w') |
-                             FILE_FLAG('W') | FILE_FLAG('p')))
-                        return text_refuse(null, "selected mode requires a live kernel log", 1);
-                return tools_dmesg_read_file(address_of state,
-                                             file ? file : kmsg_file,
-                                             kmsg_file != null);
+                // --follow is inert on a file; --read-clear prints the file
+                // and then asks the kernel, which is where it may fail.
+                b32 shown = tools_dmesg_read_file(address_of state,
+                                                  file ? file : kmsg_file,
+                                                  kmsg_file != null);
+                if (shown || !(flags & FILE_FLAG('c')))
+                        return shown;
+                return tools_dmesg_control(DMESG_CLEAR, 0,
+                                           "clear kernel buffer failed");
         }
 
         if (flags & (FILE_FLAG('w') | FILE_FLAG('W')))
@@ -12306,10 +13062,9 @@ static bool tools_fincore_one(string_address path,
                 system_close(handle);
                 return false;
         }
+        // util-linux skips anything but a regular file without a word.
         if ((facts.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(file_fail,
-                              "fincore: not a regular file: %s\n", path);
                 system_close(handle);
                 return false;
         }

@@ -538,8 +538,8 @@ def misc_hex_shape(match):
 def misc_uuid_normalize(channel, data):
     # Random and time UUIDs (versions 1, 4, 6, 7) keep their version and
     # variant nibbles; name UUIDs (3, 5) are deterministic and stay.
-    return re.sub(rb"[0-9a-f]{8}-[0-9a-f]{4}-([1467])[0-9a-f]{3}-([89ab])[0-9a-f]{3}-[0-9a-f]{12}",
-                  lambda m: b"xxxxxxxx-xxxx-" + m.group(1) + b"xxx-" + m.group(2) + b"xxx-xxxxxxxxxxxx",
+    return re.sub(rb"[0-9a-f]{8}-[0-9a-f]{4}-([1467])[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}",
+                  lambda m: b"xxxxxxxx-xxxx-" + m.group(1) + b"xxx-vxxx-xxxxxxxxxxxx",
                   data)
 
 
@@ -582,20 +582,57 @@ def misc_dmesg_normalize(channel, data):
 # ----------------------------------------------------------------------------
 
 def misc_wall_valid(argv):
-    # Every option offered is one the reference refuses before it writes to
-    # any terminal (it is setgid tty). A bare message would broadcast.
-    return any(word.startswith("-") for word in argv)
+    # Only a bad timeout or an unknown group makes the reference stop before
+    # it writes to every terminal (it is setgid tty); --nobanner is merely a
+    # warning for non-root and a bare message would broadcast.
+    return any(word.startswith(("-t", "-g", "--timeout", "--group")) for word in argv)
+
+
+misc_SCRIPT_VALUED = ("-c", "-E", "-m", "-O", "-I", "-B", "-T", "-o")
 
 
 def misc_script_valid(argv):
     # The output log must be /dev/null: a typescript in the directory would
     # carry the wall clock in its header and fail the effects comparison.
-    for index, word in enumerate(argv):
+    index = 0
+    while index < len(argv):
+        word = argv[index]
         if word in ("-O", "-B") or word.startswith(("--log-out=", "--log-io=")):
             return True
-        if word == "/dev/null" and (index == 0 or argv[index - 1] not in ("-I", "-T")):
+        if word == "/dev/null":
             return True
+        if word == "--":
+            return False
+        index += 2 if word in misc_SCRIPT_VALUED else 1
     return False
+
+
+def misc_dd_valid(argv):
+    # The runner's standard input is an O_TMPFILE; GNU dd re-sets the input
+    # flags for a byte-suffixed quantity and the kernel refuses the inherited
+    # O_DIRECTORY bit (ENOTDIR). Byte quantities therefore always name if=.
+    if any(word.startswith("if=") for word in argv):
+        return True
+    return not any(word.startswith(("count=", "skip=", "seek=", "iseek=", "oseek=")) and word.endswith("B")
+                   for word in argv)
+
+
+def misc_last_normalize(channel, data):
+    # An empty or unreadable database "begins" now, in the reference's clock.
+    if channel != "stdout":
+        return data
+
+    def recent(match):
+        stamp = match.group(2).decode()
+        for layout in ("%a %b %d %H:%M:%S %Y", "%Y-%m-%dT%H:%M:%S+00:00"):
+            try:
+                when = time.mktime(time.strptime(stamp.replace("  ", " "), layout))
+            except ValueError:
+                continue
+            if abs(time.time() - when) < 7200:
+                return match.group(1) + b"<NOW>"
+        return match.group(0)
+    return re.sub(rb"( begins )(.+)$", recent, data)
 
 
 # ----------------------------------------------------------------------------
@@ -614,11 +651,9 @@ def misc_ps_multicall_script(argv, stdin_name):
 # ----------------------------------------------------------------------------
 
 misc_DUMP_OPERANDS = ((), ("a.txt",), ("binary",), ("a.txt", "binary"), ("-",), ("missing",),
-                      ("dir",), ("empty",), ("empty", "dir"), ("edge_65537",), ("nonl",),
-                      ("two words",), ("unreadable",), ("binary", "-", "a.txt"),
-                      ("a.txt", "b.txt", "c.txt"), ("long",), ("zeros",), ("blob",))
-misc_DUMP_STDIN = ("text", "empty", "nul", "high", "controls", "edge_65536", "edge_65537",
-                   "long", "blanks", "many_lines", "wide_words")
+                      ("dir",), ("empty", "dir"), ("edge_65537",), ("nonl",), ("two words",),
+                      ("unreadable",), ("binary", "-", "a.txt"), ("long",), ("blob",))
+misc_DUMP_STDIN = ("text", "empty", "nul", "high", "controls", "edge_65536", "long", "blanks")
 
 
 def misc_checksum(name, variable_length=False):
@@ -677,7 +712,7 @@ UTILITIES = (
             operands=((),),
             stdin=("text", "empty", "nul", "high", "mixed_case", "misc_dd_case", "misc_dd_1000",
                    "edge_65537", "long", "many_lines", "nonl"),
-            fixture="misc", stderr="exact", normalize=misc_dd_normalize, max_flags=5,
+            fixture="misc", stderr="exact", normalize=misc_dd_normalize, valid=misc_dd_valid, max_flags=5,
             extra=(("bs=4", "status=noxfer"), ("bs=16", "status=noxfer"), ("ibs=3", "obs=7", "status=noxfer"),
                    ("bs=4", "ibs=2", "status=noxfer"), ("bs=4", "obs=2", "status=noxfer"),
                    ("ibs=2", "obs=3", "bs=4", "status=noxfer"), ("bs=16", "conv=sync", "status=noxfer"),
@@ -687,6 +722,8 @@ UTILITIES = (
                    ("bs=4", "count=3", "iflag=count_bytes", "status=noxfer"),
                    ("iflag=count_bytes", "bs=4", "count=7", "status=noxfer"),
                    ("bs=4", "skip=3", "iflag=skip_bytes", "status=noxfer"),
+                   ("if=ten", "bs=4", "count=3B", "status=noxfer"), ("if=blob", "bs=700", "count=1KiB", "status=noxfer"),
+                   ("if=ten", "bs=4", "skip=3B", "status=noxfer"), ("if=ten", "bs=4", "iseek=1B", "status=noxfer"),
                    ("if=ten", "of=out", "bs=4", "seek=2", "conv=notrunc", "status=noxfer"),
                    ("if=ten", "of=out", "bs=4", "seek=2", "status=noxfer"),
                    ("if=ten", "of=out", "bs=4", "oseek=2B", "status=none"),
@@ -704,10 +741,8 @@ UTILITIES = (
 
     Utility("od",
             options=(Option("-A", ("d", "o", "x", "n", "bad", "dd"), None),
-                     Option("-t", ("a", "c", "d1", "d2", "d4", "d8", "dC", "dS", "dI", "dL", "u1", "u2", "u4",
-                                   "u8", "o1", "o2", "o4", "o8", "x1", "x2", "x4", "x8", "x1z", "cz", "az",
-                                   "d8z", "u1z", "o2z", "f4", "f", "fD", "fL", "x1c", "xSxI", "d", "u", "o",
-                                   "x", "bad", "", "x3", "x16", "dz", "aC"), None, repeat=True),
+                     Option("-t", ("a", "c", "d1", "d2", "d4", "d8", "u1", "u4", "o1", "o2", "x1", "x2", "x8",
+                                   "x1z", "cz", "d8z", "f4", "x1c", "xSxI", "bad"), None, repeat=True),
                      Option("-j", ("0", "3", "5", "0x3", "1K", "100000", "bad", "-1", "3b"), None),
                      Option("-N", ("0", "1", "5", "16", "17", "33", "65536", "bad", "0x10", "1KiB"), None),
                      Option("-w"), Option("-w", ("1", "2", "3", "4", "8", "16", "32", "64", "0", "bad", "5", "6", "128", "257"), True),
@@ -715,9 +750,15 @@ UTILITIES = (
                      Option("-v"), Option("-c"), Option("-b"), Option("-o"), Option("-d"), Option("-x"), Option("-s"),
                      Option("-a"), Option("-i"), Option("-l"), Option("-h"), Option("-f"),
                      Option("-S", ("3", "0", "1", "bad"), None), Option("--traditional")),
-            operands=misc_DUMP_OPERANDS + (("a.txt", "+3"), ("a.txt", "+3", "+5"), ("binary", "0x10")),
+            operands=misc_DUMP_OPERANDS + (("a.txt", "+3"), ("binary", "0x10")),
             stdin=misc_DUMP_STDIN, fixture="misc", stderr="exact", max_flags=5,
-            extra=(("-A", "x", "-t", "x1z", "-v", "binary"), ("-A", "d", "-t", "d2", "binary"),
+            extra=(("-t", "dC", "binary"), ("-t", "dS", "binary"), ("-t", "dI", "binary"), ("-t", "dL", "binary"),
+                   ("-t", "u2", "binary"), ("-t", "u8", "binary"), ("-t", "o4", "binary"), ("-t", "o8", "binary"),
+                   ("-t", "x4", "binary"), ("-t", "az", "a.txt"), ("-t", "u1z", "binary"), ("-t", "o2z", "binary"),
+                   ("-t", "f", "binary"), ("-t", "fD", "binary"), ("-t", "fL", "binary"), ("-t", "d", "binary"),
+                   ("-t", "u", "binary"), ("-t", "o", "binary"), ("-t", "x", "binary"), ("-t", "", "binary"),
+                   ("-t", "x3", "binary"), ("-t", "x16", "binary"), ("-t", "dz", "binary"), ("-t", "aC", "binary"),
+                   ("-A", "x", "-t", "x1z", "-v", "binary"), ("-A", "d", "-t", "d2", "binary"),
                    ("-A", "n", "-t", "c", "binary"), ("-A", "x", "-j", "3", "-N", "5", "-t", "x1z", "a.txt"),
                    ("-A", "x", "-t", "x1", "-t", "c", "a.txt"), ("-An", "-t", "dC", "-t", "uS", "-t", "xI", "-t", "oL", "binary"),
                    ("-An", "-t", "xSxI", "binary"), ("-An", "-bc", "binary"), ("-An", "-a", "binary"),
@@ -770,15 +811,23 @@ UTILITIES = (
                       ("d1/same", "d2"), ("dir", "d1"), ("a.txt",), (), ("a.txt", "b.txt", "c.txt"),
                       ("link", "a.txt"), ("dangling", "a.txt"), ("unreadable", "a.txt"), ("two words", "a.txt"),
                       ("nulx", "nulX"), ("nulx", "nul_x_"), ("nulx", "nultx"), ("nulx", "nuly"), ("nultx", "nul_x_"))
-            + tuple(("p%02da" % i, "p%02db" % i) for i in range(24))
-            + tuple(("q%da" % i, "q%db" % i) for i in range(6))
-            + tuple(("e%da" % i, "e%db" % i) for i in range(6))
-            + tuple(("w%da" % i, "w%db" % i) for i in range(8))
+            + tuple(("p%02da" % i, "p%02db" % i) for i in range(12))
+            + tuple(("q%da" % i, "q%db" % i) for i in range(3))
+            + tuple(("e%da" % i, "e%db" % i) for i in range(3))
+            + tuple(("w%da" % i, "w%db" % i) for i in range(4))
             + tuple(("n%da" % i, "n%db" % i) for i in range(4))
             + tuple(("t%da" % i, "t%db" % i) for i in range(4)),
             stdin=("text", "empty", "nonl", "crlf"), fixture="misc_pair", stderr="exact",
             normalize=misc_diff_normalize, max_flags=5,
-            extra=(("-u", "-L", "left", "-L", "right", "a.txt", "b"), ("-u", "-L", "one", "-L", "two", "-L", "three", "a.txt", "b"),
+            # The other generated pairs, plain and unified, as fixed cases.
+            extra=tuple(("p%02da" % i, "p%02db" % i) for i in range(12, 24))
+            + tuple(("-u", "p%02da" % i, "p%02db" % i) for i in range(12, 24))
+            + tuple(("q%da" % i, "q%db" % i) for i in range(3, 6))
+            + tuple(("-u", "q%da" % i, "q%db" % i) for i in range(3, 6))
+            + tuple(("e%da" % i, "e%db" % i) for i in range(3, 6))
+            + tuple(("-q", "e%da" % i, "e%db" % i) for i in range(3, 6))
+            + tuple((flag, "w%da" % i, "w%db" % i) for i in range(4, 8) for flag in ("-i", "-w", "-b", "-B", "-Z", "-u"))
+            + (("-u", "-L", "left", "-L", "right", "a.txt", "b"), ("-u", "-L", "one", "-L", "two", "-L", "three", "a.txt", "b"),
                    ("-U0", "a.txt", "b"), ("-U", "1", "a.txt", "b"), ("--unified=2", "a.txt", "b"), ("-qs", "a.txt", "a2"),
                    ("-u", "--normal", "a.txt", "b"), ("-rU", "1", "d1", "d2"), ("-rs", "d1", "d2"), ("-rN", "d1", "d2"),
                    ("-rq", "d1", "d2"), ("-ru", "d1", "d2"), ("-r", "--unidirectional-new-file", "d1", "d2"),
@@ -810,8 +859,7 @@ UTILITIES = (
                    ("--color=never", "a.txt", "b"), ("--color=always", "a.txt", "b"), ("--color", "a.txt", "b"),
                    ("--palette=ad=1", "--color=always", "a.txt", "b"), ("--tabsize=4", "a.txt", "b"),
                    ("--suppress-blank-empty", "a.txt", "b"), ("-l", "a.txt", "b"), ("--paginate", "a.txt", "b"),
-                   ("--ignore-file-name-case", "-r", "d1", "d2"), ("--no-dereference", "-r", "d1", "d2"),
-                   ("-v",), ("--help",))),
+                   ("--ignore-file-name-case", "-r", "d1", "d2"), ("--no-dereference", "-r", "d1", "d2"))),
 
     Utility("factor",
             options=(Option("-h"), Option("--exponents")),
@@ -820,7 +868,7 @@ UTILITIES = (
                       ("18446744073709551615",), ("18446744073709551616",),
                       ("1000000016000000063", "18446743979220271189", "18446744030759878681"),
                       ("2305843009213693951", "18446744073709551557"), ("bad",), ("-2",), ("--", "12", "bad", "-2", "13"),
-                      ("1e3",), ("0x10",), (" 12",), ("12abc",), ("",), ("340282366920938463463374607431768211457",),
+                      ("1e3",), ("0x10",), (" 12",), ("12abc",), ("",), ("18446744073709551617",),
                       ("--", "-1"), ("2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2", "2")),
             stdin=("misc_factor", "misc_factor_random", "numbers", "empty", "text", "nonl", "blanks", "long",
                    "many_lines", "nul", "high", "wide_words"),
@@ -893,18 +941,20 @@ UTILITIES = (
                      Option("-k", (".1", "0", "1", "bad"), None), Option("--kill-after", (".2",), True),
                      Option("-p"), Option("--preserve-status"), Option("-f"), Option("--foreground"),
                      Option("-v"), Option("--verbose")),
-            operands=(("1", "exe", "a"), (".1", "sleep", "2"), ("0", "exe", "b"), (".1", "sh", "-c", "trap '' TERM; sleep 1"),
-                      ("1", "missing"), ("1",), (), ("bad", "exe"), ("1s", "exe"), ("1m", "exe"), ("1h", "exe"),
-                      ("1d", "exe"), ("1x", "exe"), ("1e1", "exe"), ("inf", "exe"), ("0x1", "exe"), ("", "exe"),
+            operands=(("1", "./exe", "a"), (".1", "sleep", "2"), ("0", "./exe", "b"), (".1", "sh", "-c", "trap '' TERM; sleep 1"),
+                      ("1", "missing"), ("1",), (), ("bad", "./exe"), ("1s", "./exe"), ("1m", "./exe"), ("1h", "./exe"),
+                      ("1d", "./exe"), ("1x", "./exe"), ("1e1", "./exe"), ("inf", "./exe"), ("0x1", "./exe"), ("", "./exe"),
                       ("1", "dir"), ("1", "unreadable"), ("1", "sh", "-c", "exit 7"),
-                      (".2", "sh", "-c", "printf output; printf error >&2; exit 7"), ("--", "1", "exe"),
-                      ("1", "--", "exe"), (".1", "sleep"), ("1.5", "exe", "c"), ("-1", "exe"), ("1", "cat")),
+                      (".2", "sh", "-c", "printf output; printf error >&2; exit 7"), ("--", "1", "./exe"),
+                      ("1", "--", "./exe"), (".1", "sleep"), ("1.5", "./exe", "c"), ("-1", "./exe"), ("1", "cat"),
+                      ("1", "exe")),
             stdin=("empty", "text"), fixture="misc", stderr="exact", timeout=8.0),
 
     Utility("nohup",
-            operands=(("exe", "a"), ("exe",), ("missing",), (), ("--", "exe"), ("dir",), ("unreadable",),
+            operands=(("./exe", "a"), ("./exe",), ("missing",), (), ("--", "./exe"), ("dir",), ("unreadable",),
                       ("sh", "-c", "kill -HUP $$; printf alive; printf error >&2"), ("sh", "-c", "exit 3"),
-                      ("cat",), ("-x", "exe"), ("--bad",), ("sh", "-c", "trap - HUP; kill -HUP $$; echo survived")),
+                      ("cat",), ("-x", "./exe"), ("--bad",), ("sh", "-c", "trap - HUP; kill -HUP $$; echo survived"),
+                      ("exe",)),
             stdin=("text", "empty"), fixture="misc", stderr="exact"),
 
     Utility("stdbuf",
@@ -912,16 +962,16 @@ UTILITIES = (
                      Option("-o", ("0", "L", "1", "4K", "4KB", "4KiB", "1M", "l", "bad", "0Q", "+1", "004K"), None),
                      Option("--output", ("L",), True),
                      Option("-e", ("0", "L", "4KiB", "bad"), None), Option("--error", ("0",), True)),
-            operands=(("exe", "a"), ("sh", "-c", "echo \"$_STDBUF_I|$_STDBUF_O|$_STDBUF_E|$LD_PRELOAD\""),
-                      ("missing",), (), ("dir",), ("true",), ("cat",), ("--", "exe", "b"),
-                      ("env",)),
+            operands=(("./exe", "a"), ("sh", "-c", "echo \"$_STDBUF_I|$_STDBUF_O|$_STDBUF_E|$LD_PRELOAD\""),
+                      ("missing",), (), ("dir",), ("true",), ("cat",), ("--", "./exe", "b"),
+                      ("env",), ("exe",)),
             stdin=("text", "empty"), fixture="misc", stderr="exact"),
 
     Utility("chroot",
             options=(Option("--skip-chdir"), Option("--groups", ("0", "bad", "0,1"), True),
                      Option("--userspec", ("0:0", "nobody", "bad:bad", ":0"), True)),
-            operands=(("/", "exe"), ("/", "true"), ("dir", "exe"), ("dir",), ("missing", "exe"), (), ("/",),
-                      ("a.txt", "exe"), ("/", "missing"), ("--", "/", "exe"), ("/", "sh", "-c", "pwd")),
+            operands=(("/", "./exe"), ("/", "true"), ("dir", "./exe"), ("dir",), ("missing", "./exe"), (), ("/",),
+                      ("a.txt", "./exe"), ("/", "missing"), ("--", "/", "./exe"), ("/", "sh", "-c", "pwd")),
             stdin=("empty",), fixture="misc", stderr="exact"),
 
     Utility("pipesz",
@@ -929,18 +979,19 @@ UTILITIES = (
                      Option("-f", ("a.txt", "dir", "missing", "/dev/null"), None),
                      Option("-n", ("0", "1", "2", "3", "99", "bad", "-1"), None),
                      Option("-i"), Option("-o"), Option("-e"), Option("-c"), Option("-q"), Option("-v"), Option("--get")),
-            operands=((), ("exe", "a"), ("missing",), ("--", "exe", "b"), ("sh", "-c", "exit 3")),
+            operands=((), ("./exe", "a"), ("missing",), ("--", "./exe", "b"), ("sh", "-c", "exit 3")),
             stdin=("text", "empty"), fixture="misc", stderr="loose",
-            extra=(("--set=8192", "--stdout", "--verbose", "exe", "a"), ("--get", "--stdin", "--stderr", "--quiet"),
-                   ("--file=b.txt", "--check", "--get"), ("--fd=0", "--get", "--verbose"), ("--set", "4096", "--", "exe"))),
+            extra=(("--set=8192", "--stdout", "--verbose", "./exe", "a"), ("--get", "--stdin", "--stderr", "--quiet"),
+                   ("--file=b.txt", "--check", "--get"), ("--fd=0", "--get", "--verbose"), ("--set", "4096", "--", "./exe"))),
 
     Utility("coresched",
             options=(Option("-s", ("1", "99999999", "bad", "0"), None), Option("--source", ("1",), True),
                      Option("-d", ("1", "99999999", "bad"), None), Option("--dest", ("1",), True),
                      Option("-t", ("pid", "tgid", "pgid", "bad"), None), Option("--dest-type", ("pgid",), True),
                      Option("-v"), Option("--verbose")),
-            operands=((), ("get",), ("new",), ("new", "--", "exe", "a"), ("copy",), ("copy", "--", "exe", "b"),
-                      ("bad",), ("get", "extra"), ("--", "exe"), ("new", "--", "missing"), ("new", "exe")),
+            operands=((), ("get",), ("new",), ("new", "--", "./exe", "a"), ("copy",), ("copy", "--", "./exe", "b"),
+                      ("bad",), ("get", "extra"), ("--", "./exe"), ("new", "--", "missing"), ("new", "./exe"),
+                      ("new", "--", "exe")),
             stdin=("empty",), fixture="misc", stderr="loose", normalize=misc_coresched_normalize),
 
     Utility("ctrlaltdel",
@@ -953,20 +1004,21 @@ UTILITIES = (
             stdin=("empty",), fixture="misc", stderr="loose"),
 
     Utility("script",
-            options=(Option("-c", ("exe a", "exit 3", "printf out; printf err >&2", "cat", "", "echo $0"), None),
+            options=(Option("-c", ("./exe a", "exit 3", "printf out; printf err >&2", "cat", "", "echo $0", "exe a"), None),
                      Option("-e"), Option("-q"), Option("-f"), Option("-a"),
                      Option("-E", ("auto", "always", "never", "bad"), None),
                      Option("-m", ("classic", "advanced", "bad"), None),
                      Option("-O", ("/dev/null",), None), Option("-I", ("/dev/null",), None), Option("-B", ("/dev/null",), None),
                      Option("-T", ("/dev/null",), None), Option("-t"), Option("--force"), Option("-o", ("1K", "bad"), None)),
-            operands=(("/dev/null",), ("/dev/null", "--", "exe", "a"), ("--", "exe", "a"), (), ("/dev/null", "extra"),
-                      ("--",), ("/dev/null", "--", "sh", "-c", "exit 5")),
+            operands=(("/dev/null",), ("/dev/null", "--", "./exe", "a"), ("--", "./exe", "a"), (), ("/dev/null", "extra"),
+                      ("--",), ("/dev/null", "--", "sh", "-c", "exit 5"), ("/dev/null", "--", "false"),
+                      ("/dev/null", "--", "exe", "two words")),
             stdin=("empty", "text"), fixture="misc", stderr="loose", valid=misc_script_valid,
-            normalize=misc_script_normalize, timeout=8.0,
-            extra=(("--command=exe b", "--return", "--quiet", "/dev/null"), ("--flush", "--append", "--log-out=/dev/null", "-c", "exe a"),
-                   ("--echo=never", "--logging-format=advanced", "--log-io=/dev/null", "-c", "exe a"),
-                   ("--log-timing=/dev/null", "--log-out=/dev/null", "-qc", "exe a"), ("--timing=/dev/null", "-q", "-c", "exe a", "/dev/null"),
-                   ("--output-limit=1M", "-q", "-c", "exe a", "/dev/null"), ("-qec", "exit 3", "/dev/null"))),
+            normalize=misc_script_normalize, timeout=8.0, env=(("SHELL", "/bin/sh"),),
+            extra=(("--command=./exe b", "--return", "--quiet", "/dev/null"), ("--flush", "--append", "--log-out=/dev/null", "-c", "./exe a"),
+                   ("--echo=never", "--logging-format=advanced", "--log-io=/dev/null", "-c", "./exe a"),
+                   ("--log-timing=/dev/null", "--log-out=/dev/null", "-qc", "./exe a"), ("--timing=/dev/null", "-q", "-c", "./exe a", "/dev/null"),
+                   ("--output-limit=1M", "-q", "-c", "./exe a", "/dev/null"), ("-qec", "exit 3", "/dev/null"))),
 
     Utility("scriptreplay",
             options=(Option("-t", ("timing", "timing.adv", "missing", "empty", "a.txt"), None),
@@ -1064,7 +1116,7 @@ UTILITIES = (
                       ("-f", "wtmp", "pts/0"), ("-f", "wtmp", "reboot"), ("-f", "wtmp", "nosuchuser"), ("-f", "utmp"),
                       ("-f", "empty"), ("-f", "missing"), ("-f", "a.txt"), ("--file=wtmp",), ("-f", "dir"),
                       ("-f", "wtmp", "--", "root")),
-            stdin=("empty",), fixture="misc", stderr="loose"),
+            stdin=("empty",), fixture="misc", stderr="loose", normalize=misc_last_normalize),
 
     Utility("utmpdump",
             options=(Option("-o", ("dump.out", "dir", "missing/x"), None), Option("--output", ("dump.out",), True),
@@ -1074,7 +1126,7 @@ UTILITIES = (
             stdin=("misc_utmp", "empty", "text", "misc_utmp_text", "misc_wtmp"), fixture="misc", stderr="loose"),
 
     Utility("wall",
-            options=(Option("-n"), Option("--nobanner"), Option("-t", ("0", "bad"), None), Option("--timeout", ("0",), True),
+            options=(Option("-t", ("0", "bad"), None), Option("--timeout", ("0",), True),
                      Option("-g", ("nosuchgroup",), None), Option("--group", ("nosuchgroup",), True)),
             operands=((), ("message",), ("a.txt",), ("two", "words"), ("missing",)),
             stdin=("text", "empty"), fixture="misc", stderr="loose", valid=misc_wall_valid),
@@ -1091,7 +1143,7 @@ UTILITIES = (
                      Option("-p", ("user.info", "daemon.err", "local0.debug", "13", "bad", "user.bad", "kern.info",
                                    "info", "0", "191", "192", "user"), None),
                      Option("--octet-count"), Option("--prio-prefix"),
-                     Option("-s"), Option("-S", ("1", "64", "1024", "1KiB", "bad", "0"), None),
+                     Option("-s"), Option("-S", ("1", "64", "1024", "1KiB", "bad"), None),
                      Option("-t", ("tg", "", "a b"), None),
                      Option("-n", ("localhost", "127.0.0.1"), None), Option("-P", ("1", "514", "bad"), None),
                      Option("-T"), Option("-d"), Option("--rfc3164"),

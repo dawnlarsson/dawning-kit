@@ -1,0 +1,362 @@
+[
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--color",
+  "reason": "deliberate: ANSI coloring changes the output byte protocol and requires WHEN policy plus palette handling; plain deterministic patches remain the contract.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--context",
+  "reason": "deliberate: optional-count long spelling of context output, rejected with the rest of that output protocol.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--ed",
+  "reason": "deliberate: long spelling of the unimplemented ed-script output protocol.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--exclude",
+  "reason": "deliberate: long spelling of the unimplemented recursive exclusion matcher.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--exclude-from",
+  "reason": "deliberate: long spelling of the unimplemented exclusion-file grammar.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--expand-tabs",
+  "reason": "deliberate: long spelling of the unimplemented output tab renderer.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--from-file",
+  "reason": "deliberate: one-to-many comparison changes operand arity, headings and worst-status aggregation; it is not a two-file alias.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--horizon-lines",
+  "reason": "deliberate: this changes the matcher search horizon and therefore edit selection; it is rejected rather than accepted without effect.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--ifdef",
+  "reason": "deliberate: long spelling of the unimplemented ifdef merge generator.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--ignore-file-name-case",
+  "reason": "deliberate: case-insensitive directory pairing needs collision rules for two names which fold alike; bytewise pairing remains explicit.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--ignore-matching-lines",
+  "reason": "deliberate: long spelling of group-aware regex change suppression.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--initial-tab",
+  "reason": "deliberate: output alignment modifier with format-specific tab placement, rejected rather than ignored.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--left-column",
+  "reason": "deliberate: modifier for the unimplemented side-by-side output protocol.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--line-format",
+  "reason": "deliberate: GNU's line/group format language is a printf-like interpreter; accepting a subset would silently generate corrupt output.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--minimal",
+  "reason": "deliberate: long spelling of the stronger unimplemented minimal-edit guarantee.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--no-dereference",
+  "reason": "deliberate: exact symlink-object comparison requires lstat/readlink traversal throughout recursive diff; following links is the current explicit policy.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--old-line-format",
+  "reason": "deliberate: one of GNU's LTYPE-line-format spellings; the line/group format language is a printf-like interpreter and a subset would silently generate corrupt output.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--paginate",
+  "reason": "deliberate: long spelling of the unimplemented pr pagination pipeline.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--palette",
+  "reason": "deliberate: palette is meaningful only with the unimplemented color output protocol and cannot safely be ignored.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--rcs",
+  "reason": "deliberate: long spelling of the unimplemented RCS output protocol.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--show-c-function",
+  "reason": "deliberate: long spelling of the unimplemented C-function hunk annotation.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--show-function-line",
+  "reason": "deliberate: long spelling of the unimplemented regex function-line annotation.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--side-by-side",
+  "reason": "deliberate: long spelling of the unimplemented side-by-side renderer.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--starting-file",
+  "reason": "deliberate: long spelling of the unimplemented directory starting point.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--suppress-blank-empty",
+  "reason": "deliberate: format-specific output whitespace suppression, rejected rather than changing comparison data.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--suppress-common-lines",
+  "reason": "deliberate: modifier for the unimplemented side-by-side output protocol.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--tabsize",
+  "reason": "deliberate: tab-stop control affects output rendering and -E comparison semantics; only the standard eight-column comparison contract is implemented.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--to-file",
+  "reason": "deliberate: reverse one-to-many comparison changes operand arity, headings and status aggregation.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--width",
+  "reason": "deliberate: long spelling of the side-by-side width control; accepting it while ignoring the width would be a silent lie.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-C",
+  "reason": "deliberate: valued short spelling of the unimplemented context output protocol; approximating it with unified output would silently emit the wrong patch language.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-D",
+  "reason": "deliberate: ifdef merge output is source generation with directive placement and incomplete-line rules, not a normal diff variant.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-F",
+  "reason": "deliberate: regex-selected function-line annotations alter every hunk header and need the regex engine plus exact header quoting.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-I",
+  "reason": "deliberate: ignore-matching-lines needs regex matching per complete change group; ignoring individual matching lines would produce a plausible but wrong script.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-S",
+  "reason": "deliberate: starting-file changes top-level directory merge ordering and needs exact interaction with exclusions and case-folding.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-W",
+  "reason": "deliberate: width controls only the unimplemented side-by-side renderer and is rejected rather than accepted without effect.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-X",
+  "reason": "deliberate: exclude-file parsing adds newline, escaping, empty-pattern and read-error contracts; no partial reader is advertised.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-c",
+  "reason": "deliberate: context format is a separate output protocol, not an alias for unified output; it is rejected until its headers, ranges, separators and no-newline markers are complete.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-d",
+  "reason": "deliberate: minimal mode changes the edit-search guarantee on large repeated inputs; the GNU-compatible heuristic matcher cannot claim it as a no-op.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-e",
+  "reason": "deliberate: ed-script output is executable command language with escaping and final-line rules of its own; normal diff output is not a safe approximation.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-l",
+  "reason": "deliberate: pagination delegates to pr and changes process/error behavior; this freestanding tool does not claim that external rendering pipeline.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-n",
+  "reason": "deliberate: RCS-script output is a separate executable patch language and is rejected rather than approximated.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-p",
+  "reason": "deliberate: C-function hunk annotations require a source recognizer and alter the patch headers; they are rejected rather than omitted silently.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-t",
+  "reason": "deliberate: output tab expansion changes patch bytes and needs column tracking across every output format; comparison-time -E is implemented, this renderer is not.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-x",
+  "reason": "deliberate: recursive name exclusion needs repeatable ordered glob storage and directory-level matching; it is rejected rather than applying a partial basename filter.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-y",
+  "reason": "deliberate: side-by-side layout needs display-width, tab and truncation semantics; emitting normal diff output would falsely claim that layout.",
+  "utility": "diff"
+ }
+]

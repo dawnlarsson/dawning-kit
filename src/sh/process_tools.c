@@ -335,7 +335,8 @@ static bool stdbuf_mode(string_address text, bool input,
         {
                 if (input)
                 {
-                        file_fail("stdbuf: line buffering stdin is meaningless\n",
+                        file_fail("stdbuf: line buffering standard input is meaningless\n"
+                                  "Try 'stdbuf --help' for more information.\n",
                                   0);
                         return false;
                 }
@@ -429,6 +430,23 @@ static bool stdbuf_preload(string_address library)
         return true;
 }
 
+/* coreutils checks each mode as the option is read, so an invalid one is
+   refused even when a later option for the same stream would supersede it. */
+static bool process_stdbuf_seen(p8 letter, string_address value)
+{
+        p8 scratch[64];
+
+        if (!value)
+                return true;
+        if (letter == 'i')
+                return stdbuf_mode(value, true, 'I', scratch);
+        if (letter == 'o')
+                return stdbuf_mode(value, false, 'O', scratch);
+        if (letter == 'e')
+                return stdbuf_mode(value, false, 'E', scratch);
+        return true;
+}
+
 static b32 process_stdbuf()
 {
         file_taking taking = {
@@ -436,6 +454,7 @@ static b32 process_stdbuf()
             .allowed = (string_address) "ioe",
             .valued = (string_address) "ioe",
             .longs = process_stdbuf_longs,
+            .seen = process_stdbuf_seen,
         };
 
         if (!file_take(address_of taking))
@@ -447,13 +466,14 @@ static b32 process_stdbuf()
 
         if (!modes)
         {
-                file_fail("stdbuf: you must specify a buffering mode option\n",
-                          0);
+                file_fail("stdbuf: you must specify a buffering mode option\n"
+                          "Try 'stdbuf --help' for more information.\n", 0);
                 return 125;
         }
         if (taking.first >= count)
         {
-                file_fail("stdbuf: missing operand\n", 0);
+                file_fail("stdbuf: missing operand\n"
+                          "Try 'stdbuf --help' for more information.\n", 0);
                 return 125;
         }
 
@@ -557,7 +577,8 @@ static b32 process_chroot()
                 return 125;
         if (taking.first >= count)
         {
-                file_fail("chroot: missing operand\n", 0);
+                file_fail("chroot: missing operand\n"
+                          "Try 'chroot --help' for more information.\n", 0);
                 return 125;
         }
 
@@ -670,7 +691,8 @@ static b32 process_nohup()
                 return 125;
         if (taking.first >= count)
         {
-                file_fail("nohup: missing operand\n", 0);
+                file_fail("nohup: missing operand\n"
+                          "Try 'nohup --help' for more information.\n", 0);
                 return 125;
         }
 
@@ -1379,35 +1401,107 @@ static fn process_timeout_signal(b32 child, b32 signal, bool foreground,
                       (positive)signal);
 }
 
+/* GNU's duration: a float with an optional s/m/h/d, where strtod also
+   takes inf (no deadline at all) and a 0x hexadecimal. */
+static bool process_timeout_duration(string_address text,
+                                     positive address_to duration)
+{
+        if (string_equals(text, "inf") || string_equals(text, "INF") ||
+            string_equals(text, "infinity") || string_equals(text, "+inf"))
+        {
+                address_to duration = 0;
+                return true;
+        }
+        if (string_is(text, '0') && (text[1] == 'x' || text[1] == 'X'))
+        {
+                string_address at = text + 2;
+                positive value;
+                positive unit = 1;
+
+                if (!string_digits_checked(address_of at, 16, address_of value))
+                        return false;
+                if (string_get(at) == 'm')
+                        unit = 60;
+                else if (string_get(at) == 'h')
+                        unit = 3600;
+                else if (string_get(at) == 'd')
+                        unit = 86400;
+                else if (string_get(at) && string_get(at) != 's')
+                        return false;
+                if (string_get(at) && string_get(at + 1))
+                        return false;
+                if (value > positive_max / (unit * 1000000000u))
+                        return false;
+                address_to duration = value * unit * 1000000000u;
+                return true;
+        }
+        return file_duration_read(text, true, duration);
+}
+
+/* coreutils validates each --signal and --kill-after as it is read. */
+static bool process_timeout_seen(p8 letter, string_address value)
+{
+        if (letter == 's' && value)
+        {
+                bipolar named = ul_signal_number(value);
+
+                if (named < 0 || named > 64)
+                {
+                        string_format(file_fail, "timeout: '%s': invalid signal\n"
+                                                 "Try 'timeout --help' for more information.\n",
+                                      value);
+                        return false;
+                }
+        }
+        if (letter == 'k' && value)
+        {
+                positive after;
+
+                if (!process_timeout_duration(value, address_of after))
+                {
+                        string_format(file_fail, "timeout: invalid time interval '%s'\n"
+                                                 "Try 'timeout --help' for more information.\n",
+                                      value);
+                        return false;
+                }
+        }
+        return true;
+}
+
 static b32 process_timeout()
 {
         file_taking taking = {
             .program = (string_address) "timeout",
-            .allowed = (string_address) "ksv",
+            .allowed = (string_address) "kpfsv",
             .valued = (string_address) "ks",
             .longs = process_timeout_longs,
+            .seen = process_timeout_seen,
         };
         positive count = (positive)program_argument_count();
 
         if (!file_take(address_of taking))
                 return 125;
+        /* coreutils answers a missing duration or command with the usage
+           hint alone, and names the offending value in the other three. */
         if (taking.first >= count)
         {
-                file_fail("timeout: missing operand\n", 0);
+                file_fail("Try 'timeout --help' for more information.\n", 0);
                 return 125;
         }
 
         positive duration;
+        string_address interval = program_argument((b32)taking.first++);
 
-        if (!file_duration_read(program_argument((b32)taking.first++), true,
-                                      address_of duration))
+        if (!process_timeout_duration(interval, address_of duration))
         {
-                file_fail("timeout: invalid time interval\n", 0);
+                string_format(file_fail, "timeout: invalid time interval '%s'\n"
+                                         "Try 'timeout --help' for more information.\n",
+                              interval);
                 return 125;
         }
         if (taking.first >= count)
         {
-                file_fail("timeout: missing command\n", 0);
+                file_fail("Try 'timeout --help' for more information.\n", 0);
                 return 125;
         }
 
@@ -1415,28 +1509,14 @@ static b32 process_timeout()
         string_address signal_text = file_option_value(address_of taking, 's');
 
         if (signal_text)
-        {
-                bipolar named = ul_signal_number(signal_text);
-
-                if (named <= 0 || named > SIGNAL_HIGHEST)
-                {
-                        string_format(file_fail, "timeout: invalid signal '%s'\n",
-                                      signal_text);
-                        return 125;
-                }
-                signal = (b32)named;
-        }
+                signal = (b32)ul_signal_number(signal_text);
 
         bool escalate = (taking.flags & FILE_FLAG('k')) != 0;
         positive kill_after = 0;
 
-        if (escalate &&
-            !file_duration_read(file_option_value(address_of taking, 'k'), true,
-                                      address_of kill_after))
-        {
-                file_fail("timeout: invalid time interval for --kill-after\n", 0);
-                return 125;
-        }
+        if (escalate)
+                process_timeout_duration(file_option_value(address_of taking, 'k'),
+                                         address_of kill_after);
 
         bool foreground = (taking.flags & FILE_FLAG('f')) != 0;
         bool preserve = (taking.flags & FILE_FLAG('p')) != 0;
@@ -1885,13 +1965,15 @@ static b32 process_script_child(string_address command,
                 return 1;
         }
 
+        // The shell is named by its last component, as util-linux names
+        // it, which is how bash spells itself in its diagnostics.
+        string_address shell = file_environment((string_address)"SHELL");
+        if (!shell || !*shell)
+                shell = (string_address)"/bin/sh";
+        string_address shell_name = file_last_component(shell);
         if (command)
         {
-                string_address shell = file_environment(
-                    (string_address)"SHELL");
-                if (!shell || !*shell)
-                        shell = (string_address)"/bin/sh";
-                string_address words[] = {shell, (string_address)"-c",
+                string_address words[] = {shell_name, (string_address)"-c",
                                           command, null};
                 return process_tool_exec_environment(
                     (string_address)"script", words, file_environment_all(),
@@ -1904,10 +1986,7 @@ static b32 process_script_child(string_address command,
                     file_environment_all(),
                     file_environment((string_address)"PATH"));
 
-        string_address shell = file_environment((string_address)"SHELL");
-        if (!shell || !*shell)
-                shell = (string_address)"/bin/sh";
-        string_address words[] = {shell, (string_address)"-i", null};
+        string_address words[] = {shell_name, (string_address)"-i", null};
         return process_tool_exec_environment(
             (string_address)"script", words, file_environment_all(),
             file_environment((string_address)"PATH"));
@@ -2284,9 +2363,10 @@ static b32 process_script()
         }
         else if (separator < count)
         {
+                // A bare -- with nothing after it means the shell itself.
                 positive before = separator > taking.first
                                       ? separator - taking.first : 0;
-                if (before > 1 || separator + 1 >= count)
+                if (before > 1)
                         return ul_bad_usage("script", "invalid command operands");
                 if (before)
                         positional = program_argument((b32)taking.first);
@@ -2365,13 +2445,13 @@ static b32 process_script()
         string_address old_timing = file_option_value(address_of taking, 't');
         if (!timing_path && old_timing)
                 timing_path = old_timing;
-        if ((!combined_path && output_path && input_path &&
-             string_equals(output_path, input_path)) ||
-            (timing_path &&
-             ((output_path && string_equals(timing_path, output_path)) ||
-              (input_path && string_equals(timing_path, input_path)))))
+        // util-linux takes the same path for a log and the timing (the
+        // typical case being /dev/null for both); only the two logs are
+        // kept apart, which --log-io exists for.
+        if (!combined_path && output_path && input_path &&
+            string_equals(output_path, input_path))
                 return ul_bad_usage(
-                    "script", "log and timing paths must be distinct");
+                    "script", "log paths must be distinct");
 
         string_address paths[] = {
             output_path, combined_path ? null : input_path, timing_path};
@@ -2417,6 +2497,10 @@ static b32 process_script()
                 ul_bad_usage("script", "command is too long");
                 goto close_logs;
         }
+        // util-linux hands a -- command to the shell as one line, the
+        // words joined by spaces, exactly as --command does.
+        if (!command && command_first < count)
+                command = display;
 
         p8 stamp[64];
         process_script_stamp(stamp, sizeof(stamp));
@@ -2779,6 +2863,12 @@ static b32 process_scriptreplay()
         }
 
         string_address out_path = file_option_value(address_of taking, 'O');
+        if (out_path && file_option_value(address_of taking, 's'))
+        {
+                file_fail("scriptreplay: options --log-out and --typescript cannot be combined\n",
+                          0);
+                return 1;
+        }
         if (!out_path)
                 out_path = file_option_value(address_of taking, 's');
         string_address in_path = file_option_value(address_of taking, 'I');
@@ -2790,11 +2880,10 @@ static b32 process_scriptreplay()
         if (!out_path && !in_path)
                 out_path = (string_address)"typescript";
 
+        // Operands past the divisor are ignored, as util-linux ignores them.
         string_address divisor_text = file_option_value(address_of taking, 'd');
         if (!divisor_text && operand < argument_count)
                 divisor_text = program_argument((b32)operand++);
-        if (operand < argument_count)
-                return ul_bad_usage("scriptreplay", "extra operand");
         positive divisor = 1000000000;
         if (divisor_text &&
             (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
@@ -2891,9 +2980,12 @@ static b32 process_scriptreplay()
                 if (kind == 'S')
                         continue;
 
-                process_replay_reader address_to source = both_path || kind == 'O'
-                                                              ? address_of output
-                                                              : address_of input;
+                // A classic timing file has no stream letters; with only an
+                // input log to play, its entries play that log.
+                process_replay_reader address_to source =
+                    both_path || (kind == 'O' && output.handle >= 0)
+                        ? address_of output
+                        : address_of input;
                 if (source->handle < 0)
                         continue;
                 if (!process_replay_payload(source, length, kind == selected,
