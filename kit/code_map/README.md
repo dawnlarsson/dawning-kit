@@ -32,15 +32,18 @@ select containing files.
 ## What the current map establishes
 
 Classification began at `ae8ef2c3aa346a64fbd832a9c90608b3296fa069`.
-This refresh maps the counted-regex replacement and its consumer migration.
-It removes 44 obsolete C entries, adds 25 individually reviewed graph/compiler
-functions, and refreshes 505 location IDs by file/name mapping. Unchanged bodies
+The first refresh mapped the counted-regex replacement and its consumer migration.
+It removed 44 obsolete C entries, added 25 individually reviewed graph/compiler
+functions, and refreshed 505 location IDs by file/name mapping. Unchanged bodies
 keep their earlier classifications. Four changed AWK bodies retain their family
 classification but are conservatively excluded from complete body-review totals.
-The moved `text_literal_find` retains its earlier annotation.
+The moved `text_literal_find` retains its earlier annotation. The completion
+re-audit removes no further functions and refreshes 130 location IDs. Changed
+regex bodies were re-read; targeted caller changes do not promote family
+classifications to complete body review.
 
 The source digest is
-`e7f3e866b9f2126aeec48d9e0ce4b69c939107d7a9c93dce696033e71c038e55`.
+`6d44543536e94d9038353a7d793e132917e21689283d96247878f34f01244d96`.
 The generated artifact records its checkout commit and each source file's
 SHA-256; during integration the digest identifies the working source even when
 the commit still names its baseline. The following measurements are pinned to
@@ -49,7 +52,7 @@ that source snapshot. Classification completeness is not correctness evidence.
 | Inventory | Count |
 | --- | ---: |
 | Production files | 81 |
-| Production physical lines | 192,526 |
+| Production physical lines | 192,522 |
 | Ordinary C bodies | 3,648 |
 | Generated C entries | 148 |
 | C aliases | 100 |
@@ -71,7 +74,7 @@ earlier library seal; they are now visible and explicitly classified.
 Every production entry has a family, role, responsibility, confidence and review
 basis. Family constraints are shared research requirements; individual contract
 notes are recorded where evidence supports them. The 270 reviewed bodies cover
-16,186 attributed lines, or 11.3% of all function-attributed source. Classification
+16,185 attributed lines, or 11.3% of all function-attributed source. Classification
 coverage is complete against this inventory; individual body review is partial.
 Assembly instruction bodies were not freshly re-audited for this map.
 
@@ -81,8 +84,8 @@ These areas are disjoint; AWK is included in utilities.
 
 | Area | Physical LOC | Share |
 | --- | ---: | ---: |
-| Utilities | 80,423 | 41.8% |
-| Shell language and runtime | 37,430 | 19.4% |
+| Utilities | 80,422 | 41.8% |
+| Shell language and runtime | 37,427 | 19.4% |
 | C standard library | 22,219 | 11.5% |
 | Assembly library | 18,843 | 9.8% |
 | Terminal, editor and system tools | 9,573 | 5.0% |
@@ -95,7 +98,7 @@ These areas are disjoint; AWK is included in utilities.
 | Bowl runtime | 600 | 0.3% |
 
 The largest files are `src/sh/file.c` (20,333 lines), `src/library.c` (18,843),
-`src/sh/text.c` (18,059), `src/sh/util_linux.c` (13,660),
+`src/sh/text.c` (18,072), `src/sh/util_linux.c` (13,660),
 `src/sh/builtin.c` (13,571) and `src/sh/tools.c` (12,299).
 
 ### Largest C families
@@ -110,13 +113,13 @@ blanks inside spans. Declarations and other residual source are separate.
 | Difference engine | 41 | 1,689 |
 | History storage, expansion and fc | 35 | 1,634 |
 | Declarations and variable listings | 38 | 1,616 |
-| Stream editor | 31 | 1,492 |
-| Pattern search command | 30 | 1,409 |
+| Stream editor | 31 | 1,510 |
+| Pattern search command | 30 | 1,403 |
 | Directory listings | 30 | 1,225 |
 | Shell command grammar | 38 | 1,207 |
 | Editor editing operations | 35 | 1,191 |
 
-These ten families total 15,515 lines: **12.2% of the 127,670 lines attributed
+These ten families total 15,527 lines: **12.2% of the 127,666 lines attributed
 to C entries**. The largest 25 account for 24.0%. Size is distributed across
 many features; a large reduction will probably require a design shared across
 families or several complete subsystem replacements. That is an inference from
@@ -127,8 +130,8 @@ architecture implementations and distinct conversion contracts.
 Source accounting conserves the whole tree:
 
 ```text
-192,526 production physical lines
-  = 142,795 attributed to function/symbol spans
+192,522 production physical lines
+  = 142,791 attributed to function/symbol spans
   +  17,706 other code-bearing lines
   +  22,846 other comment lines
   +   9,179 other blank lines
@@ -142,7 +145,7 @@ See [the research comparisons](RESEARCH.md) and the subsequent
 [audited fold plan](FOLD_PLAN.md) for complete replacement budgets and current
 priorities. The regex implementation is now represented as counted-graph compilation,
 search metadata, and execution/consumer interfaces. Its measured source reduction
-is 762 production lines; behavior, resource limits and performance require their
+is 766 production lines; behavior, resource limits and performance require their
 separate qualification evidence. This atlas does not supply that proof.
 The annotations contain a design question and constraints for every family,
 rather than a savings estimate derived from its size.

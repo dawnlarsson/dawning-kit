@@ -1672,6 +1672,27 @@ compare 'not blank'      grep m  -v '^$'
 compare 'word only'      grep u  -w the
 compare 'word case'      grep u  -iw the
 
+# A replacement may only read numbered groups in its selected expression.
+case_start sedrefs
+printf 'a\n' > "$work/sed_reference"
+compare 'missing replacement group' sed sed_reference 's/./[\1]/'
+compare 'missing group empty input' sed empty 's/./[\1]/'
+compare 'address captures cannot leak' sed sed_reference '/\(a\)/s/./[\1]/'
+compare 'invalid skipped substitution' sed sed_reference '/z/s/./[\1]/'
+compare 'valid replacement group' sed sed_reference 's/\(a\)/[\1]/'
+compare 'whole match zero' sed sed_reference 's/./[\0]/'
+compare 'escaped replacement number' sed sed_reference 's/./[\\1]/'
+compare 'escaped slash then number' sed sed_reference 's/./[\\\1]/'
+compare 'reference followed by digit' sed sed_reference 's/./[\10]/'
+compare 'highest reference checked' sed sed_reference 's/\(a\)/[\1\9]/'
+compare 'reused regex has group' sed sed_reference '/\(a\)/s//[\1]/'
+compare 'reused regex lacks group' sed sed_reference '/./s//[\1]/'
+compare 'reused regex empty input' sed empty '/./s//[\1]/'
+compare 'reused regex no match' sed sed_reference 's/z/z/;s//[\1]/'
+compare 'reused command not executed' sed sed_reference 's/z/z/;/b/s//[\1]/'
+compare 'missing reused regex' sed sed_reference 's//[\1]/'
+compare 'missing reused regex no input' sed empty 's//[\1]/'
+
 case_start sed2
 compare 'star empty g'   sed m  's/a*/X/g'
 compare 'anchor empty g' sed m  's/^/> /'

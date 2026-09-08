@@ -13546,12 +13546,6 @@ static b32 text_grep()
         const rx_hints *literal = regex_current.hints;
         bool literal_proves = (regex_current.flags & RX_LITERAL_PROVES) != 0;
 
-        /* Boolean selection does not need capture snapshots unless the
-           pattern itself reads them. Output modes that inspect match spans
-           retain the same capture-aware executor as sed and the other tools. */
-        if (!only && !grep_coloring)
-                regex_demand = false;
-
         if (before && !grep_hold_make(before))
                 return text_done(2);
 
@@ -14054,6 +14048,7 @@ typedef struct
         b32 writer;
         bool global;
         bool printing;
+        p8 references;
         positive which;
         b32 block_stop;
 } sed_command;
@@ -14129,7 +14124,7 @@ static b32 sed_text_add(string_address from, positive length)
         than while running it.
 */
 static b32 sed_recent = -1;
-static bool sed_failed;
+static string_address sed_failed;
 static bool sed_io_failed;
 static bool sed_replaced;
 
@@ -14144,7 +14139,7 @@ static bool sed_use_regex(b32 which)
         if (sed_recent >= 0)
                 return true;
 
-        sed_failed = true;
+        sed_failed = (string_address)"no previous regular expression";
         return false;
 }
 
@@ -14659,6 +14654,15 @@ static fn sed_parse()
                         positive have = sed_take_until(delimiter, replacement, sizeof(replacement));
                         bool icase = false;
 
+                        command->references = 0;
+                        for (positive c = 0; c < have; c++)
+                                if (replacement[c] == '\\' && c + 1 < have)
+                                {
+                                        p8 next = replacement[++c];
+                                        if (byte_is_digit(next) && next - '0' > command->references)
+                                                command->references = next - '0';
+                                }
+
                         command->global = false;
                         command->printing = false;
                         command->writer = -1;
@@ -14701,6 +14705,9 @@ static fn sed_parse()
                                 command->which = 1;
 
                         command->pattern = sed_compile_regex(pattern, icase);
+                        if (command->pattern >= 0 &&
+                            command->references > sed_programs[command->pattern].groups)
+                                sed_broken = true;
                         command->text = sed_text_add(replacement, have);
                         sed_command_count++;
                         continue;
@@ -15012,7 +15019,7 @@ static fn sed_write_space(b32 which)
                 if (sed_files[which].handle < 0)
                 {
                         text_error(name, "couldn't open file");
-                        sed_failed = true;
+                        sed_failed = (string_address)"no previous regular expression";
                         return;
                 }
         }
@@ -15076,8 +15083,14 @@ static bool sed_substitute(sed_command address_to command)
 
         while (at <= sed_pattern.length)
         {
-                if (!regex_find(REGEX_LONGEST, sed_pattern.bytes, sed_pattern.length, at))
+                if (!regex_find(REGEX_LONGEST | (command->references ? REGEX_CAPTURES : 0),
+                                sed_pattern.bytes, sed_pattern.length, at))
                         break;
+                if (command->references > regex_group_count)
+                {
+                        sed_failed = (string_address)"invalid reference in replacement";
+                        return false;
+                }
 
                 positive from = regex_slots[0];
                 positive to = regex_slots[1];
@@ -15723,7 +15736,7 @@ cycle_done:
                 return text_refuse(null, "write error", 4);
 
         if (sed_failed)
-                return text_refuse(null, "no previous regular expression", 1);
+                return text_refuse(null, sed_failed, 1);
 
         return text_done(text_status ? text_status : leaving > 0 ? leaving : 0);
 }
@@ -17708,7 +17721,7 @@ static expr_value expr_matched(expr_value address_to subject,
                 return made;
         }
 
-        if (!regex_find(REGEX_LONGEST, text, length, 0) || regex_slots[0])
+        if (!regex_find(REGEX_LONGEST | REGEX_CAPTURES, text, length, 0) || regex_slots[0])
         {
                 if (regex_group_count)
                         made.text = expr_empty;

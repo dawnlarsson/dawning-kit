@@ -8775,23 +8775,20 @@ static bool conditional_regex_match(string_address text, string_address pattern,
         regex_program saved = regex_current;
         rx_mark mark = regex_pool.used;
         positive slots[RX_SLOT_MAX];
-        bool demand = regex_demand;
         bool matched = false;
 
         memory_copy_apart(slots, regex_slots, sizeof(slots));
         /* Compile above any live transient program; rewind only our own work. */
         address_to valid = rx_compile(&regex_pool, &regex_current, pattern,
                                       true, false, false, REGEX_POLICY_DEFAULT);
-        regex_demand = true;
         if (address_to valid)
         {
-                matched = regex_find(REGEX_FIRST, text, string_length(text), 0);
+                matched = regex_find(REGEX_FIRST | REGEX_CAPTURES, text, string_length(text), 0);
                 if (matched)
                         conditional_regex_captures(text);
         }
         regex_pool.used = mark;
         regex_current = saved;
-        regex_demand = demand;
         memory_copy_apart(regex_slots, slots, sizeof(slots));
         return matched;
 }

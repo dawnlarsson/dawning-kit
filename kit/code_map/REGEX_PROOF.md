@@ -1,11 +1,17 @@
 # Counted regex graph: implementation and qualification
 
-The qualified implementation replaces the old regex bytecode compiler and recursive
-runner with one immutable expression graph and an iterative matcher. The
-complete production patch removes **762 physical lines and 479 nonblank lines**.
+The initial qualified implementation (`92359fd`) replaces the old regex bytecode
+compiler and recursive runner with one immutable expression graph and an iterative
+matcher. Its complete production patch removes **762 physical lines and 479 nonblank lines**.
 Raw C source tokens including preprocessor bodies fall by only **4**: source-token
 size is effectively unchanged. This is a reduction in repeated mechanisms and
 line count, not a claim that the program contains substantially fewer tokens.
+
+The completion re-audit below removes another four net production lines while
+fixing undeclared sed replacement references. The cumulative reduction is
+**766 physical lines, 483 nonblank lines and 17 source tokens**. The original
+qualification measurements below remain pinned to `92359fd`; they are not
+silently replaced with measurements from the follow-up.
 
 The old engine is removed. Counted groups keep one child plus bounds; they no
 longer copy or relocate instructions. Saved programs reference their own prepared
@@ -205,3 +211,95 @@ repeated-count capacity, erased groups and capture-slot reuse checks. Use
 `CC=aarch64-linux-gnu-gcc` or `CC=riscv64-linux-gnu-gcc` for the corresponding builds.
 `python3 kit/function_audit.py --check` verifies the refreshed inventory seal;
 `python3 kit/code_map/build.py` rebuilds the classified map.
+
+## Completion re-audit against `92359fd`
+
+Two independent reviews re-read the compiler/metadata and matcher/callers. The
+remaining demonstrated fold removes compiler failure state from metadata readers
+and replaces the shared `regex_demand` toggle with an explicit `REGEX_CAPTURES`
+request. Whole-match slots are always available. Only numbered captures need undo
+records; pattern backreferences still force those captures internally. Shell
+conditionals and expr request them explicitly; sed requests them only when its
+replacement refers to a numbered group. Other consumers need only a span or bool.
+
+Successfully parsed graphs are acyclic and contain at most 8,191 nonzero nodes.
+A metadata recursion path cannot exceed 8,192 calls, below the old 8,193 guard.
+Those readers now take const graph data and cannot mutate compiler failure state.
+The parser's actual depth, syntax and capacity guards remain.
+
+This cleanup removes 23 physical lines before the discovered sed defect is fixed.
+Sed could read an undeclared replacement group from an earlier match, for example
+`/\(a\)/s/./[\1]/` on `a`. Each substitution now records its highest referenced
+group, validates known expressions during parsing, and validates an empty reused
+expression after a successful match. The same field controls capture demand.
+This costs 19 lines, with all declarations, diagnostics and callers charged:
+
+| Complete production delta | Physical LOC removed | Source tokens removed |
+| --- | ---: | ---: |
+| Metadata and capture-demand cleanup | 23 | 159 |
+| Sed reference validation | -19 | -146 |
+| **Net follow-up** | **4** | **13** |
+
+The current graph file has 963 lines. Production source totals 192,522 lines and
+has digest `6d44543536e94d9038353a7d793e132917e21689283d96247878f34f01244d96`.
+No function is added or removed by this follow-up. The map remaps 130 location IDs,
+retains its evidence distinctions, and verifies all 4,245 production symbols.
+
+### Follow-up verification and explicit differences
+
+Evidence is in `artifacts/regex-reaudit-2026-09-08/`, including frozen prototypes,
+source/token accounting, complete counterexamples, binary hashes and raw samples.
+The metadata-only change is identical over 46,633 cases in optimized and sanitizer
+builds, including every byte of prepared hints and 8k-node boundaries. The combined
+sanitizer run has identical metadata in all 46,633 cases; six exhausted runs return
+a later endpoint or capture because whole-match span writes no longer consume undo
+entries. All six retain pending exhaustion. These are declared capacity changes,
+not exact equivalence claims for exhausted output.
+
+The separate span-demand probe has 30,863 ordinary exact comparisons and 40 manual
+graphs passing ASan/UBSan. Among 9,216 deliberately tiny resource cases, 687 differ
+without losing a previously successful match. This does not prove a universal
+resource ordering outside the tested cases.
+
+The final production binaries pass 34,522 text checks (including 17 new sed cases),
+8,949 AWK checks, 1,776 shell checks, 1,669 file checks plus 672 generated path cases,
+and 69,588 shared production-floor checks. All three architecture builds succeed;
+84 qualified consumer comparisons pass using native x64 and QEMU ARM64/RISC-V.
+The same nine unavailable strace/ptrace injection cases remain excluded.
+
+The 17 maintained sed comparisons match GNU status and output. A broader probe is
+20/21 exact for status, output and diagnostic presence. Its remaining invalid-script
+case, `s/\(a\)/a/;s/./a/;s//[\1]/`, produced `[a]` from stale state in the landed
+engine, produces `[]` in GNU sed 4.10, and now fails with status 1. Consistently
+rejecting a group absent from the selected expression is intentional; the fix does
+not reproduce GNU's dependence on prior compiled capture state. Diagnostics are
+not claimed to match GNU wording.
+
+| Final binary | SHA-256 |
+| --- | --- |
+| x64 | `755c272724e31fef3433a8f08a893874bd68d793482b20bdac71973065e92394` |
+| ARM64 | `869c761ce58d991a72b736fa36a95e11ab251c6f0fbccf0b037934c5deb71164` |
+| RISC-V | `e7a0159ca1358aee68c6adc369455c3446319979ae993bd1ed7825bb1ad3e1b9` |
+
+### Follow-up performance and remaining design questions
+
+Eleven paired native rounds qualify identical output, status and diagnostics for
+17 workloads against `92359fd`. Match-span workloads improve: grouped `grep -o`
+runs at 0.785 times baseline wall time, grouped AWK substitution at 0.836,
+ambiguous longest matching at 0.780 and nullable groups at 0.819. Fixed-group
+`grep -c` is essentially unchanged at 0.991. Small literal/class measurements are
+within about 4%. An initial 1.140 ratio for the 4.7-ms nl workload becomes 1.015
+over 15 paired rounds with 20 times the input; both observations are retained.
+These samples do not establish universal speedups. Binary text falls by 832,
+928 and 352 bytes on x64, ARM64 and RISC-V respectively. BSS changes by 0, 16 and
+8 bytes; this does not eliminate the original graph's larger scratch reservation.
+
+Removing graph tails/reverse links would add sequence scans, deep recursion or
+traversal scratch. Combining metadata walks requires branch-local nullable and
+first/last/literal state. Combining continuation, choice and undo storage loses
+existing capacity or increases entry size. Algebraic repeat fusion can change
+capture priority or accepted lengths. None yielded a demonstrated major complete
+LOC reduction with the required behavior and performance. The earlier fixed-group
+slowdown and scratch-space cost remain real design tradeoffs. The large LOC fold
+is near its demonstrated limit; this audit does not establish mathematical
+minimality or optimal performance.

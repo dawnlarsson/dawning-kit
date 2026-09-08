@@ -1,7 +1,8 @@
 # Plan for major architectural folds
 
 **Execution update, 2026-09-08:** the regex experiment qualified and was applied.
-It removes 762 production lines; source tokens are essentially unchanged.
+It removes 766 production lines including the completion re-audit; source tokens
+are essentially unchanged (17 fewer, including directives).
 See [implementation, validation and measured tradeoffs](REGEX_PROOF.md).
 The remaining proposals are still held. The text below preserves the original
 planning estimates and decision gates against their pinned baseline.

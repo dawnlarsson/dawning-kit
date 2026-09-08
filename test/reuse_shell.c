@@ -479,7 +479,7 @@ static fn reuse_regex(void)
         repeated[80] = 0;
         check("mandatory repeats of erased groups stay empty without exponential work",
               regex_compile(repeated, true, false, false, REGEX_POLICY_DEFAULT) &&
-              regex_find(REGEX_LONGEST, "", 0, 0) && regex_slots[2] == positive_max);
+              regex_find(REGEX_LONGEST | REGEX_CAPTURES, "", 0, 0) && regex_slots[2] == positive_max);
         rx_mark mark = regex_pool.used;
         regex_program published = regex_current;
         check("invalid compile does not publish partial state",
@@ -490,10 +490,10 @@ static fn reuse_regex(void)
               regex_pool.used.hints == mark.hints);
         check("capture-bearing search succeeds",
               regex_compile("(a)", true, false, false, REGEX_POLICY_DEFAULT) &&
-              regex_find(REGEX_LONGEST, "a", 1, 0) && regex_slots[2] == 0);
+              regex_find(REGEX_LONGEST | REGEX_CAPTURES, "a", 1, 0) && regex_slots[2] == 0);
         check("literal shortcut clears captures removed by a zero count",
               regex_compile("(b){0}x", true, false, false, REGEX_POLICY_DEFAULT) &&
-              regex_find(REGEX_LONGEST, "x", 1, 0) &&
+              regex_find(REGEX_LONGEST | REGEX_CAPTURES, "x", 1, 0) &&
               regex_slots[2] == positive_max && regex_slots[3] == positive_max);
         regex_retained = regex_pool.used = (rx_mark){0};
 }
