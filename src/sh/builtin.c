@@ -7535,7 +7535,7 @@ bool test_compare(positive kind, string_address left, string_address right)
                 //      Both references complain about the operand that is not
                 //      a number; being silent read as a false rather than an
                 //      error to anything watching the diagnostic.
-                string_format(shell_diagnostic, "%s: Illegal number: %s\n",
+                string_format(log_error, "%s: Illegal number: %s\n",
                               shell_argv[0], first_good ? right : left);
                 test_bad = true;
                 return false;
@@ -13361,7 +13361,7 @@ fn shell_help(writer write, string_address input)
                         if (!string_is(letter, 'd') && !string_is(letter, 's') &&
                             !string_is(letter, 'm'))
                         {
-                                string_format(shell_diagnostic,
+                                string_format(log_error,
                                               "help: -%c: invalid option\n",
                                               string_get(letter));
                                 return shell_answer(2);
@@ -13381,7 +13381,7 @@ fn shell_help(writer write, string_address input)
                                 shell_argv[index],
                                 string_hash_33_length(shell_argv[index])))
                         {
-                                string_format(shell_diagnostic,
+                                string_format(log_error,
                                               "help: no help topics match `%s'\n",
                                               shell_argv[index]);
                                 answer = 1;
