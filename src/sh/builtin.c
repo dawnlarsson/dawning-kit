@@ -1598,15 +1598,6 @@ string_address env_get_hashed_span(const_string name, positive length,
         return shell_vars[index].text + length + 1;
 }
 
-PURE string_address env_get_span(const_string name, positive length)
-{
-        if (name == null)
-                return null;
-
-        return env_get_hashed_span(name, length,
-                                   env_name_hash(name, length), null);
-}
-
 PURE string_address env_get(const_string name)
 {
         positive2 answer;
@@ -3059,12 +3050,9 @@ static COLD bool shell_reference_element_forget(env_reference resolved)
 positive shell_subshell_depth;
 
 COLD string_address shell_dynamic_value(const_string name, positive length,
-                                        positive hash,
                                         positive address_to value_length)
 {
         string_address text = env_reading(name);
-
-        (void)hash;
 
         if (length == 1)
         {
@@ -11450,7 +11438,6 @@ static shell_wait_entry address_to shell_wait_table;
 static positive shell_wait_room;
 static positive shell_wait_count;
 
-#define SHELL_WAIT_NO_HANG 1
 #define SHELL_WAIT_DONE 1
 #define SHELL_WAIT_LAST 2
 #define SHELL_WAIT_PIPEFAIL 4
@@ -11548,17 +11535,6 @@ static fn shell_background_reaped(bipolar pid, positive status)
                 shell_wait_table[at].status = status;
                 shell_wait_table[at].flags |= SHELL_WAIT_DONE;
         }
-}
-
-fn shell_background_reap()
-{
-        positive status;
-        bipolar pid;
-
-        while ((pid = system_call_4(syscall(wait4), (positive)-1,
-                                    (positive)address_of status,
-                                    SHELL_WAIT_NO_HANG, 0)) > 0)
-                shell_background_reaped(pid, status);
 }
 
 static bipolar shell_wait_call(bipolar pid, positive address_to status)
@@ -13107,7 +13083,6 @@ fn shell_enable(writer write, string_address input)
         shell_option_walk walk = {1};
         p8 which;
         bool off = false;
-        bool as_commands = false;
         bool every = false;
         b32 bad = 0;
 
@@ -13116,7 +13091,7 @@ fn shell_enable(writer write, string_address input)
                 if (which == 'n')
                         off = true;
                 else if (which == 'p')
-                        as_commands = true;
+                        continue;
                 else if (which == 'a')
                         every = true;
                 else if (which == 'f' || which == 'd' || which == 's')
@@ -13149,8 +13124,6 @@ fn shell_enable(writer write, string_address input)
 
                         command++;
                 }
-
-                (void)as_commands;
 
                 return shell_answer(0);
         }

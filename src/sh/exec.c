@@ -1252,7 +1252,6 @@ fn job_report()
         ambiguous rather than one of them, because guessing which of two
         running commands to kill is not a service.
 */
-#define JOB_SPEC_NONE 0
 #define JOB_SPEC_FOUND 1
 #define JOB_SPEC_UNKNOWN 2
 #define JOB_SPEC_AMBIGUOUS 3
@@ -10480,8 +10479,6 @@ static b32 exec_node_kind(b32 index)
 
         return status;
 }
-
-#define WAIT_NO_HANG 1
 
 static b32 exec_depth;
 

@@ -212,7 +212,7 @@ repeated-count capacity, erased groups and capture-slot reuse checks. Use
 `python3 kit/function_audit.py --check` verifies the refreshed inventory seal;
 `python3 kit/code_map/build.py` rebuilds the classified map.
 
-## Completion re-audit against `92359fd`
+## Completion re-audit against `92359fd`, applied in `c6f5a6a`
 
 Two independent reviews re-read the compiler/metadata and matcher/callers. The
 remaining demonstrated fold removes compiler failure state from metadata readers
@@ -240,7 +240,7 @@ This costs 19 lines, with all declarations, diagnostics and callers charged:
 | Sed reference validation | -19 | -146 |
 | **Net follow-up** | **4** | **13** |
 
-The current graph file has 963 lines. Production source totals 192,522 lines and
+At `c6f5a6a` the graph file has 963 lines. Production source totals 192,522 lines and
 has digest `6d44543536e94d9038353a7d793e132917e21689283d96247878f34f01244d96`.
 No function is added or removed by this follow-up. The map remaps 130 location IDs,
 retains its evidence distinctions, and verifies all 4,245 production symbols.

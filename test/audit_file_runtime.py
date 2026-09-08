@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Linux CLI regressions; every mutated path is inside one owned temporary directory."""
-import argparse,calendar,datetime,hashlib,json,os,pathlib,subprocess,tempfile,sys
+import argparse,hashlib,json,os,pathlib,subprocess,tempfile,sys
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--shell',required=True,type=pathlib.Path)
 parser.add_argument('--source',type=pathlib.Path)

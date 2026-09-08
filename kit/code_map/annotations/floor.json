@@ -12,7 +12,7 @@
     "src/platform/socket.inc",
     "src/platform/standard.inc"
   ],
-  "source_digest": "6d44543536e94d9038353a7d793e132917e21689283d96247878f34f01244d96",
+  "source_digest": "93e46f6ea23f0cc6ca60d474fdb052cfe19f1f267d8b654546b9e2f32839fd55",
   "families": [
     {"id": "floor.cpu_clock","title": "CPU features and counters","description": "Detect CPU capabilities and read the low-level timing counter.","design_question": "Do callers keep feature probing at startup and reuse its recorded result?","constraints": ["Counter units and feature availability are platform contracts, not wall-clock seconds.","Preserve the supported architecture spans, calling conventions, kernel/userspace guards and existing feature-dispatch fallbacks."]},
     {"id": "floor.integer_arithmetic","title": "Scalar integer and bit arithmetic","description": "Count bits, locate set bits and compute signed integer magnitudes.","design_question": "Are scalar operations consistently routed through the baseline instruction floor?","constraints": ["Preserve zero-input bit-scan rules, integer widths and signed-minimum behavior.","Preserve the supported architecture spans, calling conventions, kernel/userspace guards and existing feature-dispatch fallbacks."]},

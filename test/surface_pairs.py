@@ -23,7 +23,7 @@ awkward rather than representative:
 Same four verdicts as surface.py, same meaning. Where a difference is only
 reachable with two flags together, this is what says so.
 """
-import argparse, itertools, json, os, subprocess, sys
+import argparse, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 LEDGER = os.path.join(HERE, 'surface_pairs_ledger.json')

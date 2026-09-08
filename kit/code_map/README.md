@@ -1,7 +1,7 @@
 # Function atlas
 
-The [regex implementation audit](REGEX_PROOF.md) records the latest architectural
-fold, its complete source accounting, regression evidence and runtime tradeoffs.
+The [regex implementation audit](REGEX_PROOF.md) records the counted-graph fold,
+its complete source accounting, regression evidence and runtime tradeoffs.
 
 This is a source map for finding and costing architectural reductions. It joins
 the sealed production inventory to semantic classifications, source extents,
@@ -29,6 +29,28 @@ pairs back to their contracts and source. **Coverage & method** explains scope
 and limitations. The Files view keeps whole-file totals when function filters
 select containing files.
 
+## Audit trail
+
+Local reports under `artifacts/` retain their original baseline, counts and
+verdicts. Use the later implementation record when an earlier review says
+"unfixed" or "unapplied"; those historical labels are not the current backlog.
+
+| Effort | Status and follow-up |
+| --- | --- |
+| [Codebase audit and verification](../../artifacts/audit-2026-09-08/verification-2/verification.md) | C01–C16, cached enable lookup, and the coupled small folds were repaired in `009bce0`; [implementation record](../../artifacts/audit-2026-09-08/implementation-1/implementation.md). |
+| [Utility and arithmetic reductions](../../artifacts/audit-2026-09-08/reduction-2/reduction.md) | Applied in `de27dfd`: file loops, literal replacement, typed columns, mount/blkid policy and arithmetic lvalues. |
+| [Binding, sort and regex search designs](../../artifacts/audit-2026-09-08/architecture-1/architecture.md) | Applied in `ae8ef2c`; regex storage/execution was subsequently replaced by the counted graph. |
+| [Larger fold research](FOLD_PLAN.md) | Planning estimates are preserved. The regex prototype qualified; other proposed large replacements remain unqualified. |
+| [Counted regex and completion audit](REGEX_PROOF.md) | Applied in `92359fd` and `c6f5a6a`; 766 production lines removed, with recorded performance and resource tradeoffs. |
+| [General tidy](../../artifacts/general-tidy-2026-09-08/review.md) | Removes 46 further production lines and 172 source tokens: unused shell APIs/state and the previously proposed D13 dd operand table. Repairs stale sed state and lsblk include paths in maintained audit fixtures. |
+
+The remaining mapfile read-error and alternating function-redefinition storage
+leads are recorded in the [shell follow-up](../../artifacts/tidy-2026-09-08/shell-runtime/review.md).
+Their current runtime behavior and replacement policies were not qualified by
+this tidy pass. Canvas presentation and ownership proposals also remain leads;
+passing the existing geometry/state mocks does not establish live-display or
+device-failure correctness. No historical estimate is counted as a deletion.
+
 ## What the current map establishes
 
 Classification began at `ae8ef2c3aa346a64fbd832a9c90608b3296fa069`.
@@ -40,10 +62,13 @@ classification but are conservatively excluded from complete body-review totals.
 The moved `text_literal_find` retains its earlier annotation. The completion
 re-audit removes no further functions and refreshes 130 location IDs. Changed
 regex bodies were re-read; targeted caller changes do not promote family
-classifications to complete body review.
+classifications to complete body review. The general tidy pass removes two
+unreferenced shell functions and remaps 654 location IDs after deleting dead
+shell state and folding dd numeric operands. Four targeted dispatch/signature
+notes retain their existing family classifications.
 
 The source digest is
-`6d44543536e94d9038353a7d793e132917e21689283d96247878f34f01244d96`.
+`93e46f6ea23f0cc6ca60d474fdb052cfe19f1f267d8b654546b9e2f32839fd55`.
 The generated artifact records its checkout commit and each source file's
 SHA-256; during integration the digest identifies the working source even when
 the commit still names its baseline. The following measurements are pinned to
@@ -52,20 +77,20 @@ that source snapshot. Classification completeness is not correctness evidence.
 | Inventory | Count |
 | --- | ---: |
 | Production files | 81 |
-| Production physical lines | 192,522 |
-| Ordinary C bodies | 3,648 |
+| Production physical lines | 192,476 |
+| Ordinary C bodies | 3,646 |
 | Generated C entries | 148 |
 | C aliases | 100 |
 | Assembly symbols, including aliases; architecture variants grouped | 349 |
-| Total production symbols | **4,245** |
+| Total production symbols | **4,243** |
 | Semantic production families | 403 |
 | Individually reviewed bodies | 270 |
-| Classifications derived from family context | 3,636 |
+| Classifications derived from family context | 3,634 |
 | Classifications derived from aliases or generators | 339 |
 | Additional support entries | 1,570 |
 
 The map contains 232 source files including the tracked support layer. Production
-C coverage equals the sealed 3,896-entry inventory exactly. The 349 assembly
+C coverage equals the sealed 3,894-entry inventory exactly. The 349 assembly
 symbols comprise 335 in the library inclusion graph, eight additional platform
 signal/setjmp symbols, and six Canvas/kernel symbols. Architecture variants are
 shown inside each symbol. The additional platform symbols were outside the
@@ -84,8 +109,8 @@ These areas are disjoint; AWK is included in utilities.
 
 | Area | Physical LOC | Share |
 | --- | ---: | ---: |
-| Utilities | 80,422 | 41.8% |
-| Shell language and runtime | 37,427 | 19.4% |
+| Utilities | 80,407 | 41.8% |
+| Shell language and runtime | 37,396 | 19.4% |
 | C standard library | 22,219 | 11.5% |
 | Assembly library | 18,843 | 9.8% |
 | Terminal, editor and system tools | 9,573 | 5.0% |
@@ -99,7 +124,7 @@ These areas are disjoint; AWK is included in utilities.
 
 The largest files are `src/sh/file.c` (20,333 lines), `src/library.c` (18,843),
 `src/sh/text.c` (18,072), `src/sh/util_linux.c` (13,660),
-`src/sh/builtin.c` (13,571) and `src/sh/tools.c` (12,299).
+`src/sh/builtin.c` (13,544) and `src/sh/tools.c` (12,284).
 
 ### Largest C families
 
@@ -109,7 +134,7 @@ blanks inside spans. Declarations and other residual source are separate.
 | Family | Entries | Attributed LOC |
 | --- | ---: | ---: |
 | Parameter lookup and transformations | 41 | 2,202 |
-| Jobs, waits and terminal process groups | 63 | 1,850 |
+| Jobs, waits and terminal process groups | 62 | 1,840 |
 | Difference engine | 41 | 1,689 |
 | History storage, expansion and fc | 35 | 1,634 |
 | Declarations and variable listings | 38 | 1,616 |
@@ -119,7 +144,7 @@ blanks inside spans. Declarations and other residual source are separate.
 | Shell command grammar | 38 | 1,207 |
 | Editor editing operations | 35 | 1,191 |
 
-These ten families total 15,527 lines: **12.2% of the 127,666 lines attributed
+These ten families total 15,517 lines: **12.2% of the 127,627 lines attributed
 to C entries**. The largest 25 account for 24.0%. Size is distributed across
 many features; a large reduction will probably require a design shared across
 families or several complete subsystem replacements. That is an inference from
@@ -130,14 +155,14 @@ architecture implementations and distinct conversion contracts.
 Source accounting conserves the whole tree:
 
 ```text
-192,522 production physical lines
-  = 142,791 attributed to function/symbol spans
-  +  17,706 other code-bearing lines
+192,476 production physical lines
+  = 142,752 attributed to function/symbol spans
+  +  17,702 other code-bearing lines
   +  22,846 other comment lines
-  +   9,179 other blank lines
+  +   9,176 other blank lines
 ```
 
-The 49,731-line residual includes tables, declarations, macro templates and
+The 49,724-line residual includes tables, declarations, macro templates and
 assembly scaffolding. It cannot be counted as removable overhead. A replacement
 must include its new descriptors and declarations in its measured cost.
 
