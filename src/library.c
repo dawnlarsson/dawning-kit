@@ -12413,7 +12413,7 @@ __asm__(
     //       at boot with __ALTERNATIVE_CFG: one that turns a word into a byte
     //       mask with orc.b and finds the byte with ctz, and a byte loop for
     //       machines without Zbb. The floor this library is built to is
-    //       rv64imafd_zicsr_zicntr, which src/test/run pins and then reads
+    //       rv64imafd_zicsr_zicntr, which test/run pins and then reads
     //       back out of the ELF attributes, so orc.b and ctz are not ours to
     //       emit. Coming in at half the Zbb body is not a loss that better
     //       code here can close; it closes when the floor gains Zbb, and until
@@ -13413,7 +13413,7 @@ __asm__(
     //
     //       Note for the next audit: the residue branch at the top of this
     //       routine still lands on the byte walk, which is what the riscv
-    //       alignment gate in src/test/run reads it for, but unequal residues
+    //       alignment gate in test/run reads it for, but unequal residues
     //       no longer stay there. The gate proves the branch target and the
     //       displacements; it does not prove this arm, and the arm is safe
     //       for the reason above rather than because the gate says so.
@@ -13463,7 +13463,7 @@ __asm__(
     //       Four instructions off every overlapping call, which is what turns
     //       17 bytes from 0.89x of arch/riscv/lib/memmove.S into parity and 16
     //       from 0.97x into 1.12x. The run-up below is where the rest of the
-    //       difference is and it is not touched: src/test/run's riscv alignment
+    //       difference is and it is not touched: test/run's riscv alignment
     //       audit pins its shape instruction for instruction -- two exact
     //       t0 = a4 & 7 gates with exactly six instructions of peel between
     //       them -- and that is the tree's proof that no ld or sd here can

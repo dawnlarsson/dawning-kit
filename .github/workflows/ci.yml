@@ -3,7 +3,7 @@ name: CI
 # Parked: nothing here runs by itself.
 #
 # The lanes below still work and are still worth running -- shellcheck and the
-# dash parse over every script, the whole suite through src/test/run, and the
+# dash parse over every script, the whole suite through test/run, and the
 # same three compiling lanes again under clang. What has gone is the push and
 # pull_request triggers, so it costs nothing until somebody asks for it.
 #
@@ -49,9 +49,9 @@ jobs:
           for f in kit/bit.sh kit/emit.sh \
                    kit/build kit/spark kit/asm kit/common \
                    kit/config kit/verify_config kernel/replace/apply \
-                   src/test/run src/test/shell.sh src/test/text.sh \
-                   src/test/files.sh src/test/kit.sh src/test/probe.sh \
-                   src/test/boot.sh \
+                   test/run test/shell.sh test/text.sh \
+                   test/files.sh test/kit.sh test/probe.sh \
+                   test/boot.sh \
                    build.sh; do
             echo "dash -n $f"
             dash -n "$f"
@@ -64,13 +64,13 @@ jobs:
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             kit/build kit/spark kit/asm kit/common \
             kit/config kit/verify_config kernel/replace/apply \
-            src/test/run src/test/shell.sh src/test/text.sh \
-            src/test/files.sh src/test/kit.sh src/test/probe.sh \
-            src/test/boot.sh \
+            test/run test/shell.sh test/text.sh \
+            test/files.sh test/kit.sh test/probe.sh \
+            test/boot.sh \
             build.sh
 
   suite:
-    name: Every test (sh src/test/run)
+    name: Every test (sh test/run)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -88,7 +88,7 @@ jobs:
             gcc-aarch64-linux-gnu gcc-riscv64-linux-gnu
 
       - name: Run it
-        run: sh src/test/run
+        run: sh test/run
 
   clang:
     name: The library, the probes and the shell under clang
@@ -103,4 +103,4 @@ jobs:
       # the job above; this is the same code through the other compiler,
       # which is where a freestanding link tends to differ.
       - name: Run the lanes that compile
-        run: CC=clang sh src/test/run standard probe shell
+        run: CC=clang sh test/run standard probe shell

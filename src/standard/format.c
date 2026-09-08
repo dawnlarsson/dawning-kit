@@ -504,7 +504,7 @@ static fn format_integer(format_sink address_to sink, positive value,
 /*
         A counted run of bytes inside a width, which is %s and %c both.
 
-        The name carries the word field only because src/test/verify.c already
+        The name carries the word field only because test/verify.c already
         has a static array called format_text, and one translation unit cannot
         hold both.
 

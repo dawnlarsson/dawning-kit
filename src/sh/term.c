@@ -13,7 +13,7 @@
 
         Nothing below makes a system call. The emulator is a byte stream in and
         a grid of cells out, so it runs the same whether a pty is driving it or
-        a test is, and src/test/term.sh drives it with no kernel underneath at
+        a test is, and test/term.sh drives it with no kernel underneath at
         all. The two functions at the bottom are the exception and they are the
         only ones: everything the parser, the keys and the line editor do is
         stores into a page.

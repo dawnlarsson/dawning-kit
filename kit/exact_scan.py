@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Write src/test/exact_scan.c -- every length known at the call site.
+"""Write test/exact_scan.c -- every length known at the call site.
 
-The shape is src/test/exact.c's: a literal per line, because a size taken
+The shape is test/exact.c's: a literal per line, because a size taken
 from a loop counter never reaches the expansion at all.
 """
 import pathlib

@@ -1,0 +1,2134 @@
+#!/bin/sh
+#
+#       hostid, login records, dd, diff and ps against the ones already on
+#       the machine.
+#
+#           sh test/tools.sh [directory of the names our shell answers to]
+#
+#       Every case runs the same input through the corresponding system tool
+#       and through ours, and compares. Agreeing with the reference is what
+#       passing means; there is no separate idea here of the right answer.
+#
+#       What each of the three compares, and why it is not the same thing:
+#
+#       dd     writes its summary to the error stream, not to standard
+#              output, so the comparison has to capture both. The default
+#              summary ends in a duration and a rate that are what this
+#              machine did in that second and cannot agree between two runs,
+#              so there are two shapes of case: status=noxfer, which is byte
+#              for byte including both records lines, and the default, with
+#              everything from " copied," onwards cut off so that the byte
+#              count and its human readable forms are still compared.
+#
+#       diff   is compared whole, standard output and exit status, because
+#              all of it is deterministic -- including the timestamps in a
+#              -u header, since both tools read the mtime of the same file
+#              and TZ is fixed below. The generated section is the one that
+#              matters: a minimal edit script is not unique, and which of
+#              several identical lines gets called the changed one is a
+#              choice GNU makes in three places -- the identical head and
+#              tail it trims first, the lines it discards before the matcher
+#              runs, and the pass that slides a run of changes as far forward
+#              as it will go. Hand written cases do not reach any of them.
+#              Random pairs over a five letter alphabet reach all three,
+#              because that is what makes duplicate lines everywhere.
+#
+#       ps     reads a machine that is not the same machine a second later,
+#              so nothing about its content can be compared. What is compared
+#              is the shape: the header line, which is fixed; the number of
+#              fields a row has; and that a process known to exist is in the
+#              listing. A case that says only "it printed something" would
+#              pass for a tool that printed anything at all, so each one
+#              below says what it is looking at.
+#
+#       LC_ALL=C for the same reason every other lane sets it, and TZ so that
+#       the reference and ours agree about what +0000 means.
+#
+#       What is not here, written down so that the absence is a decision and
+#       not an oversight:
+#
+#         * TZ. Our diff prints a -u timestamp in UTC, always: the tree has
+#           no reader for /usr/share/zoneinfo and nothing else in it wants
+#           one. Pinning TZ=UTC0 above makes the reference agree, which also
+#           means no case here covers a machine whose clock is not UTC.
+#
+#         * The formats we do not have. Context (-c), -U with a count of its
+#           own, -I, -Z, --from-file, and the obsolete -NUM spelling of the
+#           context count are not implemented and are not compared. diff -Z9
+#           is a real GNU invocation and ours refuses it.
+#
+#         * Names with a space or a quote in them. GNU quotes a name in a
+#           header and in an "Only in" line; ours prints the bytes. Nothing
+#           below uses such a name.
+#
+#         * Where the binary check looks. GNU decides a file is binary from
+#           the first buffer it read; ours looks at the whole file, so a
+#           large file whose first zero byte is a long way in is binary to us
+#           and text to GNU.
+#
+#         * ps content. RSS here is the page count out of /proc/PID/stat
+#           rather than the field procps reads, STIME is UTC, and C is a
+#           simpler ratio than the reference computes. The ps cases compare
+#           shape for that reason as well as the obvious one.
+
+LC_ALL=C
+TZ=UTC0
+export LC_ALL TZ
+
+bin=${1:-/tmp/mwfarm}
+rounds=${2:-300}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+
+pass=0
+fail=0
+group=""
+
+case_start()
+{
+        group=$1
+}
+
+report()
+{
+        fail=$((fail + 1))
+        printf '  %-8s %-34s %s\n' "$group" "$1" "$2"
+}
+
+show()
+{
+        head -c 40 "$1" | tr '\n\t' '|>'
+}
+
+#       Standard output and exit status, for the tools whose answer is on
+#       standard output.
+compare()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        "$tool" "$@" > "$work/want" 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+}
+
+#       Same, with standard input coming from a named file.
+compare_in()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        "$tool" "$@" < "$feed" > "$work/want" 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" < "$feed" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+}
+
+#       dd: standard input from a file, standard output to a file, and the
+#       summary from the error stream, all three compared. The filter is what
+#       the case asks to have cut out of the summary before comparing.
+compare_dd()
+{
+        name=$1
+        feed=$2
+        filter=$3
+        shift 3
+
+        rm -f "$work/dd_want" "$work/dd_got"
+
+        dd "$@" < "$feed" > "$work/dd_want" 2> "$work/want_err"
+        want_status=$?
+        "$bin/dd" "$@" < "$feed" > "$work/dd_got" 2> "$work/got_err"
+        got_status=$?
+
+        sed "$filter" < "$work/want_err" > "$work/want"
+        sed "$filter" < "$work/got_err" > "$work/got"
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/dd_want" "$work/dd_got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+}
+
+# A full device accepts the open and rejects the write, reaching paths that a
+# missing or read-only output never does. GNU's wording varies slightly by
+# release; the failure status is the contract compared here.
+compare_dd_full()
+{
+        name=$1
+        feed=$2
+        shift 2
+
+        [ -e /dev/full ] || return 0
+
+        dd "$@" < "$feed" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/dd" "$@" < "$feed" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want status $want_status got $got_status"
+}
+
+compare_dd_reject()
+{
+        name=$1
+        shift
+
+        dd "$@" < /dev/null > /dev/null 2> /dev/null
+        want_status=$?
+        "$bin/dd" "$@" < /dev/null > /dev/null 2> /dev/null
+        got_status=$?
+
+        check "$name" "$((want_status != 0))" "$((got_status != 0))"
+}
+
+#       diff: the whole of standard output and the exit status, with the two
+#       operands named last.
+compare_diff()
+{
+        name=$1
+        shift
+
+        diff "$@" > "$work/want" 2> /dev/null
+        want_status=$?
+        "$bin/diff" "$@" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+}
+
+compare_diff_full()
+{
+        name=$1
+        shift
+
+        [ -e /dev/full ] || return 0
+
+        diff "$@" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/diff" "$@" > /dev/full 2> /dev/null
+        got_status=$?
+
+        check "$name" "$want_status" "$got_status"
+}
+
+#       tsort: ordering, cycle diagnostics and status are all deterministic.
+#       Standard input always comes from tsort-feed; arguments distinguish the
+#       stdin, named-file and refusal paths without duplicating the runner.
+compare_tsort()
+{
+        name=$1
+        shift
+
+        tsort "$@" < "$work/tsort-feed" > "$work/want" 2> "$work/want_err"
+        want_status=$?
+        "$bin/tsort" "$@" < "$work/tsort-feed" > "$work/got" 2> "$work/got_err"
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/want_err" "$work/got_err" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$name" "want $(show "$work/want")/$(show "$work/want_err")[$want_status] got $(show "$work/got")/$(show "$work/got_err")[$got_status]"
+}
+
+compare_tsort_reject()
+{
+        name=$1
+        shift
+
+        tsort "$@" < "$work/tsort-feed" > /dev/null 2>&1
+        want_status=$?
+        "$bin/tsort" "$@" < "$work/tsort-feed" > /dev/null 2>&1
+        got_status=$?
+        check "$name" "$want_status" "$got_status"
+}
+
+compare_diff_many_switches()
+{
+        set --
+        i=0
+
+        while [ "$i" -lt 80 ]; do
+                set -- "$@" -i
+                i=$((i + 1))
+        done
+
+        compare_diff 'recursive long switch title' "$@" -r "$work/d1" "$work/d2"
+}
+
+check()
+{
+        if [ "$2" = "$3" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        report "$1" "want [$2] got [$3]"
+}
+
+compare_ps_full()
+{
+        [ -e /dev/full ] || return 0
+
+        ps -e -o pid > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/ps" -e -o pid > /dev/full 2> /dev/null
+        got_status=$?
+        check 'ps output write failure' "$want_status" "$got_status"
+}
+
+#
+#       hostid
+#
+
+case_start hostid
+
+compare 'default' hostid
+compare 'option terminator' hostid --
+compare 'extra operand' hostid unexpected
+
+#
+#       who, users and pinky
+#
+
+case_start login
+
+: > "$work/login-empty"
+
+if command -v python3 > /dev/null 2>&1; then
+        # Linux has two current utmp64 layouts. x86 retains the historic
+        # 384-byte time32 record, while ARM64/RISC-V use a 400-byte native
+        # timeval. Make the reference's own native records explicitly so this
+        # catches treating one layout as the other.
+        python3 - "$work/login-utmp" <<'PYTHON'
+import platform
+import struct
+import sys
+
+path = sys.argv[1]
+little = sys.byteorder == "little"
+order = "<" if little else ">"
+compat32 = struct.calcsize("P") == 4 or platform.machine() in ("x86_64", "amd64")
+size = 384 if compat32 else 400
+
+def record(kind, pid, line, user, host, seconds, termination=0, status=0):
+    row = bytearray(size)
+    struct.pack_into(order + "h", row, 0, kind)
+    struct.pack_into(order + "i", row, 4, pid)
+    for offset, width, value in ((8, 32, line), (40, 4, "id"),
+                                 (44, 32, user), (76, 256, host)):
+        value = value.encode()
+        row[offset:offset + min(width, len(value))] = value[:width]
+    struct.pack_into(order + "hh", row, 332, termination, status)
+    if compat32:
+        struct.pack_into(order + "iii", row, 336, 0, seconds, 0)
+    else:
+        struct.pack_into(order + "q", row, 336, 0)
+        struct.pack_into(order + "qq", row, 344, seconds, 0)
+    return row
+
+rows = [
+    record(2, 0, "~", "", "", 1699990000),
+    record(7, 4242, "pts/99", "root", "remote:3", 1700000000),
+    record(7, 4343, "ttyS0123456789", "daemon", "", 1700003600),
+    record(7, 4444, "pts/3", "root", "zeta", 1700007200),
+    record(6, 5151, "tty2", "", "", 1700010000),
+    record(5, 6161, "tty3", "", "", 1700011000),
+    record(8, 7171, "pts/4", "", "", 1700012000, 15, 2),
+    record(1, ord("3") + ord("2") * 256, "~", "runlevel", "", 1700013000),
+    record(3, 0, "|", "", "", 1700014000),
+]
+
+with open(path, "wb") as output:
+    output.write(b"".join(rows))
+    output.write(b"partial record")
+PYTHON
+
+        compare 'who default fixture' who "$work/login-utmp"
+        compare 'who heading fixture' who -H "$work/login-utmp"
+        compare 'who count fixture' who -q "$work/login-utmp"
+        compare 'who message fixture' who -T "$work/login-utmp"
+        compare 'who users fixture' who -u "$work/login-utmp"
+        compare 'who all fixture' who -a "$work/login-utmp"
+        compare 'who boot fixture' who -b "$work/login-utmp"
+        compare 'who dead fixture' who -d "$work/login-utmp"
+        compare 'who login fixture' who -l "$work/login-utmp"
+        compare 'who init fixture' who -p "$work/login-utmp"
+        compare 'who runlevel fixture' who -r "$work/login-utmp"
+        compare 'who clock fixture' who -t "$work/login-utmp"
+        compare 'who long alias fixture' who --all "$work/login-utmp"
+        compare 'users sorted fixture' users "$work/login-utmp"
+else
+        echo "  login    python3 missing, controlled utmp cases did not run"
+fi
+
+compare 'who empty' who "$work/login-empty"
+compare 'users empty' users "$work/login-empty"
+compare 'who missing' who "$work/login-missing"
+compare 'users missing' users "$work/login-missing"
+
+# pinky has no FILE operand. Its live short form still catches the public
+# formatter and option projections; all record parsing is the same path the
+# controlled who/users cases above exercise.
+compare 'pinky default' pinky
+compare 'pinky no heading' pinky -f
+compare 'pinky no fullname' pinky -w
+compare 'pinky terse' pinky -q
+
+if "$bin/pinky" -l root > /dev/null 2> "$work/pinky-long-error"; then
+        report 'pinky long refused' 'unsupported long mode succeeded'
+elif grep -q 'not supported' "$work/pinky-long-error"; then
+        pass=$((pass + 1))
+else
+        report 'pinky long refused' 'failure did not explain unsupported mode'
+fi
+
+#
+#       tsort
+#
+
+case_start tsort
+
+: > "$work/tsort-feed"
+compare_tsort 'empty stdin'
+
+printf 'c d\na b\na c\n' > "$work/tsort-feed"
+compare_tsort 'stdin ordering'
+cp "$work/tsort-feed" "$work/tsort-file"
+compare_tsort 'named file' "$work/tsort-file"
+compare_tsort 'option terminator' -- "$work/tsort-file"
+
+# Duplicates count as duplicate relations in GNU, while self relations only
+# introduce their node. Both choices affect the release order around b/c.
+printf 'z z\na b\na b\nb c\na c\nd d\n' > "$work/tsort-feed"
+compare_tsort 'duplicates self disconnected'
+
+printf 'a b\nb c\nc a\na d\n' > "$work/tsort-feed"
+compare_tsort 'one cycle'
+
+printf 'a b\nb a\nc d\nd c\ne f\n' > "$work/tsort-feed"
+compare_tsort 'two cycles disconnected'
+
+printf 'one two three\n' > "$work/tsort-feed"
+compare_tsort 'odd token'
+
+: > "$work/tsort-feed"
+compare_tsort 'missing file' "$work/tsort-missing"
+compare_tsort_reject 'extra operand' "$work/tsort-file" "$work/tsort-file"
+compare_tsort_reject 'unknown option' -q
+
+#
+#       factor
+#
+
+case_start factor
+
+compare 'zero one' factor 0 1
+compare 'small operands' factor 2 3 4 12 97 65537 99991
+compare 'canonical decimal' factor +000 0001 00012
+compare 'exponents short' factor -h 12 360 65536
+compare 'exponents long' factor --exponents 999950000 18446744073709551615
+compare 'signed ceiling' factor 9223372036854775807
+compare 'unsigned ceiling' factor 18446744073709551615
+compare 'hard semiprimes' factor 1000000016000000063 \
+        18446743979220271189 18446744030759878681
+compare 'large primes' factor 2305843009213693951 18446744073709551557
+compare 'invalid continues' factor -- 12 bad -2 13
+
+printf '12 13\n15\t17 18446744073709551615\n' > "$work/factor-feed"
+compare_in 'stdin words' factor "$work/factor-feed"
+
+# GNU has a bignum fallback. Moonwater's intentionally smaller boundary is a
+# complete native unsigned word: on 64-bit builds UINT64_MAX succeeds and the
+# next integer must fail loudly, with no plausible truncated output.
+"$bin/factor" 18446744073709551616 > "$work/factor-overflow" \
+        2> "$work/factor-overflow-error"
+factor_overflow_status=$?
+if [ "$factor_overflow_status" != 0 ] &&
+        [ ! -s "$work/factor-overflow" ] &&
+        grep -q 'native-word' "$work/factor-overflow-error"; then
+        pass=$((pass + 1))
+else
+        report 'native ceiling' \
+                "status $factor_overflow_status, out $(show "$work/factor-overflow"), error $(show "$work/factor-overflow-error")"
+fi
+
+#
+#       numfmt
+#
+
+case_start numfmt
+
+compare 'plain decimals' numfmt -- 0 -0 1 -1 1.2300 9223372036854775807
+compare 'to si' numfmt --to=si -- \
+        999 1000000 1001000 9999000 999499000 -1001000
+compare 'to iec' numfmt --to=iec -- 1023 1024 1025 9999 -1025
+compare 'to iec-i' numfmt --to=iec-i 1024 1048576
+compare 'from auto' numfmt --from=auto 1K 1Ki 2.5M 2.5Mi
+compare 'from si' numfmt --from=si 1K 2.5M
+compare 'from iec' numfmt --from=iec 1K 2.5M
+compare 'from iec-i' numfmt --from=iec-i 1Ki 2.5Mi
+compare 'unit ratio' numfmt --from-unit=3 --to-unit=2 -- 1.50 -2.00
+compare 'suffix separator' numfmt --from=auto --to=iec-i \
+        --suffix=B --unit-separator=_ 1_KB 2_MiB
+compare 'round directions' numfmt --to=si --round=down -- \
+        9990000 10010000 -9990000 -10010000 999950000
+compare 'round nearest' numfmt --to=si --round=nearest -- \
+        .5 -.5 1.5 -1.5 999949000 999950000
+compare 'right padding' numfmt --to=si --padding=10 1000000
+compare 'left padding' numfmt --to=si --padding=-10 1000000
+compare 'format space' numfmt --to=si '--format=[%8.1f]' 1000000
+compare 'format zero' numfmt --to=iec-i '--format=[%08.3f]' 1048576
+compare 'format left' numfmt --to=si '--format=[%-8.1f]' 1000000
+compare 'format literals' numfmt --to=si '--format=[value=%f]' 1000000
+
+printf 'heading\nsecond\n1000 foo  2000\n1\t2\t3000\n' > "$work/numfmt-feed"
+compare_in 'stdin fields' numfmt "$work/numfmt-feed" --header=2 \
+        --field=1,3 --to=iec
+
+# Automatic width belongs to whitespace-prefixed fields, not bare numeric
+# input. A long unpadded first token must shrink when it gains a unit.
+printf '1048576\n 1048576\n\t1048576\n1048576 tail\nx 1048576\n' > "$work/numfmt-feed"
+compare_in 'automatic first-field width' numfmt "$work/numfmt-feed" \
+        --to=iec --invalid=ignore
+compare_in 'automatic later-field width' numfmt "$work/numfmt-feed" \
+        --field=2 --to=iec --invalid=ignore
+compare_in 'explicit width overrides automatic' numfmt "$work/numfmt-feed" \
+        --to=iec --invalid=ignore --padding=9
+printf '  bad\nx \tbad\n \t\nx\t\t1048576\n' > "$work/numfmt-feed"
+compare_in 'invalid and untouched whitespace' numfmt "$work/numfmt-feed" \
+        --field=1,2 --to=iec --invalid=ignore --padding=9
+printf '    1024\n  1048576\n1024\n' > "$work/numfmt-feed"
+for numeric_format in '%.2f' '%0.2f' '[%.2f]' 'X%.2fY' '%06.2f' '%6.2f' '%-6.2f'; do
+        compare_in "format automatic width $numeric_format" numfmt \
+                "$work/numfmt-feed" --to=iec "--format=$numeric_format"
+done
+printf '\n \t\n1024\n' > "$work/numfmt-feed"
+compare_in 'empty selected first field' numfmt "$work/numfmt-feed" --to=iec
+compare_in 'empty unselected first field' numfmt "$work/numfmt-feed" --field=2 --to=iec
+compare_in 'empty ignored first field' numfmt "$work/numfmt-feed" --invalid=ignore --to=iec
+
+printf '1024: 2048 \n1024:\t2048\t\n1024:2048 \t\n1024:bad \n1024: \t\n1024:2048\r\n1024:2048\v\n' > "$work/numfmt-feed"
+for invalid_mode in abort fail warn ignore; do
+        compare_in "explicit field trailing blanks $invalid_mode" numfmt \
+                "$work/numfmt-feed" --delimiter=: --field=2 --to=iec \
+                "--invalid=$invalid_mode"
+done
+compare_in 'trailing blanks with format and padding' numfmt "$work/numfmt-feed" \
+        --delimiter=: --field=2 --to=iec --invalid=ignore '--format=[%.2f]' --padding=9
+printf '2048 \t:x\n2048K \t:x\n2048 K \t:x\n2048  K:x\n2048\t K:x\n2048B :x\n2048 B :x\n2048_B:x\n2048_KB:x\n2048 _KB:x\n' > "$work/numfmt-feed"
+for suffix in B ' B' 'B ' ' '; do
+        compare_in "exact suffix before trailing blanks [$suffix]" numfmt \
+                "$work/numfmt-feed" --delimiter=: --from=auto --to=iec \
+                --invalid=ignore "--suffix=$suffix"
+done
+compare_in 'trailing blanks around scale separator' numfmt "$work/numfmt-feed" \
+        --delimiter=: --from=auto --to=iec --invalid=ignore --suffix=B --unit-separator=_
+for unit_separator in '' ' ' '_' '_ ' ' _' 0 1 '.' '.5' '-' '-2' K Ki i; do
+        for numeric_value in 2048 -2048 2048.25 .5 -.5 0 bad; do
+                printf '%s%sK \t:x\n%s%sKi:x\n%s %sK:x\n%s\tK:x\n%s  K:x\n' \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$unit_separator" \
+                        "$numeric_value" "$numeric_value"
+        done > "$work/numfmt-feed"
+        compare_in "literal scale separator [$unit_separator]" numfmt \
+                "$work/numfmt-feed" --delimiter=: --from=auto --to=iec \
+                --invalid=ignore "--unit-separator=$unit_separator"
+done
+
+printf 'a:1000:c\n::bad\n' > "$work/numfmt-feed"
+compare_in 'explicit delimiter abort' numfmt "$work/numfmt-feed" \
+        --delimiter=: --field=2 --to=iec
+
+printf '1\nbad\n2000\n' > "$work/numfmt-feed"
+compare_in 'invalid fail' numfmt "$work/numfmt-feed" --invalid=fail --to=iec
+compare_in 'invalid warn' numfmt "$work/numfmt-feed" --invalid=warn --to=iec
+compare_in 'invalid ignore' numfmt "$work/numfmt-feed" --invalid=ignore --to=iec
+
+printf '1000\0002000\000bad\000' > "$work/numfmt-zero"
+compare_in 'zero records' numfmt "$work/numfmt-zero" -z --invalid=ignore --to=iec
+
+# One selected token crosses the shared reader's 64 KiB refill. Ignore keeps
+# the invalid value byte-for-byte, so this checks both the long-record path
+# and that a failed conversion cannot truncate its input.
+head -c 70000 /dev/zero | tr '\000' x > "$work/numfmt-long"
+printf '\n' >> "$work/numfmt-long"
+compare_in 'refill boundary' numfmt "$work/numfmt-long" --invalid=ignore
+
+#
+#       dd
+#
+
+case_start dd
+
+dd if=/dev/urandom of="$work/blob" bs=1024 count=17 2> /dev/null
+printf 'abcdefghij' > "$work/ten"
+printf 'AaZz09-abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ' > "$work/case"
+printf '' > "$work/none"
+head -c 4096 /dev/zero > "$work/zeros"
+
+#       The two records lines, byte for byte. A short read is not an error
+#       and not the end of the input: with bs=4 over ten bytes the answer is
+#       two whole records and one partial, and an implementation that treats
+#       the short read as either of the other two gets a different number
+#       here and nowhere else.
+compare_dd 'records exact'    "$work/ten"  's/x/x/' bs=4 status=noxfer
+compare_dd 'records short'    "$work/ten"  's/x/x/' bs=16 status=noxfer
+compare_dd 'records empty'    "$work/none" 's/x/x/' bs=8 status=noxfer
+compare_dd 'records aligned'  "$work/zeros" 's/x/x/' bs=512 status=noxfer
+compare_dd 'count stops'      "$work/blob" 's/x/x/' bs=1024 count=3 status=noxfer
+compare_dd 'count past end'   "$work/ten"  's/x/x/' bs=4 count=99 status=noxfer
+compare_dd 'count zero'       "$work/blob" 's/x/x/' bs=1024 count=0 status=noxfer
+compare_dd 'skip blocks'      "$work/blob" 's/x/x/' bs=1024 skip=4 status=noxfer
+compare_dd 'skip past end'    "$work/ten"  's/x/x/' bs=4 skip=9 status=noxfer
+
+#       ibs and obs apart is the other counting path: the input is read in
+#       one size and the output written in another, so the records in and
+#       the records out are different numbers on purpose.
+compare_dd 'ibs obs apart'    "$work/blob" 's/x/x/' ibs=1000 obs=512 status=noxfer
+compare_dd 'ibs obs ragged'   "$work/ten"  's/x/x/' ibs=3 obs=7 status=noxfer
+compare_dd 'obs larger'       "$work/ten"  's/x/x/' ibs=2 obs=64 status=noxfer
+compare_dd 'obs one byte'     "$work/ten"  's/x/x/' ibs=7 obs=1 status=noxfer
+compare_dd 'obs coprime'      "$work/blob" 's/x/x/' ibs=997 obs=311 status=noxfer
+compare_dd 'obs blocks over'  "$work/blob" 's/x/x/' ibs=8192 obs=1000 status=noxfer
+
+#       bs overrides ibs and obs regardless of operand order. Treating the
+#       command line as last-one-wins copies the same bytes but reports the
+#       wrong records and takes a different buffering path.
+compare_dd 'bs before ibs'     "$work/ten" 's/x/x/' bs=4 ibs=2 status=noxfer
+compare_dd 'bs before obs'     "$work/ten" 's/x/x/' bs=4 obs=2 status=noxfer
+compare_dd 'bs after both'     "$work/ten" 's/x/x/' ibs=2 obs=3 bs=4 status=noxfer
+
+#       conv=sync pads the short block out to the input size, which turns a
+#       partial record in into a whole record out.
+compare_dd 'conv sync'        "$work/ten"  's/x/x/' bs=16 conv=sync status=noxfer
+compare_dd 'conv sync ragged' "$work/ten"  's/x/x/' bs=4 conv=sync status=noxfer
+compare_dd 'conv fsync'       "$work/ten"  's/x/x/' bs=4 conv=fsync status=noxfer
+compare_dd 'conv noerror'     "$work/blob" 's/x/x/' bs=512 conv=noerror status=noxfer
+compare_dd 'conv lcase'       "$work/ten" 's/x/x/' bs=3 conv=lcase status=noxfer
+compare_dd 'conv ucase'       "$work/ten" 's/x/x/' bs=3 conv=ucase status=noxfer
+compare_dd 'conv lcase 31-byte blocks' "$work/case" 's/x/x/' bs=31 conv=lcase status=noxfer
+compare_dd 'conv lcase bulk boundary' "$work/case" 's/x/x/' bs=32 conv=lcase status=noxfer
+compare_dd 'conv ucase bulk binary' "$work/blob" 's/x/x/' bs=512 conv=ucase status=noxfer
+compare_dd 'conv swab'        "$work/ten" 's/x/x/' bs=3 conv=swab status=noxfer
+compare_dd 'conv sync swab'   "$work/ten" 's/x/x/' bs=4 conv=sync,swab status=noxfer
+compare_dd 'valid cbs alone'  "$work/ten" 's/x/x/' cbs=3 status=noxfer
+
+#       status=none prints nothing at all, which is a summary too.
+compare_dd 'status none'      "$work/blob" 's/x/x/' bs=512 status=none
+compare_dd_full 'write full equal blocks' "$work/ten" bs=2 status=none
+compare_dd_full 'write full regrouped' "$work/ten" ibs=3 obs=7 status=none
+compare_dd_full 'write full final partial' "$work/ten" ibs=8 obs=64 status=none
+compare_dd_reject 'size digit overflow' bs=18446744073709551616 status=none
+compare_dd_reject 'size product overflow' bs=18446744073709551615x2 status=none
+compare_dd_reject 'asterisk is not a product' bs=2\*3 status=none
+compare_dd_reject 'count signed overflow' count=9223372036854775808 status=none
+compare_dd_reject 'skip offset overflow' ibs=2 skip=9223372036854775808 status=none
+compare_dd_reject 'skip byte offset overflow' skip=9223372036854775808B status=none
+compare_dd_reject 'seek offset overflow' obs=2 seek=9223372036854775808 status=none
+compare_dd_reject 'seek byte offset overflow' seek=9223372036854775808B status=none
+compare_dd_reject 'invalid cbs' cbs=not-a-number status=none
+compare_dd_reject 'invalid input flag' iflag=not-a-flag status=none
+compare_dd_reject 'invalid output flag' oflag=not-a-flag status=none
+compare_dd_reject 'empty input flags' iflag= status=none
+compare_dd_reject 'empty output flags' oflag= status=none
+compare_dd_reject 'opposite case conversions' conv=lcase,ucase status=none
+
+#       A B suffix on these three operands means bytes, not blocks. This is
+#       observably different even though B has multiplier one in a size.
+compare_dd 'count bytes'       "$work/ten" 's/x/x/' bs=4 count=3B status=noxfer
+compare_dd 'count kibi bytes'  "$work/blob" 's/x/x/' bs=700 count=1KiB status=noxfer
+compare_dd 'skip bytes'        "$work/ten" 's/x/x/' bs=4 skip=3B status=noxfer
+compare_dd 'iseek alias'       "$work/ten" 's/x/x/' bs=4 iseek=1B status=noxfer
+compare_dd 'count bytes flag'  "$work/ten" 's/x/x/' bs=4 count=3 iflag=count_bytes status=noxfer
+compare_dd 'count bytes flag first' "$work/ten" 's/x/x/' iflag=count_bytes bs=4 count=7 status=noxfer
+compare_dd 'skip bytes flag'   "$work/ten" 's/x/x/' bs=4 skip=3 iflag=skip_bytes status=noxfer
+
+#       The default summary, with the duration and the rate cut off. What is
+#       left is the byte count and the two human readable forms of it, and
+#       which of those two appear depends on the count: under a thousand
+#       neither, a round thousand only the decimal one, and past a kibibyte
+#       both.
+compare_dd 'summary small'    "$work/ten"  's/ copied,.*//' bs=4
+compare_dd 'summary kilo'     "$work/zeros" 's/ copied,.*//' bs=1000 count=1
+compare_dd 'summary kibi'     "$work/zeros" 's/ copied,.*//' bs=1024 count=1
+compare_dd 'summary blob'     "$work/blob" 's/ copied,.*//' bs=1024
+compare_dd 'summary one byte' "$work/ten"  's/ copied,.*//' bs=1 count=1
+compare_dd 'summary none'     "$work/none" 's/ copied,.*//' bs=512
+
+#       The size suffixes, where KB and KiB are two different numbers and a
+#       bare K is the binary one.
+for suffix in c b K KB KiB M MB; do
+        compare_dd "size $suffix" "$work/blob" 's/x/x/' bs=1$suffix count=2 status=noxfer
+done
+compare_dd_reject 'lowercase extended size suffix' bs=1p count=1 status=none
+
+compare_dd 'size product'     "$work/blob" 's/x/x/' bs=2x512 count=2 status=noxfer
+
+#       fullblock is the input flag whose semantics are not an open(2) bit:
+#       it gathers short pipe reads until one input block is complete.
+rm -f "$work/fullblock_pipe"
+mkfifo "$work/fullblock_pipe" 2> /dev/null
+if [ -p "$work/fullblock_pipe" ]; then
+        (printf ab; sleep 0.2; printf cd) > "$work/fullblock_pipe" &
+        writer=$!
+        dd if="$work/fullblock_pipe" bs=4 count=1 iflag=fullblock status=noxfer \
+                > "$work/want" 2> "$work/want_err"
+        want_status=$?
+        wait "$writer" 2> /dev/null
+
+        (printf ab; sleep 0.2; printf cd) > "$work/fullblock_pipe" &
+        writer=$!
+        "$bin/dd" if="$work/fullblock_pipe" bs=4 count=1 iflag=fullblock status=noxfer \
+                > "$work/got" 2> "$work/got_err"
+        got_status=$?
+        wait "$writer" 2> /dev/null
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/want_err" "$work/got_err" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report 'iflag fullblock' \
+                        "want $(show "$work/want_err")[$want_status] got $(show "$work/got_err")[$got_status]"
+        fi
+fi
+
+#       A pipe cannot seek. The fallback writes zero bytes to reach the
+#       requested position, and a byte-unit seek must write that many bytes,
+#       not that many obs-sized blocks.
+rm -f "$work/seek_pipe"
+mkfifo "$work/seek_pipe" 2> /dev/null
+if [ -p "$work/seek_pipe" ]; then
+        cat "$work/seek_pipe" > "$work/want" &
+        reader=$!
+        dd if="$work/ten" of="$work/seek_pipe" obs=4 seek=3B status=none \
+                2> /dev/null
+        want_status=$?
+        wait "$reader" 2> /dev/null
+
+        cat "$work/seek_pipe" > "$work/got" &
+        reader=$!
+        "$bin/dd" if="$work/ten" of="$work/seek_pipe" obs=4 seek=3B status=none \
+                2> /dev/null
+        got_status=$?
+        wait "$reader" 2> /dev/null
+
+        if cmp -s "$work/want" "$work/got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report 'pipe byte seek' \
+                        "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+        fi
+fi
+
+#       of= and seek= write into a file rather than to standard output, so
+#       what is compared is the file each one left behind.
+for one in 'seek=2' 'seek=2 conv=notrunc' 'seek=0'; do
+        rm -f "$work/out_want" "$work/out_got"
+        head -c 3000 /dev/zero > "$work/out_want"
+        head -c 3000 /dev/zero > "$work/out_got"
+
+        # shellcheck disable=SC2086
+        dd if="$work/ten" of="$work/out_want" bs=4 $one status=noxfer 2> "$work/want"
+        want_status=$?
+        # shellcheck disable=SC2086
+        "$bin/dd" if="$work/ten" of="$work/out_got" bs=4 $one status=noxfer 2> "$work/got"
+        got_status=$?
+
+        if cmp -s "$work/want" "$work/got" &&
+                cmp -s "$work/out_want" "$work/out_got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report "of $one" "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+        fi
+done
+
+#       oseek is seek, and a B suffix makes its displacement bytes. append is
+#       an output-open flag; with notrunc it preserves the old prefix. A seek
+#       of whole blocks keeps what was before it and cuts the file there,
+#       while a byte seek inside the first block truncates on open, which is
+#       coreutils' rule and not an obvious one: the three old bytes survive
+#       seek=1 and seek=5B, and not seek=2B.
+for one in 'oseek=2B' 'seek=2B' 'oflag=seek_bytes seek=2' \
+        'oflag=append conv=notrunc' 'seek=1' 'seek=5B'; do
+        printf old > "$work/out_want"
+        printf old > "$work/out_got"
+
+        # shellcheck disable=SC2086
+        dd if="$work/ten" of="$work/out_want" bs=4 $one status=none 2> /dev/null
+        want_status=$?
+        # shellcheck disable=SC2086
+        "$bin/dd" if="$work/ten" of="$work/out_got" bs=4 $one status=none 2> /dev/null
+        got_status=$?
+
+        if cmp -s "$work/out_want" "$work/out_got" &&
+                [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                report "$one" "output/status differ"
+        fi
+done
+
+#       skip and seek move on from where the input and the output already
+#       are, which is how two commands share one redirection: the second dd
+#       reads from where the first stopped, and one writing after a printf
+#       lands after it rather than over it, with nothing cut off behind.
+{ dd bs=1 count=2 status=noxfer; dd bs=1 skip=1 count=2 status=noxfer; } \
+        < "$work/ten" > "$work/want" 2> "$work/want_err"
+want_status=$?
+{ "$bin/dd" bs=1 count=2 status=noxfer
+  "$bin/dd" bs=1 skip=1 count=2 status=noxfer; } \
+        < "$work/ten" > "$work/got" 2> "$work/got_err"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_err" "$work/got_err" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'skip from the inherited offset' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+{ printf XY; dd if="$work/ten" bs=2 seek=1 count=1 status=noxfer; } \
+        > "$work/want" 2> "$work/want_err"
+want_status=$?
+{ printf XY; "$bin/dd" if="$work/ten" bs=2 seek=1 count=1 status=noxfer; } \
+        > "$work/got" 2> "$work/got_err"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_err" "$work/got_err" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'seek from the inherited offset' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+#       Cutting the output off after the seek is an error on anything but a
+#       regular file, and dd only minds it on one: a device takes the seek
+#       and the copy, and a pipe cannot seek at all and says so before the
+#       records lines. The reason after "cannot seek" is cut off: the shared
+#       reason table has no word for ESPIPE yet, and the sentence, the two
+#       records lines and the status are the contract.
+dd if="$work/ten" of=/dev/null bs=4 seek=2 status=noxfer 2> "$work/want"
+want_status=$?
+"$bin/dd" if="$work/ten" of=/dev/null bs=4 seek=2 status=noxfer 2> "$work/got"
+got_status=$?
+
+if cmp -s "$work/want" "$work/got" && [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'seek on a device' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+{ dd if="$work/ten" bs=4 seek=2 status=noxfer 2> "$work/want_err"
+  echo $? > "$work/want_status"; } | cat > /dev/null
+{ "$bin/dd" if="$work/ten" bs=4 seek=2 status=noxfer 2> "$work/got_err"
+  echo $? > "$work/got_status"; } | cat > /dev/null
+sed 's/cannot seek.*/cannot seek/' < "$work/want_err" > "$work/want"
+sed 's/cannot seek.*/cannot seek/' < "$work/got_err" > "$work/got"
+
+if cmp -s "$work/want" "$work/got" &&
+        cmp -s "$work/want_status" "$work/got_status"; then
+        pass=$((pass + 1))
+else
+        report 'seek on a pipe' \
+                "want $(show "$work/want")[$(cat "$work/want_status")] got $(show "$work/got")[$(cat "$work/got_status")]"
+fi
+
+#       if= that is not there: the exit status and the fact that nothing was
+#       written, not the wording, which quotes the name differently between
+#       coreutils releases.
+dd if="$work/nosuch" of=/dev/null 2> /dev/null
+want_status=$?
+"$bin/dd" if="$work/nosuch" of=/dev/null 2> /dev/null
+got_status=$?
+check 'missing input status' "$want_status" "$got_status"
+
+#       A running dd told to say where it is prints the summary and keeps
+#       going. There is no way to compare that against the reference without
+#       racing it, so the input is a pipe with a pause in the middle of it:
+#       dd is certainly inside a read when the signal lands, and what is
+#       checked is that the read went back to waiting rather than coming back
+#       short, that a summary arrived before the final one, and that all
+#       eight bytes still came out.
+rm -f "$work/pipe"
+mkfifo "$work/pipe" 2> /dev/null
+
+if [ -p "$work/pipe" ]; then
+        (printf 'aaaa'; sleep 1; printf 'bbbb') > "$work/pipe" &
+        writer=$!
+
+        "$bin/dd" if="$work/pipe" of="$work/info_out" bs=4 status=noxfer \
+                2> "$work/info_err" &
+        child=$!
+
+        sleep 0.3
+        kill -USR1 "$child" 2> /dev/null
+        wait "$child" 2> /dev/null
+        wait "$writer" 2> /dev/null
+
+        if [ "$(cat "$work/info_out" 2> /dev/null)" = "aaaabbbb" ]; then
+                pass=$((pass + 1))
+        else
+                report 'usr1 keeps copying' "got [$(cat "$work/info_out" 2> /dev/null)]"
+        fi
+
+        said=$(grep -c 'records in' "$work/info_err" 2> /dev/null)
+
+        if [ "${said:-0}" -ge 2 ]; then
+                pass=$((pass + 1))
+        else
+                report 'usr1 says where it is' "${said:-0} summaries, wanted the final one and one more"
+        fi
+
+        #       Two whole records, not four partial ones: a read that a
+        #       signal interrupted goes back to waiting.
+        if grep -q '^2+0 records in$' "$work/info_err" 2> /dev/null; then
+                pass=$((pass + 1))
+        else
+                report 'usr1 does not shorten a read' "$(tail -2 "$work/info_err" | tr '\n' '|')"
+        fi
+
+        #       The rate is the bytes over the time they took, and the time
+        #       is not whole seconds: eight kilobytes over a second and a
+        #       half are 5.5 kB/s, and a rate taken over the whole second
+        #       alone said 8.2. The pause is in the input, and the seconds
+        #       dd itself printed are what the rate is checked against, so
+        #       a slow machine changes both together.
+        (head -c 4096 /dev/zero; sleep 1.5; head -c 4096 /dev/zero) \
+                > "$work/pipe" &
+        writer=$!
+        "$bin/dd" if="$work/pipe" of=/dev/null bs=4096 2> "$work/rate_err"
+        wait "$writer" 2> /dev/null
+
+        seconds=$(sed -n 's/.* copied, \([0-9.]*\) s, .*/\1/p' "$work/rate_err")
+        rate=$(sed -n 's/.* s, \([0-9.]*\) kB\/s$/\1/p' "$work/rate_err")
+
+        if [ -n "$seconds" ] && [ -n "$rate" ] &&
+                awk -v r="$rate" -v s="$seconds" \
+                    'BEGIN { want = 8192 / s / 1000
+                             exit !(r > want * 0.97 && r < want * 1.03) }'; then
+                pass=$((pass + 1))
+        else
+                report 'rate over a fraction of a second' \
+                        "$(tail -1 "$work/rate_err" 2> /dev/null)"
+        fi
+else
+        echo "  dd       usr1: no fifo here, the three signal cases and the rate case did not run"
+fi
+
+#
+#       od and hexdump
+#
+
+case_start dump
+
+printf 'abcdef\0\377XYZ\n' > "$work/dump-short"
+printf '0123456789abcdef0123456789abcdef' > "$work/dump-repeat"
+printf '' > "$work/dump-empty"
+mkdir -p "$work/dump-directory"
+printf 'first-' > "$work/dump-first"
+printf 'second' > "$work/dump-second"
+
+# The two names share one reader and row formatter, but their stock layouts
+# do not: od uses an octal two-byte default and >printable< suffix, while
+# util-linux hexdump has fixed-width stock records and |canonical| output.
+compare 'od default' od "$work/dump-short"
+compare 'od byte hex printable' od -A x -t x1z -v "$work/dump-short"
+compare 'od signed words' od -A d -t d2 "$work/dump-short"
+compare 'od characters no address' od -A n -t c "$work/dump-short"
+compare 'od skip and count' od -A x -j 3 -N 5 -t x1z "$work/dump-repeat"
+compare 'od multiple formats' od -A x -t x1 -t c "$work/dump-repeat"
+compare 'od duplicate folding' od "$work/dump-repeat"
+compare 'od duplicate visible' od -v "$work/dump-repeat"
+compare 'od concatenated files' od -A x -t x1 "$work/dump-first" "$work/dump-second"
+compare 'od empty final address' od "$work/dump-empty"
+compare 'od legacy named characters' od -An -a "$work/dump-short"
+compare 'od legacy byte octal' od -An -b "$work/dump-short"
+compare 'od legacy characters' od -An -c "$work/dump-short"
+compare 'od legacy unsigned words' od -An -d "$work/dump-short"
+compare 'od legacy short hex' od -An -h "$work/dump-short"
+compare 'od legacy signed ints' od -An -i "$work/dump-short"
+compare 'od legacy signed longs' od -An -l "$work/dump-short"
+compare 'od legacy word octal' od -An -o "$work/dump-short"
+compare 'od legacy signed shorts' od -An -s "$work/dump-short"
+compare 'od legacy word hex' od -An -x "$work/dump-short"
+compare 'od legacy format order' od -An -bc "$work/dump-short"
+compare 'od legacy wide unsigned' od -An -D "$work/dump-short"
+compare 'od legacy wide octal' od -An -O "$work/dump-short"
+compare 'od legacy wide hex' od -An -X "$work/dump-short"
+compare 'od legacy wide hex alias' od -An -H "$work/dump-short"
+compare 'od legacy word octal alias' od -An -B "$work/dump-short"
+compare 'od legacy long alias' od -An -I "$work/dump-short"
+compare 'od legacy long alias again' od -An -L "$work/dump-short"
+compare 'od named format' od -An -t a "$work/dump-short"
+compare 'od named format printable' od -A x -t az -v "$work/dump-short"
+compare 'od characters printable' od -A x -t cz -v "$work/dump-short"
+compare 'od named integer sizes' od -An -t dC -t uS -t xI -t oL "$work/dump-short"
+compare 'od named size in one word' od -An -t xSxI "$work/dump-short"
+# All final-row lengths, every byte value and mixed-format alignment exercise
+# the shared bulk encoder without sharing its expected-output implementation.
+dump_byte=0
+while [ "$dump_byte" -lt 256 ]; do
+        printf "\\$(printf '%03o' "$dump_byte")"
+        dump_byte=$((dump_byte + 1))
+done > "$work/dump-all-bytes"
+dump_length=0
+while [ "$dump_length" -le 33 ]; do
+        compare "od hex tail $dump_length" od -A x -N "$dump_length" -t x1z -v "$work/dump-all-bytes"
+        compare "od mixed hex tail $dump_length" od -A n -N "$dump_length" -t x1 -t d8 -v "$work/dump-all-bytes"
+        if command -v hexdump > /dev/null 2>&1; then
+                compare "hexdump hex tail $dump_length" hexdump -Cv -n "$dump_length" "$work/dump-all-bytes"
+        fi
+        dump_length=$((dump_length + 1))
+done
+compare 'od hex all bytes' od -An -t x1z -v "$work/dump-all-bytes"
+if command -v hexdump > /dev/null 2>&1; then
+        compare 'hexdump hex all bytes' hexdump -Cv "$work/dump-all-bytes"
+fi
+# A directory opens and then refuses to be read, and the reference has no
+# offset to close a dump it never began.
+compare 'od unreadable input' od "$work/dump-directory"
+compare 'od unreadable after empty' od "$work/dump-empty" "$work/dump-directory"
+
+printf 'pipeline\n' | od -An -c > "$work/want" 2>/dev/null
+want_status=$?
+printf 'pipeline\n' | "$bin/od" -An -c > "$work/got" 2>/dev/null
+got_status=$?
+if cmp -s "$work/want" "$work/got" &&
+        [ "$want_status" = "$got_status" ]; then
+        pass=$((pass + 1))
+else
+        report 'od -An -c pipeline' \
+                "want $(show "$work/want")[$want_status] got $(show "$work/got")[$got_status]"
+fi
+
+if command -v hexdump > /dev/null 2>&1; then
+        compare 'hexdump canonical' hexdump -C "$work/dump-short"
+        compare 'hexdump byte octal' hexdump -b "$work/dump-short"
+        compare 'hexdump characters' hexdump -c "$work/dump-short"
+        compare 'hexdump word decimal' hexdump -d "$work/dump-short"
+        compare 'hexdump word octal' hexdump -o "$work/dump-short"
+        compare 'hexdump word hex' hexdump -x "$work/dump-short"
+        compare 'hexdump skip and count' hexdump -C -s 3 -n 5 "$work/dump-repeat"
+        compare 'hexdump multiple formats' hexdump -b -c "$work/dump-repeat"
+        compare 'hexdump duplicate folding' hexdump -C "$work/dump-repeat"
+        compare 'hexdump duplicate visible' hexdump -Cv "$work/dump-repeat"
+        compare 'hexdump empty' hexdump -C "$work/dump-empty"
+fi
+
+# The custom format language is a separate language implementation, not a
+# formatting switch. Until that language exists, reject it visibly; accepting
+# it and falling back to a stock row would be plausible but corrupt output.
+"$bin/od" -t f4 "$work/dump-short" > /dev/null 2>&1
+check 'od unsupported float refused' 1 "$(( $? != 0 ))"
+"$bin/od" -f "$work/dump-short" > /dev/null 2>&1
+check 'od legacy float refused' 1 "$(( $? != 0 ))"
+"$bin/hexdump" -e '1/1 "%02x"' "$work/dump-short" > /dev/null 2>&1
+check 'hexdump expression refused' 1 "$(( $? != 0 ))"
+
+#
+#       diff
+#
+
+case_start diff
+
+printf 'alpha\nbeta\ngamma\ndelta\n'            > "$work/a"
+printf 'alpha\nbeta\nBETA\ngamma\ndelta\n'      > "$work/b"
+printf 'alpha\nbeta\ngamma\ndelta\n'            > "$work/a2"
+printf 'ALPHA\nBeta\nGamma\nDelta\n'            > "$work/case"
+printf 'alpha \n  beta\ngam ma\ndelta\n'        > "$work/spaced"
+printf 'alpha\t\nbeta\ngam\t\tma\ndelta\n'      > "$work/tabbed"
+printf 'alpha\n\n\nbeta\n'                      > "$work/blanks"
+printf 'alpha\nbeta\n'                          > "$work/tight"
+printf ''                                       > "$work/empty"
+printf 'one\ntwo\nthree'                        > "$work/nonl"
+printf 'one\ntwo\nthree\n'                      > "$work/withnl"
+printf 'one\ntwo\nthre'                         > "$work/nonl2"
+printf 'abcdefghijklmnopqrstuvAb'                > "$work/longnonl"
+printf 'abcdefghijklmnopqrstuvAb\n'              > "$work/longwithnl"
+printf 'abcdefghijklmnopqrstuvAb\n'              > "$work/collision1"
+printf 'abcdefghijklmnopqrstuvBA\n'              > "$work/collision2"
+printf 'a\0b\0c\n'                              > "$work/bin1"
+printf 'a\0b\0d\n'                              > "$work/bin2"
+printf 'a\0b\0c\n'                              > "$work/bin1copy"
+printf 'a\0b\0c\0\n'                            > "$work/bin3"
+printf 'a\0b\0c'                                > "$work/binnonl"
+printf 'a\0b\0c'                                > "$work/binnonlcopy"
+printf 'alpha  \nbeta\t\n'                    > "$work/trailing1"
+printf 'alpha\nbeta\n'                         > "$work/trailing2"
+printf 'alpha\r\nbeta\r\n'                   > "$work/crlf"
+printf 'a\tb\nchange\n'                      > "$work/tabexpand1"
+printf 'a       b\nCHANGE\n'                  > "$work/tabexpand2"
+
+seq 1 40 > "$work/long1"
+seq 1 40 | sed '7s/.*/SEVEN/; 23s/.*/TWENTYTHREE/' > "$work/long2"
+seq 1 40 | sed '5d; 6d; 30i\
+inserted' > "$work/long3"
+
+compare_diff 'same'            "$work/a" "$work/a2"
+compare_diff 'insert'          "$work/a" "$work/b"
+compare_diff 'delete'          "$work/b" "$work/a"
+compare_diff 'empty left'      "$work/empty" "$work/a"
+compare_diff 'empty right'     "$work/a" "$work/empty"
+compare_diff 'both empty'      "$work/empty" "$work/empty"
+compare_diff 'shorter'         "$work/a" "$work/tight"
+compare_diff 'long change'     "$work/long1" "$work/long2"
+compare_diff 'long mixed'      "$work/long1" "$work/long3"
+compare_in 'stdin left'        diff "$work/a" - "$work/b"
+compare_in 'stdin right'       diff "$work/b" "$work/a" -
+compare_in 'stdin twice'       diff "$work/a" - -
+compare_in 'stdin twice report' diff "$work/a" -s - -
+
+# A pipe's short read is not its end. Compare the completed stream with a
+# regular copy rather than racing two writers against one another.
+mkfifo "$work/diff-pipe" 2> /dev/null
+if [ -p "$work/diff-pipe" ]; then
+        (printf 'alpha\n'; sleep 0.2; printf 'beta\n') > "$work/diff-pipe" &
+        writer=$!
+        "$bin/diff" "$work/diff-pipe" "$work/tight" > "$work/got" 2> /dev/null
+        got_status=$?
+        wait "$writer"
+
+        if [ "$got_status" = 0 ] && [ ! -s "$work/got" ]; then
+                pass=$((pass + 1))
+        else
+                report 'pipe short read continues' \
+                        "status $got_status, output $(show "$work/got")"
+        fi
+fi
+
+compare_diff 'normal long'     --normal "$work/a" "$work/b"
+compare_diff 'report same'     -s "$work/a" "$work/a2"
+compare_diff 'report binary same' -s "$work/bin1" "$work/bin1copy"
+compare_diff 'brief report same' -qs "$work/a" "$work/a2"
+dd if=/dev/zero of="$work/same-large" bs=1 count=1 seek=268435455 \
+        status=none 2>/dev/null
+ln "$work/same-large" "$work/same-large-link"
+compare_diff 'large same inode' "$work/same-large" "$work/same-large"
+compare_diff 'large hard link' -s "$work/same-large" "$work/same-large-link"
+
+compare_diff 'unified'         -u "$work/a" "$work/b"
+compare_diff 'unified long'    -u "$work/long1" "$work/long2"
+compare_diff 'unified mixed'   -u "$work/long1" "$work/long3"
+compare_diff 'unified same'    -u "$work/a" "$work/a2"
+compare_diff 'unified empty'   -u "$work/empty" "$work/a"
+compare_diff 'unified labels'  -u -L left -L right "$work/a" "$work/b"
+compare_diff 'unified zero'    -U0 "$work/a" "$work/b"
+compare_diff 'unified one'     -U 1 "$work/a" "$work/b"
+compare_diff 'unified long count' --unified=2 "$work/a" "$work/b"
+compare_diff 'unified bad count' -U nope "$work/a" "$work/b"
+compare_diff 'conflicting styles' -u --normal "$work/a" "$work/b"
+compare_diff 'third label refused' -u -L one -L two -L three "$work/a" "$work/b"
+compare_diff_full 'output write failure' "$work/a" "$work/b"
+
+compare_diff 'brief differ'    -q "$work/a" "$work/b"
+compare_diff 'brief same'      -q "$work/a" "$work/a2"
+compare_diff 'brief no newline' -q "$work/nonl" "$work/nonl2"
+compare_diff 'brief ignore case' -qi "$work/a" "$work/case"
+compare_diff 'brief ignore space' -qw "$work/a" "$work/spaced"
+compare_diff 'brief strip carriage' -q --strip-trailing-cr \
+        "$work/crlf" "$work/trailing2"
+
+# The changed first line leaves a tail longer than diff's transfer block.
+# Its byte-for-byte answer proves that the blockwise suffix scan stops on the
+# same line boundary as the scalar definition it replaces.
+awk 'BEGIN {
+        print "left"
+        for (i = 0; i < 4096; i++)
+                print "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+}' > "$work/tail1"
+sed '1s/left/right/' "$work/tail1" > "$work/tail2"
+compare_diff 'long common tail' "$work/tail1" "$work/tail2"
+compare_diff 'brief long common tail' -q "$work/tail1" "$work/tail2"
+
+compare_diff 'ignore case'     -i "$work/a" "$work/case"
+compare_diff 'ignore case off' "$work/a" "$work/case"
+compare_diff 'ignore space'    -w "$work/a" "$work/spaced"
+compare_diff 'ignore change'   -b "$work/a" "$work/spaced"
+compare_diff 'ignore tabs'     -b "$work/spaced" "$work/tabbed"
+compare_diff 'ignore blanks'   -B "$work/tight" "$work/blanks"
+compare_diff 'ignore blanks u' -u -B "$work/tight" "$work/blanks"
+compare_diff 'ignore trailing'  -Z "$work/trailing1" "$work/trailing2"
+compare_diff 'ignore trailing long' --ignore-trailing-space \
+        "$work/trailing1" "$work/trailing2"
+compare_diff 'strip carriage return' --strip-trailing-cr "$work/crlf" "$work/trailing2"
+compare_diff 'ignore tab expansion' -E "$work/tabexpand1" "$work/tabexpand2"
+compare_diff 'ignore tab expansion long' --ignore-tab-expansion \
+        "$work/tabexpand1" "$work/tabexpand2"
+for left in 'x' 'X' ' x ' '\tx'; do
+        for right in 'x' 'y' ' X ' '       x'; do
+                for ending in '' '\n'; do
+                        printf 'prefix\0%b%b' "$left" "$ending" > "$work/nul-left"
+                        printf 'prefix\0%b%b' "$right" "$ending" > "$work/nul-right"
+                        for flags in '' '-w' '-b' '-Z' '-E' '-i' '-iw' '-ib'; do
+                                compare_diff "bounded text $left/$right/$ending/$flags" \
+                                        -a $flags "$work/nul-left" "$work/nul-right"
+                        done
+                done
+        done
+done
+compare_diff 'speed hint' --speed-large-files "$work/a" "$work/b"
+compare_diff 'explicit filename case default' --no-ignore-file-name-case \
+        "$work/a" "$work/b"
+
+#       The last line of a file that has no newline of its own is not the
+#       same line as a complete one however the bytes read, and the marker
+#       that says so is part of the output.
+compare_diff 'no newline right' "$work/withnl" "$work/nonl"
+compare_diff 'no newline left'  "$work/nonl" "$work/withnl"
+compare_diff 'no newline both'  "$work/nonl" "$work/nonl2"
+compare_diff 'no newline u'     -u "$work/withnl" "$work/nonl"
+compare_diff 'no newline u two' -u "$work/nonl" "$work/nonl2"
+compare_diff 'no newline bulk hash' "$work/longwithnl" "$work/longnonl"
+
+#       These distinct 24-byte lines have the same 5381-times-33 hash: Ab and
+#       BA contribute the same final polynomial. The hash may choose a class,
+#       but the exact comparator must still reject the collision.
+compare_diff 'bulk hash collision' "$work/collision1" "$work/collision2"
+
+compare_diff 'binary differ'   "$work/bin1" "$work/bin2"
+compare_diff 'binary same'     "$work/bin1" "$work/bin1"
+compare_diff 'binary two same' "$work/bin1" "$work/bin1copy"
+compare_diff 'binary lengths'  "$work/bin1" "$work/bin3"
+
+#       A binary file that ends without a newline is not the file that ends
+#       with one, however the buffer that read it rounds the last line out:
+#       that newline is the one byte the two differ by.
+compare_diff 'binary trailing newline' "$work/bin1" "$work/binnonl"
+compare_diff 'binary trailing newline reverse' "$work/binnonl" "$work/bin1"
+compare_diff 'binary trailing newline brief' -q "$work/bin1" "$work/binnonl"
+compare_diff 'binary no newline same' -s "$work/binnonl" "$work/binnonlcopy"
+compare_diff 'binary as text'  -a "$work/bin1" "$work/bin2"
+compare_diff 'binary brief'    -q "$work/bin1" "$work/bin2"
+
+compare_diff 'missing operand' "$work/a" "$work/nosuchfile"
+
+mkdir -p "$work/d1/sub" "$work/d2/sub"
+printf 'one\ntwo\n'   > "$work/d1/same"
+printf 'one\ntwo\n'   > "$work/d2/same"
+printf 'one\ntwo\n'   > "$work/d1/differs"
+printf 'one\nTWO\n'   > "$work/d2/differs"
+printf 'only\n'       > "$work/d1/onlyleft"
+printf 'only\n'       > "$work/d2/onlyright"
+printf 'deep\n'       > "$work/d1/sub/inner"
+printf 'DEEP\n'       > "$work/d2/sub/inner"
+
+compare_diff 'directories'     "$work/d1" "$work/d2"
+compare_diff 'directories r'   -r "$work/d1" "$work/d2"
+compare_diff 'directories r u' -ru "$work/d1" "$work/d2"
+compare_diff 'directories r U'  -rU 1 "$work/d1" "$work/d2"
+compare_diff 'directories r s'  -rs "$work/d1" "$work/d2"
+compare_diff 'directories one way N' -r --unidirectional-new-file \
+        "$work/d1" "$work/d2"
+compare_diff 'directories one way N reverse' -r --unidirectional-new-file \
+        "$work/d2" "$work/d1"
+compare_diff 'missing left one way N' --unidirectional-new-file \
+        "$work/nosuch" "$work/a"
+compare_diff 'directories q'   -rq "$work/d1" "$work/d2"
+compare_diff 'directories N'   -rN "$work/d1" "$work/d2"
+compare_diff 'directory file'  "$work/d1" "$work/d2/same"
+compare_diff_many_switches
+
+# The former directory vector stopped at 2,048 entries and reported a
+# plausible but incomplete comparison. Put every name on only one side so
+# every omitted entry is visible in the exact output.
+mkdir -p "$work/many1" "$work/many2"
+i=0
+while [ "$i" -lt 2055 ]; do
+        : > "$work/many1/n$i"
+        i=$((i + 1))
+done
+compare_diff 'directory beyond old ceiling' "$work/many1" "$work/many2"
+
+# A recursive walk must release each completed file's matcher workspace. The
+# two base files deliberately have different inodes so the same-file shortcut
+# cannot hide the leak; hard links make a hundred 1 MiB pairs without storing
+# two hundred copies. Retaining every pair used to exhaust the 192 MiB arena
+# near the end and turn an identical-tree answer into status 2.
+mkdir -p "$work/reclaim1" "$work/reclaim2"
+head -c 1048576 /dev/zero > "$work/reclaim-left"
+cp "$work/reclaim-left" "$work/reclaim-right"
+i=0
+while [ "$i" -lt 100 ]; do
+        ln "$work/reclaim-left" "$work/reclaim1/n$i"
+        ln "$work/reclaim-right" "$work/reclaim2/n$i"
+        i=$((i + 1))
+done
+compare_diff 'recursive workspaces reclaimed' -r \
+        "$work/reclaim1" "$work/reclaim2"
+
+#
+#       ps
+#
+
+case_start ps
+
+#       The header is fixed text and is the one part of a ps listing that can
+#       be compared with the reference outright. It is also what says the
+#       columns are the right columns in the right order at the right width.
+for one in '' '-e' '-f' '-ef' '-A'; do
+        # shellcheck disable=SC2086
+        ps $one 2> /dev/null | head -1 > "$work/want"
+        # shellcheck disable=SC2086
+        "$bin/ps" $one 2> /dev/null | head -1 > "$work/got"
+
+        if cmp -s "$work/want" "$work/got"; then
+                pass=$((pass + 1))
+        else
+                report "header ps $one" "want $(show "$work/want") got $(show "$work/got")"
+        fi
+done
+
+for one in pid pid,ppid pid,comm user,pid,stat pid,ppid,user,comm,args,stat,time,etime,rss,vsz,tty; do
+        ps -o "$one" 2> /dev/null | head -1 > "$work/want"
+        "$bin/ps" -o "$one" 2> /dev/null | head -1 > "$work/got"
+
+        if cmp -s "$work/want" "$work/got"; then
+                pass=$((pass + 1))
+        else
+                report "header -o $one" "want $(show "$work/want") got $(show "$work/got")"
+        fi
+done
+
+#       A process that is certainly running is in the listing: the shell that
+#       is running this script. Its number cannot be compared against
+#       anything, so what is asked is whether it is there at all.
+mine=$$
+if "$bin/ps" -e 2> /dev/null | awk -v p="$mine" '$1 == p { found = 1 } END { exit !found }'; then
+        pass=$((pass + 1))
+else
+        report 'own pid listed' "pid $mine not in ps -e"
+fi
+
+#       -o selects what was asked and nothing else, which is a count of
+#       fields rather than their values.
+for spec in 'pid 1' 'pid,ppid 2' 'pid,ppid,user 3' 'pid,ppid,user,stat 4'; do
+        want=${spec#* }
+        columns=${spec% *}
+        got=$("$bin/ps" -e -o "$columns" 2> /dev/null | sed -n '2p' | awk '{ print NF }')
+
+        check "-o $columns field count" "$want" "${got:-none}"
+done
+
+#       Every listing has at least a header and, on any machine that is
+#       running this, one process.
+lines=$("$bin/ps" -e 2> /dev/null | wc -l)
+if [ "$lines" -gt 1 ]; then
+        pass=$((pass + 1))
+else
+        report 'ps -e has rows' "$lines lines"
+fi
+
+#       The two number columns of a row are numbers, which a listing that had
+#       lost its alignment would fail.
+if "$bin/ps" -e -o pid,ppid 2> /dev/null | sed -n '2,20p' |
+        awk '{ if ($1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/) bad = 1 } END { exit bad }'; then
+        pass=$((pass + 1))
+else
+        report 'pid and ppid numeric' "a row was not two numbers"
+fi
+
+#       A column nobody has heard of is refused, as it is by the reference.
+ps -o nosuchcolumn > /dev/null 2>&1
+want_status=$?
+"$bin/ps" -o nosuchcolumn > /dev/null 2>&1
+got_status=$?
+check 'unknown column refused' "$((want_status != 0))" "$((got_status != 0))"
+
+# More than the former 32-entry field vector. The values race, but the header
+# is fixed and proves every requested field survived parsing.
+spec=pid
+i=1
+while [ "$i" -lt 40 ]; do
+        spec="$spec,pid"
+        i=$((i + 1))
+done
+ps -o "$spec" 2> /dev/null | head -1 > "$work/want"
+"$bin/ps" -o "$spec" 2> /dev/null | head -1 > "$work/got"
+if cmp -s "$work/want" "$work/got"; then
+        pass=$((pass + 1))
+else
+        report 'more than 32 ps fields' "want $(show "$work/want") got $(show "$work/got")"
+fi
+
+# /proc/PID/cmdline is not bounded by the width of a display column. Put a
+# marker beyond the former 256-byte buffer and compare the exact row from the
+# same live process.
+marker=$(head -c 600 /dev/zero | tr '\0' x)
+sh -c 'sleep 10' "$marker" &
+long_pid=$!
+sleep 0.1
+ps -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/ps_long_want"
+"$bin/ps" -eww -o pid,args 2> /dev/null | awk -v p="$long_pid" '$1 == p' > "$work/ps_long_got"
+
+# A PID selector makes the otherwise racing process table deterministic: both
+# implementations read these fields from the same sleeping process. These
+# cases cover the three accepted selector spellings, repeated/list selectors,
+# numeric uid versus user name, aliases, and the header rules that scripts use
+# to turn ps into a data source.
+compare 'pid selection' ps -p "$long_pid" -o pid,ppid,uid,user,comm,sid,pgid,nlwp
+compare 'selected full format' ps -p "$long_pid" -f
+compare 'selected every full format' ps -ef -p "$long_pid"
+compare 'selected common columns' ps -A -p "$long_pid" \
+        -o comm,args,ppid,stat,time
+compare 'attached pid selection' ps -p"$long_pid" -o pid=,comm=
+compare 'long pid selection' ps --pid="$long_pid" -o pid=PIDX
+compare 'pid selection beats every' ps -e -p "$long_pid" -o pid=
+compare 'pid selection list' ps -p "1,$long_pid" -o pid=
+compare 'repeated pid selection' ps -p "$long_pid" -p 1 -o pid=
+compare 'blank headings' ps -p "$long_pid" -o pid=,comm=
+compare 'mixed headings' ps -p "$long_pid" -o pid=,comm
+compare 'custom heading' ps -p "$long_pid" -o pid=PROCESS
+compare 'suppress headings' ps -p "$long_pid" --no-headers -o pid,comm
+compare 'force blank headings' ps -p "$long_pid" --headers -o pid=,comm=
+compare 'format long option' ps -p "$long_pid" --format=pid,ppid,comm
+compare 'format aliases' ps -p "$long_pid" -o cmd,command,ucmd
+
+# A cluster of letters ends at the one that takes a value: -eo, -fp and -ep
+# are -e -o, -f -p and -e -p, which scripts write and procps reads.
+compare 'clustered format letter' ps -eo pid,comm -p "$long_pid"
+compare 'clustered pid letter' ps -fp "$long_pid"
+compare 'clustered attached pid letter' ps -ep"$long_pid" -o pid=,comm=
+compare 'repeated width before format' ps -wwo pid,comm -p "$long_pid"
+compare 'BSD clustered format argument' ps -p "$long_pid" wwo pid,comm
+compare 'suppressed clustered format' ps --no-headers -wo pid=,comm= -p "$long_pid"
+compare 'cluster then long sort value' ps -ww --sort -pid -p "1,$long_pid" -o pid=
+compare 'missing long format value' ps --format
+compare 'empty long format value' ps --format=
+compare 'mixed PID option spellings' ps -p "$long_pid" --pid="$long_pid" -o pid=
+
+# The terminal is named the way the kernel numbers it: pts/N here when the
+# suite has one, and ? when it is run from nowhere.
+compare 'terminal name' ps -p "$long_pid" -o tty=
+
+# TIME is D-HH:MM:SS with the day only when there is one, so the hours never
+# reach 24. Nothing here has a day of CPU time to show, so what is checked is
+# that every row is that shape.
+if "$bin/ps" -e -o time= 2> /dev/null |
+        awk '$1 !~ /^([0-9]+-)?[0-9][0-9]:[0-9][0-9]:[0-9][0-9]$/ { bad = 1 }
+             END { exit bad }'; then
+        pass=$((pass + 1))
+else
+        report 'time column shape' 'a row was not D-HH:MM:SS'
+fi
+want_elapsed=$(ps -p "$long_pid" -o etimes= | tr -d ' ')
+got_elapsed=$("$bin/ps" -p "$long_pid" -o etimes= 2> /dev/null | tr -d ' ')
+case $want_elapsed:$got_elapsed in
+        *[!0-9:]*|:*) report 'elapsed seconds' "want $want_elapsed got $got_elapsed" ;;
+        *)
+                elapsed_gap=$((want_elapsed - got_elapsed))
+                [ "$elapsed_gap" -lt 0 ] && elapsed_gap=$((-elapsed_gap))
+                if [ "$elapsed_gap" -le 1 ]; then
+                        pass=$((pass + 1))
+                else
+                        report 'elapsed seconds' "want $want_elapsed got $got_elapsed"
+                fi ;;
+esac
+
+# More selectors than the former small option vectors commonly allowed. Only
+# PID 1 can match; repetitions select it once, exactly as procps does.
+pid_spec=1
+i=1
+while [ "$i" -lt 40 ]; do
+        pid_spec="$pid_spec,1"
+        i=$((i + 1))
+done
+compare 'many pid selectors' ps -p "$pid_spec" -o pid=
+
+# Duplicate PIDs in one comma list are deliberately repeated by procps, while
+# the same PID in two selector operands is a set union. Missing selections
+# print the ordinary heading (when there is one) and return one.
+compare 'duplicate pid list' ps -p "$long_pid,$long_pid" -o pid=
+compare 'duplicate pid operands' ps -p "$long_pid" -p "$long_pid" -o pid=
+compare 'missing pid' ps -p 999999999 -o pid
+
+# PID is the one sort key this implementation advertises. Ascending is the
+# gathered order; descending must reverse both selected rows exactly.
+compare 'sort pid' ps -p "1,$long_pid" --sort pid -o pid=
+compare 'sort pid descending' ps -p "1,$long_pid" --sort=-pid -o pid=
+compare 'unordered duplicate and missing pid selection' ps \
+        -p "$long_pid,999999999,1,$long_pid" --sort=-pid -o pid=,ppid=,comm=
+compare 'sort pid keys' ps -p "1,$long_pid" --sort pid,-pid -o pid=
+
+# Give -C a name unique to this suite so another user's sleep cannot enter the
+# result. Linux limits comm to fifteen bytes: the full long name must select
+# nothing, while its kernel-truncated spelling selects the live process.
+comm_name=pscommselector
+ln -s /bin/sleep "$work/$comm_name"
+"$work/$comm_name" 10 &
+comm_pid=$!
+sleep 0.1
+compare 'command selection' ps -C "$comm_name" -o pid,comm
+compare 'attached command selection' ps -C"$comm_name" -o pid=,comm=
+compare 'clustered command letter' ps -wC "$comm_name" -o pid,comm
+compare 'duplicate command list' ps -C "$comm_name,$comm_name" -o pid=
+
+long_comm=pscommselector-long
+ln -s /bin/sleep "$work/$long_comm"
+"$work/$long_comm" 10 &
+long_comm_pid=$!
+sleep 0.1
+compare 'long command refused' ps -C "$long_comm" -o pid=
+compare 'kernel command length' ps -C pscommselector- -o pid,comm
+
+# A separate parent keeps the ps process itself out of --ppid's answer. The
+# numeric and command selectors are unions; matching both does not duplicate
+# a row, and repeating a parent selector remains a set.
+# Re-parenting cannot make a deterministic fixture, so a waiting shell owns a
+# uniquely named child and reports its PID through a fifo-free temporary file.
+sh -c '"$1" 10 & echo $! > "$2"; wait' sh \
+        "$work/$comm_name" "$work/ppid-child" &
+parent_pid=$!
+i=0
+while [ ! -s "$work/ppid-child" ] && [ "$i" -lt 50 ]; do
+        sleep 0.02
+        i=$((i + 1))
+done
+selected_child=$(cat "$work/ppid-child")
+compare 'parent selection' ps --ppid "$parent_pid" -o pid,ppid,comm
+compare 'parent selection attached' ps --ppid="$parent_pid" -o pid=,comm=
+compare 'repeated parent selection' ps --ppid "$parent_pid" \
+        --ppid "$parent_pid" -o pid=
+compare 'selector union' ps -p "$long_pid" --ppid "$parent_pid" -o pid=
+compare 'missing parent' ps --ppid 999999999 -o pid
+compare 'parent zero selects parentless processes' ps --ppid 0 -o pid=,ppid=,comm=
+compare 'pid zero remains invalid' ps -p 0 -o pid=
+
+# Unlike -e with -p, procps treats -e with an alternate selector as a union:
+# it is still the all-process full listing. Content races, so pin the two rows
+# that prove neither side of that union was dropped.
+if "$bin/ps" -ef --ppid "$parent_pid" 2> /dev/null |
+        awk -v one=1 -v child="$selected_child" \
+            '$2 == one { all = 1 } $2 == child { selected = 1 }
+             END { exit !(all && selected) }'; then
+        pass=$((pass + 1))
+else
+        report 'every parent union' 'all-process or selected row missing'
+fi
+
+# BSD a/x/u options select a different column personality, not merely more
+# rows. Until that full format exists, accepting `ps aux` and printing the
+# ordinary four columns is silently wrong; the deliberate gap is a refusal.
+"$bin/ps" aux > /dev/null 2>&1
+check 'BSD aux refused' 1 "$(( $? != 0 ))"
+"$bin/ps" --sort comm -p "$long_pid" > /dev/null 2>&1
+check 'unsupported sort refused' 1 "$(( $? != 0 ))"
+
+# Header overrides are invocation-local. Run two ps commands through the same
+# multicall shell and normalize only the unavoidable process number.
+shell_binary=${bin%/bin}/shell
+sh -c 'ps -p $$ -o pid=ONE; ps -p $$ -o pid' 2> /dev/null |
+        sed 's/[0-9]/#/g' > "$work/want"
+PATH="$bin" "$shell_binary" -c \
+        'ps -p $$ -o pid=ONE; ps -p $$ -o pid' 2> /dev/null |
+        sed 's/[0-9]/#/g' > "$work/got"
+if cmp -s "$work/want" "$work/got"; then
+        pass=$((pass + 1))
+else
+        report 'multicall header reset' \
+                "want $(show "$work/want") got $(show "$work/got")"
+fi
+
+# Processes vanishing between the /proc directory walk and their stat/status
+# reads are normal. Churn short-lived children while taking repeated listings;
+# every completed row must retain its two numeric identity fields.
+(
+        race=0
+        while [ "$race" -lt 200 ]; do
+                /bin/true &
+                race=$((race + 1))
+        done
+        wait
+) &
+churn=$!
+race_ok=1
+race=0
+while [ "$race" -lt 12 ]; do
+        if ! "$bin/ps" -e -o pid,ppid > "$work/ps-race" 2> /dev/null ||
+                ! sed -n '2,$p' "$work/ps-race" |
+                    awk 'NF != 2 || $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ \
+                         { bad = 1 } END { exit bad }'; then
+                race_ok=0
+                break
+        fi
+        race=$((race + 1))
+done
+wait "$churn" 2> /dev/null
+check 'process exit races' 1 "$race_ok"
+
+kill "$selected_child" "$parent_pid" \
+        "$comm_pid" "$long_comm_pid" 2> /dev/null
+wait "$selected_child" "$parent_pid" \
+        "$comm_pid" "$long_comm_pid" 2> /dev/null
+
+kill "$long_pid" 2> /dev/null
+wait "$long_pid" 2> /dev/null
+if cmp -s "$work/ps_long_want" "$work/ps_long_got" &&
+        [ -s "$work/ps_long_want" ]; then
+        pass=$((pass + 1))
+else
+        report 'long process arguments' \
+                "want $(show "$work/ps_long_want") got $(show "$work/ps_long_got")"
+fi
+
+compare_ps_full
+
+case_start monitor
+#       The interval is honoured on every frame, not only the first: the
+#       kernel writes what is left of a timespec back into it, and a sleep
+#       that reused the same one slept once and then drew every frame at
+#       once, which a dashboard on the screen showed as a picture that never
+#       changed again. Ten frames at fifty milliseconds are at least nine
+#       sleeps, four hundred and fifty milliseconds by the wall clock.
+monitor_started=$(date +%s%N)
+"$bin/monitor" 0.05 10 > "$work/monitor.out" 2> /dev/null
+monitor_status=$?
+monitor_took=$(( ($(date +%s%N) - monitor_started) / 1000000 ))
+monitor_frames=$(grep -c '2026h' "$work/monitor.out")
+if [ "$monitor_status" = 0 ] && [ "$monitor_frames" = 10 ] && [ "$monitor_took" -ge 400 ]; then
+        pass=$((pass + 1))
+else
+        report 'monitor paces its frames' "status $monitor_status, $monitor_frames frames in $monitor_took ms"
+fi
+
+printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'tools-listed %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
+
+listed_fail=$fail
+
+#
+#       The generated ones.
+#
+#       Random pairs of files over a small alphabet diffed both ways, and dd
+#       given operands drawn out of a hat. The
+#       alphabet is small on purpose: with every line distinct the longest
+#       common subsequence is unique and any correct implementation agrees,
+#       so a generator over distinct lines reports green and proves nothing.
+#       Repeats everywhere are what make the choice of which identical line
+#       to call the changed one observable, and that choice is the whole of
+#       what is hard here.
+#
+#       The files stay small for a second reason: past a few hundred lines
+#       GNU stops looking for a minimal edit script and returns a good enough
+#       one from a heuristic. Agreement above that ceiling is not something
+#       this claims.
+
+if ! command -v python3 > /dev/null 2>&1; then
+        echo "  generated    python3 missing, generated cases not run"
+        exit 1
+fi
+
+python3 - "$bin" "$rounds" "$work" << 'PYTHON' > "$work/generated" 2>&1
+import os
+import random
+import subprocess
+import sys
+
+binary, rounds, work = sys.argv[1], int(sys.argv[2]), sys.argv[3]
+
+environment = dict(os.environ)
+environment["LC_ALL"] = "C"
+environment["TZ"] = "UTC0"
+
+total = 0
+bad = 0
+
+left = os.path.join(work, "gen_a")
+right = os.path.join(work, "gen_b")
+
+# One stdin batch makes every native value through 10000 exhaustive without
+# paying process startup per integer. The second mixes arbitrary words,
+# products, squares and hard semiprimes near UINT64_MAX; GNU supplies both
+# primality and the ordered factor list independently.
+def factor_both(label, values):
+    global total, bad
+
+    data = (" ".join(str(value) for value in values) + "\n").encode()
+    want = subprocess.run(["factor"], input=data, capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/factor"], input=data,
+                         capture_output=True, env=environment)
+    total += 1
+
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        return
+
+    bad += 1
+    if bad <= 6:
+        print("  factor %-12s want %r[%d] got %r[%d]"
+              % (label, want.stdout[:100], want.returncode,
+                 got.stdout[:100], got.returncode))
+
+
+factor_both("exhaustive", range(10001))
+
+factor_values = [1000000016000000063, 18446743979220271189,
+                 18446744030759878681, 2305843009213693951,
+                 18446744073709551557]
+for _ in range(max(300, rounds * 4)):
+    kind = random.randrange(4)
+    if kind == 0:
+        factor_values.append(random.getrandbits(64))
+    elif kind == 1:
+        factor_values.append(random.randrange(2, 1 << 32)
+                             * random.randrange(2, 1 << 32))
+    elif kind == 2:
+        factor_values.append(random.randrange(2, 1 << 21)
+                             * random.randrange(2, 1 << 21)
+                             * random.randrange(2, 1 << 21))
+    else:
+        factor_values.append((random.getrandbits(32) | 1) ** 2)
+
+factor_both("random-64", factor_values)
+
+# numfmt stays inside the exact signed-64/18-decimal contract here. Mixing
+# human bases, signs, decimal widths, all rounding choices and restricted %f
+# formats reaches the rational and both rounding stages without asking the
+# reference's long-double parser to decide an intentionally lossy value.
+def numfmt_both(args, values):
+    global total, bad
+
+    command = args + ["--"] + values
+    want = subprocess.run(["numfmt"] + command, capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/numfmt"] + command,
+                         capture_output=True, env=environment)
+    total += 1
+
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        return
+
+    bad += 1
+    if bad <= 6:
+        print("  numfmt %-18s want %r[%d] got %r[%d]"
+              % (" ".join(args), want.stdout[:100], want.returncode,
+                 got.stdout[:100], got.returncode))
+        print("      values=%r" % values[:12])
+
+
+for _ in range(max(30, rounds // 3)):
+    # GNU 9.4 used upper-case K for SI while 9.11 uses lower-case k.  SI is
+    # covered by stable M/G cases above; generated cross-version cases use
+    # spellings whose output did not change.
+    args = ["--to=" + random.choice(("none", "iec", "iec-i")),
+            "--round=" + random.choice(("from-zero", "up", "down",
+                                         "towards-zero", "nearest"))]
+
+    if random.random() < 0.45:
+        args.append("--format=" + random.choice(
+            ("%f", "%.0f", "%.1f", "%.2f", "[%08.3f]", "[%-9.2f]")))
+
+    values = []
+    for _ in range(random.randint(4, 20)):
+        whole = random.randrange(1000000000)
+        sign = "-" if random.randrange(2) else ""
+        # Binary-exact fractions keep this a compatibility test rather than
+        # a catalog of the reference's long-double representation errors.
+        tail = random.choice(("", ".0", ".00", ".5", ".50", ".25",
+                              ".75", ".125", ".625"))
+        values.append("%s%d%s" % (sign, whole, tail))
+
+    numfmt_both(args, values)
+
+
+def both(flags, a, b):
+    global total, bad
+
+    open(left, "w").write(a)
+    open(right, "w").write(b)
+
+    want = subprocess.run(["diff"] + flags + [left, right],
+                          capture_output=True, env=environment)
+    got = subprocess.run([binary + "/diff"] + flags + [left, right],
+                         capture_output=True, env=environment)
+
+    total += 1
+
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        return
+
+    bad += 1
+
+    if bad <= 6:
+        print("  diff %-14s want %r[%d] got %r[%d]"
+              % (" ".join(flags) or "(plain)",
+                 want.stdout[:70], want.returncode,
+                 got.stdout[:70], got.returncode))
+        print("      a=%r" % a)
+        print("      b=%r" % b)
+
+
+def lines(alphabet, count):
+    return "".join(random.choice(alphabet) + "\n" for _ in range(count))
+
+
+random.seed(20260828)
+
+#       tsort's answer is deterministic but not simply lexical: initial zero
+#       nodes are lexical, then newly released nodes follow reverse relation
+#       arrival order. Compare output, cycle diagnostics and status together.
+tsort_input = os.path.join(work, "gen_tsort")
+
+
+def tsort_both(tokens, label):
+    global total, bad
+
+    separators = (" ", "\t", "\n", " \n")
+    data = "".join(token + separators[i % len(separators)]
+                   for i, token in enumerate(tokens)).encode()
+    open(tsort_input, "wb").write(data)
+
+    want = subprocess.run(["tsort", tsort_input], capture_output=True,
+                          env=environment)
+    got = subprocess.run([binary + "/tsort", tsort_input],
+                         capture_output=True, env=environment)
+    total += 1
+
+    if (want.stdout == got.stdout and want.stderr == got.stderr
+            and want.returncode == got.returncode):
+        return
+
+    bad += 1
+
+    if bad <= 6:
+        print("  tsort %-12s want %r/%r[%d] got %r/%r[%d]"
+              % (label, want.stdout[:70], want.stderr[:100], want.returncode,
+                 got.stdout[:70], got.stderr[:100], got.returncode))
+        print("      tokens=%r" % tokens[:40])
+
+
+for case in range(max(20, rounds // 2)):
+    count = random.randint(1, 28)
+    names = ["n%02d" % i for i in range(count)]
+    random.shuffle(names)
+    pairs = []
+
+    # Self pairs make isolated nodes; forward-index edges keep this half a
+    # DAG even though the token names and insertion order are shuffled.
+    for name in names:
+        if random.random() < 0.35:
+            pairs.append((name, name))
+
+    for _ in range(random.randint(0, count * 3)):
+        one = random.randrange(count)
+        two = random.randrange(one, count)
+        pair = (names[one], names[two])
+        pairs.append(pair)
+        if random.random() < 0.25:
+            pairs.append(pair)
+
+    if case & 1 and count >= 2:
+        ring = random.sample(names, random.randint(2, min(7, count)))
+        pairs.extend(zip(ring, ring[1:] + ring[:1]))
+
+    random.shuffle(pairs)
+    if not pairs:
+        pairs.append((names[0], names[0]))
+
+    tsort_both([word for pair in pairs for word in pair], "random")
+
+# Cross the shared 64 KiB refill with both one token and many relations. The
+# latter also makes quadratic zero rescans or per-edge allocation visible.
+long_name = "x" * 70000
+tsort_both([long_name, "tail"], "long-token")
+
+long_pairs = []
+for i in range(12000):
+    long_pairs.extend(("v%05d" % i, "v%05d" % (i + 1)))
+    if i % 31 == 0:
+        long_pairs.extend(("side%05d" % i, "side%05d" % i))
+tsort_both(long_pairs, "long-graph")
+
+for _ in range(rounds):
+    for alphabet in ("ab", "abcde", "abcdefghij"):
+        a = lines(alphabet, random.randint(0, 24))
+        b = lines(alphabet, random.randint(0, 24))
+
+        both([], a, b)
+        both(["-u"], a, b)
+
+for _ in range(rounds // 3):
+    a = lines("abcde", random.randint(0, 60))
+    b = lines("abcde", random.randint(0, 60))
+
+    both([], a, b)
+    both(["-u"], a, b)
+    both(["-q"], a, b)
+
+#       Longer than sixty four lines, which is where GNU stops taking every
+#       line that matches nothing on the other side and starts scaling the
+#       threshold for how many matches make a line confusing. A generator
+#       that stayed under that ceiling would never reach the branch, and the
+#       one bug that lived there -- a threshold computed from the wrong
+#       variable, so every repeated line was thrown away -- passed several
+#       thousand shorter cases without a murmur.
+for _ in range(rounds // 4):
+    for alphabet in ("abcde", "abcdefghij"):
+        a = lines(alphabet, random.randint(60, 400))
+        b = lines(alphabet, random.randint(0, 400))
+
+        both([], a, b)
+        both(["-u"], a, b)
+
+#       The same length, with one file a lightly edited copy of the other,
+#       which is the shape a diff is actually asked for.
+for _ in range(rounds // 4):
+    base = ["line %d of it" % i for i in range(random.randint(20, 300))]
+    other = list(base)
+
+    for _ in range(random.randint(0, 14)):
+        if not other:
+            break
+
+        where = random.randrange(len(other))
+        what = random.randrange(4)
+
+        if what == 0:
+            other[where] = "changed %d" % random.randrange(40)
+        elif what == 1:
+            del other[where]
+        elif what == 2:
+            other.insert(where, "inserted %d" % random.randrange(40))
+        else:
+            other.insert(where, other[where])
+
+    a = "".join(line + "\n" for line in base)
+    b = "".join(line + "\n" for line in other)
+
+    both([], a, b)
+    both(["-u"], a, b)
+    both(["-q"], a, b)
+
+#       Words rather than single letters, so a line can differ from another
+#       by its case or by its spaces and the ignore flags have something to
+#       ignore. The identical head and tail are trimmed by raw bytes while
+#       the matcher compares folded ones, so these two stages disagree on
+#       purpose and this is where that shows.
+words = ["alpha", "ALPHA", "Alpha", "beta", "BETA", " beta", "beta ",
+         "gam ma", "gam  ma", "gamma", "", "  ", "delta\t"]
+
+for _ in range(rounds):
+    a = "".join(random.choice(words) + "\n" for _ in range(random.randint(0, 14)))
+    b = "".join(random.choice(words) + "\n" for _ in range(random.randint(0, 14)))
+
+    for flags in ([], ["-i"], ["-w"], ["-b"], ["-B"], ["-E"], ["-Z"],
+                  ["-u"], ["-u", "-b"], ["-u", "-B"], ["-i", "-w"]):
+        both(flags, a, b)
+
+#       A file whose last line has no newline takes a different path through
+#       the trimming: the identical tail is not taken off at all unless both
+#       files are missing one, so every pairing of the four is worth having.
+for _ in range(rounds // 2):
+    a = lines("abc", random.randint(1, 12))
+    b = lines("abc", random.randint(1, 12))
+
+    for cut_a in (False, True):
+        for cut_b in (False, True):
+            both([], a[:-1] if cut_a else a, b[:-1] if cut_b else b)
+            both(["-u"], a[:-1] if cut_a else a, b[:-1] if cut_b else b)
+
+#       Directory trees, which are the one place a name from one level can be
+#       compared against a name from another: the walk recurses, and a level
+#       that kept its names in a buffer shared with the level below went on
+#       comparing whatever the level below left there. What is compared is
+#       the whole listing -- the "Only in" lines, their order, the headers
+#       naming each pair, and the diffs themselves.
+import shutil
+
+
+def tree(root, seed):
+    shutil.rmtree(root, ignore_errors=True)
+    os.makedirs(root)
+
+    own = random.Random(seed)
+
+    for _ in range(own.randint(0, 8)):
+        name = os.path.join(root, "f%d" % own.randint(0, 10))
+        open(name, "w").write("".join(own.choice("abcde") + "\n"
+                                     for _ in range(own.randint(0, 12))))
+
+    for _ in range(own.randint(0, 3)):
+        under = os.path.join(root, "d%d" % own.randint(0, 4))
+        os.makedirs(under, exist_ok=True)
+
+        for _ in range(own.randint(0, 4)):
+            name = os.path.join(under, "g%d" % own.randint(0, 6))
+            open(name, "w").write("".join(own.choice("xyz") + "\n"
+                                          for _ in range(own.randint(0, 8))))
+
+        deeper = os.path.join(under, "deeper")
+        os.makedirs(deeper, exist_ok=True)
+        open(os.path.join(deeper, "h"), "w").write(
+            "".join(own.choice("pq") + "\n" for _ in range(own.randint(0, 5))))
+
+
+one = os.path.join(work, "tree_a")
+two = os.path.join(work, "tree_b")
+
+for round_number in range(rounds // 6):
+    tree(one, round_number * 2)
+    tree(two, round_number * 2 + random.choice([0, 1, 7]))
+
+    for flags in (["-r"], ["-r", "-u"], ["-r", "-q"], ["-r", "-N"],
+                  ["-r", "-N", "-u"], []):
+        want = subprocess.run(["diff"] + flags + [one, two],
+                              capture_output=True, env=environment)
+        got = subprocess.run([binary + "/diff"] + flags + [one, two],
+                             capture_output=True, env=environment)
+
+        total += 1
+
+        if want.stdout == got.stdout and want.returncode == got.returncode:
+            continue
+
+        bad += 1
+
+        if bad <= 6:
+            print("  diff %-14s want %r[%d] got %r[%d]"
+                  % (" ".join(flags) or "(plain)",
+                     want.stdout[:70], want.returncode,
+                     got.stdout[:70], got.returncode))
+
+shutil.rmtree(one, ignore_errors=True)
+shutil.rmtree(two, ignore_errors=True)
+
+#       dd, with operands drawn at random rather than listed. What is
+#       compared is standard output, the exit status, and the summary on the
+#       error stream with the duration and rate cut off. Sizes on either side
+#       of a block boundary are what make the records lines interesting: the
+#       counting is per block, and a naive one gets the last block wrong.
+sizes = [0, 1, 7, 511, 512, 513, 1000, 4096, 10000]
+feeds = []
+
+for which, size in enumerate(sizes):
+    name = os.path.join(work, "dd_feed_%d" % which)
+    open(name, "wb").write(bytes(random.randrange(256) for _ in range(size)))
+    feeds.append(name)
+
+suffixes = ["", "c", "b", "K", "KB", "KiB", "M"]
+
+
+def dd_both(args, feed):
+    global total, bad
+
+    want = subprocess.run(["dd"] + args, stdin=open(feed, "rb"),
+                          capture_output=True, env=environment)
+    got = subprocess.run([binary + "/dd"] + args, stdin=open(feed, "rb"),
+                         capture_output=True, env=environment)
+
+    want_error = want.stderr.split(b" copied,")[0]
+    got_error = got.stderr.split(b" copied,")[0]
+
+    total += 1
+
+    if (want.stdout == got.stdout and want_error == got_error
+            and want.returncode == got.returncode):
+        return
+
+    bad += 1
+
+    if bad <= 6:
+        print("  dd %-20s want %r[%d] got %r[%d]"
+              % (" ".join(args),
+                 want_error[:70], want.returncode,
+                 got_error[:70], got.returncode))
+
+
+for _ in range(rounds):
+    args = []
+
+    if random.random() < 0.6:
+        args.append("bs=%d%s" % (random.randint(1, 17), random.choice(suffixes)))
+    else:
+        args.append("ibs=%d" % random.randint(1, 300))
+        args.append("obs=%d" % random.randint(1, 300))
+
+    if random.random() < 0.5:
+        args.append("count=%d" % random.randint(0, 40))
+
+    if random.random() < 0.4:
+        args.append("skip=%d" % random.randint(0, 40))
+
+    conversions = [name for name in ("sync", "noerror", "fsync", "fdatasync")
+                   if random.random() < 0.25]
+
+    if conversions:
+        args.append("conv=" + ",".join(conversions))
+
+    level = random.choice(["status=noxfer", "status=noxfer", "status=none", ""])
+
+    if level:
+        args.append(level)
+
+    dd_both(args, random.choice(feeds))
+
+print("\n  %s of %s" % (total - bad, total))
+PYTHON
+
+sed -n '/want/p;/^      /p' "$work/generated"
+
+line=$(sed -n 's/^  \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$work/generated")
+
+#       An empty parse would leave both counts empty and compare equal, which
+#       is a suite reporting that nothing failed because nothing ran.
+if [ -z "$line" ]; then
+        echo "  generated    printed no verdict"
+        sed 's/^/    /' "$work/generated" | tail -5
+        exit 1
+fi
+
+made=${line% *}
+made_total=${line#* }
+
+printf '  %-12s %s of %s\n' generated "$made" "$made_total"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'tools-generated %s %s\n' "$made" "$made_total" >> "$TEST_TALLY"
+
+[ "$listed_fail" = 0 ] && [ "$made" = "$made_total" ]

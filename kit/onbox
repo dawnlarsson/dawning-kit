@@ -55,11 +55,11 @@ if [ "${1:-}" = "--surface" ]; then
                 for n in cat grep sed cut tr sort uniq head tail wc tee rev nl fold \
                          basename dirname seq yes env id uname readlink realpath; do \
                         ln -sf shell bin/\$n; done && \
-                python3 kit/surface.d/surface.py --bin \$PWD/bin$tools"
+                python3 test/surface.py --bin \$PWD/bin$tools"
         exit $?
 fi
 
 # shellcheck disable=SC2029
 lanes=""
 for lane in "$@"; do lanes="$lanes $(shell_quote "$lane")"; done
-ssh "$host" "cd ~/$remote && mkdir -p scratch && TMPDIR=\$PWD/scratch sh src/test/run$lanes"
+ssh "$host" "cd ~/$remote && mkdir -p scratch && TMPDIR=\$PWD/scratch sh test/run$lanes"

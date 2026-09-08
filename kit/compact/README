@@ -8,7 +8,7 @@
         says so and leaves the rest to run.
 
             fixes.py        two corrections, anchored on the file's own
-                            wording. See src/test/native/FINDING.
+                            wording. See test/native_FINDING.
             chain.py        instructions several to a source line
             dedup.py        a routine's contract written once, not once per
                             architecture
@@ -30,7 +30,7 @@
         prove needs a clang with all three targets. Apple's has two of them;
         homebrew llvm has all three, and is where prove looks by default.
 
-        On an arm64 machine rebuild finishes by running src/test/native/run,
+        On an arm64 machine rebuild finishes by running test/native.sh,
         which puts two and a third million calls through the arm64 routines
         against a C reference. x86_64 and riscv64 are assembled and compared
         here and executed nowhere: that still wants qemu.

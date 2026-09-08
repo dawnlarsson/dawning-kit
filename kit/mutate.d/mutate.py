@@ -376,7 +376,7 @@ def run_one(m, text, timeout, workers):
         try:
             if not builds(work, m['path'], env):
                 return 'invalid', 'did not build'
-            r = run_group(['sh', 'src/test/run', m['lane']], work, env, timeout)
+            r = run_group(['sh', 'test/run', m['lane']], work, env, timeout)
         except subprocess.TimeoutExpired:
             return 'invalid', 'did not stop'
         finally:

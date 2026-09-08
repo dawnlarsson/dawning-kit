@@ -10,7 +10,7 @@
 /linux/
 /dev/
 docs/
-src/test/bin/
+test/bin/
 
 # kit/asm writes a .S beside each .asm and kbuild assembles it there, because
 # src/ is symlinked into the kernel tree as kernel/moonwater.

@@ -5,7 +5,7 @@
 // identical for both formats, so the difference between two runs is the cost
 // of the loader.
 //
-// A measurement and not a test, which is why it is here and not in src/test.
+// A measurement and not a test, which is why it is here and not in test.
 // It needs /dev/spark and the two images beside it, so it runs inside the
 // booted image:
 //

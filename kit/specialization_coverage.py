@@ -11,7 +11,7 @@ and what that literal is worth:
 
 ``specialized`` already ships a known-argument path. The row must name the
 static inline that expands it, that name must be in src/compiler_memory.c, and
-the routine must be exercised by literal in src/test/exact.c -- a specializer
+the routine must be exercised by literal in test/exact.c -- a specializer
 without a written-out-by-literal test is a specializer nothing reaches.
 
 ``worth_it`` has a foldable parameter that changes the shape of the work: it
@@ -98,13 +98,13 @@ def cover(category, parameter, names, note, expansion=None, evidence=None,
 # folded size expands and anything else is the ordinary call.
 cover('specialized', 'size', 'memory_copy', 'memmove, overlap safe, expanded '
       'to loads before stores up to KNOWN_SIZE_MAX',
-      expansion='copy_known', evidence='src/test/exact.c')
+      expansion='copy_known', evidence='test/exact.c')
 cover('specialized', 'size', 'memory_copy_apart', 'memcpy, the halves are '
       'apart, expanded up to KNOWN_SIZE_MAX',
-      expansion='copy_apart_known', evidence='src/test/exact.c')
+      expansion='copy_apart_known', evidence='test/exact.c')
 cover('specialized', 'size', 'memory_fill', 'memset, expanded up to '
       'KNOWN_SIZE_MAX with a broadcast when the byte is not folded',
-      expansion='fill_known', evidence='src/test/exact.c')
+      expansion='fill_known', evidence='test/exact.c')
 
 
 # ----------------------------------------------------------------------
@@ -125,16 +125,16 @@ cover('specialized', 'accept', 'string_span_of_set',
       'literal, is NOT a win at any run length measured (87% empty, 103-114% '
       'after) and is not proposed: it does the same probe the routine does '
       'and only saves the build',
-      expansion='set_known_table', evidence='src/test/exact_set.c')
+      expansion='set_known_table', evidence='test/exact_set.c')
 cover('specialized', 'accept', 'string_first_of_set',
       'Measured with string_span_of_set: one to three literal members become '
       'a compare chain, and short larger sets become a register mask',
-      expansion='first_of_set_known', evidence='src/test/exact_set.c')
+      expansion='first_of_set_known', evidence='test/exact_set.c')
 cover('specialized', 'reject', 'string_span_without_set',
       'Measured with the pair above and tiered the same way, with the '
       'terminator put into the stopping set so the end of the source stops '
       'the run too', expansion='span_without_byte_known',
-      evidence='src/test/exact_set.c')
+      evidence='test/exact_set.c')
 
 # Three siblings of the routines that already have a path. Each is a
 # trampoline or a wrapper onto one of them, so the expansion is that
@@ -143,14 +143,14 @@ cover('specialized', 'size', 'memory_zero',
       'Measured. bzero is "mov, xor, jmp memory_fill" and the expansion is '
       'fill_known with the byte already chosen: 19-48% of the routine from 1 to 128 '
       'bytes, tracking the fill it reuses',
-      expansion='zero_known', evidence='src/test/exact_family.c')
+      expansion='zero_known', evidence='test/exact_family.c')
 cover('specialized', 'size', 'memory_copy_apart_end',
       'Measured. A lea, a push, a call to the copy, a pop and one terminator; '
       'expanded, the call goes and the lea folds into the answer: 16-40% of '
       'the routine from 1 to 128 bytes',
-      expansion='copy_apart_count_end_known', evidence='src/test/verify.c')
+      expansion='copy_apart_count_end_known', evidence='test/verify.c')
 # memcmp's contract here is the magnitude of the byte difference and not its
-# sign, which src/test/verify.c checks, so __builtin_memcmp cannot be the
+# sign, which test/verify.c checks, so __builtin_memcmp cannot be the
 # expansion: a hand written word walk has to keep the subtraction.
 cover('specialized', 'size', 'memory_compare',
       'Measured. Word loads, the first differing byte from three masked tests '
@@ -160,7 +160,7 @@ cover('specialized', 'size', 'memory_compare',
       'where the routine reaches its four-block round. So this family needs '
       'its own KNOWN_COMPARE_MAX of 96 and must NOT inherit KNOWN_SIZE_MAX, '
       'which is 128 and would expand into the two-to-one loss',
-      expansion='compare_known', evidence='src/test/exact_scan.c')
+      expansion='compare_known', evidence='test/exact_scan.c')
 
 # ----------------------------------------------------------------------
 #       worth_it -- expected, from the shape of the body
@@ -174,7 +174,7 @@ cover('specialized', 'size', 'memory_common_prefix',
       'inheriting the wider memcmp cutoff. Mismatch positions are guarded for '
       'correctness but are not claimed as native floor measurements',
       expansion='common_prefix_known',
-      evidence='src/test/exact_prefix.c')
+      evidence='test/exact_prefix.c')
 
 cover('specialized', 'size', 'memory_compare_ascii_case',
       'Measured at caller-shaped protocol-token lengths. The straight folded '
@@ -183,7 +183,7 @@ cover('specialized', 'size', 'memory_compare_ascii_case',
       'sixteen and x86-64 loses from twenty four, so the shared cutoff is '
       'twelve, not memory_compare\'s much larger cutoff',
       expansion='compare_ascii_case_known',
-      evidence='src/test/exact_ascii_case.c')
+      evidence='test/exact_ascii_case.c')
 
 cover('specialized', 'needle_size', 'memory_search',
       'Measured. A one byte needle is already redirected inside the routine, '
@@ -192,54 +192,54 @@ cover('specialized', 'needle_size', 'memory_search',
       'and timed and are NOT a uniform win -- 65% of the routine at a 16 byte '
       'haystack, 158% at 64, 137% at 256, 52% at 4096 -- so only the one byte '
       'redirect is proposed', expansion='search_known',
-      evidence='src/test/needle.c')
+      evidence='test/needle.c')
 cover('specialized', 'needle_size', 'memory_search_ascii_case',
       'expected: the same one byte redirect, onto memory_first_of_ascii_case, '
       'from the shape of the body rather than from measurement',
       expansion='search_case_known',
-      evidence='src/test/needle.c')
+      evidence='test/needle.c')
 cover('specialized', 'base', 'positive_into_base',
       'base ten is positive_into and base sixteen is a shift and a nibble '
       'table; the general path divides by a register',
-      expansion='into_base_known', evidence='src/test/exact_base.c')
+      expansion='into_base_known', evidence='test/exact_base.c')
 cover('specialized', 'base', 'string_to_number string_to_number_unsigned',
       'base ten and sixteen are the two a caller ever writes down, and each '
       'drops the general digit-value path and the base range check',
-      expansion='number_known', evidence='src/test/exact_base.c')
+      expansion='number_known', evidence='test/exact_base.c')
 cover('specialized', 'base',
       'string_to_number_checked string_to_number_unsigned_checked',
       'the same constant-base scanner also produces overflow status without '
       'a second digit walk; boundary and early-exit parity are checked',
-      expansion='number_known', evidence='src/test/number.c')
+      expansion='number_known', evidence='test/number.c')
 
 cover('specialized', 'bound', 'string_length_max',
       'Measured literal bounds become a straight bounded word/byte scan',
-      expansion='length_max_known', evidence='src/test/bounded.c')
+      expansion='length_max_known', evidence='test/bounded.c')
 cover('specialized', 'bound', 'string_compare_max',
       'Measured literal bounds become a straight bounded word/byte compare',
-      expansion='compare_max_known', evidence='src/test/bounded.c')
+      expansion='compare_max_known', evidence='test/bounded.c')
 cover('specialized', 'bound', 'string_append_max',
       'Measured literal bounds reuse the bounded length and copy expansion',
-      expansion='append_max_known', evidence='src/test/bounded.c')
+      expansion='append_max_known', evidence='test/bounded.c')
 cover('specialized', 'bound', 'string_copy_max_end',
       'Measured literal bounds copy the short known pair directly',
-      expansion='copy_max_end_known', evidence='src/test/bounded.c')
+      expansion='copy_max_end_known', evidence='test/bounded.c')
 cover('specialized', 'bound', 'string_copy_max_endptr',
       'Measured literal bounds copy the short known pair directly',
-      expansion='copy_max_endptr_known', evidence='src/test/bounded.c')
+      expansion='copy_max_endptr_known', evidence='test/bounded.c')
 
 cover('specialized', 'size', 'memory_first_of memory_last_of',
       'Measured short literal spans skip the width dispatch and tail '
       'arithmetic', expansion={'memory_first_of': 'first_of_known',
                                'memory_last_of': 'last_of_known'},
-      evidence='src/test/exact_scan.c')
+      evidence='test/exact_scan.c')
 cover('specialized', 'size', 'memory_copy_until',
       'Measured short literal spans expand the stop scan and bounded copy',
-      expansion='copy_until_known', evidence='src/test/exact_family.c')
+      expansion='copy_until_known', evidence='test/exact_family.c')
 cover('specialized', 'source', 'string_copy_end',
       'A literal source has a folded length; its bytes and terminator use the '
       'known-size copy and the answer is the terminator address',
-      expansion='copy_end_known', evidence='src/test/exact_family.c')
+      expansion='copy_end_known', evidence='test/exact_family.c')
 cover('specialized', 'size', 'memory_count',
       'Measured for folded 16-, 24-, 31- and 53-byte spans. The unaligned '
       'word reductions take 19%, 26%, 37% and 66% of assembly-call time on '
@@ -247,7 +247,7 @@ cover('specialized', 'size', 'memory_count',
       'AArch64 runner. RV64 keeps the assembly path because its baseline does '
       'not permit unaligned word loads. The cutoff is the byte before one '
       'complete AArch64 vector block and two x86-64 vector blocks',
-      expansion='count_known', evidence='src/test/verify.c')
+      expansion='count_known', evidence='test/verify.c')
 cover('specialized', 'size', 'memory_translate',
       'Measured at the six-byte temporary-name call site. Straight table '
       'loads with no loop or call take 98% of the assembly-call time on '
@@ -262,7 +262,7 @@ cover('specialized', 'bound', 'string_compare_folded_max',
       'eight bytes. RV64 retains the assembly path: even a '
       'branchless three-byte expansion saves only 3% while adding 228 bytes. '
       'The fixed-width targets stop at the measured eight-byte cutoff',
-      expansion='compare_folded_max_known', evidence='src/test/standard.c')
+      expansion='compare_folded_max_known', evidence='test/standard.c')
 # ----------------------------------------------------------------------
 #       folds_already
 # ----------------------------------------------------------------------
@@ -274,7 +274,7 @@ byte_is_printable byte_is_punctuation byte_is_space byte_is_upper byte_to_ascii
 byte_to_lower byte_to_upper
 ''', 'A literal value expands through the shared KNOWN_SINGLE shape into the '
      'branchless range test or hardware bit instruction',
-      expansion='KNOWN_SINGLE', evidence='src/test/single.c')
+      expansion='KNOWN_SINGLE', evidence='test/single.c')
 
 # Arithmetic leaves. Each body is between one and ten instructions, which is
 # what the call sequence that reaches it costs, so expanding one replaces a

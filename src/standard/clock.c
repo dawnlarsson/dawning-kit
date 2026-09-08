@@ -1674,7 +1674,7 @@ positive strftime(p8 address_to into, positive max,
         number, then falls into the plain %y arm without winding the input
         back and reads a second one on top of it, and the second %O in a
         format returns null where the first one fell back. Both are in the
-        list of disagreements at the top of src/test/clock.c, with what glibc
+        list of disagreements at the top of test/clock.c, with what glibc
         answers and what this answers instead.
 */
 typedef struct clock_scan_state

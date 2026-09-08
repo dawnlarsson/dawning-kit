@@ -1,0 +1,135 @@
+#!/bin/sh
+#
+#       The arm64 cases, run on this machine.
+#
+#           sh test/native.sh [library.c]
+#
+#       Lifts each routine's arm64 body out of the library and links it into
+#       the case beside it, so what runs is what is in the file. See README
+#       for why arm64 and only arm64 can be run from here.
+#
+set -u
+
+# shellcheck disable=SC1007
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+root=$(CDPATH= cd -- "$here/.." && pwd)
+lib=${1:-$root/src/library.c}
+
+[ "$(uname -s)" = Darwin ] || {
+        echo "run: native lifting needs Darwin's Mach-O assembler" >&2
+        exit 2
+}
+
+case $(uname -m) in
+arm64 | aarch64) ;;
+*)
+        echo "run: native lifting needs an arm64 machine" >&2
+        exit 2
+        ;;
+esac
+
+[ -f "$lib" ] || { echo "run: no such library: $lib" >&2; exit 1; }
+
+#       The byte-commonness object is generated from one marked assembly
+#       payload.  Before compiling it, mutate every part of that extraction
+#       contract so missing/duplicate/mismatched wrappers, wrong size and
+#       reordered content are all known to fail closed.
+python3 "$here/native_extract_test.py" "$here/native_extract.py" "$lib" || exit 1
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/native.XXXXXX") || exit 1
+trap 'rm -rf "$work"' EXIT INT TERM
+
+#       string_find reaches three other routines by name -- string_length,
+#       memory_search, and through that memory_compare -- so they come too or
+#       the case does not link. memory_search also reads byte_commonness,
+#       which extract.py lifts with it.
+python3 "$here/native_extract.py" "$lib" \
+        string_first_of string_first_of_or_end string_first_of_max string_find \
+        string_last_of_or_end string_compare_max string_length_max memory_first_of \
+        string_length memory_search memory_search_prepare \
+        memory_search_prepared_core memory_compare \
+        > "$work/lifted.h" || exit 1
+
+#       A header of its own rather than more names in the one above: these
+#       bodies branch to memory_copy_apart by name, and a case that does not
+#       define the plain symbol would stop linking if it pulled them in.
+python3 "$here/native_extract.py" "$lib" \
+        memory_fill memory_exchange_apart memory_frob memory_copy_apart memory_copy \
+        string_copy string_copy_max string_cut string_replace_all \
+        > "$work/bulk.h" || exit 1
+
+#       In-place byte reversal is an independent leaf.  Its case crosses
+#       every small size and pointer residue, page edges and a one-megabyte
+#       span; keeping it separate makes its native count and any failure
+#       attributable to this one body.
+python3 "$here/native_extract.py" "$lib" memory_reverse \
+        > "$work/reverse.h" || exit 1
+python3 "$here/native_extract.py" "$lib" memory_decimal_series \
+        > "$work/series.h" || exit 1
+
+#       And one for the wide hunts, holding those eight and nothing else, so
+#       it never pulls in string_find and the routines that follow from it.
+python3 "$here/native_extract.py" "$lib" \
+        string_length string_length_max string_first_of string_first_of_or_end \
+        string_first_of_max string_last_of string_last_of_or_end memory_first_of \
+        > "$work/wide.h" || exit 1
+
+#       Base conversion is a leaf for octal/hexadecimal. Its decimal tail is
+#       satisfied by the reference in bases.c, because that case measures only
+#       the non-decimal lanes and lifting the much larger decimal core would
+#       measure something else as well.
+python3 "$here/native_extract.py" "$lib" positive_into_base \
+        > "$work/bases.h" || exit 1
+python3 "$here/native_extract.py" "$lib" \
+        positive_into_base writer_fill positive_to_base_field \
+        > "$work/base_field.h" || exit 1
+
+#       Compact binary-size formatting calls the decimal buffer adapters on
+#       its plain and integer-scaled paths. human.c supplies those two small
+#       references; the lifted routine is otherwise byte-for-byte the library
+#       ARM64 body, including its embedded suffix table.
+python3 "$here/native_extract.py" "$lib" \
+        positive_into_human_1024_string positive_to_human_1024 \
+        > "$work/human.h" || exit 1
+
+#       dd's nearest formatter and the wait4 status decoder are independent
+#       leaves.  Their native case exhausts raw wait status, crosses every
+#       destination residue, and benchmarks the exact former C body.
+python3 "$here/native_extract.py" "$lib" \
+        positive_into_human_nearest_string wait_status_code_base wait_status_code \
+        > "$work/human_nearest.h" || exit 1
+
+#       The contiguous fixed fields are leaves on their bounded hot paths.
+#       fields.c supplies positive_into for the general-path relocation, which
+#       its width-six/nine benchmark deliberately never takes.
+python3 "$here/native_extract.py" "$lib" positive_into_padded positive_into_pair \
+        > "$work/fields.h" || exit 1
+
+#       Bounded input-base leaves, including the three tail destinations of
+#       the runtime-base entry.
+python3 "$here/native_extract.py" "$lib" \
+        string_digits_max string_digits_octal_escape_max string_digits_octal_max \
+        string_digits_hexadecimal_escape_max string_digits_hexadecimal_max \
+        string_digits_base_max \
+        > "$work/input_bases.h" || exit 1
+
+#       Unaligned wire fields live in socket.inc rather than library.c itself.
+#       Lift the exact AArch64 bodies from there and cross every byte residue
+#       natively; the other two architectures are exercised by socket.c.
+python3 "$here/native_extract.py" "$root/src/platform/socket.inc" \
+        network_load_16 network_load_32 network_store_16 network_store_32 \
+        > "$work/network.h" || exit 1
+
+#       The allocator calls are supplied by reserve.c, leaving the exact
+#       AArch64 growth/release bodies to be tested without making Darwin
+#       understand Linux mmap flags.
+python3 "$here/native_extract.py" "$lib" memory_growth memory_reserve memory_release \
+        > "$work/reserve.h" || exit 1
+
+status=0
+for case in byte_hunts bounded riscv_bits bulk reverse series wide bases base_field human human_nearest fields input_bases network reserve; do
+        cc -O2 -w -I"$work" "$here/native_$case.c" -o "$work/$case" || { status=1; continue; }
+        "$work/$case" || status=1
+done
+
+exit $status

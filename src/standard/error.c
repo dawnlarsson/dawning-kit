@@ -511,7 +511,7 @@
             b32 address_to error_location(void) { return address_of error_number_storage; }
 
         and a main that wrote 42 through it, built with the same freestanding
-        line src/test/run uses. x86_64 native, qemu-aarch64 and qemu-riscv64
+        line test/run uses. x86_64 native, qemu-aarch64 and qemu-riscv64
         all took SIGSEGV and exited 139.
 
         The cause is that nothing establishes a thread pointer. A local-exec

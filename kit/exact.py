@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-#       Writes src/test/exact.c.
+#       Writes test/exact.c.
 #
 #       The compiler_memory.c layer expands sizes known where the call is
 #       written to a straight line of moves instead of a call, and which line
@@ -12,7 +12,7 @@
 #       Sizes run past the point where the expansion stops and the routine
 #       takes over again, so the seam is covered from both sides.
 #
-#           python3 kit/exact.py > src/test/exact.c
+#           python3 kit/exact.py > test/exact.c
 #
 import sys
 

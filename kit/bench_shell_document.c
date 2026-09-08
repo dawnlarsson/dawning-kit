@@ -3,7 +3,7 @@
 #include "../src/sh/shell.c"
 
 /* Isolate the shared here-body expansion path from parsing/forking. Build
-   this same probe in both source revisions with src/test/run's freestanding
+   this same probe in both source revisions with test/run's freestanding
    flags. Arguments: body bytes (16..1048576), repetitions, optional "dollar".
    Literal runs should go directly into the retained token arena, without a
    second body-sized expansion/mark allocation. The checksum must agree. */

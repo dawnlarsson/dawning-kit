@@ -85,7 +85,7 @@
         below calls it by name, and a call written inside a string is
         invisible to the compiler, so a static definition would be discarded
         as unused before the assembler ever saw the reference. That is the
-        same reason src/test/run's comment gives for keeping -flto off.  The
+        same reason test/run's comment gives for keeping -flto off.  The
         normal program build does use LTO, which can internalise even an
         unreferenced global, so KEEP is part of this declaration's ABI: the
         assembler reference is real even though the compiler cannot see it.

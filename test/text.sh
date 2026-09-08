@@ -1,0 +1,3210 @@
+#!/bin/sh
+#
+#       The text utilities against the ones already on the machine.
+#
+#           sh test/text.sh [directory of the names our shell answers to]
+#
+#       Every case runs the same input through the system's grep, sed, cut --
+#       whatever the case names -- and through ours, and compares standard
+#       output and the exit status. Agreeing is passing; there is no separate
+#       idea here of what the right answer is.
+#
+#       Two sections. The listed ones are a list somebody wrote down, which
+#       means they test what that somebody thought of. The generated ones
+#       build patterns instead, and are what found the one that mattered: a
+#       jump target that pointed at the instruction a quantifier was about to
+#       be inserted in front of, which broke \(a\)*\(a\)* and nothing
+#       simpler. They need python3 and say so when it is missing.
+#
+#       LC_ALL=C is not politeness. GNU sort collates by locale, and a
+#       byte-wise sort disagrees with it on almost any mixed case input, so
+#       without this every sort case fails and looks like a bug in the
+#       comparison rather than in the question being asked.
+
+LC_ALL=C
+export LC_ALL
+
+# Moonwater's current clock layer deliberately has no timezone database and
+# formats filesystem timestamps in UTC.  Keep date-bearing utility comparisons
+# on that common ground, just as the file-utility lane does.
+TZ=UTC0
+export TZ
+
+bin=${1:-/tmp/multi}
+rounds=${2:-600}
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT INT TERM
+mkdir "$work/read_dir"
+# An input can refuse to open for more reasons than being absent, and what the
+# tool names as the reason is the whole of the answer in those cases.
+: > "$work/denied"
+chmod 0000 "$work/denied"
+ln -s circle_two "$work/circle_one"
+ln -s circle_one "$work/circle_two"
+
+pass=0
+fail=0
+group=""
+
+printf 'alpha beta gamma\ndelta epsilon\n\nzeta eta theta iota\nalpha beta gamma\n' > "$work/a"
+printf 'one:two:three\nfour:five:six\nnodelim\nseven::nine\n' > "$work/b"
+printf '10\n9\n100\n2\n-3\n2.5\n0\n' > "$work/c"
+printf 'b 2 x\na 10 y\nc 1 z\na 3 w\nb 2 x\n' > "$work/d"
+printf 'apple\napple\nbanana\ncherry\ncherry\ncherry\ndate\n' > "$work/e"
+printf 'Hello World\nHELLO world\nhello WORLD\n' > "$work/f"
+printf 'aaa\tbbb\tccc\nddd\teee\tfff\n' > "$work/g"
+printf 'no newline at the end' > "$work/h"
+: > "$work/empty"
+printf '1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15\n' > "$work/i"
+printf 'foo123bar\nbaz456qux\nnothing here\nFOO789BAR\n' > "$work/j"
+printf 'x\n\ny\n\n\nz\n' > "$work/k"
+printf 'a\n\\:\\:\\:\nhdr\n\\:\\:\nbody1\nbody2\n\\:\nfoot\n' > "$work/sections"
+printf 'x\n\n\n\ny\n' > "$work/blanks"
+printf 'a\tb\nlonger line here\n\rwide\n' > "$work/wide"
+printf '  ab  cd ef\nxy\tzw\nplain\n' > "$work/spaced"
+printf '\376\377\n' > "$work/tr_high"
+awk 'BEGIN {
+        for (n = 70; n; n--) printf "0"; print "2"
+        for (n = 64; n; n--) printf "0"; print "10"
+        for (n = 63; n; n--) printf "0"; print "1"
+        for (n = 96; n; n--) printf "0"; print "0"
+}' > "$work/sort_zero_run"
+head -c 6000 /dev/zero | tr '\0' x > "$work/cut_wide"
+printf '\n' >> "$work/cut_wide"
+head -c 65535 /dev/zero | tr '\0' x > "$work/wc_boundary"
+printf ' y\n' >> "$work/wc_boundary"
+
+# cat's numbered/squeezed and visible walkers carry line state across reader
+# refills while emitting ordinary printable spans in bulk.
+head -c 65535 /dev/zero | tr '\0' x > "$work/cat_refill"
+printf '\n\n\nend\t\001\377\n' >> "$work/cat_refill"
+
+# tr compacts delete/squeeze blocks in place.  Put a retained byte on both
+# sides of a refill and a squeezed run across it, so neither path can lose
+# state at the reader boundary.
+head -c 65535 /dev/zero | tr '\0' a > "$work/tr_refill"
+printf 'b' >> "$work/tr_refill"
+head -c 65537 /dev/zero | tr '\0' a >> "$work/tr_refill"
+printf 'c\n' >> "$work/tr_refill"
+
+# uniq's zero-copy record view has to release a buffer-backed line before the
+# next refill. Exercise a delimiter in the final byte of a read, a line one
+# byte wider than a read, duplicates on both sides, and the same shape with a
+# NUL delimiter.
+head -c 65535 /dev/zero | tr '\0' x > "$work/uniq_edge_line"
+printf '\n' >> "$work/uniq_edge_line"
+cat "$work/uniq_edge_line" "$work/uniq_edge_line" > "$work/uniq_edge"
+head -c 65536 /dev/zero | tr '\0' y > "$work/uniq_wide_line"
+printf '\n' >> "$work/uniq_wide_line"
+cat "$work/uniq_wide_line" "$work/uniq_wide_line" >> "$work/uniq_edge"
+printf 'tail\ntail' >> "$work/uniq_edge"
+
+head -c 65535 /dev/zero | tr '\0' z > "$work/uniq_zero_line"
+printf '\000' >> "$work/uniq_zero_line"
+cat "$work/uniq_zero_line" "$work/uniq_zero_line" > "$work/uniq_zero_edge"
+printf 'tail\000tail' >> "$work/uniq_zero_edge"
+
+# A single physical block with a ten-digit logical size exercises the wc width
+# chosen from stat(2) without making wc read a gigabyte.
+sparse_width=false
+printf 'x\n' > "$work/sparse_width"
+if dd if=/dev/zero of="$work/sparse_width" bs=1 count=1 seek=999999999 conv=notrunc 2>/dev/null
+then
+        allocated=$(stat -c %b "$work/sparse_width" 2>/dev/null) || allocated=
+
+        case $allocated in
+        ''|*[!0-9]*) ;;
+        *) [ "$allocated" -le 2048 ] && sparse_width=true ;;
+        esac
+fi
+
+[ "$sparse_width" = true ] || rm -f "$work/sparse_width"
+
+# The first numbered line leaves the output buffer exactly full. The next
+# number therefore flushes while it is being written, which must not change
+# the left-aligned field width.
+head -c 65528 /dev/zero | tr '\0' x > "$work/nl_flush"
+printf '\ny\n' >> "$work/nl_flush"
+
+#       -z reads and writes lines that end in a NUL rather than a newline,
+#       which is the one fixture here that cannot be read by eye.
+printf 'xa\000yb\000zc\000' > "$work/zeros"
+printf 'a:b\000c:d\000a:b\000' > "$work/zpairs"
+
+# Power-of-two encodings cross both the three/five-byte quantum boundaries
+# and the text reader's 64 KiB refill boundary.  The binary sample keeps NUL
+# and high bytes in the differential rather than proving only ASCII text.
+printf 'f' > "$work/encoding_one"
+printf 'fo' > "$work/encoding_two"
+printf 'foo' > "$work/encoding_three"
+printf 'foobar\000\001\002\176\177\200\376\377' > "$work/encoding_binary"
+head -c 131077 /dev/zero | tr '\0' q > "$work/encoding_big"
+printf 'Zg==\n' > "$work/base64_one"
+printf 'Zm9vYmFyAAECfn+A/v8=\n' > "$work/base64_binary"
+printf 'Z!m@9v\n' > "$work/base64_garbage"
+printf 'Zg=\n' > "$work/base64_bad_padding"
+printf 'MY======\n' > "$work/base32_one"
+printf 'MZXW6YTBOIAACAT6P6AP57Y=\n' > "$work/base32_binary"
+printf 'M!Z@XW6===\n' > "$work/base32_garbage"
+printf '\206\117\322\157\265\131\367\133' > "$work/z85_known"
+printf 'HelloWorld' > "$work/z85_encoded"
+printf 'Hello\nWorld\n' > "$work/z85_wrapped"
+printf '00 000' > "$work/z85_garbage"
+printf '0000' > "$work/z85_short"
+printf '%%nSc1' > "$work/z85_overflow"
+head -c 30721 /dev/zero > "$work/z85_partial_quantum"
+head -c 65536 /dev/zero > "$work/z85_refill"
+head -c 81920 /dev/zero | tr '\0' 0 > "$work/z85_refill_encoded"
+
+# The three multi-input record walkers share text_reader.  These fixtures
+# cover unequal tails, repeated join keys (whose Cartesian product has an
+# observable order), NUL records, repeated standard input for paste, and a
+# record wider than one 64 KiB refill.
+printf 'a\nc\ne\n' > "$work/comm_left"
+printf 'b\nc\nd\n' > "$work/comm_right"
+printf 'aa\000cc\000ee\000' > "$work/comm_zero_left"
+printf 'bb\000cc\000dd\000' > "$work/comm_zero_right"
+printf 'b\na\n' > "$work/relation_unordered_pair"
+printf 'b\nc\na\n' > "$work/relation_unordered_tail"
+printf 'one\ntwo\nthree\n' > "$work/paste_left"
+printf '1\n2\n' > "$work/paste_right"
+printf 'a\nb\nc\nd\n' > "$work/paste_stdin"
+printf '1 a\n1 b\n2 c\n4 lone\n' > "$work/join_left"
+printf '1 x\n1 y\n3 z\n4 pair\n' > "$work/join_right"
+printf 'a:K:L\nb:M:N\n' > "$work/join_field_left"
+printf 'x:K:R\ny:Q:S\n' > "$work/join_field_right"
+printf 'A x\na y\nb z\n' > "$work/join_case_left"
+printf 'a q\na r\nc s\n' > "$work/join_case_right"
+printf 'name left extra\n1 x\n2 y z\n' > "$work/join_header_left"
+printf 'name right\n1 q r\n3 s\n' > "$work/join_header_right"
+printf '1 a\0002 b\000' > "$work/join_zero_left"
+printf '1 x\0003 y\000' > "$work/join_zero_right"
+{
+        printf '1 '
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\n1 b\n2 c\n'
+} > "$work/join_wide_left"
+printf '1 q\n1 r\n2 s\n' > "$work/join_wide_right"
+{
+        printf 'a\n'
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\nz\n'
+} > "$work/record_wide"
+
+# expand and unexpand keep display-column state across reader refills and file
+# boundaries.  Controls make the column rules observable without a terminal.
+printf '  \tA\tB\b\tC\r\tD\f\tE\n        X        Y\n' > "$work/tabs"
+printf '1234' > "$work/tabs_part_one"
+printf '\tX\n        Y\n' > "$work/tabs_part_two"
+{
+        head -c 65535 /dev/zero | tr '\0' ' '
+        printf '\tX\b\tY\n'
+} > "$work/tabs_wide"
+
+# fmt's paragraph reader must retain words while text_line is reused for the
+# next physical line.  The wide word crosses a refill without introducing a
+# second line buffer, and the other samples expose margins, prefixes, tabs,
+# sentence spacing and an unterminated final paragraph.
+printf 'The quick brown fox jumps over the lazy dog while another sentence follows behind.\nThis continuation has enough words to require a thoughtful set of line breaks.\n\nShort final paragraph.\n' > "$work/fmt_plain"
+printf '  First indented line carries enough words to wrap across the requested width.\n    Second indented line has a distinct margin and several more useful words.\n    Third indented line continues that secondary margin.\n' > "$work/fmt_indent"
+printf '  >  Alpha beta gamma delta epsilon zeta eta theta.\n  >  Iota kappa lambda mu nu xi omicron.\nplain material must pass through unchanged\n' > "$work/fmt_prefix"
+printf '\talpha beta gamma delta epsilon zeta eta theta iota kappa lambda\n\tsecond line stays in the same tabbed paragraph for filling\n' > "$work/fmt_tabs"
+printf 'final line without a newline and several words' > "$work/fmt_nonewline"
+printf 'first file has words but no terminator' > "$work/fmt_part_one"
+printf 'second file begins a separate paragraph\n' > "$work/fmt_part_two"
+{
+        head -c 65540 /dev/zero | tr '\0' x
+        printf ' tail words here\n'
+} > "$work/fmt_wide"
+
+# pr lays out one page of record descriptors over the shared line spill.  A
+# refill-crossing record and an input form feed exercise the two cases which
+# cannot be represented by a short, newline-only sample.
+seq 1 120 > "$work/pr_many"
+printf 'r00\nr01\nr02\nr03\nr04\nr05\nr06\nr07\nr08\nr09\nr10\nr11\nr12\nr13\nr14\nr15\n' > "$work/pr_balance"
+printf 'left\nlonger-left\nlast\n' > "$work/pr_left"
+printf 'right\nr2\n' > "$work/pr_right"
+printf 'before\fafter\ntail\n' > "$work/pr_formfeed"
+{
+        head -c 65540 /dev/zero | tr '\0' x
+        printf '\ntail\n'
+} > "$work/pr_wide"
+
+# ptx keeps source text in the shared arena and sorts offset-only keyword
+# occurrences.  Sentence punctuation, input/automatic references, selection
+# lists and a refill-crossing context expose each retained offset.
+printf 'one two?  three four!\nfive six\nAlpha beta alpha.\n' > "$work/ptx_source"
+printf 'REF1 red green\nREF2 blue red\n' > "$work/ptx_references"
+printf 'one\nAlpha\n' > "$work/ptx_ignore"
+printf 'two\nred\nAlpha\n' > "$work/ptx_only"
+printf ' ,.!?\t\n' > "$work/ptx_breaks"
+{
+        printf 'first '
+        head -c 65540 /dev/zero | tr '\0' x
+        printf ' middle sentence.  final words\n'
+} > "$work/ptx_wide"
+
+case_start()
+{
+        group=$1
+}
+
+compared()
+{
+        if cmp -s "$1" "$2" && [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        return 1
+}
+
+compare_report()
+{
+        name=$1
+
+        compared "$2" "$3" && return 0
+
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$2" | tr '\n\t' '|>')[$want_status]" \
+                "$(head -c 34 "$3" | tr '\n\t' '|>')[$got_status]"
+}
+
+# Runs one command both ways. The tool is the first argument; everything
+# after it is passed to both, and standard input comes from the named file.
+compare()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        if [ "$feed" = "-" ]; then
+                "$tool" "$@" > "$work/want" 2> /dev/null
+                want_status=$?
+                "$bin/$tool" "$@" > "$work/got" 2> /dev/null
+                got_status=$?
+        else
+                "$tool" "$@" < "$work/$feed" > "$work/want" 2> /dev/null
+                want_status=$?
+                "$bin/$tool" "$@" < "$work/$feed" > "$work/got" 2> /dev/null
+                got_status=$?
+        fi
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+
+#       Both channels together, for the cases where what a tool says about an
+#       input it could not open is the whole of what it produced.
+compare_spoken()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        "$tool" "$@" > "$work/want" 2>&1
+        want_status=$?
+        "$bin/$tool" "$@" > "$work/got" 2>&1
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+
+grep_color_compare()
+{
+        name=$1
+        colors=$2
+        shift 2
+
+        GREP_COLORS=$colors grep "$@" > "$work/want" 2>/dev/null
+        want_status=$?
+        GREP_COLORS=$colors "$bin/grep" "$@" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+
+grep_color_status()
+{
+        name=$1
+        shift
+
+        "$bin/grep" "$@" >/dev/null 2>&1
+        got_status=$?
+
+        # The box carries a grep marked "3.12-modified" whose invalid-color
+        # branch prints 4096 bytes of usage text and exits zero. Upstream GNU
+        # grep rejects the word with status two; keep that contract here.
+        if [ "$got_status" = 2 ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s want status 2 got %s\n' \
+                        "$group" "$name" "$got_status"
+        fi
+}
+
+grep_pty_capture()
+{
+        output=$1
+        colors=$2
+        no_color=$3
+        program=$4
+        shift 4
+
+        python3 - "$output" "$colors" "$no_color" "$program" "$@" <<'PY'
+import errno
+import os
+import pty
+import sys
+
+output, colors, no_color, program, *arguments = sys.argv[1:]
+pid, descriptor = pty.fork()
+
+if pid == 0:
+    os.environ["GREP_COLORS"] = colors
+    os.environ["TERM"] = "xterm"
+    if no_color == "set":
+        os.environ["NO_COLOR"] = "1"
+    else:
+        os.environ.pop("NO_COLOR", None)
+    os.execvp(program, [program, *arguments])
+
+data = bytearray()
+while True:
+    try:
+        block = os.read(descriptor, 65536)
+    except OSError as error:
+        if error.errno == errno.EIO:
+            break
+        raise
+    if not block:
+        break
+    data.extend(block)
+
+_, status = os.waitpid(pid, 0)
+with open(output, "wb") as stream:
+    stream.write(data)
+sys.exit(os.waitstatus_to_exitcode(status))
+PY
+}
+
+grep_color_pty_compare()
+{
+        name=$1
+        colors=$2
+        shift 2
+
+        grep_pty_capture "$work/want" "$colors" unset grep "$@"
+        want_status=$?
+        grep_pty_capture "$work/got" "$colors" unset "$bin/grep" "$@"
+        got_status=$?
+
+        if ! compared "$work/want" "$work/got"; then
+                printf '  %-8s %-30s want pty[%s] got pty[%s]\n' \
+                        "$group" "$name" "$want_status" "$got_status"
+        fi
+}
+
+grep_color_no_color()
+{
+        grep_pty_capture "$work/want" 'mt=31' unset grep --color=never alpha "$work/grep_color"
+        want_status=$?
+        grep_pty_capture "$work/got" 'mt=31' set "$bin/grep" --color=auto alpha "$work/grep_color"
+        got_status=$?
+
+        if ! compared "$work/want" "$work/got"; then
+                printf '  %-8s %-30s NO_COLOR auto leaked ANSI or changed output\n' \
+                        "$group" 'colour NO_COLOR'
+        fi
+}
+
+grep_color_no_color_always()
+{
+        NO_COLOR=1 GREP_COLORS='mt=31' grep --color=always alpha "$work/grep_color" > "$work/want" 2>/dev/null
+        want_status=$?
+        NO_COLOR=1 GREP_COLORS='mt=31' "$bin/grep" --color=always alpha "$work/grep_color" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        if ! compared "$work/want" "$work/got"; then
+                printf '  %-8s %-30s NO_COLOR overrode explicit always\n' \
+                        "$group" 'colour NO_COLOR always'
+        fi
+}
+
+grep_color_multicall()
+{
+        command="GREP_COLORS=mt=31 grep --color=always alpha '$work/grep_color'; grep alpha '$work/grep_color'"
+        /bin/sh -c "$command" > "$work/want" 2>/dev/null
+        want_status=$?
+        "${bin%/bin}/shell" -c "$command" > "$work/got" 2>/dev/null
+        got_status=$?
+
+        if ! compared "$work/want" "$work/got"; then
+                printf '  %-8s %-30s colour state leaked between calls\n' \
+                        "$group" 'colour multicall reset'
+        fi
+}
+
+# Output errors are part of a utility's result. /dev/full accepts opens and
+# rejects writes, so it reaches both direct writes and the final buffered
+# flush without depending on a pipe reader's timing.
+compare_full()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        [ -e /dev/full ] || return 0
+
+        "$tool" "$@" < "$work/$feed" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" < "$work/$feed" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want status %-8s got %s\n' \
+                "$group" "$name" "$want_status" "$got_status"
+}
+
+#       A tool that rewrites its input cannot be handed the same file twice:
+#       the second run would read what the first one wrote. Each side gets its
+#       own copy and the copies are compared afterwards, because what -i puts
+#       on standard output is nothing.
+compare_edit()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        shift 3
+
+        cp "$work/$feed" "$work/edit_want"
+        cp "$work/$feed" "$work/edit_got"
+
+        "$tool" "$@" "$work/edit_want" > /dev/null 2>&1
+        want_status=$?
+        "$bin/$tool" "$@" "$work/edit_got" > /dev/null 2>&1
+        got_status=$?
+
+        compare_report "$name" "$work/edit_want" "$work/edit_got"
+}
+
+# --follow-symlinks changes which inode -i replaces. Keep two identical
+# little trees so each implementation sees a link, then compare the link,
+# target, backup and status together.
+compare_follow_edit()
+{
+        name=$1
+        shift
+
+        for side in want got; do
+                mkdir -p "$work/follow_$side/sub"
+                printf 'alpha here\n' > "$work/follow_$side/sub/target"
+                ln -s sub/target "$work/follow_$side/link"
+        done
+
+        sed "$@" "$work/follow_want/link" > /dev/null 2>&1
+        want_status=$?
+        "$bin/sed" "$@" "$work/follow_got/link" > /dev/null 2>&1
+        got_status=$?
+
+        {
+                printf '%s\n' "$want_status"
+                readlink "$work/follow_want/link"
+                cat "$work/follow_want/sub/target"
+                cat "$work/follow_want/sub/target.bak" 2> /dev/null
+                [ -L "$work/follow_want/link" ] && printf 'link\n'
+        } > "$work/want"
+
+        {
+                printf '%s\n' "$got_status"
+                readlink "$work/follow_got/link"
+                cat "$work/follow_got/sub/target"
+                cat "$work/follow_got/sub/target.bak" 2> /dev/null
+                [ -L "$work/follow_got/link" ] && printf 'link\n'
+        } > "$work/got"
+
+        if compared "$work/want" "$work/got"; then
+                return 0
+        fi
+
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" \
+                "$(head -c 34 "$work/want" | tr '\n\t' '|>')" \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')"
+}
+
+#       A tool that writes somewhere other than standard output has a third
+#       thing to compare. Each side names its own file, and what landed in it
+#       is compared after the run along with what came back.
+compare_side()
+{
+        name=$1
+        tool=$2
+        feed=$3
+        script=$4
+        shift 4
+
+        rm -f "$work/side_want" "$work/side_got"
+
+        "$tool" "$@" "$(printf '%s' "$script" | sed "s|SIDE|$work/side_want|")" \
+                < "$work/$feed" > "$work/want" 2> /dev/null
+        want_status=$?
+        "$bin/$tool" "$@" "$(printf '%s' "$script" | sed "s|SIDE|$work/side_got|")" \
+                < "$work/$feed" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        cat "$work/side_want" >> "$work/want" 2> /dev/null
+        cat "$work/side_got" >> "$work/got" 2> /dev/null
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+
+# A fixed-memory tool may refuse a record it cannot hold, but it must not
+# print a convincing prefix and report success. The system tools have no such
+# ceiling, so these are contract checks on ours rather than differential rows.
+refuses_long_record()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        "$bin/$tool" "$@" < "$work/overlong" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q "^$tool: line too long$" "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_pipe()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        cat "$work/overlong" | "$bin/$tool" "$@" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q "^$tool: line too long$" "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_pattern()
+{
+        "$bin/grep" -f "$work/grep_long_pattern" "$work/grep_long_subject" \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep: pattern too long$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'grep pattern ceiling' 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_grep_context()
+{
+        name=$1
+        feed=$2
+        shift 2
+
+        "$bin/grep" "$@" "$work/$feed" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep: context .* too large$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_long_sed_script()
+{
+        "$bin/sed" -f "$work/sed_long_script" "$work/one" \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^sed: unsupported or invalid script$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'sed script ceiling' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+# tr used to accept an expanded set past 1,024 bytes, discard its tail, and
+# then translate with the plausible but wrong prefix. Keep the bounded set
+# representation explicit until it can be replaced without putting an
+# attacker-controlled repeat count straight into mmap.
+refuses_long_tr_set()
+{
+        printf 'b\n' | "$bin/tr" '[a*1024]b' '[x*1024]y' \
+                > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^tr: set too large$' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'tr set ceiling' 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_many_alternatives()
+{
+        pattern=x0
+        i=1
+
+        while [ "$i" -lt 34 ]; do
+                pattern="$pattern|x$i"
+                i=$((i + 1))
+        done
+
+        "$bin/grep" -E "$pattern" "$work/one" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -eq 2 ] && [ ! -s "$work/got" ] &&
+           grep -q '^grep:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" 'grep alternation ceiling' 'loud refusal [2]' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+compares_many_grep_globs()
+{
+        set --
+        i=0
+
+        while [ "$i" -lt 33 ]; do
+                set -- "$@" '--include=*'
+                i=$((i + 1))
+        done
+
+        compare 'many grep globs' grep one "$@" x "$work/one"
+}
+
+# These modes have no correct bounded implementation here yet. They must be
+# rejected instead of silently becoming ordinary byte sorting.
+refuses_sort_mode()
+{
+        name=$1
+        shift
+
+        "$bin/sort" "$@" < "$work/a" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^sort:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+refuses_ptx_format()
+{
+        name=$1
+        shift
+
+        "$bin/ptx" "$@" < "$work/ptx_source" > "$work/got" 2> "$work/err"
+        got_status=$?
+
+        if [ "$got_status" -ne 0 ] && [ ! -s "$work/got" ] &&
+           grep -q '^ptx:' "$work/err"
+        then
+                pass=$((pass + 1))
+                return 0
+        fi
+
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' \
+                "$group" "$name" 'loud refusal' \
+                "$(head -c 34 "$work/got" | tr '\n\t' '|>')[$got_status] $(head -1 "$work/err")"
+}
+
+case_start encoding
+compare 'base64 empty'        base64 empty
+compare 'base64 one byte'     base64 encoding_one
+compare 'base64 two bytes'    base64 encoding_two
+compare 'base64 three bytes'  base64 encoding_three
+compare 'base64 binary'       base64 encoding_binary
+compare 'base64 no wrap'      base64 encoding_binary -w 0
+compare 'base64 narrow wrap'  base64 encoding_binary -w 7
+compare 'base64 long stream'  base64 encoding_big -w 0
+compare 'base64 file'         base64 - "$work/encoding_binary"
+compare 'base64 decode one'   base64 base64_one -d
+compare 'base64 decode binary' base64 base64_binary -d
+compare 'base64 garbage'      base64 base64_garbage -di
+compare 'base64 bad padding'  base64 base64_bad_padding -d
+
+compare 'base32 empty'        base32 empty
+compare 'base32 one byte'     base32 encoding_one
+compare 'base32 two bytes'    base32 encoding_two
+compare 'base32 binary'       base32 encoding_binary
+compare 'base32 no wrap'      base32 encoding_big -w0
+compare 'base32 narrow wrap'  base32 encoding_binary -w 9
+compare 'base32 decode one'   base32 base32_one -d
+compare 'base32 decode binary' base32 base32_binary -d
+compare 'base32 garbage'      base32 base32_garbage -di
+
+compare 'basenc base64'       basenc encoding_binary --base64
+compare 'basenc base64url'    basenc encoding_binary --base64url
+compare 'basenc base32'       basenc encoding_binary --base32
+compare 'basenc base32hex'    basenc encoding_binary --base32hex
+compare 'basenc base16'       basenc encoding_binary --base16
+compare 'basenc base2msbf'    basenc encoding_three --base2msbf -w0
+compare 'basenc base2lsbf'    basenc encoding_three --base2lsbf -w0
+compare 'basenc base64 decode' basenc base64_binary --base64 -d
+compare 'basenc z85 known'     basenc z85_known --z85 -w0
+compare 'basenc z85 wrap'      basenc z85_known --z85 -w4
+compare 'basenc z85 narrow'    basenc z85_known --z85 -w1
+compare 'basenc z85 refill'    basenc z85_refill --z85 -w0
+compare 'basenc z85 partial quantum' basenc z85_partial_quantum --z85 -w0
+compare 'basenc z85 decode'    basenc z85_encoded --z85 -d
+compare 'basenc z85 wrapped decode' basenc z85_wrapped --z85 -d
+compare 'basenc z85 decode refill' basenc z85_refill_encoded --z85 -d
+compare 'basenc z85 garbage'   basenc z85_garbage --z85 -d
+compare 'basenc z85 ignore garbage' basenc z85_garbage --z85 -di
+compare 'basenc z85 short'     basenc z85_short --z85 -d
+compare 'basenc z85 overflow'  basenc z85_overflow --z85 -d
+
+case_start comm
+compare 'plain'              comm - "$work/comm_left" "$work/comm_right"
+compare 'suppress first'     comm - -1 "$work/comm_left" "$work/comm_right"
+compare 'suppress two'       comm - -13 "$work/comm_left" "$work/comm_right"
+compare 'output delimiter'   comm - --output-delimiter=:: "$work/comm_left" "$work/comm_right"
+compare 'empty delimiter'    comm - --output-delimiter= "$work/comm_left" "$work/comm_right"
+compare 'totals'             comm - --total "$work/comm_left" "$work/comm_right"
+compare 'no order check'     comm - --nocheck-order "$work/comm_left" "$work/comm_right"
+compare 'forced order check' comm - --check-order "$work/comm_left" "$work/comm_right"
+compare 'paired disorder default' comm - "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'paired disorder checked' comm - --check-order "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'disorder with unpaired' comm - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
+compare 'zero records'       comm - -z "$work/comm_zero_left" "$work/comm_zero_right"
+compare 'refill record'      comm - "$work/record_wide" "$work/record_wide"
+for record_width in 65534 65535 65536 131071; do
+        head -c "$record_width" /dev/zero | tr '\0' m > "$work/record_edge"
+        printf '\na\nz' >> "$work/record_edge"
+        compare "refill disorder $record_width" comm - --check-order \
+                "$work/record_edge" "$work/record_edge"
+        compare "refill unchecked $record_width" comm - --nocheck-order \
+                "$work/record_edge" "$work/record_edge"
+        compare "refill stdin $record_width" comm record_edge --check-order \
+                - "$work/record_edge"
+        tr '\n' '\0' < "$work/record_edge" > "$work/record_zero_edge"
+        compare "zero refill disorder $record_width" comm - -z --check-order \
+                "$work/record_zero_edge" "$work/record_zero_edge"
+done
+
+case_start paste
+compare 'parallel'           paste - "$work/paste_left" "$work/paste_right"
+compare 'serial'             paste - -s "$work/paste_left" "$work/paste_right"
+compare 'delimiter cycle'    paste - -d ,: "$work/paste_left" "$work/paste_right"
+compare 'escaped delimiters' paste - -d '\n\t\b' "$work/paste_left" "$work/paste_right"
+compare 'empty delimiter'    paste - -d '' "$work/paste_left" "$work/paste_right"
+compare 'stdin twice'        paste paste_stdin - -
+compare 'zero records'       paste - -z "$work/comm_zero_left" "$work/comm_zero_right"
+compare 'refill record'      paste - "$work/record_wide" "$work/paste_right"
+
+case_start join
+compare 'plain duplicates'   join - "$work/join_left" "$work/join_right"
+compare 'unpaired left'      join - -a1 "$work/join_left" "$work/join_right"
+compare 'unpaired both'      join - -a1 -a2 "$work/join_left" "$work/join_right"
+compare 'only left'          join - -v1 "$work/join_left" "$work/join_right"
+compare 'only both'          join - -v1 -v2 "$work/join_left" "$work/join_right"
+compare 'selected output'    join - -o 0,1.2,2.2 "$work/join_left" "$work/join_right"
+compare 'missing replacement' join - -a1 -e EMPTY -o 0,1.2,2.3 "$work/join_left" "$work/join_right"
+compare 'join fields'        join - -1 2 -2 2 "$work/join_field_left" "$work/join_field_right"
+compare 'separator'          join - -t: -1 2 -2 2 "$work/join_field_left" "$work/join_field_right"
+compare 'ignore case'        join - -i "$work/join_case_left" "$work/join_case_right"
+compare 'header'             join - --header "$work/join_header_left" "$work/join_header_right"
+compare 'paired disorder default' join - "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'paired disorder checked' join - --check-order "$work/relation_unordered_pair" "$work/relation_unordered_pair"
+compare 'disorder with unpaired' join - "$work/relation_unordered_pair" "$work/relation_unordered_tail"
+compare 'zero records'       join - -z "$work/join_zero_left" "$work/join_zero_right"
+compare 'refill duplicate'   join - "$work/join_wide_left" "$work/join_wide_right"
+compare 'auto duplicate products' join - -o auto "$work/join_left" "$work/join_right"
+compare 'auto missing sides' join - -o auto -a1 -a2 -e EMPTY "$work/join_left" "$work/join_right"
+compare 'auto nonfirst keys' join - -o auto -t: -1 2 -2 2 -a1 -a2 "$work/join_field_left" "$work/join_field_right"
+compare 'auto header width'  join - -o auto --header -a1 -a2 -e EMPTY "$work/join_header_left" "$work/join_header_right"
+compare 'auto zero records' join - -o auto -z -a1 -a2 "$work/join_zero_left" "$work/join_zero_right"
+
+# Forced ordering validates both duplicate runs before emitting their product.
+printf 'a 1\na 2\n0 bad\nz last\n' > "$work/join_bad_run"
+printf 'a R\nb R\n' > "$work/join_good_run"
+for join_selection in -a1 -a2 -v1 -v2; do
+        compare "checked left run $join_selection" join - --check-order \
+                "$join_selection" "$work/join_bad_run" "$work/join_good_run"
+        compare "checked right run $join_selection" join - --check-order \
+                "$join_selection" "$work/join_good_run" "$work/join_bad_run"
+done
+compare 'checked run on stdin' join join_bad_run --check-order -a1 \
+        - "$work/join_good_run"
+
+case_start grep
+compare 'literal'        grep a  alpha
+compare 'anchor start'   grep a  '^delta'
+compare 'anchor end'     grep a  'gamma$'
+compare 'any'            grep a  'd.lta'
+compare 'star'           grep a  'al*pha'
+compare 'star greedy'    grep a  'a.*a'
+compare 'class'          grep a  '[dz]'
+compare 'class range'    grep j  '[0-9]'
+compare 'class negated'  grep j  '[^0-9a-z]'
+compare 'class named'    grep j  '[[:digit:]]'
+compare 'group basic'    grep a  '\(al\)pha'
+compare 'backref'        grep a  '\(a\)lph\1'
+compare 'alternation'    grep a  'delta\|zeta'
+compare 'interval'       grep j  '[0-9]\{3\}'
+compare 'plus gnu'       grep j  '[0-9]\+'
+compare 'question gnu'   grep a  'alphas\?'
+compare 'word start'     grep a  '\<beta'
+compare 'word boundary'  grep a  '\bbeta\b'
+compare 'ignore case'    grep f  -i hello
+compare 'invert'         grep a  -v alpha
+compare 'numbered'       grep a  -n a
+compare 'count'          grep a  -c a
+compare 'quiet hit'      grep a  -q alpha
+compare 'quiet miss'     grep a  -q nowhere
+compare 'quiet count hit' grep a -q -c alpha
+compare 'quiet count miss' grep a -q -c nowhere
+compare 'no match'       grep a  nowhere
+compare 'combined'       grep a  -in ALPHA
+compare 'extended alt'   grep -  -E 'delta|zeta' "$work/a"
+compare 'extended plus'  grep -  -E '[0-9]+' "$work/j"
+compare 'extended group' grep -  -E '(al)+pha' "$work/a"
+compare 'ten groups whole match' grep a -Eo '(a)(l)(p)(h)(a)()()()()()'
+compare 'extended count' grep -  -E '[0-9]{3}' "$work/j"
+compare 'extended opt'   grep -  -E 'alphas?' "$work/a"
+compare 'fixed'          grep a  -F 'alpha beta'
+compare 'files listed'   grep -  -l a "$work/a" "$work/b"
+compare 'two files'      grep -  a "$work/a" "$work/b"
+compare 'two files count' grep - -c a "$work/a" "$work/b"
+compare 'whole line'     grep a  -x 'delta epsilon'
+compare 'whole word'     grep a  -w beta
+compare 'empty pattern'  grep a  ''
+compare 'dot star'       grep a  '.*'
+compare 'no trailing nl' grep h  newline
+compare 'expression flag' grep a -e alpha
+compare 'only matching'  grep a  -o 'a[a-z]*'
+compare 'only numbered'  grep a  -on 'a[a-z]*'
+compare 'only offsets'   grep a  -ob 'a[a-z]*'
+compare 'byte offset'    grep a  -b a
+compare 'max count'      grep a  -m 2 a
+compare 'max count none' grep a  -m 0 a
+compare 'after context'  grep a  -A1 alpha
+compare 'before context' grep a  -B1 zeta
+compare 'context both'   grep k  -C1 y
+compare 'context groups' grep i  -C1 '^[13]$'
+compare 'context count'  grep a  -c -A1 alpha
+compare 'files without'  grep a  -L nowhere
+compare 'files without hit' grep a -L alpha
+compare 'named stdin'    grep a  -H a
+compare 'named count'    grep a  -cH a
+compare 'named label'    grep a  --label=X -H a
+compare 'null names'     grep -  -Z -l a "$work/a" "$work/b"
+compare 'initial tab'    grep a  -T -n a
+compare 'initial tab off' grep a -T a
+compare 'empty pattern file' grep a -f /dev/null
+compare 'empty file invert' grep a -v -f /dev/null
+compare 'unknown letter' grep a  -N a
+compare 'long ignore case' grep f --ignore-case hello
+compare 'long invert'    grep a  --invert-match alpha
+compare 'long numbered'  grep a  --line-number a
+compare 'long count'     grep a  --count a
+compare 'long only'      grep a  --only-matching 'a[a-z]*'
+compare 'long max count' grep a  --max-count 2 a
+compare 'long context'   grep a  --context 1 alpha
+compare 'long word'      grep a  --word-regexp beta
+compare 'long fixed'     grep a  --fixed-strings 'alpha beta'
+compare 'long extended'  grep -  --extended-regexp 'delta|zeta' "$work/a"
+compare 'long quiet'     grep a  --quiet alpha
+compare 'long joined'    grep a  --regexp=alpha
+compare 'long unknown'   grep a  --nosuchflag a
+compare 'long after --'  grep a  -- --nosuchflag
+compare 'null data'      grep zeros -z a
+compare 'null data long' grep zeros --null-data a
+compare 'null data count' grep zeros -z -c a
+compare 'null data list' grep zeros -z -l a
+compare 'null data numbered' grep zeros -z -nb a
+compare 'null data only'  grep zeros -z -o a
+compare 'null data invert' grep zeros -z -v a
+compare 'null data names' grep zeros -z -Z -H a
+compare 'null data context' grep zeros -z -C1 b
+compare 'null data patterns' grep zeros -z -e a -e b
+
+# Mandatory literals are prefilters, never proof of the surrounding regex.
+# Optional/alternate branches must not make a literal mandatory, and capture
+# elision must leave backreferences and output spans unchanged.
+compare 'required suffix count' grep a -Ec '^alpha.*gamma$'
+compare 'required suffix reject' grep a -Ec '^missing.*gamma$'
+compare 'required suffix invert' grep a -Ev '^alpha.*gamma$'
+compare 'required suffix numbered' grep a -Enb '^alpha.*gamma$'
+compare 'required suffix context' grep a -EC1 '^alpha.*gamma$'
+compare 'required suffix folding' grep f -Ei '^hello.*WORLD$'
+compare 'required suffix optional' grep a -E '(alpha.*)?gamma'
+compare 'required suffix alternative' grep a -E 'missing|alpha.*gamma'
+compare 'required literal capture' grep a -Eo '(alpha).*gamma'
+compare 'required literal backref' grep a -E '(a)lph\1.*gamma'
+compare 'required literal null data' grep zeros -zE 'a.*b'
+
+case_start sed
+compare 'substitute'     sed a  's/alpha/ALPHA/'
+compare 'global'         sed a  's/a/A/g'
+compare 'nth'            sed a  's/a/A/2'
+compare 'nth global'     sed a  's/a/A/2g'
+compare 'print flag'     sed a  -n 's/alpha/X/p'
+compare 'ampersand'      sed a  's/alpha/[&]/'
+compare 'group ref'      sed a  's/\(al\)pha/\1/'
+compare 'two groups'     sed b  's/\(one\):\(two\)/\2:\1/'
+compare 'empty match'    sed a  's/x*/-/g'
+compare 'delete'         sed a  '/alpha/d'
+compare 'delete range'   sed i  '2,4d'
+compare 'quiet print'    sed a  -n '2p'
+compare 'last line'      sed a  -n '$p'
+compare 'line range'     sed i  -n '3,7p'
+compare 'regex range'    sed a  -n '/delta/,/zeta/p'
+compare 'negated'        sed a  -n '/alpha/!p'
+compare 'quit'           sed i  '3q'
+compare 'line number'    sed a  -n '='
+compare 'transliterate'  sed a  'y/abc/xyz/'
+compare 'other delim'    sed b  's,one,ONE,'
+compare 'escaped delim'  sed b  's/one:two/X/'
+compare 'block'          sed i  -n '2,4{p}'
+compare 'two scripts'    sed a  -e 's/a/1/' -e 's/b/2/'
+compare 'semicolons'     sed a  's/a/1/;s/b/2/'
+compare 'anchor'         sed a  's/^alpha/X/'
+compare 'anchor end'     sed a  's/gamma$/X/'
+compare 'class'          sed j  's/[0-9]\+/N/'
+compare 'case flag'      sed f  's/hello/X/I'
+compare 'append'         sed k  '2a added'
+compare 'insert'         sed k  '2i added'
+compare 'change'         sed k  '2c changed'
+compare 'hold'           sed a  -n '1h;$ {x;p}'
+compare 'no trailing nl' sed h  's/newline/NEWLINE/'
+compare 'delete blank'   sed k  '/^$/d'
+compare 'sub blank'      sed k  's/^$/EMPTY/'
+compare 'multiple files' sed -  's/a/A/' "$work/a" "$work/b"
+compare 'long quiet'     sed a  --quiet '2p'
+compare 'long silent'    sed a  --silent '2p'
+compare 'long expression' sed a --expression='s/a/A/'
+compare 'long file'      sed a  --file /dev/null
+compare 'empty script file' sed a -f /dev/null
+compare 'extended alt'   sed a  -E 's/alpha|zeta/X/'
+compare 'extended plus'  sed a  -E 's/(al)+pha/X/'
+compare 'extended group' sed a  -E 's/(a)(l)/\2\1/'
+compare 'extended opt'   sed a  -E 's/alphas?/X/'
+compare 'extended count' sed a  -E 's/a{2}/X/'
+compare 'extended r flag' sed a -r 's/alpha|zeta/X/'
+compare 'long extended'  sed a  --regexp-extended 's/alpha|zeta/X/'
+compare 'basic still basic' sed a 's/\(al\)pha/X/'
+compare 'separate last'  sed -  -s -n '$p' "$work/a" "$work/b"
+compare 'joined last'    sed -  -n '$p' "$work/a" "$work/b"
+compare 'separate number' sed - -s -n '=' "$work/a" "$work/b"
+compare 'long separate'  sed -  --separate -n '$p' "$work/a" "$work/b"
+compare 'unbuffered'     sed a  -u 's/a/A/'
+compare 'long unbuffered' sed a --unbuffered 's/a/A/'
+compare 'line length'    sed a  -l 2 's/a/A/'
+compare 'long line length' sed a --line-length 2 's/a/A/'
+compare 'posix'          sed a  --posix 's/a/A/'
+compare 'sandbox'        sed a  --sandbox 's/a/A/'
+compare 'in place no files' sed a -i 's/a/A/'
+compare 'unknown letter' sed a  -Q 's/a/A/'
+compare 'long unknown'   sed a  --nosuchflag 's/a/A/'
+compare 'missing file'   sed -  's/a/A/' "$work/nosuch"
+compare_edit 'in place'  sed a  -i 's/a/A/'
+compare_edit 'in place backup' sed a -i.bak 's/a/A/'
+compare_edit 'in place long' sed a --in-place 's/a/A/'
+compare_edit 'in place long backup' sed a --in-place=.bak 's/a/A/'
+compare_edit 'in place quiet' sed a -n -i '2p'
+compare_follow_edit 'follow symlink' --follow-symlinks -i.bak 's/alpha/beta/'
+compare_edit 'follow plain' sed a --follow-symlinks -i 's/a/A/'
+compare 'follow without edit' sed a --follow-symlinks 's/a/A/'
+compare 'null data'      sed zeros -z 's/a/A/'
+compare 'null data long' sed zeros --null-data 's/a/A/'
+compare 'null data number' sed zeros -z -n '='
+compare 'null data last' sed zeros -z '$d'
+
+# Exercise each store after either exchange or substitution has changed its
+# physical backing, including an unterminated record and embedded NUL data.
+for first in h H g G x 's/a/expanded/g' 'N;D'; do
+        for second in h H g G x 's/a/A/g'; do
+                for fixture in a h zeros; do
+                        compare "space transitions $fixture $first/$second" \
+                                sed "$fixture" -n "$first;$second;p"
+                done
+                compare "NUL space transitions $first/$second" \
+                        sed zeros -z -n "$first;$second;p"
+        done
+done
+
+case_start cut
+compare 'field one'      cut b  -d: -f1
+compare 'field two'      cut b  -d: -f2
+compare 'field list'     cut b  -d: -f1,3
+compare 'field range'    cut b  -d: -f1-2
+compare 'field open'     cut b  -d: -f2-
+compare 'suppress'       cut b  -d: -f2 -s
+compare 'tab default'    cut g  -f2
+compare 'characters'     cut a  -c1-5
+compare 'character list' cut a  -c1,3,5
+compare 'character open' cut a  -c6-
+compare 'bytes'          cut a  -b1-3
+compare 'field high'     cut b  -d: -f9
+compare 'no newline'     cut h  -c1-4
+compare 'complement fields' cut b --complement -d: -f2
+compare 'complement chars' cut a --complement -c1-3
+compare 'complement list' cut a  --complement -c1,3
+compare 'output delimiter' cut b -d: -f1,3 --output-delimiter=X
+compare 'output chars'   cut a  -c1,3 --output-delimiter=X
+compare 'output ranges'  cut a  -c1-2,4 --output-delimiter=X
+compare 'output joined'  cut a  -c1,2 --output-delimiter=X
+compare 'output short'   cut a  -OX -c1,3
+compare 'whitespace one' cut spaced -w -f1
+compare 'whitespace two' cut spaced -w -f2
+compare 'whitespace rest' cut spaced -w -f2-
+compare 'whitespace list' cut spaced -w -f1,2
+compare 'long delimiter' cut b  --delimiter=: --fields=1
+compare 'long characters' cut a --characters=1-3
+compare 'long bytes'     cut a  --bytes=2-
+compare 'long suppress'  cut b  --only-delimited -d: -f2
+compare 'two lists'      cut a  -b 2 -c1-3
+compare 'delimiter no fields' cut a -d, -c1
+compare 'suppress no fields' cut a -s -c1
+compare 'whitespace no fields' cut a -w -c1
+compare 'whitespace and delimiter' cut spaced -w -d: -f1
+compare 'no partial'     cut a   --no-partial -c1-3
+compare 'unknown letter' cut a  -Z -c1
+compare 'long unknown'   cut a  --nosuchflag -c1
+compare 'null data'      cut zpairs -z -d: -f2
+compare 'null data chars' cut zpairs -z -c1
+compare 'null data long' cut zpairs --zero-terminated -d: -f1
+compare 'descending range' cut a -c5-2
+compare 'empty list'       cut a -c ''
+compare 'trailing comma'   cut a -c 1,
+
+case_start tr
+compare 'translate'      tr a  a-z A-Z
+compare 'single'         tr a  a X
+compare 'short set'      tr a  abc X
+compare 'delete'         tr a  -d aeiou
+compare 'squeeze'        tr a  -s ' '
+compare 'squeeze set'    tr e  -s a
+compare 'complement'     tr j  -d -c '0-9\n'
+compare 'class upper'    tr a  '[:lower:]' '[:upper:]'
+compare 'class digit'    tr j  -d '[:digit:]'
+compare 'escape'         tr a  ' ' '\n'
+compare 'range map'      tr a  'a-e' '1-5'
+compare 'delete squeeze' tr a  -ds aeiou ' '
+compare 'truncate'       tr a  -t abc xy
+compare 'truncate range' tr a  -t a-z A-M
+compare 'long complement' tr a --complement a-y X
+compare 'long delete'    tr a  --delete ab
+compare 'long squeeze'   tr a  --squeeze-repeats an
+compare 'long truncate'  tr a  --truncate-set1 abc xy
+compare 'delete refill'  tr tr_refill -d a
+compare 'squeeze refill' tr tr_refill -s a
+compare 'extra operand'  tr a  -d a A
+compare 'missing second' tr a  a
+compare 'three operands' tr a  -s a b c
+compare 'long unknown'   tr a  --nosuchflag a b
+
+case_start sort
+compare 'plain'          sort a
+compare 'reverse'        sort a  -r
+compare 'numeric'        sort c  -n
+compare 'numeric rev'    sort c  -nr
+compare 'numeric long zero runs' sort sort_zero_run -n
+compare 'unique'         sort e  -u
+compare 'unique plain'   sort a  -u
+compare 'fold'           sort f  -f
+compare 'key two'        sort d  -k2
+compare 'key two numeric' sort d -k2n
+compare 'key range'      sort d  -k1,1
+compare 'key two only'   sort d  -k2,2
+compare 'separator'      sort b  -t: -k2
+compare 'separator num'  sort b  -t: -k1
+compare 'blanks'         sort d  -b -k2
+compare 'key reverse'    sort d  -k2r
+compare 'two keys'       sort d  -k1,1 -k2n
+compare 'numeric unique' sort c  -nu
+compare 'no newline'     sort h
+
+case_start uniq
+compare 'plain'          uniq e
+compare 'count'          uniq e  -c
+compare 'repeated'       uniq e  -d
+compare 'unique only'    uniq e  -u
+compare 'ignore case'    uniq f  -i
+compare 'skip fields'    uniq d  -f1
+compare 'skip chars'     uniq e  -s1
+compare 'width'          uniq e  -w2
+compare 'count repeated' uniq e  -cd
+compare 'all repeated'   uniq e  -D
+compare 'all repeated none' uniq e --all-repeated=none
+compare 'all repeated prepend' uniq e --all-repeated=prepend
+compare 'all repeated separate' uniq e --all-repeated=separate
+compare 'group'          uniq e  --group
+compare 'group separate' uniq e  --group=separate
+compare 'group prepend'  uniq e  --group=prepend
+compare 'group append'   uniq e  --group=append
+compare 'group both'     uniq e  --group=both
+compare 'long count'     uniq e  --count
+compare 'long repeated'  uniq e  --repeated
+compare 'long unique'    uniq e  --unique
+compare 'long ignore case' uniq f --ignore-case
+compare 'long skip fields' uniq d --skip-fields 1
+compare 'long skip chars' uniq e --skip-chars 1
+compare 'long check chars' uniq e --check-chars 2
+compare 'all repeated counted' uniq e -c -D
+compare 'group with count' uniq e --group -c
+compare 'bad repeat word' uniq e --all-repeated=nosuch
+compare 'long unknown'   uniq e  --nosuchflag
+compare 'null data'      uniq zpairs -z
+compare 'null data count' uniq zpairs -z -c
+compare 'null data long' uniq zpairs --zero-terminated
+compare 'no newline'     uniq h
+compare 'no newline count' uniq h -c
+compare 'null no newline' uniq -  -z "$work/h"
+compare 'reader edges'    uniq uniq_edge
+compare 'reader edges count' uniq uniq_edge -c
+compare 'null reader edges' uniq uniq_zero_edge -z
+compare 'null reader edges count' uniq uniq_zero_edge -z -c
+
+case_start head
+compare 'default'        head i
+compare 'count'          head i  -n 3
+compare 'joined'         head i  -n3
+compare 'short'          head i  -3
+compare 'zero'           head i  -n 0
+compare 'explicit positive lines' head i -n +3
+compare 'bytes'          head a  -c 10
+compare 'explicit positive bytes' head a -c +10
+compare 'more than have' head a  -n 100
+compare 'two files'      head -  -n 2 "$work/a" "$work/b"
+compare 'no newline'     head h  -n 1
+compare 'long lines'     head i  --lines 3
+compare 'long positive lines' head i --lines=+3
+compare 'long bytes'     head a  --bytes 10
+compare 'long quiet'     head -  --quiet "$work/a" "$work/b"
+compare 'long silent'    head -  --silent "$work/a" "$work/b"
+compare 'long verbose'   head a  --verbose
+compare 'long unknown'   head a  --nosuchflag
+compare 'null data'      head zeros -z -n 2
+compare 'null data long' head zeros --zero-terminated -n 2
+
+#       A count with a minus in front of it is what to leave off the end,
+#       which is found by seeking when the input is a file and by holding
+#       every line when it is a pipe.
+compare 'all but last'   head i  -n -1
+compare 'all but three'  head i  -n -3
+compare 'all but none'   head i  -n -0
+compare 'all but too many' head i -n -99
+compare 'bytes but last' head a  -c -3
+compare 'bytes but none' head a  -c -0
+compare 'bytes but all'  head a  -c -999
+compare 'short unended'  head h  -n -1
+compare 'short unended byte' head h -c -1
+compare 'short zero ends' head zeros -z -n -1
+compare 'short long form' head i  --lines=-2
+compare 'short two files' head -  -n -1 "$work/a" "$work/e"
+compare 'short by name'   head -  -c -4 "$work/a"
+
+case_start tail
+compare 'default'        tail i
+compare 'count'          tail i  -n 3
+compare 'joined'         tail i  -n3
+compare 'short'          tail i  -3
+compare 'from line'      tail i  -n +12
+compare 'bytes'          tail a  -c 10
+compare 'more than have' tail a  -n 100
+compare 'two files'      tail -  -n 2 "$work/a" "$work/b"
+compare 'no newline'     tail h  -n 1
+compare 'long lines'     tail i  --lines 3
+compare 'long bytes'     tail a  --bytes 10
+compare 'long quiet'     tail -  --quiet "$work/a" "$work/b"
+compare 'long verbose'   tail a  --verbose
+compare 'retry'          tail a  --retry
+compare 'pid ignored'    tail a  --pid 2
+compare 'sleep ignored'  tail a  --sleep-interval 2
+compare 'unchanged stats' tail a --max-unchanged-stats 2
+compare 'sleep short'    tail a  -s 2
+compare 'debug'          tail a  --debug
+compare 'long unknown'   tail a  --nosuchflag
+compare 'null data'      tail zeros -z -n 2
+compare 'null data long' tail zeros --zero-terminated -n 2
+compare 'null data file' tail -  -z -n 2 "$work/zeros"
+
+case_start wc
+compare 'default'        wc a
+compare 'lines'          wc a  -l
+compare 'words'          wc a  -w
+compare 'bytes'          wc a  -c
+compare 'characters'     wc a  -m
+compare 'lines characters' wc a -lm
+compare 'word at read boundary' wc wc_boundary -w
+compare 'default at read boundary' wc wc_boundary
+compare 'lines words at boundary' wc wc_boundary -lw
+compare 'words bytes at boundary' wc wc_boundary -wc
+compare 'words chars at boundary' wc wc_boundary -wm
+compare 'named'          wc -  "$work/a"
+compare 'two files'      wc -  "$work/a" "$work/b"
+compare 'lines named'    wc -  -l "$work/a"
+compare 'lines two'      wc -  -l "$work/a" "$work/b"
+[ "$sparse_width" = false ] || \
+        compare 'width ten digits' wc - -c "$work/sparse_width" "$work/a"
+compare 'no newline'     wc h
+compare 'empty'          wc k  -l
+compare 'longest'        wc a  -L
+compare 'longest tabs'   wc wide -L
+compare 'longest bytes'  wc wide -Lc
+compare 'longest all'    wc wide -lwcmL
+compare 'longest two'    wc -    -L "$work/a" "$work/wide"
+compare 'long lines'     wc a    --lines
+compare 'long words'     wc a    --words
+compare 'long bytes'     wc a    --bytes
+compare 'long chars'     wc a    --chars
+compare 'long longest'   wc wide --max-line-length
+compare 'total always stdin' wc a --total=always
+compare 'total only stdin' wc a --total=only
+compare 'total always one' wc - --total=always "$work/a"
+compare 'total never two' wc - --total=never "$work/a" "$work/b"
+compare 'total only two'  wc - --total=only "$work/a" "$work/b"
+compare 'total error mix' wc - --total=auto "$work/nosuch" "$work/a"
+compare 'total last wins' wc - --total=only --total=always "$work/a"
+compare 'total short value' wc - --total=o "$work/a"
+compare 'total ambiguous' wc - --total=a "$work/a"
+[ ! -r /proc/version ] || \
+        compare 'proc bytes' wc - -c /proc/version
+[ ! -r /sys/kernel/profiling ] || \
+        compare 'sysfs bytes' wc - -c /sys/kernel/profiling
+compare 'long unknown'   wc a    --nosuchflag
+compare 'debug'          wc a    --debug
+
+case_start rev
+compare 'plain'          rev a
+compare 'blank lines'    rev k
+compare 'no newline'     rev h
+compare 'null data'      rev zeros -0
+compare 'null data long' rev zeros --zero
+
+case_start nl
+compare 'default'        nl a
+compare 'no final newline' nl h
+compare 'no final numbered' nl h -b a -n rn
+compare 'no final separator' nl h -w 4 -s ';'
+compare 'all lines'      nl a  -ba
+compare 'width'          nl a  -w3
+compare 'separator'      nl a  -s:
+compare 'start'          nl a  -v5
+compare 'step'           nl a  -i2
+compare 'blank heavy'    nl k
+compare 'no numbering'   nl a   -bn
+compare 'pattern'        nl a   -b p^alpha
+compare 'pattern miss'   nl a   -b pnowhere
+compare 'sections'       nl sections
+compare 'sections all'   nl sections -ha -fa
+compare 'sections keep'  nl sections -p -ha -fa
+compare 'join blanks'    nl blanks -ba -l3
+compare 'join blanks two' nl blanks -ba -l2
+compare 'delimiter'      nl sections -d '\:'
+compare 'format left'    nl a   -nln
+compare 'format left flush' nl nl_flush -nln -w6
+compare 'format zeros'   nl a   -nrz
+compare 'format right'   nl a   -nrn
+compare 'long body'      nl a   --body-numbering=a
+compare 'long width'     nl a   --number-width 3
+compare 'long separator' nl a   --number-separator=:
+compare 'long start'     nl a   --starting-line-number 5
+compare 'long increment' nl a   --line-increment 2
+compare 'long format'    nl a   --number-format=ln
+compare 'long header'    nl sections --header-numbering=a --footer-numbering=a
+compare 'long renumber'  nl sections --no-renumber -ha -fa
+compare 'long join'      nl blanks --join-blank-lines 3 -ba
+compare 'long delimiter' nl sections --section-delimiter '\:'
+compare 'unknown letter' nl a   -Z
+compare 'long unknown'   nl a   --nosuchflag
+
+case_start fold
+compare 'default'        fold a
+compare 'width'          fold a  -w 8
+compare 'joined width'   fold a  -w8
+compare 'spaces'         fold a  -w 8 -s
+compare 'narrow'         fold a  -w 3
+compare 'bytes'          fold g  -w 4 -b
+compare 'no newline'     fold h  -w 5
+compare 'long width'     fold a  --width 8
+compare 'long bytes'     fold g  --bytes --width 4
+compare 'long spaces'    fold a  --spaces --width 8
+compare 'long unknown'   fold a  --nosuchflag
+compare 'characters'     fold a  -c -w 8
+compare 'long characters' fold a --characters --width 8
+compare 'characters keep tab columns' fold g -c -w 3
+compare 'width plus'     fold a  -w +8
+compare 'width zero'     fold a  -w 0
+compare 'width malformed' fold a -w nope
+
+case_start fmt
+compare 'paragraphs'      fmt fmt_plain
+compare 'width'           fmt fmt_plain -w 37
+compare 'joined width'    fmt fmt_plain -w37
+compare 'goal'            fmt fmt_plain -w39 -g31
+compare 'crown margin'    fmt fmt_indent -c -w35
+compare 'tagged paragraph' fmt fmt_indent -t -w35
+compare 'split only'      fmt fmt_plain -s -w37
+compare 'uniform spacing' fmt fmt_plain -u -w37
+compare 'prefix'          fmt fmt_prefix -p '  >  ' -w37
+compare 'long prefix'     fmt fmt_prefix --prefix='  >  ' --width=37
+compare 'tab indentation' fmt fmt_tabs -w37
+compare 'old width'       fmt fmt_plain -37
+compare 'no newline'      fmt fmt_nonewline
+compare 'separate files'  fmt - "$work/fmt_part_one" "$work/fmt_part_two"
+compare 'refill crossing' fmt fmt_wide
+compare 'bad width'       fmt fmt_plain -w 2501
+compare 'bad goal'        fmt fmt_plain -w 20 -g 21
+compare 'unknown mode'    fmt fmt_plain --not-a-mode
+
+case_start pr
+compare 'plain body'      pr pr_many -t
+compare 'page range'      pr pr_many -t -l 7 +3:4
+compare 'long page range' pr pr_many -t -l 7 --pages=3:4
+compare 'header pages'    pr pr_many -l 12 -D '%Y-%m-%d' -h HEAD
+compare 'form feed pages' pr pr_formfeed -l 12 -D '%Y' -F
+compare 'input form feed' pr pr_formfeed -t -l 2
+compare 'omit pagination' pr pr_formfeed -T -l 2
+compare 'double space'    pr pr_many -t -d -l 8
+compare 'columns down'    pr pr_many -t -3 -w 31
+compare 'balanced final columns' pr pr_balance -t -3 -w 41 -l 8
+compare 'balanced numbered columns' pr pr_balance -t -3 -n:3 -w 41 -l 8
+compare 'columns across'  pr pr_many -t -3 -a -w 31
+compare 'column separator' pr pr_many -t -2 -w 20 -s:
+compare 'separator string' pr pr_many -t -2 -w 22 -S '::'
+compare 'joined columns'  pr pr_many -t -2 -J -w 20
+compare 'numbered'        pr pr_many -t -n:4
+compare 'numbered range reset' pr pr_many -t -l 7 -n -N 5 +2
+compare 'numbered columns' pr pr_many -t -2 -n -w 30
+compare 'margin width'    pr pr_many -l 12 -D '%Y' -o 4 -w 40
+compare 'page truncate'   pr pr_many -t -W 1
+compare 'explicit one column truncation' pr pr_wide -t -1 -w 8
+compare 'one column keeps records whole' pr pr_wide -t -1
+compare 'column separator keeps records whole' pr pr_wide -t -2 -s:
+compare 'merged single file keeps records whole' pr - -m -t "$work/pr_wide"
+compare 'input tab width' pr g -t -e4
+compare 'output tab width' pr pr_many -t -2 -i4 -w 20
+compare 'merge files'     pr - -m -t -w 30 "$work/pr_left" "$work/pr_right"
+compare 'merge numbered'  pr - -m -t -n -w 36 "$work/pr_left" "$work/pr_right"
+compare 'refill crossing' pr pr_wide -t
+
+case_start ptx
+compare 'default index'    ptx ptx_source
+compare 'ignore case'      ptx ptx_source -f
+compare 'narrow width'     ptx ptx_source -w 40
+compare 'gap width'        ptx ptx_source -g 5 -w 50
+compare 'truncation flag'  ptx ptx_source -F '++' -w 32
+[ "$(ptx --version 2>/dev/null | head -1)" != 'ptx (GNU coreutils) 9.11' ] || \
+        compare 'typeset width' ptx ptx_source -t
+compare 'automatic refs'   ptx ptx_source -A
+compare 'right refs'       ptx ptx_source -A -R
+compare 'input refs'       ptx ptx_references -r
+compare 'input right refs' ptx ptx_references -r -R
+compare 'ignore words'     ptx ptx_source -i "$work/ptx_ignore"
+compare 'folded ignores'   ptx ptx_source -f -i "$work/ptx_ignore"
+compare 'only words'       ptx ptx_source -o "$work/ptx_only"
+compare 'both word lists'  ptx ptx_source -i "$work/ptx_ignore" -o "$work/ptx_only"
+compare 'sentence regexp'  ptx ptx_source -S '\n'
+compare 'word regexp'      ptx ptx_source -W '[a-z][a-z]*'
+compare 'folded word regexp' ptx ptx_source -f -W '[a-z][a-z]*'
+compare 'break characters' ptx ptx_source -b "$work/ptx_breaks"
+compare 'multiple files'   ptx - -A "$work/ptx_source" "$work/ptx_references"
+compare 'refill crossing'  ptx ptx_wide
+refuses_ptx_format 'traditional format' -G
+refuses_ptx_format 'roff format' -O
+refuses_ptx_format 'tex format' -T
+
+case_start tabs
+compare 'expand default'        expand tabs
+compare 'expand initial'        expand tabs -i
+compare 'expand explicit'       expand tabs -t '3,5'
+compare 'expand absolute tail'  expand tabs -t '3,5,/4'
+compare 'expand relative tail'  expand tabs --tabs='3,5,+4'
+compare 'expand repeated list'  expand tabs -t3 -t5
+compare 'expand old spacing'    expand tabs -4
+compare 'expand files continue' expand - "$work/tabs_part_one" "$work/tabs_part_two"
+compare 'expand refill'         expand tabs_wide -t 65536,65544
+compare 'unexpand initial'      unexpand tabs
+compare 'unexpand all'          unexpand tabs -a
+compare 'unexpand first only'   unexpand tabs -a --first-only
+compare 'unexpand explicit'     unexpand tabs -t '3 5'
+compare 'unexpand absolute tail' unexpand tabs -t '3,5,/4'
+compare 'unexpand relative tail' unexpand tabs --tabs='3,5,+4'
+compare 'unexpand repeated list' unexpand tabs -t3 -t5
+compare 'unexpand files continue' unexpand - -a "$work/tabs_part_one" "$work/tabs_part_two"
+compare 'unexpand refill'       unexpand tabs_wide -a
+compare 'expand bad order'      expand tabs -t 5,3
+compare 'unexpand bad repeat'   unexpand tabs -t 3,/4,+2
+
+case_start tee
+compare 'passthrough'    tee a  "$work/tee1"
+compare 'append'         tee a  -a "$work/tee2"
+
+
+#       Harder cases. Everything above was written alongside the code and
+#       agrees for that reason; these were written to disagree.
+
+printf 'aaa\nab\nabab\na\n\nbbb\n' > "$work/m"
+printf '  leading blanks\n\ttab first\nx  y   z\n' > "$work/n"
+printf '0005\n5\n5.10\n5.9\n-0\n+7\n007\nnotanumber\n' > "$work/o"
+printf 'a,b,,c\n,x,y\nsingle\n' > "$work/p"
+printf 'AAA\naaa\nBBB\nbbb\nAAA\n' > "$work/q"
+printf 'field1 field2 field3\nz1 a2 m3\nz1 b2 a3\n' > "$work/r"
+printf 'one\ntwo\nthree\n' > "$work/s"
+printf 'x\ty\tz\n' > "$work/t"
+printf 'The quick brown fox jumps over the lazy dog again and again today\n' > "$work/u"
+printf '3\n1K\n2M\n500\n-1G\n2\n900K\n' > "$work/v"
+printf 'a\nc\ne\n' > "$work/w"
+printf '1.10\n1.9\n1.2.3\nfoo-1.0.tar.gz\nfoo-1.0~rc1\nfoo-2.tar.gz\n.hidden\n' > "$work/y"
+printf 'Mar\nJAN\nfeb\nnotamonth\nDec 3\n' > "$work/z"
+printf 'b\nd\nf\n' > "$work/x"
+
+#       A directory to walk. Both tools read it with the same getdents on the
+#       same filesystem, so the order they print is the same order; nothing
+#       here sorts and neither does GNU.
+
+mkdir -p "$work/tree/inner" "$work/tree/other" "$work/bare"
+printf 'alpha here\nbeta here\n' > "$work/tree/one.txt"
+printf 'alpha again\n' > "$work/tree/two.log"
+printf 'gamma only\n' > "$work/tree/three.txt"
+printf 'alpha inner\n' > "$work/tree/inner/deep.txt"
+printf 'alpha other\n' > "$work/tree/other/far.log"
+ln -s one.txt "$work/tree/link.txt"
+# A link back up the tree, which -R would follow forever without the walk's
+# device and node check.
+mkdir -p "$work/loop_tree/inner"
+printf 'alpha down here\n' > "$work/loop_tree/inner/deep.txt"
+ln -s .. "$work/loop_tree/inner/back"
+printf 'alpha alpha beta\nzero\nalpha tail\n' > "$work/grep_color"
+printf 'raw\033[0m alpha byte\n' > "$work/grep_color_control"
+printf 'ALPHA alpha beta\na.*a\nsword word wordy\nalpha\nababa\n' > "$work/grep_color_patterns"
+printf 'final alpha' > "$work/grep_color_final"
+grep_color_name=$(printf 'name\033byte')
+printf 'alpha named\n' > "$work/$grep_color_name"
+printf '*.log\nthree*\n' > "$work/grep_excludes"
+printf 'one.txt\n' > "$work/grep_excludes_two"
+printf '*.txt' > "$work/grep_excludes_nonl"
+: > "$work/grep_excludes_empty"
+
+case_start grepr
+compare 'recursive'      grep -  -r alpha "$work/tree"
+compare 'recursive long' grep -  --recursive alpha "$work/tree"
+compare 'recursive links' grep - -R alpha "$work/tree"
+compare 'recursive names' grep - -rl alpha "$work/tree"
+compare 'recursive without' grep - -rL alpha "$work/tree"
+compare 'recursive count' grep - -rc alpha "$work/tree"
+compare 'recursive numbered' grep - -rn alpha "$work/tree"
+compare 'recursive no names' grep - -rh alpha "$work/tree"
+compare 'recursive one file' grep - -r alpha "$work/tree/one.txt"
+compare 'recursive empty'  grep - -r alpha "$work/bare"
+compare 'recursive missing' grep - -r alpha "$work/nosuchdir"
+compare 'recursive quiet miss' grep - -rs alpha "$work/nosuchdir"
+compare 'recursive two'    grep - -rl alpha "$work/tree" "$work/bare"
+compare 'directories recurse' grep - -d recurse alpha "$work/tree"
+compare 'directories skip' grep -  -d skip alpha "$work/tree"
+compare 'plain directory' grep -   alpha "$work/tree"
+compare 'directory then file' grep - alpha "$work/tree" "$work/a"
+compare 'recursive loop'  grep -  -R alpha "$work/loop_tree"
+compare 'include suffix'  grep -  -rl --include='*.txt' alpha "$work/tree"
+compare 'include two'     grep -  -rl --include='*.txt' --include='*.log' alpha "$work/tree"
+compare 'include one letter' grep - -rl --include='?.txt' alpha "$work/tree"
+compare 'include set'     grep -  -rl --include='[ot]*' alpha "$work/tree"
+compare 'include nothing' grep -  -rl --include='*.zzz' alpha "$work/tree"
+compare 'exclude suffix'  grep -  -rl --exclude='*.log' alpha "$work/tree"
+compare 'exclude all'     grep -  -r --exclude='*' alpha "$work/tree"
+compare 'exclude file'    grep -  -rl --exclude-from="$work/grep_excludes" alpha "$work/tree"
+compare 'exclude file separate' grep - -rl --exclude-from "$work/grep_excludes" alpha "$work/tree"
+compare 'exclude file twice' grep - -rl --exclude-from="$work/grep_excludes" --exclude-from="$work/grep_excludes_two" alpha "$work/tree"
+compare 'exclude file empty' grep - -rl --exclude-from="$work/grep_excludes_empty" alpha "$work/tree"
+compare 'exclude file nonl' grep - -rl --exclude-from="$work/grep_excludes_nonl" alpha "$work/tree"
+compare 'exclude file stdin' grep grep_excludes -rl --exclude-from=- alpha "$work/tree"
+compare 'exclude file missing' grep - -rl --exclude-from="$work/nosuch-excludes" alpha "$work/tree"
+compare 'exclude file directory' grep - -rl --exclude-from="$work/read_dir" alpha "$work/tree"
+compare 'exclude names'   grep -  -rl --exclude-dir=inner alpha "$work/tree"
+compare 'exclude names slash' grep - -rl --exclude-dir=inner/ alpha "$work/tree"
+compare 'exclude two dirs' grep - -rl --exclude-dir=inner --exclude-dir=other alpha "$work/tree"
+compare 'include and exclude' grep - -rl --include='*.txt' --exclude='three*' alpha "$work/tree"
+compare 'include on named'  grep - -l --include='*.log' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'include names one' grep - --include='*.log' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'exclude names one' grep - --exclude='*.txt' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'include counts one' grep - -c --include='*.log' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'include names none' grep - --include='*.zzz' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'exclude on named'  grep - -l --exclude='*.txt' alpha "$work/tree/one.txt" "$work/tree/two.log"
+compare 'colour never'    grep -  --color=never alpha "$work/tree/one.txt"
+compare 'colour auto'     grep -  --color=auto alpha "$work/tree/one.txt"
+compare 'colour bare'     grep -  --color alpha "$work/tree/one.txt"
+compare 'colour british'  grep -  --colour=never alpha "$work/tree/one.txt"
+grep_color_compare 'colour always' '' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour british always' '' --colour=always alpha "$work/grep_color"
+grep_color_compare 'colour repeated' 'mt=35' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour only matching' 'mt=35' --color=always -o alpha "$work/grep_color"
+grep_color_compare 'colour numbered named offset' 'mt=31:fn=35:ln=32:bn=33:se=36' --color=always -Hnb alpha "$work/grep_color"
+grep_color_compare 'colour context' 'sl=44:ms=31:cx=45:mc=32:se=36' --color=always -n -A1 alpha "$work/grep_color"
+grep_color_compare 'colour no erase' 'mt=31:ne' --color=always alpha "$work/grep_color"
+grep_color_compare 'colour invert reverse' 'sl=44:ms=31:cx=45:mc=32:rv:ne' --color=always -v -A1 alpha "$work/grep_color"
+grep_color_compare 'colour zero width' 'mt=31:ne' --color=always '^' "$work/grep_color"
+grep_color_compare 'colour count' 'fn=35:se=36' --color=always -Hc alpha "$work/grep_color"
+grep_color_compare 'colour listing' 'fn=35' --color=always -l alpha "$work/grep_color"
+grep_color_compare 'colour raw input' 'mt=31' --color=always alpha "$work/grep_color_control"
+grep_color_compare 'colour raw filename' 'mt=31:fn=35:se=36' --color=always -H alpha "$work/$grep_color_name"
+grep_color_compare 'colour nul data' 'mt=31' --color=always -az a "$work/zeros"
+grep_color_compare 'colour two expressions' 'mt=31:ne' --color=always -e alpha -e beta "$work/grep_color_patterns"
+grep_color_compare 'colour fixed metacharacters' 'mt=31:ne' --color=always -F 'a.*a' "$work/grep_color_patterns"
+grep_color_compare 'colour ignore case' 'mt=31:ne' --color=always -i alpha "$work/grep_color_patterns"
+grep_color_compare 'colour whole word' 'mt=31:ne' --color=always -w word "$work/grep_color_patterns"
+grep_color_compare 'colour whole line' 'mt=31:ne' --color=always -x alpha "$work/grep_color_patterns"
+grep_color_compare 'colour empty expression' 'mt=31:ne' --color=always -e '' "$work/grep_color_patterns"
+grep_color_compare 'colour overlapping alternatives' 'mt=31:ne' --color=always -E 'aba|ba' "$work/grep_color_patterns"
+grep_color_compare 'colour final unterminated' 'mt=31:ne' --color=always alpha "$work/grep_color_final"
+grep_color_status 'colour invalid' --color=sometimes alpha "$work/grep_color"
+grep_color_pty_compare 'colour auto pty' 'mt=31' --color=auto alpha "$work/grep_color"
+grep_color_no_color
+grep_color_no_color_always
+grep_color_multicall
+
+case_start grep2
+compare 'nested star'    grep m  '\(ab\)*'
+compare 'group star'     grep m  '^\(ab\)*$'
+compare 'empty star'     grep m  '^a*$'
+compare 'dot anchor'     grep m  '^.$'
+compare 'star of dot'    grep m  '^.*b$'
+compare 'escaped dot'    grep p  '\.'
+compare 'literal dot'    grep b  'one\.two'
+compare 'bracket rbrack' grep p  '[],]'
+compare 'bracket dash'   grep p  '[a-]'
+compare 'bracket caret'  grep p  '[^abc]'
+compare 'interval exact' grep m  '^a\{3\}$'
+compare 'interval range' grep m  '^a\{1,2\}$'
+compare 'interval open'  grep m  '^a\{2,\}$'
+compare 'ere interval'   grep -  -E '^(ab){2}$' "$work/m"
+compare 'ere group opt'  grep -  -E '^(ab)?a$' "$work/m"
+compare 'ere nested'     grep -  -E '^((a|b)+)$' "$work/m"
+compare 'ere alt anchor' grep -  -E '^(aaa|bbb)$' "$work/m"
+compare 'ere dollar alt' grep -  -E 'a$|b$' "$work/m"
+compare 'backref twice'  grep m  '\(a\)\1'
+compare 'case class'     grep q  -i '[a-b]\{3\}'
+compare 'count invert'   grep m  -cv a
+compare 'line num inv'   grep m  -nv a
+compare 'multiple e'     grep m  -e aaa -e bbb
+compare 'pattern star1'  grep m  '*a'
+compare 'caret middle'   grep m  'a^b'
+compare 'dollar middle'  grep m  'a$b'
+compare 'blank line'     grep m  '^$'
+compare 'not blank'      grep m  -v '^$'
+compare 'word only'      grep u  -w the
+compare 'word case'      grep u  -iw the
+
+case_start sed2
+compare 'star empty g'   sed m  's/a*/X/g'
+compare 'anchor empty g' sed m  's/^/> /'
+compare 'end append'     sed m  's/$/ </'
+compare 'group swap'     sed r  's/\([a-z]*\)\([0-9]\)/\2\1/'
+compare 'nested group'   sed r  's/\(\([a-z]\)[0-9]\)/[\1|\2]/'
+compare 'saved loop programs' sed m -n '/^a*a*a*$/p;/^\(ab\)*$/p'
+compare 'loop overflow state' sed m -n '/^a*a*a*a*a*a*a*a*a*$/p'
+compare 'amp escape'     sed s  's/one/\&/'
+compare 'newline in rep' sed s  's/one/a\nb/'
+compare 'tab in rep'     sed s  's/one/a\tb/'
+compare 'backslash rep'  sed s  's/one/a\\b/'
+compare 'range to end'   sed i  -n '10,$p'
+compare 'range one line' sed i  -n '5,3p'
+compare 'regex to num'   sed i  -n '/3/,5p'
+compare 'step of range'  sed i  '2,4s/^/> /'
+compare 'negate range'   sed i  -n '2,4!p'
+compare 'block many'     sed i  -n '3,5{s/^/> /;p}'
+compare 'quit after sub' sed i  '3{s/^/> /;q}'
+compare 'last only'      sed i  -n '$='
+compare 'delete last'    sed i  '$d'
+compare 'y with escape'  sed t  'y/\t/ /'
+compare 'sub then sub'   sed s  's/one/two/;s/two/three/'
+compare 'global anchor'  sed u  's/a/A/g'
+compare 'no match keep'  sed s  's/zzz/X/'
+compare 'print doubles'  sed s  'p'
+compare 'N join'         sed s  'N;s/\n/+/'
+compare 'P first of space' sed a -n 'N;P'
+compare 'P without joined line' sed h -n 'P'
+compare 'D restarts space' sed a -n 'N;P;D'
+compare 'D without joined line' sed h -n 'D'
+compare 'multiple files' sed -  -n '$p' "$work/s" "$work/m"
+compare 'char class rep' sed n  's/[[:blank:]]\+/ /g'
+compare 'leading blanks' sed n  's/^[ \t]*//'
+
+#       Address forms GNU added to the ones POSIX has: a step, a range that
+#       ends a count of lines later or at the next line a number divides, and
+#       line zero, which is not a line and is only an address at all as the
+#       open end of a range a pattern closes.
+
+case_start sedaddr
+compare 'step from one'  sed i  -n '1~2p'
+compare 'step from zero' sed i  -n '0~3p'
+compare 'step of one'    sed i  -n '3~1p'
+compare 'step of none'   sed i  -n '4~0p'
+compare 'step past end'  sed i  -n '99~2p'
+compare 'step of none from zero' sed i -n '0~0p'
+compare 'step deletes'   sed i  '1~4d'
+compare 'step negated'   sed i  -n '1~2!p'
+compare 'ahead two'      sed i  -n '3,+2p'
+compare 'ahead none'     sed i  -n '3,+0p'
+compare 'ahead past end' sed i  -n '14,+9p'
+compare 'ahead from match' sed a -n '/delta/,+1p'
+compare 'multiple three' sed i  -n '2,~3p'
+compare 'multiple on it' sed i  -n '3,~3p'
+compare 'multiple of one' sed i -n '2,~1p'
+compare 'multiple of none' sed i -n '2,~0p'
+compare 'zero to match'  sed i  -n '0,/1/p'
+compare 'zero to later'  sed i  -n '0,/3/p'
+compare 'zero to nothing' sed i -n '0,/nope/p'
+compare 'zero deletes'   sed a  '0,/alpha/d'
+compare 'one deletes'    sed a  '1,/alpha/d'
+compare 'zero negated'   sed i  -n '0,/2/!p'
+compare 'zero alone'     sed i  -n '0p'
+compare 'zero to line'   sed i  -n '0,5p'
+compare 'zero two files' sed -  -n '0,/alpha/p' "$work/a" "$work/e"
+compare 'zero separate'  sed -  -s -n '0,/a/p' "$work/a" "$work/e"
+compare 'quit silently'  sed i  'Q'
+compare 'quit at line'   sed i  '3Q'
+compare 'quit with status' sed i '3Q5'
+compare 'quit after print' sed i -n '2{p;Q}'
+compare 'name of input'  sed -  -n 'F' "$work/a"
+compare 'name of stdin'  sed a  -n 'F'
+compare 'name once'      sed -  -n '1F' "$work/a" "$work/b"
+
+#       Where sed writes other than to standard output, what it reads in the
+#       middle of a cycle, and the jump table: a label is an index into the
+#       same flat array of commands, which is what makes b and t nothing more
+#       than an assignment to the counter.
+
+case_start sedfiles
+compare_side 'write every line' sed a  'w SIDE' -n
+compare_side 'write and print'  sed a  'w SIDE'
+compare_side 'write one line'   sed a  '2w SIDE' -n
+compare_side 'write last'       sed a  '$w SIDE' -n
+compare_side 'write matched'    sed a  '/alpha/w SIDE' -n
+compare_side 'write twice'      sed a  '1w SIDE
+2w SIDE' -n
+compare_side 'substitute wrote' sed a  's/a/X/w SIDE' -n
+compare_side 'substitute all'   sed a  's/[ae]/X/gw SIDE' -n
+compare_side 'substitute none'  sed a  's/zzz/X/w SIDE' -n
+compare_side 'write unended'    sed h  'w SIDE' -n
+compare_side 'write zero ends'  sed zeros 'w SIDE' -nz
+compare_side 'write two files'  sed a  's/a/X/w SIDE' -n -e 's/b/Y/'
+compare 'write to stdout' sed a -n 'w /dev/stdout'
+compare 'substitute to stdout' sed a -n 's/alpha/X/w /dev/stdout'
+compare 'read after one'  sed -  '1r '"$work/b" "$work/a"
+compare 'read after last' sed -  '$r '"$work/b" "$work/a"
+compare 'read after match' sed - '/delta/r '"$work/b" "$work/a"
+compare 'read every line' sed -  'r '"$work/b" "$work/a"
+compare 'read quiet'      sed -  -n '1r '"$work/b" "$work/a"
+compare 'read missing'    sed -  '1r '"$work/nosuchfile" "$work/a"
+compare 'read and append' sed -  '1{r '"$work/b"'
+a APPENDED
+}' "$work/a"
+compare 'two appends'     sed a  '1a one
+1a two'
+compare 'append then read' sed - '1{a one
+r '"$work/b"'
+a two
+}' "$work/a"
+
+case_start sedjump
+compare 'join every line' sed a  ':a;N;$!ba;s/\n/,/g'
+compare 'branch forward'  sed a  's/alpha/X/;t done;s/beta/Y/;:done'
+compare 'branch not taken' sed a 's/zzz/X/;t done;s/beta/Y/;:done'
+compare 'branch when not'  sed a 's/alpha/X/;T done;s/beta/Y/;:done'
+compare 'branch to the end' sed a 'b'
+compare 'branch at a line' sed a  '2b
+s/./X/'
+compare 'branch in a block' sed a -n '/alpha/{:l;p;b};p'
+compare 'loop until last'  sed a  ':a
+$!{N;ba
+}
+s/\n/-/g'
+compare 'print each looping' sed a -n ':x;p;$!{n;bx}'
+compare 'label with no name' sed a ':'
+compare 'label not there'  sed a  'b nowhere'
+compare 'branch back once'  sed a 's/a/X/;ta;b;:a;s/$/!/'
+
+case_start tee2
+compare 'append flag'    tee a  -a /dev/null
+compare 'ignore signals' tee a  -i /dev/null
+compare 'pipe errors'    tee a  -p /dev/null
+compare 'long append'    tee a  --append /dev/null
+compare 'long ignore'    tee a  --ignore-interrupts /dev/null
+compare 'long errors'    tee a  --output-error /dev/null
+compare 'long errors when' tee a --output-error=warn /dev/null
+compare 'letters together' tee a -ai /dev/null
+compare 'unknown letter' tee a  -Q /dev/null
+compare 'end of options' tee a  -- /dev/null
+compare 'no files'       tee a
+
+case_start cut2
+compare 'comma delim'    cut p  -d, -f2
+compare 'empty fields'   cut p  -d, -f3
+compare 'out of order'   cut p  -d, -f3,1
+compare 'repeat field'   cut p  -d, -f2,2
+compare 'char past end'  cut s  -c1-100
+compare 'char single'    cut s  -c2
+compare 'field all'      cut p  -d, -f1-
+compare 'space delim'    cut u  '-d ' -f2,4
+
+case_start tr2
+compare 'octal'          tr s  '\157' O
+compare 'octal cap'      tr s  '\1570' X
+compare 'octal breaker'  tr s  '\157q' X
+compare 'repeat set'     tr s  'one' '[X*]'
+compare 'range high bytes' tr tr_high '\376-\377' XY
+compare 'complement sub' tr s  -c 'o\n' X
+compare 'squeeze all'    tr q  -s '[:upper:]'
+compare 'delete class'   tr n  -d '[:blank:]'
+compare 'upper to lower' tr q  '[:upper:]' '[:lower:]'
+compare 'longer set two' tr s  ab abcdef
+compare 'newline delete' tr s  -d '\n'
+
+case_start sort2
+compare 'numeric mixed'  sort o  -n
+compare 'numeric rev'    sort o  -nr
+compare 'numeric unique' sort o  -nu
+compare 'fold unique'    sort q  -fu
+compare 'stable keys'    sort r  -k1,1
+compare 'key char off'   sort r  -k1.2
+compare 'key two fields' sort r  -k2,3
+compare 'key numeric b'  sort n  -k2b
+compare 'blank lines'    sort k
+compare 'reverse unique' sort q  -ru
+compare 'tab separator'  sort t  -t'	' -k2
+compare 'key past end'   sort r  -k9
+compare 'whole then key' sort r  -k2 -k1
+compare 'check sorted'   sort s  -c
+compare 'check unsorted' sort a  -c
+compare 'check quiet'    sort a  -C
+compare 'check quiet ok' sort s  -C
+compare 'check unique'   sort e  -cu
+compare 'check named'    sort -  -c "$work/a"
+compare 'merge one'      sort w  -m
+compare 'merge two'      sort -  -m "$work/w" "$work/x"
+compare 'merge unsorted' sort -  -m "$work/a" "$work/x"
+compare 'merge unique'   sort -  -mu "$work/w" "$work/w"
+compare 'output file'    sort a  -o /dev/stdout
+compare 'ignore unprintable' sort n -i
+compare 'dictionary'     sort n  -d
+compare 'human'          sort v  -h
+compare 'human reverse'  sort v  -hr
+compare 'human key'      sort d  -k2h
+compare 'buffer size'    sort a  -S 2
+compare 'temp directory' sort a  -T /tmp
+compare 'long numeric'   sort c  --numeric-sort
+compare 'long reverse'   sort a  --reverse
+compare 'long unique'    sort e  --unique
+compare 'long fold'      sort f  --ignore-case
+compare 'long blanks'    sort n  --ignore-leading-blanks
+compare 'long unprint'   sort n  --ignore-nonprinting
+compare 'long dict'      sort n  --dictionary-order
+compare 'long stable'    sort d  --stable -k1,1
+compare 'long check'     sort a  --check
+compare 'long merge'     sort w  --merge
+compare 'long key'       sort d  --key 2
+compare 'long separator' sort b  --field-separator=: --key 2
+compare 'long human'     sort v  --human-numeric-sort
+compare 'long buffer'    sort a  --buffer-size 2
+compare 'long batch'     sort a  --batch-size 2
+compare 'sort word'      sort c  --sort=numeric
+compare 'long unknown'   sort a  --nosuchflag
+compare 'unknown letter' sort a  -Q
+compare 'version'        sort y  -V
+compare 'version rev'    sort y  -Vr
+compare 'version unique' sort y  -Vu
+compare 'long version'   sort y  --version-sort
+compare 'month'          sort z  -M
+compare 'long month'     sort z  --month-sort
+compare 'sort word month' sort z --sort=month
+compare 'sort word version' sort y --sort=version
+compare 'key version'    sort d  -k1,1V
+compare 'key month'      sort z  -k1,1M
+compare 'check quiet arg' sort a --check=quiet
+compare 'check first arg' sort a --check=diagnose-first
+compare 'null data'      sort zeros -z
+compare 'null data unique' sort zeros -z -u
+compare 'null data long' sort zeros --zero-terminated
+
+case_start uniq2
+compare 'all same'       uniq q  -c
+compare 'no repeats'     uniq s  -c
+compare 'd on unique'    uniq s  -d
+compare 'u on all dup'   uniq q  -u
+compare 'skip two'       uniq r  -f2
+compare 'width one'      uniq q  -w1
+compare 'ignore case c'  uniq q  -ic
+
+case_start format
+compare 'wc pipe wide'   wc a
+compare 'wc lines pipe'  wc i  -l
+compare 'wc all flags'   wc a  -lwc
+compare 'wc chars named' wc -  -m "$work/a"
+compare 'nl no number'   nl k  -bn
+compare 'nl left'        nl a  -nln
+compare 'nl zeros'       nl a  -nrz
+compare 'nl width one'   nl a  -w1
+compare 'fold long'      fold u  -w 20
+compare 'fold spaces'    fold u  -w 20 -s
+compare 'fold tabs'      fold g  -w 6
+compare 'head bytes big' head a  -c 1000
+compare 'tail bytes big' tail a  -c 1000
+compare 'tail plus one'  tail i  -n +1
+compare 'rev tabs'       rev t
+
+
+#       A third batch: empty inputs, missing files, long lines, and the
+#       places where a backtracking machine is expected to be slow or wrong.
+
+: > "$work/empty"
+awk 'BEGIN { for (i = 0; i < 4000; i++) printf "a"; printf "\n" }' > "$work/long"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%d line %d\n", (i * 7919) % 20000, i }' > "$work/big"
+printf 'a b\tc  d\n' > "$work/w"
+printf 'x\n' > "$work/one"
+
+case_start empty
+compare 'grep'           grep empty  a
+compare 'sed'            sed empty   's/a/b/'
+compare 'cut'            cut empty   -c1
+compare 'tr'             tr empty    a b
+compare 'sort'           sort empty
+compare 'uniq'           uniq empty
+compare 'head'           head empty
+compare 'tail'           tail empty
+compare 'wc'             wc empty
+compare 'rev'            rev empty
+compare 'nl'             nl empty
+compare 'fold'           fold empty
+compare 'sort unique'    sort empty  -u
+compare 'uniq count'     uniq empty  -c
+compare 'wc lines'       wc empty    -l
+
+case_start missing
+compare 'grep gone'      grep -  a "$work/nosuchfile"
+compare 'wc gone'        wc -    "$work/nosuchfile"
+compare 'head gone'      head -  "$work/nosuchfile"
+compare 'grep one gone'  grep -  a "$work/a" "$work/nosuchfile"
+
+case_start long
+compare 'grep dot star'  grep long  '^a*$'
+compare 'grep anchored'  grep long  'a\{4000\}'
+compare 'grep tail'      grep long  'aaaa$'
+compare 'sed whole'      sed long   's/a*/X/'
+compare 'sed each'       sed long   's/a/b/g'
+compare 'wc'             wc long
+compare 'fold'           fold long  -w 100
+compare 'rev'            rev long
+compare 'cut'            cut long   -c3990-
+
+#       What the audit found, each against the system tool.
+case_start audit
+printf 'aabbcc\n' > "$work/tr_ds"
+compare 'tr delete squeeze' tr tr_ds -ds a b
+compare 'tr delete squeeze none' tr tr_ds -d ab
+printf '*x\nx\n**\n' > "$work/stars"
+compare 'grep anchor star' grep - '^*' "$work/stars"
+compare 'grep anchor star star' grep - '^**' "$work/stars"
+compare 'grep anchor star group' grep - '\(^*\)' "$work/stars"
+printf 'aaaa\nb\n' > "$work/runs"
+compare 'grep interval no low' grep - -o 'a\{,3\}' "$work/runs"
+compare 'grep extended no low' grep - -oE 'a{,2}' "$work/runs"
+printf 'a b\nab a\nb  b\n' > "$work/words"
+compare 'grep only words adjacent' grep - -ow '[ab]' "$work/words"
+compare 'grep only words counted' grep - -cw 'b' "$work/words"
+grep_color_compare 'grep color words adjacent' '' --color=always -w '[ab]' "$work/words"
+printf 'aa\nbb\nab\naabb\n' > "$work/refs"
+compare 'grep line backref' grep - -x '\(a\)\1' "$work/refs"
+compare 'grep word backref' grep - -w '\(b\)\1' "$work/refs"
+compare 'grep two patterns backref' grep - -e '\(a\)\1' -e '\(b\)\1' "$work/refs"
+compare 'grep extended backrefs' grep - -E -x '(a)\1|(b)\2' "$work/refs"
+compare 'grep backref in set' grep - '[\1]' "$work/refs"
+compare 'sed separate last' sed - -s -n 'N;$p' "$work/a" "$work/b"
+compare 'sed separate next' sed - -s -n 'n;$p' "$work/a" "$work/b"
+compare 'sed joined last' sed - -n 'N;$p' "$work/a" "$work/b"
+printf '2\n10\n' > "$work/sortk"
+compare 'sort key own order' sort sortk -r -k1n
+compare 'sort key inherits' sort sortk -r -k1
+compare 'sort key blank only' sort sortk -r -k1b
+compare 'sort fold key reversed' sort f -f -k1,1r
+compare 'sort numeric key reversed' sort c -n -k1r
+
+#       head -n -N and tail on a seekable input that another command has
+#       already read from start where that command stopped.
+after_read()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        sh -c 'exec < "$1"; read -r first; shift; exec "$0" "$@"' "$tool" "$work/i" "$@" \
+                > "$work/want" 2> /dev/null
+        want_status=$?
+        sh -c 'exec < "$1"; read -r first; shift; exec "$0" "$@"' "$bin/$tool" "$work/i" "$@" \
+                > "$work/got" 2> /dev/null
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+after_read 'head short after read' head -n -1
+after_read 'head short bytes after read' head -c -3
+after_read 'tail after read' tail -n 3
+after_read 'tail all after read' tail -n 100
+
+#       tail -c and head -c -N on a pipe hold everything in the arena, and a
+#       pipe hands it over in runs of any length, not sixteen bytes at a
+#       time: the pause makes two reads of it, twenty-three bytes and
+#       seventeen, which have to sit end to end before the last ten are
+#       counted back from the end.
+in_pieces()
+{
+        name=$1
+        tool=$2
+        shift 2
+
+        { printf 'abcdefghijklmnopqrstuvw'; sleep 0.2; printf 'xyz0123456789ABCD'; } |
+                "$tool" "$@" > "$work/want" 2> /dev/null
+        want_status=$?
+        { printf 'abcdefghijklmnopqrstuvw'; sleep 0.2; printf 'xyz0123456789ABCD'; } |
+                "$bin/$tool" "$@" > "$work/got" 2> /dev/null
+        got_status=$?
+
+        compare_report "$name" "$work/want" "$work/got"
+}
+in_pieces 'tail bytes in pieces' tail -c 10
+in_pieces 'tail bytes from in pieces' tail -c +30
+in_pieces 'head short bytes in pieces' head -c -10
+
+#       An empty regular file has a size to trust and no block behind it, and
+#       a proc file has neither: the stat answer is proved or refused before
+#       wc, head and tail count on it.
+compare 'bytes of nothing' wc empty -c
+compare 'bytes of nothing by name' wc - -c "$work/empty"
+compare 'short bytes of nothing' head empty -c -1
+compare 'bytes of nothing from end' tail empty -c 5
+[ -r /proc/version ] && compare 'bytes of a proc file' wc - -c /proc/version
+[ -r /proc/version ] && compare 'short bytes of a proc file' head - -c -3 /proc/version
+
+#       A pattern space that outgrows its room is refused aloud, not
+#       written over the neighbours; a group loop deeper than the stack is
+#       refused, not a crash.
+seq 1 300000 | "$bin/sed" ':a;N;$!ba;s/\n/,/g' > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" = 4 ] && grep -q 'pattern space too large' "$work/err"; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'sed slurp refused' "$got_status"
+fi
+{ printf '%*s' 200000 '' | tr ' ' a; echo b; } | "$bin/grep" '\(a\)*b' > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" = 2 ] && grep -q 'too complex' "$work/err"; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'grep deep group refused' "$got_status"
+fi
+"$bin/sed" "1a$(printf 'x%.0s' $(seq 1 2000))" "$work/a" > "$work/got" 2> "$work/err"
+got_status=$?
+if [ "$got_status" -ne 0 ] && [ "$got_status" -lt 128 ]; then
+        passed=$((passed + 1))
+else
+        failed=$((failed + 1))
+        printf '  %-8s %-30s refusal expected, status %s\n' "$group" 'sed long body refused' "$got_status"
+fi
+
+# One byte beyond the shared line buffer. Before the explicit check these
+# nine printed exactly one MiB, silently dropped the tail, and exited zero.
+head -c 1048577 /dev/zero | tr '\0' x > "$work/overlong"
+printf '\n' >> "$work/overlong"
+head -c 17000 /dev/zero | tr '\0' x > "$work/grep_long_pattern"
+printf '\n' >> "$work/grep_long_pattern"
+head -c 16383 /dev/zero | tr '\0' x > "$work/grep_long_subject"
+printf 'Y\n' >> "$work/grep_long_subject"
+head -c 600000 /dev/zero | tr '\0' a > "$work/grep_large_context"
+printf '\n' >> "$work/grep_large_context"
+head -c 600000 /dev/zero | tr '\0' b >> "$work/grep_large_context"
+printf '\nhit\n' >> "$work/grep_large_context"
+awk 'BEGIN {
+        for (line = 0; line < 256; line++) {
+                printf "#";
+                for (i = 0; i < 62; i++) printf "x";
+                printf "\n";
+        }
+        print "s/x/y/";
+}' > "$work/sed_long_script"
+awk 'BEGIN { for (i = 1; i <= 40; i++) print "1a line" i }' \
+        > "$work/sed_many_appends"
+
+case_start ceiling
+refuses_long_record 'grep record' grep x
+refuses_long_record 'sed record'  sed 's/x/y/'
+refuses_long_record 'cut record'  cut -c1-
+refuses_long_record 'sort record' sort
+refuses_long_record 'uniq record' uniq
+refuses_long_record 'head record' head -n1
+refuses_long_record 'rev record'  rev
+refuses_long_record 'nl record'   nl
+refuses_long_record 'fold record' fold -w 2000000
+refuses_long_pipe   'tail pipe record' tail -n1
+refuses_long_pattern
+refuses_many_alternatives
+refuses_long_tr_set
+refuses_grep_context 'grep context byte ceiling' grep_large_context -B2 hit
+refuses_grep_context 'grep context slot ceiling' one -B8193 x
+refuses_long_sed_script
+compares_many_grep_globs
+compare 'sed forty appends' sed - -f "$work/sed_many_appends" "$work/one"
+
+case_start writeerr
+compare_full 'cat stdout'  cat  a
+compare_full 'grep stdout' grep a alpha
+compare_full 'sed stdout'  sed  a p
+compare_full 'cut stdout'  cut  a -c1
+compare_full 'tr stdout'   tr   a a A
+compare_full 'sort stdout' sort a
+compare_full 'uniq stdout' uniq a
+compare_full 'head stdout' head a
+compare_full 'tail stdout' tail a
+compare_full 'wc stdout'   wc   a
+compare_full 'tee stdout'  tee  a
+compare_full 'rev stdout'  rev  a
+compare_full 'nl stdout'   nl   a
+compare_full 'fold stdout' fold a
+compare_full 'awk stdout'  awk  a '{print}'
+
+case_start readerr
+compare 'cat directory'  cat  - "$work/read_dir"
+compare 'wc directory'   wc   - "$work/read_dir"
+compare 'head directory' head - "$work/read_dir"
+compare 'tail directory' tail - "$work/read_dir"
+compare 'rev directory'  rev  - "$work/read_dir"
+compare 'nl directory'   nl   - "$work/read_dir"
+compare 'fold directory' fold - "$work/read_dir"
+compare 'cut directory'  cut  - -c1 "$work/read_dir"
+compare 'uniq directory' uniq - "$work/read_dir"
+compare 'sort directory' sort - "$work/read_dir"
+
+#       Only the tools that share the reference's "tool: name: reason" shape
+#       are compared whole here; head and sort word the same failure their own
+#       way and are left to the stdout cases above.
+case_start openerr
+compare_spoken 'cat denied'       cat "$work/denied"
+compare_spoken 'wc denied'        wc "$work/denied"
+compare_spoken 'grep denied'      grep a "$work/denied"
+compare_spoken 'cat symlink loop' cat "$work/circle_one"
+compare_spoken 'wc symlink loop'  wc "$work/circle_one"
+
+case_start big
+compare 'sort'           sort big
+compare 'sort numeric'   sort big   -n
+compare 'sort key'       sort big   -k3n
+compare 'sort unique'    sort big   -u
+compare 'uniq'           uniq big
+compare 'wc'             wc big
+compare 'grep count'     grep big   -c '^1'
+compare 'head'           head big   -n 5
+compare 'tail'           tail big   -n 5
+compare 'sed'            sed big    -n '19999p'
+
+
+#       The literal path, and the block skip in front of it.
+#
+#       A pattern that is nothing but characters is answered out of
+#       memory_search rather than the machine, and whole read blocks that
+#       cannot hold it are stepped over without ever being cut into lines.
+#       What that must not do is lose the second pattern of a -e list, fold
+#       case it was not asked to fold, or walk past a needle lying across the
+#       end of a block. All three are invisible on a file smaller than one
+#       read, which is what every other grep case here is.
+
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s %d\n", (i % 500 == 0 ? "needle" : "filler"), i }' > "$work/sparse"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "%s line %d\n", (i % 3 == 0 ? "FOX" : (i % 3 == 1 ? "Fox" : "fox")), i }' > "$work/mixed"
+awk 'BEGIN { for (i = 0; i < 12000; i++) print "needle dense" }' > "$work/grep_mapped_dense"
+awk 'BEGIN { printf "needle"; for (i = 0; i < 131072; i++) printf "x" }' > "$work/grep_mapped_long"
+awk 'BEGIN { for (i = 0; i < 65531; i++) printf "x"; printf "needle" }' > "$work/grep_refill_edge"
+awk 'BEGIN { for (i = 0; i < 12000; i++) printf "needle%c", 0 }' > "$work/grep_mapped_zero"
+printf '%s' "$(cat "$work/sparse")" > "$work/nonl"
+printf 'needle\nzzz\n' > "$work/plist"
+printf '%s\n' '- a' '--b' 'x - a' 'plain a' 'a-b' '-x' '-z' '-ab' > "$work/grep_word_optional"
+
+#       Two options that answer the same question, in both orders.
+#
+#       GNU takes the last one: head -n 2 -c 5 is five bytes and head -c 5 -n 2
+#       is two lines, from the same pair of flags. A parser that keeps one
+#       value per letter has no way to say which arrived last, so this is where
+#       that shows if it is going to.
+
+case_start ordering
+compare 'head lines then bytes' head i  -n 2 -c 5
+compare 'head bytes then lines' head i  -c 5 -n 2
+compare 'head bytes then bytes' head i  -c 9 -c 3
+compare 'head lines then lines' head i  -n 9 -n 3
+compare 'tail lines then bytes' tail i  -n 2 -c 3
+compare 'tail bytes then lines' tail i  -c 3 -n 2
+compare 'tail bytes then bytes' tail i  -c 9 -c 3
+compare 'sort numeric then human' sort c -n -h
+compare 'sort human then numeric' sort c -h -n
+compare 'sort numeric then version' sort c -n -V
+compare 'sort version then numeric' sort c -V -n
+compare 'grep after then context' grep i -A1 -C2 5
+compare 'grep context then after' grep i -C2 -A1 5
+compare 'cut chars then fields' cut b  -c1 -f1
+compare 'cut fields then chars' cut b  -f1 -c1
+compare 'cut fields twice'      cut b  -d: -f1 -f3
+compare 'uniq skip twice'       uniq d -f1 -f2
+compare 'fold width twice'      fold long -w 20 -w 60
+compare 'nl width twice'        nl i   -w 3 -w 6
+
+case_start grepblock
+: > "$work/grep_empty_patterns"
+printf 'needle\n' > "$work/grep_one_pattern"
+compare 'count'          grep sparse  -c needle
+compare 'count miss'     grep sparse  -c zzzz
+compare 'empty file then e' grep sparse -F -f "$work/grep_empty_patterns" -e needle
+compare 'empty then pattern file' grep sparse -F -f "$work/grep_empty_patterns" -f "$work/grep_one_pattern"
+compare 'max zero inverted' grep sparse -F -v -m0 needle
+compare 'inverted empty count' grep sparse -F -v -c -n -e ''
+compare 'word optional only' grep grep_word_optional -E -w -o 'a?'
+compare 'word star only' grep grep_word_optional -E -w -o 'a*'
+compare 'word optional many' grep grep_word_optional -E -w -o -e 'a?' -e 'b?'
+compare 'dense named count' grep - -Fc needle "$work/grep_mapped_dense"
+compare 'long named count' grep - -Fc needle "$work/grep_mapped_long"
+compare 'refill edge named' grep - -Fc needle "$work/grep_refill_edge"
+compare 'zero named count' grep - -zFc needle "$work/grep_mapped_zero"
+compare 'dense standard input' grep grep_mapped_dense -Fc needle
+compare 'numbered'       grep sparse  -n needle
+compare 'byte offset'    grep sparse  -b needle
+compare 'two patterns'   grep sparse  -c -e needle -e filler
+compare 'second is rare' grep sparse  -c -e zzzz -e needle
+compare 'pattern file'   grep sparse  -c -f "$work/plist"
+compare 'word'           grep sparse  -c -w needle
+compare 'whole line'     grep sparse  -c -x 'needle 0'
+compare 'fixed'          grep sparse  -c -F needle
+compare 'inverted'       grep sparse  -c -v needle
+compare 'context'        grep sparse  -A2 -B1 needle
+compare 'files listed'   grep -       -l needle "$work/sparse" "$work/mixed"
+compare 'mixed folded'   grep mixed   -c -i FOX
+compare 'mixed exact'    grep mixed   -c FOX
+compare 'mixed word'     grep mixed   -c -iw fox
+compare 'no last newline' grep nonl   -c needle
+compare 'no last newline n' grep nonl -n needle
+compare 'sed on blocks'  sed sparse   -n '/needle/p'
+compare 'nl on blocks'   nl sparse    -b 'p^needle'
+
+#       The needle moved a byte at a time across the end of the first read.
+across=65530
+while [ $across -le 65541 ]; do
+        awk -v want=$across 'BEGIN {
+                n = 0
+                while (n + 9 <= want) { printf "abcdefgh\n"; n += 9 }
+                while (n < want) { printf "z"; n++ }
+                printf "needle\n"
+        }' > "$work/across"
+
+        compare "across $across" grep across -n needle
+        across=$((across + 1))
+done
+
+case_start edges
+compare 'cut mixed sep'  cut w   '-d ' -f2
+compare 'cut tab sep'    cut w   -f2
+compare 'cut byte above old ceiling' cut cut_wide -c5000
+compare 'cut range above old ceiling' cut cut_wide -c4999-5001
+compare 'cut separated high bytes' cut cut_wide -c4999,5001 -OX
+compare 'sort one line'  sort one
+compare 'uniq one line'  uniq one -c
+compare 'nl one line'    nl one
+compare 'tail one'       tail one -n 5
+compare 'head zero c'    head one -c 0
+compare 'grep both'      grep one -c x
+compare 'tr no set two'  tr one  -d x
+compare 'fold width 1'   fold one -w 1
+compare 'sed s empty re' sed one 's///'
+compare 'sed multiple !' sed i   -n '3!!p'
+compare 'wc four flags'  wc a    -lwmc
+compare 'sort t missing' sort b  -t: -k3
+compare 'sort t empty'   sort b  -t '' -k1
+compare 'sort t two'     sort b  -t '::' -k1
+compare 'sort t tab word' sort g -t '\t' -k2
+compare 'sort t null'    sort zpairs -t '\0' -k1
+compare 'sort t backslash' sort b -t '\' -k1
+compare 'sort key unknown modifier' sort a -k1Q
+compare 'sort key missing end field' sort a -k1,
+compare 'sort key missing first offset' sort a -k1.
+compare 'sort key zero first offset' sort a -k1.0
+compare 'sort key conflicting kinds' sort a -k1nV
+compare 'sort conflicting global kinds' sort a -h --sort=numeric
+refuses_sort_mode 'sort general numeric' -g
+refuses_sort_mode 'sort long general numeric' --sort=general-numeric
+refuses_sort_mode 'sort random' --sort=random
+compare 'uniq f past'    uniq a  -f9
+compare 'cut f zero pad' cut b   -d: -f1,1,1
+
+
+#       Several files at once, which is where one arena shared between an
+#       index, the lines and the key bounds either holds up or does not.
+
+case_start manyfiles
+compare 'tail three'     tail -  -n 2 "$work/a" "$work/b" "$work/e"
+compare 'tail three all' tail -  -n 100 "$work/s" "$work/one" "$work/k"
+compare 'tail bytes two' tail -  -c 5 "$work/a" "$work/b"
+compare 'tail bytes q'   tail -  -q -c 5 "$work/a" "$work/b"
+compare 'head three'     head -  -n 2 "$work/a" "$work/b" "$work/e"
+compare 'head bytes two' head -  -c 5 "$work/a" "$work/b"
+compare 'sort two'       sort -  "$work/a" "$work/e"
+compare 'sort key two'   sort -  -k2 "$work/d" "$work/r"
+compare 'sort numeric two' sort - -n "$work/c" "$work/o"
+compare 'sort unique two' sort - -u "$work/e" "$work/q"
+compare 'wc three'       wc -    "$work/a" "$work/b" "$work/e"
+compare 'grep three'     grep -  -n a "$work/a" "$work/b" "$work/e"
+compare 'nl two'         nl -    "$work/s" "$work/one"
+compare 'rev two'        rev -   "$work/a" "$work/b"
+compare 'cut two'        cut -   -d: -f2 "$work/b" "$work/p"
+compare 'fold two'       fold -  -w 6 "$work/a" "$work/s"
+compare 'tail empty mix' tail -  -n 2 "$work/empty" "$work/s"
+compare 'sort empty mix' sort -  "$work/empty" "$work/s"
+
+# cat, which for most of its life is a copy and for the rest of it is a walk.
+compare 'cat'            cat a
+compare 'cat number'     cat a   -n
+compare 'cat number full' cat s  -b
+compare 'cat ends'       cat a   -E
+compare 'cat tabs'       cat d   -T
+compare 'cat all'        cat d   -A
+compare 'cat squeeze'    cat s   -s
+compare 'cat number squeeze' cat s -ns
+compare 'cat show ends'  cat a   -e
+compare 'cat refill number squeeze' cat cat_refill -ns
+compare 'cat refill visible' cat cat_refill -v
+compare 'cat refill all' cat cat_refill -A
+compare 'cat two'        cat -   "$work/a" "$work/b"
+compare 'cat missing'    cat -   "$work/nosuch"
+compare 'cat empty'      cat -   "$work/empty"
+compare 'cat bad option' cat -   -Z "$work/a"
+compare 'cat long number' cat a  --number
+compare 'cat long nonblank' cat s --number-nonblank
+compare 'cat long ends'  cat a   --show-ends
+compare 'cat long tabs'  cat d   --show-tabs
+compare 'cat long squeeze' cat s --squeeze-blank
+compare 'cat long all'   cat d   --show-all
+compare 'cat long nonprinting' cat d --show-nonprinting
+compare 'cat long unknown' cat a --nosuchflag
+
+#       xargs, which is standard input turned into arguments and a command
+#       run with them -- so both halves of compare matter: what the command
+#       printed, and the number xargs came back with when it went wrong.
+
+printf 'a b c\n' > "$work/x1"
+printf 'a\nb\nc\n' > "$work/x2"
+printf 'a\0b\0' > "$work/x3"
+printf "'a b' c\n" > "$work/x4"
+printf 'a\\ b c\n' > "$work/x5"
+printf '' > "$work/x6"
+printf '   \n\n  \n' > "$work/x7"
+printf '1 2 3 4 5 6 7 8 9 10 11 12\n' > "$work/x8"
+printf 'a\nEND\nb\n' > "$work/x9"
+printf '"a b" c\n' > "$work/x10"
+printf 'a b' > "$work/x11"
+printf '  a b  \n' > "$work/x12"
+printf 'a\tb\n\tc\t\n' > "$work/x13"
+(head -c 8200 /dev/zero | tr '\0' x; printf '\n') > "$work/x14"
+head -c 20000 /dev/zero | tr '\0' x > "$work/x20-item"
+printf '\n' >> "$work/x20-item"
+head -c 20000 /dev/zero | tr '\0' x > "$work/x20-zero"
+printf '\0' >> "$work/x20-zero"
+head -c 200000 /dev/zero | tr '\0' x > "$work/x200-item"
+printf '\n' >> "$work/x200-item"
+awk 'BEGIN { for (i = 0; i < 30000; i++) printf "w%05d%s", i, \
+             i % 17 == 16 ? "\n" : " " }' > "$work/x200-words"
+awk 'BEGIN { for (i = 0; i < 5000; i++) printf "z%04d%c", i, 0 }' \
+        > "$work/xzero-many"
+printf 'a b\nc d\ne f\ng h\n' > "$work/xlines"
+printf 'a b   \nc d\ne f\n' > "$work/xcontinued"
+printf "'unterminated\n" > "$work/xquote-single"
+printf '"unterminated\n' > "$work/xquote-double"
+printf 'unterminated\\' > "$work/xescape-end"
+printf '#!/bin/sh\nexit 0\n' > "$work/xdenied"
+mkdir "$work/xread"
+
+case_start xargs
+compare 'words'          xargs x1  echo
+compare 'lines'          xargs x2  echo
+compare 'tabs'           xargs x13 -n1 echo
+compare 'no command'     xargs x1
+compare 'one at a time'  xargs x1  -n1 echo
+compare 'two at a time'  xargs x8  -n2 echo
+compare 'five at a time' xargs x8  -n5 echo
+compare 'joined number'  xargs x8  -n3 echo
+compare 'with a prefix'  xargs x8  -n2 echo pre
+compare 'zero ended'     xargs x3  -0 echo
+compare 'zero one each'  xargs x3  -0 -n1 echo
+compare 'single quotes'  xargs x4  -n1 echo
+compare 'double quotes'  xargs x10 -n1 echo
+compare 'a backslash'    xargs x5  -n1 echo
+compare 'nothing at all' xargs x6  echo
+compare 'blanks only'    xargs x7  echo
+compare 'nothing refused' xargs x6 -r echo
+compare 'blanks refused' xargs x7  -r echo
+compare 'nothing to replace' xargs x6 -I{} echo x
+compare 'nothing but a status' xargs x6 false
+compare 'only the end word' xargs x9 -E a echo
+compare 'no last newline' xargs x11 echo
+compare 'replacing'      xargs x2  -I{} echo x{}y
+compare 'replacing short' xargs x2 -i echo x{}y
+compare 'replacing twice' xargs x2 -I{} echo {}-{}
+compare 'replacing blanks' xargs x12 -I{} echo "[{}]"
+compare 'replacing unused' xargs x2 -I{} echo plain
+compare 'logical end'    xargs x9  -E END echo
+compare 'end ignored'    xargs x9  -0 -E END echo
+compare 'end of options' xargs x1  -- echo
+compare 'an absolute path' xargs x1 /bin/echo
+compare 'the command failed' xargs x1 false
+compare 'each one failed' xargs x1 -n1 false
+compare 'no such command' xargs x1 nosuchcommand12345
+compare 'traced'         xargs x1  -t echo
+compare 'an option it has not' xargs x1 -Q echo
+compare 'read error'       xargs xread echo
+compare 'long input item'  xargs x14 echo
+compare 'twenty kilobyte item' xargs x20-item echo
+compare 'twenty kilobyte zero item' xargs x20-zero -0 echo
+compare 'kernel oversized item' xargs x200-item echo
+compare 'thirty thousand words' xargs x200-words echo
+compare 'large n batches' xargs x200-words -n1000 echo
+compare 'many zero items' xargs xzero-many -0 echo
+compare 'many zero batches' xargs xzero-many -0 -n777 echo
+compare 'two logical lines' xargs xlines -L2 echo
+compare 'attached logical lines' xargs xlines -L3 echo
+compare 'continued logical line' xargs xcontinued -L1 echo
+compare 'long replacement' xargs x20-item -I{} echo pre{}post
+long_template=$(head -c 20000 /dev/zero | tr '\0' t)
+compare 'long replacement template' xargs x2 -I{} echo "$long_template{}"
+compare 'unmatched single quote' xargs xquote-single echo
+compare 'unmatched double quote' xargs xquote-double echo
+compare 'unfinished escape' xargs xescape-end echo
+compare 'child exits 126' xargs x1 sh -c 'exit 126' sh
+compare 'child exits 127' xargs x1 sh -c 'exit 127' sh
+compare 'permission denied command' xargs x1 "$work/xdenied"
+
+# A child that cannot write makes xargs return the ordinary child-failure
+# status. Compare that status without trying to capture /dev/full itself.
+if [ -e /dev/full ]; then
+        xargs echo < "$work/x1" > /dev/full 2> /dev/null
+        want_status=$?
+        "$bin/xargs" echo < "$work/x1" > /dev/full 2> /dev/null
+        got_status=$?
+
+        if [ "$want_status" = "$got_status" ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s want status %s got %s\n' \
+                        "$group" 'child write failure' "$want_status" "$got_status"
+        fi
+fi
+
+# The shared operand index used to stop silently at 1,024 names. Exercise
+# every consumer with one small file repeated beyond that boundary, and take
+# two streaming/sorting paths to 20,000 operands. Reusing one pathname keeps
+# this a table test rather than a filesystem-capacity test. stderr is omitted
+# exactly as compare() omits it; stdout and status remain byte-exact.
+case_start operands
+if ! python3 - "$bin" "$work" > "$work/text-many-report" <<'PY'
+import os
+import subprocess
+import sys
+
+binary, work = sys.argv[1:]
+os.chdir(work)
+one = "operand-one"
+missing = "operand-missing"
+with open(one, "wb") as f:
+    f.write(b"x\n")
+
+def invoke(program, args, feed=None, full=False):
+    target = open("/dev/full", "wb") if full else subprocess.PIPE
+    try:
+        return subprocess.run([program] + args, input=feed, stdout=target,
+                              stderr=subprocess.DEVNULL, timeout=120)
+    finally:
+        if full:
+            target.close()
+
+def case(name, tool, args, feed=None):
+    want = invoke(tool, args, feed)
+    got = invoke(os.path.join(binary, tool), args, feed)
+    if want.stdout == got.stdout and want.returncode == got.returncode:
+        print("PASS", name)
+    else:
+        print("FAIL", name, "status", want.returncode, got.returncode,
+              "bytes", len(want.stdout or b""), len(got.stdout or b""))
+
+two_thousand = [one] * 2000
+twenty_thousand = [one] * 20000
+case("cat-2000-operands", "cat", two_thousand)
+case("wc-2000-operands", "wc", ["-c"] + two_thousand)
+case("head-2000-operands", "head", ["-n1"] + two_thousand)
+case("tail-2000-operands", "tail", ["-n1"] + two_thousand)
+case("rev-20000-operands", "rev", twenty_thousand)
+case("nl-2000-operands", "nl", ["-ba"] + two_thousand)
+case("fold-2000-operands", "fold", ["-w2"] + two_thousand)
+case("cut-2000-operands", "cut", ["-c1"] + two_thousand)
+case("uniq-extra-operands", "uniq", two_thousand)
+case("grep-2000-operands", "grep", ["x"] + two_thousand)
+case("sed-2000-operands", "sed", ["s/x/X/"] + two_thousand)
+case("sort-20000-operands", "sort", twenty_thousand)
+
+# A failure after the old boundary must affect status and later operands must
+# still be visited in order.
+case("late-missing-operand", "head",
+     ["-n1"] + [one] * 1100 + [missing] + [one] * 10)
+
+if os.path.exists("/dev/full"):
+    args = ["-n1"] + two_thousand
+    want = invoke("head", args, full=True)
+    got = invoke(os.path.join(binary, "head"), args, full=True)
+    print("PASS" if want.returncode == got.returncode else "FAIL",
+          "many-operand-write-error", want.returncode, got.returncode)
+
+# tee owns a parallel descriptor table. Use distinct reference/output names
+# but otherwise the same 2,000 repeated destinations.
+want_name = os.path.join(work, "tee-many-want")
+got_name = os.path.join(work, "tee-many-got")
+want = invoke("tee", [want_name] * 2000, b"payload\n")
+got = invoke(os.path.join(binary, "tee"), [got_name] * 2000, b"payload\n")
+try:
+    want_file = open(want_name, "rb").read()
+    got_file = open(got_name, "rb").read()
+except OSError:
+    want_file = got_file = None
+print("PASS" if (want.stdout == got.stdout and
+                 want.returncode == got.returncode and
+                 want_file == got_file) else "FAIL", "tee-2000-operands")
+PY
+then
+        printf 'FAIL many-operand-harness aborted\n' >> "$work/text-many-report"
+fi
+
+while read -r result name detail; do
+        if [ "$result" = PASS ]; then
+                pass=$((pass + 1))
+        else
+                fail=$((fail + 1))
+                printf '  %-8s %-30s %s\n' "$group" "$name" "$detail"
+        fi
+done < "$work/text-many-report"
+
+#       cmp, whose answer is often nothing at all -- so the exit status is
+#       most of what there is to compare, and compare looks at both.
+
+i=0
+while [ $i -lt 30 ]; do printf '0123456789'; i=$((i + 1)); done > "$work/cl1"
+tr 5 x < "$work/cl1" > "$work/cl2"
+head -c 250 "$work/cl1" > "$work/cl3"
+cp "$work/a" "$work/a2"
+sed 's/gamma/gammX/' "$work/a" > "$work/a3"
+head -c 12 "$work/a" > "$work/a4"
+i=0
+while [ $i -lt 7000 ]; do printf '0123456789\n'; i=$((i + 1)); done > "$work/cmp_block1"
+cp "$work/cmp_block1" "$work/cmp_block2"
+sed '6000s/5/X/' "$work/cmp_block1" > "$work/cmp_block3"
+head -c 65536 "$work/cmp_block1" > "$work/cmp_block4"
+
+case_start cmp
+compare 'same'           cmp -  "$work/a" "$work/a2"
+compare 'same across blocks' cmp - "$work/cmp_block1" "$work/cmp_block2"
+compare 'late block difference' cmp - "$work/cmp_block1" "$work/cmp_block3"
+compare 'prefix at block edge' cmp - "$work/cmp_block1" "$work/cmp_block4"
+compare 'limit inside equal block' cmp - -n 65000 "$work/cmp_block1" "$work/cmp_block3"
+compare 'differ'         cmp -  "$work/a" "$work/a3"
+compare 'differ other way' cmp - "$work/a3" "$work/a"
+compare 'prefix'         cmp -  "$work/a" "$work/a4"
+compare 'prefix first'   cmp -  "$work/a4" "$work/a"
+compare 'empty against'  cmp -  "$work/a" "$work/empty"
+compare 'both empty'     cmp -  "$work/empty" "$work/empty"
+compare 'silent same'    cmp -  -s "$work/a" "$work/a2"
+compare 'silent differ'  cmp -  -s "$work/a" "$work/a3"
+compare 'silent prefix'  cmp -  -s "$work/a" "$work/a4"
+compare 'listed'         cmp -  -l "$work/a" "$work/a3"
+compare 'listed columns' cmp -  -l "$work/cl1" "$work/cl2"
+compare 'listed prefix'  cmp -  -l "$work/cl1" "$work/cl3"
+compare 'listed same'    cmp -  -l "$work/cl1" "$work/cl1"
+compare 'no newline'     cmp -  "$work/h" "$work/a"
+compare 'missing file'   cmp -  "$work/a" "$work/nosuch"
+compare 'both missing'   cmp -  "$work/nosuch" "$work/nosuch2"
+compare 'end of options' cmp -  -- "$work/a" "$work/a3"
+compare 'standard input' cmp a  "$work/a"
+compare 'named as dash'  cmp a  "$work/a" -
+compare 'dash is first'  cmp a  - "$work/a3"
+compare 'no operands'    cmp -
+compare 'three operands' cmp -  "$work/a" "$work/a" "$work/a"
+
+#       -b puts the differing bytes beside their octal, -i and the operands
+#       after the names say where to start, and -n says how far to go.
+compare 'print bytes'    cmp -  -b "$work/cl1" "$work/cl2"
+compare 'print bytes listed' cmp - -bl "$work/cl1" "$work/cl2"
+compare 'print bytes other order' cmp - -lb "$work/cl1" "$work/cl2"
+compare 'print bytes odd'  cmp - -b "$work/wide" "$work/spaced"
+compare 'print bytes listed odd' cmp - -bl "$work/wide" "$work/spaced"
+compare 'print bytes prefix' cmp - -b "$work/cl1" "$work/cl3"
+compare 'print bytes same' cmp - -b "$work/cl1" "$work/cl1"
+compare 'skip both'      cmp -  -i 5 "$work/cl1" "$work/cl2"
+compare 'skip each'      cmp -  -i 5:7 "$work/cl1" "$work/cl2"
+compare 'skip nothing'   cmp -  -i 0:0 "$work/cl1" "$work/cl2"
+compare 'skip past end'  cmp -  -i 9999 "$work/cl1" "$work/cl3"
+compare 'skip listed'    cmp -  -l -i 5 "$work/cl1" "$work/cl2"
+compare 'skip is not a number' cmp - -i zz "$work/cl1" "$work/cl2"
+compare 'limit short'    cmp -  -n 3 "$work/cl1" "$work/cl2"
+compare 'limit none'     cmp -  -n 0 "$work/cl1" "$work/cl2"
+compare 'limit long'     cmp -  -n 9999 "$work/cl1" "$work/cl2"
+compare 'limit listed'   cmp -  -l -n 60 "$work/cl1" "$work/cl2"
+compare 'limit suffix'   cmp -  -n 1K "$work/cl1" "$work/cl2"
+compare 'limit thousand' cmp -  -n 1kB "$work/cl1" "$work/cl2"
+compare 'limit is not a number' cmp - -n zz "$work/cl1" "$work/cl2"
+compare 'skip one operand' cmp - "$work/cl1" "$work/cl2" 5
+compare 'skip two operands' cmp - "$work/cl1" "$work/cl2" 5 7
+compare 'skip zero operands' cmp - "$work/cl1" "$work/cl2" 0 0
+compare 'five operands'  cmp -  "$work/cl1" "$work/cl2" 1 2 3
+compare 'long print bytes' cmp - --print-bytes "$work/cl1" "$work/cl2"
+compare 'long ignore initial' cmp - --ignore-initial=5 "$work/cl1" "$work/cl2"
+compare 'long ignore each' cmp - --ignore-initial=5:7 "$work/cl1" "$work/cl2"
+compare 'long bytes'     cmp -  --bytes=3 "$work/cl1" "$work/cl2"
+compare 'long quiet'     cmp -  --quiet "$work/cl1" "$work/cl2"
+compare 'long silent'    cmp -  --silent "$work/cl1" "$work/cl2"
+compare 'long verbose'   cmp -  --verbose "$work/cl1" "$work/cl2"
+compare 'skip and silent' cmp - -s -i 5 "$work/cl1" "$work/cl2"
+compare 'skip prefix'    cmp -  -i 3 "$work/h" "$work/a"
+compare 'same standard input twice' cmp a - -
+compare 'overflowing limit' cmp - -n 18446744073709551616 "$work/a" "$work/a3"
+compare 'limit with plus' cmp - -n +1 "$work/a" "$work/a3"
+compare 'limit IEC suffix' cmp - -n 1KiB "$work/a" "$work/a3"
+compare 'read directory' cmp - "$work/read_dir" "$work/a"
+
+#       expr, whose answer is on standard output and whose verdict is the exit
+#       status, so both halves of compare matter here.
+
+case_start expr
+compare 'add'            expr -  1 + 1
+compare 'subtract'       expr -  5 - 9
+compare 'multiply'       expr -  3 '*' 4
+compare 'divide'         expr -  7 / 2
+compare 'divide negative' expr - -3 / 2
+compare 'remainder'      expr -  7 % 3
+compare 'precedence'     expr -  2 + 3 '*' 4
+compare 'left to right'  expr -  10 - 3 - 2
+compare 'parentheses'    expr -  '(' 1 + 2 ')' '*' 3
+compare 'zero is false'  expr -  0
+compare 'padded zero'    expr -  00
+compare 'empty is false' expr -  ''
+compare 'string is true' expr -  abc
+compare 'not a number'   expr -  0.0
+compare 'equal'          expr -  1 = 1
+compare 'unequal'        expr -  1 = 2
+compare 'strings equal'  expr -  abc = abc
+compare 'string order'   expr -  abc '<' abd
+compare 'number order'   expr -  3 '<' 10
+compare 'number not text' expr - 10 '>' 9
+compare 'differs'        expr -  1 != 2
+compare 'compare chain'  expr -  1 = 1 = 1
+compare 'or takes first' expr -  abc '|' 0
+compare 'or takes second' expr - '' '|' abc
+compare 'or has neither' expr -  0 '|' 0
+compare 'and takes first' expr - abc '&' def
+compare 'and wants both' expr -  abc '&' ''
+compare 'and wants first' expr - '' '&' abc
+compare 'or is lazy'     expr -  1 '|' 1 / 0
+compare 'and is lazy'    expr -  0 '&' 1 / 0
+compare 'match counts'   expr -  abc : 'a.c'
+compare 'match anchored' expr -  abc : 'b'
+compare 'match start'    expr -  abc : '^a'
+compare 'match star'     expr -  aab : 'a*'
+compare 'match nothing'  expr -  bbb : 'a*'
+compare 'match end'      expr -  abc : 'abc$'
+compare 'match group'    expr -  abcdef : 'abc\(d\)e'
+compare 'group missing'  expr -  abc : '\(b\)'
+compare 'match keyword'  expr -  match abc 'a\(b\)'
+compare 'match keyword none' expr - match abc x
+compare 'length'         expr -  length abcde
+compare 'length empty'   expr -  length ''
+compare 'substr'         expr -  substr abcde 2 3
+compare 'substr from nought' expr - substr abcde 0 2
+compare 'substr past end' expr - substr abcde 2 100
+compare 'substr beyond'  expr -  substr abcde 9 2
+compare 'index'          expr -  index abcde cd
+compare 'index missing'  expr -  index abcde xyz
+compare 'divide by zero' expr -  5 / 0
+compare 'modulo by zero' expr -  5 % 0
+compare 'not an integer' expr -  foo + 1
+compare 'blank is not'   expr -  ' 1' + 1
+compare 'missing operand' expr - 1 +
+compare 'unclosed'       expr -  '(' 1
+compare 'trailing word'  expr -  1 1
+compare 'no arguments'   expr -
+compare 'end of options' expr -  -- 1
+compare 'quote keyword'  expr -  + length
+compare 'quote operator' expr -  + +
+compare 'quote missing'  expr -  +
+
+# Generated expression values used to live in an 8192-byte fixed array.
+# A perfectly ordinary large substring then failed despite fitting in argv.
+expr_long=$(head -c 20000 /dev/zero | tr '\0' x)
+compare 'long substring' expr - substr "$expr_long" 1 20000
+
+#       Sixty four bits where GNU has as many as it likes, written down here
+#       so the wrap is a decision and not a surprise: what is asserted is that
+#       it wraps the way two's complement does, not that it agrees.
+overflow=$("$bin/expr" 9223372036854775807 + 1)
+if [ "$overflow" = "-9223372036854775808" ]; then
+        pass=$((pass + 1))
+else
+        fail=$((fail + 1))
+        printf '  %-8s %-30s want %-24s got %s\n' expr 'overflow wraps' \
+                '-9223372036854775808' "$overflow"
+fi
+
+printf '  %-12s %s of %s\n' listed "$pass" "$((pass + fail))"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'text-listed %s %s\n' "$pass" "$((pass + fail))" >> "$TEST_TALLY"
+
+listed_fail=$fail
+
+#
+#       Generated cases, ours against the system's.
+#
+#       The seed is fixed so the same twelve thousand nine hundred questions
+#       are asked every time and a failure can be reproduced by running it
+#       again rather than by being lucky twice.
+#
+
+if ! command -v python3 > /dev/null 2>&1; then
+        echo "  generated    skipped (needs python3)"
+        [ "$listed_fail" = 0 ]
+        exit
+fi
+
+BIN=$bin ROUNDS=$rounds python3 - <<'PYTHON' > "$work/generated" 2>&1
+import os, random, subprocess
+
+ours = os.environ["BIN"]
+rounds = int(os.environ["ROUNDS"])
+total = 0
+bad = 0
+shown = 0
+
+
+def report(what, script, want, got, data):
+    global shown
+    shown += 1
+    if shown <= 8:
+        print("  %-6s %-28s want %r got %r" % (what, script, want, got))
+        print("         on %r" % data)
+
+
+def lines(count, longest, alphabet="abc"):
+    return "\n".join(
+        "".join(random.choice(alphabet) for _ in range(random.randint(0, longest)))
+        for _ in range(count)
+    ) + "\n"
+
+
+def run(program, arguments, data):
+    got = subprocess.run([program] + arguments, input=data,
+                         capture_output=True, text=True)
+    return got.stdout, got.returncode
+
+
+def both(name, arguments, data):
+    global total, bad
+    total += 1
+    want, want_status = run(name, arguments, data)
+    mine, mine_status = run(ours + "/" + name, arguments, data)
+
+    if want != mine or want_status != mine_status:
+        bad += 1
+        report(name, " ".join(arguments), want, mine, data)
+
+
+# Longest traversal must stop at a proven endpoint, preserve equal-end
+# captures, and apply grep boundaries without stealing capture groups.
+# Explicit -wx expectations follow the documented -x precedence; the test
+# host's grep 3.12-modified incorrectly adds a blank line for that combination.
+for name, arguments, data, wanted in [
+    ("grep", ["-Eo", "(a|aa)*"], "a" * 128 + "z\n", "a" * 128 + "\n"),
+    ("grep", ["-Eo", "a|ab"], "a" + "b" * 128 + "\n", "ab\n"),
+    ("grep", ["-Ewo", "-e", "-|-b"], "--b\n", "-b\n"),
+    ("grep", ["-Ewo", "a|ab"], "ab a abc\n", "ab\na\n"),
+    ("grep", ["-Ewo", "-e", "(a)\\1", "-e", "(b)\\1"], "aa bb\n", "aa\nbb\n"),
+    ("grep", ["-Ewo", "(a)" * 9 + "\\9"], "a" * 10 + "\n", "a" * 10 + "\n"),
+    ("grep", ["-Exo", "(a)" * 9 + "\\9"], "a" * 10 + "\n", "a" * 10 + "\n"),
+    ("grep", ["-Ewxo", "a|ab"], "a\nab\na_\n", "a\nab\n"),
+    ("grep", ["-Ewxo", "(a)(b)"], "ab\n", "ab\n"),
+    ("grep", ["-Ewxo", ""], "\n", ""),
+    ("sed", ["-E", "s/(a|ab)(b|)/[\\1][\\2]/"], "ab\n", "[a][b]\n"),
+]:
+    total += 1
+    try:
+        got = subprocess.run([ours + "/" + name] + arguments, input=data,
+                             capture_output=True, text=True, timeout=10)
+        actual = got.stdout, got.returncode
+    except subprocess.TimeoutExpired:
+        actual = "timed out", -1
+    if actual != (wanted, 0):
+        bad += 1
+        report(name, " ".join(arguments), (wanted, 0), actual, data)
+
+basic = ["a", "b", "c", ".", "[ab]", "[^a]", "\\(a\\)", "\\(ab\\)", "[a-c]",
+         "a*", "b*", ".*", "\\(a\\)*", "ab", "a\\|b", "\\(a\\|b\\)",
+         "a\\{1,2\\}", "[abc]\\{2\\}", "a\\+", "b\\?", "\\(ab\\)*",
+         "\\(a\\|bc\\)", "\\(ab\\|a\\)"]
+
+extended = ["a", "b", "c", ".", "[ab]", "[^a]", "(a)", "(ab)", "[a-c]", "a*",
+            "b*", ".*", "(a)*", "ab", "a|b", "(a|b)", "a{1,2}", "[abc]{2}",
+            "a+", "b?", "(ab)+", "(a|b)*", "(a|bc)"]
+
+random.seed(20260827)
+
+# Cross vector and refill edges with both complete and unterminated records.
+# The suffix can occur on a rejected record too: finding it only licenses
+# the VM to run, including captures, anchors and optional branches.
+for edge in (31, 32, 63, 64, 65535, 65536, 65537, 131071):
+    for shift in (0, 5, 15):
+        data = ("x" * (edge - shift) + "\nrow000001 RARE_MATCH\n"
+                "bad RARE_MATCH\nrow000002 RARE_MATCH tail\n"
+                "row000003 RARE_MATCH")
+        for flags in ([], ["-c"], ["-nb"], ["-o"], ["-v"],
+                      ["-C1"], ["--color=always"]):
+            both("grep", ["-E", *flags, '^row[0-9]{6}.*RARE_MATCH$'], data)
+        both("grep", ["-F", "RARE_MATCH"], data)
+        both("grep", ["-Fc", "RARE_MATCH"], data)
+        both("grep", ["-zE", '^row[0-9]{6}.*RARE_MATCH$'],
+             data.replace("\n", "\0"))
+
+for _ in range(rounds):
+    pattern = "".join(random.choice(basic) for _ in range(random.randint(1, 3)))
+
+    if random.random() < 0.25:
+        pattern = "^" + pattern
+
+    if random.random() < 0.25:
+        pattern = pattern + "$"
+
+    data = lines(8, 6)
+
+    for flags in (["-c"], ["-n"], ["-ci"], ["-cv"]):
+        both("grep", flags + [pattern], data)
+
+for _ in range(rounds):
+    pattern = "".join(random.choice(extended) for _ in range(random.randint(1, 3)))
+
+    if random.random() < 0.25:
+        pattern = "^" + pattern
+
+    if random.random() < 0.25:
+        pattern = pattern + "$"
+
+    data = lines(8, 6)
+
+    for flags in (["-cE"], ["-nE"], ["-cEi"]):
+        both("grep", flags + [pattern], data)
+
+for _ in range(rounds):
+    pattern = "".join(random.choice(basic) for _ in range(random.randint(1, 3)))
+    replacement = random.choice(["X", "[&]", "<\\1>", "", "Y&Y"])
+
+    if "\\1" in replacement and "\\(" not in pattern:
+        replacement = "X"
+
+    data = lines(6, 6)
+
+    for tail in ("", "g", "2", "gp"):
+        both("sed", ["-n" if tail == "gp" else "-e",
+                     "s/" + pattern + "/" + replacement + "/" + tail], data)
+
+for _ in range(rounds // 2):
+    data = lines(6, 6)
+
+    for flags in (["-n"], ["-c"], ["-u"], ["-d"], ["-i"]):
+        both("uniq", flags if flags != ["-n"] else [], data)
+
+    for flags in (["-r"], ["-u"], ["-f"], ["-n"]):
+        both("sort", flags, data)
+
+    for width in ("1", "3", "5"):
+        both("fold", ["-w", width], data)
+        both("cut", ["-c" + width + "-"], data)
+
+    both("rev", [], data)
+    both("wc", [], data)
+    both("nl", [], data)
+    both("tr", ["a-c", "x-z"], data)
+    both("tr", ["-d", "ab"], data)
+    both("tr", ["-s", "abc"], data)
+
+#       Paragraph boundaries, sentence spacing and prefix filtering are
+#       generated independently of fmt's historical exact-width tie change,
+#       so the same cases remain differential on older host coreutils too.
+
+fmt_words = ["alpha", "beta", "gamma", "word.", "why?", "(open", "close)"]
+
+for _ in range(max(rounds // 4, 1)):
+    rows = []
+    for row in range(random.randint(1, 2)):
+        pieces = [random.choice(fmt_words)
+                  for _ in range(random.randint(1, 4))]
+        rows.append(("  " if random.random() < 0.3 else "")
+                    + ("  " if random.random() < 0.3 else " ").join(pieces))
+    data = "\n".join(rows) + "\n"
+
+    both("fmt", [], data)
+    both("fmt", ["-u"], data)
+    both("fmt", ["-s"], data)
+
+    prefixed = "".join("> " + row + "\n" for row in rows) + "plain\n"
+    both("fmt", ["-p", "> "], prefixed)
+
+#       pr's final page is where down-columns balance differently from
+#       across-columns.  Vary both the incomplete page and its geometry;
+#       -t keeps wall-clock header text out of a generated differential.
+
+for _ in range(max(rounds // 4, 1)):
+    count = random.randint(0, 25)
+    data = "".join("r%02d-%s\n" %
+                   (row, "x" * random.randint(0, 8))
+                   for row in range(count))
+    columns = random.randint(1, 4)
+    width = random.randint(columns * 7 + columns - 1, 48)
+    length = random.randint(2, 9)
+    base = ["-t", "-%d" % columns, "-w", str(width),
+            "-l", str(length)]
+
+    both("pr", base, data)
+    both("pr", base + ["-a"], data)
+    both("pr", base + ["-n:3"], data)
+    both("pr", base + ["-s:"], data)
+
+#       Clean sentence-shaped inputs make ptx's context wrap and stable
+#       keyword ordering independently variable without depending on GNU's
+#       historical diagnostic when a sentence regexp starts at byte zero.
+
+ptx_words = ["alpha", "Beta", "gamma", "delta", "epsilon", "zeta"]
+
+for _ in range(max(rounds // 4, 1)):
+    sentences = []
+    for sentence in range(random.randint(1, 4)):
+        words = [random.choice(ptx_words)
+                 for _ in range(random.randint(1, 7))]
+        sentences.append(("\t" if random.random() < 0.2 else "")
+                         + " ".join(words)
+                         + random.choice([".  ", "?\n", "!\t"]))
+    data = "".join(sentences)
+
+    both("ptx", [], data)
+    both("ptx", ["-f"], data)
+    both("ptx", ["-w", str(random.randint(24, 80)),
+                 "-g", str(random.randint(1, 5))], data)
+    both("ptx", ["-A"], data)
+    both("ptx", ["-S", "\\n"], data)
+    both("ptx", ["-W", "[a-z][a-z]*"], data)
+
+#       A count taken off the end, against one taken off the front of the
+#       same input read backwards. The unterminated last line is the one
+#       that decides where the boundary is, so half of these have none.
+
+for _ in range(rounds // 2):
+    count = random.randint(0, 9)
+    data = lines(random.randint(0, 8), 5)
+
+    if random.random() < 0.5:
+        data = data[:-1]
+
+    for flag in ("-n", "-c"):
+        both("head", [flag, "-%d" % count], data)
+        both("head", [flag, "%d" % count], data)
+        both("tail", [flag, "-%d" % count], data)
+        both("tail", [flag, "+%d" % count], data)
+
+#       The address forms GNU added. A step, a range that ends N lines later
+#       or at the next line a number divides, and line zero.
+
+for _ in range(rounds // 2):
+    data = lines(random.randint(1, 9), 4)
+    first = random.randint(0, 5)
+    step = random.randint(0, 4)
+    other = random.randint(0, 5)
+
+    for script in ("%d~%dp" % (first, step),
+                   "%d~%d!p" % (first, step),
+                   "%d,+%dp" % (max(first, 1), other),
+                   "%d,~%dp" % (max(first, 1), other),
+                   "/a/,+%dp" % other,
+                   "/a/,~%dp" % max(other, 1),
+                   "0,/a/p",
+                   "0,/%s/p" % random.choice("abc"),
+                   "0,/a/!p"):
+        both("sed", ["-n", script], data)
+
+    both("sed", ["0,/b/d"], data)
+    both("sed", ["%d~%dd" % (first, step)], data)
+    both("sed", ["%dQ" % max(first, 1)], data)
+    both("sed", ["-n", "%dQ%d" % (max(first, 1), other)], data)
+
+#       A substitution and a branch off the back of whether it took, which is
+#       the whole of what t and T decide.
+
+for _ in range(rounds // 4):
+    data = lines(random.randint(1, 6), 4)
+    one = random.choice("abc")
+    two = random.choice("abc")
+
+    for script in ("s/%s/X/;t e;s/%s/Y/;:e" % (one, two),
+                   "s/%s/X/;T e;s/%s/Y/;:e" % (one, two),
+                   "/%s/b e\ns/%s/Y/\n:e" % (one, two),
+                   ":a;s/%s/X/;ta" % one,
+                   ":a;N;$!ba;s/\\n/,/g",
+                   "$!{N;s/\\n/+/}"):
+        both("sed", [script], data)
+
+#       Two files, byte for byte, with a skip and a limit either side of the
+#       first difference. cmp reads names rather than standard input, so the
+#       pair is written out and handed over.
+
+import tempfile
+
+folder = tempfile.mkdtemp()
+left = folder + "/left"
+right = folder + "/right"
+
+
+def bytes_of(count):
+    return "".join(random.choice("abc\n") for _ in range(count))
+
+
+for _ in range(rounds // 2):
+    one = bytes_of(random.randint(0, 24))
+    two = one
+
+    if random.random() < 0.8:
+        at = random.randint(0, max(len(one) - 1, 0))
+        two = one[:at] + random.choice("xyz\n") + one[at + 1:]
+
+    if random.random() < 0.3:
+        two = two[:random.randint(0, len(two))]
+
+    open(left, "w").write(one)
+    open(right, "w").write(two)
+
+    skip = random.randint(0, 6)
+    limit = random.randint(0, 12)
+
+    for flags in ([], ["-b"], ["-l"], ["-bl"], ["-s"],
+                  ["-i", str(skip)],
+                  ["-i", "%d:%d" % (skip, random.randint(0, 6))],
+                  ["-n", str(limit)],
+                  ["-l", "-i", str(skip)],
+                  ["-b", "-n", str(limit)]):
+        both("cmp", flags + [left, right], "")
+
+    both("cmp", [left, right, str(skip)], "")
+    both("cmp", [left, right, str(skip), str(random.randint(0, 6))], "")
+
+os.remove(left)
+os.remove(right)
+os.rmdir(folder)
+
+#       The globs --include and the two beside it are matched against, asked
+#       here of grep itself with one file named after the other so what the
+#       glob decided is the whole of the answer.
+
+names = ["ab.txt", "a.txt", "b.log", "abc", "a-b.txt", "A.txt", ".hidden",
+         "x.tar.gz"]
+folder = tempfile.mkdtemp()
+
+for name in names:
+    open(folder + "/" + name, "w").write("alpha\n")
+
+pieces = ["*", "?", "a", "b", ".", "txt", "[ab]", "[^a]", "[a-c]", "*.txt",
+          "-", "[!b]", "]"]
+
+for _ in range(rounds // 2):
+    glob = "".join(random.choice(pieces)
+                   for _ in range(random.randint(1, 3)))
+
+    both("grep", ["-rl", "--include=" + glob, "alpha", folder], "")
+    both("grep", ["-rl", "--exclude=" + glob, "alpha", folder], "")
+
+for name in names:
+    os.remove(folder + "/" + name)
+
+os.rmdir(folder)
+
+# A null sink may stop independently opened regular files after selection,
+# but cannot hide errors in later operands or break a stdin pipe producer.
+with tempfile.TemporaryDirectory() as discard_folder:
+    fixtures = {
+        "hit": b"alpha\nbeta\nalpha\n",
+        "miss": b"beta\ngamma\n",
+        "empty": b"",
+        "binary": b"alpha\0beta\n",
+        "tail": b"beta\nalpha",
+        "denied": b"alpha\n",
+    }
+    for name, data in fixtures.items():
+        with open(discard_folder + "/" + name, "wb") as output:
+            output.write(data)
+    os.chmod(discard_folder + "/denied", 0)
+    inputs = [[name] for name in fixtures]
+    inputs += [["hit", "missing"], ["missing", "hit"],
+               ["hit", "denied"], ["denied", "hit"],
+               ["miss", "missing"], ["hit", "."]]
+
+    def compare_discard(arguments):
+        global total, bad
+        answers = []
+        for program in ("grep", ours + "/grep"):
+            result = subprocess.run([program, *arguments],
+                                    stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.PIPE, timeout=5)
+            answers.append((result.returncode, bool(result.stderr)))
+        total += 1
+        if answers[0] != answers[1]:
+            bad += 1
+            report("grep", "discard " + " ".join(arguments),
+                   answers[0], answers[1], "discarded output")
+
+    for flags in ([], ["-q"], ["-c"], ["-v"], ["-m0"], ["-m1"],
+                  ["-m2", "-c"], ["-a"], ["-o"], ["-n"]):
+        for names in inputs:
+            arguments = [*flags, "alpha", *[discard_folder + "/" + n for n in names]]
+            # This implementation treats input as bytes. GNU's automatic
+            # binary splitting/diagnostics differ under -v and finite -m;
+            # use their shared -a mode for the binary differential matrix.
+            if "binary" in names:
+                arguments.insert(0, "-a")
+            compare_discard(arguments)
+
+    compare_discard(["alpha", discard_folder + "/binary"])
+
+    for flags in ([], ["-c"], ["-v"]):
+        for operand in ([], ["-"]):
+            data = b"alpha\nbeta\n" * 300000
+            answers = []
+            for program in ("grep", ours + "/grep"):
+                child = subprocess.Popen([program, *flags, "alpha", *operand],
+                                         stdin=subprocess.PIPE,
+                                         stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.PIPE)
+                broken = False
+                try:
+                    child.stdin.write(data)
+                    child.stdin.close()
+                except BrokenPipeError:
+                    broken = True
+                errors = child.stderr.read()
+                answers.append((child.wait(timeout=5), broken, bool(errors)))
+            total += 1
+            if answers[0] != answers[1]:
+                bad += 1
+                report("grep", "discard pipe " + " ".join(flags + operand),
+                       answers[0], answers[1], "stream larger than pipe capacity")
+
+    # Preserve our established write-error contract even for the null inode.
+    with open("/dev/null", "rb") as readonly:
+        result = subprocess.run([ours + "/grep", "alpha", discard_folder + "/hit"],
+                                stdout=readonly, stderr=subprocess.PIPE, timeout=5)
+    total += 1
+    if result.returncode != 2:
+        bad += 1
+        report("grep", "read-only null stdout", 2, result.returncode, "write error")
+
+print("\n  %s of %s" % (total - bad, total))
+PYTHON
+
+sed -n '/want/p' "$work/generated"
+
+line=$(sed -n 's/^  \([0-9]*\) of \([0-9]*\)$/\1 \2/p' "$work/generated")
+
+# An empty parse would leave both counts empty and compare equal, which is a
+# suite reporting that nothing failed because nothing ran.
+if [ -z "$line" ]; then
+        echo "  generated    printed no verdict"
+        sed 's/^/    /' "$work/generated" | tail -5
+        exit 1
+fi
+
+made=${line% *}
+made_total=${line#* }
+
+printf '  %-12s %s of %s\n' generated "$made" "$made_total"
+[ -z "${TEST_TALLY:-}" ] ||
+        printf 'text-generated %s %s\n' "$made" "$made_total" >> "$TEST_TALLY"
+
+order_stream=0
+python3 "$(dirname "$0")/text_order_stream.py" "$bin" --capacity || order_stream=1
+
+[ "$listed_fail" = 0 ] && [ "$made" = "$made_total" ] && [ "$order_stream" = 0 ]

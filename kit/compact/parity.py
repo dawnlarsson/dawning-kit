@@ -9,7 +9,7 @@ code can fall back to the generic C. True, and it left the library uneven: a
 program calling string_length_max linked on one machine and not the others.
 
 This adds them where they are absent. The arm64 four are written out here and
-have been run -- src/test/native/run puts 1.2 million calls through them
+have been run -- test/native.sh puts 1.2 million calls through them
 against a C reference. riscv64 is still outstanding and the inventory says so.
 
     python3 kit/compact/parity.py <file.c>
