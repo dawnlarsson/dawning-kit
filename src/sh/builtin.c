@@ -5251,7 +5251,7 @@ fn shell_options_listed(writer write, bool as_commands)
                    stored bit implemented their behavior. */
                 static const string_address names[] = {
                     "allexport", "braceexpand", "emacs", "errexit",
-                    "errtrace", "functrace", "hashall", "history", "histexpand",
+                    "errtrace", "functrace", "hashall", "histexpand", "history",
                     "ignoreeof", "interactive-comments", "keyword",
                     "monitor", "noclobber", "noexec", "noglob", "nolog",
                     "notify", "nounset", "onecmd", "physical", "pipefail",
