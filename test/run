@@ -2290,6 +2290,7 @@ lane_probe()
 lane_shell()
 {
         need_shell || return 1
+        python3 test/shell_functions.py --shell "$shell_binary" || return 1
 
         freestanding test/env_duplicate.c "$work/env-duplicate" || return 1
 
@@ -2481,6 +2482,8 @@ lane_edit()
 lane_kit()
 {
         python3 test/core_state.py || return 1
+        python3 test/canvas_lifetime.py || return 1
+        python3 test/audit_shell_functions.py || return 1
         python3 test/spark_entry.py || return 1
         python3 kit/function_audit.py --check || return 1
         python3 test/surface_coreutils_gap.py || return 1

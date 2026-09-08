@@ -63,7 +63,7 @@ try {
  // removed by the general tidy. Production files and support are unchanged.
  // Scope values are an independently specified integration contract.
  await reset();await click('[data-view="functions"]');
- const scopeCounts={production:4243,c:3894,assembly:349,support:1570,all:5813};
+ const scopeCounts={production:4244,c:3895,assembly:349,support:1570,all:5814};
  for(const [scope,want] of Object.entries(scopeCounts)){
   await select('scope',scope);const got=await meta();check('scope '+scope,got.count===want,{expected:want,...got});
  }

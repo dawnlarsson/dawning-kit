@@ -4817,12 +4817,8 @@ typedef struct
         positive name_hash;
         positive name_length;
         b32 body;
-        // Where this body sits in the kept arenas, so that redefining it can
-        // hand the space back rather than leaving it behind.
-        parse_marks from;
-        parse_marks to;
-        // How many calls of it are on the stack. A body being walked is not
-        // given back, because the next definition would be written over it.
+        // Active calls keep this slot and its name stable. Each call holds
+        // its own body independently when a definition replaces this one.
         positive active;
         bool readonly;
         bool exported;
@@ -5576,10 +5572,7 @@ b32 exec_function_unset(string_address name)
                 if (exec_functions[slot].readonly)
                         return -1;
 
-                // A function unsetting itself is still running its body.
-                if (!exec_functions[slot].active)
-                        parse_release(address_of exec_functions[slot].from,
-                                      address_of exec_functions[slot].to);
+                parse_release(exec_functions[slot].body);
 
                 if (exec_functions[slot].exported)
                         exec_function_environment_changed();
@@ -5610,9 +5603,6 @@ static COLD b32 exec_function_no_room(string_address name)
 static b32 exec_define(b32 index)
 {
         string_address name = parse_words[parse_nodes[index].word];
-        parse_marks before;
-        parse_marks after;
-        bool released = false;
         b32 body;
         positive slot;
         positive2 named = string_hash_33_length(name);
@@ -5679,52 +5669,10 @@ static b32 exec_define(b32 index)
                     exec_special_kind(name);
         }
 
-        /*
-                The body this one replaces, given back where it can be.
-
-                The kept arenas are a stack, so only the last definition taken
-                can be handed back -- which is the one a script redefining a
-                function in a loop keeps making, and the reason such a script
-                used to run the arena out and then walk over what was left.
-
-                A body still being run is not handed back at all. It is the
-                last one taken when a function redefines itself from inside,
-                and the new body was copied over the tree the executor was
-                standing in: the rest of the old body ran from the new one.
-                That block is left behind instead, which is what a function
-                that keeps replacing itself costs.
-        */
-        if (exec_functions[slot].body && !exec_functions[slot].active)
-                released = parse_release(address_of exec_functions[slot].from,
-                                         address_of exec_functions[slot].to);
-
-        // Into locals, because a keep that fails must leave the slot saying
-        // exactly what it said before: half the new marks beside half the old
-        // ones describes a block that was never taken, and giving that back
-        // hands away whatever was kept in between.
-        parse_mark(address_of before);
-        body = parse_keep(parse_nodes[index].right, address_of after);
-
+        body = parse_keep(parse_nodes[index].right, exec_functions[slot].body);
         if (!body)
-        {
-                // What was there was written over by the attempt, so saying
-                // the name is gone is the honest answer.
-                if (released)
-                {
-                        exec_functions[slot].body = 0;
-                        exec_functions[slot].environment_valid = false;
-                        if (exec_functions[slot].exported)
-                        {
-                                exec_functions[slot].exported = false;
-                                exec_function_environment_changed();
-                        }
-                }
-
                 return exec_function_no_room(name);
-        }
 
-        exec_functions[slot].from = before;
-        exec_functions[slot].to = after;
         exec_functions[slot].body = body;
         exec_functions[slot].environment_valid = false;
         exec_function_recent = slot;
@@ -6113,6 +6061,7 @@ static b32 exec_call(positive slot)
         // grow the table, and the table may move when it does.
         exec_function_depth++;
         exec_functions[slot].active++;
+        parse_kept_bodies[body].references++;
 
         if (shell_array_room(exec_frames, exec_frame_room,
                              exec_frame_count + 1))
@@ -6147,6 +6096,7 @@ static b32 exec_call(positive slot)
         }
 
         exec_functions[slot].active--;
+        parse_release(body);
         shell_local_leave();
         exec_function_depth--;
 

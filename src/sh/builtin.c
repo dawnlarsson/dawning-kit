@@ -9203,15 +9203,15 @@ COLD fn shell_read(writer write, string_address input)
 /*
         mapfile, and readarray which is the same command under its other name.
 
-        A whole input read into one array, one element per delimited record.
+        One array element per delimited record.
         Every option is about which records and where they land: -s skips
         some, -n stops after some, -O says which subscript the first one
         takes, -u says which descriptor to read, -d changes what ends a
         record and -t leaves that byte off the element.
 
-        The input is read whole before any element is made, because a record
-        is only a record once its delimiter has been seen and the array is
-        replaced rather than appended to.
+        Keep only the current refill and any record spanning it. A limited
+        read must leave the next record on the descriptor: seek back unread
+        bytes on files, and avoid read-ahead on pipes.
 */
 static p8 address_to mapfile_text;
 static positive mapfile_room;
@@ -9222,7 +9222,7 @@ COLD fn shell_mapfile(writer write, string_address input)
         positive index = 1;
         positive used = 0;
         positive at = 0;
-        positive seen = 0;
+        positive stop = 0;
         positive count = 0;
         positive wanted = 0;
         positive skip = 0;
@@ -9231,6 +9231,8 @@ COLD fn shell_mapfile(writer write, string_address input)
         p8 delimiter = '\n';
         p8 written[32];
         bool trim = false;
+        bool append = false;
+        bool finished = false;
         b32 from = 0;
 
         (void)input;
@@ -9258,32 +9260,40 @@ COLD fn shell_mapfile(writer write, string_address input)
                                       shell_argv[0], said);
                         return shell_answer(2);
                 }
-                bool good;
-                bipolar asked;
+                positive asked;
                 if (which == 'd')
                 {
                         delimiter = string_get(value);
                         continue;
                 }
 
-                asked = shell_signed(value, address_of good);
-
-                if (!good || asked < 0)
+                if (!read_nonnegative(value, which == 'u' ? b32_max : (positive)bipolar_max,
+                                      address_of asked))
                 {
                         string_format(shell_diagnostic,
                                       "%s: %s: bad number\n",
                                       shell_argv[0], value);
-                        return shell_answer(2);
+                        return shell_answer(which == 'u' ? 1 : 2);
                 }
 
                 if (which == 'n')
-                        wanted = (positive)asked;
+                        wanted = asked;
                 else if (which == 's')
-                        skip = (positive)asked;
+                        skip = asked;
                 else if (which == 'O')
-                        origin = (positive)asked;
+                {
+                        origin = asked;
+                        append = true;
+                }
                 else
+                {
                         from = (b32)asked;
+                        if (system_call_3(syscall(fcntl), from, FILE_F_GETFL, 0) < 0)
+                        {
+                                shell_diagnostic("mapfile: bad descriptor\n", 0);
+                                return shell_answer(1);
+                        }
+                }
         }
         index = options.index;
 
@@ -9299,86 +9309,77 @@ COLD fn shell_mapfile(writer write, string_address input)
                 return shell_answer(2);
         }
 
-        while (true)
+        p8 attributes = shell_array_attributes(name, name_length);
+        if (attributes & (SHELL_ARRAY_READONLY | SHELL_ARRAY_ASSOCIATIVE))
         {
-                bipolar got;
-
-                if (used > positive_max - 4098 ||
-                    !shell_array_room(mapfile_text, mapfile_room, used + 4097))
-                {
-                        shell_diagnostic("mapfile: no room\n", 0);
-                        return shell_answer(2);
-                }
-
-                got = system_read_once(from, mapfile_text + used, 4096);
-
-                if (got <= 0)
-                        break;
-
-                used += (positive)got;
+                string_format(shell_diagnostic, "mapfile: %s: %s\n", name,
+                              attributes & SHELL_ARRAY_READONLY
+                                  ? "readonly variable" : "not an indexed array");
+                return shell_answer(1);
         }
-
-        mapfile_text[used] = end;
-
-        // -O adds to what is there rather than replacing it, which is the
-        // one way this command does not start from an empty array.
         if (!shell_variable_attribute_set(name, name_length,
                                           SHELL_ARRAY_INDEXED |
                                               SHELL_ARRAY_ASSIGNED,
                                           SHELL_ARRAY_ASSOCIATIVE) ||
-            (!origin && !shell_array_clear(name, name_length)))
+            (!append && !shell_array_clear(name, name_length)))
+                return shell_no_room("mapfile");
+
+        bool seekable = wanted && system_seek(from, 0, FILE_SEEK_CUR) >= 0;
+        positive amount = wanted && !seekable ? 1 : 4096;
+        bool failed = false;
+        while (!wanted || count < wanted)
         {
-                shell_diagnostic("mapfile: no room\n", 0);
-                return shell_answer(2);
-        }
-
-        while (at < used)
-        {
-                positive begin = at;
-                positive short_stop = at + min(used - at, 16);
-                positive stop;
-                p8 held;
-
-                // Short records avoid a wide-scan setup on every element.
-                while (at < short_stop && mapfile_text[at] != delimiter)
-                        at++;
-                if (at == short_stop && at < used)
-                        at += memory_span_without_byte(mapfile_text + at, delimiter, used - at);
-
-                stop = at;
-
-                if (at < used)
-                        at++;
-
-                // Without -t the delimiter is part of the record, so the
-                // terminator goes after it -- over the first byte of the
-                // next record, which is put back before that one is read.
-                if (!trim)
-                        stop = at;
-
-                if (seen++ < skip)
+                if (stop < used)
+                        stop += memory_span_without_byte(mapfile_text + stop, delimiter, used - stop);
+                if (stop == used && !finished)
+                {
+                        if (skip)
+                                at = used;
+                        used -= at;
+                        if (used && at)
+                                memory_copy(mapfile_text, mapfile_text + at, used);
+                        at = 0;
+                        stop = used;
+                        if (used > positive_max - amount - 1 ||
+                            !shell_array_room(mapfile_text, mapfile_room, used + amount + 1))
+                        {
+                                failed = true;
+                                break;
+                        }
+                        bipolar got = system_read_retry(from, mapfile_text + used, amount);
+                        // Bash treats a read failure on an open descriptor as EOF.
+                        finished = got <= 0;
+                        if (got > 0)
+                                used += (positive)got;
+                        mapfile_text[used] = end;
                         continue;
-
-                if (wanted && count >= wanted)
+                }
+                if (at == used)
                         break;
-
-                held = mapfile_text[stop];
-                mapfile_text[stop] = end;
-
-                if (!shell_array_set(name, name_length, written,
+                positive next = stop + (stop < used);
+                if (skip)
+                        skip--;
+                else
+                {
+                        positive end_at = trim ? stop : next;
+                        p8 held = mapfile_text[end_at];
+                        mapfile_text[end_at] = end;
+                        failed = origin > (positive)bipolar_max - count ||
+                            !shell_array_set(name, name_length, written,
                                      bipolar_into_string(
                                          written, (bipolar)(origin + count)),
-                                     mapfile_text + begin, false))
-                {
-                        mapfile_text[stop] = held;
-                        shell_diagnostic("mapfile: no room\n", 0);
-                        return shell_answer(2);
+                                     mapfile_text + at, false);
+                        mapfile_text[end_at] = held;
+                        count++;
                 }
-
-                mapfile_text[stop] = held;
-                count++;
+                at = stop = next;
+                if (failed)
+                        break;
         }
-
+        if (seekable && used > at)
+                system_seek(from, (positive)(-(bipolar)(used - at)), FILE_SEEK_CUR);
+        if (failed)
+                return shell_no_room("mapfile");
         shell_answer(0);
 }
 
