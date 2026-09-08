@@ -635,6 +635,22 @@ b32 main()
 
         positive held = 0;
 
+        /*
+                A script on standard input shares that descriptor with every
+                command it runs.
+
+                Reading ahead in four kilobyte lumps handed `read`, and the
+                commands after it, an input the shell had already swallowed:
+                `read x` in a piped script read nothing, and the line meant
+                for it was run as a command. dash and bash read a pipe a byte
+                at a time and leave a regular file's offset at the end of the
+                line being run, so a child sees exactly the bytes the script
+                has not reached yet. A terminal already hands over one line
+                per read, so it keeps the wider read.
+        */
+        bool shared_input = !script_file && !shell_interactive();
+        bool seekable_input = shared_input && system_seek(input, 0, 1) >= 0;
+
         while (1)
         {
                 bipolar got;
@@ -658,7 +674,8 @@ b32 main()
                 if (script_file)
                         input = exec_script_fd;
                 got = system_read_once(input, shell_buffer + held,
-                                       shell_buffer_room - 1 - held);
+                                       shared_input && !seekable_input
+                                          ? 1 : shell_buffer_room - 1 - held);
 
                 if (got < 0 && script_file && shell_bash_compat)
                 {
@@ -672,6 +689,35 @@ b32 main()
                         break;
 
                 total = held + (positive)got;
+
+                if (shared_input)
+                {
+                        p8 address_to newline = memory_first_of(
+                            shell_buffer + held, '\n', (positive)got);
+
+                        // Nothing to run yet; keep collecting the line.
+                        if (!newline)
+                        {
+                                held = total;
+                                continue;
+                        }
+
+                        // Only the line that ended is run. What was read
+                        // past it is given back to the file, where the next
+                        // command to read standard input expects to find it.
+                        if (seekable_input)
+                        {
+                                positive line_end =
+                                    (positive)(newline - shell_buffer) + 1;
+
+                                if (line_end < total)
+                                        system_seek(input,
+                                                    -(bipolar)(total - line_end),
+                                                    1);
+                                total = line_end;
+                        }
+                }
+
                 at = shell_run_complete_lines(shell_buffer, total, false);
 
                 if (at && shell_onecmd_on() && !shell_reading_more())
