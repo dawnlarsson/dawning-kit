@@ -6,8 +6,9 @@
 #
 #       The input is generated once outside every timed region. Each direct
 #       utility is reached through argv[0], its output is first required to be
-#       byte-identical to the host tool, and only then is it timed. Lower is
-#       better. BENCH_RUNS defaults to 7 and BENCH_SECONDS to 0.15.
+#       byte-identical to the host tool, and only then is it timed. Output goes
+#       to a regular file in both paths so grep cannot skip discarded output.
+#       Lower is better. BENCH_RUNS defaults to 7 and BENCH_SECONDS to 0.15.
 #
 set -eu
 
@@ -51,6 +52,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -69,6 +71,7 @@ if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
 environment = os.environ.copy()
 environment["LC_ALL"] = "C"
 work_path = Path(work)
+benchmark_output = tempfile.TemporaryFile(dir=work_path)
 data = work_path / "records"
 find_tree = work_path / "find-tree"
 comm_left = work_path / "comm-left"
@@ -159,10 +162,12 @@ if sys.platform.startswith("linux"):
 
 def execute(executable, arguments, stdin_path, capture):
     source = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
+    benchmark_output.seek(0)
+    benchmark_output.truncate()
     try:
         result = subprocess.run(
             (str(executable), *arguments), stdin=source,
-            stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+            stdout=benchmark_output,
             stderr=subprocess.PIPE, env=environment, check=False,
         )
     finally:
@@ -174,7 +179,8 @@ def execute(executable, arguments, stdin_path, capture):
             f"{executable} {' '.join(arguments)} exited {result.returncode}"
             + (f": {detail}" if detail else "")
         )
-    return result.stdout if capture else b""
+    benchmark_output.seek(0)
+    return benchmark_output.read() if capture else b""
 
 def elapsed(executable, arguments, stdin_path, count):
     started = time.perf_counter_ns()

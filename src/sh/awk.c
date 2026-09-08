@@ -19,13 +19,7 @@
         than the arena has says so.
 */
 
-static fn awk_leave(b32 code);
-
-static fn awk_out_of_memory()
-{
-        text_error(null, "out of memory");
-        awk_leave(2);
-}
+static DEAD_END fn awk_leave(b32 code);
 
 /*
         One point of failure, because awk makes garbage.
@@ -41,7 +35,7 @@ static address_any awk_take(positive bytes)
         address_any made = memory_take(bytes);
 
         if (!made)
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
 
         return made;
 }
@@ -49,7 +43,7 @@ static address_any awk_take(positive bytes)
 static positive awk_size_add(positive left, positive right)
 {
         if (right > positive_max - left)
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
         return left + right;
 }
 
@@ -665,7 +659,7 @@ static awk_array address_to awk_array_new()
 static fn awk_array_grow(awk_array address_to which)
 {
         if (which->width > positive_max / (4 * sizeof(address_any)))
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
 
         positive width = which->width * 4;
         awk_slot address_to address_to buckets =
@@ -859,7 +853,7 @@ static b32 awk_where_environ;
 static b32 awk_where_argv;
 static b32 awk_where_argc;
 
-static fn awk_fatal(string_address about, string_address reason);
+static fn awk_flush_everything();
 
 static b32 awk_global_find(string_address name, positive length)
 {
@@ -868,7 +862,8 @@ static b32 awk_global_find(string_address name, positive length)
                         return i;
 
         if (awk_global_count == AWK_GLOBALS_MAX)
-                awk_fatal(null, "too many variables");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "too many variables")));
 
         b32 which = awk_global_count++;
 
@@ -954,14 +949,13 @@ static regex_program awk_regex_cache[AWK_REGEX_CACHED];
 static awk_text address_to awk_regex_cache_key[AWK_REGEX_CACHED];
 static b32 awk_regex_cache_count;
 
-static b32 awk_regex_mark_code;
-static b32 awk_regex_mark_sets;
-static b32 awk_regex_mark_first;
+static rx_mark awk_regex_mark_pool;
 
 static fn awk_regex_build(regex_program address_to into, string_address pattern)
 {
         if (!regex_compile(pattern, true, false, true, REGEX_POLICY_DEFAULT))
-                awk_fatal(pattern, "invalid regular expression");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, pattern, "invalid regular expression")));
 
         regex_keep(into);
 }
@@ -977,12 +971,6 @@ static regex_program address_to awk_regex_keep(string_address pattern)
         return into;
 }
 
-static fn awk_regex_mark()
-{
-        awk_regex_mark_code = regex_pool_used;
-        awk_regex_mark_sets = regex_pool_sets;
-        awk_regex_mark_first = regex_first_used;
-}
 
 static regex_program address_to awk_regex_dynamic(awk_text address_to pattern)
 {
@@ -997,9 +985,8 @@ static regex_program address_to awk_regex_dynamic(awk_text address_to pattern)
                         awk_text_drop(awk_regex_cache_key[i]);
 
                 awk_regex_cache_count = 0;
-                regex_pool_used = awk_regex_mark_code;
-                regex_pool_sets = awk_regex_mark_sets;
-                regex_first_used = awk_regex_mark_first;
+                regex_retained = awk_regex_mark_pool;
+                regex_pool.used = regex_retained;
         }
 
         b32 which = awk_regex_cache_count++;
@@ -1050,7 +1037,7 @@ static HOT fn awk_piece_add(positive start, positive length)
                         address_of awk_pieces, address_of bytes,
                         (awk_piece_count + 1) * sizeof(awk_piece),
                         64 * sizeof(awk_piece)))
-                        awk_out_of_memory();
+                        awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
 
                 awk_piece_room = bytes / sizeof(awk_piece);
         }
@@ -1149,7 +1136,7 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
         positive at = 0;
 
         awk_text_drop(pattern);
-        regex_select(program);
+        regex_current = *program;
 
         while (at < length)
         {
@@ -1216,7 +1203,7 @@ static fn awk_fields_reserve(positive want)
             !memory_resize_reserve(address_of awk_fields, address_of bytes,
                                     (want + 1) * sizeof(awk_value),
                                     64 * sizeof(awk_value)))
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
         awk_fields_room = bytes / sizeof(awk_value);
         for (positive i = before; i < awk_fields_room; i++)
                 awk_fields[i] = (awk_value){.state = AWK_UNSET};
@@ -1346,7 +1333,8 @@ static fn awk_record_set(string_address text, positive length)
 static awk_value address_to awk_field(b32 which)
 {
         if (which < 0)
-                awk_fatal(null, "attempt to access a field before the first");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "attempt to access a field before the first")));
 
         if (!which)
         {
@@ -1611,7 +1599,8 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
         }
 
         if (free_slot < 0)
-                awk_fatal(null, "too many open files");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "too many open files")));
 
         awk_writer address_to made = address_of awk_writers[free_slot];
 
@@ -1626,7 +1615,8 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
                 b32 ends[2];
 
                 if (system_pipe(ends, 0) < 0)
-                        awk_fatal(null, "cannot open pipe");
+                        awk_leave((awk_flush_everything(),
+                                   string_diagnostic(&text_diagnostic, 2, null, "cannot open pipe")));
 
                 // The child has to be told about its own end of the pipe
                 // before it is made, or it inherits the writing end and the
@@ -1647,7 +1637,8 @@ static awk_writer address_to awk_writer_for(awk_text address_to name, p8 kind)
                                           kind == AWK_TO_APPEND ? TEXT_APPEND : TEXT_WRITE, 0666);
 
         if (handle < 0)
-                awk_fatal(name->text, "cannot open for writing");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, name->text, "cannot open for writing")));
 
         made->handle = (b32)handle;
         return made;
@@ -1672,7 +1663,7 @@ static bool awk_reader_fill(awk_reader address_to which)
         if (!memory_resize_reserve(address_of which->data, address_of which->room,
                                     awk_size_add(which->filled, AWK_READ_CHUNK + 1),
                                     AWK_READ_CHUNK * 2))
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
 
         bipolar got = system_read_retry((positive)which->handle,
                                         which->data + which->filled,
@@ -1942,7 +1933,7 @@ static b32 awk_read_record(awk_reader address_to which, awk_text address_to addr
 
         for (;;)
         {
-                regex_select(awk_regex_dynamic(pattern));
+                regex_current = *awk_regex_dynamic(pattern);
 
                 bool got = regex_find(REGEX_LONGEST, which->data + which->at,
                                                 which->filled - which->at, 0) &&
@@ -2011,7 +2002,7 @@ static fn awk_builder_room(awk_builder address_to build, positive want)
         positive room = memory_growth(build->room, want, sizeof(build->fixed));
 
         if (!room)
-                awk_out_of_memory();
+                awk_leave(string_diagnostic(&text_diagnostic, 2, null, "out of memory"));
 
         p8 address_to made = (p8 address_to)awk_take(room);
 
@@ -2647,24 +2638,6 @@ static decimal awk_token_number;
 static awk_text address_to awk_token_text;
 static b32 awk_line_number = 1;
 
-static fn awk_fatal(string_address about, string_address reason)
-{
-        awk_flush_everything();
-        text_error(about, reason);
-        awk_leave(2);
-}
-
-static fn awk_syntax(string_address reason)
-{
-        p8 where[64];
-
-        memory_copy(where, "line ", 5);
-        positive_into_string(where + 5, (positive)awk_line_number);
-        awk_flush_everything();
-        text_error(where, reason);
-        awk_leave(1);
-}
-
 static bool awk_name_start(p8 character)
 {
         return byte_is_alpha(character) || character == '_';
@@ -2840,7 +2813,9 @@ static fn awk_next_token()
                 while (awk_source_at < awk_source_length && awk_source[awk_source_at] != '"')
                 {
                         if (awk_source[awk_source_at] == '\n')
-                                awk_syntax("newline in string");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "newline in string")));
 
                         if (awk_source[awk_source_at] == '\\' &&
                             awk_source_at + 1 < awk_source_length)
@@ -2856,7 +2831,9 @@ static fn awk_next_token()
                 }
 
                 if (awk_source_at >= awk_source_length)
-                        awk_syntax("unterminated string");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "unterminated string")));
 
                 awk_source_at++;
                 awk_text_drop(awk_token_text);
@@ -2878,7 +2855,9 @@ static fn awk_next_token()
                         p8 here = awk_source[awk_source_at];
 
                         if (here == '\n')
-                                awk_syntax("newline in regular expression");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "newline in regular expression")));
 
                         if (here == '\\' && awk_source_at + 1 < awk_source_length)
                         {
@@ -2911,7 +2890,9 @@ static fn awk_next_token()
                 }
 
                 if (awk_source_at >= awk_source_length)
-                        awk_syntax("unterminated regular expression");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "unterminated regular expression")));
 
                 awk_source_at++;
                 awk_text_drop(awk_token_text);
@@ -2962,7 +2943,9 @@ static fn awk_next_token()
                 return;
         }
 
-        awk_syntax("unexpected character");
+        awk_leave((awk_flush_everything(), text_flush(),
+                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                 text_name, (positive)awk_line_number, "unexpected character")));
 }
 
 /*
@@ -3113,7 +3096,9 @@ static b32 awk_function_named(awk_text address_to name)
                         return i;
 
         if (awk_function_count == AWK_FUNCTIONS_MAX)
-                awk_syntax("too many functions");
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                         text_name, (positive)awk_line_number, "too many functions")));
 
         b32 which = awk_function_count++;
 
@@ -3166,7 +3151,9 @@ static fn awk_forget(awk_place address_to place)
 static fn awk_expect(b32 what, string_address complaint)
 {
         if (awk_token != what)
-                awk_syntax(complaint);
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                         text_name, (positive)awk_line_number, complaint)));
 
         awk_next_token();
 }
@@ -3291,7 +3278,9 @@ static awk_node address_to awk_primary()
                 node->a = awk_primary();
 
                 if (!awk_is_lvalue(node->a))
-                        awk_syntax("++ wants a variable");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "++ wants a variable")));
 
                 return node;
         }
@@ -3407,7 +3396,9 @@ static awk_node address_to awk_primary()
                 if (awk_token != T_OPEN)
                 {
                         if (awk_builtin_least[which])
-                                awk_syntax("expected ( after a function name");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "expected ( after a function name")));
 
                         return node;
                 }
@@ -3425,10 +3416,14 @@ static awk_node address_to awk_primary()
 
                 if (node->count < awk_builtin_least[which] ||
                     node->count > awk_builtin_most[which])
-                        awk_syntax("wrong number of arguments to a function");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "wrong number of arguments to a function")));
 
                 if (which == B_SPLIT && node->a->next->kind != N_VARIABLE)
-                        awk_syntax("split wants an array");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "split wants an array")));
 
                 return node;
         }
@@ -3444,7 +3439,9 @@ static awk_node address_to awk_primary()
                         node->a = awk_primary();
 
                         if (!awk_is_lvalue(node->a))
-                                awk_syntax("getline wants a variable");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "getline wants a variable")));
                 }
 
                 if (awk_token == T_LESS)
@@ -3458,8 +3455,9 @@ static awk_node address_to awk_primary()
         }
         }
 
-        awk_syntax("unexpected token");
-        return null;
+        awk_leave((awk_flush_everything(), text_flush(),
+                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                 text_name, (positive)awk_line_number, "unexpected token")));
 }
 
 static awk_node address_to awk_postfix()
@@ -3576,7 +3574,9 @@ static awk_node address_to awk_in_level()
                 awk_next_token();
 
                 if (awk_token != T_NAME)
-                        awk_syntax("in wants an array");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "in wants an array")));
 
                 made->index = awk_resolve(awk_token_text);
                 made->a = node;
@@ -3672,7 +3672,9 @@ static awk_node address_to awk_pipe_level()
                         made->a = awk_primary();
 
                         if (!awk_is_lvalue(made->a))
-                                awk_syntax("getline wants a variable");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "getline wants a variable")));
                 }
 
                 node = made;
@@ -3715,7 +3717,9 @@ static awk_node address_to awk_expression()
         case T_ASSIGN_POWER:
         {
                 if (!awk_is_lvalue(node))
-                        awk_syntax("assignment wants a variable on the left");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "assignment wants a variable on the left")));
 
                 awk_node address_to made = awk_node_new(N_ASSIGN);
 
@@ -3750,7 +3754,9 @@ static fn awk_finish_statement()
         if (awk_token == T_CLOSE_BRACE || awk_token == T_END)
                 return;
 
-        awk_syntax("expected ; or a newline");
+        awk_leave((awk_flush_everything(), text_flush(),
+                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                 text_name, (positive)awk_line_number, "expected ; or a newline")));
 }
 
 static awk_node address_to awk_print_statement(bool formatted)
@@ -3801,7 +3807,9 @@ static awk_node address_to awk_simple_statement()
                 awk_next_token();
 
                 if (awk_token != T_NAME)
-                        awk_syntax("delete wants an array");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "delete wants an array")));
 
                 node = awk_node_new(S_DELETE);
                 node->index = awk_resolve(awk_token_text);
@@ -3950,7 +3958,9 @@ static awk_node address_to awk_statement()
                                 awk_next_token();
 
                                 if (awk_token != T_NAME)
-                                        awk_syntax("for wants an array after in");
+                                        awk_leave((awk_flush_everything(), text_flush(),
+                                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                                 text_name, (positive)awk_line_number, "for wants an array after in")));
 
                                 node = awk_node_new(S_FORIN);
                                 node->index = awk_resolve(name);
@@ -4032,12 +4042,16 @@ static fn awk_parse_function()
         awk_next_token();
 
         if (awk_token != T_NAME && awk_token != T_CALL_NAME)
-                awk_syntax("function wants a name");
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                         text_name, (positive)awk_line_number, "function wants a name")));
 
         b32 which = awk_function_named(awk_token_text);
 
         if (awk_functions[which].defined)
-                awk_syntax("function defined twice");
+                awk_leave((awk_flush_everything(), text_flush(),
+                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                         text_name, (positive)awk_line_number, "function defined twice")));
 
         awk_next_token();
         awk_expect(T_OPEN, "expected ( after a function name");
@@ -4047,10 +4061,14 @@ static fn awk_parse_function()
         while (awk_token != T_CLOSE)
         {
                 if (awk_token != T_NAME)
-                        awk_syntax("expected a parameter name");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "expected a parameter name")));
 
                 if (awk_local_count == AWK_LOCALS_MAX)
-                        awk_syntax("too many parameters");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "too many parameters")));
 
                 awk_local_names[awk_local_count++] = awk_text_hold(awk_token_text);
                 awk_next_token();
@@ -4095,7 +4113,9 @@ static fn awk_parse_program()
                 }
 
                 if (awk_rule_count == AWK_RULES_MAX)
-                        awk_syntax("too many rules");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "too many rules")));
 
                 awk_rule address_to rule = address_of awk_rules[awk_rule_count++];
 
@@ -4112,7 +4132,9 @@ static fn awk_parse_program()
                         awk_skip_newlines();
 
                         if (awk_token != T_OPEN_BRACE)
-                                awk_syntax("BEGIN and END want an action");
+                                awk_leave((awk_flush_everything(), text_flush(),
+                                           string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                         text_name, (positive)awk_line_number, "BEGIN and END want an action")));
                 }
                 else if (awk_token != T_OPEN_BRACE)
                 {
@@ -4133,7 +4155,9 @@ static fn awk_parse_program()
                         awk_expect(T_CLOSE_BRACE, "expected } after an action");
                 }
                 else if (!awk_statement_ends())
-                        awk_syntax("expected an action or the end of the rule");
+                        awk_leave((awk_flush_everything(), text_flush(),
+                                   string_report(writer_stderr, 1, "%s: line %p: %s\n",
+                                                 text_name, (positive)awk_line_number, "expected an action or the end of the rule")));
         }
 }
 
@@ -4200,7 +4224,7 @@ static fn awk_value_done(awk_value address_to which)
         which->state = AWK_UNSET;
 }
 
-static fn awk_leave(b32 code)
+static DEAD_END fn awk_leave(b32 code)
 {
         awk_flush_everything();
 
@@ -4281,11 +4305,13 @@ static inline INLINE decimal awk_arithmetic(p8 operation, decimal left, decimal 
         case '*': return left * right;
         case '/':
                 if (right == 0)
-                        awk_fatal(null, "division by zero attempted");
+                        awk_leave((awk_flush_everything(),
+                                   string_diagnostic(&text_diagnostic, 2, null, "division by zero attempted")));
                 return left / right;
         case '%':
                 if (right == 0)
-                        awk_fatal(null, "division by zero attempted in %");
+                        awk_leave((awk_flush_everything(),
+                                   string_diagnostic(&text_diagnostic, 2, null, "division by zero attempted in %")));
                 return decimal_modulo(left, right);
         }
         return awk_power(left, right);
@@ -4378,7 +4404,8 @@ static inline INLINE fn awk_target_field_locate(awk_node address_to node,
         into->index = node->sub;
 
         if (into->field < 0)
-                awk_fatal(null, "attempt to assign to a field before the first");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "attempt to assign to a field before the first")));
 }
 
 static inline INLINE fn awk_target_field_prepare(awk_target address_to into)
@@ -4426,7 +4453,8 @@ static fn awk_target_of(awk_node address_to node, awk_target address_to into)
         }
         }
 
-        awk_fatal(null, "not something that can be assigned to");
+        awk_leave((awk_flush_everything(),
+                   string_diagnostic(&text_diagnostic, 2, null, "not something that can be assigned to")));
 }
 
 static bool awk_target_of_sub(awk_node address_to node, awk_target address_to into)
@@ -4530,7 +4558,7 @@ static regex_program address_to awk_program_of(awk_node address_to node)
 
 static bool awk_matches(awk_node address_to pattern, awk_text address_to subject)
 {
-        regex_select(awk_program_of(pattern));
+        regex_current = *awk_program_of(pattern);
         return regex_find(REGEX_FIRST, subject->text, subject->length, 0);
 }
 
@@ -4688,7 +4716,8 @@ static fn awk_eval(awk_node address_to node, awk_value address_to out)
                 return;
         }
 
-        awk_fatal(null, "cannot evaluate this");
+        awk_leave((awk_flush_everything(),
+                   string_diagnostic(&text_diagnostic, 2, null, "cannot evaluate this")));
 }
 
 static fn awk_call(awk_node address_to node, awk_value address_to out)
@@ -4696,7 +4725,8 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
         awk_function address_to which = address_of awk_functions[node->index];
 
         if (!which->defined)
-                awk_fatal(which->name->text, "calling a function that is not defined");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, which->name->text, "calling a function that is not defined")));
 
         b32 base = awk_frame + awk_frame_size;
         b32 count = which->parameters;
@@ -4708,7 +4738,8 @@ static fn awk_call(awk_node address_to node, awk_value address_to out)
 
         if (base + count >= AWK_FRAME_MAX ||
             awk_stack_start - (positive)address_of mark > awk_stack_room)
-                awk_fatal(which->name->text, "too deep");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, which->name->text, "too deep")));
 
         awk_frame_size += count;
 
@@ -4805,7 +4836,7 @@ static awk_text address_to awk_replace(awk_text address_to subject, regex_progra
 
         while (at <= subject->length)
         {
-                regex_select(program);
+                regex_current = *program;
 
                 if (!regex_find(REGEX_LONGEST, subject->text, subject->length, at))
                         break;
@@ -5108,7 +5139,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
         {
                 awk_text address_to text = awk_eval_text(first);
 
-                regex_select(awk_program_of(second));
+                regex_current = *awk_program_of(second);
 
                 if (regex_find(REGEX_LONGEST, text->text, text->length, 0))
                 {
@@ -5250,7 +5281,8 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
                 return;
         }
 
-        awk_fatal(null, "no such function");
+        awk_leave((awk_flush_everything(),
+                   string_diagnostic(&text_diagnostic, 2, null, "no such function")));
 }
 
 static fn awk_getline_store(awk_node address_to node, awk_text address_to record)
@@ -5392,7 +5424,8 @@ static fn awk_do_printf(awk_node address_to node)
         awk_writer address_to where;
 
         if (!node->a)
-                awk_fatal(null, "printf wants a format");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "printf wants a format")));
 
         awk_text address_to format = awk_eval_text(node->a);
         awk_text address_to made = awk_format_list(
@@ -5749,7 +5782,8 @@ static bool awk_open_next_input()
                         if (handle < 0)
                         {
                                 awk_text_drop(name);
-                                awk_fatal(awk_main.name->text, "cannot open file for reading");
+                                awk_leave((awk_flush_everything(),
+                                           string_diagnostic(&text_diagnostic, 2, awk_main.name->text, "cannot open file for reading")));
                         }
 
                         awk_main.handle = (b32)handle;
@@ -5836,7 +5870,8 @@ static b32 awk_run_rules()
                 if (got <= 0)
                 {
                         if (got < 0)
-                                awk_fatal(awk_main.name->text, "error reading input file");
+                                awk_leave((awk_flush_everything(),
+                                           string_diagnostic(&text_diagnostic, 2, awk_main.name->text, "error reading input file")));
                         break;
                 }
 
@@ -5973,7 +6008,8 @@ static fn awk_start()
         if (!shell_array_room(awk_child_environment,
                               awk_child_environment_room,
                               environment_count + 1))
-                awk_fatal(null, "no room for the environment");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, null, "no room for the environment")));
 
         if (environment_count)
                 memory_copy(awk_child_environment, process_environment,
@@ -6035,15 +6071,6 @@ static fn awk_start()
         awk_set_bytes(address_of awk_fields[0], "", 0);
 }
 
-static fn awk_usage()
-{
-        text_error_raw("usage: awk [-F sepstring] [-v assignment]... program"
-                       " [argument...]\n");
-        text_error_raw("       awk [-F sepstring] -f progfile [-f progfile]..."
-                       " [-v assignment]... [argument...]\n");
-        awk_leave(1);
-}
-
 /*
         -f and -v come as often as there are program files and assignments, so
         the options are done as they arrive rather than counted and looked at
@@ -6071,7 +6098,8 @@ static bool awk_option_seen(p8 letter, string_address value)
         {
                 if (!shell_array_room(awk_pending, awk_pending_room,
                                       (positive)awk_pending_count + 1))
-                        awk_fatal(null, "no room for assignments");
+                        awk_leave((awk_flush_everything(),
+                                   string_diagnostic(&text_diagnostic, 2, null, "no room for assignments")));
 
                 awk_pending[awk_pending_count++] =
                     awk_text_new(value, string_length(value));
@@ -6084,7 +6112,8 @@ static bool awk_option_seen(p8 letter, string_address value)
                              : text_open_handle(value, FILE_READ, 0);
 
         if (handle < 0)
-                awk_fatal(value, "cannot open the program file");
+                awk_leave((awk_flush_everything(),
+                           string_diagnostic(&text_diagnostic, 2, value, "cannot open the program file")));
 
         for (;;)
         {
@@ -6125,16 +6154,20 @@ static b32 text_awk()
         awk_pending_count = 0;
         awk_have_program = false;
 
-        if (!file_take(address_of taking))
-                awk_usage();
+        if (!file_take(address_of taking) ||
+            (!awk_have_program && (b32)taking.first >= text_argument_count))
+        {
+                writer_stderr("usage: awk [-F sepstring] [-v assignment]... program"
+                              " [argument...]\n", 0);
+                writer_stderr("       awk [-F sepstring] -f progfile [-f progfile]..."
+                              " [-v assignment]... [argument...]\n", 0);
+                awk_leave(1);
+        }
 
         b32 at = (b32)taking.first;
 
         if (!awk_have_program)
         {
-                if (at >= text_argument_count)
-                        awk_usage();
-
                 string_address text = program_argument(at++);
 
                 awk_builder_put(address_of program, text, string_length(text));
@@ -6168,7 +6201,7 @@ static b32 text_awk()
         awk_source_length = program.used;
         awk_source_at = 0;
         awk_parse_program();
-        awk_regex_mark();
+        awk_regex_mark_pool = regex_retained;
 
         if (awk_field_split)
         {
@@ -6183,8 +6216,5 @@ static b32 text_awk()
                 awk_text_drop(awk_pending[i]);
         }
 
-        b32 answer = awk_run_rules();
-
-        awk_leave(answer);
-        return answer;
+        awk_leave(awk_run_rules());
 }

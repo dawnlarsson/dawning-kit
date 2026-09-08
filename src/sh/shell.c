@@ -592,7 +592,6 @@ positive shell_shopt_state = SHELL_SHOPT_STARTED;
 #endif
 
 COLD string_address shell_dynamic_value(const_string name, positive length,
-                                        positive hash,
                                         positive address_to value_length);
 COLD bool shell_dynamic_assign(const_string name, positive length,
                                const_string value);
@@ -1283,7 +1282,7 @@ static fn run_line_inner(string_address line)
                 parse_here_line(line);
         else if (!parse_feed(line))
         {
-                string_format(exec_error, "Command line too long\n");
+                log_error(str("Command line too long\n"));
                 parse_reset();
                 shell_more = false;
                 return;
@@ -1307,7 +1306,7 @@ static fn run_line_inner(string_address line)
 
         if (parse_state)
         {
-                string_format(exec_error, "Syntax error\n");
+                log_error(str("Syntax error\n"));
                 shell_status = 2;
                 parse_reset();
 
@@ -1443,7 +1442,7 @@ fn run_lines(string_address text)
         if (length == positive_max ||
             !shell_array_room(copy, room, length + 1))
         {
-                string_format(exec_error, "No room to run lines\n");
+                log_error(str("No room to run lines\n"));
                 shell_status = 2;
                 return;
         }
@@ -1498,7 +1497,7 @@ fn shell_input_end()
         */
         if (parse_here_open())
         {
-                string_format(exec_error,
+                string_format(log_error,
                               "Warning: here-document ended by end of input"
                               " (wanted %s)\n",
                               parse_here_open());
@@ -1520,7 +1519,7 @@ fn shell_input_end()
                         return;
         }
 
-        string_format(exec_error, "Syntax error: unexpected end of input\n");
+        log_error(str("Syntax error: unexpected end of input\n"));
         bool word_eof = parse_pending_used &&
                         lex_unfinished(parse_pending) == LEX_OPEN_WORD;
         parse_reset();

@@ -60,4 +60,4 @@ b32 main(void)
         return test_report(null);
 }
 '''
-Path(sys.argv[1]).write_text(code.replace('#include "src/', f'#include "{root}/src/'))
+Path(sys.argv[1]).write_text(code.replace('#include "', f'#include "{root}/'))
