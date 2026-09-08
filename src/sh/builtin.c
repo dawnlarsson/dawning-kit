@@ -7640,6 +7640,11 @@ bool test_compare(positive kind, string_address left, string_address right)
 
         if (!first_good || !second_good)
         {
+                //      Both references complain about the operand that is not
+                //      a number; being silent read as a false rather than an
+                //      error to anything watching the diagnostic.
+                string_format(shell_diagnostic, "%s: Illegal number: %s\n",
+                              shell_argv[0], first_good ? right : left);
                 test_bad = true;
                 return false;
         }
@@ -7961,6 +7966,25 @@ RETURNS_NONNULL string_address printf_escape(writer write, string_address step)
                 write(address_of value, 1);
 
                 return step;
+        }
+
+        // \xHH is one or two hexadecimal digits, in the format, a %b argument
+        // and echo -e alike -- both references read it in all three. A bare
+        // \x with no digit falls through and stays the two bytes it was.
+        if (string_is(step, 'x'))
+        {
+                positive used;
+                positive number = string_digits_hexadecimal_escape_max(
+                    step + 1, 2, address_of used);
+
+                if (used)
+                {
+                        step += used + 1;
+                        value = (p8)number;
+                        write(address_of value, 1);
+
+                        return step;
+                }
         }
 
         value = string_get(step);
