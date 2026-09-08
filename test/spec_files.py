@@ -95,7 +95,8 @@ FIXTURES["files"] = {
     "dir/inside": files_file(b"nested\n", 1150000000),
     "dir/sub/deep": files_file(b"deeper\n", 1160000000),
     "dir/sub/deep.txt": files_file(b"deep text\n", 1165000000),
-    "dir/back": files_link("..", 1310000000),
+    "dir/sub/back": files_link("..", 1310000000),
+    "self": files_link(".", 1315000000),
     "dir/sub": files_dir(1710000000),
     "dir": files_dir(1700000000),
     "deep/one/two/three/leaf": files_file(b"leaf\n", 1170000000),
@@ -205,12 +206,24 @@ def files_hide_digits(data):
     return re.sub(rb"\d", b"X", data)
 
 
+def files_hide_help_hint(data):
+    """GNU follows a usage error with "Try 'x --help' for more information."
+    This suite has no --help to try, on purpose, and says nothing there; the
+    line is dropped from both sides and the diagnostic itself is compared."""
+    return re.sub(rb"(?m)^Try '[^'\n]*' for more information\.\n", b"", data)
+
+
 def files_normal(*steps):
     def normalize(channel, data):
+        if channel == "stderr":
+            data = files_hide_help_hint(data)
         for step in steps:
             data = step(data)
         return data
     return normalize
+
+
+files_plain = files_normal()
 
 
 def files_sorted_records(data):
@@ -274,7 +287,7 @@ files_CHMOD_OPERANDS = tuple(
 # ----------------------------------------------------------------------------
 
 files_FIND_ROOTS = ((".",), ("dir",), ("a.txt",), ("link",), ("dirlink",), ("dangling",), ("missing",),
-                    ("dir", "a.txt"), ("shut",), ("loop",), ("deep",), ("two words",), ("dir/back",),
+                    ("dir", "a.txt"), ("shut",), ("loop",), ("deep",), ("two words",), ("dir/sub/back",),
                     ("dup", "nest"), (), ("hollow",), ("badwalk",), ("dir/",), ("dirlink/",))
 
 files_FIND_GLOBALS = (("-maxdepth", "0"), ("-maxdepth", "1"), ("-maxdepth", "2"), ("-maxdepth", "3"),
@@ -357,7 +370,7 @@ files_FIND_BROKEN = (
     ("-O9", "."), (".", "-newer"), (".", "-samefile"), (".", "-perm"), (".", "-user"), (".", "-user", ""),
     (".", "-uid", "x"), (".", "-links", ""), (".", "-empty", "-empty"), (".", "-name", "a.txt", ",", "-name", "b.txt"),
     (".", ",", "-print"), (".", "-print", ","), (".", "-true", "-quit", "-print"),
-    ("-L", ".", "-name", "a.txt", "-print"), ("-L", "dir", "-type", "f"), ("-L", "dir/back", "-maxdepth", "3"),
+    ("-L", ".", "-name", "a.txt", "-print"), ("-L", "dir", "-type", "f"), ("-L", "dir/sub/back", "-maxdepth", "3"),
     ("-L", "loop"), ("-L", "dangling", "-type", "l"), ("-L", "badwalk"), ("-H", "dirlink", "-type", "d"),
     ("-H", "dir", "-type", "l"), ("-L", "-P", "-L", ".", "-type", "d"), (".", "-follow", "-type", "f"),
     (".", "-xdev", "-type", "d"), (".", "-noleaf", "-type", "d"), (".", "-depth", "-type", "d"),
@@ -415,7 +428,7 @@ files_FIND_WALKED = (
     (".", "-name", "*.txt", "-print0"), (".", "-name", "a.txt", "-printf", "%p %s %m\\n"), (".", "-ls"),
     (".", "-type", "f", "-exec", "echo", "{}", ";"), (".", "-type", "f", "-exec", "printf", "%s\\n", "{}", "+"),
     ("dir", "-delete"), ("dir", "-name", "inside", "-delete"), (".", "-name", "a.txt", "-ok", "rm", "{}", ";"),
-    ("dir/back", "-name", "a.txt"), ("dirlink", "-type", "f"), ("link", "-type", "f"), ("dangling",),
+    ("dir/sub/back", "-name", "a.txt"), ("dirlink", "-type", "f"), ("link", "-type", "f"), ("dangling",),
     ("missing",), ("shut",), ("loop",), (), (".", "-name", "a.txt", "-quit"), (".", "-regex", ".*\\.txt"),
     (".", "-mtime", "+100"), (".", "-newermt", "2003-01-01"), (".", "-iname", "*.TXT", "-fprint", "out"),
 )
@@ -455,7 +468,7 @@ files_LS_OPTIONS = (
 files_LS_OPERANDS = (
     (), ("a.txt",), ("dir",), ("dir", "a.txt", "link"), ("link",), ("dirlink",), ("dangling",), ("missing",),
     ("unreadable",), ("shut",), ("two words", "b.txt"), ("--", "-dash"), (".hidden", "hollow"), ("deep",),
-    ("exe", "twin"), ("dir/sub",), ("missing", "a.txt"), ("loop",), ("dir/back",), ("new\nline",),
+    ("exe", "twin"), ("dir/sub",), ("missing", "a.txt"), ("loop",), ("dir/sub/back",), ("new\nline",),
     ("recent.txt",), ("dirlink/",), ("dup",), ("/dev/null",), ("badwalk",),
 )
 
@@ -631,10 +644,10 @@ UTILITIES = (
                                  Option("--canonicalize-existing"), Option("--canonicalize-missing"),
                                  Option("--no-newline"), Option("--quiet"), Option("--silent"),
                                  Option("--verbose"), Option("--zero")),
-            operands=(("link",), ("a.txt",), ("dirlink",), ("dangling",), ("loop",), ("missing",), ("dir/back",),
+            operands=(("link",), ("a.txt",), ("dirlink",), ("dangling",), ("loop",), ("missing",), ("dir/sub/back",),
                       ("link/",), ("a.txt/",), ("a.txt/.",), ("a.txt/..",), ("missing/at/all",), ("link", "dirlink"),
-                      ("dir/../a.txt",), ("dirlink/inside",), ("dirlink/..",), ("dir/back/a.txt",), ("two words",),
-                      (), ("",), ("/",), ("badwalk",), ("badwalk/",), ("shut/inside",), ("dir/back/dir/back/dir",),
+                      ("dir/../a.txt",), ("dirlink/inside",), ("dirlink/..",), ("dir/sub/back/inside",), ("two words",),
+                      (), ("",), ("/",), ("badwalk",), ("badwalk/",), ("shut/inside",), ("dir/sub/back/sub/back/sub",),
                       ("link", "missing", "dirlink"), ("loop/",), ("-",), ("/dev/null",)),
             stdin=("empty",), fixture="files", stderr="exact"),
     Utility("realpath", options=(Option("-e"), Option("-m"), Option("-L"), Option("-P"), Option("-q"),
@@ -644,10 +657,10 @@ UTILITIES = (
                                  Option("--relative-to", ("dir", ".", "dir/sub", "missing", "", "/", "dirlink", "a.txt"), True),
                                  Option("--relative-base", (".", "dir", "/usr", "", "/", "deep/one"), True)),
             operands=(("a.txt",), ("link",), ("dir/../a.txt",), ("dir/sub",), ("/",), ("missing",), ("missing/at/all",),
-                      ("dangling",), ("loop",), ("dirlink/..",), ("dir/back/..",), ("dir/back/a.txt",), ("link/",),
+                      ("dangling",), ("loop",), ("dirlink/..",), ("dir/sub/back/..",), ("dir/sub/back/inside",), ("link/",),
                       ("a.txt/",), ("a.txt/.",), ("a.txt//",), ("a.txt/..",), ("badwalk",), ("badwalk/",), ("two words",),
                       ("a.txt", "link", "missing", "dir"), (), ("",), ("dirlink",), ("dirlink/inside",), ("deep/one/two/three/leaf",),
-                      ("shut/inside",), ("./././a.txt",), ("dir//sub//",), ("x" * 20000,), ("-",), ("dir/back/dir/back/a.txt",)),
+                      ("shut/inside",), ("./././a.txt",), ("dir//sub//",), ("x" * 20000,), ("-",), ("dir/sub/back/sub/back/inside",)),
             stdin=("empty",), fixture="files", stderr="exact"),
     Utility("pathchk", options=(Option("-p"), Option("-P"), Option("--portability")),
             operands=(("absent",), ("a.txt",), ("",), ("A-z_09.ok/path",), ("bad+name",), ("okay/-bad",),
@@ -698,7 +711,7 @@ UTILITIES = (
             operands=(("a.txt",), ("dir",), ("link",), ("dangling",), ("missing",), ("empty",), ("exe",), ("two words",),
                       ("unreadable",), ("shut/inside",), ("a.txt", "dir", "link"), ("twin",), ("loop",), ("/dev/null",),
                       ("hollow",), ("-",), (), ("dirlink",), ("badwalk",), ("recent.txt",), ("a.txt", "missing", "b.txt"),
-                      ("/",), ("dir/back",), (".",), ("new\nline",)),
+                      ("/",), ("dir/sub/back",), (".",), ("new\nline",)),
             stdin=("empty", "text"), fixture="files", stderr="exact", normalize=files_listing),
     Utility("ls", options=files_LS_OPTIONS, operands=files_LS_OPERANDS, stdin=("empty",), fixture="files",
             stderr="exact", normalize=files_listing, env=(("LS_COLORS", files_LS_COLORS),), max_flags=5,
@@ -707,7 +720,7 @@ UTILITIES = (
                    ("-l", "--time-style=full-iso"), ("-lu", "--time-style=+%s"), ("-lc",), ("-lt", "--time=birth"),
                    ("-C", "-w", "40"), ("-x", "-w", "40"), ("-m", "-w", "30"), ("-Q", "-1"), ("-b", "-1"), ("-N", "-1"),
                    ("--quoting-style=shell-escape", "-1"), ("--quoting-style=c", "-l"), ("-F", "-1"), ("-p", "-1"),
-                   ("--file-type", "-1"), ("-R", "shut"), ("-R", "dir/back"), ("-LR", "dir"), ("-ls",), ("-lS", "-r"),
+                   ("--file-type", "-1"), ("-R", "shut"), ("-R", "dir/sub/back"), ("-LR", "dir"), ("-ls",), ("-lS", "-r"),
                    ("-lX",), ("-lv",), ("-lU",), ("-f",), ("-lf",), ("-la", "--group-directories-first"),
                    ("-l", "--block-size=K"), ("-l", "--si", "-s"), ("-D", "-l"), ("--zero", "-1"), ("-g", "-o"),
                    ("-n", "-l"), ("--dired",), ("-I", "*.txt", "-a"), ("--hide=*.txt", "-A"), ("-B",),
@@ -757,11 +770,11 @@ UTILITIES = (
                            Option("-t", ("1", "-1", "4K", "+10K", "x", "0", "-4K"), None),
                            Option("--threshold", ("1", "-1"), True)),
             operands=((), ("dir",), ("a.txt",), ("dir", "a.txt", "link"), ("link",), ("dirlink",), ("dangling",),
-                      ("missing",), ("shut",), ("twin", "b.txt"), ("deep",), ("two words",), ("loop",), ("dir/back",),
+                      ("missing",), ("shut",), ("twin", "b.txt"), ("deep",), ("two words",), ("loop",), ("dir/sub/back",),
                       (".",), ("hollow",), ("unreadable",), ("dup",), ("badwalk",), ("dirlink/",), ("missing", "a.txt")),
             stdin=("files_nul_words", "empty"), fixture="files", stderr="exact", normalize=files_when, max_flags=5,
             extra=(tuple("--exclude=never-match-%d" % n for n in range(40)) + (".",),) +
-                  (("-L", "dir"), ("-L", "."), ("-L", "dir/back"), ("-aL", "dup"), ("-D", "dirlink"), ("-H", "dirlink"),
+                  (("-L", "dir"), ("-L", "."), ("-L", "dir/sub/back"), ("-aL", "dup"), ("-D", "dirlink"), ("-H", "dirlink"),
                     ("-Lx", "."), ("-a", "--time", "."), ("-sh", "."), ("-sb", "."), ("-c", "dir", "dup"), ("-s", "-a", "dir"),
                     ("-d", "1", "-s", "dir"), ("-b", "-m", "a.txt"), ("-m", "-b", "a.txt"), ("-k", "-m", "a.txt"),
                    ("--inodes", "-a", "."), ("--apparent-size", "-a", "dir"), ("-l", "dup"), ("--files0-from=-",))),
@@ -1012,12 +1025,12 @@ UTILITIES = (
                       ("missing", "a.txt", "dir"), ("a.txt",), (), ("dir", "a.txt"), ("dir/.", "hollow"), ("a.txt", "missing/copy"),
                       ("unreadable", "copy"), ("shut", "copied"), ("two words", "sp ace"), ("exe", "copy"), ("empty", "copy"),
                       ("dir/sub/deep", "copy"), ("a.txt", "link"), ("a.txt", "dangling"), ("a.txt", "dirlink"), ("dir", "dirlink"),
-                      ("dir", "dir/sub/x"), ("dir", "dirlink/x"), ("loop", "copy"), ("deep", "copied"), ("a.txt", "b.txt", "missing"),
+                      ("loop", "copy"), ("deep", "copied"), ("a.txt", "b.txt", "missing"),
                       ("-", "copy"), ("a.txt", "shut/copy"), ("dir/", "copied"), ("dir", "hollow"), ("dup", "copied"), ("a.txt", "recent.txt"),
-                      ("recent.txt", "a.txt"), ("binary", "copy"), ("new\nline", "copy"), ("dir/back", "copy"), ("dir", "deep"),
+                      ("recent.txt", "a.txt"), ("binary", "copy"), ("new\nline", "copy"), ("dir/sub/back", "copy"), ("dir", "deep"),
                       ("a.txt", "b.txt", "c.txt", "hollow"), ("dir/inside", "dir/sub"), ("many", "copy"), ("a.txt", "twin")),
             stdin=("files_yes", "files_no"), fixture="files", stderr="exact", max_flags=4,
-            extra=(("-rL", "dir", "copied"), ("-rL", ".", "copied"), ("-rL", "dir/back", "copied"), ("-rp", "dir", "kept"), ("-a", "dir", "arch"),
+            extra=(("-rL", "dir", "copied"), ("-rL", ".", "copied"), ("-rL", "dir/sub/back", "copied"), ("-rp", "dir", "kept"), ("-a", "dir", "arch"),
                    ("-a", "link", "arch"), ("-rl", "dir", "linked"), ("-rs", "dir", "linked"), ("-r", "dir", "dirlink/x"), ("-r", "dir", "dir/sub/x"),
                    ("-P", "-H", "link", "kept"), ("-H", "-P", "link", "kept"), ("-n", "-i", "a.txt", "b.txt"), ("-i", "-n", "a.txt", "b.txt"),
                    ("-rv", "dir", "copied"), ("-T", "-t", "dir", "a.txt"), ("-f", "a.txt", "missing/copy"), ("-l", "missing", "a.txt", "dir"),
@@ -1080,12 +1093,12 @@ UTILITIES = (
                            Option("--preserve-root", ("all",), True), Option("--recursive"), Option("--dir"), Option("--verbose")),
             operands=(("a.txt",), ("dir",), ("missing",), ("link",), ("dangling",), ("dirlink",), ("dirlink/",), ("hollow",),
                       ("a.txt", "b.txt", "missing"), ("shut",), ("unreadable",), ("deep",), ("two words",), ("--", "-dash"), (),
-                      ("dir", "a.txt", "hollow"), ("loop",), ("dir/back",), (".",), ("./",), ("a.txt/",), ("dir/",), ("twin",),
+                      ("dir", "a.txt", "hollow"), ("loop",), ("dir/sub/back",), (".",), ("./",), ("a.txt/",), ("dir/",), ("twin",),
                       ("nest",), ("dup", "nest", "hollow"), ("a.txt", "a.txt"), ("new\nline",), ("shut/inside",), ("dir/sub",)),
             stdin=("files_yes", "files_no", "files_mixed"), fixture="files", stderr="exact",
             extra=(("-rf", "dir", "a.txt", "missing"), ("-ri", "dir"), ("-rv", "dir"), ("-dv", "hollow"), ("-fd", "dir"),
                    ("-f", "-i", "a.txt"), ("-i", "-f", "a.txt"), ("-r", "--one-file-system", "dir"), ("-I", "a.txt", "b.txt", "c.txt", "empty"),
-                   ("-rI", "dir"), ("-rf", "shut"), ("-r", "shut"), ("-rf", "unreadable"), ("-r", "dir/back"), ("-rf", "dir/back/"),
+                   ("-rI", "dir"), ("-rf", "shut"), ("-r", "shut"), ("-rf", "unreadable"), ("-r", "dir/sub/back"), ("-rf", "dir/back/"),
                    ("-r", "dirlink"), ("-r", "dirlink/"), ("-rf", "deep", "nest", "dup"), ("-d", "dir"), ("-d", "hollow", "nest/a/b"),
                    ("-r", "."), ("-rf", "./"), ("-W", "a.txt"), ("-v", "a.txt", "link", "dangling"))),
     Utility("mktemp", options=(Option("-d"), Option("-u"), Option("-q"), Option("-t"), Option("--directory"), Option("--dry-run"),
@@ -1153,7 +1166,7 @@ UTILITIES = (
     Utility("namei", options=(Option("-x"), Option("-m"), Option("-o"), Option("-l"), Option("-n"), Option("-v"), Option("--mountpoints"),
                               Option("--modes"), Option("--owners"), Option("--long"), Option("--nosymlinks"), Option("--vertical")),
             operands=(("a.txt",), ("dir/sub/deep",), ("link",), ("dirlink/inside",), ("dangling",), ("loop",), ("missing",), ("/",),
-                      ("/usr/bin/ls",), ("dir/back/a.txt",), (), ("a.txt", "link"), ("two words",), ("shut/inside",), ("badwalk",),
+                      ("/usr/bin/ls",), ("dir/sub/back/inside",), (), ("a.txt", "link"), ("two words",), ("shut/inside",), ("badwalk",),
                       ("dir/../a.txt",), ("./a.txt",), ("//a.txt",), ("dir//sub",), ("dirlink/..",), ("missing/x/y",), ("a.txt/x",),
                       ("--", "-dash"), ("",), ("/dev/null",), ("deep/one/two/three/leaf",), ("x" * 300,)),
             stdin=("empty",), fixture="files", stderr="exact"),

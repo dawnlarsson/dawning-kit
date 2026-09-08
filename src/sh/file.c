@@ -2356,9 +2356,17 @@ static fn file_option_supersede(file_taking address_to taking, p8 letter)
                         address_to taking->supersedes[i].into = letter;
 }
 
+// Said the way getopt says it, which is what every script that matches on a
+// diagnostic has learned to expect: the letter after two dashes for a short
+// option, the whole word for a long one.
 static bool file_option_needs(file_taking address_to taking, string_address word)
 {
-        file_complain(taking->program, "option needs an argument", word);
+        if (string_is(word, '-') && string_is(word + 1, '-'))
+                string_format(file_fail, "%s: option '%s' requires an argument\n",
+                              taking->program, word);
+        else
+                string_format(file_fail, "%s: option requires an argument -- '%s'\n",
+                              taking->program, word + 1);
 
         return false;
 }
@@ -2441,8 +2449,12 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 string_address shown = long_option ? cursor.word : named;
                 if (!letter || (!long_option && !string_first_of(taking->allowed, letter)))
                 {
-                        file_complain(taking->program,
-                                      long_option ? "unrecognized option" : "invalid option", shown);
+                        if (long_option)
+                                string_format(file_fail, "%s: unrecognized option '%s'\n",
+                                              taking->program, shown);
+                        else
+                                string_format(file_fail, "%s: invalid option -- '%s'\n",
+                                              taking->program, named + 1);
                         return false;
                 }
                 positive bit = file_letter_bit(letter);
@@ -2451,7 +2463,12 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 bool valued = file_option_among(taking->valued, letter);
                 if (cursor.attached && !optional && !valued)
                 {
-                        file_complain(taking->program, "option does not allow an argument", shown);
+                        p8 name[FILE_NAME_MAX];
+
+                        string_copy_max_end(name, cursor.word,
+                                            min(cursor.name_length + 2, FILE_NAME_MAX - 1));
+                        string_format(file_fail, "%s: option '%s' doesn't allow an argument\n",
+                                      taking->program, name);
                         return false;
                 }
                 taking->flags |= (positive)1 << bit;
@@ -3038,9 +3055,16 @@ static bool file_source_destination(string_address program, positive first,
                 return false;
         }
 
-        if (first >= count || (!into && first + 1 >= count))
+        if (first >= count)
         {
-                file_missing(program);
+                string_format(file_fail, "%s: missing file operand\n", program);
+                return false;
+        }
+
+        if (!into && first + 1 >= count)
+        {
+                string_format(file_fail, "%s: missing destination file operand after '%s'\n",
+                              program, program_argument((b32)first));
                 return false;
         }
 
@@ -6490,6 +6514,16 @@ static fn stat_readable(string_address path, file_facts address_to facts)
         log("  Links: ", 0);
         positive_to_string(log, facts->hard_links);
 
+        positive kind = facts->mode & MODE_FORMAT;
+
+        if (kind == MODE_CHARACTER || kind == MODE_BLOCK)
+        {
+                log("     Device type: ", 0);
+                positive_to_string(log, facts->rdev_major);
+                log(",", 1);
+                positive_to_string(log, facts->rdev_minor);
+        }
+
         log("\nAccess: (", 0);
         positive_to_base_field(log, facts->mode & 07777, 8, 4, -1,
                                (positive)1 << 28);
@@ -6585,9 +6619,13 @@ static b32 file_stat()
                 }
 
                 file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, path,
-                                                stat_follow ? 0 : AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
+                // A lone dash is standard input, whatever it is open on.
+                bool standard = string_is(path, '-') && !string_get(path + 1);
+                bipolar looked = standard
+                    ? file_look_code(0, (string_address) "", AT_EMPTY_PATH, address_of facts)
+                    : file_look_code(AT_FDCWD, path,
+                                     stat_follow ? 0 : AT_SYMLINK_NOFOLLOW,
+                                     address_of facts);
 
                 if (looked < 0)
                 {
@@ -6885,7 +6923,8 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
                 // A directory that will not open at the bottom of the walk is
                 // not complained about, because nothing was going to be read
                 // out of it either way.
-                string_format(file_fail, "du: cannot read directory '%s'\n", path);
+                string_format(file_fail, "du: cannot read directory '%s': %s\n", path,
+                              file_reason(walk.handle));
                 du_status = 1;
         }
 
@@ -7510,7 +7549,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                            address_of naive)))
         {
                 if (!chmod_quiet)
-                        string_format(file_fail, "chmod: invalid mode: %s\n",
+                        string_format(file_fail, "chmod: invalid mode: '%s'\n",
                                       chmod_specification);
 
                 chmod_status = 1;
@@ -7743,7 +7782,10 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         if (done < 0)
         {
                 if (!chown_quiet)
-                        string_format(file_fail, "%s: changing ownership of '%s': %s\n",
+                        string_format(file_fail,
+                                      chown_groups_only
+                                          ? "%s: changing group of '%s': %s\n"
+                                          : "%s: changing ownership of '%s': %s\n",
                                       chown_program, shown, file_reason(done));
 
                 chown_status = 1;
@@ -7845,13 +7887,16 @@ static b32 file_chown_common(string_address program, bool groups_only)
         {
                 positive number;
 
-                chown_group = string_digits_exact(who, address_of number)
+                // An empty group is no group: nothing changes, and the
+                // reference chgrp answers 0 to it.
+                chown_group = !string_get(who)              ? -1
+                              : string_digits_exact(who, address_of number)
                                   ? (bipolar)number
                                   : file_group_id(who);
 
-                if (chown_group < 0)
+                if (chown_group < 0 && string_get(who))
                 {
-                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
+                        string_format(file_fail, "%s: invalid group: '%s'\n", program, who);
                         return 1;
                 }
 
@@ -7887,7 +7932,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
                 if (chown_user < 0)
                 {
-                        string_format(file_fail, "%s: invalid user: %s\n", program, who);
+                        string_format(file_fail, "%s: invalid user: '%s'\n", program, who);
                         return 1;
                 }
         }
@@ -7902,7 +7947,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
 
                 if (chown_group < 0)
                 {
-                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
+                        string_format(file_fail, "%s: invalid group: '%s'\n", program, who);
                         return 1;
                 }
         }
@@ -8045,7 +8090,8 @@ static bool ln_make(string_address target, string_address name)
         }
 
         if (ln_loud)
-                string_format(log, "'%s' -> '%s'\n", name, target);
+                string_format(log, ln_symbolic ? "'%s' -> '%s'\n" : "'%s' => '%s'\n",
+                              name, target);
 
         return true;
 }
@@ -8640,6 +8686,15 @@ static b32 file_namei()
                 namei_row_count = 0;
                 namei_text_used = 0;
                 namei_operand = file_operand_at(i);
+
+                // An empty pathname names nothing; the reference says
+                // nothing about it and answers 1.
+                if (!string_get(namei_operand))
+                {
+                        status = 1;
+                        continue;
+                }
+
                 string_format(log, "f: %s\n", namei_operand);
 
                 positive hops = 0;
@@ -9044,7 +9099,7 @@ static b32 file_whereis()
                         log_flush();
                         return 0;
                 }
-                string_format(file_fail, "whereis: missing name\n");
+                string_format(file_fail, "whereis: not enough arguments\n");
                 return 1;
         }
 
@@ -9284,7 +9339,8 @@ static b32 file_basename()
 
         if (!many && index + 2 < count)
         {
-                file_fail("basename: extra operand\n", 0);
+                string_format(file_fail, "basename: extra operand '%s'\n",
+                              program_argument((b32)(index + 2)));
                 return 1;
         }
 
@@ -9655,13 +9711,32 @@ static const file_long pathchk_longs[] = {
     {null, 0},
 };
 
+// The reference's shapes: a stat failure is "name: reason", the checks name
+// the rule first and the file after it.
 static COLD bool pathchk_bad(string_address path, string_address why)
 {
-        string_format(file_fail, "pathchk: %s: '%s'\n", why, path);
+        string_format(file_fail, "pathchk: %s: %s\n", path, why);
         return false;
 }
 
-static bool pathchk_portable_chars(string_address path, positive length)
+static COLD bool pathchk_rule(string_address why, string_address path)
+{
+        string_format(file_fail, "pathchk: %s '%s'\n", why, path);
+        return false;
+}
+
+static COLD bool pathchk_limit(positive limit, positive length, string_address what,
+                               string_address text, positive text_length)
+{
+        p8 shown[FILE_PATH_MAX];
+
+        string_copy_max_end(shown, text, min(text_length, FILE_PATH_MAX - 1));
+        string_format(file_fail, "pathchk: limit %u exceeded by length %u of %s '%s'\n",
+                      limit, length, what, shown);
+        return false;
+}
+
+static b8 address_to pathchk_portable_set()
 {
         static b8 portable[STRING_SET_BYTES];
         static bool ready;
@@ -9675,7 +9750,12 @@ static bool pathchk_portable_chars(string_address path, positive length)
                 ready = true;
         }
 
-        return string_span(path, portable) == length;
+        return portable;
+}
+
+static bool pathchk_portable_chars(string_address path, positive length)
+{
+        return string_span(path, pathchk_portable_set()) == length;
 }
 
 static bool pathchk_one(string_address path, bool basic, bool extra)
@@ -9683,10 +9763,14 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         positive length = string_length(path);
 
         if ((basic || extra) && !length)
-                return pathchk_bad(path, (string_address) "empty file name");
+        {
+                file_fail("pathchk: empty file name\n", 0);
+                return false;
+        }
 
         positive at = 0;
         positive longest = 0;
+        positive longest_at = 0;
 
         while (at < length)
         {
@@ -9699,27 +9783,38 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 positive component = (positive)(stop - path) - at;
 
                 if (extra && string_is(path + at, '-'))
-                        return pathchk_bad(path,
-                                           (string_address) "leading '-' in a component");
+                        return pathchk_rule(
+                            (string_address) "leading '-' in a component of file name", path);
 
                 if (component > longest)
+                {
                         longest = component;
+                        longest_at = at;
+                }
 
                 at += component;
         }
 
         if (basic && !pathchk_portable_chars(path, length))
-                return pathchk_bad(path, (string_address) "non-portable character");
+        {
+                p8 offender[2] = {path[string_span(path, pathchk_portable_set())], end};
+
+                string_format(file_fail,
+                              "pathchk: non-portable character '%s' in file name '%s'\n",
+                              offender, path);
+                return false;
+        }
 
         if (basic)
         {
                 if (length >= PATHCHK_POSIX_PATH)
-                        return pathchk_bad(path,
-                                           (string_address) "portable path limit exceeded");
+                        return pathchk_limit(PATHCHK_POSIX_PATH - 1, length,
+                                             (string_address) "file name", path, length);
 
                 if (longest > PATHCHK_POSIX_NAME)
-                        return pathchk_bad(path,
-                                           (string_address) "portable component limit exceeded");
+                        return pathchk_limit(PATHCHK_POSIX_NAME, longest,
+                                             (string_address) "file name component",
+                                             path + longest_at, longest);
 
                 return true;
         }
@@ -9936,7 +10031,10 @@ static b32 file_make_node(string_address program, string_address path,
 
         if (made < 0)
         {
-                string_format(file_fail, "%s: cannot create '%s': %s\n",
+                string_format(file_fail,
+                              string_is(program + 2, 'f')
+                                  ? "%s: cannot create fifo '%s': %s\n"
+                                  : "%s: %s: %s\n",
                               program, path, file_reason(made));
                 return 1;
         }
@@ -10875,7 +10973,7 @@ static b32 file_split()
 
         if (in < 0)
         {
-                string_format(file_fail, "split: cannot open '%s': %s\n",
+                string_format(file_fail, "split: cannot open '%s' for reading: %s\n",
                               input_name, file_reason(in));
                 return 1;
         }
@@ -11886,7 +11984,7 @@ static b32 file_truncate()
 
         if (!reference_path && !size_text)
         {
-                file_fail("truncate: you must specify either --size or --reference\n", 0);
+                file_fail("truncate: you must specify either '--size' or '--reference'\n", 0);
                 return 1;
         }
 
@@ -13438,7 +13536,7 @@ static shuf_record address_to shuf_file_records(string_address name,
 
         if (handle < 0)
         {
-                string_format(file_fail, "shuf: cannot open '%s': %s\n", name,
+                string_format(file_fail, "shuf: %s: %s\n", name,
                               file_reason(handle));
                 return null;
         }
@@ -13800,7 +13898,7 @@ static b32 file_shuf()
 
                 if (!output.opened)
                 {
-                        string_format(file_fail, "shuf: cannot open '%s': %s\n",
+                        string_format(file_fail, "shuf: %s: %s\n",
                                       output_name, file_reason(output.handle));
                         text_arena_used = 0;
                         return 1;
@@ -14286,7 +14384,7 @@ static b32 file_dircolors()
 
                 if (handle < 0)
                 {
-                        string_format(file_fail, "dircolors: '%s': %s\n", name,
+                        string_format(file_fail, "dircolors: %s: %s\n", name,
                                       file_reason(handle));
                         return 1;
                 }
@@ -14627,6 +14725,18 @@ static bool file_copy_one(string_address source, string_address destination,
                 return false;
         }
 
+        // A destination that is a link to nothing would be written through,
+        // making a file wherever the link points; the reference refuses that
+        // unless -f says to replace what is in the way.
+        if (!moving && !destination_exists && !cp_force && kind != MODE_DIRECTORY &&
+            file_look_link(destination, address_of there) &&
+            (there.mode & MODE_FORMAT) == MODE_LINK)
+        {
+                string_format(file_fail, "cp: not writing through dangling symlink '%s'\n",
+                              destination);
+                return false;
+        }
+
         if (!moving && kind == MODE_DIRECTORY)
         {
                 p8 from[FILE_PATH_MAX];
@@ -14957,13 +15067,16 @@ static bool install_leading(string_address destination)
 static bool install_attributes(string_address destination,
                                file_facts address_to source)
 {
-        if ((install_owner >= 0 || install_group >= 0) &&
-            system_change_owner_at(AT_FDCWD, destination, install_owner,
-                                   install_group, 0) < 0)
+        bipolar owned = install_owner >= 0 || install_group >= 0
+                            ? system_change_owner_at(AT_FDCWD, destination, install_owner,
+                                                     install_group, 0)
+                            : 0;
+
+        if (owned < 0)
         {
                 string_format(file_fail,
-                              "install: cannot change ownership of '%s'\n",
-                              destination);
+                              "install: cannot change ownership of '%s': %s\n",
+                              destination, file_reason(owned));
                 return false;
         }
 
@@ -15040,8 +15153,24 @@ static fn install_pair(string_address source, string_address destination)
                                      install_mode,
                                      FILE_WRITE | FILE_EXCLUSIVE))
         {
-                string_format(file_fail, "install: cannot copy '%s' to '%s'\n",
-                              source, destination);
+                // The copy says only that it failed; asking the kernel again
+                // for the destination is what names the reason, and a probe
+                // that succeeds is taken away before anyone sees it.
+                bipolar probe = system_open_at_mode(AT_FDCWD, destination,
+                                                    FILE_WRITE | FILE_EXCLUSIVE, install_mode);
+
+                if (probe >= 0)
+                {
+                        system_close(probe);
+                        system_remove_at(AT_FDCWD, destination, 0);
+                        string_format(file_fail, "install: cannot copy '%s' to '%s'\n",
+                                      source, destination);
+                }
+                else
+                        string_format(file_fail,
+                                      "install: cannot create regular file '%s': %s\n",
+                                      destination, file_reason(probe));
+
                 install_status = 1;
                 return;
         }
@@ -15178,10 +15307,17 @@ static fn mv_one(string_address source, string_address destination)
 
         file_facts from;
         file_facts to;
+        file_facts through;
 
+        // The two names for one file, or a link named as the source that
+        // points at the destination: renaming either would lose the file.
+        // A link named as the destination is only what the rename replaces.
         if (file_look_link(source, address_of from) &&
             file_look_link(destination, address_of to) &&
-            file_same_identity(address_of from, address_of to))
+            (file_same_identity(address_of from, address_of to) ||
+             ((from.mode & MODE_FORMAT) == MODE_LINK &&
+              file_look_at(source, address_of through) &&
+              file_same_identity(address_of through, address_of to))))
         {
                 string_format(file_fail, "mv: '%s' and '%s' are the same file\n", source,
                               destination);
@@ -15215,6 +15351,22 @@ static fn mv_one(string_address source, string_address destination)
 
                 if (mv_across_said)
                 {
+                        mv_status = 1;
+                        return;
+                }
+        }
+
+        if (done == -ERROR_INVALID)
+        {
+                p8 outer[FILE_PATH_MAX];
+                p8 inner[FILE_PATH_MAX];
+
+                if (file_resolve(source, outer, true) &&
+                    file_resolve(destination, inner, true) && realpath_under(outer, inner))
+                {
+                        string_format(file_fail,
+                                      "mv: cannot move '%s' to a subdirectory of itself, '%s'\n",
+                                      source, destination);
                         mv_status = 1;
                         return;
                 }
@@ -15881,6 +16033,22 @@ static b32 file_touch()
         {
                 string_address path = program_argument((b32)first++);
 
+                // A lone dash is standard output, already open, whatever
+                // name it has.
+                if (string_is(path, '-') && !string_get(path + 1))
+                {
+                        bipolar done = system_update_times_at(1, null, times, 0);
+
+                        if (done < 0)
+                        {
+                                string_format(file_fail, "touch: cannot touch '%s': %s\n",
+                                              path, file_reason(done));
+                                status = 1;
+                        }
+
+                        continue;
+                }
+
                 file_facts existing;
                 bool exists = through ? file_look_at(path, address_of existing)
                                       : file_look_link(path, address_of existing);
@@ -16050,7 +16218,7 @@ static b32 file_sleep()
                 if (!sleep_read(program_argument((b32)i), address_of wanted[0],
                                 address_of wanted[1]))
                 {
-                        string_format(file_fail, "sleep: invalid time interval: %s\n",
+                        string_format(file_fail, "sleep: invalid time interval '%s'\n",
                                       program_argument((b32)i));
                         return 1;
                 }
@@ -16549,7 +16717,7 @@ static b32 file_seq()
                 if (!seq_decimal_number(program_argument((b32)(index + i)),
                                          address_of number[i]))
                 {
-                        string_format(file_fail, "seq: invalid number: %s\n",
+                        string_format(file_fail, "seq: invalid floating point argument: '%s'\n",
                                       program_argument((b32)(index + i)));
                         return 1;
                 }
@@ -17405,13 +17573,24 @@ static b32 file_id()
                 while (first < count)
                 {
                         string_address who = program_argument((b32)first++);
+                        p8 named[FILE_NAME_MAX];
+                        positive number;
+
+                        // A number is the account that has it, by name from
+                        // here on, so every field below is the same lookup.
+                        if (string_digits_exact(who, address_of number) &&
+                            number <= p32_max &&
+                            file_user_name(number, named, FILE_NAME_MAX))
+                                who = (string_address)named;
+
                         bipolar user = file_user_id(who);
                         bipolar group = file_account_id(
                             file_account_text(FILE_ACCOUNT_USER), who, 3);
 
                         if (user < 0 || group < 0)
                         {
-                                string_format(file_fail, "id: '%s': no such user\n", who);
+                                string_format(file_fail, "id: '%s': no such user\n",
+                                              program_argument((b32)(first - 1)));
                                 status = 1;
                                 continue;
                         }
@@ -17867,6 +18046,13 @@ static b32 file_uname()
 
         if (!file_take(address_of taking))
                 return 1;
+
+        if (taking.first < (positive)program_argument_count())
+        {
+                string_format(file_fail, "uname: extra operand '%s'\n",
+                              program_argument((b32)taking.first));
+                return 1;
+        }
 
         positive flags = taking.flags;
 
@@ -18507,6 +18693,12 @@ static b32 file_mktemp()
                 return 1;
         }
 
+        // The template as the reference names it when nothing can be made:
+        // directory, X's and suffix together, before any X was filled in.
+        p8 shown[FILE_PATH_MAX];
+
+        memory_copy_apart(shown, path, length + 1);
+
         for (positive attempt = 0; attempt < MKTEMP_ATTEMPTS; attempt++)
         {
                 bipolar answer;
@@ -18540,9 +18732,9 @@ static b32 file_mktemp()
                 {
                         if (!quiet)
                                 string_format(file_fail,
-                                              "mktemp: failed to create %s via template '%s'\n",
+                                              "mktemp: failed to create %s via template '%s': %s\n",
                                               directory ? "directory" : "file",
-                                              template);
+                                              shown, file_reason(answer));
 
                         return 1;
                 }
@@ -18557,8 +18749,8 @@ static b32 file_mktemp()
 
         if (!quiet)
                 string_format(file_fail,
-                              "mktemp: failed to create %s via template '%s'\n",
-                              directory ? "directory" : "file", template);
+                              "mktemp: failed to create %s via template '%s': File exists\n",
+                              directory ? "directory" : "file", shown);
 
         return 1;
 }
@@ -18808,10 +19000,10 @@ static const file_long rename_longs[] = {
 /* Return zero for no occurrence, one for a complete new name and two when
    that name cannot fit in the kernel pathname boundary. */
 static p8 rename_name(string_address source, string_address before,
-                      string_address after, bool every, bool last,
+                      string_address after, bool every, bool last, bool whole,
                       p8 address_to into)
 {
-        string_address slash = string_last_of(source, '/');
+        string_address slash = whole ? null : string_last_of(source, '/');
         positive prefix = slash ? (positive)(slash - source) + 1 : 0;
         string_address name = source + prefix;
         positive source_length = string_length(name);
@@ -18963,12 +19155,7 @@ static b32 file_rename()
                           0);
                 return 1;
         }
-        if (taking.flags & FILE_FLAG('s'))
-        {
-                file_fail("rename: symlink-target rewriting is not supported\n",
-                          0);
-                return 1;
-        }
+        bool symlinks = (taking.flags & FILE_FLAG('s')) != 0;
 
         string_address before = file_operand_at(0);
         string_address after = file_operand_at(1);
@@ -18984,10 +19171,85 @@ static b32 file_rename()
         {
                 string_address source = file_operand_at(at);
                 p8 destination[FILE_PATH_MAX];
+                p8 target[FILE_PATH_MAX];
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, source, AT_SYMLINK_NOFOLLOW,
+                                                address_of facts);
+
+                if (looked < 0)
+                {
+                        string_format(file_fail, "rename: %s: not accessible: %s\n", source,
+                                      file_reason(looked));
+                        failed = true;
+                        continue;
+                }
+
+                // -s rewrites what a link points at, the whole of it, and the
+                // link is made again to say the new target.
+                if (symlinks)
+                {
+                        if ((facts.mode & MODE_FORMAT) != MODE_LINK ||
+                            file_link_text(source, target, FILE_PATH_MAX) < 0)
+                        {
+                                string_format(file_fail, "rename: %s: not a symbolic link\n",
+                                              source);
+                                failed = true;
+                                continue;
+                        }
+
+                        p8 made = rename_name(
+                            (string_address)target, before, after,
+                            (taking.flags & FILE_FLAG('a')) != 0,
+                            (taking.flags & FILE_FLAG('l')) != 0, true, destination);
+
+                        if (!made)
+                                continue;
+                        if (made == 2)
+                        {
+                                string_format(file_fail,
+                                              "rename: new name for '%s' is too long\n",
+                                              source);
+                                failed = true;
+                                continue;
+                        }
+
+                        if (no_overwrite || interactive)
+                        {
+                                file_facts there;
+
+                                if (file_look_link((string_address)destination, address_of there) &&
+                                    (no_overwrite || !rename_ask((string_address)destination)))
+                                        continue;
+                        }
+
+                        if (!no_act)
+                        {
+                                system_remove_at(AT_FDCWD, source, 0);
+
+                                bipolar linked = system_symbolic_link_at(
+                                    (string_address)destination, AT_FDCWD, source);
+
+                                if (linked < 0)
+                                {
+                                        string_format(file_fail,
+                                                      "rename: %s: symlinking to %s failed: %s\n",
+                                                      source, destination, file_reason(linked));
+                                        failed = true;
+                                        continue;
+                                }
+                        }
+
+                        if (verbose)
+                                string_format(log, "%s: `%s' -> `%s'\n", source, target,
+                                              destination);
+                        renamed++;
+                        continue;
+                }
+
                 p8 made = rename_name(
                     source, before, after,
                     (taking.flags & FILE_FLAG('a')) != 0,
-                    (taking.flags & FILE_FLAG('l')) != 0, destination);
+                    (taking.flags & FILE_FLAG('l')) != 0, false, destination);
 
                 if (!made)
                         continue;
@@ -19038,7 +19300,13 @@ static b32 file_rename()
         }
 
         log_flush();
-        return failed ? 1 : (renamed ? 0 : 4);
+
+        // The reference's four answers: everything renamed, everything
+        // failed, some of each, or nothing to rename at all.
+        if (failed)
+                return renamed ? 2 : 1;
+
+        return renamed ? 0 : 4;
 }
 
 // cal -------------------------------------------------------------
@@ -19367,7 +19635,7 @@ static b32 file_cal()
                 {
                         if (!number || number > 2147483646U)
                         {
-                                file_fail("cal: illegal year value\n", 0);
+                                file_fail("cal: illegal year value: use positive integer\n", 0);
                                 return 1;
                         }
                         year = (b64)number;
@@ -19410,7 +19678,7 @@ static b32 file_cal()
                                 address_of parsed_year) || !parsed_year ||
                     parsed_year > 2147483646U)
                 {
-                        file_fail("cal: illegal year value\n", 0);
+                        file_fail("cal: illegal year value: use positive integer\n", 0);
                         return 1;
                 }
                 month = (positive)named;
