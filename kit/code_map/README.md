@@ -129,10 +129,12 @@ The 49,870-line residual includes tables, declarations, macro templates and
 assembly scaffolding. It cannot be counted as removable overhead. A replacement
 must include its new descriptors and declarations in its measured cost.
 
-See [the research and experiment plan](RESEARCH.md) for the design comparisons
-and the next boundaries to investigate. The annotations contain a design
-question and constraints for every family, rather than a savings estimate
-derived from its size.
+See [the research comparisons](RESEARCH.md) and the subsequent
+[audited fold plan](FOLD_PLAN.md) for complete replacement budgets and current
+priorities. The follow-up audit weakens the broad configuration proposal and
+selects regex as a bounded experiment whose major savings remain unproved.
+The annotations contain a design question and constraints for every family,
+rather than a savings estimate derived from its size.
 
 ## Evidence and metric definitions
 
