@@ -49,6 +49,12 @@ import sys
 import tempfile
 import concurrent.futures
 
+# A spec imports this module by name to reach Utility, INPUTS and FIXTURES.
+# When this file is the program (or a pool worker's __mp_main__), that import
+# would otherwise load a second copy of the module, and the inputs and
+# fixtures a spec adds would land in dictionaries nobody reads.
+sys.modules.setdefault("differential", sys.modules[__name__])
+
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
@@ -807,6 +813,13 @@ def build_cases(domain, spec, budget, seed, selected, modes, families):
     for name, utility in sorted(utilities.items()):
         if selected and name not in selected:
             continue
+        # An input or fixture the spec misspelled would otherwise feed nothing
+        # and pass, since both programs would agree about an empty input.
+        for stdin in utility.stdin:
+            if stdin not in INPUTS:
+                raise SystemExit(f"spec_{domain}: {name} names unknown input {stdin!r}")
+        if utility.fixture not in FIXTURES:
+            raise SystemExit(f"spec_{domain}: {name} names unknown fixture {utility.fixture!r}")
         rng = random.Random(int.from_bytes(hashlib.sha256(
             f"{seed}:{domain}:{name}".encode()).digest()[:8], "little"))
         if utility.modes:
