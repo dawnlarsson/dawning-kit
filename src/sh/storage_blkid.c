@@ -1791,23 +1791,20 @@ static bool storage_blkid_visit(
                 if (context->mode == STORAGE_OUTPUT_FULL)
                         string_format(context->output, "%s:", identity->path);
 
+                positive eligible = context->shown;
+                if (context->mode != STORAGE_OUTPUT_VALUE && !context->select_seen)
+                        eligible = positive_max;
+                if (exported || (context->mode == STORAGE_OUTPUT_FULL &&
+                                 !context->select_seen))
+                        eligible &= ~((positive)STORAGE_SHOW_DEVNAME);
+
                 for (positive at = 0; at < array_count(storage_tags); at++)
                 {
                         const storage_tag_descriptor address_to tag =
                             storage_tags + at;
-                        bool asked = (context->shown & tag->show) != 0;
                         string_address value = storage_tag_value(identity, tag);
 
-                        if (!value ||
-                            (exported && tag->show == STORAGE_SHOW_DEVNAME) ||
-                            (context->mode == STORAGE_OUTPUT_VALUE && !asked) ||
-                            (context->mode == STORAGE_OUTPUT_FULL &&
-                             context->select_seen && !asked) ||
-                            (context->mode == STORAGE_OUTPUT_FULL &&
-                             !context->select_seen &&
-                             tag->show == STORAGE_SHOW_DEVNAME) ||
-                            (exported && tag->show != STORAGE_SHOW_DEVNAME &&
-                             context->select_seen && !asked))
+                        if (!value || !(eligible & tag->show))
                                 continue;
 
                         if (context->mode == STORAGE_OUTPUT_VALUE)

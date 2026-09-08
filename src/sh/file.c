@@ -5604,6 +5604,42 @@ static fn find_batch_add(find_node address_to node, string_address path)
         batch->used += length + 1;
 }
 
+/* Literal substitution shared by find -exec and xargs -I. A null output
+   measures the required bytes including NUL; zero means overflow. Writers
+   use the same immutable inputs after reserving that measured size. */
+static positive file_replace_literal(string_address word, string_address marker,
+                                      positive mark, string_address replacement,
+                                      positive replacement_length, p8 address_to into)
+{
+        positive length = 0;
+
+        for (;;)
+        {
+                string_address hit = mark ? string_find(word, marker) : null;
+                positive kept = hit ? (positive)(hit - word) : string_length(word);
+
+                if (kept > positive_max - length)
+                        return 0;
+                if (into)
+                        memory_copy_apart(into + length, word, kept);
+                length += kept;
+                if (!hit)
+                        break;
+                if (replacement_length > positive_max - length)
+                        return 0;
+                if (into)
+                        memory_copy_apart(into + length, replacement, replacement_length);
+                length += replacement_length;
+                word = hit + mark;
+        }
+
+        if (length == positive_max)
+                return 0;
+        if (into)
+                into[length] = end;
+        return length + 1;
+}
+
 static bool find_exec_once(find_node address_to node)
 {
         positive used = 0;
@@ -5622,38 +5658,16 @@ static bool find_exec_once(find_node address_to node)
 
         for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
         {
-                string_address word = program_argument(i);
+                positive length = file_replace_literal(program_argument(i), "{}", 2,
+                                                        find_path, path_length, null);
 
-                for (positive k = 0; string_get(word + k);)
-                {
-                        positive add = 1;
-
-                        if (string_is(word + k, '{') && string_is(word + k + 1, '}'))
-                        {
-                                add = path_length;
-                                k += 2;
-                        }
-                        else
-                                k++;
-
-                        if (needed > (positive)-1 - add)
-                        {
-                                file_fail("find: -exec arguments are too large\n", 0);
-                                find_status = 1;
-                                return false;
-                        }
-
-                        needed += add;
-                }
-
-                if (needed == (positive)-1)
+                if (!length || length > positive_max - needed)
                 {
                         file_fail("find: -exec arguments are too large\n", 0);
                         find_status = 1;
                         return false;
                 }
-
-                needed++;
+                needed += length;
         }
 
         if (!shell_array_room(find_exec_text, find_exec_text_room, needed ? needed : 1))
@@ -5665,28 +5679,10 @@ static bool find_exec_once(find_node address_to node)
 
         for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
         {
-                string_address word = program_argument(i);
-                positive at = used;
-
-                for (positive k = 0; string_get(word + k);)
-                {
-                        if (string_is(word + k, '{') && string_is(word + k + 1, '}'))
-                        {
-                                for (positive j = 0; string_get(find_path + j); j++)
-                                        find_exec_text[used++] = string_get(find_path + j);
-
-                                k += 2;
-                                continue;
-                        }
-
-                        find_exec_text[used++] = string_get(word + k);
-
-                        k++;
-                }
-
-                find_exec_text[used++] = end;
-
-                find_exec_words[have++] = find_exec_text + at;
+                find_exec_words[have++] = find_exec_text + used;
+                used += file_replace_literal(program_argument(i), "{}", 2,
+                                              find_path, path_length,
+                                              find_exec_text + used);
         }
 
         find_exec_words[have] = null;
@@ -7025,9 +7021,12 @@ static bool df_posix;
 static positive df_device_width;
 static positive df_type_width;
 static positive df_full_width;
-static positive df_blocks_width;
-static positive df_used_width;
-static positive df_free_width;
+
+typedef struct
+{
+        string_address heading;
+        positive width;
+} df_amount_column;
 
 typedef struct
 {
@@ -7106,13 +7105,14 @@ static fn df_reading(file_mount_facts address_to facts, p64 address_to total,
 }
 
 static fn df_row(string_address device, string_address type, string_address where,
-                 file_mount_facts address_to facts, bool measured)
+                 file_mount_facts address_to facts, bool measured,
+                 df_amount_column address_to columns)
 {
-        p64 total, used, spare, size;
+        p64 values[3], size;
         p8 text[64];
         string_address dash = (string_address) "-";
 
-        df_reading(facts, address_of total, address_of used, address_of spare,
+        df_reading(facts, values, values + 1, values + 2,
                    address_of size);
 
         string_to_field(log, device, df_device_width, ' ', true);
@@ -7126,21 +7126,12 @@ static fn df_row(string_address device, string_address type, string_address wher
 
         for (positive column = 0; column < 3; column++)
         {
-                positive width = column == 0   ? df_blocks_width
-                                 : column == 1 ? df_used_width
-                                               : df_free_width;
-
-                if (!measured)
-                {
-                        df_column(dash, width);
-                        continue;
-                }
-
-                df_amount(text, column == 0 ? total : column == 1 ? used : spare, size);
-                df_column(text, width);
+                if (measured)
+                        df_amount(text, values[column], size);
+                df_column(measured ? text : dash, columns[column].width);
         }
 
-        p64 wanted = used + spare;
+        p64 wanted = values[1] + values[2];
 
         // A filesystem with nothing in it to fill has no proportion full, and
         // saying nought percent would be an answer where there is none.
@@ -7149,7 +7140,7 @@ static fn df_row(string_address device, string_address type, string_address wher
         else
         {
                 positive_to_padded(log,
-                                   (positive)((used * 100 + wanted - 1) / wanted),
+                                   (positive)((values[1] * 100 + wanted - 1) / wanted),
                                    df_full_width - 1, ' ', 0);
                 log("% ", 2);
         }
@@ -7199,15 +7190,16 @@ static b32 file_df()
                 return 1;
         }
 
-        string_address blocks_heading = df_inodes ? (string_address) "Inodes"
-                                        : df_human ? (string_address) "Size"
-                                        : df_posix ? (string_address) "1024-blocks"
-                                                   : (string_address) "1K-blocks";
-        string_address used_heading = df_inodes ? (string_address) "IUsed"
-                                                : (string_address) "Used";
-        string_address free_heading = df_inodes  ? (string_address) "IFree"
-                                      : df_human ? (string_address) "Avail"
-                                                 : (string_address) "Available";
+        df_amount_column columns[] = {
+            {df_inodes ? (string_address) "Inodes"
+             : df_human ? (string_address) "Size"
+             : df_posix ? (string_address) "1024-blocks"
+                        : (string_address) "1K-blocks", 5},
+            {df_inodes ? (string_address) "IUsed" : (string_address) "Used", 5},
+            {df_inodes ? (string_address) "IFree"
+             : df_human ? (string_address) "Avail"
+                        : (string_address) "Available", 5},
+        };
         string_address full_heading = df_inodes ? (string_address) "IUse%"
                                       : df_posix && !df_human ? (string_address) "Capacity"
                                                               : (string_address) "Use%";
@@ -7221,18 +7213,10 @@ static b32 file_df()
         */
         df_device_width = 14;
         df_type_width = 4;
-        df_blocks_width = 5;
-        df_used_width = 5;
-        df_free_width = 5;
 
-        if (string_length(blocks_heading) > df_blocks_width)
-                df_blocks_width = string_length(blocks_heading);
-
-        if (string_length(used_heading) > df_used_width)
-                df_used_width = string_length(used_heading);
-
-        if (string_length(free_heading) > df_free_width)
-                df_free_width = string_length(free_heading);
+        for (positive column = 0; column < array_count(columns); column++)
+                if (string_length(columns[column].heading) > columns[column].width)
+                        columns[column].width = string_length(columns[column].heading);
 
         df_full_width = string_length(full_heading);
 
@@ -7352,24 +7336,16 @@ static b32 file_df()
                 if (!sample->measured)
                         continue;
 
-                p64 total, used, spare, size;
+                p64 values[3], size;
 
-                df_reading(facts, address_of total, address_of used,
-                           address_of spare, address_of size);
-                positive length = df_amount(text, total, size);
+                df_reading(facts, values, values + 1, values + 2, address_of size);
+                for (positive column = 0; column < array_count(columns); column++)
+                {
+                        positive length = df_amount(text, values[column], size);
 
-                if (length > df_blocks_width)
-                        df_blocks_width = length;
-
-                length = df_amount(text, used, size);
-
-                if (length > df_used_width)
-                        df_used_width = length;
-
-                length = df_amount(text, spare, size);
-
-                if (length > df_free_width)
-                        df_free_width = length;
+                        if (length > columns[column].width)
+                                columns[column].width = length;
+                }
         }
 
         /* Named operands that all failed leave nothing to head, and the
@@ -7392,9 +7368,8 @@ static b32 file_df()
                 log(" ", 1);
         }
 
-        df_column(blocks_heading, df_blocks_width);
-        df_column(used_heading, df_used_width);
-        df_column(free_heading, df_free_width);
+        for (positive column = 0; column < array_count(columns); column++)
+                df_column(columns[column].heading, columns[column].width);
         log(full_heading, 0);
         log(" Mounted on\n", 0);
 
@@ -7406,7 +7381,7 @@ static b32 file_df()
                                mounts.entry[at].type,
                                mounts.entry[at].target,
                                address_of df_samples[at].facts,
-                               df_samples[at].measured);
+                               df_samples[at].measured, columns);
         }
 
         storage_mount_table_release(address_of mounts);
@@ -11464,11 +11439,12 @@ static b32 file_csplit()
         for (positive i = 1; i < file_operand_count && !failed; i++)
         {
                 string_address word = file_operand_at(i);
-                bool forever;
-                positive repeats;
+                bool forever = false;
+                positive repeats = 1;
+                bool repeated = csplit_repeat(word, address_of forever,
+                                               address_of repeats);
 
-                if (csplit_repeat(word, address_of forever,
-                                  address_of repeats))
+                if (repeated)
                 {
                         if (!have_pattern)
                         {
@@ -11476,108 +11452,83 @@ static b32 file_csplit()
                                 failed = true;
                                 break;
                         }
+                }
+                else
+                {
+                        memory_fill(address_of pattern, 0, sizeof(pattern));
 
-                        positive repetition = 0;
-
-                        while (forever || repetition < repeats)
+                        if (string_is(word, '/') || string_is(word, '%'))
                         {
-                                b32 done = csplit_execute(address_of state,
-                                                         address_of pattern,
-                                                         true);
-
-                                if (done == CSPLIT_EXECUTED)
+                                if (!csplit_parse_regex(word, address_of pattern))
                                 {
-                                        repetition++;
-                                        continue;
-                                }
-                                if (done == CSPLIT_NOT_FOUND && forever)
-                                {
-                                        /* A repeated %pattern% consumes the
-                                           unmatched tail as part of the
-                                           suppressed search. */
-                                        if (pattern.discard)
-                                                state.suppress_final = true;
+                                        string_format(file_fail,
+                                                      "csplit: invalid pattern: '%s'\n", word);
+                                        failed = true;
                                         break;
                                 }
-
-                                if (done == CSPLIT_NOT_FOUND)
+                                if (state.suppress_matched && pattern.offset)
                                 {
-                                        if (!csplit_section(
-                                                address_of state, state.cursor,
-                                                length, !pattern.discard))
-                                        {
-                                                failed = true;
-                                                break;
-                                        }
-                                        string_format(file_fail,
-                                                      "csplit: '%s': match not found on repetition %p\n",
-                                                      word, repetition + 1);
+                                        file_fail("csplit: --suppress-matched with an offset is unsupported\n",
+                                                  0);
+                                        failed = true;
+                                        break;
                                 }
+                                if (!regex_compile(pattern.expression, false, false,
+                                                   false, CSPLIT_REGEX_POLICY))
+                                {
+                                        string_format(file_fail,
+                                                      "csplit: invalid regular expression: '%s'\n",
+                                                      pattern.expression);
+                                        failed = true;
+                                        break;
+                                }
+                                pattern.search_line = state.next_search_line;
+
+                                if (pattern.search_line < state.cursor_line)
+                                        pattern.search_line = state.cursor_line;
+                        }
+                        else if (!csplit_parse_line(word, address_of pattern))
+                        {
+                                string_format(file_fail, "csplit: invalid pattern: '%s'\n",
+                                              word);
                                 failed = true;
                                 break;
                         }
-                        continue;
+                        have_pattern = true;
                 }
 
-                memory_fill(address_of pattern, 0, sizeof(pattern));
-
-                if (string_is(word, '/') || string_is(word, '%'))
+                for (positive repetition = 0; forever || repetition < repeats;
+                     repetition++)
                 {
-                        if (!csplit_parse_regex(word, address_of pattern))
+                        b32 done = csplit_execute(address_of state,
+                                                  address_of pattern, repeated);
+
+                        if (done == CSPLIT_EXECUTED)
+                                continue;
+                        if (done == CSPLIT_NOT_FOUND && forever)
                         {
-                                string_format(file_fail,
-                                              "csplit: invalid pattern: '%s'\n", word);
-                                failed = true;
+                                /* A repeated %pattern% consumes the unmatched
+                                   tail as part of the suppressed search. */
+                                if (pattern.discard)
+                                        state.suppress_final = true;
                                 break;
                         }
-                        if (state.suppress_matched && pattern.offset)
-                        {
-                                file_fail("csplit: --suppress-matched with an offset is unsupported\n",
-                                          0);
-                                failed = true;
-                                break;
-                        }
-                        if (!regex_compile(pattern.expression, false, false,
-                                           false, CSPLIT_REGEX_POLICY))
-                        {
-                                string_format(file_fail,
-                                              "csplit: invalid regular expression: '%s'\n",
-                                              pattern.expression);
-                                failed = true;
-                                break;
-                        }
-                        pattern.search_line = state.next_search_line;
 
-                        if (pattern.search_line < state.cursor_line)
-                                pattern.search_line = state.cursor_line;
-                }
-                else if (!csplit_parse_line(word, address_of pattern))
-                {
-                        string_format(file_fail, "csplit: invalid pattern: '%s'\n",
-                                      word);
-                        failed = true;
-                        break;
-                }
-
-                have_pattern = true;
-                b32 done = csplit_execute(address_of state, address_of pattern,
-                                          false);
-
-                if (done != CSPLIT_EXECUTED)
-                {
                         if (done == CSPLIT_NOT_FOUND)
                         {
-                                if (!csplit_section(
-                                        address_of state, state.cursor, length,
-                                        !pattern.discard))
+                                if (!csplit_section(address_of state, state.cursor,
+                                                     length, !pattern.discard))
                                 {
                                         failed = true;
                                         break;
                                 }
                                 string_format(file_fail,
-                                              "csplit: '%s': match not found\n", word);
+                                              repeated ? "csplit: '%s': match not found on repetition %p\n"
+                                                       : "csplit: '%s': match not found\n",
+                                              word, repetition + 1);
                         }
                         failed = true;
+                        break;
                 }
         }
 
@@ -14384,28 +14335,27 @@ static b32 file_rmdir()
         while (first < count)
         {
                 string_address path = program_argument((b32)first++);
-                bipolar gone = system_remove_at(AT_FDCWD, path,
-                                             AT_REMOVEDIR);
-
-                if (gone < 0)
-                {
-                        string_format(file_fail, "rmdir: failed to remove '%s': %s\n",
-                                      path, file_reason(gone));
-                        status = 1;
-                        continue;
-                }
-
-                if (!(flags & FILE_FLAG('p')))
-                        continue;
-
                 p8 parent[FILE_PATH_MAX];
-
-                string_copy_max_end(parent, path, FILE_PATH_MAX - 1);
+                p8 above[FILE_PATH_MAX];
 
                 while (1)
                 {
-                        p8 above[FILE_PATH_MAX];
+                        bipolar gone = system_remove_at(AT_FDCWD, path,
+                                                         AT_REMOVEDIR);
 
+                        if (gone < 0)
+                        {
+                                string_format(file_fail,
+                                              "rmdir: failed to remove '%s': %s\n",
+                                              path, file_reason(gone));
+                                status = 1;
+                                break;
+                        }
+
+                        if (!(flags & FILE_FLAG('p')))
+                                break;
+
+                        string_copy_max_end(parent, path, FILE_PATH_MAX - 1);
                         path_head_copy(above, FILE_PATH_MAX, parent);
 
                         if (string_is(above, '.') && string_is(above + 1, end))
@@ -14414,21 +14364,7 @@ static b32 file_rmdir()
                         if (string_is(above, '/') && string_is(above + 1, end))
                                 break;
 
-                        bipolar kept = system_remove_at(AT_FDCWD, above,
-                                                        AT_REMOVEDIR);
-
-                        // A parent that stays is a failure like the first
-                        // name's: said, and counted in the status.
-                        if (kept < 0)
-                        {
-                                string_format(file_fail,
-                                              "rmdir: failed to remove '%s': %s\n",
-                                              above, file_reason(kept));
-                                status = 1;
-                                break;
-                        }
-
-                        string_copy_max_end(parent, above, FILE_PATH_MAX - 1);
+                        path = above;
                 }
         }
 
@@ -20022,60 +19958,21 @@ static bool xargs_replaced(string_address item)
         for (positive at = 0; at < xargs_prefix_words; at++)
         {
                 string_address word = xargs_template[at];
-                string_address scan = word;
-                positive length = 0;
+                positive length = file_replace_literal(word, xargs_replace, mark,
+                                                        item, item_length, null);
 
-                for (;;)
-                {
-                        string_address hit = mark ? string_find(scan, xargs_replace) : null;
-                        positive kept = hit ? (positive)(hit - scan) : string_length(scan);
-
-                        if (kept > positive_max - length)
-                                return false;
-
-                        length += kept;
-
-                        if (!hit)
-                                break;
-
-                        if (item_length > positive_max - length)
-                                return false;
-
-                        length += item_length;
-                        scan = hit + mark;
-                }
-
-                if (length == positive_max)
+                if (!length || length > positive_max - xargs_used ||
+                    xargs_word_count + 2 > xargs_word_room)
                         return false;
 
-                p8 address_to made = (p8 address_to)text_arena_take(length + 1);
+                p8 address_to made = (p8 address_to)text_arena_take(length);
 
                 if (!made)
                         return false;
 
-                scan = word;
-                positive used = 0;
-
-                for (;;)
-                {
-                        string_address hit = mark ? string_find(scan, xargs_replace) : null;
-                        positive kept = hit ? (positive)(hit - scan) : string_length(scan);
-
-                        memory_copy_apart(made + used, scan, kept);
-                        used += kept;
-
-                        if (!hit)
-                                break;
-
-                        memory_copy_apart(made + used, item, item_length);
-                        used += item_length;
-                        scan = hit + mark;
-                }
-
-                made[length] = end;
-
-                if (!xargs_add(made, length))
-                        return false;
+                file_replace_literal(word, xargs_replace, mark, item, item_length, made);
+                xargs_words[xargs_word_count++] = made;
+                xargs_used += length;
         }
 
         return true;

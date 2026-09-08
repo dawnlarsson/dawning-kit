@@ -372,60 +372,41 @@ static bipolar storage_mount_one(string_address source, string_address target,
                 return system_mount(0, target, 0,
                                      options->propagation, 0);
 
-        if (options->flags & STORAGE_MS_BIND)
-        {
-                if (options->flags & STORAGE_MS_REMOUNT)
-                {
-                        if (!storage_remount_options(target, options,
-                                                     address_of effective))
-                                return -STORAGE_ERROR_NO_MEMORY;
+        bool bind = (options->flags & STORAGE_MS_BIND) != 0;
 
-                        effective_live = true;
+        if (bind && !(options->flags & STORAGE_MS_REMOUNT))
+        {
+                positive bind_flags = STORAGE_MS_BIND |
+                                      (options->flags & STORAGE_MS_REC);
+                answer = system_mount(resolved, target, 0, bind_flags, 0);
+                if (answer)
+                        return answer;
+        }
+
+        /* bind(2) ignores VFS restrictions on the first call. Both kinds of
+           remount merge the requested changes with the live options. */
+        if ((options->flags & STORAGE_MS_REMOUNT) ||
+            (bind && (options->mentioned & STORAGE_BIND_CHANGEABLE)))
+        {
+                if (!storage_remount_options(target, options,
+                                             address_of effective))
+                        return -STORAGE_ERROR_NO_MEMORY;
+                effective_live = true;
+        }
+
+        if (bind)
+        {
+                if (effective_live)
                         answer = system_call_5(
                             syscall(mount), 0, (positive)target, 0,
                             STORAGE_MS_BIND | STORAGE_MS_REMOUNT |
                                 (effective.flags & STORAGE_BIND_CHANGEABLE),
                             0);
-                }
-                else
-                {
-                        positive bind_flags = STORAGE_MS_BIND |
-                                              (options->flags & STORAGE_MS_REC);
-                        answer = system_mount(resolved, target, 0,
-                                              bind_flags, 0);
-                        if (answer)
-                                return answer;
-
-                        /* bind(2) ignores VFS restrictions on the first call. */
-                        if (options->mentioned & STORAGE_BIND_CHANGEABLE)
-                        {
-                                if (!storage_remount_options(
-                                        target, options, address_of effective))
-                                        return -STORAGE_ERROR_NO_MEMORY;
-
-                                effective_live = true;
-                                answer = system_call_5(
-                                    syscall(mount), 0, (positive)target, 0,
-                                    STORAGE_MS_BIND | STORAGE_MS_REMOUNT |
-                                        (effective.flags &
-                                         STORAGE_BIND_CHANGEABLE),
-                                    0);
-                        }
-                }
         }
         else
         {
-                storage_mount_options address_to used = options;
-
-                if (options->flags & STORAGE_MS_REMOUNT)
-                {
-                        if (!storage_remount_options(target, options,
-                                                     address_of effective))
-                                return -STORAGE_ERROR_NO_MEMORY;
-
-                        effective_live = true;
-                        used = address_of effective;
-                }
+                storage_mount_options address_to used =
+                    effective_live ? address_of effective : options;
 
                 answer = system_call_5(
                     syscall(mount), (positive)resolved, (positive)target,

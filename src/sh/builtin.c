@@ -10290,29 +10290,11 @@ static COLD fn trap_listed(writer write)
                 if (number < TRAP_NAMES - 1)
                         write(trap_names[number],
                               string_length(trap_names[number]));
-                else if (number <= 49)
-                {
-                        // The real-time signals are named by their distance
-                        // from each end, which is how every tool that prints
-                        // them writes them down.
-                        write("RTMIN", 5);
-
-                        if (number > 34)
-                        {
-                                write("+", 1);
-                                positive_to_string(write, number - 34);
-                        }
-                }
                 else
                 {
-                        write("RTMAX", 5);
-
-                        if (number < TRAP_NUMBER_MAX)
-                        {
-                                write("-", 1);
-                                positive_to_string(write,
-                                                   TRAP_NUMBER_MAX - number);
-                        }
+                        p8 name[16];
+                        kill_name(number, name);
+                        write(name, string_length(name));
                 }
 
                 shown++;

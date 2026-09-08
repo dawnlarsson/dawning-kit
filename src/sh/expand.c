@@ -2363,6 +2363,97 @@ static bipolar arith_based(string_address hash)
         return (bipolar)value;
 }
 
+// Each lvalue owns its name and subscript storage through the whole operation.
+// Recursive right operands may allocate and rewind their own inner marks.
+static bipolar arith_lvalue(p8 prefix)
+{
+        string_address start = arith_at;
+        p8 name_local[EXPAND_LOCAL_NAME];
+        expand_reference name = {0};
+        positive length = string_span(arith_at, string_set_name);
+        shell_mark held;
+        bipolar value = 0;
+        p8 op = 0;
+        b32 skip = 0;
+
+        arith_at += length;
+        bool element = length && string_is(arith_at, '[');
+        if (element)
+                held = shell_store_mark(address_of expand_store);
+        name.name = expand_hold(start, length, name_local, sizeof(name_local));
+        name.name_length = length;
+        if (element && name.name && !arith_element_name(&name))
+                name.name = null;
+
+        if (!length || !name.name)
+        {
+                arith_bad = true;
+                goto done;
+        }
+
+        if (prefix)
+        {
+                value = arith_value_of(name);
+                value = arith_store(name, prefix == '+' ? arith_addition(value, 1)
+                                                       : arith_subtraction(value, 1));
+                goto done;
+        }
+
+        arith_space();
+        if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
+        {
+                arith_at++;
+                value = arith_store(name, arith_choose());
+                goto done;
+        }
+
+        // Compound assignments read before evaluating their right operand.
+        // Match the three-byte shifts before the two-byte operators.
+        if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
+            string_is(arith_at + 2, '='))
+        {
+                op = 'l';
+                skip = 3;
+        }
+        else if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
+                 string_is(arith_at + 2, '='))
+        {
+                op = 'r';
+                skip = 3;
+        }
+        else if (string_is(arith_at + 1, '=') &&
+                 string_first_of((string_address) "+-*/%&|^",
+                                 string_get(arith_at)))
+        {
+                op = string_get(arith_at);
+                skip = 2;
+        }
+
+        if (op)
+        {
+                arith_at += skip;
+                value = arith_value_of(name);
+                value = arith_store(name, arith_combine(op, value, arith_choose()));
+        }
+        else if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
+                 (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
+        {
+                bool increment = string_is(arith_at, '+');
+
+                value = arith_value_of(name);
+                arith_at += 2;
+                arith_store(name, increment ? arith_addition(value, 1)
+                                           : arith_subtraction(value, 1));
+        }
+        else
+                value = arith_value_of(name);
+
+done:
+        if (element)
+                shell_store_rewind(address_of expand_store, held);
+        return value;
+}
+
 static bipolar arith_primary()
 {
         bipolar value = 0;
@@ -2397,47 +2488,11 @@ static bipolar arith_primary()
         if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
             (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
         {
-                bool increment = string_is(arith_at, '+');
-                string_address start;
-                p8 name_local[EXPAND_LOCAL_NAME];
-                expand_reference name = {0};
-                positive length = 0;
-                bipolar value;
-                bool element = false;
-                shell_mark held;
+                p8 prefix = string_get(arith_at);
 
                 arith_at += 2;
                 arith_space();
-                start = arith_at;
-
-                length = string_span(arith_at, string_set_name);
-                arith_at += length;
-
-                element = length && string_is(arith_at, '[');
-                if (element)
-                        held = shell_store_mark(address_of expand_store);
-                name.name = expand_hold(start, length, name_local, sizeof(name_local));
-                name.name_length = length;
-                if (element && name.name && !arith_element_name(&name))
-                        name.name = null;
-
-                if (!length || !name.name)
-                {
-                        arith_bad = true;
-                        if (element)
-                                shell_store_rewind(address_of expand_store,
-                                                   held);
-                        return 0;
-                }
-
-                value = arith_value_of(name);
-                value = increment ? arith_addition(value, 1)
-                                  : arith_subtraction(value, 1);
-                value = arith_store(name, value);
-                if (element)
-                        shell_store_rewind(address_of expand_store, held);
-
-                return value;
+                return arith_lvalue(prefix);
         }
 
         if (string_is(arith_at, '-'))
@@ -2477,120 +2532,7 @@ static bipolar arith_primary()
                 the language where that reads a variable.
         */
         if (expand_name_character(string_get(arith_at)))
-        {
-                string_address start = arith_at;
-                p8 name_local[EXPAND_LOCAL_NAME];
-                expand_reference name = {0};
-                positive length = 0;
-                bool element = false;
-                shell_mark held;
-                bipolar answer;
-
-                length = string_span(arith_at, string_set_name);
-                arith_at += length;
-
-                element = length && string_is(arith_at, '[');
-                if (element)
-                        held = shell_store_mark(address_of expand_store);
-                name.name = expand_hold(start, length, name_local, sizeof(name_local));
-                name.name_length = length;
-                if (element && name.name && !arith_element_name(&name))
-                        name.name = null;
-
-                if (!name.name)
-                {
-                        arith_bad = true;
-                        if (element)
-                                shell_store_rewind(address_of expand_store,
-                                                   held);
-                        return 0;
-                }
-                arith_space();
-
-                if (string_is(arith_at, '=') && string_get(arith_at + 1) != '=')
-                {
-                        arith_at++;
-                        answer = arith_store(name, arith_choose());
-                        if (element)
-                                shell_store_rewind(address_of expand_store,
-                                                   held);
-
-                        return answer;
-                }
-
-                /*
-                        The compound forms, which read the name as well as
-                        write it: += and its nine relatives.
-
-                        Longest first, or <<= is < followed by <= and x >>= 1
-                        halves nothing. They are all "read, combine, write"
-                        and share the tail below, with postfix ++ and -- after
-                        them: the doubled sign has to be tried before += so
-                        that x++ is not read as x + (+...).
-                */
-                {
-                        p8 op = 0;
-                        b32 skip = 0;
-
-                        if (string_is(arith_at, '<') && string_is(arith_at + 1, '<') &&
-                            string_is(arith_at + 2, '='))
-                        {
-                                op = 'l';
-                                skip = 3;
-                        }
-                        else if (string_is(arith_at, '>') && string_is(arith_at + 1, '>') &&
-                                 string_is(arith_at + 2, '='))
-                        {
-                                op = 'r';
-                                skip = 3;
-                        }
-                        else if (string_is(arith_at + 1, '=') &&
-                                 string_first_of((string_address) "+-*/%&|^",
-                                                 string_get(arith_at)))
-                        {
-                                op = string_get(arith_at);
-                                skip = 2;
-                        }
-
-                        if (op)
-                        {
-                                bipolar was;
-
-                                arith_at += skip;
-
-                                was = arith_value_of(name);
-                                answer = arith_store(
-                                    name,
-                                    arith_combine(op, was, arith_choose()));
-                                if (element)
-                                        shell_store_rewind(
-                                            address_of expand_store, held);
-
-                                return answer;
-                        }
-
-                        if ((string_is(arith_at, '+') && string_is(arith_at + 1, '+')) ||
-                            (string_is(arith_at, '-') && string_is(arith_at + 1, '-')))
-                        {
-                                bool increment = string_is(arith_at, '+');
-                                bipolar was = arith_value_of(name);
-
-                                arith_at += 2;
-                                arith_store(name,
-                                            increment ? arith_addition(was, 1)
-                                                      : arith_subtraction(was, 1));
-                                if (element)
-                                        shell_store_rewind(
-                                            address_of expand_store, held);
-                                return was;
-                        }
-                }
-
-                answer = arith_value_of(name);
-                if (element)
-                        shell_store_rewind(address_of expand_store, held);
-                return answer;
-        }
+                return arith_lvalue(0);
 
         // A byte that starts no value at all, which is where a missing
         // operand lands: $((1 + )) answered 1 and $((2 ** 3)) answered 0.

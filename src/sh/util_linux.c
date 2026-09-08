@@ -1195,6 +1195,18 @@ typedef struct
         case id: { string_address text = (value); return text ? text : (string_address)""; }
 #define UL_TABLE_PROJECT_UNSIGNED(id, value) \
         case id: positive_into_string(scratch, (positive)(value)); return scratch;
+#define UL_TABLE_PROJECT_NONNEGATIVE(id, value) \
+        case id: { \
+                bipolar number = (bipolar)(value); \
+                if (number < 0) return (string_address)""; \
+                positive_into_string(scratch, (positive)number); return scratch; \
+        }
+#define UL_TABLE_PROJECT_NONZERO(id, value) \
+        case id: { \
+                positive number = (positive)(value); \
+                if (!number) return (string_address)""; \
+                positive_into_string(scratch, number); return scratch; \
+        }
 #define UL_TABLE_PROJECT_BOOLEAN(id, value) \
         case id: return (value) ? (string_address)"1" : (string_address)"0";
 #define UL_TABLE_PROJECT_CUSTOM(id, value)
@@ -2063,65 +2075,51 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
                             positive start, positive length,
                             b32 conflict)
 {
-        if (nonblocking || (timed && !timeout))
-        {
-                bipolar answer = ul_flock_try(handle, kind, true, fcntl,
-                                              start, length);
-                if (answer >= 0)
-                        return 0;
-                if (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)
-                        return conflict;
-                string_format(file_fail, "flock: cannot lock: %s\n",
-                              file_reason(answer));
-                return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
-        }
-        if (!timed)
-        {
-                bipolar answer = ul_flock_try(handle, kind, false, fcntl,
-                                              start, length);
-                if (answer >= 0)
-                        return 0;
-                string_format(file_fail, "flock: cannot lock: %s\n",
-                              file_reason(answer));
-                return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
-        }
-
-        signal_interval prior;
-        if (system_call_2(syscall(getitimer), SIGNAL_TIMER_REAL,
-                          (positive)address_of prior) < 0 ||
-            prior.first_seconds || prior.first_microseconds)
-                return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                     length, conflict);
-
-        signal_action wanted;
-        signal_action had;
-        memory_zero(address_of wanted, sizeof wanted);
-        wanted.handler = ul_flock_alarm;
-        if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
-                return ul_flock_poll(handle, kind, timeout, fcntl, start,
-                                     length, conflict);
-
-        signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
-                                 (bipolar)((timeout % 1000000000 + 999) / 1000)};
-        if (timer.first_microseconds == 1000000)
-        {
-                timer.first_seconds++;
-                timer.first_microseconds = 0;
-        }
-        bipolar answer = system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
-                                       (positive)address_of timer, 0);
-        if (answer >= 0)
-                answer = ul_flock_try(handle, kind, false, fcntl,
+        bipolar answer;
+        bool immediate = nonblocking || (timed && !timeout);
+        if (immediate || !timed)
+                answer = ul_flock_try(handle, kind, immediate, fcntl,
                                       start, length);
+        else
+        {
+                signal_interval prior;
+                if (system_call_2(syscall(getitimer), SIGNAL_TIMER_REAL,
+                                  (positive)address_of prior) < 0 ||
+                    prior.first_seconds || prior.first_microseconds)
+                        return ul_flock_poll(handle, kind, timeout, fcntl, start,
+                                             length, conflict);
 
-        signal_interval stopped = {0, 0, 0, 0};
-        system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
-                      (positive)address_of stopped, 0);
-        signal_action_change(SIGALRM, address_of had, null);
+                signal_action wanted;
+                signal_action had;
+                memory_zero(address_of wanted, sizeof wanted);
+                wanted.handler = ul_flock_alarm;
+                if (signal_action_change(SIGALRM, address_of wanted, address_of had) < 0)
+                        return ul_flock_poll(handle, kind, timeout, fcntl, start,
+                                             length, conflict);
+
+                signal_interval timer = {0, 0, (bipolar)(timeout / 1000000000),
+                                         (bipolar)((timeout % 1000000000 + 999) / 1000)};
+                if (timer.first_microseconds == 1000000)
+                {
+                        timer.first_seconds++;
+                        timer.first_microseconds = 0;
+                }
+                answer = system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
+                                       (positive)address_of timer, 0);
+                if (answer >= 0)
+                        answer = ul_flock_try(handle, kind, false, fcntl,
+                                              start, length);
+
+                signal_interval stopped = {0, 0, 0, 0};
+                system_call_3(syscall(setitimer), SIGNAL_TIMER_REAL,
+                              (positive)address_of stopped, 0);
+                signal_action_change(SIGALRM, address_of had, null);
+        }
 
         if (answer >= 0)
                 return 0;
-        if (answer == UL_ERROR_INTERRUPTED)
+        if ((immediate && (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)) ||
+            (!immediate && timed && answer == UL_ERROR_INTERRUPTED))
                 return conflict;
         string_format(file_fail, "flock: cannot lock: %s\n",
                       file_reason(answer));
@@ -3361,30 +3359,34 @@ static bool ul_namespace_same(bipolar handle,
 
 // lsns ------------------------------------------------------------
 
+#define UL_LSNS_FIELDS(X) \
+    X(UL_LSNS_NS, UNSIGNED, entry->inode, \
+      "ns", "NS", 10, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSNS_TYPE, TEXT, ul_namespaces[entry->type].name, \
+      "type", "TYPE", 0, false, UL_TABLE_STRING) \
+    X(UL_LSNS_PATH, CUSTOM, 0, \
+      "path", "PATH", 0, false, UL_TABLE_STRING) \
+    X(UL_LSNS_NPROCS, UNSIGNED, entry->processes, \
+      "nprocs", "NPROCS", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSNS_PID, UNSIGNED, process->pid, \
+      "pid", "PID", 5, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSNS_PPID, UNSIGNED, process->ppid, \
+      "ppid", "PPID", 4, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSNS_COMMAND, TEXT, entry->command, \
+      "command", "COMMAND", 0, false, UL_TABLE_STRING) \
+    X(UL_LSNS_UID, UNSIGNED, process->uid, \
+      "uid", "UID", 3, true, UL_TABLE_NUMBER, .decimal = true) \
+    X(UL_LSNS_USER, CUSTOM, 0, \
+      "user", "USER", 0, false, UL_TABLE_STRING)
+
 enum
 {
-        UL_LSNS_NS,
-        UL_LSNS_TYPE,
-        UL_LSNS_PATH,
-        UL_LSNS_NPROCS,
-        UL_LSNS_PID,
-        UL_LSNS_PPID,
-        UL_LSNS_COMMAND,
-        UL_LSNS_UID,
-        UL_LSNS_USER,
+        UL_LSNS_FIELDS(UL_TABLE_ID)
         UL_LSNS_COLUMNS,
 };
 
 static const ul_table_column ul_lsns_columns[] = {
-    {(string_address)"ns", (string_address)"NS", 10, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"type", (string_address)"TYPE", 0, false, UL_TABLE_STRING},
-    {(string_address)"path", (string_address)"PATH", 0, false, UL_TABLE_STRING},
-    {(string_address)"nprocs", (string_address)"NPROCS", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"pid", (string_address)"PID", 5, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"ppid", (string_address)"PPID", 4, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"command", (string_address)"COMMAND", 0, false, UL_TABLE_STRING},
-    {(string_address)"uid", (string_address)"UID", 3, true, UL_TABLE_NUMBER, .decimal = true},
-    {(string_address)"user", (string_address)"USER", 0, false, UL_TABLE_STRING},
+    UL_LSNS_FIELDS(UL_TABLE_DEFINITION)
 };
 
 typedef struct
@@ -3479,28 +3481,10 @@ static string_address ul_lsns_table_field(address_any row, p8 column,
 
         switch (column)
         {
-        case UL_LSNS_NS:
-                positive_into_string(scratch, (positive)entry->inode);
-                return scratch;
-        case UL_LSNS_TYPE:
-                return ul_namespaces[entry->type].name;
+        UL_LSNS_FIELDS(UL_TABLE_PROJECT)
         case UL_LSNS_PATH:
                 system_process_path(scratch, process->pid, "ns",
                                     ul_namespaces[entry->type].name);
-                return scratch;
-        case UL_LSNS_NPROCS:
-                positive_into_string(scratch, entry->processes);
-                return scratch;
-        case UL_LSNS_PID:
-                positive_into_string(scratch, process->pid);
-                return scratch;
-        case UL_LSNS_PPID:
-                positive_into_string(scratch, process->ppid);
-                return scratch;
-        case UL_LSNS_COMMAND:
-                return entry->command;
-        case UL_LSNS_UID:
-                positive_into_string(scratch, process->uid);
                 return scratch;
         default:
                 return entry->user;
@@ -4431,9 +4415,10 @@ static b32 util_linux_lsns()
                             (!inode_selected ||
                              wanted_inode == entries[i].inode);
 
-                if (keep && inode_selected)
+                if (keep)
                 {
-                        for (positive member = i; member < next; member++)
+                        positive stop = inode_selected ? next : i + 1;
+                        for (positive member = i; member < stop; member++)
                         {
                                 entries[groups] = entries[member];
                                 entries[groups].processes = (p32)(next - i);
@@ -4447,21 +4432,6 @@ static b32 util_linux_lsns()
                                         return text_done(1);
                                 groups++;
                         }
-                        inode_found = true;
-                }
-                else if (keep)
-                {
-                        entries[groups] = entries[i];
-                        entries[groups].processes = (p32)(next - i);
-                        entries[groups].command =
-                            ps_arguments(entries[groups].process);
-                        entries[groups].user =
-                            ps_name_of(entries[groups].process->uid);
-
-                        if (!entries[groups].command || !entries[groups].user)
-                                return text_done(1);
-
-                        groups++;
                         inode_found = true;
                 }
 
@@ -10232,40 +10202,44 @@ static fn ul_lscpu_summary(bool json, bool hex, bool bytes)
                  columns, array_count(columns), false, false, ul_lscpu_summary_field);
 }
 
+#define UL_LSCPU_FIELDS(X) \
+    X(UL_LSCPU_CPU, NONNEGATIVE, cpu->id, \
+      "cpu", "CPU", 3, true, UL_TABLE_NUMBER) \
+    X(UL_LSCPU_CORE, NONNEGATIVE, cpu->core, \
+      "core", "CORE", 4, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_SOCKET, NONNEGATIVE, cpu->socket, \
+      "socket", "SOCKET", 6, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_CLUSTER, NONNEGATIVE, cpu->cluster, \
+      "cluster", "CLUSTER", 7, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_NODE, NONNEGATIVE, cpu->node, \
+      "node", "NODE", 4, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_CACHE, CUSTOM, 0, \
+      "cache", "L1d:L1i:L2:L3", 0, false, UL_TABLE_STRING) \
+    X(UL_LSCPU_ONLINE, TEXT, cpu->online ? (string_address)"yes" : (string_address)"no", \
+      "online", "ONLINE", 6, true, UL_TABLE_BOOLEAN) \
+    X(UL_LSCPU_BOGOMIPS, NULL_TEXT, ul_lscpu.info.bogomips, \
+      "bogomips", "BOGOMIPS", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_MICROCODE, NULL_TEXT, ul_lscpu.info.microcode, \
+      "microcode", "MICROCODE", 0, false, UL_TABLE_NULL_STRING) \
+    X(UL_LSCPU_MHZ, TEXT, ul_lscpu_frequency(scratch, cpu->current_khz), \
+      "mhz", "MHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_SCALMHZ, CUSTOM, 0, \
+      "scalmhz%", "SCALMHZ%", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_MAXMHZ, TEXT, ul_lscpu_frequency(scratch, cpu->maximum_khz), \
+      "maxmhz", "MAXMHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_MINMHZ, TEXT, ul_lscpu_frequency(scratch, cpu->minimum_khz), \
+      "minmhz", "MINMHZ", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_MODELNAME, CUSTOM, 0, \
+      "modelname", "MODELNAME", 0, false, UL_TABLE_NULL_STRING)
+
 enum
 {
-        UL_LSCPU_CPU,
-        UL_LSCPU_CORE,
-        UL_LSCPU_SOCKET,
-        UL_LSCPU_CLUSTER,
-        UL_LSCPU_NODE,
-        UL_LSCPU_CACHE,
-        UL_LSCPU_ONLINE,
-        UL_LSCPU_BOGOMIPS,
-        UL_LSCPU_MICROCODE,
-        UL_LSCPU_MHZ,
-        UL_LSCPU_SCALMHZ,
-        UL_LSCPU_MAXMHZ,
-        UL_LSCPU_MINMHZ,
-        UL_LSCPU_MODELNAME,
+        UL_LSCPU_FIELDS(UL_TABLE_ID)
         UL_LSCPU_COLUMNS,
 };
 
 static ul_table_column ul_lscpu_columns[] = {
-    {"cpu", "CPU", 3, true, UL_TABLE_NUMBER},
-    {"core", "CORE", 4, true, UL_TABLE_NULL_NUMBER},
-    {"socket", "SOCKET", 6, true, UL_TABLE_NULL_NUMBER},
-    {"cluster", "CLUSTER", 7, true, UL_TABLE_NULL_NUMBER},
-    {"node", "NODE", 4, true, UL_TABLE_NULL_NUMBER},
-    {"cache", "L1d:L1i:L2:L3", 0, false, UL_TABLE_STRING},
-    {"online", "ONLINE", 6, true, UL_TABLE_BOOLEAN},
-    {"bogomips", "BOGOMIPS", 0, true, UL_TABLE_NULL_NUMBER},
-    {"microcode", "MICROCODE", 0, false, UL_TABLE_NULL_STRING},
-    {"mhz", "MHZ", 0, true, UL_TABLE_NULL_NUMBER},
-    {"scalmhz%", "SCALMHZ%", 0, true, UL_TABLE_NULL_NUMBER},
-    {"maxmhz", "MAXMHZ", 0, true, UL_TABLE_NULL_NUMBER},
-    {"minmhz", "MINMHZ", 0, true, UL_TABLE_NULL_NUMBER},
-    {"modelname", "MODELNAME", 0, false, UL_TABLE_NULL_STRING},
+    UL_LSCPU_FIELDS(UL_TABLE_DEFINITION)
 };
 
 static string_address ul_lscpu_frequency(p8 address_to text, positive khz)
@@ -10284,14 +10258,9 @@ static string_address ul_lscpu_cpu_field(address_any row, p8 column,
                                          p8 address_to scratch)
 {
         ul_lscpu_cpu address_to cpu = (ul_lscpu_cpu address_to)row;
-        bipolar number = -1;
         switch (column)
         {
-        case UL_LSCPU_CPU: number = (bipolar)cpu->id; break;
-        case UL_LSCPU_CORE: number = cpu->core; break;
-        case UL_LSCPU_SOCKET: number = cpu->socket; break;
-        case UL_LSCPU_CLUSTER: number = cpu->cluster; break;
-        case UL_LSCPU_NODE: number = cpu->node; break;
+        UL_LSCPU_FIELDS(UL_TABLE_PROJECT)
         case UL_LSCPU_CACHE:
         {
                 positive used = 0;
@@ -10306,17 +10275,6 @@ static string_address ul_lscpu_cpu_field(address_any row, p8 column,
                 scratch[used] = end;
                 return scratch;
         }
-        case UL_LSCPU_ONLINE:
-                return cpu->online ? (string_address)"yes"
-                                   : (string_address)"no";
-        case UL_LSCPU_BOGOMIPS:
-                return ul_lscpu.info.bogomips
-                           ? ul_lscpu.info.bogomips : (string_address)"";
-        case UL_LSCPU_MICROCODE:
-                return ul_lscpu.info.microcode
-                           ? ul_lscpu.info.microcode : (string_address)"";
-        case UL_LSCPU_MHZ:
-                return ul_lscpu_frequency(scratch, cpu->current_khz);
         case UL_LSCPU_SCALMHZ:
                 if (!cpu->current_khz || !cpu->maximum_khz)
                         return (string_address)"";
@@ -10324,44 +10282,40 @@ static string_address ul_lscpu_cpu_field(address_any row, p8 column,
                     scratch, min((positive)100,
                                  cpu->current_khz * 100 / cpu->maximum_khz));
                 return scratch;
-        case UL_LSCPU_MAXMHZ:
-                return ul_lscpu_frequency(scratch, cpu->maximum_khz);
-        case UL_LSCPU_MINMHZ:
-                return ul_lscpu_frequency(scratch, cpu->minimum_khz);
         default:
                 return ul_lscpu.info.model_name
                            ? ul_lscpu.info.model_name : (string_address)"";
         }
-        if (number < 0)
-                return (string_address)"";
-        positive_into_string(scratch, (positive)number);
-        return scratch;
 }
+
+#define UL_LSCPU_CACHE_FIELDS(X) \
+    X(UL_LSCPU_C_NAME, TEXT, cache->name, \
+      "name", "NAME", 0, false, UL_TABLE_STRING) \
+    X(UL_LSCPU_C_ONE, CUSTOM, 0, \
+      "one-size", "ONE-SIZE", 0, true, UL_TABLE_NULL_STRING) \
+    X(UL_LSCPU_C_ALL, CUSTOM, 0, \
+      "all-size", "ALL-SIZE", 0, true, UL_TABLE_NULL_STRING) \
+    X(UL_LSCPU_C_WAYS, NONZERO, cache->ways, \
+      "ways", "WAYS", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_C_TYPE, TEXT, cache->type, \
+      "type", "TYPE", 11, false, UL_TABLE_STRING) \
+    X(UL_LSCPU_C_LEVEL, UNSIGNED, cache->level, \
+      "level", "LEVEL", 0, true, UL_TABLE_NUMBER) \
+    X(UL_LSCPU_C_SETS, NONZERO, cache->sets, \
+      "sets", "SETS", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_C_PHY, NONZERO, cache->physical_line, \
+      "phy-line", "PHY-LINE", 0, true, UL_TABLE_NULL_NUMBER) \
+    X(UL_LSCPU_C_COHERENCY, CUSTOM, 0, \
+      "coherency-size", "COHERENCY-SIZE", 0, true, UL_TABLE_NULL_NUMBER)
 
 enum
 {
-        UL_LSCPU_C_NAME,
-        UL_LSCPU_C_ONE,
-        UL_LSCPU_C_ALL,
-        UL_LSCPU_C_WAYS,
-        UL_LSCPU_C_TYPE,
-        UL_LSCPU_C_LEVEL,
-        UL_LSCPU_C_SETS,
-        UL_LSCPU_C_PHY,
-        UL_LSCPU_C_COHERENCY,
+        UL_LSCPU_CACHE_FIELDS(UL_TABLE_ID)
         UL_LSCPU_C_COLUMNS,
 };
 
 static const ul_table_column ul_lscpu_cache_columns[] = {
-    {"name", "NAME", 0, false, UL_TABLE_STRING},
-    {"one-size", "ONE-SIZE", 0, true, UL_TABLE_NULL_STRING},
-    {"all-size", "ALL-SIZE", 0, true, UL_TABLE_NULL_STRING},
-    {"ways", "WAYS", 0, true, UL_TABLE_NULL_NUMBER},
-    {"type", "TYPE", 11, false, UL_TABLE_STRING},
-    {"level", "LEVEL", 0, true, UL_TABLE_NUMBER},
-    {"sets", "SETS", 0, true, UL_TABLE_NULL_NUMBER},
-    {"phy-line", "PHY-LINE", 0, true, UL_TABLE_NULL_NUMBER},
-    {"coherency-size", "COHERENCY-SIZE", 0, true, UL_TABLE_NULL_NUMBER},
+    UL_LSCPU_CACHE_FIELDS(UL_TABLE_DEFINITION)
 };
 
 static bool ul_lscpu_bytes;
@@ -10373,7 +10327,7 @@ static string_address ul_lscpu_cache_field(address_any row, p8 column,
         positive value = 0;
         switch (column)
         {
-        case UL_LSCPU_C_NAME: return cache->name;
+        UL_LSCPU_CACHE_FIELDS(UL_TABLE_PROJECT)
         case UL_LSCPU_C_ONE:
                 if (!cache->size)
                         return (string_address)"";
@@ -10385,14 +10339,9 @@ static string_address ul_lscpu_cache_field(address_any row, p8 column,
                 if (cache->instances && value <= positive_max / cache->instances)
                         value *= cache->instances;
                 return ul_lscpu_cache_size(value, ul_lscpu_bytes, false);
-        case UL_LSCPU_C_WAYS: value = cache->ways; break;
-        case UL_LSCPU_C_TYPE: return cache->type;
-        case UL_LSCPU_C_LEVEL: value = cache->level; break;
-        case UL_LSCPU_C_SETS: value = cache->sets; break;
-        case UL_LSCPU_C_PHY: value = cache->physical_line; break;
         default: value = cache->coherency; break;
         }
-        if (!value && column != UL_LSCPU_C_LEVEL)
+        if (!value)
                 return (string_address)"";
         positive_into_string(scratch, value);
         return scratch;
