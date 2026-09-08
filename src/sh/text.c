@@ -2504,7 +2504,9 @@ static fn text_banner(b32 which, bool first)
                 text_put_character('\n');
 
         text_put_string("==> ");
-        text_put_string(name ? name : (string_address)"standard input");
+        text_put_string(name && !string_equals(name, "-")
+                            ? name
+                            : (string_address)"standard input");
         text_put_string(" <==\n");
 }
 
@@ -13215,6 +13217,7 @@ static positive text_set_one_length;
 static p8 text_set_two[TEXT_SET_MAX];
 static positive text_set_two_length;
 static bool text_set_broken;
+static bool text_set_reversed;
 
 static fn text_set_put(p8 address_to into, positive address_to have, p8 character)
 {
@@ -13354,6 +13357,9 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
                         positive after = at + 1;
                         p8 last = text_escape(spec, address_of after);
 
+                        if (first > last)
+                                text_set_reversed = true;
+
                         for (b32 c = first; c <= (b32)last; c++)
                                 text_set_put(into, have, (p8)c);
 
@@ -13417,6 +13423,7 @@ static b32 text_tr()
                 return text_refuse(first, "missing operand after", 1);
 
         text_set_broken = false;
+        text_set_reversed = false;
         text_set_build(first, text_set_one, address_of text_set_one_length);
 
         if (second)
@@ -13424,6 +13431,12 @@ static b32 text_tr()
 
         if (text_set_broken)
                 return text_refuse(null, "set too large", 1);
+
+        if (text_set_reversed)
+                return text_refuse(
+                    null,
+                    "range-endpoints are in reverse collating sequence order",
+                    1);
 
         p8 in_first[256];
         p8 in_second[256];
@@ -13451,13 +13464,28 @@ static b32 text_tr()
         {
                 if (complement)
                 {
-                        p8 last = text_set_two[(text_set_two_length < TEXT_SET_MAX
-                                                    ? text_set_two_length
-                                                    : TEXT_SET_MAX) - 1];
+                        // The complement is every byte not in the first set,
+                        // in byte order, and it maps to the second set by
+                        // position the way a written-out set does: measured,
+                        // tr -c a-z A-Z turns a newline into K. -t stops the
+                        // mapping where the second set ends.
+                        positive room = text_set_two_length < TEXT_SET_MAX
+                                            ? text_set_two_length
+                                            : TEXT_SET_MAX;
+                        positive index = 0;
 
                         for (b32 c = 0; c < 256; c++)
-                                if (in_first[c])
-                                        mapped[c] = last;
+                        {
+                                if (!in_first[c])
+                                        continue;
+
+                                if (truncate && index >= room)
+                                        break;
+
+                                mapped[c] = text_set_two[index < room ? index
+                                                                      : room - 1];
+                                index++;
+                        }
                 }
                 else
                 {
@@ -13719,8 +13747,10 @@ static b32 text_uniq()
         if (!text_open(text_file_name(0)))
                 return text_done(1);
 
-        // uniq's second operand is where the answer goes, not another input.
-        if (text_files_count > 1)
+        // uniq's second operand is where the answer goes, not another input;
+        // spelled "-" it is standard output, as GNU reads it.
+        if (text_files_count > 1 &&
+            !string_equals(program_argument(text_files[1]), "-"))
         {
                 string_address name = program_argument(text_files[1]);
                 bipolar target = text_open_handle(name, TEXT_WRITE, 0666);
@@ -17842,6 +17872,8 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         case 'E': return sign * 6;
         case 'Z': return sign * 7;
         case 'Y': return sign * 8;
+        case 'R': return sign * 9;
+        case 'Q': return sign * 10;
         default: return 0;
         }
 }

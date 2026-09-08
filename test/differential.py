@@ -241,44 +241,91 @@ class Case:
 def covering_array(parameters, strength, rng):
     """Rows over parameter value indexes so every strength-tuple appears.
 
-    Greedy: each new row is the best of a handful of seeded candidates by
-    the number of still-uncovered tuples it hits. Deterministic for a seed,
-    and small -- a dozen options with two values each cover in about ten
-    rows, where the product is thousands."""
+    Greedy, one row at a time: the columns are visited largest domain first
+    (a seeded order among equals) and each takes the value that completes the
+    most still-uncovered tuples with the columns already chosen, ties going to
+    the value with the most uncovered tuples left anywhere. The best of a few
+    such rows is kept. Deterministic for a seed, and small -- a dozen options
+    with two values each cover in about ten rows, where the product is
+    thousands.
+
+    Scoring a value looks only at the tuples that value could complete, and
+    the bookkeeping is a set per column tuple, so a grammar of fifty options
+    covers in seconds; scoring every candidate row against every uncovered
+    tuple took hours on the same grammar. At strength three the pairs a value
+    is scored against are sampled, which changes how good a row is and not
+    what the loop guarantees: it runs until nothing is uncovered, and a row
+    that covers nothing new is replaced by one built from an uncovered tuple
+    directly."""
     sizes = [len(values) for values in parameters]
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
-    uncovered = set()
-    for columns in itertools.combinations(range(len(sizes)), strength):
-        for values in itertools.product(*(range(sizes[c]) for c in columns)):
-            uncovered.add((columns, values))
+    count = len(sizes)
+    uncovered = {}
+    left = [[0] * size for size in sizes]
+    for columns in itertools.combinations(range(count), strength):
+        values = set(itertools.product(*(range(sizes[c]) for c in columns)))
+        uncovered[columns] = values
+        for combination in values:
+            for column, value in zip(columns, combination):
+                left[column][value] += 1
+    remaining = sum(len(values) for values in uncovered.values())
+    candidates = 4 if strength <= 2 else 1
+    sampled = 48
     rows = []
-    while uncovered:
+    while remaining:
         best, best_hits = None, -1
-        for _ in range(24):
-            row = [rng.randrange(size) for size in sizes]
-            hits = sum(1 for columns, values in uncovered
-                       if all(row[c] == v for c, v in zip(columns, values)))
+        for _ in range(candidates):
+            row = [None] * count
+            assigned = []
+            order = sorted(rng.sample(range(count), count), key=lambda c: -sizes[c])
+            for column in order:
+                if strength == 1:
+                    groups = [()]
+                elif strength == 2:
+                    groups = [(other,) for other in assigned]
+                else:
+                    groups = list(itertools.combinations(assigned, strength - 1))
+                    if len(groups) > sampled:
+                        groups = rng.sample(groups, sampled)
+                best_value, best_gain = 0, (-1, -1)
+                start = rng.randrange(sizes[column])
+                for offset in range(sizes[column]):
+                    value = (start + offset) % sizes[column]
+                    gain = 0
+                    for others in groups:
+                        columns = tuple(sorted(others + (column,)))
+                        key = tuple(value if c == column else row[c] for c in columns)
+                        if key in uncovered[columns]:
+                            gain += 1
+                    if (gain, left[column][value]) > best_gain:
+                        best_value, best_gain = value, (gain, left[column][value])
+                row[column] = best_value
+                assigned.append(column)
+            if candidates == 1:
+                best = row
+                break
+            hits = sum(1 for columns, values in uncovered.items()
+                       if tuple(row[c] for c in columns) in values)
             if hits > best_hits:
                 best, best_hits = row, hits
-        # Improve the candidate greedily one column at a time.
-        for column in rng.sample(range(len(sizes)), len(sizes)):
-            for value in range(sizes[column]):
-                trial = list(best)
-                trial[column] = value
-                hits = sum(1 for columns, values in uncovered
-                           if all(trial[c] == v for c, v in zip(columns, values)))
-                if hits > best_hits:
-                    best, best_hits = trial, hits
-        if best_hits <= 0:
-            columns, values = next(iter(uncovered))
-            best = [0] * len(sizes)
-            for c, v in zip(columns, values):
+        covered = [(columns, tuple(best[c] for c in columns)) for columns in uncovered]
+        if not any(key in uncovered[columns] for columns, key in covered):
+            columns, values = next((columns, values) for columns, values
+                                   in uncovered.items() if values)
+            best = [0] * count
+            for c, v in zip(columns, next(iter(sorted(values)))):
                 best[c] = v
+            covered = [(columns, tuple(best[c] for c in columns)) for columns in uncovered]
         rows.append(best)
-        uncovered = {(columns, values) for columns, values in uncovered
-                     if not all(best[c] == v for c, v in zip(columns, values))}
+        for columns, key in covered:
+            values = uncovered[columns]
+            if key in values:
+                values.remove(key)
+                remaining -= 1
+                for column, value in zip(columns, key):
+                    left[column][value] -= 1
     return rows
 
 
