@@ -115,18 +115,12 @@ static positive stdlib_arena_left = 0;
 #define stdlib_environment_failure(result) (-1)
 #endif
 
-static address_any stdlib_arena_failed(void)
-{
-        (fn)stdlib_environment_failure(-ENOMEM);
-        return null;
-}
-
 static address_any stdlib_arena_take(positive size)
 {
         address_any given;
 
         if (size > (positive)-1 - (STDLIB_ARENA_ALIGN - 1))
-                return stdlib_arena_failed();
+                return ((fn)stdlib_environment_failure(-ENOMEM), null);
         size = (size + (STDLIB_ARENA_ALIGN - 1)) & ~(positive)(STDLIB_ARENA_ALIGN - 1);
 
         if (size > stdlib_arena_left)
@@ -135,12 +129,12 @@ static address_any stdlib_arena_take(positive size)
                 p8 address_to block;
 
                 if (want == 0)
-                        return stdlib_arena_failed();
+                        return ((fn)stdlib_environment_failure(-ENOMEM), null);
 
                 block = (p8 address_to)memory(want);
 
                 if (is_null(block) || system_failed(block))
-                        return stdlib_arena_failed();
+                        return ((fn)stdlib_environment_failure(-ENOMEM), null);
 
                 //      Whatever was left of the previous chunk is abandoned.
                 //      It is at most one allocation's worth and chasing it

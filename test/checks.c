@@ -9842,8 +9842,169 @@ fn check_clock()
         checks += (spin == 0);
 }
 
+static b32 report_nested_status;
+
+static fn report_nested_writer(address_any data, positive length)
+{
+        catch_writer(data, length);
+        if (caught_calls == 1)
+                report_nested_status = string_report(
+                    catch_writer, -9, "<%s:%p>", "inner", (positive)99);
+}
+
+fn check_report()
+{
+        static b32 results[] = {0, 1, 2, 125, -1, -2147483647 - 1, 2147483647};
+        static string_address endings[] = {"", "plain", "%%", "before%", "%qafter"};
+        b8 expected[sizeof caught];
+        for (positive i = 0; i < array_count(results); i++)
+        {
+                b32 result = results[i];
+                for (positive j = 0; j < array_count(endings); j++)
+                {
+                        catch_reset();
+                        string_format(catch_writer, endings[j]);
+                        positive length = caught_length, calls = caught_calls;
+                        memory_copy(expected, caught, length + 1);
+                        catch_reset();
+                        same("string_report", "early-exit result",
+                             (positive)(bipolar)string_report(
+                                 catch_writer, result, endings[j]),
+                             (positive)(bipolar)result);
+                        same("string_report", "writer calls", caught_calls, calls);
+                        same_bytes("string_report", "early-exit bytes",
+                                   caught, expected, length + 1);
+                }
+
+                // Exhaust GP registers and interleave stack integers with more
+                // than eight FP arguments. The extra fixed result argument
+                // changes only the GP cursor, never the FP/overflow ordering.
+#define REPORT_MIX "%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%p:%f|%s:%b"
+#define REPORT_VALUES (positive)1, 1.25, (positive)2, 2.5, \
+        (positive)3, 3.75, (positive)4, 4.0, (positive)5, 5.25, \
+        (positive)6, 6.5, (positive)7, 7.75, (positive)8, 8.0, \
+        (positive)9, 9.25, "last", -37
+                catch_reset();
+                string_format(catch_writer, REPORT_MIX, REPORT_VALUES);
+                positive length = caught_length, calls = caught_calls;
+                memory_copy(expected, caught, length + 1);
+                catch_reset();
+                same("string_report", "mixed result",
+                     (positive)(bipolar)string_report(catch_writer, result,
+                                                    REPORT_MIX, REPORT_VALUES),
+                     (positive)(bipolar)result);
+                same("string_report", "mixed calls", caught_calls, calls);
+                same("string_report", "mixed length", caught_length, length);
+                same_bytes("string_report", "mixed bytes", caught, expected, length + 1);
+#undef REPORT_VALUES
+#undef REPORT_MIX
+                catch_reset();
+                same("string_report", "integer spill result",
+                     (positive)(bipolar)string_report(catch_writer, result,
+                         "%p %p %p %p %p %p %p %p %p %s", (positive)1,
+                         (positive)2, (positive)3, (positive)4, (positive)5,
+                         (positive)6, (positive)7, (positive)8, (positive)9, "end"),
+                     (positive)(bipolar)result);
+                same("string_report", "integer spill bytes",
+                     string_compare(caught, "1 2 3 4 5 6 7 8 9 end"), 0);
+                catch_reset();
+                same("string_report", "nested outer result",
+                     (positive)(bipolar)string_report(report_nested_writer, result,
+                                                    "A%s", "B"),
+                     (positive)(bipolar)result);
+                same("string_report", "nested inner result",
+                     (positive)(bipolar)report_nested_status, (positive)(bipolar)-9);
+                same("string_report", "nested bytes",
+                     string_compare(caught, "A<inner:99>B"), 0);
+        }
+}
+
+static string_address diagnostic_name = "early";
+static positive diagnostic_before_calls;
+
+static fn diagnostic_before()
+{
+        diagnostic_before_calls++;
+        catch_writer("!", 1);
+        diagnostic_name = "late";
+}
+
+fn check_diagnostic()
+{
+        const diagnostic sink = {catch_writer, diagnostic_before, &diagnostic_name};
+        const diagnostic plain = {catch_writer, null, &diagnostic_name};
+        static b32 results[] = {0, 1, -1, -2147483647 - 1, 2147483647};
+        static string_address subjects[] = {null, "", "subject%"};
+        b8 expected[256];
+        for (positive i = 0; i < array_count(results); i++)
+                for (positive j = 0; j < array_count(subjects); j++)
+                {
+                        catch_reset();
+                        catch_writer("!", 1);
+                        string_format(catch_writer,
+                            subjects[j] ? "%s: %s: %s\n" : "%s: %s\n",
+                            "late", subjects[j] ? subjects[j] : (string_address)"reason%", "reason%");
+                        positive length = caught_length, calls = caught_calls;
+                        memory_copy(expected, caught, length + 1);
+                        catch_reset();
+                        diagnostic_name = "early";
+                        diagnostic_before_calls = 0;
+                        same("string_diagnostic", "result survives before and writes",
+                            (positive)(bipolar)string_diagnostic(&sink, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "one before call", diagnostic_before_calls, 1);
+                        same("string_diagnostic", "writer call count", caught_calls, calls);
+                        same("string_diagnostic", "output length", caught_length, length);
+                        same_bytes("string_diagnostic", "prefix read after before",
+                                   caught, expected, length + 1);
+                        catch_reset();
+                        same("string_diagnostic", "optional before",
+                            (positive)(bipolar)string_diagnostic(&plain, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "no before call", diagnostic_before_calls, 1);
+                        same_bytes("string_diagnostic", "plain output", caught, expected + 1, length);
+                }
+
+        b32 pipes[2];
+        bipolar saved = system_call_1(syscall(dup), 2);
+        bipolar opened = system_call_2(syscall(pipe2), (positive)pipes, 2048);
+        same("stderr writers", "pipe setup", opened, 0);
+        if (opened < 0 || saved < 0)
+        {
+                if (saved >= 0) system_call_1(syscall(close), saved);
+                if (opened == 0)
+                {
+                        system_call_1(syscall(close), pipes[0]);
+                        system_call_1(syscall(close), pipes[1]);
+                }
+                return;
+        }
+        bipolar rebound = system_call_3(syscall(dup3), pipes[1], 2, 0);
+        same("stderr writers", "stderr binding", rebound, 2);
+        if (rebound == 2)
+        {
+                positive buffered = log_writer_buffer_length;
+                writer_stderr("alpha", 0);
+                writer_stderr_once("x\0z", 3);
+                writer_stderr("", 0);
+                writer_stderr_once("", 0);
+                same("stderr writers", "no implicit flush", log_writer_buffer_length, buffered);
+        }
+        system_call_3(syscall(dup3), saved, 2, 0);
+        system_call_1(syscall(close), saved);
+        system_call_1(syscall(close), pipes[1]);
+        b8 bytes[16];
+        bipolar read = system_call_3(syscall(read), pipes[0], (positive)bytes, sizeof bytes);
+        same("stderr writers", "exact and terminated spans", read, 8);
+        if (read == 8)
+                same_bytes("stderr writers", "embedded NUL", bytes, "alphax\0z", 8);
+        system_call_1(syscall(close), pipes[0]);
+}
+
 fn check_format()
 {
+        check_report();
+        check_diagnostic();
         // string_format drives most of what anything here prints, so the check
         // is over what it emits rather than over a return value it has none of.
         catch_reset();
@@ -17400,7 +17561,18 @@ fn check_formatters()
 
 b32 main()
 {
-#if defined(VERIFY_FORMATTERS_ONLY)
+#if defined(VERIFY_REPORTS_ONLY)
+        check_format();
+        check_format_deep();
+        check_format_decimals();
+#if X64
+        cpu_has_avx2 = 0;
+        cpu_has_avx512 = 0;
+        check_format();
+        check_format_deep();
+        check_format_decimals();
+#endif
+#elif defined(VERIFY_FORMATTERS_ONLY)
         // A small cross-machine lane for the shared numeric core. It avoids
         // making a formatter change wait on unrelated platform tests when a
         // target is available only through a minimal linker and qemu-user.

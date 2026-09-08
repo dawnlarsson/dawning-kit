@@ -48,11 +48,6 @@ typedef struct
         bool malformed;
 } storage_fstab_table;
 
-static fn storage_write_text(writer output, string_address text)
-{
-        if (output && text)
-                output((address_any)text, string_length(text));
-}
 
 #define STORAGE_TABLE_RELEASE(name, type)                                    \
         fn name(type address_to table)                                       \
@@ -239,8 +234,8 @@ bool storage_mount_table_load(storage_mount_table address_to table,
         if (!file_store_slurp((string_address) "/proc/self/mountinfo",
                               address_of table->text))
         {
-                storage_write_text(diagnostic,
-                                   (string_address) "cannot read /proc/self/mountinfo\n");
+                if (diagnostic)
+                        diagnostic(str("cannot read /proc/self/mountinfo\n"));
                 return false;
         }
 
@@ -252,8 +247,8 @@ bool storage_mount_table_load(storage_mount_table address_to table,
         {
                 if (*line && !storage_mount_line(table, line))
                 {
-                        storage_write_text(diagnostic,
-                                           (string_address) "invalid /proc/self/mountinfo line\n");
+                        if (diagnostic)
+                                diagnostic(str("invalid /proc/self/mountinfo line\n"));
                         storage_mount_table_release(table);
                         return false;
                 }
@@ -347,12 +342,12 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
 
         if (!file_store_slurp(path, address_of table->text))
         {
-                if (!missing_ok)
+                if (!missing_ok && diagnostic)
                 {
-                        storage_write_text(diagnostic,
-                                           (string_address) "cannot read ");
-                        storage_write_text(diagnostic, path);
-                        storage_write_text(diagnostic, (string_address) "\n");
+                        diagnostic(str("cannot read "));
+                        if (path)
+                                diagnostic((address_any)path, string_length(path));
+                        diagnostic(str("\n"));
                 }
 
                 return missing_ok;
@@ -378,12 +373,11 @@ bool storage_fstab_table_load(storage_fstab_table address_to table,
                         {
                                 if (diagnostic)
                                 {
-                                        storage_write_text(diagnostic, path);
-                                        storage_write_text(diagnostic,
-                                            (string_address) ": parse error at line ");
+                                        if (path)
+                                                diagnostic((address_any)path, string_length(path));
+                                        diagnostic(str(": parse error at line "));
                                         positive_to_string(diagnostic, line_number);
-                                        storage_write_text(diagnostic,
-                                            (string_address) " -- ignored\n");
+                                        diagnostic(str(" -- ignored\n"));
                                 }
                                 table->malformed = true;
                                 continue;
@@ -717,8 +711,9 @@ static fn storage_findmnt_row(writer output, storage_mount address_to mount,
                         output((address_any)" ", 1);
                 if (options->pairs)
                 {
-                        storage_write_text(output,
-                            storage_column_name(options->columns[at]));
+                        string_address heading = storage_column_name(options->columns[at]);
+                        if (output && heading)
+                                output((address_any)heading, string_length(heading));
                         output((address_any)"=\"", 2);
                 }
                 positive length = storage_findmnt_cell(
@@ -811,8 +806,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                 {
                         if (options.operand)
                         {
-                                storage_write_text(diagnostic,
-                                    (string_address) "findmnt: too many arguments\n");
+                                if (diagnostic)
+                                        diagnostic(str("findmnt: too many arguments\n"));
                                 return 1;
                         }
 
@@ -822,8 +817,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
 
                 if (option == ARGUMENT_MISSING)
                 {
-                        storage_write_text(diagnostic,
-                            (string_address) "findmnt: option needs an argument\n");
+                        if (diagnostic)
+                                diagnostic(str("findmnt: option needs an argument\n"));
                         return 1;
                 }
 
@@ -860,14 +855,14 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         options.option_filter = value;
                 else if (option != 'o')
                 {
-                        storage_write_text(diagnostic,
-                            (string_address) "findmnt: unsupported option\n");
+                        if (diagnostic)
+                                diagnostic(str("findmnt: unsupported option\n"));
                         return 1;
                 }
                 else if (!storage_columns(value, address_of options))
                 {
-                        storage_write_text(diagnostic,
-                            (string_address) "findmnt: unsupported output column\n");
+                        if (diagnostic)
+                                diagnostic(str("findmnt: unsupported output column\n"));
                         return 1;
                 }
         }
@@ -876,8 +871,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
             (options.operand &&
              (options.source || options.path_query || options.mountpoint_query)))
         {
-                storage_write_text(diagnostic,
-                    (string_address) "findmnt: incompatible query arguments\n");
+                if (diagnostic)
+                        diagnostic(str("findmnt: incompatible query arguments\n"));
                 return 1;
         }
 
@@ -998,25 +993,7 @@ static p8 address_to storage_fd_path(bipolar handle, positive address_to room)
 }
 
 /* Reentrant core used unchanged by builtin and multicall dispatch. */
-static fn storage_device_number(writer output, positive major, positive minor)
-{
-        positive_to_string(output, major);
-        output((address_any)":", 1);
-        positive_to_string(output, minor);
-        output((address_any)"\n", 1);
-}
 
-static fn storage_mountpoint_error(writer diagnostic, bool quiet,
-                                   string_address path,
-                                   string_address reason)
-{
-        if (quiet)
-                return;
-
-        storage_write_text(diagnostic, (string_address) "mountpoint: ");
-        storage_write_text(diagnostic, path);
-        storage_write_text(diagnostic, reason);
-}
 
 b32 storage_mountpoint(positive argc, string_address address_to argv,
                        writer output, writer diagnostic)
@@ -1053,24 +1030,24 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                 {
                         if (path)
                         {
-                                storage_write_text(diagnostic,
-                                    (string_address) "mountpoint: too many paths\n");
+                                if (diagnostic)
+                                        diagnostic(str("mountpoint: too many paths\n"));
                                 return 1;
                         }
                         path = value;
                 }
                 else
                 {
-                        storage_write_text(diagnostic,
-                            (string_address) "mountpoint: unsupported option\n");
+                        if (diagnostic)
+                                diagnostic(str("mountpoint: unsupported option\n"));
                         return 1;
                 }
         }
 
         if (!path)
         {
-                storage_write_text(diagnostic,
-                    (string_address) "mountpoint: exactly one path is required\n");
+                if (diagnostic)
+                        diagnostic(str("mountpoint: exactly one path is required\n"));
                 return 1;
         }
 
@@ -1082,22 +1059,29 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                                nofollow ? AT_SYMLINK_NOFOLLOW : 0,
                                address_of facts))
                 {
-                        storage_mountpoint_error(
-                            diagnostic, quiet, path,
-                            (string_address) ": cannot inspect\n");
+                        if (!quiet && diagnostic)
+                        {
+                                diagnostic(str("mountpoint: "));
+                                if (path)
+                                        diagnostic((address_any)path, string_length(path));
+                                diagnostic(str(": cannot inspect\n"));
+                        }
                         return 1;
                 }
 
                 if ((facts.mode & MODE_FORMAT) != MODE_BLOCK)
                 {
-                        storage_mountpoint_error(
-                            diagnostic, quiet, path,
-                            (string_address) ": not a block device\n");
+                        if (!quiet && diagnostic)
+                        {
+                                diagnostic(str("mountpoint: "));
+                                if (path)
+                                        diagnostic((address_any)path, string_length(path));
+                                diagnostic(str(": not a block device\n"));
+                        }
                         return 32;
                 }
 
-                storage_device_number(output, facts.rdev_major,
-                                       facts.rdev_minor);
+                string_format(output, "%p:%p\n", (positive)facts.rdev_major, (positive)facts.rdev_minor);
                 return 0;
         }
 
@@ -1112,9 +1096,13 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
 
         if (handle < 0)
         {
-                storage_mountpoint_error(
-                    diagnostic, quiet, path,
-                    (string_address) ": cannot inspect\n");
+                if (!quiet && diagnostic)
+                {
+                        diagnostic(str("mountpoint: "));
+                        if (path)
+                                diagnostic((address_any)path, string_length(path));
+                        diagnostic(str(": cannot inspect\n"));
+                }
                 return 1;
         }
 
@@ -1163,25 +1151,31 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
 
         if (!inspected)
         {
-                storage_mountpoint_error(
-                    diagnostic, quiet, path,
-                    (string_address) ": cannot inspect\n");
+                if (!quiet && diagnostic)
+                {
+                        diagnostic(str("mountpoint: "));
+                        if (path)
+                                diagnostic((address_any)path, string_length(path));
+                        diagnostic(str(": cannot inspect\n"));
+                }
                 return 1;
         }
 
         if (mounted && fs_devno)
         {
-                storage_device_number(output, here.device_major,
-                                       here.device_minor);
+                string_format(output, "%p:%p\n", (positive)here.device_major, (positive)here.device_minor);
                 return 0;
         }
 
         if (!quiet)
         {
-                storage_write_text(output, path);
-                storage_write_text(output, mounted
+                if (output && path)
+                        output((address_any)path, string_length(path));
+                string_address suffix = mounted
                     ? (string_address) " is a mountpoint\n"
-                    : (string_address) " is not a mountpoint\n");
+                    : (string_address) " is not a mountpoint\n";
+                if (output && suffix)
+                        output((address_any)suffix, string_length(suffix));
         }
 
         /* util-linux reserves 1 for invocation/inspection errors and uses

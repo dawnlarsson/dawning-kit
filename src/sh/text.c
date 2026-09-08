@@ -137,28 +137,9 @@ static positive text_visible(p8 address_to into, p8 value)
         return have;
 }
 
-static fn text_error_raw(string_address text)
-{
-        system_write_all(2, text, string_length(text));
-}
-
-// "grep: nosuch.txt: No such file or directory", the shape every one of them
-// uses, with the flush first so the complaint cannot land inside a line.
-static fn text_error(string_address about, string_address reason)
-{
-        text_flush();
-        text_error_raw(text_name);
-        text_error_raw(": ");
-
-        if (about)
-        {
-                text_error_raw(about);
-                text_error_raw(": ");
-        }
-
-        text_error_raw(reason);
-        text_error_raw("\n");
-}
+static const diagnostic text_diagnostic = {
+    writer_stderr, text_flush, &text_name,
+};
 
 static b32 text_done(b32 code)
 {
@@ -177,23 +158,6 @@ static b32 text_done(b32 code)
         }
 
         return code;
-}
-
-/*
-        A complaint and the status that goes with it, which is how nearly
-        every refusal in this file ends.
-
-        The status is the caller's because the tools do not agree on one:
-        most answer 1, grep and sort answer 2, and sed answers 4. Saying both
-        halves in one line is also what keeps them together -- a refusal that
-        prints and then falls through to the ordinary exit is the bug this
-        shape cannot have.
-*/
-static b32 text_refuse(string_address about, string_address reason, b32 code)
-{
-        text_error(about, reason);
-
-        return text_done(code);
 }
 
 /*
@@ -217,7 +181,7 @@ static address_any text_arena_take(positive bytes)
            the arena and let the caller write past it. */
         if (bytes > TEXT_ARENA_BYTES || bytes > positive_max - 15)
         {
-                text_error(null, "input too large");
+                string_diagnostic(&text_diagnostic, 0, null, "input too large");
                 return null;
         }
 
@@ -230,7 +194,7 @@ static address_any text_arena_take(positive bytes)
                 // mmap answers a failure as a small negative, not as null.
                 if (!got || system_failed(got))
                 {
-                        text_error(null, "out of memory");
+                        string_diagnostic(&text_diagnostic, 0, null, "out of memory");
                         return null;
                 }
 
@@ -241,7 +205,7 @@ static address_any text_arena_take(positive bytes)
         if (text_arena_used > TEXT_ARENA_BYTES ||
             bytes > TEXT_ARENA_BYTES - text_arena_used)
         {
-                text_error(null, "input too large");
+                string_diagnostic(&text_diagnostic, 0, null, "input too large");
                 return null;
         }
 
@@ -413,7 +377,7 @@ static bool text_reader_open(text_reader address_to reader, string_address path)
                    name the system gives it; assuming the absent one made a
                    denied file and a symlink loop read alike. */
                 if (!text_quiet_open)
-                        text_error(path, file_reason(handle));
+                        string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
                 reader->failed = true;
                 return false;
         }
@@ -456,7 +420,7 @@ static bool text_reader_fill_amount(text_reader address_to reader,
 
                 if (got < 0)
                 {
-                        text_error(reader->name, "Read error");
+                        string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
                         reader->failed = true;
                 }
 
@@ -535,8 +499,7 @@ static bool text_reader_spill(text_reader address_to reader, p8 delimiter,
                         reader->finished = true;
                         reader->failed = true;
                         address_to length = 0;
-                        text_error(about, "line too long");
-                        return false;
+                        return string_diagnostic(&text_diagnostic, 0, about, "line too long");
                 }
 
                 memory_copy(storage + used, at, take);
@@ -843,15 +806,6 @@ static fn text_file_add(b32 which)
         }
 
         text_files[text_files_count++] = which;
-}
-
-static bool text_files_ready()
-{
-        if (!text_files_failed)
-                return true;
-
-        text_error(null, "too many operands");
-        return false;
 }
 
 static string_address text_file_name(positive which)
@@ -1263,7 +1217,7 @@ static b32 encoding_decode(const encoding_codec address_to codec,
                 valid = false;
 
         if (!valid)
-                text_error(null, "invalid input");
+                string_diagnostic(&text_diagnostic, 0, null, "invalid input");
 
         return text_done((!valid || text_status) ? 1 : 0);
 }
@@ -1366,8 +1320,7 @@ static b32 z85_encode(positive wrap)
 
         if (valid && (held & 3))
         {
-                text_error(null,
-                           "invalid input (length must be multiple of 4 characters)");
+                string_diagnostic(&text_diagnostic, 0, null, "invalid input (length must be multiple of 4 characters)");
                 valid = false;
         }
         else if (valid && held)
@@ -1441,7 +1394,7 @@ static b32 z85_decode(bool ignore_garbage)
                 valid = false;
 
         if (!valid)
-                text_error(null, "invalid input");
+                string_diagnostic(&text_diagnostic, 0, null, "invalid input");
 
         return text_done((!valid || text_status) ? 1 : 0);
 }
@@ -1492,27 +1445,24 @@ static b32 text_encoding(string_address name, positive format)
                         if (taking.flags & FILE_FLAG(choices[at]))
                         {
                                 if (format != ENCODING_NONE)
-                                        return text_refuse(null,
-                                                           "multiple encoding types",
-                                                           1);
+                                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "multiple encoding types"));
 
                                 format = at + ENCODING_BASE64;
                         }
 
                 if (format == ENCODING_NONE)
-                        return text_refuse(null, "missing encoding type", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing encoding type"));
         }
 
         string_address said = file_option_value(address_of taking, 'w');
 
         if (said && !text_unsigned_option(said, false, address_of wrap))
-                return text_refuse(said, "invalid wrap size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid wrap size"));
 
         positive operands = (positive)text_argument_count - taking.first;
 
         if (operands > 1)
-                return text_refuse(program_argument((b32)taking.first + 1),
-                                   "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first + 1), "extra operand"));
 
         string_address path = operands
             ? program_argument((b32)taking.first)
@@ -1814,19 +1764,19 @@ static b32 text_comm()
         text_delimiter = '\n';
         comm_order_mode = RELATION_ORDER_DEFAULT;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         if (text_files_count < 2)
-                return text_refuse(null, "missing operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
         if (text_files_count > 2)
-                return text_refuse(text_file_name(2), "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, text_file_name(2), "extra operand"));
 
         string_address left_name = text_file_name(0);
         string_address right_name = text_file_name(1);
 
         if (string_equals(left_name, "-") && string_equals(right_name, "-"))
-                return text_refuse(null, "standard input is meaningful only once", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "standard input is meaningful only once"));
 
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
@@ -1937,7 +1887,7 @@ static b32 text_comm()
             (comm_order_mode == RELATION_ORDER_FORCE || unpaired);
 
         if (order_failed)
-                text_error(null, "input is not in sorted order");
+                string_diagnostic(&text_diagnostic, 0, null, "input is not in sorted order");
 
         text_record_close(sides);
         text_record_close(sides + 1);
@@ -2030,7 +1980,7 @@ static b32 text_paste()
         text_delimiter = '\n';
         text_arena_used = 0;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('z'))
@@ -2043,7 +1993,7 @@ static b32 text_paste()
         if (!delimiter_room)
                 delimiter_room = 1;
         if (delimiter_room > positive_max / sizeof(p16))
-                return text_refuse(said, "invalid delimiter list", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid delimiter list"));
 
         p16 address_to delimiters = (p16 address_to)text_arena_take(
             delimiter_room * sizeof(p16));
@@ -2052,12 +2002,12 @@ static b32 text_paste()
             !paste_delimiters(said ? said : (string_address)"\t",
                               delimiters, delimiter_room,
                               address_of delimiter_count))
-                return text_refuse(said, "invalid delimiter list", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid delimiter list"));
 
         positive inputs = text_files_count ? text_files_count : 1;
 
         if (inputs > positive_max / sizeof(text_record_cursor))
-                return text_refuse(null, "too many operands", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
         text_record_cursor address_to cursors =
             (text_record_cursor address_to)text_arena_take(
@@ -2732,19 +2682,19 @@ static b32 text_join()
         join_order_mode = RELATION_ORDER_DEFAULT;
         join_separator = -1;
 
-        if (!file_take(address_of taking) || !text_files_ready())
-                return text_refuse(null, "invalid option value", 1);
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid option value"));
 
         if (text_files_count < 2)
-                return text_refuse(null, "missing operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
         if (text_files_count > 2)
-                return text_refuse(text_file_name(2), "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, text_file_name(2), "extra operand"));
 
         string_address left_name = text_file_name(0);
         string_address right_name = text_file_name(1);
 
         if (string_equals(left_name, "-") && string_equals(right_name, "-"))
-                return text_refuse(null, "both files cannot be standard input", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "both files cannot be standard input"));
 
         bool separated = join_separator >= 0;
         p8 separator = separated ? (p8)join_separator : ' ';
@@ -2938,7 +2888,7 @@ static b32 text_join()
 
                                 if (next == TEXT_UNSET)
                                 {
-                                        text_error(null, "matching group too large");
+                                        string_diagnostic(&text_diagnostic, 0, null, "matching group too large");
                                         trouble = true;
                                         break;
                                 }
@@ -3031,7 +2981,7 @@ static b32 text_join()
             (join_order_mode == RELATION_ORDER_FORCE || unpaired);
 
         if (order_failed)
-                text_error(null, "input is not in sorted order");
+                string_diagnostic(&text_diagnostic, 0, null, "input is not in sorted order");
 
         text_record_close(sides);
         text_record_close(sides + 1);
@@ -3408,7 +3358,7 @@ static b32 text_wc()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -3433,8 +3383,7 @@ static b32 text_wc()
         if ((flags & FILE_FLAG('T')) &&
             !wc_total_of(file_option_value(address_of taking, 'T'),
                          address_of total_mode))
-                return text_refuse(file_option_value(address_of taking, 'T'),
-                                   "invalid argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'T'), "invalid argument"));
 
         b32 selected = (b32)want_lines + (b32)want_words + (b32)want_bytes +
                        (b32)want_chars + (b32)want_longest;
@@ -3727,7 +3676,7 @@ static b32 text_sum()
 
         text_begin("sum");
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         bool sysv = sum_option == 's';
@@ -3799,7 +3748,7 @@ static bool tac_read(tac_buffer address_to buffer, string_address name)
                     !byte_store_reserve(buffer, buffer->used + length,
                                         TEXT_READ_MAX))
                 {
-                        text_error(name, "input too large");
+                        string_diagnostic(&text_diagnostic, 0, name, "input too large");
                         text_status = 1;
                         text_input.finished = true;
                         failed = true;
@@ -3929,7 +3878,7 @@ static b32 text_tac()
 
         text_begin("tac");
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         string_address separator = file_option_value(address_of taking, 's');
@@ -3945,17 +3894,11 @@ static b32 text_tac()
         if (regex)
         {
                 if (!separator_length)
-                {
-                        text_error(null, "separator cannot be empty");
-                        return text_done(1);
-                }
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "separator cannot be empty"));
 
                 if (!regex_compile(separator, false, false, false,
                                    REGEX_POLICY_TAC))
-                {
-                        text_error(null, "invalid regular expression");
-                        return text_done(1);
-                }
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid regular expression"));
         }
         else if (!separator_length)
         {
@@ -4000,7 +3943,7 @@ static b32 text_rev()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('0'))
@@ -4062,10 +4005,7 @@ static bool text_lines_gather()
         while (text_line_next())
         {
                 if (text_lines_count >= TEXT_LINES_MAX)
-                {
-                        text_error(null, "too many lines");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, null, "too many lines");
 
                 p8 address_to room = (p8 address_to)text_arena_take(text_line_length + 1);
 
@@ -4351,8 +4291,7 @@ static bool text_count_option(string_address said, p8 marked,
         if (string_digits_exact(said, count))
                 return true;
 
-        text_error(null, "invalid number of lines");
-        return false;
+        return string_diagnostic(&text_diagnostic, 0, null, "invalid number of lines");
 }
 
 /*
@@ -4408,7 +4347,7 @@ static inline INLINE b32 text_head_tail(bool tail)
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive count = 10;
@@ -4568,7 +4507,7 @@ static b32 text_tee()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
@@ -4576,13 +4515,13 @@ static b32 text_tee()
         if (text_files_count)
         {
                 if (text_files_count > positive_max / sizeof(positive))
-                        return text_error(null, "too many operands"), text_done(1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
                 positive mapped =
                     (positive)memory(text_files_count * sizeof(positive));
 
                 if (!mapped || system_failed(mapped))
-                        return text_error(null, "too many operands"), text_done(1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many operands"));
 
                 handles = (positive address_to)mapped;
         }
@@ -4595,7 +4534,7 @@ static b32 text_tee()
 
                 if (target < 0)
                 {
-                        text_error(name, "Cannot open file");
+                        string_diagnostic(&text_diagnostic, 0, name, "Cannot open file");
                         text_status = 1;
                         continue;
                 }
@@ -4696,7 +4635,7 @@ static b32 text_nl()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive width = 6;
@@ -4733,8 +4672,7 @@ static b32 text_nl()
                 if (pattern_count >= 3 ||
                     !regex_compile(said + 1, false, false, false,
                                    REGEX_POLICY_DEFAULT))
-                        return text_refuse(said + 1,
-                                           "invalid regular expression", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said + 1, "invalid regular expression"));
 
                 regex_keep(nl_patterns + pattern_count);
                 patterns[k] = pattern_count++;
@@ -4973,18 +4911,12 @@ static bool text_tab_parse(string_address list)
 
                 if (!text_tab_number(list + at, address_of used,
                                      address_of value))
-                {
-                        text_error(list, "invalid tab stops");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, list, "invalid tab stops");
 
                 at += used;
 
                 if (list[at] && list[at] != ',' && !byte_is_space(list[at]))
-                {
-                        text_error(list + at, "invalid tab stops");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, list + at, "invalid tab stops");
 
                 any = true;
 
@@ -4996,10 +4928,7 @@ static bool text_tab_parse(string_address list)
                                 after++;
 
                         if (list[after])
-                        {
-                                text_error(list, "tab repeat must be last");
-                                return false;
-                        }
+                                return string_diagnostic(&text_diagnostic, 0, list, "tab repeat must be last");
 
                         text_tab_repeat = value;
                         text_tab_repeat_relative = prefix == '+';
@@ -5009,32 +4938,20 @@ static bool text_tab_parse(string_address list)
                 }
 
                 if (!value)
-                {
-                        text_error(list, "tab stop cannot be zero");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, list, "tab stop cannot be zero");
 
                 if (text_tab_stop_count &&
                     value <= text_tab_stops[text_tab_stop_count - 1])
-                {
-                        text_error(list, "tab stops must be ascending");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, list, "tab stops must be ascending");
 
                 if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
-                {
-                        text_error(list, "too many tab stops");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, list, "too many tab stops");
 
                 text_tab_stops[text_tab_stop_count++] = value;
         }
 
         if (!any)
-        {
-                text_error(list, "empty tab list");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, list, "empty tab list");
 
         return true;
 }
@@ -5403,14 +5320,13 @@ static inline INLINE b32 text_tabs(bool unexpand)
         text_begin(taking.program);
         text_tab_reset();
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('T'))
         {
                 if (text_tab_option_seen)
-                        return text_refuse(null,
-                                           "cannot mix -N and --tabs syntax", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot mix -N and --tabs syntax"));
 
                 if (!text_tab_parse(file_option_value(address_of taking, 'T')))
                         return text_done(1);
@@ -5638,7 +5554,7 @@ static bool fmt_add_word(p8 address_to at, positive length, positive space,
         if (fmt_word_count == FMT_WORD_MAX ||
             length > TEXT_LINE_MAX - fmt_character_count)
         {
-                text_error(null, "paragraph is too large");
+                string_diagnostic(&text_diagnostic, 0, null, "paragraph is too large");
                 fmt_failed = true;
                 return false;
         }
@@ -5996,7 +5912,7 @@ static b32 text_fmt()
         text_begin("fmt");
         text_arena_used = 0;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('W'))
@@ -6006,8 +5922,7 @@ static b32 text_fmt()
                                            : null;
 
                 if (!first || first[0] != '-' || !byte_is_digit(first[1]))
-                        return text_refuse(null,
-                                           "-WIDTH is only accepted first", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "-WIDTH is only accepted first"));
         }
 
         positive width = FMT_WIDTH_DEFAULT;
@@ -6020,7 +5935,7 @@ static b32 text_fmt()
         if (width_value &&
             (!text_unsigned_option(width_value, false, address_of width) ||
              width > 2500))
-                return text_refuse(width_value, "invalid width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, width_value, "invalid width"));
 
         positive goal;
 
@@ -6031,7 +5946,7 @@ static b32 text_fmt()
 
                 if (!text_unsigned_option(value, false, address_of goal) ||
                     goal > ceiling)
-                        return text_refuse(value, "invalid width", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid width"));
 
                 if (!width_value)
                         width = goal + 10;
@@ -6204,7 +6119,7 @@ static bool pr_option_seen(p8 letter, string_address value)
         if (pr_pages(value))
                 return true;
 
-        text_error(value, "invalid page range");
+        string_diagnostic(&text_diagnostic, 0, value, "invalid page range");
         pr_page_option_failed = true;
         return false;
 }
@@ -6217,7 +6132,7 @@ static fn pr_operand_add(b32 which)
         {
                 if (!pr_pages(value + 1))
                 {
-                        text_error(value, "invalid page range");
+                        string_diagnostic(&text_diagnostic, 0, value, "invalid page range");
                         pr_page_option_failed = true;
                 }
 
@@ -6422,7 +6337,7 @@ static bool pr_store(p8 address_to bytes, positive length, bipolar number,
 
         if (length > TEXT_LINE_MAX - pr_spill_used)
         {
-                text_error(null, "page is too large");
+                string_diagnostic(&text_diagnostic, 0, null, "page is too large");
                 pr_failed = true;
                 return false;
         }
@@ -6550,8 +6465,7 @@ static positive pr_load_merge(text_record_cursor address_to cursors,
                                                     '\f',
                                                     cursors[column].length))
                                 {
-                                        text_error(null,
-                                                   "form feed with --merge is unsupported");
+                                        string_diagnostic(&text_diagnostic, 0, null, "form feed with --merge is unsupported");
                                         pr_failed = true;
                                         return rows;
                                 }
@@ -6602,7 +6516,7 @@ static fn pr_put_header(string_address name, b64 stamp, positive page)
 
         if (!pr_date(date, sizeof(date), stamp, address_of date_length))
         {
-                text_error(pr_date_format, "date format is too long");
+                string_diagnostic(&text_diagnostic, 0, pr_date_format, "date format is too long");
                 pr_failed = true;
                 return;
         }
@@ -6906,22 +6820,18 @@ static b32 text_pr()
         pr_last_page = positive_max;
 
         if (!file_take(address_of taking) || pr_page_option_failed ||
-            !text_files_ready())
+            (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         if ((taking.flags & FILE_FLAG('c')) ||
             (taking.flags & FILE_FLAG('v')))
-                return text_refuse(null,
-                                   "control-character display is unsupported",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "control-character display is unsupported"));
 
         pr_merge = (taking.flags & FILE_FLAG('m')) != 0;
         pr_across = (taking.flags & FILE_FLAG('a')) != 0;
 
         if (pr_merge && (pr_across || (taking.flags & FILE_FLAG('C'))))
-                return text_refuse(null,
-                                   "cannot combine --merge and --columns",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot combine --merge and --columns"));
 
         if (pr_merge && !text_files_count)
                 pr_merge = false;
@@ -6932,8 +6842,7 @@ static b32 text_pr()
             (!pr_parse_positive(file_option_value(address_of taking, 'C'),
                                 address_of pr_columns) ||
              pr_columns > TEXT_LINE_MAX))
-                return text_refuse(file_option_value(address_of taking, 'C'),
-                                   "invalid number of columns", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'C'), "invalid number of columns"));
 
         pr_page_length = PR_LENGTH_DEFAULT;
         pr_page_width = PR_WIDTH_DEFAULT;
@@ -6942,8 +6851,7 @@ static b32 text_pr()
         if ((taking.flags & FILE_FLAG('l')) &&
             !pr_parse_positive(file_option_value(address_of taking, 'l'),
                                address_of pr_page_length))
-                return text_refuse(file_option_value(address_of taking, 'l'),
-                                   "invalid page length", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'l'), "invalid page length"));
 
         p8 width_letter = (taking.flags & FILE_FLAG('W')) ? 'W' : 'w';
 
@@ -6951,15 +6859,13 @@ static b32 text_pr()
             !pr_parse_positive(file_option_value(address_of taking,
                                                   width_letter),
                                address_of pr_page_width))
-                return text_refuse(file_option_value(address_of taking,
-                                                      width_letter),
-                                   "invalid page width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking,
+                                                      width_letter), "invalid page width"));
 
         if ((taking.flags & FILE_FLAG('o')) &&
             !text_unsigned_option(file_option_value(address_of taking, 'o'),
                                   false, address_of pr_margin))
-                return text_refuse(file_option_value(address_of taking, 'o'),
-                                   "invalid indentation", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'o'), "invalid indentation"));
 
         /* An explicit page length restores input page breaks even with -T;
            the omitted header policy remains independent of that override. */
@@ -6978,9 +6884,7 @@ static b32 text_pr()
                              : (string_address)"%Y-%m-%d %H:%M";
 
         if (pr_header && pr_omit_header)
-                return text_refuse(null,
-                                   "header conflicts with omitted pagination",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "header conflicts with omitted pagination"));
 
         positive printable = pr_omit_header
                                  ? pr_page_length
@@ -6990,7 +6894,7 @@ static b32 text_pr()
                                   : printable;
 
         if (!pr_body_lines)
-                return text_refuse(null, "page length leaves no body", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "page length leaves no body"));
 
         pr_separator = pr_join ? (string_address)"\t"
                                : (string_address)" ";
@@ -7011,14 +6915,12 @@ static b32 text_pr()
 
         if (pr_number &&
             !pr_number_option(file_option_value(address_of taking, 'n')))
-                return text_refuse(file_option_value(address_of taking, 'n'),
-                                   "invalid line-number format", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'n'), "invalid line-number format"));
 
         if (pr_number_reset &&
             !pr_signed(file_option_value(address_of taking, 'N'),
                        address_of pr_start_line_number))
-                return text_refuse(file_option_value(address_of taking, 'N'),
-                                   "invalid first line number", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'N'), "invalid first line number"));
 
         pr_number_width = pr_number
                               ? (pr_number_separator == '\t'
@@ -7035,15 +6937,13 @@ static b32 text_pr()
             !pr_tab_option(file_option_value(address_of taking, 'e'),
                            address_of pr_input_tab,
                            address_of pr_input_tab_width))
-                return text_refuse(file_option_value(address_of taking, 'e'),
-                                   "invalid tab width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'e'), "invalid tab width"));
 
         if ((taking.flags & FILE_FLAG('i')) &&
             !pr_tab_option(file_option_value(address_of taking, 'i'),
                            address_of pr_output_tab,
                            address_of pr_output_tab_width))
-                return text_refuse(file_option_value(address_of taking, 'i'),
-                                   "invalid tab width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'i'), "invalid tab width"));
 
         pr_expand_input = (taking.flags & FILE_FLAG('e')) || pr_columns > 1;
         pr_tabify_output = (taking.flags & FILE_FLAG('i')) || pr_columns > 1;
@@ -7071,11 +6971,11 @@ static b32 text_pr()
         if (fixed >= pr_page_width ||
             (pr_page_width - fixed) / pr_columns <=
                 (pr_number && !pr_merge ? pr_number_width : 0))
-                return text_refuse(null, "page width is too narrow", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "page width is too narrow"));
 
         if (pr_body_lines > positive_max / pr_columns ||
             pr_body_lines * pr_columns > TEXT_LINE_MAX)
-                return text_refuse(null, "page has too many records", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "page has too many records"));
 
         pr_record_room = pr_body_lines * pr_columns;
         pr_records = (pr_record address_to)text_arena_take(
@@ -7283,8 +7183,7 @@ static positive ptx_context_next(ptx_file address_to file, positive from,
 
                 if (match == from)
                 {
-                        text_error(null,
-                                   "sentence expression matches empty text");
+                        string_diagnostic(&text_diagnostic, 0, null, "sentence expression matches empty text");
                         ptx_failed = true;
                         return file->text.length;
                 }
@@ -7299,8 +7198,7 @@ static positive ptx_context_next(ptx_file address_to file, positive from,
 
                 if (begin == from || after == begin)
                 {
-                        text_error(ptx_sentence_pattern,
-                                   "sentence expression matches empty text");
+                        string_diagnostic(&text_diagnostic, 0, ptx_sentence_pattern, "sentence expression matches empty text");
                         ptx_failed = true;
                         return file->text.length;
                 }
@@ -7975,16 +7873,14 @@ static b32 text_ptx()
         text_begin("ptx");
         text_arena_used = 0;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         positive flags = taking.flags;
 
         if (flags & (FILE_FLAG('G') | FILE_FLAG('O') | FILE_FLAG('T') |
                      FILE_FLAG('Q')))
-                return text_refuse(null,
-                                   "traditional and typesetter formats are unsupported",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "traditional and typesetter formats are unsupported"));
 
         ptx_fold = (flags & FILE_FLAG('f')) != 0;
         ptx_auto_reference = (flags & FILE_FLAG('A')) != 0;
@@ -8014,19 +7910,15 @@ static b32 text_ptx()
         if ((flags & FILE_FLAG('w')) &&
             !pr_parse_positive(file_option_value(address_of taking, 'w'),
                                address_of ptx_width))
-                return text_refuse(file_option_value(address_of taking, 'w'),
-                                   "invalid line width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'), "invalid line width"));
 
         if ((flags & FILE_FLAG('g')) &&
             !pr_parse_positive(file_option_value(address_of taking, 'g'),
                                address_of ptx_gap))
-                return text_refuse(file_option_value(address_of taking, 'g'),
-                                   "invalid gap width", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'g'), "invalid gap width"));
 
         if (ptx_input_reference && ptx_custom_sentence)
-                return text_refuse(null,
-                                   "--references with --sentence-regexp is unsupported",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--references with --sentence-regexp is unsupported"));
 
         if (flags & FILE_FLAG('F'))
                 ptx_unescape((p8 address_to)ptx_truncation);
@@ -8069,8 +7961,7 @@ static b32 text_ptx()
         {
                 if (!regex_compile(ptx_word_pattern, false, ptx_fold, false,
                                    REGEX_POLICY_DEFAULT))
-                        return text_refuse(ptx_word_pattern,
-                                           "unsupported word expression", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, ptx_word_pattern, "unsupported word expression"));
         }
         else if (ptx_lower_word || ptx_alpha_word)
         {
@@ -8125,8 +8016,7 @@ static b32 text_ptx()
         if (ptx_custom_sentence && ptx_sentence_pattern[0] &&
             !regex_compile(ptx_sentence_pattern, false, ptx_fold, false,
                            REGEX_POLICY_DEFAULT))
-                return text_refuse(ptx_sentence_pattern,
-                                   "unsupported sentence expression", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, ptx_sentence_pattern, "unsupported sentence expression"));
 
         ptx_context_count = ptx_plan_contexts(false);
 
@@ -8144,8 +8034,7 @@ static b32 text_ptx()
         if (ptx_custom_word &&
             !regex_compile(ptx_word_pattern, false, ptx_fold, false,
                            REGEX_POLICY_DEFAULT))
-                return text_refuse(ptx_word_pattern,
-                                   "unsupported word expression", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, ptx_word_pattern, "unsupported word expression"));
 
         ptx_occurrence_count = ptx_scan_occurrences(false);
         ptx_occurrences = (ptx_occurrence address_to)text_arena_take(
@@ -9072,7 +8961,7 @@ static b32 text_column()
         text_begin("column");
         text_arena_used = 0;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -9081,18 +8970,14 @@ static b32 text_column()
                      FILE_FLAG('m') |
                      FILE_FLAG('r') | FILE_FLAG('i') | FILE_FLAG('p') |
                      FILE_FLAG('q') | FILE_FLAG('Q') | FILE_FLAG('G')))
-                return text_refuse(null,
-                                   "column properties, tree, color, header-repeat and custom wrap parsing are unsupported",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "column properties, tree, color, header-repeat and custom wrap parsing are unsupported"));
 
         column_table = (flags & (FILE_FLAG('t') | FILE_FLAG('J') |
                                  FILE_FLAG('K'))) != 0;
         bool fill_rows = (flags & FILE_FLAG('x')) != 0;
 
         if (fill_rows && column_table)
-                return text_refuse(null,
-                                   "--fillrows and --table are mutually exclusive",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--fillrows and --table are mutually exclusive"));
 
         positive table_options = FILE_FLAG('N') | FILE_FLAG('n') |
                                  FILE_FLAG('O') | FILE_FLAG('H') |
@@ -9101,14 +8986,10 @@ static b32 text_column()
                                  FILE_FLAG('d') | FILE_FLAG('l');
 
         if (!column_table && (flags & table_options))
-                return text_refuse(null,
-                                   "option --table required for all --table-*",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "option --table required for all --table-*"));
 
         if ((flags & FILE_FLAG('N')) && (flags & FILE_FLAG('K')))
-                return text_refuse(null,
-                                   "--table-columns and --table-header-as-columns are mutually exclusive",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--table-columns and --table-header-as-columns are mutually exclusive"));
 
         positive width = 80;
         string_address width_option = file_option_value(address_of taking, 'c');
@@ -9119,8 +9000,7 @@ static b32 text_column()
                         width = 0;
                 else if (!text_unsigned_option(width_option, false,
                                                address_of width))
-                        return text_refuse(width_option,
-                                           "invalid columns argument", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, width_option, "invalid columns argument"));
         }
 
         bool spaces = (flags & FILE_FLAG('S')) != 0;
@@ -9129,8 +9009,7 @@ static b32 text_column()
         if (spaces &&
             !text_unsigned_option(file_option_value(address_of taking, 'S'),
                                   false, address_of spacing))
-                return text_refuse(file_option_value(address_of taking, 'S'),
-                                   "invalid spaces argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'S'), "invalid spaces argument"));
 
         column_keep_empty = (flags & FILE_FLAG('L')) != 0;
         column_header_as_names = (flags & FILE_FLAG('K')) != 0;
@@ -9141,9 +9020,7 @@ static b32 text_column()
 
         if ((flags & FILE_FLAG('J')) && !(flags & FILE_FLAG('N')) &&
             !column_header_as_names)
-                return text_refuse(null,
-                                   "option --table-columns or --table-column required for --json",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "option --table-columns or --table-column required for --json"));
 
         column_file_count = text_input_count();
         column_files = (text_blob address_to)text_arena_take(
@@ -9218,9 +9095,9 @@ static b32 text_column()
         if ((flags & FILE_FLAG(letter)) &&                                  \
             !column_apply_list(file_option_value(address_of taking, letter),\
                                property, properties, unnamed))              \
-                return text_refuse(file_option_value(address_of taking,     \
-                                                      letter),              \
-                                   "undefined column name", 1)
+                return text_done(string_diagnostic(&text_diagnostic, 1,     \
+                    file_option_value(address_of taking, letter),           \
+                    "undefined column name"))
 
         COLUMN_LIST('H', COLUMN_HIDDEN, true);
         COLUMN_LIST('E', COLUMN_NOEXTREME, false);
@@ -9248,8 +9125,7 @@ static b32 text_column()
                                    ? file_option_value(address_of taking, 'O')
                                    : null,
                                order, properties, address_of visible))
-                return text_refuse(file_option_value(address_of taking, 'O'),
-                                   "undefined column name", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'O'), "undefined column name"));
 
         if (flags & FILE_FLAG('J'))
         {
@@ -9259,9 +9135,7 @@ static b32 text_column()
                                           : (string_address)"table";
 
                 if (!column_json(name, order, visible))
-                        return text_refuse(null,
-                                           "for JSON every visible column requires a name",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "for JSON every visible column requires a name"));
         }
         else
                 column_table_output((flags & FILE_FLAG('d')) != 0, width,
@@ -9539,7 +9413,7 @@ static bool terminal_ul_column(terminal_state address_to state,
 {
         if (column > TEXT_LINE_MAX)
         {
-                text_error(null, "line too long");
+                string_diagnostic(&text_diagnostic, 0, null, "line too long");
                 state->ul_failed = true;
                 return false;
         }
@@ -9722,7 +9596,7 @@ static fn terminal_ul_escape(terminal_state address_to state, p8 command)
                 terminal_ul_reverse(state);
         else
         {
-                text_error(null, "unknown escape sequence in input");
+                string_diagnostic(&text_diagnostic, 0, null, "unknown escape sequence in input");
                 state->ul_failed = true;
         }
 }
@@ -9775,7 +9649,7 @@ static fn terminal_ul_byte(terminal_state address_to state, p8 character)
 
         if (state->ul_column >= TEXT_LINE_MAX)
         {
-                text_error(null, "line too long");
+                string_diagnostic(&text_diagnostic, 0, null, "line too long");
                 state->ul_failed = true;
                 return;
         }
@@ -9912,8 +9786,7 @@ static fn terminal_scan(text_blob address_to blob,
                         {
                                 if (at >= blob->length)
                                 {
-                                        text_error(null,
-                                                   "unknown escape sequence in input");
+                                        string_diagnostic(&text_diagnostic, 0, null, "unknown escape sequence in input");
                                         state->ul_failed = true;
                                         break;
                                 }
@@ -10352,14 +10225,11 @@ static b32 text_col()
                 return text_done(1);
 
         if (taking.first != (positive)program_argument_count())
-                return text_refuse(program_argument((b32)taking.first),
-                                   "bad usage", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first), "bad usage"));
 
         if ((taking.flags & FILE_FLAG('h')) &&
             (taking.flags & FILE_FLAG('x')))
-                return text_refuse(null,
-                                   "--tabs and --spaces are mutually exclusive",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--tabs and --spaces are mutually exclusive"));
 
         if (taking.flags & FILE_FLAG('l'))
         {
@@ -10368,9 +10238,8 @@ static b32 text_col()
                                                             'l'),
                                           false, address_of lines) ||
                     lines > 0xffffffffU)
-                        return text_refuse(file_option_value(address_of taking,
-                                                            'l'),
-                                           "bad -l argument", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking,
+                                                            'l'), "bad -l argument"));
         }
 
         text_blob input = {null, 0};
@@ -10437,7 +10306,7 @@ static b32 text_colcrt()
         text_begin("colcrt");
         terminal_colcrt_no_under = false;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         bool no_under = terminal_colcrt_no_under ||
@@ -10483,14 +10352,12 @@ static b32 text_colrm()
         if (count > 1 &&
             !text_unsigned_option(program_argument(1), false,
                                   address_of first))
-                return text_refuse(program_argument(1),
-                                   "invalid first argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument(1), "invalid first argument"));
 
         if (count > 2 &&
             !text_unsigned_option(program_argument(2), false,
                                   address_of last))
-                return text_refuse(program_argument(2),
-                                   "invalid second argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument(2), "invalid second argument"));
 
         text_blob input = {null, 0};
         if (!text_blob_read(null, address_of input))
@@ -10519,7 +10386,7 @@ static p8 terminal_ul_type(string_address name, bool explicit)
 {
         if (!name)
         {
-                text_error(null, "trouble reading terminfo");
+                string_diagnostic(&text_diagnostic, 0, null, "trouble reading terminfo");
                 return TERMINAL_UL_DUMB;
         }
 
@@ -10539,9 +10406,9 @@ static p8 terminal_ul_type(string_address name, bool explicit)
         if (explicit)
         {
                 text_flush();
-                text_error_raw("ul: terminal `");
-                text_error_raw(name);
-                text_error_raw("' is not known, defaulting to `dumb'\n");
+                writer_stderr("ul: terminal `", 0);
+                writer_stderr(name, 0);
+                writer_stderr("' is not known, defaulting to `dumb'\n", 0);
         }
 
         return TERMINAL_UL_DUMB;
@@ -10567,7 +10434,7 @@ static b32 text_ul()
         text_begin("ul");
         terminal_ul_option = null;
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         string_address terminal = terminal_ul_option
@@ -10792,7 +10659,7 @@ static b32 text_look()
         positive operands = (positive)program_argument_count() - taking.first;
 
         if (operands < 1 || operands > 2)
-                return text_refuse(null, "bad usage", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "bad usage"));
 
         bool supplied = operands == 2;
         string_address key = program_argument((b32)taking.first);
@@ -10918,8 +10785,7 @@ static b32 text_line_command()
                 return text_done(1);
 
         if (taking.first != (positive)program_argument_count())
-                return text_refuse(program_argument((b32)taking.first),
-                                   "bad usage", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first), "bad usage"));
 
         if (!text_open(null))
                 return text_done(1);
@@ -10976,7 +10842,7 @@ static b32 text_fold()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive width = 80;
@@ -10990,8 +10856,7 @@ static b32 text_fold()
             (!text_unsigned_option(file_option_value(address_of taking, 'w'), false,
                                    address_of width) ||
              !width || width == (positive)-1))
-                return text_refuse(file_option_value(address_of taking, 'w'),
-                                   "invalid number of columns", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'), "invalid number of columns"));
 
         b32 inputs = text_input_count();
 
@@ -11268,7 +11133,7 @@ static b32 text_cut()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -11295,13 +11160,10 @@ static b32 text_cut()
                 text_delimiter = '\0';
 
         if (have_list && kinds == 1 && !text_list_parse(said))
-                return text_refuse(null, "invalid list", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid list"));
 
         if (!have_list)
-                return text_refuse(
-                    null,
-                    "you must specify a list of bytes, characters, or fields",
-                    1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "you must specify a list of bytes, characters, or fields"));
 
         /*
                 Three ways of saying the same no. GNU refuses two lists of
@@ -11310,17 +11172,13 @@ static b32 text_cut()
                 stops cut -d: -c1 from quietly ignoring the -d.
         */
         if (kinds > 1)
-                return text_refuse(null,
-                                   "only one type of list may be specified", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "only one type of list may be specified"));
 
         if (whitespace && have_delimiter)
-                return text_refuse(null, "-d and -w are mutually exclusive", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "-d and -w are mutually exclusive"));
 
         if (!by_field && (have_delimiter || only_delimited || whitespace))
-                return text_refuse(
-                    null,
-                    "an input delimiter makes sense only when operating on fields",
-                    1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "an input delimiter makes sense only when operating on fields"));
 
         // -w splits on runs of blanks and joins with a tab, which is the one
         // place cut's two delimiters are not the same character.
@@ -11760,7 +11618,7 @@ static b32 text_tr()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -11774,7 +11632,7 @@ static b32 text_tr()
         string_address extra = at < text_argument_count ? program_argument(at++) : null;
 
         if (!first)
-                return text_refuse(null, "missing operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing operand"));
 
         /*
                 How many sets each shape of tr wants, which it has to say out
@@ -11783,10 +11641,10 @@ static b32 text_tr()
                 squeeze at once, because the second is what gets squeezed.
         */
         if (extra || (remove && !squeeze && second))
-                return text_refuse(extra ? extra : second, "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, extra ? extra : second, "extra operand"));
 
         if (!second && !remove && !squeeze)
-                return text_refuse(first, "missing operand after", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, first, "missing operand after"));
 
         text_set_broken = false;
         text_set_build(first, text_set_one, address_of text_set_one_length);
@@ -11795,7 +11653,7 @@ static b32 text_tr()
                 text_set_build(second, text_set_two, address_of text_set_two_length);
 
         if (text_set_broken)
-                return text_refuse(null, "set too large", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "set too large"));
 
         p8 in_first[256];
         p8 in_second[256];
@@ -11991,8 +11849,7 @@ static bool uniq_number_of(file_taking address_to taking, p8 letter,
         if (string_digits_exact(file_option_value(taking, letter), into))
                 return true;
 
-        text_error(null, "invalid number");
-        return false;
+        return string_diagnostic(&text_diagnostic, 0, null, "invalid number");
 }
 
 /*
@@ -12040,7 +11897,7 @@ static b32 text_uniq()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -12062,12 +11919,12 @@ static b32 text_uniq()
                 text_delimiter = '\0';
 
         if (said && !uniq_grouping_of(said, false, address_of all_how))
-                return text_refuse(said, "invalid argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument"));
 
         said = file_option_value(address_of taking, 'G');
 
         if (said && !uniq_grouping_of(said, true, address_of group_how))
-                return text_refuse(said, "invalid argument", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument"));
 
         if (!uniq_number_of(address_of taking, 'f', address_of skip_fields) ||
             !uniq_number_of(address_of taking, 's', address_of skip_characters) ||
@@ -12075,18 +11932,13 @@ static b32 text_uniq()
                 return text_done(1);
 
         if (all_repeated && counting)
-                return text_refuse(
-                    null,
-                    "printing all duplicated lines and repeat counts is meaningless",
-                    1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "printing all duplicated lines and repeat counts is meaningless"));
 
         if (grouping && (counting || repeated_only || unique_only || all_repeated))
-                return text_refuse(
-                    null, "--group is mutually exclusive with -c/-d/-D/-u", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--group is mutually exclusive with -c/-d/-D/-u"));
 
         if (text_files_count > 2)
-                return text_refuse(program_argument(text_files[2]),
-                                   "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument(text_files[2]), "extra operand"));
 
         if (!text_open(text_file_name(0)))
                 return text_done(1);
@@ -12098,7 +11950,7 @@ static b32 text_uniq()
                 bipolar target = text_open_handle(name, TEXT_WRITE, 0666);
 
                 if (target < 0)
-                        return text_refuse(name, "Cannot open file", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, name, "Cannot open file"));
 
                 text_out_handle = (positive)target;
         }
@@ -12490,10 +12342,7 @@ static fn grep_color_line(string_address line, positive length, bool context,
 static bool grep_hold_make(positive lines)
 {
         if (lines > GREP_HOLD_LINES)
-        {
-                text_error(null, "context length too large");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "context length too large");
 
         grep_hold_slots = lines;
         grep_hold_pool = (p8 address_to)text_arena_take(GREP_HOLD_BYTES);
@@ -12600,10 +12449,7 @@ static bool grep_hold_put(string_address line, positive length, positive number)
                 return true;
 
         if (length > GREP_HOLD_BYTES)
-        {
-                text_error(null, "context lines too large");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "context lines too large");
 
         while (grep_hold_count == grep_hold_slots)
         {
@@ -12613,10 +12459,7 @@ static bool grep_hold_put(string_address line, positive length, positive number)
         }
 
         if (grep_hold_used + length > GREP_HOLD_BYTES)
-        {
-                text_error(null, "context lines too large");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "context lines too large");
 
         positive slot = (grep_hold_first + grep_hold_count) % grep_hold_slots;
         positive at = grep_hold_write;
@@ -12996,10 +12839,7 @@ static p32 text_path_mode(string_address path)
 static bool grep_path_add(string_address path)
 {
         if (grep_path_count >= grep_paths_room)
-        {
-                text_error(null, "too many files");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "too many files");
 
         grep_paths[grep_path_count++] = path;
         return true;
@@ -13071,7 +12911,7 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
         if (handle < 0)
         {
                 if (!quietly)
-                        text_error(path, file_reason(handle));
+                        string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
                 return false;
         }
 
@@ -13155,7 +12995,7 @@ static bool grep_walk(string_address path, b32 depth, bool quietly)
         if (error < 0)
         {
                 if (!quietly)
-                        text_error(path, file_reason(error));
+                        string_diagnostic(&text_diagnostic, 0, path, file_reason(error));
                 fine = false;
         }
 
@@ -13401,7 +13241,7 @@ static b32 text_grep()
         if (!file_take(address_of taking))
                 return text_done(2);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(2);
 
         positive flags = taking.flags;
@@ -13463,19 +13303,18 @@ static b32 text_grep()
                 else if (string_equals(said, "skip"))
                         grep_skip_directories = true;
                 else if (!string_equals(said, "read"))
-                        return text_refuse(
-                            said, "invalid argument for --directories", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --directories"));
         }
 
         said = file_option_value(address_of taking, 'D');
 
         if (said && !grep_word_is(said, "read", "skip", null))
-                return text_refuse(null, "unknown devices method", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "unknown devices method"));
 
         said = file_option_value(address_of taking, 'N');
 
         if (said && !grep_word_is(said, "binary", "text", "without-match"))
-                return text_refuse(null, "unknown binary-files type", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "unknown binary-files type"));
 
         said = file_option_value(address_of taking, 'W');
 
@@ -13484,8 +13323,7 @@ static b32 text_grep()
                 b32 when = file_color_when(said, FILE_COLOR_AUTO);
 
                 if (when < 0)
-                        return text_refuse(said,
-                                           "invalid argument for --color", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid argument for --color"));
 
                 grep_coloring = file_color_active(when);
                 grep_colors = file_environment((string_address) "GREP_COLORS");
@@ -13508,8 +13346,7 @@ static b32 text_grep()
                         continue;
 
                 if (!string_digits_exact(said, address_of number))
-                        return text_refuse(
-                            null, "invalid context length argument", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "invalid context length argument"));
 
                 if (letter == 'm')
                         limit = number;
@@ -13529,17 +13366,17 @@ static b32 text_grep()
         }
 
         if (grep_pattern_broken)
-                return text_refuse(null, "pattern too long", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "pattern too long"));
 
         if (text_status)
                 return text_done(2);
 
         if (!have_pattern)
-                return text_refuse(null, "no pattern given", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "no pattern given"));
 
         if (!never && !regex_compile(grep_pattern, extended, icase, false,
                                      REGEX_POLICY_DEFAULT))
-                return text_refuse(null, "invalid regular expression", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "invalid regular expression"));
 
         regex_boundary = whole_line ? REGEX_BOUNDARY_LINE :
                          whole_word ? REGEX_BOUNDARY_WORD : REGEX_BOUNDARY_NONE;
@@ -13613,7 +13450,7 @@ static b32 text_grep()
                         trouble = 2;
 
                         if (!quietly)
-                                text_error(name, "No such file or directory");
+                                string_diagnostic(&text_diagnostic, 0, name, "No such file or directory");
 
                         continue;
                 }
@@ -13670,7 +13507,7 @@ static b32 text_grep()
                         if (grep_skip_directories)
                                 continue;
 
-                        text_error(name, "Is a directory");
+                        string_diagnostic(&text_diagnostic, 0, name, "Is a directory");
                         trouble = 2;
                         continue;
                 }
@@ -14204,7 +14041,7 @@ static bool sed_space_fits(positive have, positive more)
                 return true;
 
         if (!sed_space_full)
-                text_error(null, "pattern space too large");
+                string_diagnostic(&text_diagnostic, 0, null, "pattern space too large");
 
         sed_space_full = true;
         return false;
@@ -15018,7 +14855,7 @@ static fn sed_write_space(b32 which)
 
                 if (sed_files[which].handle < 0)
                 {
-                        text_error(name, "couldn't open file");
+                        string_diagnostic(&text_diagnostic, 0, name, "couldn't open file");
                         sed_failed = (string_address)"no previous regular expression";
                         return;
                 }
@@ -15324,7 +15161,7 @@ static bool sed_commit(string_address name, string_address temporary)
 
                 if (length >= TEXT_PATH_MAX || extra >= TEXT_PATH_MAX - length)
                 {
-                        text_error(name, "backup path too long");
+                        string_diagnostic(&text_diagnostic, 0, name, "backup path too long");
                         goto failed;
                 }
 
@@ -15336,7 +15173,7 @@ static bool sed_commit(string_address name, string_address temporary)
 
                 if (moved < 0)
                 {
-                        text_error(kept, file_reason(moved));
+                        string_diagnostic(&text_diagnostic, 0, kept, file_reason(moved));
                         goto failed;
                 }
         }
@@ -15347,10 +15184,10 @@ static bool sed_commit(string_address name, string_address temporary)
         if (moved >= 0)
                 return true;
 
-        text_error(name, file_reason(moved));
+        string_diagnostic(&text_diagnostic, 0, name, file_reason(moved));
 
         if (backup && system_link_at(AT_FDCWD, kept, AT_FDCWD, name, 0) < 0)
-                text_error(kept, "backup retained; cannot restore input");
+                string_diagnostic(&text_diagnostic, 0, kept, "backup retained; cannot restore input");
 
 failed:
         system_remove_at(AT_FDCWD, temporary, 0);
@@ -15385,7 +15222,7 @@ static b32 text_sed()
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
         positive flags = taking.flags;
@@ -15406,7 +15243,7 @@ static b32 text_sed()
         }
 
         if (!have_script)
-                return text_refuse(null, "no script", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "no script"));
 
         // After the script has been read, not while: -f reads its file with
         // the same reader and a script is lines however the input is split.
@@ -15416,13 +15253,12 @@ static b32 text_sed()
         sed_parse();
 
         if (sed_broken)
-                return text_refuse(null, "unsupported or invalid script",
-                                   sed_broken_status);
+                return text_done(string_diagnostic(&text_diagnostic, sed_broken_status, null, "unsupported or invalid script"));
 
         // -i edits files, and there is nothing to edit when the input is a
         // pipe. GNU says so and stops with four.
         if (sed_in_place && !text_files_count)
-                return text_refuse(null, "no input files", 4);
+                return text_done(string_diagnostic(&text_diagnostic, 4, null, "no input files"));
 
         b32 inputs = text_input_count();
         positive temporary_nonce = sed_in_place
@@ -15440,7 +15276,7 @@ static b32 text_sed()
                 {
                         if (!file_resolve(name, resolved, true))
                         {
-                                text_error(name, "cannot follow symbolic link");
+                                string_diagnostic(&text_diagnostic, 0, name, "cannot follow symbolic link");
                                 text_status = 4;
                                 continue;
                         }
@@ -15465,11 +15301,8 @@ static b32 text_sed()
                         {
                                 text_close();
                                 if (!temporary[0])
-                                        return text_refuse(
-                                            name,
-                                            "cannot make a temporary file beside",
-                                            4);
-                                return text_refuse(temporary, "cannot create", 4);
+                                        return text_done(string_diagnostic(&text_diagnostic, 4, name, "cannot make a temporary file beside"));
+                                return text_done(string_diagnostic(&text_diagnostic, 4, temporary, "cannot create"));
                         }
 
                         text_out_to((positive)written);
@@ -15710,7 +15543,7 @@ cycle_done:
                                 system_remove_at(AT_FDCWD,
                                               temporary, 0);
                                 if (text_out_failed || closed < 0)
-                                        text_error(name, "write error");
+                                        string_diagnostic(&text_diagnostic, 0, name, "write error");
                                 if (!sed_failed)
                                         text_status = 4;
                                 break;
@@ -15733,10 +15566,10 @@ cycle_done:
                                 sed_io_failed = true;
 
         if (sed_io_failed)
-                return text_refuse(null, "write error", 4);
+                return text_done(string_diagnostic(&text_diagnostic, 4, null, "write error"));
 
         if (sed_failed)
-                return text_refuse(null, sed_failed, 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, sed_failed));
 
         return text_done(text_status ? text_status : leaving > 0 ? leaving : 0);
 }
@@ -16761,27 +16594,7 @@ static bool sort_key_seen(p8 letter, string_address value)
         if (sort_parse_key(value))
                 return true;
 
-        text_error(null, "invalid key");
-        return false;
-}
-
-// "sort: -:2: disorder: apple", which is the only thing -c has to say.
-static fn sort_disorder(string_address name, positive number, text_slice address_to line)
-{
-        text_flush();
-        text_error_raw(text_name);
-        text_error_raw(": ");
-        text_error_raw(name);
-        text_error_raw(":");
-
-        p8 digits[24];
-        positive length = positive_into(digits, number);
-
-        system_write_all(2, digits, length);
-
-        text_error_raw(": disorder: ");
-        system_write_all(2, line->at, line->length);
-        text_error_raw("\n");
+        return string_diagnostic(&text_diagnostic, 0, null, "invalid key");
 }
 
 static b32 text_sort()
@@ -16804,7 +16617,7 @@ static b32 text_sort()
         if (!file_take(address_of taking))
                 return text_done(2);
 
-        if (!text_files_ready())
+        if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(2);
 
         positive flags = taking.flags;
@@ -16848,7 +16661,7 @@ static b32 text_sort()
                         continue;
 
                 if (defaults.kind)
-                        return text_refuse(null, "options are incompatible", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
 
                 defaults.kind = letter;
         }
@@ -16859,8 +16672,7 @@ static b32 text_sort()
                                  string_equals(said, "silent");
 
                 if (!checking_quiet && !string_equals(said, "diagnose-first"))
-                        return text_refuse(
-                            said, "invalid argument for --check", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid argument for --check"));
         }
 
         said = file_option_value(address_of taking, 'W');
@@ -16881,11 +16693,10 @@ static b32 text_sort()
                         a plausible-looking answer to a different question.
                 */
                 if (!kind)
-                        return text_refuse(said,
-                                           "invalid argument for --sort", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --sort"));
 
                 if (defaults.kind && defaults.kind != kind)
-                        return text_refuse(null, "options are incompatible", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
 
                 defaults.kind = kind;
         }
@@ -16902,10 +16713,10 @@ static b32 text_sort()
                 bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
 
                 if (!said[0])
-                        return text_refuse(null, "empty tab", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "empty tab"));
 
                 if (said[1] && !escaped)
-                        return text_refuse(said, "multi-character tab", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "multi-character tab"));
 
                 sort_separator = escaped ? '\0' : said[0];
         }
@@ -16970,7 +16781,13 @@ static b32 text_sort()
                                 continue;
 
                         if (!checking_quiet)
-                                sort_disorder(name, i + 1, text_lines + i);
+                        {
+                                text_flush();
+                                string_format(writer_stderr, "%s: %s:%p: disorder: ",
+                                              text_name, name, i + 1);
+                                system_write_all(2, text_lines[i].at, text_lines[i].length);
+                                writer_stderr("\n", 0);
+                        }
 
                         return text_done(1);
                 }
@@ -17075,8 +16892,7 @@ static b32 text_sort()
                 bipolar handle = text_open_handle(output, TEXT_WRITE, 0666);
 
                 if (handle < 0)
-                        return text_refuse(output,
-                                           "cannot open for writing", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, output, "cannot open for writing"));
 
                 text_out_to((positive)handle);
         }
@@ -17161,38 +16977,6 @@ static fn cmp_pass(text_reader address_to side, positive count)
                 side->position += take;
                 count -= take;
         }
-}
-
-// The line is left out when the differences were listed, because that is
-// what the tool this is measured against does.
-static fn cmp_ended(text_reader address_to side, positive at, positive line,
-                    bool newline, bool listing)
-{
-        p8 text[24];
-
-        text_flush();
-        text_error_raw("cmp: EOF on '");
-        text_error_raw(side->name);
-        text_error_raw("'");
-
-        if (!at)
-        {
-                text_error_raw(" which is empty\n");
-                return;
-        }
-
-        text_error_raw(" after byte ");
-        positive_into_string(text, at);
-        text_error_raw(text);
-
-        if (!listing)
-        {
-                text_error_raw(", in line ");
-                positive_into_string(text, newline ? line : line + 1);
-                text_error_raw(text);
-        }
-
-        text_error_raw("\n");
 }
 
 // A skip or a limit: a count, and one of the suffixes the tool this is
@@ -17299,7 +17083,7 @@ static b32 text_cmp()
         string_address said = file_option_value(address_of taking, 'n');
 
         if (said && !cmp_count_of(said, address_of limit))
-                return text_refuse(said, "invalid --bytes value", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --bytes value"));
 
         said = file_option_value(address_of taking, 'i');
 
@@ -17316,8 +17100,7 @@ static b32 text_cmp()
                 if (said[split] != ':')
                 {
                         if (!cmp_count_of(said, address_of skip_left))
-                                return text_refuse(
-                                    said, "invalid --ignore-initial value", 2);
+                                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --ignore-initial value"));
 
                         skip_right = skip_left;
                 }
@@ -17330,16 +17113,14 @@ static b32 text_cmp()
 
                         if (!cmp_count_of(head, address_of skip_left) ||
                             !cmp_count_of(said + split + 1, address_of skip_right))
-                                return text_refuse(
-                                    said, "invalid --ignore-initial value", 2);
+                                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --ignore-initial value"));
                 }
         }
 
         b32 operands = text_argument_count - index;
 
         if (operands < 1 || operands > 4)
-                return text_refuse(
-                    null, operands ? "extra operand" : "missing operand", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, operands ? "extra operand" : "missing operand"));
 
         // The third and fourth operands say the same thing -i does, and say
         // it last, so they win.
@@ -17348,8 +17129,7 @@ static b32 text_cmp()
                 positive value = 0;
 
                 if (!cmp_count_of(program_argument(index + which), address_of value))
-                        return text_refuse(program_argument(index + which),
-                                           "invalid byte count", 2);
+                        return text_done(string_diagnostic(&text_diagnostic, 2, program_argument(index + which), "invalid byte count"));
 
                 if (which == 2)
                         skip_left = value;
@@ -17410,9 +17190,15 @@ static b32 text_cmp()
                 if (!have_left || !have_right)
                 {
                         if (!silent)
-                                cmp_ended(!have_left ? address_of cmp_left
-                                                     : address_of cmp_right,
-                                          at, lines, newline, listing);
+                        {
+                                text_flush();
+                                string_format(writer_stderr,
+                                    !at ? "cmp: EOF on '%s' which is empty\n"
+                                    : listing ? "cmp: EOF on '%s' after byte %p\n"
+                                    : "cmp: EOF on '%s' after byte %p, in line %p\n",
+                                    !have_left ? cmp_left.name : cmp_right.name,
+                                    at, newline ? lines : lines + 1);
+                        }
                         answer = 1;
                         break;
                 }
@@ -17563,7 +17349,7 @@ static b32 expr_dead;
 static fn expr_stop(string_address reason)
 {
         if (!expr_fault)
-                text_error(null, reason);
+                string_diagnostic(&text_diagnostic, 0, null, reason);
 
         expr_fault = 1;
 }
@@ -18055,7 +17841,7 @@ static b32 text_expr()
                 expr_at++;
 
         if (expr_at >= expr_count)
-                return text_refuse(null, "missing operand", 2);
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "missing operand"));
 
         result = expr_any();
 

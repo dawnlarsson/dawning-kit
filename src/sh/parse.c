@@ -299,7 +299,7 @@ fn parse_nest_enter()
         if (parse_nest_depth == 0x7fffffff ||
             !shell_array_room(parse_frames, parse_frame_room, (positive)parse_nest_depth + 1))
         {
-                string_format(log_error, "No room for nested shell input\n");
+                log_error(str("No room for nested shell input\n"));
                 log_flush();
                 system_call_1(syscall(exit_group), 2);
         }

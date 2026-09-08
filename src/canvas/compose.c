@@ -746,8 +746,8 @@ static _Bool output_map(struct output *output, struct iosys_map *map)
         if (!output->unmappable)
         {
                 output->unmappable = true;
-                log_canvas_error("the scanout buffer will not map (%d), "
-                                 "so nothing can be drawn on it\n", ret);
+                pr_err("[moonwater canvas] " "the scanout buffer will not map (%d), "
+                                                 "so nothing can be drawn on it\n", ret);
         }
 
         return false;
@@ -772,12 +772,8 @@ static _Bool output_describe(struct output *output)
         if (!output_map(output, &map))
                 return false;
 
-        log_canvas("scanout %p4cc, %u bytes a row (%lu KiB), modifier %llx, "
-                   "%s memory\n",
-                   &fb->format->format, fb->pitches[0],
-                   ((unsigned long)fb->pitches[0] * output->height) >> 10,
-                   (unsigned long long)fb->modifier,
-                   map.is_iomem ? "device" : "system");
+        pr_info("[moonwater canvas] " "scanout %p4cc, %u bytes a row (%lu KiB), modifier %llx, "
+                           "%s memory\n", &fb->format->format, fb->pitches[0], ((unsigned long)fb->pitches[0] * output->height) >> 10, (unsigned long long)fb->modifier, map.is_iomem ? "device" : "system");
 
         drm_client_buffer_vunmap_local(output->buffer);
         return true;

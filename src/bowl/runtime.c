@@ -17,6 +17,10 @@
 
 #define bowl_label TERM_BOLD "[Bowl]" TERM_RESET " "
 
+static const p8 bowl_usage_text[] = bowl_label
+    "usage: bowl [--fast|--system] <root> [program [argument...]]\n"
+    bowl_label "       bowl expose <root> <program> [name]\n";
+
 #define BOWL_NATIVE_SHELL "/shell"
 #define BOWL_ROOT_PREFIX "/bowls/"
 #define BOWL_EXPOSE_DIRECTORY "/bowls/bin"
@@ -73,22 +77,6 @@ static struct bowl_layer bowl_fast_layers[] = {
     {"/opt", false},
     {null, false},
 };
-
-static fn bowl_fail(string_address text, bipolar code)
-{
-        string_format(log, bowl_label "%s: %b\n", text, code);
-        log_flush();
-}
-
-static fn bowl_usage()
-{
-        string_format(log, bowl_label
-                      "usage: bowl [--fast|--system] <root> "
-                      "[program [argument...]]\n"
-                      bowl_label
-                      "       bowl expose <root> <program> [name]\n");
-        log_flush();
-}
 
 static bipolar bowl_mkdir(string_address path)
 {
@@ -172,7 +160,8 @@ static b32 bowl_expose(positive count,
 
         if (count < 4 || count > 5)
         {
-                bowl_usage();
+                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
+                log_flush();
                 return 1;
         }
 
@@ -227,7 +216,8 @@ static b32 bowl_expose(positive count,
         failed = system_access_at(AT_FDCWD, installed, BOWL_ACCESS_EXECUTE);
         if (failed < 0)
         {
-                bowl_fail(installed, failed);
+                string_format(log, bowl_label "%s: %b\n", installed, failed);
+                log_flush();
                 return 1;
         }
 
@@ -236,7 +226,8 @@ static b32 bowl_expose(positive count,
                 failed = bowl_mkdir(BOWL_EXPOSE_DIRECTORY);
         if (failed < 0)
         {
-                bowl_fail(BOWL_EXPOSE_DIRECTORY, failed);
+                string_format(log, bowl_label "%s: %b\n", BOWL_EXPOSE_DIRECTORY, failed);
+                log_flush();
                 return 1;
         }
 
@@ -254,7 +245,8 @@ static b32 bowl_expose(positive count,
 
         if (handle < 0)
         {
-                bowl_fail(launcher, handle);
+                string_format(log, bowl_label "%s: %b\n", launcher, handle);
+                log_flush();
                 return 1;
         }
 
@@ -275,7 +267,8 @@ static b32 bowl_expose(positive count,
         if (failed < 0)
         {
                 system_remove_at(AT_FDCWD, launcher, 0);
-                bowl_fail(launcher, failed);
+                string_format(log, bowl_label "%s: %b\n", launcher, failed);
+                log_flush();
                 return 1;
         }
 
@@ -378,7 +371,8 @@ static bipolar bowl_system_populate()
 
                 if (failed)
                 {
-                        bowl_fail(point->target, failed);
+                        string_format(log, bowl_label "%s: %b\n", point->target, failed);
+                        log_flush();
                         return failed;
                 }
         }
@@ -425,7 +419,8 @@ static b32 bowl_launch_failed(bipolar native_shell, string_address what,
 {
         if (native_shell >= 0)
                 system_close(native_shell);
-        bowl_fail(what, failed);
+        string_format(log, bowl_label "%s: %b\n", what, failed);
+        log_flush();
         return 1;
 }
 
@@ -444,7 +439,8 @@ static DEAD_END fn bowl_inside(string_address root,
 
         if (failed)
         {
-                bowl_fail(root, failed);
+                string_format(log, bowl_label "%s: %b\n", root, failed);
+                log_flush();
                 exit(1);
         }
 
@@ -453,7 +449,8 @@ static DEAD_END fn bowl_inside(string_address root,
                              (positive)"", (positive)arguments,
                              (positive)environment, AT_EMPTY_PATH)
             : system_execute(program, arguments, environment);
-        bowl_fail(program, failed);
+        string_format(log, bowl_label "%s: %b\n", program, failed);
+        log_flush();
         exit(127);
 }
 
@@ -474,7 +471,8 @@ static b32 bowl_launch(string_address root, string_address program,
 
         if (!root || root[0] != '/')
         {
-                bowl_usage();
+                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
+                log_flush();
                 return 1;
         }
 
@@ -546,7 +544,8 @@ static b32 bowl_main()
 
         if (!arguments || count < 2)
         {
-                bowl_usage();
+                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
+                log_flush();
                 return 1;
         }
 
@@ -562,13 +561,15 @@ static b32 bowl_main()
                 root_at++;
         else if (arguments[1][0] == '-' && arguments[1][1] == '-')
         {
-                bowl_usage();
+                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
+                log_flush();
                 return 1;
         }
 
         if (root_at >= count)
         {
-                bowl_usage();
+                log((address_any) bowl_usage_text, sizeof(bowl_usage_text) - 1);
+                log_flush();
                 return 1;
         }
 

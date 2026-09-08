@@ -956,7 +956,7 @@ static bool regex_find(p8 mode, string_address text, positive length, positive f
                             mode & ~REGEX_CAPTURES, mode & REGEX_CAPTURES, text, length, from);
         if (result == RX_COMPLEX)
         {
-                text_error(null, "regular expression too complex");
+                string_diagnostic(&text_diagnostic, 0, null, "regular expression too complex");
                 text_status = 2;
         }
         return result == RX_MATCH;

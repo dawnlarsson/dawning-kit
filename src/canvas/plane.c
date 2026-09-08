@@ -214,7 +214,7 @@ static void cursor_arm_output(struct output *output, _Bool wanted)
         // Give it up rather than leave a cursor that cannot move. The next
         // event repaints through the software path.
         atomic_long_inc(&cursor_plane_failures);
-        log_canvas("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
+        pr_info("[moonwater canvas] " "cursor plane refused an update (%d), drawing the cursor instead\n", ret);
         plane_drop(output);
 }
 

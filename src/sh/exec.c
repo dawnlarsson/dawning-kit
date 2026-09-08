@@ -122,11 +122,6 @@ static COLD fn exec_abort_line(b32 status)
         exec_signal_level = 0;
 }
 
-COLD fn exec_expand_fatal()
-{
-        exec_abort_line(shell_status);
-}
-
 // A recoverable arithmetic expansion error belongs to the reader that
 // evaluated it. eval/dot may continue on their next input line and consume
 // this signal on return, while functions and loops must keep unwinding.
@@ -293,9 +288,6 @@ static fn exec_errexit(b32 status)
 //      never move once handed out.
 static shell_store exec_store;
 static p8 exec_nothing[1];
-
-// A diagnostic bypasses the buffered output writer and goes to stderr.
-#define exec_error log_error
 
 /*
         Job control.
@@ -1159,19 +1151,6 @@ static string_address job_mark_of(job_entry address_to entry)
         return (string_address) " ";
 }
 
-// One letter, as a string, because the format writer knows s, p, b and f and
-// nothing else -- and a diagnostic that drops the letter it is complaining
-// about is worse than no diagnostic.
-static string_address job_letter(p8 letter)
-{
-        static p8 held[2];
-
-        held[0] = letter;
-        held[1] = end;
-
-        return held;
-}
-
 /*
         One job, on one line.
 
@@ -1332,37 +1311,6 @@ static positive job_specified(string_address word, positive address_to found)
         return matches ? JOB_SPEC_AMBIGUOUS : JOB_SPEC_UNKNOWN;
 }
 
-static b32 job_specified_complaint(string_address command,
-                                   string_address word, positive answer)
-{
-        if (answer == JOB_SPEC_AMBIGUOUS)
-        {
-                string_format(shell_diagnostic, "%s: %s: ambiguous job spec\n",
-                              command, word);
-                return 1;
-        }
-
-        string_format(shell_diagnostic, "%s: %s: no such job\n", command,
-                      word ? word : (string_address) "current");
-
-        return 1;
-}
-
-// Job control that was never turned on has no job to name, and saying so is
-// more use than a listing that is empty for a different reason.
-static bool job_control_missing(writer write, string_address command)
-{
-        (void)write;
-
-        if (job_monitor())
-                return false;
-
-        string_format(shell_diagnostic, "%s: no job control\n", command);
-        shell_answer(1);
-
-        return true;
-}
-
 fn shell_jobs(writer write, string_address input)
 {
         shell_option_walk walk = {1};
@@ -1394,10 +1342,8 @@ fn shell_jobs(writer write, string_address input)
                         changed_only = true;
                         break;
                 default:
-                        string_format(shell_diagnostic,
-                                      "jobs: -%s: invalid option\n",
-                                      job_letter(letter));
-                        return shell_answer(2);
+                        return shell_answer(string_report(log_error, 2, "jobs: -%s: invalid option\n",
+                                      (p8[]){letter, end}));
                 }
 
         job_reap();
@@ -1414,9 +1360,10 @@ fn shell_jobs(writer write, string_address input)
 
                         if (told != JOB_SPEC_FOUND)
                         {
-                                answer = job_specified_complaint(
-                                    (string_address) "jobs", shell_argv[at],
-                                    told);
+                                answer = string_report(log_error, 1,
+                                    told == JOB_SPEC_AMBIGUOUS
+                                        ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
+                                    (string_address) "jobs", told == JOB_SPEC_AMBIGUOUS || shell_argv[at] ? shell_argv[at] : (string_address)"current");
                                 continue;
                         }
 
@@ -1477,18 +1424,19 @@ fn shell_fg(writer write, string_address input)
 
         (void)input;
 
-        if (job_control_missing(write, (string_address) "fg"))
-                return;
+        if (!job_monitor())
+                return shell_answer(string_report(log_error, 1, "%s: no job control\n", "fg"));
 
         job_reap();
 
-        told = job_specified(shell_argc > 1 ? shell_argv[1] : null,
-                             address_of found);
+        string_address word = shell_argc > 1 ? shell_argv[1] : null;
+        told = job_specified(word, address_of found);
 
         if (told != JOB_SPEC_FOUND)
-                return shell_answer(job_specified_complaint(
-                    (string_address) "fg",
-                    shell_argc > 1 ? shell_argv[1] : null, told));
+                return shell_answer(string_report(log_error, 1,
+                    told == JOB_SPEC_AMBIGUOUS
+                        ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
+                    (string_address) "fg", told == JOB_SPEC_AMBIGUOUS || word ? word : (string_address)"current"));
 
         entry = job_table + found;
         entry->background = false;
@@ -1516,8 +1464,8 @@ fn shell_bg(writer write, string_address input)
 
         (void)input;
 
-        if (job_control_missing(write, (string_address) "bg"))
-                return;
+        if (!job_monitor())
+                return shell_answer(string_report(log_error, 1, "%s: no job control\n", "bg"));
 
         job_reap();
 
@@ -1530,8 +1478,10 @@ fn shell_bg(writer write, string_address input)
 
                 if (told != JOB_SPEC_FOUND)
                 {
-                        answer = job_specified_complaint(
-                            (string_address) "bg", word, told);
+                        answer = string_report(log_error, 1,
+                            told == JOB_SPEC_AMBIGUOUS
+                                ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
+                            (string_address) "bg", told == JOB_SPEC_AMBIGUOUS || word ? word : (string_address)"current");
                         continue;
                 }
 
@@ -1539,7 +1489,7 @@ fn shell_bg(writer write, string_address input)
 
                 if (entry->state == JOB_RUNNING && entry->background)
                 {
-                        string_format(shell_diagnostic,
+                        string_format(log_error,
                                       "bg: job %p already in background\n",
                                       entry->number);
                         answer = 1;
@@ -1594,10 +1544,8 @@ fn shell_disown(writer write, string_address input)
                         keep = true;
                         break;
                 default:
-                        string_format(shell_diagnostic,
-                                      "disown: -%s: invalid option\n",
-                                      job_letter(letter));
-                        return shell_answer(2);
+                        return shell_answer(string_report(log_error, 2, "disown: -%s: invalid option\n",
+                                      (p8[]){letter, end}));
                 }
 
         job_reap();
@@ -1642,8 +1590,10 @@ fn shell_disown(writer write, string_address input)
 
                 if (told != JOB_SPEC_FOUND)
                 {
-                        answer = job_specified_complaint(
-                            (string_address) "disown", shell_argv[at], told);
+                        answer = string_report(log_error, 1,
+                            told == JOB_SPEC_AMBIGUOUS
+                                ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
+                            (string_address) "disown", told == JOB_SPEC_AMBIGUOUS || shell_argv[at] ? shell_argv[at] : (string_address)"current");
                         continue;
                 }
 
@@ -1673,11 +1623,7 @@ fn shell_suspend(writer write, string_address input)
         (void)input;
 
         if (!job_monitor() || !shell_is_interactive)
-        {
-                string_format(shell_diagnostic,
-                              "suspend: cannot suspend: no job control\n");
-                return shell_answer(1);
-        }
+                return shell_answer(string_report(log_error, 1, "suspend: cannot suspend: no job control\n"));
 
         log_flush();
         job_signal(-job_shell_group, JOB_SIGNAL_STOP);
@@ -1971,11 +1917,7 @@ fn shell_kill(writer write, string_address input)
                 if (string_get(word + 1) == 's' && !string_get(word + 2))
                 {
                         if (++at >= shell_argc)
-                        {
-                                string_format(shell_diagnostic,
-                                              "kill: -s needs a signal\n");
-                                return shell_answer(2);
-                        }
+                                return shell_answer(string_report(log_error, 2, "kill: -s needs a signal\n"));
 
                         number = kill_number(shell_argv[at]);
                 }
@@ -1983,20 +1925,13 @@ fn shell_kill(writer write, string_address input)
                         number = kill_number(word + 1);
 
                 if (number < 0)
-                {
-                        string_format(shell_diagnostic,
-                                      "kill: invalid signal\n");
-                        return shell_answer(2);
-                }
+                        return shell_answer(string_report(log_error, 2, "kill: invalid signal\n"));
 
                 at++;
         }
 
         if (at >= shell_argc)
-        {
-                string_format(shell_diagnostic, "kill: no process named\n");
-                return shell_answer(2);
-        }
+                return shell_answer(string_report(log_error, 2, "kill: no process named\n"));
 
         job_reap();
 
@@ -2012,7 +1947,7 @@ fn shell_kill(writer write, string_address input)
                         if (job_signal(string_to_bipolar(word),
                                        (positive)number) < 0)
                         {
-                                string_format(shell_diagnostic,
+                                string_format(log_error,
                                               "kill: %s: no such process\n",
                                               word);
                                 answer = 1;
@@ -2025,8 +1960,10 @@ fn shell_kill(writer write, string_address input)
 
                 if (told != JOB_SPEC_FOUND)
                 {
-                        answer = job_specified_complaint(
-                            (string_address) "kill", word, told);
+                        answer = string_report(log_error, 1,
+                            told == JOB_SPEC_AMBIGUOUS
+                                ? "%s: %s: ambiguous job spec\n" : "%s: %s: no such job\n",
+                            (string_address) "kill", told == JOB_SPEC_AMBIGUOUS || word ? word : (string_address)"current");
                         continue;
                 }
 
@@ -2036,7 +1973,7 @@ fn shell_kill(writer write, string_address input)
 
                 if (job_signal(target, (positive)number) < 0)
                 {
-                        string_format(shell_diagnostic,
+                        string_format(log_error,
                                       "kill: %s: no such job\n", word);
                         answer = 1;
                 }
@@ -2179,11 +2116,8 @@ fn job_wait(writer write, string_address input)
                         if (letter == 'p')
                                 break;
 
-                        string_format(shell_diagnostic,
-                                      "wait: -%s: invalid option\n",
-                                      job_letter(letter));
-
-                        return shell_answer(2);
+                        return shell_answer(string_report(log_error, 2,
+                            "wait: -%s: invalid option\n", (p8[]){letter, end}));
                 }
 
                 for (at = 1; string_get(word + at); at++)
@@ -2209,12 +2143,7 @@ fn job_wait(writer write, string_address input)
                         }
 
                         if (first + 1 >= shell_argc)
-                        {
-                                string_format(shell_diagnostic,
-                                              "wait: -p wants a name\n");
-
-                                return shell_answer(2);
-                        }
+                                return shell_answer(string_report(log_error, 2, "wait: -p wants a name\n"));
 
                         into = shell_argv[++first];
                         break;
@@ -2275,24 +2204,13 @@ fn job_wait(writer write, string_address input)
                 {
                         if (job_specified(word, address_of found) !=
                             JOB_SPEC_FOUND)
-                        {
-                                string_format(shell_diagnostic,
-                                              "wait: %s: no such job\n", word);
-
-                                return shell_answer(127);
-                        }
+                                return shell_answer(string_report(log_error, 127, "wait: %s: no such job\n", word));
                 }
                 else
                 {
                         if (!string_digits_exact(word, address_of pid) ||
                             pid > (positive)bipolar_max)
-                        {
-                                string_format(shell_diagnostic,
-                                              "wait: Illegal number: %s\n",
-                                              word);
-
-                                return shell_answer(2);
-                        }
+                                return shell_answer(string_report(log_error, 2, "wait: Illegal number: %s\n", word));
 
                         found = job_find(pid, true);
 
@@ -2314,7 +2232,7 @@ fn job_wait(writer write, string_address input)
 
                 if (!force && job_table[found].state == JOB_STOPPED)
                 {
-                        string_format(shell_diagnostic,
+                        string_format(log_error,
                                       "wait: job %p is stopped\n",
                                       job_table[found].number);
                         answer = 128 + (b32)job_table[found].stopped_by;
@@ -2653,10 +2571,9 @@ static bool history_event_at(string_address bang,
         return true;
 
 missing:
-        shell_diagnostic("bash: ", 6);
-        shell_diagnostic(bang, (positive)(at - bang));
-        shell_diagnostic(": event not found\n", 0);
-        return false;
+        log_error("bash: ", 6);
+        log_error(bang, (positive)(at - bang));
+        return string_report(log_error, false, ": event not found\n");
 }
 
 enum
@@ -3169,7 +3086,7 @@ b32 history_expand_line(string_address line,
                         goto bad_event;
 
                 address_to expanded = history_expanded.bytes;
-                string_format(shell_diagnostic, "%s\n",
+                string_format(log_error, "%s\n",
                               history_expanded.bytes);
                 log_flush();
                 return HISTORY_EXPAND_RUN;
@@ -3359,19 +3276,18 @@ b32 history_expand_line(string_address line,
                 goto no_room;
 
         address_to expanded = history_expanded.bytes;
-        string_format(shell_diagnostic, "%s\n", history_expanded.bytes);
+        string_format(log_error, "%s\n", history_expanded.bytes);
         log_flush();
         return print_only ? HISTORY_EXPAND_PRINT : HISTORY_EXPAND_RUN;
 
 bad_event:
         return HISTORY_EXPAND_ERROR;
 unsupported_modifier:
-        string_format(shell_diagnostic,
-                      "bash: history expansion: unsupported modifier\n");
+        log_error(str("bash: history expansion: unsupported modifier\n"));
         log_flush();
         return HISTORY_EXPAND_ERROR;
 no_room:
-        string_format(shell_diagnostic, "bash: history expansion: no room\n");
+        log_error(str("bash: history expansion: no room\n"));
         shell_status = 1;
         return HISTORY_EXPAND_ERROR;
 }
@@ -3539,11 +3455,8 @@ static bool history_write(string_address path, positive from, bool append)
             AT_FDCWD, path, append ? FILE_APPEND : FILE_WRITE, 0600);
 
         if (handle < 0)
-        {
-                string_format(shell_diagnostic, "history: %s: cannot write\n",
+                return string_report(log_error, false, "history: %s: cannot write\n",
                               path);
-                return false;
-        }
 
         for (positive at = from; at < history_used; at++)
         {
@@ -3650,11 +3563,7 @@ fn shell_history(writer write, string_address input)
                         bipolar offset;
 
                         if (!named)
-                        {
-                                string_format(shell_diagnostic,
-                                              "history: -d wants an offset\n");
-                                return shell_answer(2);
-                        }
+                                return shell_answer(string_report(log_error, 2, "history: -d wants an offset\n"));
 
                         offset = string_to_bipolar(named);
 
@@ -3664,13 +3573,9 @@ fn shell_history(writer write, string_address input)
                         offset -= (bipolar)history_first;
 
                         if (offset < 0 || (positive)offset >= history_used)
-                        {
-                                string_format(shell_diagnostic,
-                                              "history: %s: not in the"
+                                return shell_answer(string_report(log_error, 1, "history: %s: not in the"
                                               " history\n",
-                                              named);
-                                return shell_answer(1);
-                        }
+                                              named));
 
                         history_drop((positive)offset, 1);
 
@@ -3685,11 +3590,7 @@ fn shell_history(writer write, string_address input)
                         string_address where = named ? named : path;
 
                         if (!where)
-                        {
-                                string_format(shell_diagnostic,
-                                              "history: no history file\n");
-                                return shell_answer(1);
-                        }
+                                return shell_answer(string_report(log_error, 1, "history: no history file\n"));
 
                         if (letter == 'a')
                                 return shell_answer(
@@ -3742,10 +3643,8 @@ fn shell_history(writer write, string_address input)
                 }
 
                 default:
-                        string_format(shell_diagnostic,
-                                      "history: -%s: invalid option\n",
-                                      job_letter(letter));
-                        return shell_answer(2);
+                        return shell_answer(string_report(log_error, 2, "history: -%s: invalid option\n",
+                                      (p8[]){letter, end}));
                 }
         }
 
@@ -3754,13 +3653,9 @@ fn shell_history(writer write, string_address input)
                 positive wanted;
 
                 if (!string_digits_exact(shell_argv[at], address_of wanted))
-                {
-                        string_format(shell_diagnostic,
-                                      "history: %s: numeric argument"
+                        return shell_answer(string_report(log_error, 1, "history: %s: numeric argument"
                                       " required\n",
-                                      shell_argv[at]);
-                        return shell_answer(1);
-                }
+                                      shell_argv[at]));
 
                 if (wanted < show)
                         show = wanted;
@@ -3869,10 +3764,7 @@ static b32 history_edit(writer write, string_address editor, positive first,
         handle = system_open_at_mode(AT_FDCWD, path, FILE_WRITE, 0600);
 
         if (handle < 0)
-        {
-                string_format(shell_diagnostic, "fc: cannot open %s\n", path);
-                return 1;
-        }
+                return string_report(log_error, 1, "fc: cannot open %s\n", path);
 
         for (positive at = first; at <= last && at < history_used; at++)
         {
@@ -3958,11 +3850,7 @@ fn shell_fc(writer write, string_address input)
                 if (letter == 'e')
                 {
                         if (at + 1 >= shell_argc)
-                        {
-                                string_format(shell_diagnostic,
-                                              "fc: -e wants an editor\n");
-                                return shell_answer(2);
-                        }
+                                return shell_answer(string_report(log_error, 2, "fc: -e wants an editor\n"));
 
                         editor = shell_argv[++at];
 
@@ -3995,11 +3883,8 @@ fn shell_fc(writer write, string_address input)
                                 again = true;
                                 break;
                         default:
-                                string_format(shell_diagnostic,
-                                              "fc: -%s: invalid option\n",
-                                              job_letter(string_get(
-                                                  shell_argv[at] + step)));
-                                return shell_answer(2);
+                                return shell_answer(string_report(log_error, 2, "fc: -%s: invalid option\n",
+                                              (p8[]){string_get(shell_argv[at] + step), end}));
                         }
 
                 at++;
@@ -4016,9 +3901,7 @@ fn shell_fc(writer write, string_address input)
                 if (listing && at >= shell_argc)
                         return shell_answer(0);
 
-                string_format(shell_diagnostic, "fc: no command found\n");
-
-                return shell_answer(1);
+                return shell_answer(string_report(log_error, 1, "fc: no command found\n"));
         }
 
         if (!history_locate(at < shell_argc ? shell_argv[at] : null,
@@ -4026,11 +3909,8 @@ fn shell_fc(writer write, string_address input)
                                   : listing ? (count > 16 ? count - 16 : 0)
                                             : count - 1,
                             address_of first))
-        {
-                string_format(shell_diagnostic, "fc: %s: no such command\n",
-                              shell_argv[at]);
-                return shell_answer(1);
-        }
+                return shell_answer(string_report(log_error, 1, "fc: %s: no such command\n",
+                              shell_argv[at]));
 
         if (at < shell_argc)
                 at++;
@@ -4038,11 +3918,8 @@ fn shell_fc(writer write, string_address input)
         if (!history_locate(at < shell_argc ? shell_argv[at] : null,
                             again ? first : listing ? count - 1 : first,
                             address_of last))
-        {
-                string_format(shell_diagnostic, "fc: %s: no such command\n",
-                              shell_argv[at]);
-                return shell_answer(1);
-        }
+                return shell_answer(string_report(log_error, 1, "fc: %s: no such command\n",
+                              shell_argv[at]));
 
         if (last < first)
         {
@@ -4270,16 +4147,10 @@ static bool exec_save_fd(b32 fd, parse_node address_to node)
         // claiming several descriptors cannot overwrite the relocated one
         // later in the same redirect list. Keep the original live on failure.
         if (fd == exec_script_fd && !exec_script_preserve(node))
-        {
-                string_format(exec_error, "Cannot preserve script input\n");
-                return false;
-        }
+                return string_report(log_error, false, "Cannot preserve script input\n");
 
         if (exec_save_count >= REDIRECT_SAVE_MAX)
-        {
-                string_format(exec_error, "Too many redirections\n");
-                return false;
-        }
+                return string_report(log_error, false, "Too many redirections\n");
 
         saved = exec_save_duplicate(fd, node, 10);
 
@@ -4297,11 +4168,8 @@ static bool exec_save_fd(b32 fd, parse_node address_to node)
         // original is live but cannot be saved, and must never be treated as
         // a closed descriptor -- doing that closes it during restoration.
         if (!closed && saved < 0)
-        {
-                string_format(exec_error, "Cannot preserve descriptor %p\n",
+                return string_report(log_error, false, "Cannot preserve descriptor %p\n",
                               (positive)fd);
-                return false;
-        }
 
         exec_saves[exec_save_count].fd = fd;
         exec_saves[exec_save_count].saved = closed ? -1 : (b32)saved;
@@ -4424,7 +4292,7 @@ static bool exec_here_expand_isolated(string_address body, positive length,
 
                 if (token_overflow)
                 {
-                        string_format(exec_error, "Here-document too long\n");
+                        log_error(str("Here-document too long\n"));
                         log_flush();
                         system_call_1(syscall(exit_group), 2);
                 }
@@ -4628,7 +4496,7 @@ static bool exec_redirect_apply(b32 index)
                                 return false;
                         if (!expanded)
                         {
-                                string_format(exec_error,
+                                string_format(log_error,
                                               "%s: ambiguous redirect\n",
                                               want->text);
                                 exec_redirect_status = 1;
@@ -4719,10 +4587,8 @@ static bool exec_redirect_apply(b32 index)
                             exec_saved_fd_is((b32)source))
                         {
                                 exec_redirect_diagnostic_restore(redirect_mark);
-                                string_format(exec_error,
-                                              "Cannot redirect descriptor: %s\n",
+                                return string_report(log_error, false, "Cannot redirect descriptor: %s\n",
                                               target);
-                                return false;
                         }
 
                         if ((b32)source == want->fd)
@@ -4747,8 +4613,7 @@ static bool exec_redirect_apply(b32 index)
                 if (opened < 0)
                 {
                         exec_redirect_diagnostic_restore(redirect_mark);
-                        string_format(exec_error, "Cannot redirect: %s\n", target);
-                        return false;
+                        return string_report(log_error, false, "Cannot redirect: %s\n", target);
                 }
 
                 log_flush();
@@ -4787,10 +4652,8 @@ static bool exec_redirect_apply(b32 index)
                         {
                                 system_close(opened);
                                 exec_redirect_diagnostic_restore(redirect_mark);
-                                string_format(exec_error,
-                                              "Cannot redirect descriptor: %p\n",
+                                return string_report(log_error, false, "Cannot redirect descriptor: %p\n",
                                               (positive)want->fd);
-                                return false;
                         }
 
                         system_close(opened);
@@ -4798,16 +4661,6 @@ static bool exec_redirect_apply(b32 index)
         }
 
         return true;
-}
-
-// What a command whose redirections could not be made answers with: what the
-// expansion that aborted the line left, else what the redirect said, else
-// plain failure.
-static b32 exec_redirect_failed_status()
-{
-        return exec_line_aborted() ? shell_status
-               : exec_redirect_status ? exec_redirect_status
-                                      : 1;
 }
 
 typedef struct
@@ -5592,14 +5445,6 @@ static b32 exec_node(b32 index);
    ADRP/load shape.  This alignment removes a 4 KiB linker veneer island. */
 static ARM64_ERRATUM_ALIGN b32 exec_node_kind(b32 index);
 
-static COLD b32 exec_function_no_room(string_address name)
-{
-        string_format(exec_error, "No room for function: %s\n", name);
-        shell_status = 1;
-
-        return 1;
-}
-
 static b32 exec_define(b32 index)
 {
         string_address name = parse_words[parse_nodes[index].word];
@@ -5617,7 +5462,7 @@ static b32 exec_define(b32 index)
         if (slot < exec_function_count && exec_functions[slot].body &&
             exec_functions[slot].readonly)
         {
-                string_format(exec_error, "%s: readonly function\n", name);
+                string_format(log_error, "%s: readonly function\n", name);
                 shell_status = 1;
                 return 1;
         }
@@ -5637,7 +5482,7 @@ static b32 exec_define(b32 index)
                         if (exec_function_count == positive_max ||
                             !shell_array_room(exec_functions, exec_function_room,
                                               exec_function_count + 1))
-                                return exec_function_no_room(name);
+                                return (shell_status = string_report(log_error, 1, "No room for function: %s\n", name));
 
                         exec_functions[slot].name = null;
                         exec_functions[slot].name_room = 0;
@@ -5657,7 +5502,7 @@ static b32 exec_define(b32 index)
                 if (name_length == positive_max ||
                     !shell_array_room(exec_functions[slot].name, exec_functions[slot].name_room,
                                       name_length + 1))
-                        return exec_function_no_room(name);
+                        return (shell_status = string_report(log_error, 1, "No room for function: %s\n", name));
 
                 string_copy(exec_functions[slot].name, name);
                 exec_functions[slot].name_hash = named.x;
@@ -5671,7 +5516,7 @@ static b32 exec_define(b32 index)
 
         body = parse_keep(parse_nodes[index].right, exec_functions[slot].body);
         if (!body)
-                return exec_function_no_room(name);
+                return (shell_status = string_report(log_error, 1, "No room for function: %s\n", name));
 
         exec_functions[slot].body = body;
         exec_functions[slot].environment_valid = false;
@@ -5682,7 +5527,7 @@ static b32 exec_define(b32 index)
                 {
                         exec_functions[slot].exported = false;
                         exec_function_environment_changed();
-                        string_format(exec_error,
+                        string_format(log_error,
                                       "%s: function body cannot be exported\n",
                                       name);
                         shell_status = 1;
@@ -5950,7 +5795,7 @@ fn shell_caller(writer write, string_address input)
 
         if (numbered && !string_digits_exact(shell_argv[1], address_of want))
         {
-                string_format(shell_diagnostic, "caller: %s: invalid number\n",
+                string_format(log_error, "caller: %s: invalid number\n",
                               shell_argv[1]);
                 shell_answer(2);
                 return;
@@ -6030,7 +5875,7 @@ static b32 exec_call(positive slot)
 
         if (exec_function_depth == 0x7fffffff)
         {
-                string_format(exec_error, "Too deep\n");
+                log_error(str("Too deep\n"));
                 shell_status = 1;
                 return 1;
         }
@@ -6050,7 +5895,7 @@ static b32 exec_call(positive slot)
                 if (saved != EXPAND_NO_ROOM)
                         shell_parameter_stack_used = saved;
                 shell_local_leave();
-                string_format(exec_error, "No room for function arguments\n");
+                log_error(str("No room for function arguments\n"));
                 shell_status = 1;
                 return 1;
         }
@@ -6106,8 +5951,7 @@ static b32 exec_call(positive slot)
 
         if (!shell_parameters_restore(saved, saved_count))
         {
-                string_format(exec_error,
-                              "No room to restore function arguments\n");
+                log_error(str("No room to restore function arguments\n"));
                 shell_status = 2;
                 /* Restore storage was reserved before the function ran, and
                    the caller's byte/table capacities cannot have shrunk.
@@ -6143,17 +5987,17 @@ static fn exec_trace(b32 count)
                 return;
 
         prefix = env_get("PS4");
-        exec_error(prefix ? prefix : (string_address) "+ ", 0);
+        log_error(prefix ? prefix : (string_address) "+ ", 0);
 
         for (at = 0; at < count; at++)
         {
                 if (at)
-                        exec_error((string_address) " ", 1);
+                        log_error((string_address) " ", 1);
 
-                exec_error(shell_argv[at], 0);
+                log_error(shell_argv[at], 0);
         }
 
-        exec_error((string_address) "\n", 1);
+        log_error((string_address) "\n", 1);
 }
 
 /*
@@ -6303,7 +6147,7 @@ COLD bool shell_compound_assign(string_address name, positive name_length,
 
                 if (keyed)
                 {
-                        string_format(exec_error,
+                        string_format(log_error,
                                       "%s: must use subscript when assigning "
                                       "associative array\n",
                                       name);
@@ -6393,7 +6237,7 @@ static bool exec_assign_value(string_address word, positive name_length,
                 positive length = string_length(mark + 1);
                 if (env_assignment_readonly_hashed_span(word, name_length, name_hash))
                 {
-                        string_format(exec_error, "%s: is read only\n", word);
+                        string_format(log_error, "%s: is read only\n", word);
                         *name_end = append ? '+' : '=';
                         return exec_assignment_error(assignment_error);
                 }
@@ -6409,7 +6253,7 @@ static bool exec_assign_value(string_address word, positive name_length,
                 bool readonly = env_assignment_readonly_hashed_span(word, base,
                     bracket ? env_name_hash(word, base) : name_hash);
                 if (readonly)
-                        string_format(exec_error, "%s: is read only\n", word);
+                        string_format(log_error, "%s: is read only\n", word);
                 if (bracket)
                         *bracket = '[';
                 if (readonly)
@@ -6427,7 +6271,7 @@ static bool exec_assign_value(string_address word, positive name_length,
                 (positive)(string_first_of_or_end(word, '[') - word),
                 null, null, null, null))
         {
-                string_format(exec_error, "%s: cannot assign\n", word);
+                string_format(log_error, "%s: cannot assign\n", word);
                 *name_end = append ? '+' : '=';
                 return exec_assignment_error(assignment_error);
         }
@@ -6622,7 +6466,7 @@ static bool exec_prefix_assign(exec_kept_value address_to kept,
 
         if (!promote && (attributes & SHELL_ARRAY_READONLY))
         {
-                string_format(exec_error, "%s: is read only\n", kept->binding.name);
+                string_format(log_error, "%s: is read only\n", kept->binding.name);
                 return exec_assignment_error(assignment_error);
         }
         if (append)
@@ -6778,7 +6622,7 @@ static bool exec_finish_prefixes(exec_kept_value address_to kept, b32 count)
                                 inherited &= (p8)~SHELL_ARRAY_EITHER;
                                 if ((target.binding.variable.attributes & SHELL_ARRAY_READONLY) &&
                                     !(source->binding.variable.attributes & SHELL_ARRAY_READONLY))
-                                        string_format(exec_error, "%s: is read only\n", source->binding.name);
+                                        string_format(log_error, "%s: is read only\n", source->binding.name);
                         }
                         written = env_value_restore(target.binding.name, base, env_variable_value(&source->binding.variable),
                             inherited | source->binding.variable.attributes, source->binding.variable.array);
@@ -6952,14 +6796,14 @@ static COLD fn exec_return_bash()
                 valid = exec_control_integer(shell_argv[first], address_of value);
                 if (!valid)
                 {
-                        string_format(exec_error,
+                        string_format(log_error,
                                       "return: %s: numeric argument required\n",
                                       shell_argv[first]);
                         value = 2;
                 }
                 else if (shell_argc > first + 1)
                 {
-                        exec_error("return: too many arguments\n", 0);
+                        log_error("return: too many arguments\n", 0);
                         shell_status = 1;
                         if (!shell_is_interactive || exec_forked ||
                             string_is(shell_option_flags, 'c'))
@@ -6968,14 +6812,14 @@ static COLD fn exec_return_bash()
                                 log_flush();
                                 exit(1);
                         }
-                        exec_expand_fatal();
+                        exec_abort_line(shell_status);
                         return;
                 }
         }
 
         if (!exec_function_depth && !shell_source_depth)
         {
-                exec_error("return: can only return from a function or sourced script\n", 0);
+                log_error("return: can only return from a function or sourced script\n", 0);
                 shell_status = 2;
                 return;
         }
@@ -7003,10 +6847,10 @@ bool exec_control_builtin(string_address name, bool run)
                     !exec_control_number(shell_argv[1], false,
                                          address_of levels))
                 {
-                        string_format(exec_error, "%s: Illegal number: %s\n",
+                        string_format(log_error, "%s: Illegal number: %s\n",
                                       name, shell_argv[1]);
                         shell_status = 2;
-                        exec_expand_fatal();
+                        exec_abort_line(shell_status);
                         return true;
                 }
 
@@ -7040,10 +6884,10 @@ bool exec_control_builtin(string_address name, bool run)
         if (shell_argc > 1 &&
             !exec_control_number(shell_argv[1], true, address_of shell_status))
         {
-                string_format(exec_error, "return: Illegal number: %s\n",
+                string_format(log_error, "return: Illegal number: %s\n",
                               shell_argv[1]);
                 shell_status = 2;
-                exec_expand_fatal();
+                exec_abort_line(shell_status);
                 return true;
         }
 
@@ -7155,14 +6999,14 @@ static b32 exec_dispatch(b32 command_word)
                 if (located < 0)
                 {
                         shell_status = 2;
-                        string_format(exec_error, "%s: no room\n", name);
+                        string_format(log_error, "%s: no room\n", name);
                         return shell_status;
                 }
 
                 if (located == 2)
                 {
                         shell_status = 126;
-                        string_format(exec_error, "%s: cannot run\n", name);
+                        string_format(log_error, "%s: cannot run\n", name);
                         return shell_status;
                 }
 
@@ -7181,7 +7025,7 @@ static b32 exec_dispatch(b32 command_word)
         }
 
         shell_status = 127;
-        string_format(exec_error, "%s: not found\n", name);
+        string_format(log_error, "%s: not found\n", name);
 
         return shell_status;
 }
@@ -7569,7 +7413,7 @@ static b32 exec_simple(b32 index)
                         parse_word_name_lengths[word_index]))
                 {
                         shell_argv[at] = word;
-                        string_format(exec_error, "%.*s: not a valid identifier\n",
+                        string_format(log_error, "%.*s: not a valid identifier\n",
                             (int)parse_word_name_lengths[word_index], word);
                         if (!exec_assignment_error(exec_assignment_error_status(false, shell_argv[first])))
                                 break;
@@ -7680,7 +7524,7 @@ static b32 exec_simple(b32 index)
         if (node->redirect_count && !exec_redirect_apply(index))
         {
                 exec_redirect_restore(mark);
-                status = exec_redirect_failed_status();
+                status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
                 // An expansion error already selected its reader boundary.
                 // Do not turn a recoverable Bash substring failure into a
                 // POSIX special-builtin redirection failure that exits.
@@ -7935,7 +7779,7 @@ static b32 exec_loop_items(parse_node address_to node, positive base)
 
 static COLD b32 exec_loop_assignment_error(string_address name)
 {
-        string_format(exec_error,
+        string_format(log_error,
                       env_readonly(name) ? "%s: is read only\n"
                                          : "%s: cannot assign\n",
                       name);
@@ -7949,7 +7793,7 @@ static COLD b32 exec_loop_assignment_error(string_address name)
                 return 127;
         }
 
-        expand_fatal();
+        expand_fatal_status(2);
         return 2;
 }
 
@@ -8247,7 +8091,7 @@ static b32 exec_for(b32 index, bool selecting)
 
                         if (!env_assign((const_string) "REPLY", select_reply))
                         {
-                                string_format(exec_error, "REPLY: cannot assign\n");
+                                log_error(str("REPLY: cannot assign\n"));
                                 status = 2;
                                 break;
                         }
@@ -8302,7 +8146,7 @@ static bool exec_arithmetic_value(string_address text,
                 return true;
         }
 
-        string_format(exec_error, "arithmetic: %s\n", ready);
+        string_format(log_error, "arithmetic: %s\n", ready);
         shell_store_rewind(address_of expand_store, mark);
         return false;
 }
@@ -8423,7 +8267,7 @@ static b32 exec_cfor(b32 index)
 
         if (!string_get(first))
         {
-                string_format(exec_error, "arithmetic: expected two semicolons\n");
+                log_error(str("arithmetic: expected two semicolons\n"));
                 status = 2;
                 goto done;
         }
@@ -8433,7 +8277,7 @@ static b32 exec_cfor(b32 index)
 
         if (!string_get(second))
         {
-                string_format(exec_error, "arithmetic: expected two semicolons\n");
+                log_error(str("arithmetic: expected two semicolons\n"));
                 status = 2;
                 goto done;
         }
@@ -8648,12 +8492,12 @@ static bool conditional_integer(positive kind, string_address left,
 
 static COLD fn conditional_nounset_fatal()
 {
-        string_format(exec_error, "arithmetic: parameter not set\n");
+        log_error(str("arithmetic: parameter not set\n"));
         shell_status = 1;
 
         if (shell_is_interactive)
         {
-                exec_expand_fatal();
+                exec_abort_line(shell_status);
                 return;
         }
 
@@ -9331,25 +9175,18 @@ static b32 exec_coproc(b32 index)
         bipolar child;
 
         if (name_length > EXEC_COPROC_NAME)
-        {
-                string_format(exec_error, "coproc: %s: name too long\n", name);
-                return 1;
-        }
+                return string_report(log_error, 1, "coproc: %s: name too long\n", name);
 
         log_flush();
 
         if (system_pipe(address_of into, 0) < 0)
-        {
-                string_format(exec_error, "coproc: no pipe\n");
-                return 1;
-        }
+                return string_report(log_error, 1, "coproc: no pipe\n");
 
         if (system_pipe(address_of from, 0) < 0)
         {
                 system_close(into[0]);
                 system_close(into[1]);
-                string_format(exec_error, "coproc: no pipe\n");
-                return 1;
+                return string_report(log_error, 1, "coproc: no pipe\n");
         }
 
         child = exec_stage_spawn(node->left, into[0], from[1]);
@@ -9386,28 +9223,27 @@ static b32 exec_coproc(b32 index)
         {
                 system_close(into[1]);
                 system_close(from[0]);
-                string_format(exec_error, "coproc: cannot fork\n");
-                return 1;
+                return string_report(log_error, 1, "coproc: cannot fork\n");
         }
 
         pair[0] = coproc_kept(from[0]);
         pair[1] = coproc_kept(into[1]);
 
         if (!shell_array_numbers(name, name_length, pair, 2))
-                string_format(exec_error, "coproc: %s: cannot assign\n", name);
+                string_format(log_error, "coproc: %s: cannot assign\n", name);
 
         memory_copy(pid_name, name, name_length);
         memory_copy_end(pid_name + name_length, (string_address) "_PID", 4);
         bipolar_into_string(written, child);
 
         if (!env_assign(pid_name, written))
-                string_format(exec_error, "coproc: %s: cannot assign\n",
+                string_format(log_error, "coproc: %s: cannot assign\n",
                               pid_name);
 
         // Registered the way a background command is, so that $! names it and
         // wait can be told what it answered.
         if (!shell_background_started(address_of child, 1, false, false))
-                string_format(exec_error, "No room to retain coprocess\n");
+                log_error(str("No room to retain coprocess\n"));
 
         return 0;
 }
@@ -9433,10 +9269,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
         if (count > positive_max / sizeof(children[0]) ||
             !shell_array_room(children, children_room, count))
-        {
-                string_format(exec_error, "No room for pipeline\n");
-                return 2;
-        }
+                return string_report(log_error, 2, "No room for pipeline\n");
 
         /* Save before making a pipe: when the shell arrived with fd 0 closed,
            pipe may legitimately allocate that number. Saving at the final
@@ -9509,8 +9342,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                                         upstream = -1;
                                         lastpipe_status = 2;
                                         lastpipe_ran = true;
-                                        string_format(exec_error,
-                                                      "Cannot connect pipeline\n");
+                                        log_error(str("Cannot connect pipeline\n"));
                                         break;
                                 }
 
@@ -9619,8 +9451,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
                 if (!shell_background_started(children, started, pipefail,
                                               invert))
                 {
-                        string_format(exec_error,
-                                      "No room to retain background pipeline\n");
+                        log_error(str("No room to retain background pipeline\n"));
                         status = 2;
                 }
                 else
@@ -9736,7 +9567,7 @@ static b32 exec_pipe(b32 first, positive count, bool background,
 
         if (spawn_failed)
         {
-                string_format(exec_error, "Cannot start pipeline\n");
+                log_error(str("Cannot start pipeline\n"));
                 status = 2;
         }
 
@@ -9755,7 +9586,7 @@ static positive exec_pipeline_count(b32 first)
         {
                 if (count == positive_max)
                 {
-                        string_format(exec_error, "Pipeline too long\n");
+                        log_error(str("Pipeline too long\n"));
                         return positive_max;
                 }
 
@@ -10041,12 +9872,7 @@ static bool time_formatted(string_address format, positive real,
                         shown[0] = letter;
                         shown[1] = end;
 
-                        string_format(
-                            exec_error,
-                            "TIMEFORMAT: `%s': invalid format character\n",
-                            shown);
-
-                        return false;
+                        return string_report(log_error, false, "TIMEFORMAT: `%s': invalid format character\n", shown);
                 }
 
                 at++;
@@ -10217,11 +10043,7 @@ static b32 exec_background(b32 index)
                 return 1;
 
         if (!shell_background_started(address_of child, 1, false, false))
-        {
-                string_format(exec_error,
-                              "No room to retain background command\n");
-                return 2;
-        }
+                return string_report(log_error, 2, "No room to retain background command\n");
 
         job_started(address_of child, 1, job_monitor() ? child : 0, index,
                     false, true);
@@ -10384,7 +10206,7 @@ static b32 exec_node_kind(b32 index)
                 exec_redirect_restore(mark);
                 exec_expansion_done(expanded, substitutions);
 
-                shell_status = exec_redirect_failed_status();
+                shell_status = (exec_line_aborted() ? shell_status : exec_redirect_status ? exec_redirect_status : 1);
                 return shell_status;
         }
 

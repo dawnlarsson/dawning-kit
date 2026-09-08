@@ -533,7 +533,7 @@ static b32 checksum_generate(const checksum_algorithm address_to algorithm,
 
                 if (hashed < 0)
                 {
-                        text_error(name, file_reason(hashed));
+                        string_diagnostic(address_of text_diagnostic, 0, name, file_reason(hashed));
                         answer = 1;
                         continue;
                 }
@@ -550,24 +550,6 @@ static fn checksum_check_result_put(string_address name,
         text_put_string(": ");
         text_put_string(result);
         text_put_character('\n');
-}
-
-static fn checksum_error_number(string_address command,
-                                string_address manifest,
-                                positive line,
-                                string_address label)
-{
-        text_flush();
-        string_format(file_fail, "%s: %s: %p: improperly formatted %s checksum line\n",
-                      command, manifest, line, label);
-}
-
-static fn checksum_warning(string_address command, positive count,
-                           string_address one, string_address many)
-{
-        text_flush();
-        string_format(file_fail, "%s: WARNING: %p%s\n", command, count,
-                      count == 1 ? one : many);
 }
 
 /* Decode a normal GNU checksum record in place.  Tagged and NUL records are
@@ -685,9 +667,10 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         {
                                 malformed++;
                                 if (checksum_warn)
-                                        checksum_error_number(algorithm->command,
-                                                              manifest, line,
-                                                              algorithm->label);
+                                {
+                                        text_flush();
+                                        string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n", algorithm->command, manifest, line, algorithm->label);
+                                }
                                 continue;
                         }
 
@@ -704,7 +687,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                                 unreadable++;
                                 failed = true;
 
-                                text_error(filename, file_reason(hashed));
+                                string_diagnostic(address_of text_diagnostic, 0, filename, file_reason(hashed));
                                 if (!status)
                                         checksum_check_result_put(
                                             filename,
@@ -736,24 +719,27 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                 if (!status)
                 {
                         if (malformed && formatted)
-                                checksum_warning(algorithm->command, malformed,
-                                                 (string_address) " line is improperly formatted",
-                                                 (string_address) " lines are improperly formatted");
+                        {
+                                text_flush();
+                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, malformed, malformed == 1 ? (string_address) " line is improperly formatted" : (string_address) " lines are improperly formatted");
+                        }
                         if (unreadable)
-                                checksum_warning(algorithm->command, unreadable,
-                                                 (string_address) " listed file could not be read",
-                                                 (string_address) " listed files could not be read");
+                        {
+                                text_flush();
+                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, unreadable, unreadable == 1 ? (string_address) " listed file could not be read" : (string_address) " listed files could not be read");
+                        }
                         if (mismatched)
-                                checksum_warning(algorithm->command, mismatched,
-                                                 (string_address) " computed checksum did NOT match",
-                                                 (string_address) " computed checksums did NOT match");
+                        {
+                                text_flush();
+                                string_format(log_error, "%s: WARNING: %p%s\n", algorithm->command, mismatched, mismatched == 1 ? (string_address) " computed checksum did NOT match" : (string_address) " computed checksums did NOT match");
+                        }
                 }
 
                 if (!verified && !unreadable)
                 {
                         failed = true;
                         if (!status || !formatted)
-                                text_error(manifest, ignore_missing && formatted
+                                string_diagnostic(address_of text_diagnostic, 0, manifest, ignore_missing && formatted
                                                          ? (string_address) "no file was verified"
                                                          : (string_address) "no properly formatted checksum lines found");
                 }
@@ -794,17 +780,11 @@ static b32 checksum_main()
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('T'))
-                return text_refuse(null,
-                                   "--tag is not supported by the kernel checksum path",
-                                   1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--tag is not supported by the kernel checksum path"));
         if (taking.flags & FILE_FLAG('z'))
-                return text_refuse(null,
-                                   "--zero is not supported by the line verifier",
-                                   1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--zero is not supported by the line verifier"));
         if (taking.flags & FILE_FLAG('l'))
-                return text_refuse(null,
-                                   "variable BLAKE2 lengths are not supported",
-                                   1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "variable BLAKE2 lengths are not supported"));
 
         bool checking = (taking.flags & FILE_FLAG('c')) != 0;
         positive verifying = FILE_FLAG('i') | FILE_FLAG('q') |
@@ -812,21 +792,14 @@ static b32 checksum_main()
                              FILE_FLAG('w');
 
         if (!checking && (taking.flags & verifying))
-                return text_refuse(
-                    null,
-                    "verification option is meaningful only with --check", 1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "verification option is meaningful only with --check"));
         if (checking && (taking.flags & (FILE_FLAG('b') | FILE_FLAG('t'))))
-                return text_refuse(
-                    null,
-                    "--binary and --text are meaningless with --check", 1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--binary and --text are meaningless with --check"));
 
         bipolar transform = checksum_kernel_open(algorithm);
 
         if (transform < 0)
-                return text_refuse(
-                    null,
-                    "kernel AF_ALG hash support or requested algorithm is unavailable",
-                    1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "kernel AF_ALG hash support or requested algorithm is unavailable"));
 
         b32 answer = 0;
 
