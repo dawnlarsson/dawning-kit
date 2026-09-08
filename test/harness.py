@@ -374,8 +374,8 @@ static void canvas_rect_fill(u32 *at,unsigned long pitch,unsigned long w,
     source += section(compose, "#define DESKTOP_PIECES", "static HOT void compose_clip")
     source += r'''
 #define IS_ENABLED(x) largest
-#define log_canvas(...) ((void)0)
-#define log_canvas_error(...) ((void)0)
+#define pr_info(...) ((void)0)
+#define pr_err(...) ((void)0)
 struct canvas { int client; };
 static int largest,build_results[2],commit_results[2];
 static unsigned builds,commits,releases,attaches,mode_bits;
