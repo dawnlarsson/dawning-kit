@@ -2829,7 +2829,7 @@ esac
 #       payload.  Before compiling it, mutate every part of that extraction
 #       contract so missing/duplicate/mismatched wrappers, wrong size and
 #       reordered content are all known to fail closed.
-python3 test/native_extract_test.py test/native_extract.py "$lib" || exit 1
+python3 test/harness.py native_extract_test "$lib" || exit 1
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/native.XXXXXX") || exit 1
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -2838,7 +2838,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 #       memory_search, and through that memory_compare -- so they come too or
 #       the case does not link. memory_search also reads byte_commonness,
 #       which extract.py lifts with it.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         string_first_of string_first_of_or_end string_first_of_max string_find \
         string_last_of_or_end string_compare_max string_length_max memory_first_of \
         string_length memory_search memory_search_prepare \
@@ -2848,7 +2848,7 @@ python3 test/native_extract.py "$lib" \
 #       A header of its own rather than more names in the one above: these
 #       bodies branch to memory_copy_apart by name, and a case that does not
 #       define the plain symbol would stop linking if it pulled them in.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         memory_fill memory_exchange_apart memory_frob memory_copy_apart memory_copy \
         string_copy string_copy_max string_cut string_replace_all \
         > "$work/bulk.h" || exit 1
@@ -2857,14 +2857,14 @@ python3 test/native_extract.py "$lib" \
 #       every small size and pointer residue, page edges and a one-megabyte
 #       span; keeping it separate makes its native count and any failure
 #       attributable to this one body.
-python3 test/native_extract.py "$lib" memory_reverse \
+python3 test/harness.py native_extract "$lib" memory_reverse \
         > "$work/reverse.h" || exit 1
-python3 test/native_extract.py "$lib" memory_decimal_series \
+python3 test/harness.py native_extract "$lib" memory_decimal_series \
         > "$work/series.h" || exit 1
 
 #       And one for the wide hunts, holding those eight and nothing else, so
 #       it never pulls in string_find and the routines that follow from it.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         string_length string_length_max string_first_of string_first_of_or_end \
         string_first_of_max string_last_of string_last_of_or_end memory_first_of \
         > "$work/wide.h" || exit 1
@@ -2873,9 +2873,9 @@ python3 test/native_extract.py "$lib" \
 #       satisfied by the reference in bases.c, because that case measures only
 #       the non-decimal lanes and lifting the much larger decimal core would
 #       measure something else as well.
-python3 test/native_extract.py "$lib" positive_into_base \
+python3 test/harness.py native_extract "$lib" positive_into_base \
         > "$work/bases.h" || exit 1
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         positive_into_base writer_fill positive_to_base_field \
         > "$work/base_field.h" || exit 1
 
@@ -2883,26 +2883,26 @@ python3 test/native_extract.py "$lib" \
 #       its plain and integer-scaled paths. human.c supplies those two small
 #       references; the lifted routine is otherwise byte-for-byte the library
 #       ARM64 body, including its embedded suffix table.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         positive_into_human_1024_string positive_to_human_1024 \
         > "$work/human.h" || exit 1
 
 #       dd's nearest formatter and the wait4 status decoder are independent
 #       leaves.  Their native case exhausts raw wait status, crosses every
 #       destination residue, and benchmarks the exact former C body.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         positive_into_human_nearest_string wait_status_code_base wait_status_code \
         > "$work/human_nearest.h" || exit 1
 
 #       The contiguous fixed fields are leaves on their bounded hot paths.
 #       fields.c supplies positive_into for the general-path relocation, which
 #       its width-six/nine benchmark deliberately never takes.
-python3 test/native_extract.py "$lib" positive_into_padded positive_into_pair \
+python3 test/harness.py native_extract "$lib" positive_into_padded positive_into_pair \
         > "$work/fields.h" || exit 1
 
 #       Bounded input-base leaves, including the three tail destinations of
 #       the runtime-base entry.
-python3 test/native_extract.py "$lib" \
+python3 test/harness.py native_extract "$lib" \
         string_digits_max string_digits_octal_escape_max string_digits_octal_max \
         string_digits_hexadecimal_escape_max string_digits_hexadecimal_max \
         string_digits_base_max \
@@ -2911,14 +2911,14 @@ python3 test/native_extract.py "$lib" \
 #       Unaligned wire fields live in socket.inc rather than library.c itself.
 #       Lift the exact AArch64 bodies from there and cross every byte residue
 #       natively; the other two architectures are exercised by socket.c.
-python3 test/native_extract.py src/platform/socket.inc \
+python3 test/harness.py native_extract src/platform/socket.inc \
         network_load_16 network_load_32 network_store_16 network_store_32 \
         > "$work/network.h" || exit 1
 
 #       The allocator calls are supplied by reserve.c, leaving the exact
 #       AArch64 growth/release bodies to be tested without making Darwin
 #       understand Linux mmap flags.
-python3 test/native_extract.py "$lib" memory_growth memory_reserve memory_release \
+python3 test/harness.py native_extract "$lib" memory_growth memory_reserve memory_release \
         > "$work/reserve.h" || exit 1
 
 status=0
@@ -6348,7 +6348,7 @@ printf '  %-12s %s passed, %s failed\n' 'edit' "$pass" "$fail"
 [ "$fail" -eq 0 ] || exit 1
 
 if command -v python3 >/dev/null 2>&1 && [ "$(uname -s)" = Linux ]; then
-        python3 test/edit_driver.py "$shell_binary"
+        python3 test/harness.py edit_driver "$shell_binary"
 fi
 )
 
@@ -6369,10 +6369,10 @@ fi
 #
 lane_kit()
 (
-python3 test/core_state.py || exit 1
-python3 test/spark_entry.py || exit 1
+python3 test/harness.py core_state || exit 1
+python3 test/harness.py spark_entry || exit 1
 python3 kit/function_audit.py --check || exit 1
-python3 test/surface_coreutils_gap.py || exit 1
+python3 test/harness.py surface_coreutils_gap || exit 1
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT INT TERM
@@ -6724,7 +6724,7 @@ fi
 group build
 
 if command -v python3 > /dev/null 2>&1; then
-        if python3 test/build_tools.py > "$work/build-tools.out" 2>&1; then
+        if python3 test/harness.py build_tools > "$work/build-tools.out" 2>&1; then
                 won
         else
                 lost 'arguments and watch' "$(tail -12 "$work/build-tools.out" | tr '\n' ' ')"
@@ -6772,7 +6772,7 @@ PYTHON
                 lost 'all-platform asm' "$(tail -8 "$work/inventory-all.err" | tr '\n' ' ')"
         fi
 
-        if python3 test/inventory.py > "$work/inventory-test.out" 2>&1; then
+        if python3 test/harness.py inventory > "$work/inventory-test.out" 2>&1; then
                 won
         else
                 lost 'inventory audit' "$(tail -8 "$work/inventory-test.out" | tr '\n' ' ')"
