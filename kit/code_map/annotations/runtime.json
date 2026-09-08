@@ -47,7 +47,7 @@
     "src/standard/stream.c",
     "src/standard/text.c"
   ],
-  "source_digest": "d8de689ff75b9ffc10a557d80fa7f306d628c06533fe6fdb4c16766fbbd6785a",
+  "source_digest": "4690fc035019b719dcc31ba150cba6d34169786f871d273cb077a9eb9915e441",
   "families": [
     {"id": "runtime.startup","title": "Program startup","description": "Shell and utility executable startup, argument routing and initial execution.","design_question": "Can startup modes share a prepared execution request without obscuring login, interactive and script ordering?","constraints": ["Keep argv identity, startup files, option side effects and interactive recovery ordering.","Preserve the existing freestanding build and supported architecture/configuration variants."]},
     {"id": "runtime.bowl_paths","title": "Container filesystem preparation","description": "Bowl root naming, mount exposure and population.","design_question": "Can mount exposure be represented as one validated operation plan?","constraints": ["Preserve mount ordering, namespaces, root containment and failure cleanup.","Preserve the existing freestanding build and supported architecture/configuration variants."]},

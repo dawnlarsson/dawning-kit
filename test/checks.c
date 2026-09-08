@@ -15930,8 +15930,21 @@ fn check_first_of_page_end()
 
         //      The third page taken away, so a string ending on the last
         //      byte of the second has nothing readable after it.
-        system_call_3(syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
-                      PAGE_END_PROT_NONE);
+        bipolar protected = system_call_3(
+            syscall(mprotect), (positive)(pages + 2 * 4096), 4096,
+            PAGE_END_PROT_NONE);
+        same("memory_first_of", "guard page protected", protected, 0);
+        if (protected < 0)
+        {
+                memory_free(pages, 3 * 4096);
+                return;
+        }
+
+        // Exercise the routine even when the compiler knows the zero count.
+        same("memory_first_of", "zero count null",
+             (positive)(memory_first_of)(null, 'z', 0), 0);
+        same("memory_first_of", "zero count inaccessible",
+             (positive)(memory_first_of)(pages + 2 * 4096, 'z', 0), 0);
 
         p8 address_to last = pages + 2 * 4096 - 1;
 
