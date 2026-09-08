@@ -1,3 +1,4 @@
 /* Time the production table renderer after its independent byte/line checks. */
 #define TABLE_BENCHMARK
-#include "../test/table.c"
+#define CHECK_table
+#include "../test/checks.c"

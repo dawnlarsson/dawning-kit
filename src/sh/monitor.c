@@ -518,7 +518,7 @@ static HOT b32 tools_monitor()
             (arguments > 2 &&
              !string_digits_exact(program_argument(2), address_of frames)))
         {
-                text_error(null, "usage: monitor [interval] [frames]");
+                string_diagnostic(&text_diagnostic, 0, null, "usage: monitor [interval] [frames]");
                 return text_done(2);
         }
 
@@ -554,7 +554,7 @@ static HOT b32 tools_monitor()
 
         if (!system_snapshot_take(old, SPARK_SNAPSHOT_ALL, false))
         {
-                text_error("/proc", "cannot read system snapshot");
+                string_diagnostic(&text_diagnostic, 0, "/proc", "cannot read system snapshot");
                 status = 1;
                 goto finished;
         }
@@ -569,7 +569,7 @@ static HOT b32 tools_monitor()
                         {
                                 if (slept < 0)
                                 {
-                                        text_error(null, "monitor: sleep failed");
+                                        string_diagnostic(&text_diagnostic, 0, null, "monitor: sleep failed");
                                         status = 1;
                                 }
                                 break;
@@ -580,7 +580,7 @@ static HOT b32 tools_monitor()
                         if (!system_snapshot_take(sample, SPARK_SNAPSHOT_ALL,
                                                   false))
                         {
-                                text_error("/proc", "cannot read system snapshot");
+                                string_diagnostic(&text_diagnostic, 0, "/proc", "cannot read system snapshot");
                                 status = 1;
                                 break;
                         }

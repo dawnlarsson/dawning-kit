@@ -128,7 +128,7 @@ static void console_start(void)
 
         if (!pane)
         {
-                log_canvas("no room for a console window\n");
+                pr_info("[moonwater canvas] " "no room for a console window\n");
                 return;
         }
 

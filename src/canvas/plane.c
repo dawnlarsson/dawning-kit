@@ -12,8 +12,8 @@
         driver that is a commit that does wait -- a cursor move cannot land in
         less than a frame however little is drawn.
 
-        Every commit has to re-arm the plane, because drm_client_modeset_commit
-        disables every non-primary plane on its device first.
+        Every commit has to re-arm the plane: on the atomic drivers used here,
+        drm_client_modeset_commit disables every non-primary plane first.
 */
 
 /*
@@ -65,9 +65,9 @@ static void plane_drop(struct output *output)
 {
         int ret = 0;
 
-        // Never delete a buffer that a failed update may still be scanning.
-        // A full client commit disables every non-primary plane; until that
-        // recovery has happened the buffer stays alive but is no longer used.
+        // Keep a failed cursor for this output's next full client commit,
+        // which disables non-primary planes. Output destruction instead
+        // releases the client buffer through DRM's framebuffer removal.
         if (output->cursor_plane)
                 ret = plane_update(output, false, 0, 0);
 
@@ -148,7 +148,10 @@ static void plane_claim(struct drm_client_dev *client, struct output *output)
 {
         struct drm_plane *plane = output->mode_set->crtc->cursor;
 
-        if (!plane || !plane->funcs->update_plane || !plane->funcs->disable_plane ||
+        // Direct callbacks rely on atomic state owning framebuffer references;
+        // legacy callbacks need core bookkeeping and a different recovery path.
+        if (!drm_drv_uses_atomic_modeset(client->dev) || !plane ||
+            !plane->funcs->update_plane || !plane->funcs->disable_plane ||
             canvas_plane_pick_format(plane, DRM_FORMAT_ARGB8888,
                                      DRM_FORMAT_ARGB8888) == DRM_FORMAT_INVALID)
                 return;
@@ -211,7 +214,7 @@ static void cursor_arm_output(struct output *output, _Bool wanted)
         // Give it up rather than leave a cursor that cannot move. The next
         // event repaints through the software path.
         atomic_long_inc(&cursor_plane_failures);
-        log_canvas("cursor plane refused an update (%d), drawing the cursor instead\n", ret);
+        pr_info("[moonwater canvas] " "cursor plane refused an update (%d), drawing the cursor instead\n", ret);
         plane_drop(output);
 }
 

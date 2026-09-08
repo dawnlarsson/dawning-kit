@@ -14,6 +14,5 @@ b32 main()
                 return answered;
         }
 
-        string_format(file_fail, "%s: utility not found\n", program_argument(0));
-        return 127;
+        return string_report(log_error, 127, "%s: utility not found\n", program_argument(0));
 }

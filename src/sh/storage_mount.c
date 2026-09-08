@@ -431,17 +431,6 @@ static bipolar storage_mount_one(string_address source, string_address target,
         return answer;
 }
 
-static fn storage_mount_error(writer diagnostic, string_address program,
-                              string_address source, string_address target,
-                              bipolar error)
-{
-        b32 number = error < 0 ? (b32)-(error + 1) + 1 : (b32)error;
-
-        string_format(diagnostic, "%s: %s on %s failed: %s\n", program,
-                      source ? source : (string_address)"none",
-                      target ? target : (string_address)"none",
-                      strerror(number));
-}
 
 static b32 storage_mount_fstab_record(string_address program,
                                       storage_fstab address_to record,
@@ -459,8 +448,7 @@ static b32 storage_mount_fstab_record(string_address program,
             (extra && !storage_options_merge(address_of options, extra)))
         {
                 storage_options_free(address_of options);
-                string_format(diagnostic, "%s: no memory\n", program);
-                return 1;
+                return string_report(diagnostic, 1, "%s: no memory\n", program);
         }
         if (extra)
                 options.fake = extra->fake;
@@ -488,8 +476,10 @@ static b32 storage_mount_fstab_record(string_address program,
                                    address_of options);
         tolerated = answer && options.nofail && !explicit;
         if (answer && !tolerated)
-                storage_mount_error(diagnostic, program, record->source,
-                                    record->target, answer);
+                string_format(diagnostic, "%s: %s on %s failed: %s\n", program,
+                              (record->source) ? (record->source) : (string_address)"none",
+                              (record->target) ? (record->target) : (string_address)"none",
+                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
         storage_options_free(address_of options);
         return answer && !tolerated ? 32 : 0;
 }
@@ -570,7 +560,8 @@ static b32 storage_mount_list(writer write, writer diagnostic,
                                       record->target, record->type);
                         storage_combined_options_write(write, record, false,
                                                        false);
-                        storage_write_text(write, (string_address)")\n");
+                        if (write)
+                                write(str(")\n"));
                 }
         }
         storage_mount_table_release(address_of table);
@@ -796,9 +787,10 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                            operand[0], null,
                                                            address_of options);
                         if (answer)
-                                storage_mount_error(diagnostic,
-                                                    (string_address)"mount",
-                                                    null, operand[0], answer);
+                                string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
+                                              (null) ? (null) : (string_address)"none",
+                                              (operand[0]) ? (operand[0]) : (string_address)"none",
+                                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                         status = answer ? 32 : 0;
                 }
                 else if (options.flags & STORAGE_MS_REMOUNT)
@@ -825,11 +817,10 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                                                                    live->type,
                                                                    address_of options);
                                         if (answer)
-                                                storage_mount_error(
-                                                    diagnostic,
-                                                    (string_address)"mount",
-                                                    live->source, live->target,
-                                                    answer);
+                                                string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
+                                                              (live->source) ? (live->source) : (string_address)"none",
+                                                              (live->target) ? (live->target) : (string_address)"none",
+                                                              strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                                         status = answer ? 32 : 0;
                                 }
                                 storage_mount_table_release(address_of table);
@@ -851,9 +842,10 @@ b32 storage_mount_command(positive argc, string_address address_to argv,
                 answer = storage_mount_one(operand[0], operand[1], type,
                                            address_of options);
                 if (answer)
-                        storage_mount_error(diagnostic,
-                                            (string_address)"mount", operand[0],
-                                            operand[1], answer);
+                        string_format(diagnostic, "%s: %s on %s failed: %s\n", (string_address)"mount",
+                                      (operand[0]) ? (operand[0]) : (string_address)"none",
+                                      (operand[1]) ? (operand[1]) : (string_address)"none",
+                                      strerror(answer < 0 ? (b32)-(answer + 1) + 1 : (b32)answer));
                 status = answer ? 32 : 0;
                 goto done;
         }
@@ -989,10 +981,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                 }
         }
         if (!found)
-        {
-                string_format(diagnostic, "%s: %s: not found\n", program, root);
-                return 1;
-        }
+                return string_report(diagnostic, 1, "%s: %s: not found\n", program, root);
         return failed;
 }
 

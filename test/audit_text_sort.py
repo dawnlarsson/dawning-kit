@@ -3,9 +3,8 @@
 # With no output directory, generated sources, binaries and reports are temporary.
 # Uses current production source and hosted adapters; no full applet is executed.
 """C05 fixed-production regression and unguarded negative control."""
-import hashlib, json, pathlib, subprocess, platform
+import hashlib, json, pathlib, subprocess, platform, sys, tempfile
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-import sys, tempfile
 _owned_output = None if len(sys.argv) > 1 else tempfile.TemporaryDirectory(prefix='audit-text-sort-')
 OUT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(_owned_output.name)
 OUT.mkdir(parents=True, exist_ok=True)

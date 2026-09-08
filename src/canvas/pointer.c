@@ -538,16 +538,14 @@ static void pointer_reopen(struct work_struct *work)
 
         if (!ret)
         {
-                log_canvas("input: %s opened on try %u\n",
-                           pointer_device_name(&pointer->handle), pointer->tries + 1);
+                pr_info("[moonwater canvas] " "input: %s opened on try %u\n", pointer_device_name(&pointer->handle), pointer->tries + 1);
                 return;
         }
 
         if (++pointer->tries < POINTER_OPEN_TRIES)
                 schedule_delayed_work(&pointer->reopen, HZ);
         else
-                log_canvas("input: %s would not open (%d), given up\n",
-                           pointer_device_name(&pointer->handle), ret);
+                pr_info("[moonwater canvas] " "input: %s would not open (%d), given up\n", pointer_device_name(&pointer->handle), ret);
 }
 
 static COLD int pointer_connect(struct input_handler *handler,
@@ -582,12 +580,11 @@ static COLD int pointer_connect(struct input_handler *handler,
 
         if (pointer->opened)
         {
-                log_canvas("input: %s would not open (%d), trying again\n",
-                           pointer_device_name(&pointer->handle), pointer->opened);
+                pr_info("[moonwater canvas] " "input: %s would not open (%d), trying again\n", pointer_device_name(&pointer->handle), pointer->opened);
                 schedule_delayed_work(&pointer->reopen, HZ);
         }
         else
-                log_canvas("input: %s\n", pointer_device_name(&pointer->handle));
+                pr_info("[moonwater canvas] " "input: %s\n", pointer_device_name(&pointer->handle));
 
         return 0;
 }
@@ -805,7 +802,7 @@ static void canvas_thread_start(void)
 
         if (IS_ERR(thread))
         {
-                log_canvas("no thread for input\n");
+                pr_info("[moonwater canvas] " "no thread for input\n");
                 return;
         }
 
@@ -816,7 +813,7 @@ static void canvas_thread_start(void)
         cpu_latency_qos_add_request(&pointer_qos, 0);
 
         if (input_register_handler(&pointer_handler))
-                log_canvas("could not register the input handler\n");
+                pr_info("[moonwater canvas] " "could not register the input handler\n");
         else
                 pointer_handler_registered = true;
 }
