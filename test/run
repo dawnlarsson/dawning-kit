@@ -51,7 +51,7 @@ TEST_TALLY="$work/tally"
 export TEST_TALLY
 : > "$TEST_TALLY"
 
-lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit slurp wait writer native probe shell shell_compat shell_posix_exec shell_generated shell_pipeline shell_variables shell_startup shell_privileged shell_paths shell_lex shell_history shell_io expand builtin awk text checksum tools process_utils files storage storage_io util term edit kit boot canvas"
+lanes="standard declare fold allocator reserve utf8 hex codec fixed table error strings stdlib leaving numbers clock math format scan stream spool process signal lock verify exact known socket net bowl reuse_shell audit slurp wait writer native probe checksum storage_io differential_oracle text files misc util_linux shell builtins awk term edit kit boot canvas"
 
 describe()
 {
@@ -69,7 +69,7 @@ describe()
         codec) echo "bounded radix codecs, malformed symbols and exact spans on three machines" ;;
         fixed) echo "exact decimal records, rounding and bounded batches on three machines" ;;
         bowl) echo "Bowl root and launcher parsing without mounts or process launches" ;;
-        audit) echo "verified utility repairs with mocked failure paths and owned files" ;;
+        audit) echo "the verified builtin repairs, as pure-state regressions" ;;
         reuse_shell) echo "shared utility formatting, bounded sinks and skip edge policies" ;;
         table) echo "shared table escaping, field widths and multiline boundaries on three machines" ;;
         leaving)  echo "what a program writes on the way out, and what a child must not write twice" ;;
@@ -93,29 +93,16 @@ describe()
         writer)   echo "buffer boundaries, direct policy and write ordering, on three machines" ;;
         native)   echo "arm64 assembly on an arm64 machine, with no emulator in the way" ;;
         probe)    echo "what only a separate process can prove: arguments, status, regions" ;;
-        shell)    echo "the shell language against dash, the names it answers to, and the gaps" ;;
-        shell_compat) echo "invocation policies, startup flags and adversarial language cases against dash and Bash" ;;
-        shell_posix_exec) echo "POSIX special builtins, assignments, child traps and source lookup against Bash and dash" ;;
-        shell_generated) echo "seeded shell syntax, expansion and execution variance against Bash and dash" ;;
-        shell_pipeline) echo "lastpipe, PIPESTATUS lifetime, descriptor restoration and noexec" ;;
-        shell_variables) echo "scoped readonly attributes and resource-limit policies against dash and Bash" ;;
-        shell_startup) echo "BASH_ENV and one-command input against Bash, preserving dash identity" ;;
-        shell_privileged) echo "Bash privileged mode, startup files and child-only credential transitions" ;;
-        shell_paths) echo "logical/physical directory policy and readonly PWD against Bash and dash" ;;
-        shell_lex) echo "comment, nested substitution and heredoc boundaries against Bash and dash" ;;
-        shell_history) echo "interactive Bash history expansion over the shared history and fc store" ;;
-        shell_io) echo "read deadlines and printf option/numeric boundaries against Bash and dash" ;;
-        text)     echo "the text utilities against the system's, listed and generated" ;;
-        checksum) echo "POSIX CRC and optional kernel checksum aliases against GNU coreutils" ;;
-        files)    echo "the file utilities against coreutils, by output and by effect" ;;
-        storage)  echo "mount tables and block identities against util-linux, then real namespace effects" ;;
+        differential_oracle) echo "the differential engine's own checks: comparison, covering arrays, ledger and shrinking" ;;
+        text)     echo "the text utilities against GNU coreutils, every option combination the grammar reaches" ;;
+        files)    echo "the file utilities against coreutils, by output and by effect on the directory" ;;
+        misc)     echo "the utilities that are neither text nor files -- dd, diff, ps, the checksums, the process wrappers -- against the system's own" ;;
+        util_linux) echo "the util-linux programs against util-linux, mount tables and block identities included" ;;
+        shell)    echo "the shell language and its personalities against dash and bash, from generated programs" ;;
+        builtins) echo "the commands the shell runs without leaving itself, and the expansions, against bash and dash" ;;
+        awk)      echo "awk against the one on the machine, from generated programs" ;;
+        checksum) echo "the cksum CRC against a bitwise model, in every mode, on three machines" ;;
         storage_io) echo "positional-read retries, exact bounds, zero padding and ELF table handoff" ;;
-        util)     echo "the pinned util-linux executable denominator and process/I/O policy utilities" ;;
-        expand)   echo "quoting, the order the expansions happen in, and the arithmetic" ;;
-        builtin)  echo "the commands the shell runs without leaving itself" ;;
-        awk)      echo "awk against the one on the machine, listed and generated" ;;
-        tools)    echo "dd, diff and ps against the system's own" ;;
-        process_utils) echo "chroot, nohup and timeout process policy against coreutils" ;;
         term)     echo "the emulator driven a byte at a time, and the line being edited" ;;
         edit)     echo "the full-screen editor, its key protocol, buffer, undo and redraws" ;;
         kit)      echo "the byte and document kits the build scripts are made of" ;;
@@ -2780,31 +2767,12 @@ lane_net() { freestanding_checks_lane net net; }
 lane_bowl() { freestanding_checks_lane bowl bowl; }
 lane_reuse_shell() { freestanding_checks_lane reuse_shell reuse_shell; }
 
-# The root-preservation probes stay entirely inside mocked filesystems.
+#       Pure-state regressions for the verified enable, formatter and signal
+#       repairs; no machine-control builtin or utility is invoked. The utility
+#       fixtures that ran beside it are the differential engine's domains now.
 lane_audit()
 {
-        if ! command -v python3 >/dev/null 2>&1 || ! command -v clang >/dev/null 2>&1; then
-                note "audit source fixtures need python3 and clang"
-                return 2
-        fi
-        for audit_fixture in file_regressions util_regressions text_sed text_sort text_cut; do
-                if ! python3 "test/audit_$audit_fixture.py" > "$work/audit-$audit_fixture.out" 2>&1; then
-                        cat "$work/audit-$audit_fixture.out"
-                        return 1
-                fi
-        done
-        tally audit-source-fixtures 5 5
-        freestanding_checks_lane audit-builtin audit_builtin_regressions || return $?
-        python3 test/audit_lsblk_regressions.py "$work/audit-lsblk.c" || return 1
-        freestanding_checks_lane audit-lsblk "$work/audit-lsblk.c" || return $?
-        [ "$host_system" = Linux ] || { note "audit CLI fixtures need Linux"; return 2; }
-        need_shell || return 1
-        if ! python3 test/audit_enable_regressions.py "$shell_binary" > "$work/audit-enable.out" 2>&1 ||
-           ! python3 test/audit_file_runtime.py --shell "$shell_binary" > "$work/audit-files.out" 2>&1; then
-                cat "$work"/audit-*.out
-                return 1
-        fi
-        tally audit-cli-fixtures 2 2
+        freestanding_checks_lane audit-builtin audit_builtin_regressions
 }
 
 
@@ -3275,179 +3243,74 @@ esac
 [ "$failed" = 0 ]
 )
 
-lane_shell()
+lane_checksum() { freestanding_checks_lane checksum_crc checksum_crc; }
+
+#
+#       The differential engine, one domain at a time.
+#
+#       test/differential.py walks the grammar each domain declares -- every
+#       option alone, every pair together, every operand and input shape, and
+#       a seeded random tier -- through the farm and through the tools on this
+#       machine, and compares status, output, effect and diagnostic. It writes
+#       its own tally rows, one per program. Without python3, GNU coreutils,
+#       dash and bash there is nothing to compare against, and the lane says
+#       so rather than passing on nothing.
+#
+differential_ready()
 {
-        need_shell || return 1
-
-        freestanding_check env_duplicate "$work/env-duplicate" || return 1
-
-        MW_ENV_DUPLICATE_LAUNCHER="$work/env-duplicate" \
-                sh test/shell.sh "$shell_binary" "$farm"
-}
-
-lane_text()
-{
-        need_shell || return 1
-
-        sh test/text.sh "$farm"
-}
-
-lane_checksum()
-{
-        need_shell || return 1
-
-        checksum_status=0
-        sh test/checksum.sh "$farm" || checksum_status=1
-        crc_status=0
-        freestanding_checks_lane checksum_crc checksum_crc || crc_status=$?
-        [ "$checksum_status" = 0 ] || return "$checksum_status"
-        return "$crc_status"
-}
-
-lane_files()
-{
-        need_shell || return 1
-
-        sh test/files.sh "$farm"
-}
-
-lane_storage()
-{
-        need_shell || return 1
-
-        sh test/storage.sh "$farm" "$shell_binary"
-}
-
-lane_util()
-{
-        need_shell || return 1
-
-        sh test/util_linux.sh "$shell_binary"
-}
-
-lane_expand()
-{
-        need_shell || return 1
-
-        sh test/expand.sh "$farm"
-}
-
-lane_shell_compat()
-{
-        need_shell || return 1
-        sh test/shell_compat.sh "$shell_binary"
-}
-
-lane_shell_posix_exec()
-{
-        need_shell || return 1
-        sh test/shell_posix_exec.sh "$shell_binary"
-}
-
-lane_shell_generated()
-{
-        need_shell || return 1
-        if ! command -v python3 >/dev/null 2>&1; then
-                note "shell_generated NOT RUN -- no python3"
+        if ! command -v python3 > /dev/null 2>&1; then
+                note "differential: NOT RUN -- no python3"
                 return 2
         fi
-        python3 test/shell_generated_test.py || return 1
-        if [ "$(LC_ALL=C.UTF-8 /bin/bash -c 'x=é; printf %s "${#x}"' 2>/dev/null)" != 1 ]; then
-                note "shell_generated NOT RUN -- no C.UTF-8 Bash oracle"
+
+        case $(ls --version 2> /dev/null) in
+        *"GNU coreutils"*) ;;
+        *)
+                note "differential: NOT RUN -- the ls here is not GNU coreutils, the reference"
+                return 2
+                ;;
+        esac
+
+        if ! command -v dash > /dev/null 2>&1 || ! command -v bash > /dev/null 2>&1; then
+                note "differential: NOT RUN -- dash and bash are the shell references"
                 return 2
         fi
-        generated_status=0
-        for generated_input in ${MW_SHELL_INPUTS:-command file stdin}; do
-                python3 test/shell_generated.py "$shell_binary" \
-                        --input "$generated_input" || generated_status=1
-                python3 test/shell_generated.py "$shell_binary" \
-                        --input "$generated_input" --locale C.UTF-8 \
-                        --domain expand --cases 768 --seed 0x55544638 \
-                        --family character-length --family character-slice \
-                        --family character-patterns --family character-glob \
-                        --family character-bracket --family bracket-match \
-                        --family extended-match \
-                        --family pattern-composition --family pattern-replacement \
-                        || generated_status=1
-        done
-        return "$generated_status"
 }
 
-lane_shell_pipeline()
+differential_domain()
 {
-        need_shell || return 1
-        sh test/shell_pipeline.sh "$shell_binary"
-}
-
-lane_shell_variables()
-{
-        need_shell || return 1
-        sh test/shell_variables.sh "$shell_binary"
-}
-
-lane_shell_startup()
-{
-        need_shell || return 1
-        sh test/shell_startup.sh "$shell_binary"
-}
-
-lane_shell_privileged()
-{
-        need_shell || return 1
-        sh test/shell_privileged.sh "$shell_binary"
-}
-
-lane_shell_paths()
-{
-        need_shell || return 1
-        sh test/shell_paths.sh "$shell_binary"
-}
-
-lane_shell_lex()
-{
-        need_shell || return 1
-        sh test/shell_lex.sh "$shell_binary"
-}
-
-lane_shell_history()
-{
-        need_shell || return 1
-        sh test/shell_history.sh "$shell_binary"
-}
-
-lane_shell_io()
-{
-        need_shell || return 1
-        sh test/shell_io.sh "$shell_binary"
-}
-
-lane_builtin()
-{
+        differential_ready || return 2
         need_shell || return 1
 
-        sh test/builtin.sh "$farm"
+        python3 test/differential.py "$farm" --domain "$1" \
+                --jobs "${MW_JOBS:-$(nproc 2> /dev/null || echo 4)}"
 }
 
-lane_awk()
+#       The self-test drives the engine end to end on a farm of its own, and
+#       those inner runs write tally rows like any run does. Only the oracle's
+#       own verdict belongs in this tally, so it gets a file of its own and
+#       that one row is carried over.
+lane_differential_oracle()
 {
-        need_shell || return 1
+        if ! command -v python3 > /dev/null 2>&1; then
+                note "differential oracle: NOT RUN -- no python3"
+                return 2
+        fi
 
-        sh test/awk.sh "$farm"
+        : > "$work/oracle.tally"
+        TEST_TALLY="$work/oracle.tally" python3 test/differential.py --self-test
+        oracle_status=$?
+        grep '^differential-oracle ' "$work/oracle.tally" >> "$TEST_TALLY"
+        return "$oracle_status"
 }
 
-lane_tools()
-{
-        need_shell || return 1
-
-        sh test/tools.sh "$farm"
-}
-
-lane_process_utils()
-{
-        need_shell || return 1
-
-        sh test/process_tools.sh "$farm"
-}
+lane_text()       { differential_domain text; }
+lane_files()      { differential_domain files; }
+lane_misc()       { differential_domain misc; }
+lane_util_linux() { differential_domain util_linux; }
+lane_shell()      { differential_domain shell; }
+lane_builtins()   { differential_domain builtins; }
+lane_awk()        { differential_domain awk; }
 
 #
 #       The terminal: the sequences it is sent, the cells they become, and
@@ -7917,7 +7780,7 @@ printf '  %-12s %s of %s\n' canvas "$pass" "$((pass + fail))"
 
 if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
         for lane in $lanes; do
-                printf '  %-10s %s\n' "$lane" "$(describe "$lane")"
+                printf '  %-19s %s\n' "$lane" "$(describe "$lane")"
         done
         exit 0
 fi
