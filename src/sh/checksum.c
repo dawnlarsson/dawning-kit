@@ -86,19 +86,80 @@ static const file_long checksum_longs[] = {
 
 static bool checksum_binary;
 static bool checksum_warn;
+// Which of -b/-t was given last, and whether either was: GNU refuses --tag
+// with an explicit --text and both with --check.
+static bool checksum_text_given;
+static bool checksum_mode_given;
+// The last of --status, --warn and --quiet wins, as in GNU.
+static p8 checksum_verify_mode;
+// Output shapes: NUL-terminated unescaped lines, base64 or raw digests.
+static bool checksum_zero;
+static bool checksum_base64;
+static bool checksum_raw;
 
 static bool checksum_option_seen(p8 letter, string_address value)
 {
         (void)value;
 
         if (letter == 'b')
+        {
                 checksum_binary = true;
+                checksum_text_given = false;
+                checksum_mode_given = true;
+        }
         else if (letter == 't')
+        {
                 checksum_binary = false;
+                checksum_text_given = true;
+                checksum_mode_given = true;
+        }
         if (letter == 'w' || letter == 'q' || letter == 's')
+        {
                 checksum_warn = letter == 'w';
+                checksum_verify_mode = letter;
+        }
 
         return true;
+}
+
+static fn checksum_modes_reset()
+{
+        checksum_binary = false;
+        checksum_warn = false;
+        checksum_text_given = false;
+        checksum_mode_given = false;
+        checksum_verify_mode = 0;
+        checksum_zero = false;
+        checksum_base64 = false;
+        checksum_raw = false;
+}
+
+/* coreutils' complaint about an option out of place, with its usage hint. */
+static b32 checksum_usage_error(string_address command, string_address message)
+{
+        text_flush();
+        return text_done(string_report(writer_stderr, 1,
+                                       "%s: %s\nTry '%s --help' for more information.\n",
+                                       command, message, command));
+}
+
+static fn checksum_base64_put(p8 address_to digest, positive length)
+{
+        static const p8 alphabet[] =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        for (positive at = 0; at < length; at += 3)
+        {
+                positive have = min(length - at, (positive)3);
+                positive word = (positive)digest[at] << 16 |
+                                (have > 1 ? (positive)digest[at + 1] << 8 : 0) |
+                                (have > 2 ? (positive)digest[at + 2] : 0);
+
+                text_put_character(alphabet[(word >> 18) & 63]);
+                text_put_character(alphabet[(word >> 12) & 63]);
+                text_put_character(have > 1 ? alphabet[(word >> 6) & 63] : '=');
+                text_put_character(have > 2 ? alphabet[word & 63] : '=');
+        }
 }
 
 static string_address checksum_called()
@@ -399,7 +460,25 @@ static bool checksum_filename_escaped(string_address name)
         positive length = string_length(name);
 
         return memory_first_of(name, '\\', length) ||
-               memory_first_of(name, '\n', length);
+               memory_first_of(name, '\n', length) ||
+               memory_first_of(name, '\r', length);
+}
+
+/* GNU shell-quotes a name in a verification report when a shell would not
+   take it whole: blanks, controls, the metacharacters, and a leading # or ~. */
+static bool checksum_filename_special(string_address name)
+{
+        for (string_address at = name; string_get(at); at++)
+        {
+                p8 byte = string_get(at);
+
+                if (byte <= ' ' || byte >= 127 ||
+                    string_first_of("!\"$&'()*;<>?[\\]^`{|}", byte))
+                        return true;
+                if ((byte == '#' || byte == '~') && at == name)
+                        return true;
+        }
+        return false;
 }
 
 static fn checksum_filename_put(string_address name, bool escaped)
@@ -414,7 +493,7 @@ static fn checksum_filename_put(string_address name, bool escaped)
 
         while (string_get(from))
         {
-                string_address stop = string_first_of_set(from, "\\\n");
+                string_address stop = string_first_of_set(from, "\\\n\r");
 
                 if (!stop)
                 {
@@ -424,7 +503,7 @@ static fn checksum_filename_put(string_address name, bool escaped)
 
                 text_put(from, (positive)(stop - from));
                 text_put_character('\\');
-                text_put_character(*stop == '\n' ? 'n' : '\\');
+                text_put_character(*stop == '\n' ? 'n' : *stop == '\r' ? 'r' : '\\');
                 from = stop + 1;
         }
 }
@@ -439,7 +518,7 @@ fn shell_quoted(writer write, string_address value);
 
 static fn checksum_check_filename_put(string_address name)
 {
-        if (!checksum_filename_escaped(name))
+        if (!checksum_filename_special(name))
         {
                 text_put_string(name);
                 return;
@@ -484,10 +563,26 @@ static fn checksum_hex_put(p8 address_to digest, positive length)
         text_put(text, memory_into_hex(text, digest, length));
 }
 
+static fn checksum_digest_put(p8 address_to digest, positive length)
+{
+        if (checksum_base64)
+                checksum_base64_put(digest, length);
+        else
+                checksum_hex_put(digest, length);
+}
+
 static fn checksum_line_put(const checksum_algorithm address_to algorithm,
                             p8 address_to digest, string_address name, bool tagged)
 {
-        bool escaped = checksum_filename_escaped(name);
+        // --raw is the digest's bytes and nothing else.
+        if (checksum_raw)
+        {
+                text_put(digest, algorithm->bytes);
+                return;
+        }
+
+        // --zero disables the escaping that exists for newline records.
+        bool escaped = !checksum_zero && checksum_filename_escaped(name);
 
         if (escaped)
                 text_put_character('\\');
@@ -499,7 +594,7 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
         }
         else
         {
-                checksum_hex_put(digest, algorithm->bytes);
+                checksum_digest_put(digest, algorithm->bytes);
                 text_put_character(' ');
                 text_put_character(checksum_binary ? '*' : ' ');
         }
@@ -507,9 +602,9 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
         if (tagged)
         {
                 text_put_string(") = ");
-                checksum_hex_put(digest, algorithm->bytes);
+                checksum_digest_put(digest, algorithm->bytes);
         }
-        text_put_character('\n');
+        text_put_character(checksum_zero ? '\0' : '\n');
 }
 
 /* cksum's collected operands and the named sums' argv tail differ only at
@@ -557,9 +652,14 @@ static fn checksum_check_result_put(string_address name,
    for portable newline-delimited output. */
 static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                                 p8 address_to expected,
-                                string_address address_to filename)
+                                string_address address_to filename,
+                                bool address_to lower)
 {
         positive at = 0;
+
+        // GNU compares the digest as text: upper-case hex is well formed
+        // but never matches what it computes.
+        address_to lower = true;
 
         // A record from a Windows editor ends in CR LF; GNU drops the CR.
         if (text_line_length && text_line[text_line_length - 1] == '\r')
@@ -608,11 +708,15 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 
         for (positive i = 0; i < algorithm->bytes; i++)
         {
-                positive high = digit_known(text_line[digest_at + i * 2], 16);
-                positive low = digit_known(text_line[digest_at + i * 2 + 1], 16);
+                p8 first = text_line[digest_at + i * 2];
+                p8 second = text_line[digest_at + i * 2 + 1];
+                positive high = digit_known(first, 16);
+                positive low = digit_known(second, 16);
 
                 if (high >= 16 || low >= 16)
                         return false;
+                if ((first >= 'A' && first <= 'F') || (second >= 'A' && second <= 'F'))
+                        address_to lower = false;
 
                 expected[i] = (p8)((high << 4) | low);
         }
@@ -633,6 +737,8 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                         from++;
                         if (*from == 'n')
                                 *into++ = '\n';
+                        else if (*from == 'r')
+                                *into++ = '\r';
                         else if (*from == '\\')
                                 *into++ = '\\';
                         else
@@ -651,8 +757,8 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                            bipolar transform, file_taking address_to taking)
 {
-        bool quiet = (taking->flags & FILE_FLAG('q')) != 0;
-        bool status = (taking->flags & FILE_FLAG('s')) != 0;
+        bool quiet = checksum_verify_mode == 'q';
+        bool status = checksum_verify_mode == 's';
         bool strict = (taking->flags & FILE_FLAG('S')) != 0;
         bool ignore_missing = (taking->flags & FILE_FLAG('i')) != 0;
         positive manifests = taking->first < (positive)program_argument_count()
@@ -687,10 +793,12 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         p8 expected[64];
                         p8 digest[64];
                         string_address filename;
+                        bool lower;
 
                         line++;
                         if (!checksum_line_parse(algorithm, expected,
-                                                 address_of filename))
+                                                 address_of filename,
+                                                 address_of lower))
                         {
                                 malformed++;
                                 if (checksum_warn)
@@ -723,7 +831,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         }
 
                         verified++;
-                        if (memory_compare(expected, digest, algorithm->bytes))
+                        if (memory_compare(expected, digest, algorithm->bytes) || !lower)
                         {
                                 mismatched++;
                                 failed = true;
@@ -788,8 +896,7 @@ static b32 checksum_main()
                 return 1;
 
         text_begin(command);
-        checksum_binary = false;
-        checksum_warn = false;
+        checksum_modes_reset();
 
         file_taking taking = {
             .program = command,
@@ -806,22 +913,35 @@ static b32 checksum_main()
         if (!file_take(address_of taking))
                 return text_done(1);
 
-        if (taking.flags & FILE_FLAG('T'))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--tag is not supported by the kernel checksum path"));
-        if (taking.flags & FILE_FLAG('z'))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--zero is not supported by the line verifier"));
         if (taking.flags & FILE_FLAG('l'))
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "variable BLAKE2 lengths are not supported"));
 
         bool checking = (taking.flags & FILE_FLAG('c')) != 0;
-        positive verifying = FILE_FLAG('i') | FILE_FLAG('q') |
-                             FILE_FLAG('s') | FILE_FLAG('S') |
-                             FILE_FLAG('w');
+        bool tagged = (taking.flags & FILE_FLAG('T')) != 0;
+        checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
-        if (!checking && (taking.flags & verifying))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "verification option is meaningful only with --check"));
-        if (checking && (taking.flags & (FILE_FLAG('b') | FILE_FLAG('t'))))
-                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "--binary and --text are meaningless with --check"));
+        // coreutils' own refusals, in its order and words.
+        if (tagged && checksum_text_given)
+                return checksum_usage_error(command, "--tag does not support --text mode");
+        if (tagged && checking)
+                return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
+        if (checksum_zero && checking)
+                return checksum_usage_error(command, "the --zero option is not supported when verifying checksums");
+        if (checking && checksum_mode_given)
+                return checksum_usage_error(command, "the --binary and --text options are meaningless when verifying checksums");
+        if (!checking)
+        {
+                if (taking.flags & FILE_FLAG('i'))
+                        return checksum_usage_error(command, "the --ignore-missing option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 's')
+                        return checksum_usage_error(command, "the --status option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 'w')
+                        return checksum_usage_error(command, "the --warn option is meaningful only when verifying checksums");
+                if (checksum_verify_mode == 'q')
+                        return checksum_usage_error(command, "the --quiet option is meaningful only when verifying checksums");
+                if (taking.flags & FILE_FLAG('S'))
+                        return checksum_usage_error(command, "the --strict option is meaningful only when verifying checksums");
+        }
 
         bipolar transform = checksum_kernel_open(algorithm);
 
@@ -834,7 +954,7 @@ static b32 checksum_main()
                 answer = checksum_verify(algorithm, transform,
                                          address_of taking);
         else
-                answer = checksum_generate(algorithm, transform, taking.first, false);
+                answer = checksum_generate(algorithm, transform, taking.first, tagged);
 
         system_close((positive)transform);
         return text_done(answer);

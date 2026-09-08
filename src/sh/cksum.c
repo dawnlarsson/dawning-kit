@@ -411,14 +411,14 @@ static fn cksum_crc_put(p32 crc, p64 bytes, string_address name, bool named)
 }
 
 #if defined(LINUX)
-static b32 cksum_digest(const checksum_algorithm address_to algorithm)
+static b32 cksum_digest(const checksum_algorithm address_to algorithm, bool tagged)
 {
         bipolar transform = checksum_kernel_open(algorithm);
 
         if (transform < 0)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm->type, "kernel AF_ALG hash support or requested algorithm is unavailable"));
 
-        b32 answer = checksum_generate(algorithm, transform, 0, true);
+        b32 answer = checksum_generate(algorithm, transform, 0, tagged);
         system_close((positive)transform);
         return text_done(answer);
 }
@@ -426,6 +426,10 @@ static b32 cksum_digest(const checksum_algorithm address_to algorithm)
 
 static const file_long cksum_longs[] = {
     {(string_address) "algorithm", 'a'},
+    {(string_address) "untagged", 'U'},
+    {(string_address) "tag", 'T'},
+    {(string_address) "raw", 'R'},
+    {(string_address) "base64", 'B'},
     {null, 0},
 };
 
@@ -433,13 +437,16 @@ static b32 cksum_main()
 {
         file_taking taking = {
             .program = (string_address) "cksum",
-            .allowed = (string_address) "a",
+            .allowed = (string_address) "aUTRB",
             .valued = (string_address) "a",
             .longs = cksum_longs,
             .operand = text_file_add,
         };
 
         text_begin("cksum");
+#if defined(LINUX)
+        checksum_modes_reset();
+#endif
 
         if (!file_take(address_of taking) ||
             (text_files_failed && string_diagnostic(
@@ -447,15 +454,31 @@ static b32 cksum_main()
                 return text_done(1);
 
         string_address algorithm = file_option_value(address_of taking, 'a');
+        bool raw = (taking.flags & FILE_FLAG('R')) != 0;
+
+        if (raw && text_files_count > 1)
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, null, "the --raw option is not supported with multiple files"));
 
         if (algorithm && !string_equals(algorithm, "crc"))
         {
+                // The SHA-2 and SHA-3 families need their width said.
+                if (string_equals(algorithm, "sha2") || string_equals(algorithm, "sha3"))
+                {
+                        text_flush();
+                        return text_done(string_report(writer_stderr, 1,
+                            "cksum: --algorithm=%s requires specifying --length 224, 256, 384, or 512\n",
+                            algorithm));
+                }
 #if defined(LINUX)
                 const checksum_algorithm address_to digest =
                     checksum_algorithm_find(algorithm, true);
 
                 if (digest)
-                        return cksum_digest(digest);
+                {
+                        checksum_raw = raw;
+                        checksum_base64 = (taking.flags & FILE_FLAG('B')) != 0;
+                        return cksum_digest(digest, !(taking.flags & FILE_FLAG('U')));
+                }
 #endif
 
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
@@ -483,7 +506,15 @@ static b32 cksum_main()
                         continue;
                 }
 
-                cksum_crc_put(crc, bytes, name, named);
+                // --raw is the CRC's four bytes, most significant first.
+                if (raw)
+                {
+                        p8 wire[4] = {(p8)(crc >> 24), (p8)(crc >> 16),
+                                      (p8)(crc >> 8), (p8)crc};
+                        text_put(wire, 4);
+                }
+                else
+                        cksum_crc_put(crc, bytes, name, named);
         }
 
         return text_done(answer);
