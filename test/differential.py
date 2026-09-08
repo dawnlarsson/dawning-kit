@@ -247,91 +247,58 @@ class Case:
 def covering_array(parameters, strength, rng):
     """Rows over parameter value indexes so every strength-tuple appears.
 
-    Greedy, one row at a time: the columns are visited largest domain first
-    (a seeded order among equals) and each takes the value that completes the
-    most still-uncovered tuples with the columns already chosen, ties going to
-    the value with the most uncovered tuples left anywhere. The best of a few
-    such rows is kept. Deterministic for a seed, and small -- a dozen options
-    with two values each cover in about ten rows, where the product is
-    thousands.
-
-    Scoring a value looks only at the tuples that value could complete, and
-    the bookkeeping is a set per column tuple, so a grammar of fifty options
-    covers in seconds; scoring every candidate row against every uncovered
-    tuple took hours on the same grammar. At strength three the pairs a value
-    is scored against are sampled, which changes how good a row is and not
-    what the loop guarantees: it runs until nothing is uncovered, and a row
-    that covers nothing new is replaced by one built from an uncovered tuple
-    directly."""
+    Greedy: each new row starts as the best of a handful of seeded candidates
+    by the number of still-uncovered tuples it hits, then is improved one
+    column at a time, re-scoring only the column combinations that column
+    takes part in. Deterministic for a seed, and small -- a dozen options
+    with two values each cover pairwise in about fifteen rows, thirty
+    three-valued options cover three-wise in about a hundred and twenty,
+    where the products are thousands and millions."""
     sizes = [len(values) for values in parameters]
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
-    count = len(sizes)
-    uncovered = {}
-    left = [[0] * size for size in sizes]
-    for columns in itertools.combinations(range(count), strength):
-        values = set(itertools.product(*(range(sizes[c]) for c in columns)))
-        uncovered[columns] = values
-        for combination in values:
-            for column, value in zip(columns, combination):
-                left[column][value] += 1
-    remaining = sum(len(values) for values in uncovered.values())
-    candidates = 4 if strength <= 2 else 1
-    sampled = 48
+    combos = list(itertools.combinations(range(len(sizes)), strength))
+    uncovered = {c: set(itertools.product(*(range(sizes[i]) for i in c))) for c in combos}
+    by_column = {i: [c for c in combos if i in c] for i in range(len(sizes))}
+    remaining = sum(len(tuples) for tuples in uncovered.values())
+
+    def hits(row, chosen):
+        return sum(1 for c in chosen if tuple(row[i] for i in c) in uncovered[c])
+
     rows = []
     while remaining:
         best, best_hits = None, -1
-        for _ in range(candidates):
-            row = [None] * count
-            assigned = []
-            order = sorted(rng.sample(range(count), count), key=lambda c: -sizes[c])
-            for column in order:
-                if strength == 1:
-                    groups = [()]
-                elif strength == 2:
-                    groups = [(other,) for other in assigned]
-                else:
-                    groups = list(itertools.combinations(assigned, strength - 1))
-                    if len(groups) > sampled:
-                        groups = rng.sample(groups, sampled)
-                best_value, best_gain = 0, (-1, -1)
-                start = rng.randrange(sizes[column])
-                for offset in range(sizes[column]):
-                    value = (start + offset) % sizes[column]
-                    gain = 0
-                    for others in groups:
-                        columns = tuple(sorted(others + (column,)))
-                        key = tuple(value if c == column else row[c] for c in columns)
-                        if key in uncovered[columns]:
-                            gain += 1
-                    if (gain, left[column][value]) > best_gain:
-                        best_value, best_gain = value, (gain, left[column][value])
-                row[column] = best_value
-                assigned.append(column)
-            if candidates == 1:
-                best = row
-                break
-            hits = sum(1 for columns, values in uncovered.items()
-                       if tuple(row[c] for c in columns) in values)
-            if hits > best_hits:
-                best, best_hits = row, hits
-        covered = [(columns, tuple(best[c] for c in columns)) for columns in uncovered]
-        if not any(key in uncovered[columns] for columns, key in covered):
-            columns, values = next((columns, values) for columns, values
-                                   in uncovered.items() if values)
-            best = [0] * count
-            for c, v in zip(columns, next(iter(sorted(values)))):
-                best[c] = v
-            covered = [(columns, tuple(best[c] for c in columns)) for columns in uncovered]
-        rows.append(best)
-        for columns, key in covered:
-            values = uncovered[columns]
-            if key in values:
-                values.remove(key)
+        for _ in range(8):
+            row = [rng.randrange(size) for size in sizes]
+            score = hits(row, combos)
+            if score > best_hits:
+                best, best_hits = row, score
+        for column in rng.sample(range(len(sizes)), len(sizes)):
+            chosen = by_column[column]
+            current = hits(best, chosen)
+            for value in range(sizes[column]):
+                if value == best[column]:
+                    continue
+                trial = list(best)
+                trial[column] = value
+                score = hits(trial, chosen)
+                if score > current:
+                    best, current = trial, score
+        if hits(best, combos) == 0:
+            # Nothing random reached the last tuples: take one directly.
+            for c in combos:
+                if uncovered[c]:
+                    values = next(iter(sorted(uncovered[c])))
+                    for i, v in zip(c, values):
+                        best[i] = v
+                    break
+        for c in combos:
+            key = tuple(best[i] for i in c)
+            if key in uncovered[c]:
+                uncovered[c].discard(key)
                 remaining -= 1
-                for column, value in zip(columns, key):
-                    left[column][value] -= 1
+        rows.append(best)
     return rows
 
 
@@ -793,6 +760,15 @@ def option_ledger(rows, case):
 # ----------------------------------------------------------------------------
 
 def load_spec(domain):
+    """The grammar of one domain: inlined below when SPECS exists, else a
+    spec_<domain>.py module beside this file while a grammar is being written."""
+    specs = globals().get("SPECS")
+    if specs is not None and domain in specs:
+        utilities, families = specs[domain]
+        namespace = type("Spec", (), {})()
+        namespace.UTILITIES = utilities
+        namespace.FAMILIES = families
+        return namespace
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
     try:
@@ -905,10 +881,18 @@ def main(argv=None):
                              "the block at the end of this program")
     parser.add_argument("--list", action="store_true", help="print the cases and stop")
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--harness", nargs=argparse.REMAINDER,
+                        help="run one of the folded standalone checks: --harness NAME [ARGS]")
     args = parser.parse_args(argv)
 
     if args.self_test:
         return self_test()
+    if args.harness is not None:
+        entry = globals().get("harness_entry")
+        if entry is None:
+            parser.error("no harness is folded into this file")
+        sys.argv = [sys.argv[0]] + args.harness
+        return entry()
     if args.pins:
         globals()["PIN_FILE"] = args.pins.resolve()
     if not args.farm and not args.list:
@@ -1159,10 +1143,14 @@ def self_test():
             self.script(self.system / "effect", "#!/bin/sh\nprintf y > a.txt\n")
             self.old_path = os.environ.get("PATH")
             os.environ["PATH"] = f"{self.system}:/usr/bin:/bin"
+            # The inner runs must not write their rows into the suite's tally.
+            self.old_tally = os.environ.pop("TEST_TALLY", None)
             self.runner = Runner(self.farm, self.root / "run")
 
         def tearDown(self):
             os.environ["PATH"] = self.old_path
+            if self.old_tally is not None:
+                os.environ["TEST_TALLY"] = self.old_tally
             self.temporary.cleanup()
 
         def script(self, path, text):
@@ -1273,6 +1261,8 @@ def self_test():
             globals_["PIN_FILE"] = pins
             sys.path.insert(0, str(spec_dir))
             sys.modules.pop("spec_text", None)
+            saved_specs = globals_.get("SPECS")
+            globals_["SPECS"] = None
             try:
                 import io
                 import contextlib
@@ -1310,6 +1300,7 @@ def self_test():
                 self.assertIn("recorded", out.getvalue())
             finally:
                 globals_["PIN_FILE"] = saved
+                globals_["SPECS"] = saved_specs
                 sys.path.remove(str(spec_dir))
                 sys.modules.pop("spec_text", None)
 
@@ -1323,6 +1314,8 @@ def self_test():
             sys.modules.pop("spec_text", None)
             old = os.environ.get("TEST_TALLY")
             os.environ["TEST_TALLY"] = str(tally)
+            saved_specs = globals().get("SPECS")
+            globals()["SPECS"] = None
             try:
                 import io
                 import contextlib
@@ -1332,6 +1325,7 @@ def self_test():
                 self.assertEqual(status, 0)
                 self.assertRegex(tally.read_text(), r"text-echoer (\d+) \1\n")
             finally:
+                globals()["SPECS"] = saved_specs
                 if old is None:
                     del os.environ["TEST_TALLY"]
                 else:

@@ -1,5 +1,5 @@
 /* Literal-size equal-span walk against the out-of-line hardware routine.
-   Mismatch positions are exhaustively guarded by test/exact_prefix.c;
+   Mismatch positions are exhaustively guarded by the exact_prefix section of test/checks.c;
    this harness intentionally measures the maximum-traffic shape. */
 #include "../src/compiler_memory.c"
 

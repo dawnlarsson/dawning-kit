@@ -123,25 +123,8 @@ int path_mount(const char *dev_name, struct path *path,
 // init_mount, and this file has one of its own.
 int init_mkdir(const char *pathname, umode_t mode);
 
-#define log_k(fmt, ...) \
-        pr_alert("[moonwater] " fmt, ##__VA_ARGS__)
 
-/*
-        The same line, for the paths an unprivileged caller reaches.
-
-        A rejected image and a failed spawn are both driven entirely by the
-        caller: any user can execve a file carrying our magic and a bad
-        version, or ask the device to spawn a path that is not there. At
-        pr_alert those go to the console, and on this system the console is
-        the desktop -- so an unratelimited one is a loop that makes the
-        machine unusable without needing a bug to do it.
-
-        Boot and teardown keep the plain form. They happen once, nobody
-        outside can provoke them, and losing one to a suppression window
-        would lose the reason a machine did not start.
-*/
-#define log_k_caller(fmt, ...) \
-        pr_alert_ratelimited("[moonwater] " fmt, ##__VA_ARGS__)
+/* Caller-triggered failures are rate limited; boot and teardown are not. */
 
 typedef struct
 {
@@ -305,7 +288,7 @@ int execute_spark(struct linux_binprm *bprm)
 
         if (header->version != SPARK_VERSION)
         {
-                log_k_caller("unsupported spark version %u\n", header->version);
+                pr_alert_ratelimited("[moonwater] " "unsupported spark version %u\n", header->version);
                 return -ENOEXEC;
         }
 
@@ -371,7 +354,7 @@ int execute_spark(struct linux_binprm *bprm)
         ret = setup_arg_pages(bprm, STACK_TOP, EXSTACK_DEFAULT);
         if (ret < 0)
         {
-                log_k_caller("setup_arg_pages failed: %d\n", ret);
+                pr_alert_ratelimited("[moonwater] " "setup_arg_pages failed: %d\n", ret);
                 goto fatal;
         }
 
@@ -409,7 +392,7 @@ int execute_spark(struct linux_binprm *bprm)
                 {
                         mmap_write_unlock(current->mm);
                         ret = (int)mapped;
-                        log_k_caller("mapping %s failed: %d\n", regions[i], ret);
+                        pr_alert_ratelimited("[moonwater] " "mapping %s failed: %d\n", regions[i], ret);
                         goto fatal;
                 }
                 address += sizes[i];
@@ -441,7 +424,7 @@ int execute_spark(struct linux_binprm *bprm)
 
         if (ret)
         {
-                log_k_caller("could not lay out the arguments: %d\n", ret);
+                pr_alert_ratelimited("[moonwater] " "could not lay out the arguments: %d\n", ret);
                 goto fatal;
         }
 
@@ -670,7 +653,7 @@ finished:
                 // cannot come back as an ioctl error. Exiting 127 is what a
                 // shell reports for "could not run it", and it keeps the
                 // caller from mistaking the failure for a clean exit.
-                log_k_caller("spawn: exec failed: %d\n", ret);
+                pr_alert_ratelimited("[moonwater] " "spawn: exec failed: %d\n", ret);
                 do_exit(127 << 8);
         }
 
@@ -1236,7 +1219,7 @@ static fn init_mount()
 
                 if (ret)
                 {
-                        log_k("Mounting %s to %s failed with error: %d\n", mount->filesystem, mount->path, ret);
+                        pr_alert("[moonwater] " "Mounting %s to %s failed with error: %d\n", mount->filesystem, mount->path, ret);
                         mount++;
                         continue;
                 }
@@ -1245,10 +1228,9 @@ static fn init_mount()
                 path_put(&path);
 
                 if (ret)
-                        log_k("Mounting %s on %s failed with error: %d\n",
-                              mount->filesystem, mount->path, ret);
+                        pr_alert("[moonwater] " "Mounting %s on %s failed with error: %d\n", mount->filesystem, mount->path, ret);
                 else
-                        log_k("Mounted %s to %s\n", mount->filesystem, mount->path);
+                        pr_alert("[moonwater] " "Mounted %s to %s\n", mount->filesystem, mount->path);
 
                 mount++;
         }
@@ -1276,11 +1258,9 @@ static void __init check_ticks(void)
         second = get_cpu_time();
 
         if (second > first)
-                log_k("ticks: counting, %llu between two reads\n",
-                      (unsigned long long)(second - first));
+                pr_alert("[moonwater] " "ticks: counting, %llu between two reads\n", (unsigned long long)(second - first));
         else
-                log_k("ticks: did not advance (%llu then %llu)\n",
-                      (unsigned long long)first, (unsigned long long)second);
+                pr_alert("[moonwater] " "ticks: did not advance (%llu then %llu)\n", (unsigned long long)first, (unsigned long long)second);
 }
 
 // Likewise: an initcall does not need external linkage.
@@ -1294,7 +1274,7 @@ static b32 __init start()
                 are absent from the object. Nothing in this build reads the
                 feature bytes, so there is nothing to detect at init time.
         */
-        log_k("Moonwater starting...\n");
+        pr_alert("[moonwater] " "Moonwater starting...\n");
 
         /*
                 The initramfs is unpacked on a workqueue, not inline, so at
@@ -1323,7 +1303,7 @@ static b32 __init start()
         ret = misc_register(&device);
         if (ret)
         {
-                log_k("could not register /dev/spark: %d\n", ret);
+                pr_alert("[moonwater] " "could not register /dev/spark: %d\n", ret);
                 unregister_binfmt(&format);
                 return ret;
         }
@@ -1352,7 +1332,7 @@ static void __exit exit_module(void)
         misc_deregister(&device);
         kvfree(snapshot);
         unregister_binfmt(&format);
-        log_k("Spark format unregistered\n");
+        pr_alert("[moonwater] " "Spark format unregistered\n");
 }
 
 /*
