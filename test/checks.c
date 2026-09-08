@@ -35874,7 +35874,7 @@ static fn test_assert(void)
                 !is_null(string_search(line,
                                        (string_address) "Assertion `2 + 2 == 5' failed.")));
         true_is("assert named the file",
-                !is_null(string_search(line, (string_address) "process.c")));
+                !is_null(string_search(line, (string_address) __FILE__)));
         true_is("assert named the function",
                 !is_null(string_search(line, (string_address) "test_assert")));
 
