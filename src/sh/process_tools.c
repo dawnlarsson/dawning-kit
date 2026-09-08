@@ -2138,8 +2138,7 @@ static b32 process_script()
                 "[options] [file] [-- command [argument...]]", address_of answer))
                 return answer;
         if (taking.flags & FILE_FLAG('o'))
-                return ul_bad_usage("script",
-                                    "output limits are not supported");
+                return string_report(log_error, 1, "%s: %s\n", "script", "output limits are not supported");
 
         positive separator = count;
         for (positive at = 1; at < count; at++)
@@ -2156,8 +2155,7 @@ static b32 process_script()
         if (command)
         {
                 if (separator < count || count - taking.first > 1)
-                        return ul_bad_usage(
-                            "script", "--command cannot be combined with -- command");
+                        return string_report(log_error, 1, "%s: %s\n", "script", "--command cannot be combined with -- command");
                 if (taking.first < count)
                         positional = program_argument((b32)taking.first);
         }
@@ -2166,7 +2164,7 @@ static b32 process_script()
                 positive before = separator > taking.first
                                       ? separator - taking.first : 0;
                 if (before > 1 || separator + 1 >= count)
-                        return ul_bad_usage("script", "invalid command operands");
+                        return string_report(log_error, 1, "%s: %s\n", "script", "invalid command operands");
                 if (before)
                         positional = program_argument((b32)taking.first);
                 command_first = separator + 1;
@@ -2174,7 +2172,7 @@ static b32 process_script()
         else
         {
                 if (count - taking.first > 1)
-                        return ul_bad_usage("script", "extra operand");
+                        return string_report(log_error, 1, "%s: %s\n", "script", "extra operand");
                 if (taking.first < count)
                         positional = program_argument((b32)taking.first);
         }
@@ -2182,12 +2180,10 @@ static b32 process_script()
         bool has_io = (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
                                        FILE_FLAG('B'))) != 0;
         if (positional && has_io)
-                return ul_bad_usage("script",
-                                    "positional log conflicts with explicit log");
+                return string_report(log_error, 1, "%s: %s\n", "script", "positional log conflicts with explicit log");
         if ((taking.flags & FILE_FLAG('B')) &&
             (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O'))))
-                return ul_bad_usage("script",
-                                    "--log-io conflicts with separate logs");
+                return string_report(log_error, 1, "%s: %s\n", "script", "--log-io conflicts with separate logs");
 
         process_script_state state;
         memory_fill(address_of state, 0, sizeof(state));
@@ -2208,12 +2204,11 @@ static b32 process_script()
                 else if (string_equals(format, (string_address)"classic"))
                 {
                         if (state.advanced)
-                                return ul_bad_usage(
-                                    "script", "classic timing cannot log input");
+                                return string_report(log_error, 1, "%s: %s\n", "script", "classic timing cannot log input");
                         state.advanced = false;
                 }
                 else
-                        return ul_bad_usage("script", "unknown logging format");
+                        return string_report(log_error, 1, "%s: %s\n", "script", "unknown logging format");
         }
 
         string_address echo = file_option_value(address_of taking, 'E');
@@ -2224,7 +2219,7 @@ static b32 process_script()
                 else if (string_equals(echo, (string_address)"never"))
                         state.echo = 2;
                 else if (!string_equals(echo, (string_address)"auto"))
-                        return ul_bad_usage("script", "unknown echo mode");
+                        return string_report(log_error, 1, "%s: %s\n", "script", "unknown echo mode");
         }
 
         string_address output_path = null;
@@ -2249,8 +2244,7 @@ static b32 process_script()
             (timing_path &&
              ((output_path && string_equals(timing_path, output_path)) ||
               (input_path && string_equals(timing_path, input_path)))))
-                return ul_bad_usage(
-                    "script", "log and timing paths must be distinct");
+                return string_report(log_error, 1, "%s: %s\n", "script", "log and timing paths must be distinct");
 
         string_address paths[] = {
             output_path, combined_path ? null : input_path, timing_path};
@@ -2285,7 +2279,7 @@ static b32 process_script()
             process_script_log_same(state.out, timing) ||
             process_script_log_same(state.in, timing))
         {
-                ul_bad_usage("script", "log files must name distinct objects");
+                string_report(log_error, 1, "%s: %s\n", "script", "log files must name distinct objects");
                 goto close_logs;
         }
 
@@ -2293,7 +2287,7 @@ static b32 process_script()
         if (!process_script_command_text(display, sizeof(display), command,
                                          command_first))
         {
-                ul_bad_usage("script", "command is too long");
+                string_report(log_error, 1, "%s: %s\n", "script", "command is too long");
                 goto close_logs;
         }
 
@@ -2637,13 +2631,11 @@ static b32 process_scriptreplay()
                 "[options] timingfile [typescript [divisor]]", address_of answer))
                 return answer;
         if (taking.flags & FILE_FLAG('S'))
-                return ul_bad_usage("scriptreplay",
-                                    "summary mode is not supported");
+                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "summary mode is not supported");
         if ((taking.flags & FILE_FLAG('B')) &&
             (taking.flags & (FILE_FLAG('I') | FILE_FLAG('O') |
                              FILE_FLAG('s'))))
-                return ul_bad_usage("scriptreplay",
-                                    "--log-io conflicts with separate logs");
+                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "--log-io conflicts with separate logs");
 
         string_address timing_path = file_option_value(address_of taking, 't');
         if (!timing_path)
@@ -2652,8 +2644,7 @@ static b32 process_scriptreplay()
         if (!timing_path)
         {
                 if (operand >= argument_count)
-                        return ul_bad_usage("scriptreplay",
-                                            "missing timing file");
+                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "missing timing file");
                 timing_path = program_argument((b32)operand++);
         }
 
@@ -2673,11 +2664,11 @@ static b32 process_scriptreplay()
         if (!divisor_text && operand < argument_count)
                 divisor_text = program_argument((b32)operand++);
         if (operand < argument_count)
-                return ul_bad_usage("scriptreplay", "extra operand");
+                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "extra operand");
         positive divisor = 1000000000;
         if (divisor_text &&
             (!file_duration_read(divisor_text, false, address_of divisor) || !divisor))
-                return ul_bad_usage("scriptreplay", "invalid divisor");
+                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid divisor");
 
         bool limited = false;
         positive maximum = 0;
@@ -2685,8 +2676,7 @@ static b32 process_scriptreplay()
         if (maximum_text)
         {
                 if (!file_duration_read(maximum_text, false, address_of maximum))
-                        return ul_bad_usage("scriptreplay",
-                                            "invalid maximum delay");
+                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid maximum delay");
                 limited = true;
         }
 
@@ -2699,16 +2689,13 @@ static b32 process_scriptreplay()
                 else if (string_equals(stream, (string_address)"in"))
                         selected = 'I';
                 else
-                        return ul_bad_usage(
-                            "scriptreplay",
-                            "only out and in streams are supported");
+                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "only out and in streams are supported");
         }
         else if (!out_path && in_path)
                 selected = 'I';
         if ((selected == 'O' && !out_path) ||
             (selected == 'I' && !in_path))
-                return ul_bad_usage("scriptreplay",
-                                    "selected stream has no log file");
+                return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "selected stream has no log file");
 
         p8 cr_mode = 0;
         string_address cr = file_option_value(address_of taking, 'c');
@@ -2719,7 +2706,7 @@ static b32 process_scriptreplay()
                 else if (string_equals(cr, (string_address)"always"))
                         cr_mode = 2;
                 else if (!string_equals(cr, (string_address)"auto"))
-                        return ul_bad_usage("scriptreplay", "invalid CR mode");
+                        return string_report(log_error, 1, "%s: %s\n", "scriptreplay", "invalid CR mode");
         }
 
         process_replay_reader timing, output, input;
@@ -2828,8 +2815,7 @@ static b32 process_pivot_root()
                             address_of answer))
                 return answer;
         if (taking.first + 2 != count)
-                return ul_bad_usage((string_address)"pivot_root",
-                                    (string_address)"expected new_root and put_old");
+                return string_report(log_error, 1, "%s: %s\n", (string_address)"pivot_root", (string_address)"expected new_root and put_old");
 
         string_address new_root = program_argument((b32)taking.first);
         string_address put_old = program_argument((b32)taking.first + 1);
@@ -2869,8 +2855,7 @@ static b32 process_ctrlaltdel()
         if (ul_options_done(address_of taking, "hard|soft", address_of answer))
                 return answer;
         if (taking.first + 1 != count)
-                return ul_bad_usage((string_address)"ctrlaltdel",
-                                    (string_address)"expected hard or soft");
+                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
 
         string_address mode = program_argument((b32)taking.first);
         positive command;
@@ -2880,8 +2865,7 @@ static b32 process_ctrlaltdel()
         else if (string_equals(mode, (string_address)"soft"))
                 command = PROCESS_REBOOT_CAD_OFF;
         else
-                return ul_bad_usage((string_address)"ctrlaltdel",
-                                    (string_address)"expected hard or soft");
+                return string_report(log_error, 1, "%s: %s\n", (string_address)"ctrlaltdel", (string_address)"expected hard or soft");
 
         bipolar changed = system_call_4(syscall(reboot), PROCESS_REBOOT_MAGIC,
                                         PROCESS_REBOOT_MAGIC_SECOND, command,

@@ -30,7 +30,7 @@ def capture(start, stop, offset=0):
                   'sha256':hashlib.sha256(block.encode()).hexdigest()})
     return block
 helper = capture('static bool sed_commit(', 'static b32 text_sed()')
-done = capture('static b32 text_done(b32 code)', '/*\n        A complaint')
+done = capture('static b32 text_done(b32 code)', '/*\n        One arena')
 tail = capture('                if (written >= 0)\n', '\n}\n\n/*\n        sort', source.index('static b32 text_sed()'))
 prefix = r'''
 #include <stdbool.h>
@@ -82,12 +82,10 @@ static bipolar system_link_at(int a, const char *from, int b, const char *to, in
     return real_files && link(from,to) ? -errno : 0;
 }
 static const char *file_reason(bipolar code) { return strerror((int)-code); }
-static bool text_error(const char *name, const char *reason) {
-    (void)name; if (!reason || !*reason) abort(); diagnostics++;
-    return false;
-}
-static b32 text_refuse(const char *name, const char *reason, b32 code) {
-    text_error(name, reason); return code;
+static const char text_diagnostic;
+static b32 string_diagnostic(const void *sink, b32 code, const char *name, const char *reason) {
+    (void)sink; (void)name; if (!reason || !*reason) abort(); diagnostics++;
+    return code;
 }
 static positive string_length(const char *s) { return strlen(s); }
 static bool string_equals(const char *a, const char *b) { return !strcmp(a,b); }

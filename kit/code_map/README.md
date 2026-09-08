@@ -6,6 +6,8 @@ The [native shared-floor profile](FREQUENCY_FLOOR.md) ranks remaining performanc
 work by measured CPU share and distinguishes it from static source reach.
 The [diagnostic fold](ERROR_FOLD.md) records the shared reporting entry, source
 and binary reductions, and preserved error-policy boundaries.
+The [wrapper-removal pass](WRAPPER_REMOVAL.md) removes the remaining thin
+diagnostic helpers and records the resulting source and binary tradeoffs.
 
 This is a source map for finding and costing architectural reductions. It joins
 the sealed production inventory to semantic classifications, source extents,
@@ -48,6 +50,7 @@ verdicts. Use the later implementation record when an earlier review says
 | [Counted regex and completion audit](REGEX_PROOF.md) | Applied in `92359fd` and `c6f5a6a`; 766 production lines removed, with recorded performance and resource tradeoffs. |
 | [General tidy](../../artifacts/general-tidy-2026-09-08/review.md) | Removes 46 further production lines and 172 source tokens: unused shell APIs/state and the previously proposed D13 dd operand table. Repairs stale sed state and lsblk include paths in maintained audit fixtures. |
 | [Storage and teardown repairs](../../artifacts/resolve-2026-09-08/review.md) | Reuses retired function-body ranges, streams mapfile records, and releases orphaned Canvas cursor buffers. Removes 69 production lines overall; adds 622 tokens for ownership and correctness checks. |
+| [Wrapper removal](WRAPPER_REMOVAL.md) | Removes 55 C functions, four logging macros and 449 production lines; centralizes diagnostic transport and prefix/flush selection in `library.c`. Callers gain 5,738 lexer tokens and the normal binary grows 11,248 bytes. |
 | [Diagnostic fold](ERROR_FOLD.md) | Removes 1,401 production lines and 830 lexer tokens. Adds one assembly entry sharing the formatter across three architectures; removes diagnostic aliases and repeated report/return blocks. |
 
 The [mapfile follow-up](../../artifacts/resolve-2026-09-08/mapfile/review.md)
@@ -83,9 +86,12 @@ The diagnostic pass remaps 2,090 location IDs and adds the reviewed assembly
 entry `string_report`. Twenty changed C bodies are conservatively returned to
 family classification: their diagnostic changes were reviewed, while the full
 surrounding functions were not re-reviewed in this pass.
+The stricter wrapper-removal pass deletes 55 C entries, adds three reviewed
+assembly entries and remaps 2,329 location IDs. Twelve changed bodies return to
+family classification because only their changed paths were re-reviewed.
 
 The source digest is
-`d1d85a493f8394abf7d80b5516495e6579613ef42e6598c7dbb774d4c12e80f2`.
+`d8de689ff75b9ffc10a557d80fa7f306d628c06533fe6fdb4c16766fbbd6785a`.
 The generated artifact records its checkout commit and each source file's
 SHA-256; during integration the digest identifies the working source even when
 the commit still names its baseline. The following measurements are pinned to
@@ -94,29 +100,29 @@ that source snapshot. Classification completeness is not correctness evidence.
 | Inventory | Count |
 | --- | ---: |
 | Production files | 81 |
-| Production physical lines | 191,006 |
-| Ordinary C bodies | 3,647 |
-| Generated C entries | 148 |
+| Production physical lines | 190,557 |
+| Ordinary C bodies | 3,594 |
+| Generated C entries | 146 |
 | C aliases | 100 |
-| Assembly symbols, including aliases; architecture variants grouped | 350 |
-| Total production symbols | **4,245** |
+| Assembly symbols, including aliases; architecture variants grouped | 353 |
+| Total production symbols | **4,193** |
 | Semantic production families | 403 |
-| Individually reviewed bodies | 252 |
-| Classifications derived from family context | 3,654 |
-| Classifications derived from aliases or generators | 339 |
+| Individually reviewed bodies | 241 |
+| Classifications derived from family context | 3,615 |
+| Classifications derived from aliases or generators | 337 |
 | Additional support entries | 1,575 |
 
 The map contains 146 source files including the consolidated support layer. Production
-C coverage equals the sealed 3,895-entry inventory exactly. The 350 assembly
-symbols comprise 336 in the library inclusion graph, eight additional platform
+C coverage equals the sealed 3,840-entry inventory exactly. The 353 assembly
+symbols comprise 339 in the library inclusion graph, eight additional platform
 signal/setjmp symbols, and six Canvas/kernel symbols. Architecture variants are
 shown inside each symbol. The additional platform symbols were outside the
 earlier library seal; they are now visible and explicitly classified.
 
 Every production entry has a family, role, responsibility, confidence and review
 basis. Family constraints are shared research requirements; individual contract
-notes are recorded where evidence supports them. The 252 reviewed bodies cover
-12,751 attributed lines, or 9.0% of all function-attributed source. Classification
+notes are recorded where evidence supports them. The 241 reviewed bodies cover
+11,088 attributed lines, or 7.9% of all function-attributed source. Classification
 coverage is complete against this inventory; individual body review is partial.
 Only the added reporting entry and its shared ABI boundary received a fresh
 three-architecture assembly review in this refresh.
@@ -173,7 +179,7 @@ architecture implementations and distinct conversion contracts.
 Source accounting conserves the whole tree:
 
 ```text
-191,006 production physical lines
+190,557 production physical lines
   = 141,297 attributed to function/symbol spans
   +  17,707 other code-bearing lines
   +  22,831 other comment lines

@@ -359,7 +359,7 @@ static bool cksum_crc_path(string_address path, p32 address_to result,
                 while (input == CKSUM_ERROR_INTERRUPTED);
 
                 if (input < 0)
-                        return text_error(path, file_reason(input));
+                        return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(input));
         }
 
         p32 crc = 0;
@@ -377,7 +377,7 @@ static bool cksum_crc_path(string_address path, p32 address_to result,
                 system_close((positive)input);
 
         if (got < 0)
-                return text_error(path, file_reason(got));
+                return string_diagnostic(address_of text_diagnostic, 0, path, file_reason(got));
 
         p64 length = bytes;
 
@@ -416,10 +416,7 @@ static b32 cksum_digest(const checksum_algorithm address_to algorithm)
         bipolar transform = checksum_kernel_open(algorithm);
 
         if (transform < 0)
-                return text_refuse(
-                    algorithm->type,
-                    "kernel AF_ALG hash support or requested algorithm is unavailable",
-                    1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm->type, "kernel AF_ALG hash support or requested algorithm is unavailable"));
 
         b32 answer = checksum_generate(algorithm, transform, 0, true);
         system_close((positive)transform);
@@ -444,7 +441,9 @@ static b32 cksum_main()
 
         text_begin("cksum");
 
-        if (!file_take(address_of taking) || !text_files_ready())
+        if (!file_take(address_of taking) ||
+            (text_files_failed && string_diagnostic(
+                address_of text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
         string_address algorithm = file_option_value(address_of taking, 'a');
@@ -459,10 +458,7 @@ static b32 cksum_main()
                         return cksum_digest(digest);
 #endif
 
-                return text_refuse(
-                    algorithm,
-                    "algorithm is not supported by the available checksum engine",
-                    1);
+                return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm, "algorithm is not supported by the available checksum engine"));
         }
 
         cksum_crc_prepare();

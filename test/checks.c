@@ -9919,9 +9919,92 @@ fn check_report()
         }
 }
 
+static string_address diagnostic_name = "early";
+static positive diagnostic_before_calls;
+
+static fn diagnostic_before()
+{
+        diagnostic_before_calls++;
+        catch_writer("!", 1);
+        diagnostic_name = "late";
+}
+
+fn check_diagnostic()
+{
+        const diagnostic sink = {catch_writer, diagnostic_before, &diagnostic_name};
+        const diagnostic plain = {catch_writer, null, &diagnostic_name};
+        static b32 results[] = {0, 1, -1, -2147483647 - 1, 2147483647};
+        static string_address subjects[] = {null, "", "subject%"};
+        b8 expected[256];
+        for (positive i = 0; i < array_count(results); i++)
+                for (positive j = 0; j < array_count(subjects); j++)
+                {
+                        catch_reset();
+                        catch_writer("!", 1);
+                        string_format(catch_writer,
+                            subjects[j] ? "%s: %s: %s\n" : "%s: %s\n",
+                            "late", subjects[j] ? subjects[j] : (string_address)"reason%", "reason%");
+                        positive length = caught_length, calls = caught_calls;
+                        memory_copy(expected, caught, length + 1);
+                        catch_reset();
+                        diagnostic_name = "early";
+                        diagnostic_before_calls = 0;
+                        same("string_diagnostic", "result survives before and writes",
+                            (positive)(bipolar)string_diagnostic(&sink, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "one before call", diagnostic_before_calls, 1);
+                        same("string_diagnostic", "writer call count", caught_calls, calls);
+                        same("string_diagnostic", "output length", caught_length, length);
+                        same_bytes("string_diagnostic", "prefix read after before",
+                                   caught, expected, length + 1);
+                        catch_reset();
+                        same("string_diagnostic", "optional before",
+                            (positive)(bipolar)string_diagnostic(&plain, results[i], subjects[j], "reason%"),
+                            (positive)(bipolar)results[i]);
+                        same("string_diagnostic", "no before call", diagnostic_before_calls, 1);
+                        same_bytes("string_diagnostic", "plain output", caught, expected + 1, length);
+                }
+
+        b32 pipes[2];
+        bipolar saved = system_call_1(syscall(dup), 2);
+        bipolar opened = system_call_2(syscall(pipe2), (positive)pipes, 2048);
+        same("stderr writers", "pipe setup", opened, 0);
+        if (opened < 0 || saved < 0)
+        {
+                if (saved >= 0) system_call_1(syscall(close), saved);
+                if (opened == 0)
+                {
+                        system_call_1(syscall(close), pipes[0]);
+                        system_call_1(syscall(close), pipes[1]);
+                }
+                return;
+        }
+        bipolar rebound = system_call_3(syscall(dup3), pipes[1], 2, 0);
+        same("stderr writers", "stderr binding", rebound, 2);
+        if (rebound == 2)
+        {
+                positive buffered = log_writer_buffer_length;
+                writer_stderr("alpha", 0);
+                writer_stderr_once("x\0z", 3);
+                writer_stderr("", 0);
+                writer_stderr_once("", 0);
+                same("stderr writers", "no implicit flush", log_writer_buffer_length, buffered);
+        }
+        system_call_3(syscall(dup3), saved, 2, 0);
+        system_call_1(syscall(close), saved);
+        system_call_1(syscall(close), pipes[1]);
+        b8 bytes[16];
+        bipolar read = system_call_3(syscall(read), pipes[0], (positive)bytes, sizeof bytes);
+        same("stderr writers", "exact and terminated spans", read, 8);
+        if (read == 8)
+                same_bytes("stderr writers", "embedded NUL", bytes, "alphax\0z", 8);
+        system_call_1(syscall(close), pipes[0]);
+}
+
 fn check_format()
 {
         check_report();
+        check_diagnostic();
         // string_format drives most of what anything here prints, so the check
         // is over what it emits rather than over a return value it has none of.
         catch_reset();

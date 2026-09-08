@@ -682,13 +682,6 @@ static bool path_walk_join(p8 address_to into, positive room,
 
 CONST RETURNS_NONNULL string_address file_reason(bipolar code);
 
-static COLD fn file_too_long(string_address program, string_address verb,
-                             string_address directory, string_address name)
-{
-        string_format(log_error, "%s: %s '%s/%s': %s\n", program, verb,
-                      directory, name, file_reason(-ERROR_NAME_TOO_LONG));
-}
-
 /* Claim an exclusive temporary name beside a destination, so the eventual
    rename cannot cross a filesystem.  Editors and in-place text filters need
    the same retry machine; only their marker, nonce and creation mode differ. */
@@ -1947,7 +1940,6 @@ bool file_moment_read(string_address text, b64 now, b64 address_to out)
         return file_moment_read_exact(text, now, out, address_of nanoseconds);
 }
 
-
 // Walking directories ---------------------------------------
 
 typedef struct
@@ -2043,8 +2035,7 @@ static bool file_walk_pair(file_walk address_to walk, string_address program,
                 if (!file_path_join(from, source, entry->d_name) ||
                     !file_path_join(to, destination, entry->d_name))
                 {
-                        file_too_long(program, (string_address) "cannot copy",
-                                      source, entry->d_name);
+                        string_format(log_error, "%s: %s '%s/%s': %s\n", program, (string_address) "cannot copy", source, entry->d_name, file_reason(-ERROR_NAME_TOO_LONG));
                         address_to skipped += 1;
                         continue;
                 }
@@ -2111,8 +2102,7 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
                 if (!file_path_join(below, shown, entry->d_name))
                 {
-                        file_too_long(program, (string_address) "cannot access",
-                                      shown, entry->d_name);
+                        string_format(log_error, "%s: %s '%s/%s': %s\n", program, (string_address) "cannot access", shown, entry->d_name, file_reason(-ERROR_NAME_TOO_LONG));
                         address_to status = 1;
                         continue;
                 }
@@ -2171,17 +2161,6 @@ CONST positive file_letter_bit(p8 letter)
 
 #define FILE_FLAG(letter) ((positive)1 << file_letter_bit(letter))
 
-static COLD bool file_complain(string_address program, string_address message, string_address subject)
-{
-        return string_report(log_error, false, "%s: %s: %s\n", program, subject, message);
-}
-
-// What every tool says when it was given nothing to work on, and the status
-// each of them answers with.
-static COLD b32 file_missing(string_address program)
-{
-        return string_report(log_error, 1, "%s: missing operand\n", program);
-}
 
 /*
         The question -i asks before something is destroyed.
@@ -2353,11 +2332,6 @@ static fn file_option_supersede(file_taking address_to taking, p8 letter)
                         address_to taking->supersedes[i].into = letter;
 }
 
-static bool file_option_needs(file_taking address_to taking, string_address word)
-{
-        return file_complain(taking->program, "option needs an argument", word);
-}
-
 static p8 file_long_letter(file_taking address_to taking, string_address name,
                            positive length)
 {
@@ -2435,14 +2409,13 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 p8 named[3] = {'-', letter, end};
                 string_address shown = long_option ? cursor.word : named;
                 if (!letter || (!long_option && !string_first_of(taking->allowed, letter)))
-                        return file_complain(taking->program,
-                                      long_option ? "unrecognized option" : "invalid option", shown);
+                        return string_report(log_error, false, "%s: %s: %s\n", taking->program, shown, long_option ? "unrecognized option" : "invalid option");
                 positive bit = file_letter_bit(letter);
                 bool optional = file_option_among(taking->optional, letter) ||
                     (long_option && file_option_among(taking->long_optional, letter));
                 bool valued = file_option_among(taking->valued, letter);
                 if (cursor.attached && !optional && !valued)
-                        return file_complain(taking->program, "option does not allow an argument", shown);
+                        return string_report(log_error, false, "%s: %s: %s\n", taking->program, shown, "option does not allow an argument");
                 taking->flags |= (positive)1 << bit;
                 /* Short options supersede before missing-value errors; long
                    options do so only after their values have been accepted. */
@@ -2455,7 +2428,7 @@ static bool file_take_from(file_taking address_to taking, positive index)
                         if (value)
                                 taking->value[bit] = value;
                         else if (!optional)
-                                return file_option_needs(taking, shown);
+                                return string_report(log_error, false, "%s: %s: %s\n", (taking)->program, shown, "option needs an argument");
                         else
                         {
                                 taking->bare |= (positive)1 << bit;
@@ -3026,7 +2999,7 @@ static bool file_source_destination(string_address program, positive first,
 
         if (first >= count || (!into && first + 1 >= count))
         {
-                file_missing(program);
+                string_report(log_error, 1, "%s: missing operand\n", program);
                 return false;
         }
 
@@ -3064,8 +3037,7 @@ static bool file_source_destination(string_address program, positive first,
 
                 if (!file_path_join(destination, last, tail))
                 {
-                        file_too_long(program, (string_address) "cannot create", last,
-                                      tail);
+                        string_format(log_error, "%s: %s '%s/%s': %s\n", program, (string_address) "cannot create", last, tail, file_reason(-ERROR_NAME_TOO_LONG));
                         complete = false;
                         continue;
                 }
@@ -4010,9 +3982,7 @@ static fn ls_print(string_address directory)
 
                         if (!fits)
                         {
-                                file_too_long(ls_program,
-                                              (string_address) "cannot read symbolic link",
-                                              directory, name);
+                                string_format(log_error, "%s: %s '%s/%s': %s\n", ls_program, (string_address) "cannot read symbolic link", directory, name, file_reason(-ERROR_NAME_TOO_LONG));
                                 ls_status = 1;
                         }
                         else if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
@@ -4197,8 +4167,7 @@ static fn ls_below(string_address path, positive depth)
 
                 if (!file_path_join(below, path, name))
                 {
-                        file_too_long(ls_program, (string_address) "cannot open directory",
-                                      path, name);
+                        string_format(log_error, "%s: %s '%s/%s': %s\n", ls_program, (string_address) "cannot open directory", path, name, file_reason(-ERROR_NAME_TOO_LONG));
                         ls_status = 1;
                         continue;
                 }
@@ -5926,9 +5895,7 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
 
                                 if (!file_path_join(below, path, held))
                                 {
-                                        file_too_long((string_address) "find",
-                                                      (string_address) "cannot access",
-                                                      path, held);
+                                        string_format(log_error, "%s: %s '%s/%s': %s\n", (string_address) "find", (string_address) "cannot access", path, held, file_reason(-ERROR_NAME_TOO_LONG));
                                         find_status = 1;
                                         continue;
                                 }
@@ -6470,7 +6437,7 @@ static b32 file_stat()
         stat_file_system = (taking.flags & FILE_FLAG('f')) != 0;
 
         if (index >= count)
-                return file_missing((string_address) "stat");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "stat");
 
         while (index < count)
         {
@@ -6773,9 +6740,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
                         if (!file_path_join(under, path, entry->d_name))
                         {
-                                file_too_long((string_address) "du",
-                                              (string_address) "cannot access", path,
-                                              entry->d_name);
+                                string_format(log_error, "%s: %s '%s/%s': %s\n", (string_address) "du", (string_address) "cannot access", path, entry->d_name, file_reason(-ERROR_NAME_TOO_LONG));
                                 du_status = 1;
                                 continue;
                         }
@@ -7542,12 +7507,12 @@ static b32 file_chmod()
         if (minus_mode)
         {
                 if (first >= count)
-                        return file_missing((string_address) "chmod");
+                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "chmod");
 
                 chmod_specification = minus_mode;
         }
         else if (first >= count || (!chmod_referenced && first + 1 >= count))
-                return file_missing((string_address) "chmod");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "chmod");
         else if (!chmod_referenced)
                 chmod_specification = program_argument((b32)first++);
 
@@ -7965,7 +7930,7 @@ static b32 file_ln()
         ln_through = ln_dereference_option == 'L';
 
         if (first >= count)
-                return file_missing((string_address) "ln");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "ln");
 
         string_address into = file_option_value(address_of taking, 't');
         bool alone = (flags & FILE_FLAG('T')) != 0;
@@ -8015,9 +7980,7 @@ static b32 file_ln()
 
                 if (!file_path_join(name, last, tail))
                 {
-                        file_too_long((string_address) "ln",
-                                      (string_address) "failed to create link", last,
-                                      tail);
+                        string_format(log_error, "%s: %s '%s/%s': %s\n", (string_address) "ln", (string_address) "failed to create link", last, tail, file_reason(-ERROR_NAME_TOO_LONG));
                         status = 1;
                         continue;
                 }
@@ -8956,7 +8919,7 @@ static b32 file_readlink()
         positive flags = taking.flags;
 
         if (first >= count)
-                return file_missing((string_address) "readlink");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "readlink");
 
         bool resolve = readlink_canonical_option != 0;
         bool no_newline = (flags & FILE_FLAG('n')) != 0;
@@ -9111,7 +9074,7 @@ static b32 file_basename()
         bool many = (taking.flags & (FILE_FLAG('a') | FILE_FLAG('s'))) != 0;
 
         if (index >= count)
-                return file_missing((string_address) "basename");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "basename");
 
         if (!many && index + 1 < count)
                 suffix = program_argument((b32)(index + 1));
@@ -9196,7 +9159,7 @@ static b32 file_dirname()
         positive count = (positive)program_argument_count();
 
         if (first >= count)
-                return file_missing((string_address) "dirname");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "dirname");
 
         while (first < count)
                 dirname_one(program_argument((b32)first++),
@@ -9362,7 +9325,7 @@ static b32 file_realpath()
         positive count = (positive)program_argument_count();
 
         if (first >= count)
-                return file_missing((string_address) "realpath");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "realpath");
 
         bool allow_missing = realpath_missing_option == 'm';
         bool written_name = (taking.flags & FILE_FLAG('s')) != 0;
@@ -9483,11 +9446,6 @@ static const file_long pathchk_longs[] = {
     {null, 0},
 };
 
-static COLD bool pathchk_bad(string_address path, string_address why)
-{
-        return string_report(log_error, false, "pathchk: %s: '%s'\n", why, path);
-}
-
 static bool pathchk_portable_chars(string_address path, positive length)
 {
         static b8 portable[STRING_SET_BYTES];
@@ -9510,7 +9468,7 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         positive length = string_length(path);
 
         if ((basic || extra) && !length)
-                return pathchk_bad(path, (string_address) "empty file name");
+                return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "empty file name", path);
 
         positive at = 0;
         positive longest = 0;
@@ -9526,8 +9484,7 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 positive component = (positive)(stop - path) - at;
 
                 if (extra && string_is(path + at, '-'))
-                        return pathchk_bad(path,
-                                           (string_address) "leading '-' in a component");
+                        return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "leading '-' in a component", path);
 
                 if (component > longest)
                         longest = component;
@@ -9536,17 +9493,15 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
         }
 
         if (basic && !pathchk_portable_chars(path, length))
-                return pathchk_bad(path, (string_address) "non-portable character");
+                return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "non-portable character", path);
 
         if (basic)
         {
                 if (length >= PATHCHK_POSIX_PATH)
-                        return pathchk_bad(path,
-                                           (string_address) "portable path limit exceeded");
+                        return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "portable path limit exceeded", path);
 
                 if (longest > PATHCHK_POSIX_NAME)
-                        return pathchk_bad(path,
-                                           (string_address) "portable component limit exceeded");
+                        return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "portable component limit exceeded", path);
 
                 return true;
         }
@@ -9560,10 +9515,10 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 return true;
 
         if (looked != -ERROR_NO_ENTRY || !length)
-                return pathchk_bad(path, file_reason(looked));
+                return string_report(log_error, false, "pathchk: %s: '%s'\n", file_reason(looked), path);
 
         if (length >= FILE_PATH_MAX)
-                return pathchk_bad(path, (string_address) "path limit exceeded");
+                return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "path limit exceeded", path);
 
         // Linux promises at least fourteen bytes in every component. Only a
         // longer one needs the mount-specific f_namelen walk.
@@ -9580,7 +9535,7 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                                         (positive)address_of mount);
 
         if (mounted < 0)
-                return pathchk_bad(path, file_reason(mounted));
+                return string_report(log_error, false, "pathchk: %s: '%s'\n", file_reason(mounted), path);
 
         if (mount.name_length > 0)
                 name_max = (positive)mount.name_length;
@@ -9601,8 +9556,7 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 positive component = (positive)(stop - path) - at;
 
                 if (component > name_max)
-                        return pathchk_bad(path,
-                                           (string_address) "component limit exceeded");
+                        return string_report(log_error, false, "pathchk: %s: '%s'\n", (string_address) "component limit exceeded", path);
 
                 if (filled && prefix[filled - 1] != '/')
                         prefix[filled++] = '/';
@@ -9617,7 +9571,7 @@ static bool pathchk_one(string_address path, bool basic, bool extra)
                 if (!mounted && mount.name_length > 0)
                         name_max = (positive)mount.name_length;
                 else if (mounted < 0 && mounted != -ERROR_NO_ENTRY)
-                        return pathchk_bad(path, file_reason(mounted));
+                        return string_report(log_error, false, "pathchk: %s: '%s'\n", file_reason(mounted), path);
 
                 at += component;
         }
@@ -9641,7 +9595,7 @@ static b32 file_pathchk()
         positive first = taking.first;
 
         if (first >= count)
-                return file_missing((string_address) "pathchk");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "pathchk");
 
         bool basic = (taking.flags &
                       (FILE_FLAG('p') | FILE_FLAG('Q'))) != 0;
@@ -9684,7 +9638,7 @@ static b32 file_mkdir()
                 return string_report(log_error, 1, "mkdir: bad mode\n");
 
         if (index >= count)
-                return file_missing((string_address) "mkdir");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkdir");
 
         b32 status = 0;
 
@@ -9698,9 +9652,7 @@ static b32 file_mkdir()
                         // directory that was named gets the mode asked for.
                         if (!file_make_parents(path, 0777))
                         {
-                                file_complain((string_address) "mkdir",
-                                              (string_address) "Cannot create directory",
-                                              path);
+                                string_report(log_error, false, "%s: %s: %s\n", (string_address) "mkdir", path, (string_address) "Cannot create directory");
                                 status = 1;
                                 continue;
                         }
@@ -9815,7 +9767,7 @@ static b32 file_mkfifo()
                 return 1;
 
         if (!file_operand_count)
-                return file_missing((string_address) "mkfifo");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "mkfifo");
 
         b32 status = 0;
 
@@ -11496,8 +11448,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
             !file_look(handle, (string_address) "", AT_EMPTY_PATH,
                        address_of facts))
         {
-                file_complain((string_address) "truncate", (string_address) "cannot stat",
-                              path);
+                string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "cannot stat");
                 system_close(handle);
                 return false;
         }
@@ -11509,8 +11460,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 if (!block || size > b64_max / (b64)block ||
                     size < b64_min / (b64)block)
                 {
-                        file_complain((string_address) "truncate", (string_address) "size overflow",
-                                      path);
+                        string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "size overflow");
                         system_close(handle);
                         return false;
                 }
@@ -11555,8 +11505,7 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
 
         if (overflow)
         {
-                file_complain((string_address) "truncate", (string_address) "size overflow",
-                              path);
+                string_report(log_error, false, "%s: %s: %s\n", (string_address) "truncate", path, (string_address) "size overflow");
                 system_close(handle);
                 return false;
         }
@@ -12359,7 +12308,7 @@ static b32 file_hardlink()
                       "  -s MIN  -S MAX  -f respect name", log))
                 return 0;
         if (!file_operand_count)
-                return file_missing((string_address)"hardlink");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address)"hardlink");
 
         if (taking.flags & FILE_FLAG('R'))
         {
@@ -12895,7 +12844,7 @@ static b32 file_shred()
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (!file_operand_count)
-                return file_missing((string_address) "shred");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "shred");
 
         if (file_option_value(address_of taking, 'R'))
                 return string_report(log_error, 1, "shred: --random-source is unsupported; kernel randomness is mandatory\n");
@@ -13008,17 +12957,10 @@ static positive shuf_uniform(file_random_state address_to random,
         return (positive)(value % width);
 }
 
-static COLD bool shuf_output_failed(shuf_output address_to output)
-{
-        return string_report(log_error, false, "shuf: write error%s%s\n",
-                      output->name ? (string_address)" on " : (string_address)"",
-                      output->name ? output->name : (string_address)"");
-}
-
 static bool shuf_output_flush(shuf_output address_to output)
 {
         return buffered_flush((positive)output->handle, file_transfer,
-                               address_of output->used) || shuf_output_failed(output);
+                               address_of output->used) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
 }
 
 static bool shuf_output_send(shuf_output address_to output,
@@ -13026,7 +12968,7 @@ static bool shuf_output_send(shuf_output address_to output,
 {
         return buffered_write((positive)output->handle, file_transfer,
                                sizeof(file_transfer), address_of output->used,
-                               bytes, length) || shuf_output_failed(output);
+                               bytes, length) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
 }
 
 static bool shuf_output_record(shuf_output address_to output,
@@ -13038,7 +12980,7 @@ static bool shuf_output_record(shuf_output address_to output,
                     (positive)output->handle, file_transfer, sizeof(file_transfer),
                     address_of output->used, record->length + 1);
                 if (!bytes)
-                        return shuf_output_failed(output);
+                        return string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)"");
                 memory_copy_apart(bytes, record->text, record->length);
                 bytes[record->length] = delimiter;
                 return true;
@@ -13046,7 +12988,7 @@ static bool shuf_output_record(shuf_output address_to output,
         return shuf_output_send(output, record->text, record->length) &&
                (buffered_write_byte((positive)output->handle, file_transfer,
                                      sizeof(file_transfer), address_of output->used,
-                                     delimiter) || shuf_output_failed(output));
+                                     delimiter) || string_report(log_error, false, "shuf: write error%s%s\n", output->name ? (string_address)" on " : (string_address)"", output->name ? output->name : (string_address)""));
 }
 
 static bool shuf_output_number(shuf_output address_to output, positive number,
@@ -13957,7 +13899,7 @@ static b32 file_rmdir()
         positive first = taking.first;
 
         if (first >= count)
-                return file_missing((string_address) "rmdir");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "rmdir");
 
         b32 status = 0;
 
@@ -14126,11 +14068,6 @@ static bool cp_allowed(string_address destination, file_facts address_to facts)
         return true;
 }
 
-static fn cp_said(string_address source, string_address destination)
-{
-        if (cp_loud)
-                string_format(log, "'%s' -> '%s'\n", source, destination);
-}
 
 // -l and -s make a name for the file rather than a copy of it, and neither
 // has anything to say about a directory: with -r the directory is still made
@@ -14160,7 +14097,8 @@ static bool cp_linked(string_address source, string_address destination)
                 return string_report(log_error, false, "cp: cannot create link '%s': %s\n",
                               destination, file_reason(done));
 
-        cp_said(source, destination);
+        if (cp_loud)
+                string_format(log, "'%s' -> '%s'\n", source, destination);
 
         return true;
 }
@@ -14328,8 +14266,8 @@ static bool file_copy_one(string_address source, string_address destination,
                 return false;
         }
 
-        if (!moving)
-                cp_said(source, destination);
+        if (!moving && cp_loud)
+                string_format(log, "'%s' -> '%s'\n", source, destination);
 
         bool complete = true;
         positive skipped = 0;
@@ -14372,7 +14310,8 @@ copied:
                 file_keep(destination, address_of facts);
         if (!moving)
         {
-                cp_said(source, destination);
+                if (cp_loud)
+                        string_format(log, "'%s' -> '%s'\n", source, destination);
                 return true;
         }
 
@@ -14655,9 +14594,9 @@ static b32 file_install()
         if (directories)
         {
                 if (into || (flags & (FILE_FLAG('D') | FILE_FLAG('T'))))
-                        return file_missing((string_address) "install");
+                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "install");
                 if (taking.first >= count)
-                        return file_missing((string_address) "install");
+                        return string_report(log_error, 1, "%s: missing operand\n", (string_address) "install");
 
                 for (positive at = taking.first; at < count; at++)
                 {
@@ -14873,14 +14812,6 @@ static string_address rm_wording(file_facts address_to facts)
                            : (string_address) "remove regular empty file";
 }
 
-static fn rm_said(string_address shown, bool directory)
-{
-        if (!rm_loud)
-                return;
-
-        string_format(log, directory ? "removed directory '%s'\n" : "removed '%s'\n",
-                      shown);
-}
 
 static bool rm_contents(bipolar directory, string_address shown, positive depth)
 {
@@ -14926,9 +14857,7 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                         if (!file_path_join(below, shown, entry->d_name))
                         {
-                                file_too_long((string_address) "rm",
-                                              (string_address) "cannot remove", shown,
-                                              entry->d_name);
+                                string_format(log_error, "%s: %s '%s/%s': %s\n", (string_address) "rm", (string_address) "cannot remove", shown, entry->d_name, file_reason(-ERROR_NAME_TOO_LONG));
                                 rm_status = 1;
                                 complete = false;
                                 continue;
@@ -14999,7 +14928,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
 
                 if (tried == 0)
                 {
-                        rm_said(shown, false);
+                        if (rm_loud)
+                                string_format(log, "removed '%s'\n", shown);
                         return true;
                 }
         }
@@ -15110,7 +15040,8 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 return false;
         }
 
-        rm_said(shown, true);
+        if (rm_loud)
+                string_format(log, "removed directory '%s'\n", shown);
 
         return complete;
 }
@@ -15161,7 +15092,7 @@ static b32 file_rm()
                 if (rm_force)
                         return 0;
 
-                return file_missing((string_address) "rm");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "rm");
         }
 
         if (rm_preserve_root)
@@ -15582,7 +15513,7 @@ static b32 file_sleep()
         positive count = (positive)program_argument_count();
 
         if (count < 2)
-                return file_missing((string_address) "sleep");
+                return string_report(log_error, 1, "%s: missing operand\n", (string_address) "sleep");
 
         for (positive i = 1; i < count; i++)
         {

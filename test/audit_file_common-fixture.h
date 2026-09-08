@@ -37,6 +37,7 @@
 #define FILE_BLOCK 4096
 #define FILE_SEEK_SET 0
 #define ERROR_NO_ENTRY 2
+#define ERROR_NAME_TOO_LONG 36
 #define ERROR_NOT_EMPTY 39
 #define UTIME_NOW 0x3fffffff
 #define UTIME_OMIT 0x3ffffffe
