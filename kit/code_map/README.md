@@ -2,6 +2,8 @@
 
 The [regex implementation audit](REGEX_PROOF.md) records the counted-graph fold,
 its complete source accounting, regression evidence and runtime tradeoffs.
+The [native shared-floor profile](FREQUENCY_FLOOR.md) ranks remaining performance
+work by measured CPU share and distinguishes it from static source reach.
 
 This is a source map for finding and costing architectural reductions. It joins
 the sealed production inventory to semantic classifications, source extents,
