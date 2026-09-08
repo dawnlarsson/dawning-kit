@@ -241,44 +241,58 @@ class Case:
 def covering_array(parameters, strength, rng):
     """Rows over parameter value indexes so every strength-tuple appears.
 
-    Greedy: each new row is the best of a handful of seeded candidates by
-    the number of still-uncovered tuples it hits. Deterministic for a seed,
-    and small -- a dozen options with two values each cover in about ten
-    rows, where the product is thousands."""
+    Greedy: each new row starts as the best of a handful of seeded candidates
+    by the number of still-uncovered tuples it hits, then is improved one
+    column at a time, re-scoring only the column combinations that column
+    takes part in. Deterministic for a seed, and small -- a dozen options
+    with two values each cover pairwise in about fifteen rows, thirty
+    three-valued options cover three-wise in about a hundred and twenty,
+    where the products are thousands and millions."""
     sizes = [len(values) for values in parameters]
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
-    uncovered = set()
-    for columns in itertools.combinations(range(len(sizes)), strength):
-        for values in itertools.product(*(range(sizes[c]) for c in columns)):
-            uncovered.add((columns, values))
+    combos = list(itertools.combinations(range(len(sizes)), strength))
+    uncovered = {c: set(itertools.product(*(range(sizes[i]) for i in c))) for c in combos}
+    by_column = {i: [c for c in combos if i in c] for i in range(len(sizes))}
+    remaining = sum(len(tuples) for tuples in uncovered.values())
+
+    def hits(row, chosen):
+        return sum(1 for c in chosen if tuple(row[i] for i in c) in uncovered[c])
+
     rows = []
-    while uncovered:
+    while remaining:
         best, best_hits = None, -1
-        for _ in range(24):
+        for _ in range(8):
             row = [rng.randrange(size) for size in sizes]
-            hits = sum(1 for columns, values in uncovered
-                       if all(row[c] == v for c, v in zip(columns, values)))
-            if hits > best_hits:
-                best, best_hits = row, hits
-        # Improve the candidate greedily one column at a time.
+            score = hits(row, combos)
+            if score > best_hits:
+                best, best_hits = row, score
         for column in rng.sample(range(len(sizes)), len(sizes)):
+            chosen = by_column[column]
+            current = hits(best, chosen)
             for value in range(sizes[column]):
+                if value == best[column]:
+                    continue
                 trial = list(best)
                 trial[column] = value
-                hits = sum(1 for columns, values in uncovered
-                           if all(trial[c] == v for c, v in zip(columns, values)))
-                if hits > best_hits:
-                    best, best_hits = trial, hits
-        if best_hits <= 0:
-            columns, values = next(iter(uncovered))
-            best = [0] * len(sizes)
-            for c, v in zip(columns, values):
-                best[c] = v
+                score = hits(trial, chosen)
+                if score > current:
+                    best, current = trial, score
+        if hits(best, combos) == 0:
+            # Nothing random reached the last tuples: take one directly.
+            for c in combos:
+                if uncovered[c]:
+                    values = next(iter(sorted(uncovered[c])))
+                    for i, v in zip(c, values):
+                        best[i] = v
+                    break
+        for c in combos:
+            key = tuple(best[i] for i in c)
+            if key in uncovered[c]:
+                uncovered[c].discard(key)
+                remaining -= 1
         rows.append(best)
-        uncovered = {(columns, values) for columns, values in uncovered
-                     if not all(best[c] == v for c, v in zip(columns, values))}
     return rows
 
 
