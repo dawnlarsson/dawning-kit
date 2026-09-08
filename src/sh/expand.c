@@ -1526,7 +1526,7 @@ static COLD string_address expand_absent_value(string_address name,
                 return env_get_hashed_span(name, answer.y, answer.x,
                                            value_length);
 
-        return shell_dynamic_value(name, answer.y, answer.x, value_length);
+        return shell_dynamic_value(name, answer.y, value_length);
 }
 
 static string_address expand_value_of(expand_reference reference, p8 address_to scratch,

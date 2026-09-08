@@ -9,10 +9,10 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
 workspace = None if len(sys.argv) > 1 else tempfile.TemporaryDirectory(prefix="audit-util-results-")
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(workspace.name)
 OUT.mkdir(parents=True, exist_ok=True)

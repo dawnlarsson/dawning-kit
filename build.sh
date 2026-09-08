@@ -363,7 +363,7 @@ wgcVXSeiHcXa9SSFDvKn0L1q5nSLQGHp38qUi1ZPf/1uQSuB3ME=
                         #       serial is last on purpose, and it is not
                         #       optional.
                         #
-                        #       test/boot.sh drives the image over a
+                        #       the boot lane of test/run drives the image over a
                         #       serial line and reads its answers back, so a
                         #       default image without CONFIG_SERIAL_8250 has
                         #       no way to be tested at all: the kernel comes
