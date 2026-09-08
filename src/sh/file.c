@@ -4924,6 +4924,17 @@ static b32 find_status;
 static b64 find_moment;
 static p64 find_device;
 
+// The directories entered while following links, by identity, one per
+// level: a link back into one of them is the cycle it is, reported and left
+// alone, rather than a tree walked to the frame ceiling.
+typedef struct
+{
+        p64 device;
+        p64 inode;
+} find_ancestor;
+
+static find_ancestor find_ancestors[FILE_MAX_DEPTH + 1];
+
 static string_address find_path;
 static string_address find_name;
 static file_facts address_to find_facts;
@@ -5917,6 +5928,30 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
                 find_device = file_device_key(facts.device_major, facts.device_minor);
 
         bool directory = (facts.mode & MODE_FORMAT) == MODE_DIRECTORY;
+
+        if (directory && follow && depth <= FILE_MAX_DEPTH)
+        {
+                if (!find_facts_ready())
+                        return;
+
+                p64 device = file_device_key(facts.device_major, facts.device_minor);
+
+                for (positive above = 0; above < depth; above++)
+                        if (find_ancestors[above].device == device &&
+                            find_ancestors[above].inode == facts.inode)
+                        {
+                                string_format(file_fail,
+                                              "find: File system loop detected; the following "
+                                              "directory is part of the cycle: '%s'\n",
+                                              path);
+                                find_status = 1;
+                                return;
+                        }
+
+                find_ancestors[depth].device = device;
+                find_ancestors[depth].inode = facts.inode;
+        }
+
         bool wanted = depth >= find_minimum && depth <= find_maximum;
 
         if (!find_deepest && wanted)

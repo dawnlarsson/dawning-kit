@@ -47,6 +47,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import concurrent.futures
 
 HERE = Path(__file__).resolve().parent
@@ -249,36 +250,52 @@ def covering_array(parameters, strength, rng):
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
-    uncovered = set()
-    for columns in itertools.combinations(range(len(sizes)), strength):
-        for values in itertools.product(*(range(sizes[c]) for c in columns)):
-            uncovered.add((columns, values))
+    # Uncovered value tuples, kept per column tuple: a row is scored by
+    # looking its own values up in each group rather than by testing every
+    # uncovered tuple against it, and changing one column touches only the
+    # groups that column is in.
+    groups = list(itertools.combinations(range(len(sizes)), strength))
+    uncovered = {columns: set(itertools.product(*(range(sizes[c]) for c in columns)))
+                 for columns in groups}
+    by_column = collections.defaultdict(list)
+    for columns in groups:
+        for c in columns:
+            by_column[c].append(columns)
+    remaining = sum(len(values) for values in uncovered.values())
+
+    def hits(row, among):
+        return sum(1 for columns in among
+                   if tuple(row[c] for c in columns) in uncovered[columns])
+
     rows = []
-    while uncovered:
+    while remaining:
         best, best_hits = None, -1
         for _ in range(24):
             row = [rng.randrange(size) for size in sizes]
-            hits = sum(1 for columns, values in uncovered
-                       if all(row[c] == v for c, v in zip(columns, values)))
-            if hits > best_hits:
-                best, best_hits = row, hits
+            count = hits(row, groups)
+            if count > best_hits:
+                best, best_hits = row, count
         # Improve the candidate greedily one column at a time.
         for column in rng.sample(range(len(sizes)), len(sizes)):
+            local = hits(best, by_column[column])
             for value in range(sizes[column]):
                 trial = list(best)
                 trial[column] = value
-                hits = sum(1 for columns, values in uncovered
-                           if all(trial[c] == v for c, v in zip(columns, values)))
-                if hits > best_hits:
-                    best, best_hits = trial, hits
-        if best_hits <= 0:
-            columns, values = next(iter(uncovered))
+                count = hits(trial, by_column[column])
+                if count > local:
+                    best, local = trial, count
+        if hits(best, groups) <= 0:
+            columns = next(columns for columns in groups if uncovered[columns])
+            values = next(iter(uncovered[columns]))
             best = [0] * len(sizes)
             for c, v in zip(columns, values):
                 best[c] = v
         rows.append(best)
-        uncovered = {(columns, values) for columns, values in uncovered
-                     if not all(best[c] == v for c, v in zip(columns, values))}
+        for columns in groups:
+            key = tuple(best[c] for c in columns)
+            if key in uncovered[columns]:
+                uncovered[columns].discard(key)
+                remaining -= 1
     return rows
 
 
@@ -404,6 +421,14 @@ def _limits():
 
 
 def write_fixture(directory, fixture):
+    """Entries: bytes, ("link", target[, stamp]), ("dir"[, mode[, stamp]]),
+    ("mode", bytes, mode[, stamp]) or ("hard", source). A stamp is an epoch
+    or an (atime, mtime) pair, so a listing's dates and a walk's ages are the
+    same on both runs; "." names the directory itself. Stamps and directory
+    modes are applied last, deepest first: making an entry moves its
+    directory's time, and a directory without search permission hides what
+    is below it."""
+    later = []
     for name, contents in FIXTURES[fixture].items():
         path = directory / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -411,18 +436,31 @@ def write_fixture(directory, fixture):
             kind = contents[0]
             if kind == "link":
                 path.symlink_to(contents[1])
+                later.append((path, None, contents[2] if len(contents) > 2 else None))
             elif kind == "dir":
                 path.mkdir(exist_ok=True)
+                later.append((path, contents[1] if len(contents) > 1 else None,
+                              contents[2] if len(contents) > 2 else None))
             elif kind == "mode":
                 path.write_bytes(contents[1])
                 path.chmod(contents[2])
+                later.append((path, None, contents[3] if len(contents) > 3 else None))
+            elif kind == "hard":
+                os.link(directory / contents[1], path)
         else:
             path.write_bytes(contents)
             path.chmod(0o644)
+    for path, mode, stamp in sorted(later, key=lambda item: -len(item[0].parts)):
+        if stamp is not None:
+            times = (stamp, stamp) if isinstance(stamp, int) else tuple(stamp)
+            os.utime(path, times, follow_symlinks=False)
+        if mode is not None:
+            path.chmod(mode)
 
 
 def effects(directory):
     result = {}
+    now = time.time()
     for path in sorted(directory.rglob("*")):
         name = str(path.relative_to(directory))
         try:
@@ -430,18 +468,23 @@ def effects(directory):
         except OSError:
             continue
         mode = stat.S_IMODE(info.st_mode)
+        # A modification time far from now was set on purpose (touch -d,
+        # cp -p, a stamped fixture kept or moved) and is part of the effect;
+        # one near now is only when the run happened.
+        stamp = int(info.st_mtime)
+        deliberate = [stamp] if abs(stamp - now) > 60 else []
         if stat.S_ISLNK(info.st_mode):
-            result[name] = ["link", os.readlink(path)]
+            result[name] = ["link", os.readlink(path)] + deliberate
         elif stat.S_ISDIR(info.st_mode):
-            result[name] = ["directory", mode]
+            result[name] = ["directory", mode] + deliberate
         elif stat.S_ISREG(info.st_mode):
             try:
                 digest = hashlib.sha256(path.read_bytes()).hexdigest()
             except OSError:
                 digest = "unreadable"
-            result[name] = ["file", mode, info.st_size, digest]
+            result[name] = ["file", mode, info.st_size, digest] + deliberate
         else:
-            result[name] = ["special", info.st_mode]
+            result[name] = ["special", info.st_mode] + deliberate
     return result
 
 
@@ -742,6 +785,10 @@ def option_ledger(rows, case):
 def load_spec(domain):
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
+    # A spec's `from differential import INPUTS, FIXTURES` has to name this
+    # running module, whether it is __main__ or a worker's __mp_main__, or
+    # what the spec adds to those tables lands in a second copy nobody reads.
+    sys.modules.setdefault("differential", sys.modules[__name__])
     try:
         return importlib.import_module(f"spec_{domain}")
     except ModuleNotFoundError as error:
