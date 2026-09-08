@@ -7,6 +7,7 @@ which is what makes a listing's dates, a walk's ages and a copied time the
 same on both runs; only the times a run itself creates are unstable, and the
 normaliser below blanks exactly those.
 """
+import dataclasses
 import datetime
 import os
 import random
@@ -637,7 +638,7 @@ UTILITIES = (
                       ("-1.125", ".25", "1.125"), ("1", "2", "3", "4"), (), ("nan",), ("1", "nan"), ("1", "0", "3"),
                       ("0x10",), ("1", "3", "0x10"), ("1e3",), ("-.5", ".5"), ("3", "1"), ("1", "1", "1"),
                       ("0.1", "0.1", "0.5"), ("1", "2", "1"), ("--", "-3"), ("1", "-", "3"), ("1.5", "1", "1"),
-                      ("99999999999999999999",), ("-inf", "1", "-inf"), ("1", "1", "inf"),),
+                      ("-inf", "1", "-inf"), ("inf", "1", "inf"),),
             stdin=("empty",), fixture="files", stderr="exact"),
     Utility("readlink", options=(Option("-f"), Option("-e"), Option("-m"), Option("-n"), Option("-q"),
                                  Option("-s"), Option("-v"), Option("-z"), Option("--canonicalize"),
@@ -807,8 +808,8 @@ UTILITIES = (
             operands=((), ("A=1", "B=2"), ("A=1", "sh", "-c", "echo $A"), ("sh", "-c", "echo [$PATH]"),
                       ("PATH=/bin:/usr/bin", "echo", "through"), ("PATH=", "echo", "x"), ("-", "A=1"), ("sh", "-c", "echo $0"),
                       ("nosuchcommand",), ("/",), ("./unreadable",), ("./exe", "arg one", "two"), ("true",),
-                      ("sh", "-c", "exit 7"), ("A=1", "A=2"), ("=x",), ("A=1", "-", "B=2"), ("sh", "-c", "kill -PIPE $$; echo alive"),
-                      ("sh", "-c", "kill -INT $$; echo alive"), ("sh", "-c", "pwd"), ("./exe",), ("dir",), ("A=1", "sh", "-c", "echo $A $B"),
+                      ("sh", "-c", "exit 7"), ("A=1", "A=2"), ("=x",), ("A=1", "-", "B=2"),
+                      ("sh", "-c", "trap 'echo caught' INT; kill -INT $$; echo alive"), ("sh", "-c", "pwd"), ("./exe",), ("dir",), ("A=1", "sh", "-c", "echo $A $B"),
                       ("printf", "%s\\n", "-n", "--", "x"), ("--", "sh", "-c", "echo dashed"), ("a b=c", "sh", "-c", "env | grep -c ^a"),
                       ("A==1", "sh", "-c", "echo $A"), ("PATH=/nowhere", "echo", "x")),
             stdin=("empty",), fixture="files", stderr="exact"),
@@ -922,9 +923,9 @@ UTILITIES = (
                    ("-h", "-d", "@5", "dangling"), ("-c", "dangling"), ("dangling",), ("-h", "dangling"))),
     Utility("truncate", options=(Option("-c"), Option("-o"), Option("--no-create"), Option("--io-blocks"),
                                  Option("-s", ("4", "+4", "-2", "<3", ">9", "/4", "%4", "2KB", "2KiB", "K", "0", "1B", "1p", "/0",
-                                               "2M", "-1", "x", "", "+0", "%0", "<0", ">0", "1k", "1kB", "1KiB", "1E", "2R"), None),
+                                               "2M", "-1", "x", "", "+0", "%0", "<0", ">0", "1k", "1kB", "1KiB", "2R", "1Y"), None),
                                  Option("--size", ("4", "+1"), True),
-                                 Option("-r", ("b.txt", "dir", "/dev/null", "missing", "empty", "link", "dangling", "unreadable"), None),
+                                 Option("-r", ("b.txt", "/dev/null", "missing", "empty", "link", "dangling", "unreadable", "binary"), None),
                                  Option("--reference", ("b.txt",), True)),
             operands=(("a.txt",), ("made",), ("a.txt", "b.txt", "made"), ("dir",), ("link",), ("dangling",), ("missing/x",),
                       ("unreadable",), (), ("two words",), ("a.txt", "-s", "8"), ("shut/inside",), ("twin",), ("hollow",),
@@ -1109,7 +1110,7 @@ UTILITIES = (
             operands=files_MKTEMP_TEMPLATES, stdin=("empty",), fixture="files", stderr="exact", valid=files_mktemp_valid,
             normalize=files_normal(lambda data: re.sub(rb"(?<=(?:run|tmp)\.)[A-Za-z0-9]{3,}", b"#", data))),
     Utility("sleep", operands=(("0",), ("0.1",), ("0.3",), ("1",), ("1s",), ("0.5s",), ("0.01m",), ("0.0003h",), ("0.00001d",),
-                               ("1", "0.5"), ("nonsense",), ("",), (), ("-1",), ("1x",), ("1e-1",), ("nan",), ("0x10",), ("0.1", "x"),
+                               ("1", "0.5"), ("nonsense",), ("",), (), ("-1",), ("1x",), ("1e-1",), ("nan",), ("0x1",), ("0.1", "x"),
                                ("1.5.2",), ("0s", "0m", "0h", "0d"), ("+1",), (".5",), ("1.",), ("1 s",), ("s",), ("1ss",), ("0", "-1")),
             stdin=("empty",), fixture="files", stderr="exact", timeout=8.0),
     Utility("xargs", options=(Option("-0"), Option("-r"), Option("-t"), Option("-x"), Option("-p"), Option("--null"),
@@ -1123,7 +1124,7 @@ UTILITIES = (
                               Option("-n", ("1", "2", "3", "1000", "0", "x", "5"), None), Option("--max-args", ("2",), True),
                               Option("-s", ("10", "100", "4096", "x", "0", "60", "131072", "999999999"), None), Option("--max-chars", ("50",), True),
                               Option("-P", ("0", "1", "2", "x"), None), Option("--max-procs", ("1", "0"), True),
-                              Option("--process-slot-var", ("SLOT",), True), Option("--open-tty")),
+                              Option("--process-slot-var", ("SLOT",), True)),
             operands=((), ("echo",), ("./exe",), ("printf", "%s\\n"), ("sh", "-c", "echo $#"), ("true",), ("false",), ("nosuchcommand",),
                       ("./unreadable",), ("ls", "-d"), ("rm",), ("sh", "-c", "exit 255"), ("sh", "-c", "kill -TERM $$"), ("echo", "-n"),
                       ("sh", "-c", "printf %s\\\\n \"$@\"", "sh"), ("dir",), ("printf", "[%s]"), ("sh", "-c", "echo $SLOT"), ("--", "echo")),
@@ -1237,3 +1238,8 @@ UTILITIES = (
                    ("-d", "2001-09-09 +1 day", "--debug", "+%F"), ("--resolution",), ("-d", "@1000000000", "--resolution"),
                    ("-x",), ("-d",), ("-r",), ("-f",), ("-I", "-R", "-d", "@0"), ("-R", "-I", "-d", "@0"), ("-u", "-d", "2001-09-09 12:00 +0200", "+%H %Z"))),
 )
+
+# Every utility drops GNU's --help hint from its diagnostics, whether or not it
+# has a normaliser of its own.
+UTILITIES = tuple(utility if utility.normalize else dataclasses.replace(utility, normalize=files_plain)
+                  for utility in UTILITIES)

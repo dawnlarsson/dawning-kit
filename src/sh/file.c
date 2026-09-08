@@ -8029,6 +8029,22 @@ static bool ln_make(string_address target, string_address name)
                 target = relative;
         }
 
+        // A directory has one name and a hard link would give it two; the
+        // reference refuses before the kernel does, and says why.
+        if (!ln_symbolic)
+        {
+                file_facts source;
+
+                if (file_look(AT_FDCWD, target, ln_through ? 0 : AT_SYMLINK_NOFOLLOW,
+                              address_of source) &&
+                    (source.mode & MODE_FORMAT) == MODE_DIRECTORY)
+                {
+                        string_format(file_fail, "ln: %s: hard link not allowed for directory\n",
+                                      target);
+                        return false;
+                }
+        }
+
         if (ln_ask && file_exists(AT_FDCWD, name) &&
             !file_ask((string_address) "ln", (string_address) "replace", name))
                 return false;
@@ -8136,12 +8152,21 @@ static b32 file_ln()
         ln_loud = (flags & FILE_FLAG('v')) != 0;
         ln_relative = (flags & FILE_FLAG('r')) != 0;
 
+        if (ln_relative && !ln_symbolic)
+        {
+                file_fail("ln: cannot do --relative without --symbolic\n", 0);
+                return 1;
+        }
+
         // -L makes a hard link to what a symbolic target points at rather
         // than to the link, which is the one thing -L and -P are about.
         ln_through = ln_dereference_option == 'L';
 
         if (first >= count)
-                return file_missing((string_address) "ln");
+        {
+                file_fail("ln: missing file operand\n", 0);
+                return 1;
+        }
 
         string_address into = file_option_value(address_of taking, 't');
         bool alone = (flags & FILE_FLAG('T')) != 0;
