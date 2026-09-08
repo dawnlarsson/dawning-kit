@@ -12,7 +12,7 @@ static p8 address_to text_arena_read_all(positive handle, positive first,
    a second regular-expression implementation here. */
 static bool regex_compile(string_address pattern, bool extended, bool icase,
                           bool escapes, p8 policy);
-enum { REGEX_FIRST, REGEX_LONGEST, REGEX_EXACT_LONGEST };
+enum { REGEX_FIRST, REGEX_LONGEST, REGEX_EXACT_LONGEST, REGEX_CAPTURES = 4 };
 static bool regex_find(p8 mode, string_address text, positive length, positive from);
 
 /* Every arena-backed vector shares one rare grow/copy path.  The common

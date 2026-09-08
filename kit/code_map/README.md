@@ -1,5 +1,8 @@
 # Function atlas
 
+The [regex implementation audit](REGEX_PROOF.md) records the counted-graph fold,
+its complete source accounting, regression evidence and runtime tradeoffs.
+
 This is a source map for finding and costing architectural reductions. It joins
 the sealed production inventory to semantic classifications, source extents,
 possible call relationships and whole-function similarity leads. It does not
@@ -26,34 +29,76 @@ pairs back to their contracts and source. **Coverage & method** explains scope
 and limitations. The Files view keeps whole-file totals when function filters
 select containing files.
 
+## Audit trail
+
+Local reports under `artifacts/` retain their original baseline, counts and
+verdicts. Use the later implementation record when an earlier review says
+"unfixed" or "unapplied"; those historical labels are not the current backlog.
+
+| Effort | Status and follow-up |
+| --- | --- |
+| [Codebase audit and verification](../../artifacts/audit-2026-09-08/verification-2/verification.md) | C01–C16, cached enable lookup, and the coupled small folds were repaired in `009bce0`; [implementation record](../../artifacts/audit-2026-09-08/implementation-1/implementation.md). |
+| [Utility and arithmetic reductions](../../artifacts/audit-2026-09-08/reduction-2/reduction.md) | Applied in `de27dfd`: file loops, literal replacement, typed columns, mount/blkid policy and arithmetic lvalues. |
+| [Binding, sort and regex search designs](../../artifacts/audit-2026-09-08/architecture-1/architecture.md) | Applied in `ae8ef2c`; regex storage/execution was subsequently replaced by the counted graph. |
+| [Larger fold research](FOLD_PLAN.md) | Planning estimates are preserved. The regex prototype qualified; other proposed large replacements remain unqualified. |
+| [Counted regex and completion audit](REGEX_PROOF.md) | Applied in `92359fd` and `c6f5a6a`; 766 production lines removed, with recorded performance and resource tradeoffs. |
+| [General tidy](../../artifacts/general-tidy-2026-09-08/review.md) | Removes 46 further production lines and 172 source tokens: unused shell APIs/state and the previously proposed D13 dd operand table. Repairs stale sed state and lsblk include paths in maintained audit fixtures. |
+| [Storage and teardown repairs](../../artifacts/resolve-2026-09-08/review.md) | Reuses retired function-body ranges, streams mapfile records, and releases orphaned Canvas cursor buffers. Removes 69 production lines overall; adds 622 tokens for ownership and correctness checks. |
+
+The [mapfile follow-up](../../artifacts/resolve-2026-09-08/mapfile/review.md)
+distinguishes invalid explicit descriptors from Bash-compatible open-descriptor
+read errors and fixes count/origin/consumption behavior. Alternating function
+redefinitions now reuse free ranges while active calls retain their entered
+bodies. [Canvas ownership](../../artifacts/cleanup-2026-09-08/canvas/review.md)
+is repaired and fault-tested against an atomic DRM ownership model. Presentation
+folding remains unqualified; no live-display or physical device-failure test was
+performed. No historical estimate is counted as a deletion.
+
 ## What the current map establishes
 
 Classification began at `ae8ef2c3aa346a64fbd832a9c90608b3296fa069`.
-The map was refreshed after `65f989ee9fa53e42faf50d82fe50a2fd08c11256` moved
-tests into `/test`: its 25 changed production lines only update comment paths.
-Production token streams, physical line counts and inventory IDs were checked
-and remain identical. The refreshed source digest is
-`10d043364f0f3b40e34e09848621e1588ee11faa8b2e16209c37e32c2584a029`.
-The generated artifact also records its checkout commit and every source file's
-SHA-256. The following measurements are pinned to that source snapshot.
+The first refresh mapped the counted-regex replacement and its consumer migration.
+It removed 44 obsolete C entries, added 25 individually reviewed graph/compiler
+functions, and refreshed 505 location IDs by file/name mapping. Unchanged bodies
+keep their earlier classifications. Four changed AWK bodies retain their family
+classification but are conservatively excluded from complete body-review totals.
+The moved `text_literal_find` retains its earlier annotation. The completion
+re-audit removes no further functions and refreshes 130 location IDs. Changed
+regex bodies were re-read; targeted caller changes do not promote family
+classifications to complete body review. The general tidy pass removes two
+unreferenced shell functions and remaps 654 location IDs after deleting dead
+shell state and folding dd numeric operands. Four targeted dispatch/signature
+notes retain their existing family classifications.
+The storage follow-up removes four obsolete parser helpers, adds five reviewed
+storage helpers, and remaps 308 location IDs. Existing retained-body functions
+were re-read against the replacement. Targeted mapfile, executor and Canvas
+notes retain their family classifications; the old top-only storage constraint
+has been replaced by the current range and reference-count contracts.
+
+The source digest is
+`ef3419884580a4403419fa5f1b270faad1e9ccee0f79d1ea91b233ff337d55a6`.
+The generated artifact records its checkout commit and each source file's
+SHA-256; during integration the digest identifies the working source even when
+the commit still names its baseline. The following measurements are pinned to
+that source snapshot. Classification completeness is not correctness evidence.
 
 | Inventory | Count |
 | --- | ---: |
-| Production files | 80 |
-| Production physical lines | 193,288 |
-| Ordinary C bodies | 3,667 |
+| Production files | 81 |
+| Production physical lines | 192,407 |
+| Ordinary C bodies | 3,647 |
 | Generated C entries | 148 |
 | C aliases | 100 |
 | Assembly symbols, including aliases; architecture variants grouped | 349 |
-| Total production symbols | **4,264** |
-| Semantic production families | 401 |
-| Individually reviewed bodies | 253 |
-| Classifications derived from family context | 3,672 |
+| Total production symbols | **4,244** |
+| Semantic production families | 403 |
+| Individually reviewed bodies | 271 |
+| Classifications derived from family context | 3,634 |
 | Classifications derived from aliases or generators | 339 |
-| Additional support entries | 1,569 |
+| Additional support entries | 1,570 |
 
-The map contains 231 tracked source files including the support layer. Production
-C coverage equals the sealed 3,915-entry inventory exactly. The 349 assembly
+The map contains 232 source files including the tracked support layer. Production
+C coverage equals the sealed 3,895-entry inventory exactly. The 349 assembly
 symbols comprise 335 in the library inclusion graph, eight additional platform
 signal/setjmp symbols, and six Canvas/kernel symbols. Architecture variants are
 shown inside each symbol. The additional platform symbols were outside the
@@ -61,8 +106,8 @@ earlier library seal; they are now visible and explicitly classified.
 
 Every production entry has a family, role, responsibility, confidence and review
 basis. Family constraints are shared research requirements; individual contract
-notes are recorded where evidence supports them. The 253 reviewed bodies cover
-16,073 attributed lines, or 11.2% of all function-attributed source. Classification
+notes are recorded where evidence supports them. The 271 reviewed bodies cover
+16,125 attributed lines, or 11.3% of all function-attributed source. Classification
 coverage is complete against this inventory; individual body review is partial.
 Assembly instruction bodies were not freshly re-audited for this map.
 
@@ -72,12 +117,12 @@ These areas are disjoint; AWK is included in utilities.
 
 | Area | Physical LOC | Share |
 | --- | ---: | ---: |
-| Utilities | 81,155 | 42.0% |
-| Shell language and runtime | 37,460 | 19.4% |
+| Utilities | 80,407 | 41.8% |
+| Shell language and runtime | 37,321 | 19.4% |
 | C standard library | 22,219 | 11.5% |
-| Assembly library | 18,843 | 9.7% |
+| Assembly library | 18,843 | 9.8% |
 | Terminal, editor and system tools | 9,573 | 5.0% |
-| Canvas | 7,474 | 3.9% |
+| Canvas | 7,480 | 3.9% |
 | Platform and ABI | 7,257 | 3.8% |
 | Common C helpers | 3,812 | 2.0% |
 | Network protocols | 2,291 | 1.2% |
@@ -85,9 +130,9 @@ These areas are disjoint; AWK is included in utilities.
 | Program entries | 746 | 0.4% |
 | Bowl runtime | 600 | 0.3% |
 
-The largest files are `src/sh/file.c` (20,333 lines), `src/sh/text.c` (19,759),
-`src/library.c` (18,843), `src/sh/util_linux.c` (13,660),
-`src/sh/builtin.c` (13,571) and `src/sh/tools.c` (12,299).
+The largest files are `src/sh/file.c` (20,333 lines), `src/library.c` (18,843),
+`src/sh/text.c` (18,072), `src/sh/util_linux.c` (13,660),
+`src/sh/builtin.c` (13,545) and `src/sh/tools.c` (12,284).
 
 ### Largest C families
 
@@ -97,18 +142,18 @@ blanks inside spans. Declarations and other residual source are separate.
 | Family | Entries | Attributed LOC |
 | --- | ---: | ---: |
 | Parameter lookup and transformations | 41 | 2,202 |
-| Jobs, waits and terminal process groups | 63 | 1,850 |
+| Jobs, waits and terminal process groups | 62 | 1,840 |
 | Difference engine | 41 | 1,689 |
 | History storage, expansion and fc | 35 | 1,634 |
 | Declarations and variable listings | 38 | 1,616 |
-| Stream editor | 31 | 1,492 |
-| Pattern search command | 32 | 1,470 |
-| Shared regex VM | 42 | 1,353 |
+| Stream editor | 31 | 1,510 |
+| Pattern search command | 30 | 1,403 |
 | Directory listings | 30 | 1,225 |
 | Shell command grammar | 38 | 1,207 |
+| Editor editing operations | 35 | 1,191 |
 
-These ten families total 15,738 lines: **12.3% of the 128,293 lines attributed
-to C entries**. The largest 25 account for 24.3%. Size is distributed across
+These ten families total 15,517 lines: **12.2% of the 127,574 lines attributed
+to C entries**. The largest 25 account for 24.0%. Size is distributed across
 many features; a large reduction will probably require a design shared across
 families or several complete subsystem replacements. That is an inference from
 the distribution, not a measured deletion estimate. Assembly-family rankings
@@ -118,21 +163,25 @@ architecture implementations and distinct conversion contracts.
 Source accounting conserves the whole tree:
 
 ```text
-193,288 production physical lines
-  = 143,418 attributed to function/symbol spans
-  +  17,743 other code-bearing lines
-  +  22,919 other comment lines
-  +   9,208 other blank lines
+192,407 production physical lines
+  = 142,699 attributed to function/symbol spans
+  +  17,709 other code-bearing lines
+  +  22,826 other comment lines
+  +   9,173 other blank lines
 ```
 
-The 49,870-line residual includes tables, declarations, macro templates and
+The 49,708-line residual includes tables, declarations, macro templates and
 assembly scaffolding. It cannot be counted as removable overhead. A replacement
 must include its new descriptors and declarations in its measured cost.
 
-See [the research and experiment plan](RESEARCH.md) for the design comparisons
-and the next boundaries to investigate. The annotations contain a design
-question and constraints for every family, rather than a savings estimate
-derived from its size.
+See [the research comparisons](RESEARCH.md) and the subsequent
+[audited fold plan](FOLD_PLAN.md) for complete replacement budgets and current
+priorities. The regex implementation is now represented as counted-graph compilation,
+search metadata, and execution/consumer interfaces. Its measured source reduction
+is 766 production lines; behavior, resource limits and performance require their
+separate qualification evidence. This atlas does not supply that proof.
+The annotations contain a design question and constraints for every family,
+rather than a savings estimate derived from its size.
 
 ## Evidence and metric definitions
 
@@ -190,5 +239,6 @@ at three widths in light/dark themes, and writes screenshots and a report beside
 the artifact. Its inventory expectations are pinned to this map; deliberately
 update them after validating a new source inventory.
 
-This work adds development tooling, classifications and research. It changes
-no production code and claims no production LOC reduction.
+Refreshing this map changes tooling, classifications and metrics. The production
+regex replacement is a separate change; its source reduction must be counted
+across every changed production file, independently of this map.

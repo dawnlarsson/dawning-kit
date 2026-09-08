@@ -5,6 +5,15 @@ Research date: 2026-09-08. Source baseline and measured sizes are in the
 applications to this repository are inferences, not upstream claims or verified
 savings. No external implementation has been transplanted or benchmarked here.
 
+**Follow-up decision:** the [complete-boundary audit and fold plan](FOLD_PLAN.md)
+supersedes the initial priorities below. The seven-command configuration
+scenario adds 104 lines after shared support. Parameter results offer a central
+estimated 93-line reduction and concrete correctness benefits. A complete regex
+representation replacement is the strongest remaining size experiment at an
+unverified 186–504 lines removed after independent interface review. Its
+optimistic budget clears 500 by only four lines; this is a fragile prototype
+hypothesis, not a basis for a broad production rewrite.
+
 We can establish where source costs concentrate and whether a concrete
 replacement improves them under a fixed contract. A source map cannot establish
 that all implementations are optimal. The useful unit of investigation is a
@@ -13,8 +22,9 @@ Identical loops are only one kind of duplication.
 
 ## 1. Command metadata, configuration and initialization
 
-This is the strongest next experiment for a reduction spanning many commands.
-It is broader than the option-effects loop already costed in the preceding
+This was the strongest initial hypothesis for a reduction spanning commands;
+the follow-up costed audit does not justify a broad rollout. The hypothesis
+is broader than the option-effects loop already costed in the preceding
 audit. That narrow replacement was larger than the sampled original; changing
 its label to “data-driven” would not change that result.
 
@@ -37,8 +47,8 @@ new descriptors and generated source policy explicitly. Preserve help-before-
 validation, diagnostic ordering, repeated options, final stored values and
 state reset when commands are invoked repeatedly in the same process. Reject a
 design that retains both `file_taking` and an equally large second configuration
-representation. A complete pilot should demonstrate net savings before broad
-migration.
+representation. Measure fixed support separately from per-command costs; a
+complete named migration set should demonstrate net savings before broad rollout.
 
 BusyBox documents shared allocation, IO and option helpers in `libbb`.
 That supports examining caller policy alongside mechanism. It does not justify
@@ -177,8 +187,10 @@ generator macros.
 
 For the user's requested large wins, a net reduction of at least 500 production
 lines is a useful experiment target inherited from the preceding audit, not a
-claim that any candidate currently achieves it. Prioritize the full command
-configuration pilot first for breadth. Treat the retained-program defect as a
-separate correctness priority. Keep the expansion and regex representation
-experiments next; use the map to bound them before implementing another broad
-abstraction.
+claim that any candidate currently achieves it. The follow-up audit recommends
+a bounded complete regex prototype first: all replacement code and adapters
+must fit in 1,256 lines to remove 500 from the measured 1,756-line envelope.
+Treat expansion semantics and the retained-program defect as separate
+correctness priorities. Hold broad configuration rollout until concrete caller
+migrations establish savings beyond the scenario already costed. See the
+[fold plan](FOLD_PLAN.md) for contracts, budgets, evidence and stop conditions.
