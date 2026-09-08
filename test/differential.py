@@ -1130,10 +1130,14 @@ def self_test():
             self.script(self.system / "effect", "#!/bin/sh\nprintf y > a.txt\n")
             self.old_path = os.environ.get("PATH")
             os.environ["PATH"] = f"{self.system}:/usr/bin:/bin"
+            # The inner runs must not write their rows into the suite's tally.
+            self.old_tally = os.environ.pop("TEST_TALLY", None)
             self.runner = Runner(self.farm, self.root / "run")
 
         def tearDown(self):
             os.environ["PATH"] = self.old_path
+            if self.old_tally is not None:
+                os.environ["TEST_TALLY"] = self.old_tally
             self.temporary.cleanup()
 
         def script(self, path, text):

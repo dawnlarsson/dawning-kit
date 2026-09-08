@@ -3308,7 +3308,12 @@ lane_text()       { differential_domain text; }
 lane_files()      { differential_domain files; }
 lane_misc()       { differential_domain misc; }
 lane_util_linux() { differential_domain util_linux; }
-lane_shell()      { differential_domain shell; }
+lane_shell()
+{
+        need_shell || return 1
+        python3 test/shell_functions.py --shell "$shell_binary" || return 1
+        differential_domain shell
+}
 lane_builtins()   { differential_domain builtins; }
 lane_awk()        { differential_domain awk; }
 
@@ -6264,6 +6269,8 @@ fi
 lane_kit()
 (
 python3 test/harness.py core_state || exit 1
+python3 test/canvas_lifetime.py || exit 1
+python3 test/audit_shell_functions.py || exit 1
 python3 test/harness.py spark_entry || exit 1
 python3 kit/function_audit.py --check || exit 1
 python3 test/harness.py surface_coreutils_gap || exit 1
