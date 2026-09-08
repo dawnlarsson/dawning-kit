@@ -9,10 +9,10 @@ import hashlib
 import json
 import re
 import subprocess
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-import sys
 workspace = None if len(sys.argv) > 1 else tempfile.TemporaryDirectory(prefix="audit-util-results-")
 OUT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(workspace.name)
 OUT.mkdir(parents=True, exist_ok=True)
@@ -83,7 +83,8 @@ static p8 *text_arena;
 static positive text_arena_used;
 static bool ul_lscpu_failed;
 static positive fixture_errors;
-static void text_error(void *unused, const char *message) { (void)unused; (void)message; fixture_errors++; }
+static const char text_diagnostic;
+static b32 string_diagnostic(const void *sink, b32 code, const char *unused, const char *message) { (void)sink; (void)unused; (void)message; fixture_errors++; return code; }
 static void *memory(positive bytes) { (void)bytes; abort(); }
 static bool system_failed(positive value) { return value >= positive_max-4095; }
 static positive positive_into_string(p8 *p,positive n) { return (positive)sprintf((char *)p,"%llu",(unsigned long long)n); }

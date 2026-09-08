@@ -526,8 +526,7 @@ static COLD struct pane *pane_create(unsigned int width, unsigned int height,
                         so logging max_rows here understated each boot pane by
                         almost four times and hid about two MiB of live RAM.
                 */
-                log_canvas("window grid %ux%u, ring holds %ux%u (%lu KiB)\n",
-                           columns, rows, stride, history, bytes >> 10);
+                pr_info("[moonwater canvas] " "window grid %ux%u, ring holds %ux%u (%lu KiB)\n", columns, rows, stride, history, bytes >> 10);
 
                 page->max_columns = max_columns;
                 page->max_rows = max_rows;

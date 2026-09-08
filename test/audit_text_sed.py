@@ -13,10 +13,10 @@ import os
 import pathlib
 import platform
 import subprocess
+import sys
 import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-import sys, tempfile
 _owned_output = None if len(sys.argv) > 1 else tempfile.TemporaryDirectory(prefix='audit-text-sed-')
 OUT = pathlib.Path(sys.argv[1]).resolve() if len(sys.argv) > 1 else pathlib.Path(_owned_output.name)
 OUT.mkdir(parents=True, exist_ok=True)
@@ -30,7 +30,7 @@ def capture(start, stop, offset=0):
                   'sha256':hashlib.sha256(block.encode()).hexdigest()})
     return block
 helper = capture('static bool sed_commit(', 'static b32 text_sed()')
-done = capture('static b32 text_done(b32 code)', '/*\n        A complaint')
+done = capture('static b32 text_done(b32 code)', '/*\n        One arena')
 tail = capture('                if (written >= 0)\n', '\n}\n\n/*\n        sort', source.index('static b32 text_sed()'))
 prefix = r'''
 #include <stdbool.h>
@@ -49,7 +49,8 @@ typedef char *string_address;
 #define AT_FDCWD -100
 #define null NULL
 static b32 text_status, sed_file_count;
-static bool text_out_failed, sed_io_failed, sed_failed, sed_space_full;
+static bool text_out_failed, sed_io_failed, sed_space_full;
+static string_address sed_failed;
 static struct { bool failed; } text_input;
 static const char *text_name = "sed";
 static string_address sed_in_place;
@@ -81,11 +82,10 @@ static bipolar system_link_at(int a, const char *from, int b, const char *to, in
     return real_files && link(from,to) ? -errno : 0;
 }
 static const char *file_reason(bipolar code) { return strerror((int)-code); }
-static void text_error(const char *name, const char *reason) {
-    (void)name; (void)reason; diagnostics++;
-}
-static b32 text_refuse(const char *name, const char *reason, b32 code) {
-    text_error(name, reason); return code;
+static const char text_diagnostic;
+static b32 string_diagnostic(const void *sink, b32 code, const char *name, const char *reason) {
+    (void)sink; (void)name; if (!reason || !*reason) abort(); diagnostics++;
+    return code;
 }
 static positive string_length(const char *s) { return strlen(s); }
 static bool string_equals(const char *a, const char *b) { return !strcmp(a,b); }
@@ -111,7 +111,8 @@ int main(int argc, char **argv) {
     real_files=atoi(argv[1]); sed_in_place=argv[2];
     backup_fail=atoi(argv[3]); replace_fail=atoi(argv[4]); restore_fail=atoi(argv[5]);
     close_fail=atoi(argv[6]); flush_fail=atoi(argv[7]); text_input.failed=atoi(argv[8]);
-    sed_space_full=atoi(argv[9]); sed_failed=atoi(argv[10]); sed_io_failed=atoi(argv[11]);
+    sed_space_full=atoi(argv[9]); sed_io_failed=atoi(argv[11]);
+    sed_failed=atoi(argv[10]) ? "no previous regular expression" : NULL;
     requested_exit=atoi(argv[12]); input_count=atoi(argv[13]); text_status=atoi(argv[14]);
     race=atoi(argv[15]); failures_at=atoi(argv[16]);
     if (atoi(argv[17])) {

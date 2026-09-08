@@ -23,7 +23,7 @@ static bipolar dns_resolve_any(string_address path, string_address name,
 static b32 tools_extra_operand(string_address program, string_address word)
 {
         text_flush();
-        string_format(file_fail,
+        string_format(writer_stderr,
                       "%s: extra operand '%s'\nTry '%s --help' for more information.\n",
                       program, word, program);
         return text_done(1);
@@ -584,7 +584,8 @@ static bool logger_connect(logger_control address_to control)
 
         if (control->server)
         {
-                string_format(file_fail,
+                text_flush();
+                string_format(writer_stderr,
                               "logger: failed to connect to %s port %s\n",
                               control->server,
                               control->port ? control->port
@@ -595,7 +596,8 @@ static bool logger_connect(logger_control address_to control)
         }
         if (control->socket_errors)
         {
-                string_format(file_fail, "logger: socket %s: %s\n",
+                text_flush();
+                string_format(writer_stderr, "logger: socket %s: %s\n",
                               control->socket_path ? control->socket_path
                                                    : (string_address)"/dev/log",
                               file_reason(control->last_error));
@@ -638,10 +640,7 @@ static bool logger_emit(logger_control address_to control,
         if (!logger_header(control, content, LOGGER_HEADER_ROOM -
                                              LOGGER_FRAME_ROOM,
                            priority, address_of header_length))
-        {
-                text_error(null, "cannot construct syslog header");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "cannot construct syslog header");
 
         memory_copy(content + header_length, control->body, length);
         positive content_length = header_length + length;
@@ -667,7 +666,7 @@ static bool logger_emit(logger_control address_to control,
                 if (logger_connect(control))
                         sent = logger_send_once(control, wire, wire_length);
                 if (!sent)
-                        text_error(null, "send message failed");
+                        string_diagnostic(&text_diagnostic, 0, null, "send message failed");
         }
 
         if (control->standard_error)
@@ -906,8 +905,7 @@ static b32 tools_logger()
                 return text_done(1);
 
         if (taking.flags & (FILE_FLAG('D') | FILE_FLAG('X')))
-                return text_refuse(null,
-                    "structured-data and signature fields are not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "structured-data and signature fields are not supported"));
 
         logger_control control = {
             .handle = -1,
@@ -948,15 +946,14 @@ static b32 tools_logger()
 
         string_address priority_text = file_option_value(address_of taking, 'p');
         if (priority_text && !logger_priority(priority_text, address_of control.priority))
-                return text_refuse(priority_text, "unknown priority", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, priority_text, "unknown priority"));
 
         string_address size_text = file_option_value(address_of taking, 'S');
         if (size_text && !logger_size(size_text, address_of control.maximum))
-                return text_refuse(size_text, "invalid message size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, size_text, "invalid message size"));
 
         if (control.message_id && !logger_message_id_valid(control.message_id))
-                return text_refuse(control.message_id,
-                                   "message id cannot contain whitespace", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, control.message_id, "message id cannot contain whitespace"));
 
         string_address socket_errors = file_option_value(address_of taking, 'E');
         if (socket_errors)
@@ -966,8 +963,7 @@ static b32 tools_logger()
                 else if (!string_compare(socket_errors, "off"))
                         control.socket_errors = false;
                 else if (string_compare(socket_errors, "auto"))
-                        return text_refuse(socket_errors,
-                                           "invalid socket error mode", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, socket_errors, "invalid socket error mode"));
         }
         if (!socket_errors || !string_compare(socket_errors, "auto"))
         {
@@ -988,12 +984,9 @@ static b32 tools_logger()
                 {
                         if (!string_digits_exact(identity, address_of control.process) ||
                             !control.process || control.process > p32_max)
-                        {
-                                string_format(file_fail,
-                                              "logger: failed to parse id: '%s'\n",
-                                              identity);
-                                return text_done(1);
-                        }
+                                return text_done(string_report(writer_stderr, 1,
+                                                               "logger: failed to parse id: '%s'\n",
+                                                               identity));
                 }
                 else
                         control.process = (positive)system_call(syscall(getpid));
@@ -1004,7 +997,7 @@ static b32 tools_logger()
 
         string_address rfc_flags = file_option_value(address_of taking, '4');
         if (rfc_flags && !logger_rfc_flags(address_of control, rfc_flags))
-                return text_refuse(rfc_flags, "unsupported RFC 5424 qualifier", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, rfc_flags, "unsupported RFC 5424 qualifier"));
 
         if (!control.tag)
         {
@@ -1019,7 +1012,7 @@ static b32 tools_logger()
 
         if (control.protocol == LOGGER_PROTOCOL_5424 &&
             string_length(control.tag) > 48)
-                return text_refuse(control.tag, "tag is too long for RFC 5424", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, control.tag, "tag is too long for RFC 5424"));
 
         if (taking.flags & FILE_FLAG('J'))
         {
@@ -1033,7 +1026,7 @@ static b32 tools_logger()
         }
 
 #if !defined(LINUX) || defined(KERNEL_MODE)
-        return text_refuse(null, "logging sockets require Linux", 1);
+        return text_done(string_diagnostic(&text_diagnostic, 1, null, "logging sockets require Linux"));
 #else
         text_arena_used = 0;
         control.workspace = (p8 address_to)text_arena_take(
@@ -1165,9 +1158,7 @@ static bool login_records(string_address path, bool check_processes,
                 if (missing_ok && input == -ERROR_NO_ENTRY)
                         return true;
 
-                text_error(path ? path : (string_address)"standard input",
-                           file_reason(input));
-                return false;
+                return string_diagnostic(&text_diagnostic, 0, path ? path : (string_address)"standard input", file_reason(input));
         }
 
         positive held = 0;
@@ -1186,8 +1177,7 @@ static bool login_records(string_address path, bool check_processes,
 
                 if (got < 0)
                 {
-                        text_error(path ? path : (string_address)"standard input",
-                                   file_reason(got));
+                        string_diagnostic(&text_diagnostic, 0, path ? path : (string_address)"standard input", file_reason(got));
                         answer = false;
                         break;
                 }
@@ -1864,10 +1854,9 @@ static b32 tools_write()
 
         positive argc = (positive)program_argument_count();
         if (taking.first >= argc)
-                return text_refuse(null, "missing user operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing user operand"));
         if (taking.first + 2 < argc)
-                return text_refuse(program_argument((b32)taking.first + 2),
-                                   "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first + 2), "extra operand"));
 
         p8 source_path[FILE_PATH_MAX];
         string_address source_line = (string_address)"<no tty>";
@@ -1876,12 +1865,9 @@ static b32 tools_write()
                 file_facts source;
                 if (!file_look_at(source_path, address_of source) ||
                     (source.mode & MODE_FORMAT) != MODE_CHARACTER)
-                        return text_refuse(source_path,
-                                           "cannot inspect your terminal", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, source_path, "cannot inspect your terminal"));
                 if (system_call(syscall(getuid)) && !(source.mode & 0020))
-                        return text_refuse(null,
-                                           "you have write permission turned off",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "you have write permission turned off"));
                 source_line = login_message_line(source_path);
         }
 
@@ -1904,7 +1890,7 @@ static b32 tools_write()
         if (!read || login_message_select.failed)
         {
                 if (login_message_select.failed)
-                        text_error(null, "cannot retain terminal selection");
+                        string_diagnostic(&text_diagnostic, 0, null, "cannot retain terminal selection");
                 login_message_selection_clear();
                 return text_done(1);
         }
@@ -1927,15 +1913,15 @@ static b32 tools_write()
         if (!login_message_select.count)
         {
                 if (!login_message_select.sessions)
-                        string_format(file_fail, "write: %s is not logged in\n",
+                        string_format(log_error, "write: %s is not logged in\n",
                                       login_message_select.wanted_user);
                 else if (login_message_select.explicit_line)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "write: %s is not logged in on %s\n",
                                       login_message_select.wanted_user,
                                       login_message_select.wanted_line);
                 else
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "write: %s has messages disabled\n",
                                       login_message_select.wanted_user);
                 login_message_selection_clear();
@@ -1948,7 +1934,7 @@ static b32 tools_write()
         login_message_selection_clear();
 
         if (eligible > 1)
-                string_format(file_fail,
+                string_format(log_error,
                               "write: %s is logged in more than once; writing to %s\n",
                               chosen.user, chosen.line);
 
@@ -1956,7 +1942,7 @@ static b32 tools_write()
                                             real_user);
         if (handle < 0)
         {
-                string_format(file_fail, "write: /dev/%s: %s\n", chosen.line,
+                string_format(log_error, "write: /dev/%s: %s\n", chosen.line,
                               file_reason(handle));
                 return text_done(1);
         }
@@ -2084,7 +2070,7 @@ static b32 tools_wall()
         if (timeout_text &&
             (!string_digits_exact(timeout_text, address_of timeout) ||
              !timeout || timeout > p32_max))
-                return text_refuse(timeout_text, "invalid timeout", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, timeout_text, "invalid timeout"));
 
         bool banner = true;
         if (taking.flags & FILE_FLAG('n'))
@@ -2093,7 +2079,7 @@ static b32 tools_wall()
                 if (!system_call(syscall(geteuid)))
                         banner = false;
                 else
-                        file_fail("wall: --nobanner is available only for root\n",
+                        log_error("wall: --nobanner is available only for root\n",
                                   0);
         }
 
@@ -2108,7 +2094,7 @@ static b32 tools_wall()
                                       address_of login_message_select.wanted_group))
                 {
                         login_message_selection_clear();
-                        return text_refuse(group_text, "unknown group", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, group_text, "unknown group"));
                 }
                 login_message_select.group = true;
         }
@@ -2138,7 +2124,7 @@ static b32 tools_wall()
                         positive egid = (positive)system_call(syscall(getegid));
                         if (uid && (uid != euid || gid != egid))
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                     "wall: will not read %s - use stdin.\n", one);
                                 made = false;
                         }
@@ -2167,7 +2153,7 @@ static b32 tools_wall()
         if (!made || sink.failed)
         {
                 if (sink.failed)
-                        text_error(null, "message is too large");
+                        string_diagnostic(&text_diagnostic, 0, null, "message is too large");
                 byte_store_release(address_of message);
                 login_message_selection_clear();
                 return text_done(1);
@@ -2178,7 +2164,7 @@ static b32 tools_wall()
             login_message_select.failed)
         {
                 if (login_message_select.failed)
-                        text_error(null, "cannot retain terminal list");
+                        string_diagnostic(&text_diagnostic, 0, null, "cannot retain terminal list");
                 byte_store_release(address_of message);
                 login_message_selection_clear();
                 return text_done(1);
@@ -2193,7 +2179,7 @@ static b32 tools_wall()
                 if (sent < 0 && sent != -EACCES && sent != -ENOENT &&
                     sent != -EBUSY && sent != -ENXIO && sent != -ENODEV &&
                     sent != -EIO)
-                        string_format(file_fail, "wall: /dev/%s: %s\n", line,
+                        string_format(log_error, "wall: /dev/%s: %s\n", line,
                                       file_reason(sent));
         }
 
@@ -2433,7 +2419,7 @@ static bool login_utmpdump_seen(p8 letter, string_address value)
         login_utmpdump_output = text_open_handle(value, FILE_WRITE, 0666);
         if (login_utmpdump_output < 0)
         {
-                string_format(file_fail, "utmpdump: cannot open %s: %s\n", value,
+                string_format(writer_stderr, "utmpdump: cannot open %s: %s\n", value,
                               file_reason(login_utmpdump_output));
                 return false;
         }
@@ -2462,11 +2448,9 @@ static b32 tools_utmpdump()
         if (file_meta(address_of taking, "[options] [filename]", text_put))
                 return text_done(0);
         if (taking.flags & FILE_FLAG('r'))
-                return text_refuse(null,
-                    "reverse import is not supported; binary login state is never mutated",
-                    1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "reverse import is not supported; binary login state is never mutated"));
         if (taking.flags & FILE_FLAG('f'))
-                return text_refuse(null, "follow mode is not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "follow mode is not supported"));
 
         // util-linux dumps the first operand and ignores any others.
         positive output_handle = 1;
@@ -2478,7 +2462,7 @@ static b32 tools_utmpdump()
         }
 
         string_address path = file_operand_count ? file_operand_at(0) : null;
-        string_format(file_fail, "Utmp dump of %s\n",
+        string_format(log_error, "Utmp dump of %s\n",
                       path ? path : (string_address)"/dev/stdin");
         bool okay = login_records(path, false, false, login_utmpdump_visit);
         text_flush();
@@ -2968,16 +2952,15 @@ static b32 tools_last()
         if (file_meta(address_of taking, "[options] [username|tty ...]", text_put))
                 return text_done(0);
         if (taking.flags & FILE_FLAG('d'))
-                return text_refuse(null, "DNS lookup is not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "DNS lookup is not supported"));
         if (taking.flags & (FILE_FLAG('p') | FILE_FLAG('s') | FILE_FLAG('t')))
-                return text_refuse(null,
-                                   "time selection is not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "time selection is not supported"));
 
         memory_fill(address_of login_last, 0, sizeof(login_last));
         login_last.limit = positive_max;
         string_address limit = file_option_value(address_of taking, 'n');
         if (limit && (!string_digits_exact(limit, address_of login_last.limit)))
-                return text_refuse(limit, "invalid line limit", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, limit, "invalid line limit"));
         if (!login_last.limit)
                 login_last.limit = positive_max;
 
@@ -2987,7 +2970,7 @@ static b32 tools_last()
         string_address format = file_option_value(address_of taking, 'z');
         if (format && (taking.flags & FILE_FLAG('F')))
         {
-                file_fail("last: options --fulltimes and --time-format cannot be combined\n",
+                writer_stderr("last: options --fulltimes and --time-format cannot be combined\n",
                           0);
                 return text_done(1);
         }
@@ -3002,9 +2985,8 @@ static b32 tools_last()
                 else if (string_equals(format, "notime"))
                         login_last.time_format = LOGIN_LAST_TIME_NONE;
                 else
-                        return text_refuse(format,
-                            "time format is unsupported (use notime, short, full, or iso)",
-                            1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, format,
+                            "time format is unsupported (use notime, short, full, or iso)"));
         }
         login_last.full_names = (taking.flags & FILE_FLAG('w')) != 0;
         login_last.no_host = (taking.flags & FILE_FLAG('R')) != 0;
@@ -3020,10 +3002,7 @@ static b32 tools_last()
         login_last_reader reader = {0};
         bipolar loaded = login_last_reader_open(path, address_of reader);
         if (loaded < 0)
-        {
-                text_error(path, file_reason(loaded));
-                return text_done(1);
-        }
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, file_reason(loaded)));
 
         // util-linux warns about a directory and goes on to say when the
         // (empty) database begins.
@@ -3032,7 +3011,7 @@ static b32 tools_last()
                       address_of kind) &&
             (kind.mode & MODE_FORMAT) == MODE_DIRECTORY)
         {
-                string_format(file_fail, "last: cannot read %s: Is a directory\n",
+                string_format(writer_stderr, "last: cannot read %s: Is a directory\n",
                               path);
                 reader.records = 0;
         }
@@ -3178,8 +3157,7 @@ static b32 tools_last()
                 beginning = record.seconds;
         system_close((positive)reader.handle);
         if (login_last.failed)
-                return text_refuse(path,
-                                   "login database changed while reading", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "login database changed while reading"));
         text_put_character('\n');
         p8 beginning_text[64];
         positive beginning_length;
@@ -3761,7 +3739,7 @@ static b32 tools_pinky()
                 return text_done(1);
 
         if (!login_pinky.short_output)
-                return text_refuse(null, "long format is not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "long format is not supported"));
 
         positive flags = taking.flags;
         login_pinky.heading = !(flags & FILE_FLAG('f'));
@@ -3899,7 +3877,7 @@ static bool tsort_break_cycle(b32 address_to order, b32 address_to loop)
                                 b32 here = address_to loop;
                                 b32 next = tsort_nodes[here].queue;
 
-                                text_error(null, tsort_nodes[here].name);
+                                string_diagnostic(&text_diagnostic, 0, null, tsort_nodes[here].name);
 
                                 if (here == node)
                                 {
@@ -3960,7 +3938,7 @@ static b32 tools_tsort()
                 while (input == TSORT_ERROR_INTERRUPTED);
 
                 if (input < 0)
-                        return text_refuse(path, file_reason(input), 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, path, file_reason(input)));
 
                 close_input = true;
         }
@@ -3977,7 +3955,7 @@ static b32 tools_tsort()
         if (!bytes)
         {
                 if (read_failed)
-                        text_error(path, "Read error");
+                        string_diagnostic(&text_diagnostic, 0, path, "Read error");
                 return text_done(1);
         }
 
@@ -3989,7 +3967,7 @@ static b32 tools_tsort()
                 p8 value = bytes[at];
 
                 if (!value)
-                        return text_refuse(path, "input contains a NUL byte", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, path, "input contains a NUL byte"));
 
                 if (value == ' ' || value == '\t' || value == '\n')
                 {
@@ -4004,8 +3982,7 @@ static b32 tools_tsort()
         }
 
         if (tokens & 1)
-                return text_refuse(path,
-                                   "input contains an odd number of tokens", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "input contains an odd number of tokens"));
         if (!tokens)
                 return text_done(0);
 
@@ -4015,19 +3992,19 @@ static b32 tools_tsort()
         if (tokens > b32_max ||
             tokens > positive_max / sizeof(tsort_node) ||
             tokens / 2 > positive_max / sizeof(tsort_edge))
-                return text_refuse(path, "input too large", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
         tsort_bucket_count = 8;
 
         while (tsort_bucket_count < tokens * 2)
         {
                 if (tsort_bucket_count > positive_max / 2)
-                        return text_refuse(path, "input too large", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
                 tsort_bucket_count <<= 1;
         }
 
         if (tsort_bucket_count > positive_max / sizeof(b32))
-                return text_refuse(path, "input too large", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
         positive node_bytes = tokens * sizeof(tsort_node);
         positive edge_bytes = (tokens / 2) * sizeof(tsort_edge);
@@ -4035,7 +4012,7 @@ static b32 tools_tsort()
 
         if (node_bytes > positive_max - edge_bytes ||
             node_bytes + edge_bytes > positive_max - bucket_bytes)
-                return text_refuse(path, "input too large", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
         p8 address_to graph = (p8 address_to)text_arena_take(
             node_bytes + edge_bytes + bucket_bytes);
@@ -4086,7 +4063,7 @@ static b32 tools_tsort()
         }
 
         if (tsort_node_count > positive_max / (2 * sizeof(b32)))
-                return text_refuse(path, "input too large", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, path, "input too large"));
 
         b32 address_to order = (b32 address_to)text_arena_take(
             tsort_node_count * 2 * sizeof(b32));
@@ -4148,7 +4125,7 @@ static b32 tools_tsort()
 
                 if (left)
                 {
-                        text_error(path, "input contains a loop:");
+                        string_diagnostic(&text_diagnostic, 0, path, "input contains a loop:");
                         acyclic = false;
                         b32 loop = -1;
 
@@ -4831,7 +4808,7 @@ static fn numfmt_invalid_value(p8 address_to bytes, positive length)
                 else if (digits && rest < length)
                         reason = "invalid suffix in input";
 
-                string_format(file_fail, "numfmt: %s: '%s'%s\n", reason, shown,
+                string_format(writer_stderr, "numfmt: %s: '%s'%s\n", reason, shown,
                               note);
         }
 
@@ -5133,7 +5110,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
         if (letter == 'd' && value && string_length(value) != 1)
         {
                 text_flush();
-                file_fail("numfmt: the delimiter must be a single character\n", 0);
+                writer_stderr("numfmt: the delimiter must be a single character\n", 0);
                 return false;
         }
         if (letter == 'h' && value)
@@ -5143,7 +5120,7 @@ static bool numfmt_option_seen(p8 letter, string_address value)
                 if (!string_digits_exact(value, address_of header) || !header)
                 {
                         text_flush();
-                        string_format(file_fail,
+                        string_format(writer_stderr,
                                       "numfmt: invalid header value '%s'\n", value);
                         return false;
                 }
@@ -5185,24 +5162,24 @@ static b32 tools_numfmt()
 
         string_address value = file_option_value(address_of taking, 'r');
         if (value && !numfmt_scale_name(value, true, address_of numfmt.from))
-                return text_refuse(value, "invalid --from value", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid --from value"));
 
         value = file_option_value(address_of taking, 't');
         if (value && !numfmt_scale_name(value, false, address_of numfmt.to))
-                return text_refuse(value, "invalid --to value", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid --to value"));
 
         value = file_option_value(address_of taking, 'R');
         if (value && !numfmt_unit(value, address_of numfmt.from_unit))
-                return text_refuse(value, "invalid unit size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid unit size"));
 
         value = file_option_value(address_of taking, 'T');
         if (value && !numfmt_unit(value, address_of numfmt.to_unit))
-                return text_refuse(value, "invalid unit size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid unit size"));
 
         value = file_option_value(address_of taking, 'p');
         if (value && (!file_signed_decimal(value, address_of numfmt.padding) ||
                       !numfmt.padding))
-                return text_refuse(value, "invalid padding value", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid padding value"));
 
         value = file_option_value(address_of taking, 'u');
         if (value)
@@ -5216,7 +5193,7 @@ static b32 tools_numfmt()
                 numfmt.rounding = string_table_find(
                     value, names, sizeof(names[0]), array_count(names));
                 if (numfmt.rounding == array_count(names))
-                        return text_refuse(value, "invalid rounding method", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid rounding method"));
         }
 
         value = file_option_value(address_of taking, 'i');
@@ -5229,27 +5206,21 @@ static b32 tools_numfmt()
                 numfmt.invalid = string_table_find(
                     value, names, sizeof(names[0]), array_count(names));
                 if (numfmt.invalid == array_count(names))
-                        return text_refuse(value, "invalid invalid-mode", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid invalid-mode"));
         }
 
         value = file_option_value(address_of taking, 'm');
         if (value)
         {
                 if (!numfmt_format_read(value, address_of numfmt.format))
-                        return text_refuse(value,
-                                           "format needs exactly one %f conversion",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "format needs exactly one %f conversion"));
                 numfmt.have_format = true;
         }
 
         if (numfmt.grouping && numfmt.have_format)
-                return text_refuse(null,
-                                   "--grouping cannot be combined with --format",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --format"));
         if (numfmt.grouping && numfmt.to != NUMFMT_SCALE_NONE)
-                return text_refuse(null,
-                                   "--grouping cannot be combined with --to",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--grouping cannot be combined with --to"));
 
         value = file_option_value(address_of taking, 'd');
         if (flags & FILE_FLAG('d'))
@@ -5257,8 +5228,7 @@ static b32 tools_numfmt()
                 positive length = string_length(value);
 
                 if (length > 1)
-                        return text_refuse(value,
-                                           "delimiter must be one byte", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "delimiter must be one byte"));
                 numfmt.delimiter_given = true;
                 numfmt.field_delimiter = length ? value[0] : '\0';
         }
@@ -5273,7 +5243,7 @@ static b32 tools_numfmt()
         if (string_equals(value, "-"))
                 value = (string_address) "1-";
         if (!text_list_parse(value))
-                return text_refuse(value, "invalid field specification", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid field specification"));
 
         if (flags & FILE_FLAG('h'))
         {
@@ -5282,7 +5252,7 @@ static b32 tools_numfmt()
 
                 if (value && (!string_digits_exact(value, address_of numfmt.header) ||
                               !numfmt.header))
-                        return text_refuse(value, "invalid header value", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid header value"));
         }
 
         text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
@@ -5291,12 +5261,12 @@ static b32 tools_numfmt()
         if (numfmt.have_format && numfmt.format.width && numfmt.padding)
         {
                 text_flush();
-                file_fail("numfmt: --format padding overriding --padding\n", 0);
+                writer_stderr("numfmt: --format padding overriding --padding\n", 0);
         }
         if ((flags & FILE_FLAG('h')) && file_operand_count)
         {
                 text_flush();
-                file_fail("numfmt: --header ignored with command-line input\n", 0);
+                writer_stderr("numfmt: --header ignored with command-line input\n", 0);
         }
 
         if (file_operand_count)
@@ -5682,7 +5652,7 @@ static bool factor_number(p8 address_to bytes, positive length,
                 if (remaining > 1 &&
                     !factor_collect(remaining, factors, address_of count))
                 {
-                        text_error(decimal, "factorization did not converge");
+                        string_diagnostic(&text_diagnostic, 0, decimal, "factorization did not converge");
                         text_put_character('\n');
                         return false;
                 }
@@ -5739,11 +5709,11 @@ invalid:
 
                 text_flush();
                 if (digits == length && length > start)
-                        string_format(file_fail,
+                        string_format(writer_stderr,
                                       "factor: %s: not a valid positive native-word integer\n",
                                       shown);
                 else
-                        string_format(file_fail,
+                        string_format(writer_stderr,
                                       "factor: '%s' is not a valid positive integer\n",
                                       shown);
         }
@@ -5807,11 +5777,7 @@ static b32 tools_factor()
                                                            exponents))
                                         {
                                                 if (excess)
-                                                {
-                                                        text_flush();
-                                                        file_fail("factor: integer exceeds native-word ceiling\n",
-                                                                  0);
-                                                }
+                                                        string_diagnostic(&text_diagnostic, 0, null, "integer exceeds native-word ceiling");
                                                 failed = true;
                                         }
                                         length = 0;
@@ -5829,11 +5795,7 @@ static b32 tools_factor()
                         if (excess || !factor_number(token, length, exponents))
                         {
                                 if (excess)
-                                {
-                                        text_flush();
-                                        file_fail("factor: integer exceeds native-word ceiling\n",
-                                                  0);
-                                }
+                                        string_diagnostic(&text_diagnostic, 0, null, "integer exceeds native-word ceiling");
                                 failed = true;
                         }
                 }
@@ -6063,7 +6025,7 @@ static b32 tools_uuidgen()
                 string_address after = count_text;
                 if (!string_digits_checked(address_of after, 10,
                                            address_of count) || string_get(after))
-                        return text_refuse(count_text, "invalid count", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, count_text, "invalid count"));
         }
 
         positive modes = ((flags & FILE_FLAG('r')) != 0) +
@@ -6072,38 +6034,30 @@ static b32 tools_uuidgen()
                          ((flags & FILE_FLAG('7')) != 0) + named;
 
         if (modes > 1)
-                return text_refuse(null, "generation modes cannot be combined",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "generation modes cannot be combined"));
 
         if (named)
         {
                 if (count_text)
-                        return text_refuse(null,
-                                           "name mode and --count cannot be combined",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "name mode and --count cannot be combined"));
                 if (!namespace || !name || md5 == sha1)
-                        return text_refuse(null,
-                                           "name mode needs namespace, name and exactly one digest",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "name mode needs namespace, name and exactly one digest"));
 
                 tools_uuid space;
                 if (!tools_uuidgen_namespace(namespace, address_of space))
-                        return text_refuse(namespace, "invalid namespace UUID",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, namespace, "invalid namespace UUID"));
 
                 p8 address_to name_bytes = (p8 address_to)name;
                 positive name_length = string_length(name);
                 if (hex &&
                     !tools_uuidgen_hex_name(name, address_of name_bytes,
                                             address_of name_length))
-                        return text_refuse(name, "invalid hexadecimal name", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, name, "invalid hexadecimal name"));
 
 #if defined(LINUX)
                 bipolar transform = tools_uuid_name_transform(sha1);
                 if (transform < 0)
-                        return text_refuse(null,
-                                           "kernel MD5/SHA1 service is unavailable",
-                                           1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel MD5/SHA1 service is unavailable"));
 
                 tools_uuid uuid;
                 bool made = tools_uuid_name(transform, address_of space,
@@ -6111,15 +6065,12 @@ static b32 tools_uuidgen()
                                             address_of uuid);
                 system_close((positive)transform);
                 if (!made)
-                        return text_refuse(null,
-                                           "kernel UUID digest failed", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel UUID digest failed"));
                 tools_uuid_put(address_of uuid);
                 text_put_character('\n');
                 return text_done(0);
 #else
-                return text_refuse(null,
-                                   "name UUIDs require the Linux hash service",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "name UUIDs require the Linux hash service"));
 #endif
         }
 
@@ -6128,7 +6079,7 @@ static b32 tools_uuidgen()
 
         file_random_state random;
         if (!file_random_seed(address_of random))
-                return text_refuse(null, "kernel random source failed", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel random source failed"));
 
         bool time_one = (flags & FILE_FLAG('t')) != 0;
         bool time_six = (flags & FILE_FLAG('6')) != 0;
@@ -6144,7 +6095,7 @@ static b32 tools_uuidgen()
         if ((time_one || time_six || time_seven) &&
             system_call_2(syscall(clock_gettime), 0,
                           (positive)wall) < 0)
-                return text_refuse(null, "realtime clock failed", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "realtime clock failed"));
 
         if (time_one || time_six)
                 timestamp = tools_uuid_gregorian_now(wall[0], wall[1]);
@@ -6375,8 +6326,7 @@ static b32 tools_uuidparse()
         bool noheadings = (taking.flags & FILE_FLAG('n')) != 0;
         bool raw = (taking.flags & FILE_FLAG('r')) != 0;
         if (json && raw)
-                return text_refuse(null,
-                                   "--json and --raw cannot be combined", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--json and --raw cannot be combined"));
 
         p8 columns[32] = {
             TOOLS_UUID_COLUMN_UUID, TOOLS_UUID_COLUMN_VARIANT,
@@ -6388,8 +6338,7 @@ static b32 tools_uuidparse()
         if (output && !string_get(output))
                 return text_done(1);
         if (output && !tools_uuid_columns(output, columns, address_of column_count))
-                return text_refuse(output, "unknown or excessive output column",
-                                   1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, output, "unknown or excessive output column"));
         // Nothing to parse prints nothing, not even the heading.
         if (!file_operand_count)
                 return text_done(0);
@@ -6520,7 +6469,7 @@ static bool tools_mcookie_seen(p8 letter, string_address value)
             !(string_is(value, '0') && !string_get(value + 1)) &&
             !split_size(value, address_of maximum))
         {
-                string_format(file_fail,
+                string_format(writer_stderr,
                               "mcookie: failed to parse length: '%s': Invalid argument\n",
                               value);
                 return false;
@@ -6547,11 +6496,11 @@ static b32 tools_mcookie()
         if (maximum_text &&
             !(string_is(maximum_text, '0') && !string_get(maximum_text + 1)) &&
             !split_size(maximum_text, address_of maximum))
-                return text_refuse(maximum_text, "invalid maximum size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, maximum_text, "invalid maximum size"));
 
         file_random_state random;
         if (!file_random_seed(address_of random))
-                return text_refuse(null, "kernel random source failed", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel random source failed"));
 
         /* Upstream draws 128 kernel bytes.  Four uses of the existing
            32-byte seeder preserve that entropy budget without a direct
@@ -6560,7 +6509,7 @@ static b32 tools_mcookie()
         {
                 file_random_state additional;
                 if (!file_random_seed(address_of additional))
-                        return text_refuse(null, "kernel random source failed", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel random source failed"));
                 for (positive at = 0; at < array_count(random.words); at++)
                         random.words[at] ^= additional.words[at];
                 (void)file_random_word(address_of random);
@@ -6575,7 +6524,7 @@ static b32 tools_mcookie()
                                      : system_open_at(AT_FDCWD, path,
                                                       FILE_READ | O_CLOEXEC);
                 if (handle < 0)
-                        text_error(path, file_reason(handle));
+                        string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
                 else
                 {
                         // A seed that cannot be read contributes nothing;
@@ -6603,16 +6552,16 @@ static b32 tools_mcookie()
         {
                 if (path)
                 {
-                        text_error_raw("Got ");
+                        writer_stderr("Got ", 0);
                         p8 number[24];
                         positive length = positive_into_string(number, mixed);
                         number[length] = end;
-                        text_error_raw(number);
-                        text_error_raw(" bytes from ");
-                        text_error_raw(path);
-                        text_error_raw("\n");
+                        writer_stderr(number, 0);
+                        writer_stderr(" bytes from ", 0);
+                        writer_stderr(path, 0);
+                        writer_stderr("\n", 0);
                 }
-                text_error_raw("Got 128 bytes from getrandom() function\n");
+                writer_stderr("Got 128 bytes from getrandom() function\n", 0);
         }
 
         for (positive warm = 0; warm < 8; warm++)
@@ -6685,14 +6634,6 @@ static fn dd_info_caught(b32 number)
         dd_info_asked = 1;
 }
 
-static fn dd_say_number(positive value)
-{
-        p8 digits[24];
-        positive length = positive_into(digits, value);
-
-        system_write_all(2, digits, length);
-}
-
 // A scaled count with no prefix letter is the plain number again, and dd
 // leaves the parenthesis off rather than saying the same thing twice.
 static bool dd_bare(p8 address_to text, positive length)
@@ -6707,14 +6648,8 @@ static fn dd_summary()
 
         text_flush();
 
-        dd_say_number(dd_in_full);
-        text_error_raw("+");
-        dd_say_number(dd_in_partial);
-        text_error_raw(" records in\n");
-        dd_say_number(dd_out_full);
-        text_error_raw("+");
-        dd_say_number(dd_out_partial);
-        text_error_raw(" records out\n");
+        string_format(writer_stderr, "%p+%p records in\n%p+%p records out\n",
+                      dd_in_full, dd_in_partial, dd_out_full, dd_out_partial);
 
         if (dd_status_level == DD_STATUS_NOXFER)
                 return;
@@ -6726,21 +6661,21 @@ static fn dd_summary()
         positive iec_length = positive_into_human_nearest_string(iec, dd_written,
                                                                   true);
 
-        dd_say_number(dd_written);
-        text_error_raw(dd_written == 1 ? " byte" : " bytes");
+        positive_to_string(writer_stderr, dd_written);
+        writer_stderr(dd_written == 1 ? " byte" : " bytes", 0);
 
         if (!dd_bare(si, si_length))
         {
-                text_error_raw(" (");
-                text_error_raw(si);
+                writer_stderr(" (", 0);
+                writer_stderr(si, 0);
 
                 if (!dd_bare(iec, iec_length))
                 {
-                        text_error_raw(", ");
-                        text_error_raw(iec);
+                        writer_stderr(", ", 0);
+                        writer_stderr(iec, 0);
                 }
 
-                text_error_raw(")");
+                writer_stderr(")", 0);
         }
 
         /*
@@ -6757,20 +6692,20 @@ static fn dd_summary()
         if (!elapsed)
                 elapsed = 1;
 
-        text_error_raw(" copied, ");
+        writer_stderr(" copied, ", 0);
 
         positive whole = elapsed / 1000000000u;
         positive rest = elapsed % 1000000000u;
 
-        dd_say_number(whole);
-        text_error_raw(".");
+        positive_to_string(writer_stderr, whole);
+        writer_stderr(".", 0);
 
         p8 fraction[9];
         positive fraction_length = positive_into_padded(fraction, rest, 9, '0');
 
         system_write_all(2, fraction, fraction_length);
 
-        text_error_raw(" s, ");
+        writer_stderr(" s, ", 0);
 
         /*
                 Bytes per second from microseconds, not from whole seconds:
@@ -6790,8 +6725,8 @@ static fn dd_summary()
                            : dd_written / microseconds * 1000000u;
 
         positive_into_human_nearest_string(rate, per, false);
-        text_error_raw(rate);
-        text_error_raw("/s\n");
+        writer_stderr(rate, 0);
+        writer_stderr("/s\n", 0);
 }
 
 static bool dd_size(string_address text, positive address_to out)
@@ -6951,56 +6886,12 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
                         !dd_word(address_of value, words[word].name)))
                         word++;
                 if (word == array_count(words))
-                {
-                        text_error(value, group == 0 ? "invalid conversion" :
+                        return string_diagnostic(&text_diagnostic, 0, value, group == 0 ? "invalid conversion" :
                                           group == 1 ? "invalid input flag" :
                                                        "invalid output flag");
-                        return false;
-                }
                 *flags |= words[word].flag;
         } while (*value);
         return true;
-}
-
-/*
-        Every complaint dd makes about a file is the same sentence: dd, what
-        went wrong, which file, and the kernel's reason when there is one.
-        The verb sits before the name when it is an act that failed, "failed
-        to open 'x'", and after it when it is a finding about the file, "'x':
-        cannot seek", which is the only difference between the two shapes
-        coreutils uses. One writer keeps the ten of them from drifting
-        apart.
-*/
-static fn dd_complain(string_address before, string_address name,
-                      string_address fallback, string_address after,
-                      bipolar code)
-{
-        text_flush();
-        text_error_raw("dd: ");
-
-        if (before)
-        {
-                text_error_raw(before);
-                text_error_raw(" ");
-        }
-
-        text_error_raw("'");
-        text_error_raw(name ? name : fallback);
-        text_error_raw("'");
-
-        if (after)
-        {
-                text_error_raw(": ");
-                text_error_raw(after);
-        }
-
-        if (code < 0)
-        {
-                text_error_raw(": ");
-                text_error_raw(file_reason(code));
-        }
-
-        text_error_raw("\n");
 }
 
 /*
@@ -7036,7 +6927,16 @@ static positive dd_output(positive handle, string_address name,
                 dd_written += wrote;
 
         if (wrote != length)
-                dd_complain("error writing", name, "standard output", null, code);
+        {
+                text_flush();
+                if (code < 0)
+                        string_format(writer_stderr, "dd: error writing '%s': %s\n",
+                                      name ? name : (string_address)"standard output",
+                                      file_reason(code));
+                else
+                        string_format(writer_stderr, "dd: error writing '%s'\n",
+                                      name ? name : (string_address)"standard output");
+        }
 
         return wrote;
 }
@@ -7061,9 +6961,10 @@ static bool dd_truncate_failed(positive handle, string_address output,
 
         if (told < 0)
         {
-                dd_complain("cannot fstat", output, "standard output", null,
-                            told);
-                return true;
+                text_flush();
+                return string_report(writer_stderr, true, "dd: cannot fstat '%s': %s\n",
+                                     output ? output : (string_address)"standard output",
+                                     file_reason(told));
         }
 
         positive kind = facts.mode & MODE_FORMAT;
@@ -7071,14 +6972,11 @@ static bool dd_truncate_failed(positive handle, string_address output,
         if (kind != MODE_FILE && kind != MODE_DIRECTORY)
                 return false;
 
-        p8 sentence[72];
-        positive at = 22;
-
-        memory_copy_apart(sentence, "failed to truncate to ", at);
-        at += positive_into(sentence + at, length);
-        string_copy(sentence + at, " bytes in output file");
-        dd_complain(sentence, output, "standard output", null, refused);
-        return true;
+        text_flush();
+        return string_report(writer_stderr, true,
+                             "dd: failed to truncate to %p bytes in output file '%s': %s\n",
+                             length, output ? output : (string_address)"standard output",
+                             file_reason(refused));
 }
 
 // swab is one conversion over the byte stream, not one conversion per read.
@@ -7124,6 +7022,8 @@ static b32 tools_dd(void)
         positive count = TEXT_UNSET;
         positive skip = 0;
         positive seek = 0;
+        // cbs has no effect until block or unblock is chosen,
+        // but it remains a number and nonsense must not pass.
         positive cbs = 0;
         positive conv = 0;
         positive iflags = 0;
@@ -7134,6 +7034,21 @@ static b32 tools_dd(void)
         bool skip_bytes = false;
         bool seek_bytes = false;
         b32 status = 0;
+        struct {
+                string_address name;
+                positive address_to value;
+                bool address_to bytes, address_to seen;
+        } numbers[] = {
+            {"ibs", &ibs, null, null},
+            {"obs", &obs, null, null},
+            {"bs", &bs, null, &bs_set},
+            {"count", &count, &count_bytes, &count_set},
+            {"skip", &skip, &skip_bytes, null},
+            {"iseek", &skip, &skip_bytes, null},
+            {"seek", &seek, &seek_bytes, null},
+            {"oseek", &seek, &seek_bytes, null},
+            {"cbs", &cbs, null, null},
+        };
 
         text_begin("dd");
 
@@ -7155,49 +7070,24 @@ static b32 tools_dd(void)
                 string_address argument = program_argument(i);
                 string_address value;
 
-                if (dd_operand(argument, "if", address_of value))
+                positive n = 0;
+
+                while (n < array_count(numbers) &&
+                       !dd_operand(argument, numbers[n].name, address_of value))
+                        n++;
+                if (n < array_count(numbers))
+                {
+                        if (numbers[n].bytes
+                                ? !dd_quantity(value, numbers[n].value, numbers[n].bytes)
+                                : !dd_size(value, numbers[n].value))
+                                return string_diagnostic(&text_diagnostic, 1, argument, "invalid number");
+                        if (numbers[n].seen)
+                                *numbers[n].seen = true;
+                }
+                else if (dd_operand(argument, "if", address_of value))
                         input = value;
                 else if (dd_operand(argument, "of", address_of value))
                         output = value;
-                else if (dd_operand(argument, "ibs", address_of value))
-                {
-                        if (!dd_size(value, address_of ibs))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "obs", address_of value))
-                {
-                        if (!dd_size(value, address_of obs))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "bs", address_of value))
-                {
-                        if (!dd_size(value, address_of bs))
-                                return text_error(argument, "invalid number"), 1;
-
-                        bs_set = true;
-                }
-                else if (dd_operand(argument, "count", address_of value))
-                {
-                        if (!dd_quantity(value, address_of count,
-                                         address_of count_bytes))
-                                return text_error(argument, "invalid number"), 1;
-
-                        count_set = true;
-                }
-                else if (dd_operand(argument, "skip", address_of value) ||
-                         dd_operand(argument, "iseek", address_of value))
-                {
-                        if (!dd_quantity(value, address_of skip,
-                                         address_of skip_bytes))
-                                return text_error(argument, "invalid number"), 1;
-                }
-                else if (dd_operand(argument, "seek", address_of value) ||
-                         dd_operand(argument, "oseek", address_of value))
-                {
-                        if (!dd_quantity(value, address_of seek,
-                                         address_of seek_bytes))
-                                return text_error(argument, "invalid number"), 1;
-                }
                 else if (dd_operand(argument, "status", address_of value))
                 {
                         if (string_equals(value, "none"))
@@ -7207,7 +7097,7 @@ static b32 tools_dd(void)
                         else if (string_equals(value, "progress"))
                                 dd_status_level = DD_STATUS_ALL;
                         else
-                                return text_error(value, "invalid status level"), 1;
+                                return string_diagnostic(&text_diagnostic, 1, value, "invalid status level");
                 }
                 else if (dd_operand(argument, "conv", address_of value))
                 {
@@ -7224,17 +7114,9 @@ static b32 tools_dd(void)
                         if (!dd_flags(value, 2, address_of oflags))
                                 return 1;
                 }
-                else if (dd_operand(argument, "cbs", address_of value))
-                {
-                        // cbs has no effect until block or unblock is chosen,
-                        // but it remains a number and nonsense must not pass.
-                        if (!dd_size(value, address_of cbs))
-                                return text_error(argument, "invalid number"), 1;
-                }
                 else
                 {
-                        text_error(argument, "unrecognized operand");
-                        return 1;
+                        return string_diagnostic(&text_diagnostic, 1, argument, "unrecognized operand");
                 }
         }
 
@@ -7248,20 +7130,18 @@ static b32 tools_dd(void)
         seek_bytes |= (oflags & DD_SEEK_BYTES) != 0;
 
         if ((conv & DD_LCASE) && (conv & DD_UCASE))
-                return text_error(null, "cannot combine lcase and ucase"), 1;
+                return string_diagnostic(&text_diagnostic, 1, null, "cannot combine lcase and ucase");
 
         if (!ibs || !obs || ibs > positive_max - 31 || obs > positive_max - 31)
         {
-                text_error(null, "invalid number");
-                return 1;
+                return string_diagnostic(&text_diagnostic, 1, null, "invalid number");
         }
 
         if ((count_set && count > (positive)bipolar_max) ||
             (skip && skip > (positive)bipolar_max / (skip_bytes ? 1 : ibs)) ||
             (seek && seek > (positive)bipolar_max / (seek_bytes ? 1 : obs)))
         {
-                text_error(null, "offset too large");
-                return 1;
+                return string_diagnostic(&text_diagnostic, 1, null, "offset too large");
         }
 
         // The whole output blocks a seek covers, which is what coreutils
@@ -7277,9 +7157,9 @@ static b32 tools_dd(void)
 
                 if (opened < 0)
                 {
-                        dd_complain("failed to open", input,
-                                    "standard input", null, opened);
-                        return 1;
+                        text_flush();
+                        return string_report(writer_stderr, 1, "dd: failed to open '%s': %s\n",
+                                             input, file_reason(opened));
                 }
 
                 in_handle = (positive)opened;
@@ -7308,9 +7188,9 @@ static b32 tools_dd(void)
 
                 if (opened < 0)
                 {
-                        dd_complain("failed to open", output,
-                                    "standard output", null, opened);
-                        return 1;
+                        text_flush();
+                        return string_report(writer_stderr, 1, "dd: failed to open '%s': %s\n",
+                                             output, file_reason(opened));
                 }
 
                 out_handle = (positive)opened;
@@ -7377,8 +7257,11 @@ static b32 tools_dd(void)
                 // Asked to skip past what is there. Not fatal, and said only
                 // where a summary would have been said.
                 if (short_of_it && dd_status_level != DD_STATUS_NONE)
-                        dd_complain(null, input, "standard input",
-                                    "cannot skip to specified offset", 0);
+                {
+                        text_flush();
+                        string_format(writer_stderr, "dd: '%s': cannot skip to specified offset\n",
+                                      input ? input : (string_address)"standard input");
+                }
         }
 
         /*
@@ -7397,8 +7280,10 @@ static b32 tools_dd(void)
 
                 if (landed < 0)
                 {
-                        dd_complain(null, output, "standard output",
-                                    "cannot seek", landed);
+                        text_flush();
+                        string_format(writer_stderr, "dd: '%s': cannot seek: %s\n",
+                                      output ? output : (string_address)"standard output",
+                                      file_reason(landed));
                         status = 1;
                 }
                 else if (output && seek_records && !(conv & DD_NOTRUNC))
@@ -7476,8 +7361,10 @@ static b32 tools_dd(void)
 
                 if (got < 0)
                 {
-                        dd_complain("error reading", input, "standard input",
-                                    null, got);
+                        text_flush();
+                        string_format(writer_stderr, "dd: error reading '%s': %s\n",
+                                      input ? input : (string_address)"standard input",
+                                      file_reason(got));
 
                         if (!(conv & DD_NOERROR))
                         {
@@ -7621,8 +7508,10 @@ static b32 tools_dd(void)
                 }
                 else if (done < 0)
                 {
-                        dd_complain("fdatasync failed for", output,
-                                    "standard output", null, done);
+                        text_flush();
+                        string_format(writer_stderr, "dd: fdatasync failed for '%s': %s\n",
+                                      output ? output : (string_address)"standard output",
+                                      file_reason(done));
                         result = 1;
                 }
         }
@@ -7633,15 +7522,17 @@ static b32 tools_dd(void)
 
                 if (done < 0)
                 {
-                        dd_complain("fsync failed for", output,
-                                    "standard output", null, done);
+                        text_flush();
+                        string_format(writer_stderr, "dd: fsync failed for '%s': %s\n",
+                                      output ? output : (string_address)"standard output",
+                                      file_reason(done));
                         result = 1;
                 }
         }
 
         if (out_handle != 1 && system_close(out_handle) < 0)
         {
-                text_error(output, "close failed");
+                string_diagnostic(&text_diagnostic, 0, output, "close failed");
                 result = 1;
         }
 
@@ -7989,7 +7880,7 @@ static bool dump_od_row_width()
 
         if (dump_arguments.width % unit)
         {
-                string_format(file_fail,
+                string_format(writer_stderr,
                               "od: warning: invalid width %p; using %p instead\n",
                               dump_arguments.width, unit);
                 dump_arguments.width = unit;
@@ -8001,20 +7892,14 @@ static bool dump_od_row_width()
 static bool dump_od_seen(p8 letter, string_address value)
 {
         if (letter == 't' && !dump_od_types(value))
-        {
-                text_error(value, "unsupported output format");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, value, "unsupported output format");
 
         // -E is --endian, read after the walk; -e is GNU's float alias.
         if (letter == 'E')
                 return true;
 
         if (letter == 'e' || letter == 'F' || letter == 'f')
-        {
-                text_error(null, "floating point output is unsupported");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "floating point output is unsupported");
 
         /* Legacy switches name the same formats as -t, including its host
            sizes and tuned hex-byte selection. Keep only their spelling. */
@@ -8028,10 +7913,7 @@ static bool dump_od_seen(p8 letter, string_address value)
                 dump_od_types(formats[alias - aliases]);
 
         if (dump_arguments.failed)
-        {
-                text_error(null, "too many output formats");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "too many output formats");
 
         return true;
 }
@@ -8070,10 +7952,7 @@ static bool dump_hex_seen(p8 letter, string_address value)
         }
 
         if (dump_arguments.failed)
-        {
-                text_error(null, "too many output formats");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, null, "too many output formats");
 
         return true;
 }
@@ -8427,7 +8306,7 @@ static bool dump_input_is_directory(string_address name)
                 return false;
 
         text_flush();
-        string_format(file_fail, "%s: %s: Is a directory\n",
+        string_format(writer_stderr, "%s: %s: Is a directory\n",
                       dump_arguments.od ? (string_address)"od"
                                         : (string_address)"hexdump",
                       name ? name : (string_address)"standard input");
@@ -8465,7 +8344,7 @@ static b32 dump_run(positive first, positive count)
                 if (!dump_arguments.od && name && string_equals(name, "-"))
                 {
                         text_flush();
-                        file_fail("hexdump: -: No such file or directory\n", 0);
+                        writer_stderr("hexdump: -: No such file or directory\n", 0);
                         text_status = 1;
                         continue;
                 }
@@ -8559,15 +8438,12 @@ static b32 dump_run(positive first, positive count)
         }
 
         if (skip && dump_arguments.od)
-        {
-                text_error(null, "cannot skip past end of combined input");
-                return text_done(1);
-        }
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot skip past end of combined input"));
 
         if (!dump_arguments.od && first < count && !opened)
         {
                 text_flush();
-                file_fail("hexdump: all input file arguments failed\n", 0);
+                writer_stderr("hexdump: all input file arguments failed\n", 0);
                 text_status = 1;
         }
 
@@ -8697,7 +8573,7 @@ static b32 dump_strings(positive first, positive count, positive minimum)
 
         if (skip)
         {
-                text_error(null, "cannot skip past end of combined input");
+                string_diagnostic(&text_diagnostic, 0, null, "cannot skip past end of combined input");
                 return text_done(1);
         }
 
@@ -8737,7 +8613,7 @@ static b32 tools_od(void)
                          !dump_arguments.width ||
                          dump_arguments.width > DUMP_BLOCK)
                 {
-                        string_format(file_fail, "od: invalid -w argument '%s'\n",
+                        string_format(writer_stderr, "od: invalid -w argument '%s'\n",
                                       width);
                         return text_done(1);
                 }
@@ -8751,7 +8627,7 @@ static b32 tools_od(void)
                         dump_arguments.big_endian = true;
                 else if (!string_equals(order, "little"))
                 {
-                        string_format(file_fail,
+                        string_format(writer_stderr,
                                       "od: invalid argument '%s' for '--endian'\n"
                                       "Valid arguments are:\n  - 'big'\n  - 'little'\n"
                                       "Try 'od --help' for more information.\n",
@@ -8776,20 +8652,18 @@ static b32 tools_od(void)
                         dump_arguments.address_width = radix[0] == 'x' ? 6 : 7;
                 }
                 else
-                        return text_refuse(radix, "invalid radix", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, radix, "invalid radix"));
         }
 
         if ((taking.flags & FILE_FLAG('j')) &&
             !dump_number(file_option_value(address_of taking, 'j'),
                          address_of dump_arguments.skip))
-                return text_refuse(file_option_value(address_of taking, 'j'),
-                                   "invalid skip", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'j'), "invalid skip"));
 
         if ((taking.flags & FILE_FLAG('N')) &&
             !dump_number(file_option_value(address_of taking, 'N'),
                          address_of dump_arguments.limit))
-                return text_refuse(file_option_value(address_of taking, 'N'),
-                                   "invalid byte count", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'N'), "invalid byte count"));
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
@@ -8809,7 +8683,7 @@ static b32 tools_od(void)
 
                         if (!dump_od_offset(last, address_of offset))
                         {
-                                string_format(file_fail,
+                                string_format(writer_stderr,
                                               "od: invalid offset '%s'\n", last);
                                 return text_done(1);
                         }
@@ -8825,7 +8699,7 @@ static b32 tools_od(void)
 
                 if (wanted && !dump_number(wanted, address_of minimum))
                 {
-                        string_format(file_fail,
+                        string_format(writer_stderr,
                                       "od: invalid minimum string length: '%s'\n",
                                       wanted);
                         return text_done(1);
@@ -8869,20 +8743,18 @@ static b32 tools_hexdump(void)
         if ((taking.flags & FILE_FLAG('L')) &&
             file_color_when(file_option_value(address_of taking, 'L'),
                             FILE_COLOR_AUTO) < 0)
-                return text_refuse(file_option_value(address_of taking, 'L'),
-                                   "invalid color mode", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'L'),
+                                                   "invalid color mode"));
 
         if ((taking.flags & FILE_FLAG('n')) &&
             !dump_number(file_option_value(address_of taking, 'n'),
                          address_of dump_arguments.limit))
-                return text_refuse(file_option_value(address_of taking, 'n'),
-                                   "invalid length", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'n'), "invalid length"));
 
         if ((taking.flags & FILE_FLAG('s')) &&
             !dump_number(file_option_value(address_of taking, 's'),
                          address_of dump_arguments.skip))
-                return text_refuse(file_option_value(address_of taking, 's'),
-                                   "invalid skip", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 's'), "invalid skip"));
 
         dump_arguments.duplicates = (taking.flags & FILE_FLAG('v')) != 0;
 
@@ -8997,8 +8869,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                                 return true;
                         }
 
-                        text_error(path, file_reason(handle));
-                        return false;
+                        return string_diagnostic(&text_diagnostic, 0, path, file_reason(handle));
                 }
 
                 close_handle = true;
@@ -9016,8 +8887,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
         if (!start)
         {
                 if (read_failed)
-                        text_error(path ? path : (string_address) "standard input",
-                                   "Read error");
+                        string_diagnostic(&text_diagnostic, 0, path ? path : (string_address) "standard input", "Read error");
                 return false;
         }
 
@@ -10442,8 +10312,7 @@ static bool diff_gather(string_address path, diff_names address_to names,
                 if (allow_missing)
                         return true;
 
-                text_error(path, "No such file or directory");
-                return false;
+                return string_diagnostic(&text_diagnostic, 0, path, "No such file or directory");
         }
 
         struct linux_dirent64 address_to entry;
@@ -10707,10 +10576,7 @@ static bool diff_context_set(string_address value)
 
         if (!string_digits_checked(address_of at, 10, address_of context) || string_get(at) ||
             context > (positive_max - 1) / 2)
-        {
-                text_error(value, "invalid context length");
-                return false;
-        }
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid context length");
 
         diff_context = context;
         return true;
@@ -10723,10 +10589,7 @@ static bool diff_option_seen(p8 letter, string_address value)
         if (letter == 'L')
         {
                 if (diff_label_count >= 2)
-                {
-                        text_error(value, "too many file label options");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, value, "too many file label options");
 
                 diff_labels[diff_label_count++] = value;
                 return true;
@@ -10737,10 +10600,7 @@ static bool diff_option_seen(p8 letter, string_address value)
                 positive style = letter == 'z' ? DIFF_NORMAL : DIFF_UNIFIED;
 
                 if (diff_style_seen && diff_style != style)
-                {
-                        text_error(null, "conflicting output style options");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, null, "conflicting output style options");
 
                 diff_style = style;
                 diff_style_seen = true;
@@ -10839,7 +10699,7 @@ static b32 tools_diff(void)
         if (text_argument_count - first < 2)
         {
                 text_flush();
-                string_format(file_fail,
+                string_format(writer_stderr,
                               "diff: missing operand after '%s'\n"
                               "diff: Try 'diff --help' for more information.\n",
                               text_argument_count - first == 1
@@ -10850,7 +10710,7 @@ static b32 tools_diff(void)
         if (text_argument_count - first > 2)
         {
                 text_flush();
-                string_format(file_fail,
+                string_format(writer_stderr,
                               "diff: extra operand '%s'\n"
                               "diff: Try 'diff --help' for more information.\n",
                               program_argument(first + 2));
@@ -11651,10 +11511,7 @@ static bool ps_format_list(string_address list,
                 }
 
                 if (which == PS_FIELD_COUNT)
-                {
-                        text_error(name, "unknown user-defined format specifier");
-                        return false;
-                }
+                        return string_diagnostic(&text_diagnostic, 0, name, "unknown user-defined format specifier");
 
                 if (!custom && alias_header)
                 {
@@ -11716,10 +11573,7 @@ static b32 tools_ps(void)
                 // cursor can consume it and advance to a following word.
                 if ((!cursor.letters || !*cursor.letters) && cursor.at < cursor.argc &&
                     string_equals(cursor.argv[cursor.at], "--"))
-                {
-                        text_error("--", "unsupported option");
-                        return text_done(1);
-                }
+                        return text_done(string_diagnostic(&text_diagnostic, 1, "--", "unsupported option"));
                 b32 option = argument_next(&cursor);
                 if (option == ARGUMENT_END)
                         break;
@@ -11752,8 +11606,7 @@ static b32 tools_ps(void)
                 {
                         // Other BSD personalities also change the display
                         // format and remain unsupported until implemented.
-                        text_error(cursor.word, "unsupported option");
-                        return text_done(1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, cursor.word, "unsupported option"));
                 }
                 string_address value = valued ? argument_value(&cursor, true) : null;
                 switch (option)
@@ -11776,48 +11629,30 @@ static b32 tools_ps(void)
                 case 'p':
                 case 'P':
                         if (!value || !ps_pid_list(value, option == 'p' ? &pids : &parents, option == 'p'))
-                        {
-                                text_error(value, option == 'p' ? "invalid process id list"
-                                                               : "invalid parent process id list");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, value, option == 'p' ? "invalid process id list"
+                                                               : "invalid parent process id list"));
                         break;
                 case 'C':
                         if (!value || !ps_command_list(value, &selected_commands,
                                                        &command_count, &command_room))
-                        {
-                                text_error(value, "invalid command list");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid command list"));
                         break;
                 case 's':
                         if (!value || !ps_sort_pid(value, &reverse))
-                        {
-                                text_error(value, "unsupported sort key");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported sort key"));
                         sorted = true;
                         break;
                 case 'o':
                         if (!value)
-                        {
-                                text_error(null, long_option ? "option requires an argument -- format"
-                                                            : "option requires an argument -- o");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, long_option ? "option requires an argument -- format"
+                                                            : "option requires an argument -- o"));
                         if (!string_get(value))
-                        {
-                                text_error(null, "format specification must follow -o");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "format specification must follow -o"));
                         // An empty item anywhere in the list is a syntax
                         // error to procps, not an absent column.
                         if (string_is(value, ',') || string_search(value, ",,") ||
                             value[string_length(value) - 1] == ',')
-                        {
-                                text_error(null, "improper format list");
-                                return text_done(1);
-                        }
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "improper format list"));
                         if (!ps_format_list(value, &fields, &field_count, &field_room))
                                 return text_done(1);
                         break;
@@ -11826,7 +11661,7 @@ static b32 tools_ps(void)
 
         if (heading_options > 1)
         {
-                text_error(null, "only one heading option may be specified");
+                string_diagnostic(&text_diagnostic, 0, null, "only one heading option may be specified");
                 return text_done(1);
         }
 
@@ -11897,10 +11732,7 @@ static b32 tools_ps(void)
         if (!system_snapshot_take_selected(
                 address_of ps_snapshot, SPARK_SNAPSHOT_PROCESS, owners,
                 pids.values, alternate_selectors ? 0 : pids.count))
-        {
-                text_error("/proc", "cannot read");
-                return text_done(1);
-        }
+                return text_done(string_diagnostic(&text_diagnostic, 1, "/proc", "cannot read"));
 
         ps_now = ps_snapshot.header.uptime_ns / SYSTEM_NANOSECONDS;
         ps_wall = ps_snapshot.header.realtime_seconds;
@@ -12621,7 +12453,7 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
         if (handle < 0)
         {
                 text_flush();
-                string_format(file_fail, "dmesg: cannot open %s: %s\n",
+                string_format(log_error, "dmesg: cannot open %s: %s\n",
                               path, file_reason(handle));
                 return text_done(1);
         }
@@ -12638,7 +12470,7 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
         if (!length)
         {
                 text_flush();
-                string_format(file_fail, "dmesg: cannot mmap: %s: Invalid argument\n",
+                string_format(writer_stderr, "dmesg: cannot mmap: %s: Invalid argument\n",
                               path);
                 return text_done(1);
         }
@@ -12659,13 +12491,11 @@ static b32 tools_dmesg_follow(tools_dmesg_state address_to state,
         bipolar handle = system_open_at(AT_FDCWD, "/dev/kmsg",
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-                return text_refuse("read kernel buffer failed",
-                                   file_reason(handle), 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, "read kernel buffer failed", file_reason(handle)));
         if (only_new && system_seek(handle, 0, FILE_SEEK_END) < 0)
         {
                 system_close(handle);
-                return text_refuse("read kernel buffer failed",
-                                   "cannot seek /dev/kmsg", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, "read kernel buffer failed", "cannot seek /dev/kmsg"));
         }
 
         p8 record_bytes[65536];
@@ -12677,8 +12507,7 @@ static b32 tools_dmesg_follow(tools_dmesg_state address_to state,
                 if (got < 0)
                 {
                         system_close(handle);
-                        return text_refuse("read kernel buffer failed",
-                                           file_reason(got), 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, "read kernel buffer failed", file_reason(got)));
                 }
                 if (!got)
                         continue;
@@ -12693,7 +12522,7 @@ static b32 tools_dmesg_follow(tools_dmesg_state address_to state,
 #else
         (void)state;
         (void)only_new;
-        return text_refuse(null, "kernel log requires Linux", 1);
+        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel log requires Linux"));
 #endif
 }
 
@@ -12702,12 +12531,12 @@ static b32 tools_dmesg_control(b32 operation, positive value,
 {
 #if defined(LINUX)
         bipolar answer = system_call_3(syscall(syslog), operation, 0, value);
-        return answer < 0 ? text_refuse(action, file_reason(answer), 1)
+        return answer < 0 ? text_done(string_diagnostic(&text_diagnostic, 1, action, file_reason(answer)))
                           : text_done(0);
 #else
         (void)operation;
         (void)value;
-        return text_refuse(action, "requires Linux", 1);
+        return text_done(string_diagnostic(&text_diagnostic, 1, action, "requires Linux"));
 #endif
 }
 
@@ -12727,47 +12556,45 @@ static b32 tools_dmesg_main()
         if (!file_take(address_of taking))
                 return text_done(1);
         if (taking.first != (positive)program_argument_count())
-                return text_refuse(program_argument((b32)taking.first),
-                                   "extra operand", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, program_argument((b32)taking.first), "extra operand"));
         if (file_meta(address_of taking, "[options]\n"
                       "Display or control the kernel ring buffer.", text_put))
                 return text_done(0);
 
         positive flags = taking.flags;
         if ((flags & FILE_FLAG('F')) && (flags & FILE_FLAG('K')))
-                return text_refuse(null, "--file and --kmsg-file cannot be combined", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--file and --kmsg-file cannot be combined"));
         if ((flags & FILE_FLAG('r')) &&
             (flags & (FILE_FLAG('x') | FILE_FLAG('t') | FILE_FLAG('T') |
                       FILE_FLAG('e') | FILE_FLAG('d') | FILE_FLAG('J'))))
-                return text_refuse(null, "--raw cannot be combined with decoded output", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--raw cannot be combined with decoded output"));
         // util-linux filters raw records only where the kernel supplies
         // their priority in a form it trusts.
         if ((flags & FILE_FLAG('r')) && (flags & (FILE_FLAG('F') | FILE_FLAG('K'))) &&
             (flags & (FILE_FLAG('l') | FILE_FLAG('f') | FILE_FLAG('k') | FILE_FLAG('u'))))
         {
                 text_flush();
-                file_fail("dmesg: --raw can be used together with --level or --facility only when reading messages from /dev/kmsg\n",
-                          0);
-                return text_done(1);
+                return text_done(string_report(writer_stderr, 1,
+                    "dmesg: --raw can be used together with --level or --facility only when reading messages from /dev/kmsg\n"));
         }
         if ((flags & FILE_FLAG('p')) && (flags & FILE_FLAG('F')))
         {
                 text_flush();
-                file_fail("dmesg: only kmsg supports multi-line messages\n", 0);
-                return text_done(1);
+                return text_done(string_report(writer_stderr, 1,
+                    "dmesg: only kmsg supports multi-line messages\n"));
         }
         if ((flags & FILE_FLAG('J')) &&
             (flags & (FILE_FLAG('T') | FILE_FLAG('e') | FILE_FLAG('d'))))
-                return text_refuse(null, "JSON time transformations are not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "JSON time transformations are not supported"));
         if (flags & (FILE_FLAG('a') | FILE_FLAG('b')))
-                return text_refuse(null, "--since and --until are not supported", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "--since and --until are not supported"));
 
         positive control_count = ((flags & FILE_FLAG('C')) != 0) +
                                  ((flags & FILE_FLAG('D')) != 0) +
                                  ((flags & FILE_FLAG('E')) != 0) +
                                  ((flags & FILE_FLAG('n')) != 0);
         if (control_count > 1)
-                return text_refuse(null, "kernel log controls cannot be combined", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel log controls cannot be combined"));
 
         if (flags & FILE_FLAG('C'))
                 return tools_dmesg_control(DMESG_CLEAR, 0,
@@ -12790,7 +12617,7 @@ static b32 tools_dmesg_main()
                     level_name[0] <= '8')
                         level = level_name[0] - '1';
                 if (level < 0)
-                        return text_refuse(level_name, "unknown console level", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, level_name, "unknown console level"));
                 return tools_dmesg_control(DMESG_CONSOLE_LEVEL,
                                            (positive)level + 1,
                                            "klogctl failed");
@@ -12821,20 +12648,20 @@ static b32 tools_dmesg_main()
                 else if (string_equals(value, "delta"))
                         state.delta = true;
                 else if (!string_equals(value, "raw"))
-                        return text_refuse(value, "unsupported time format", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported time format"));
         }
 
         value = file_option_value(address_of taking, 'l');
         if (value && !tools_dmesg_mask(value, tools_dmesg_levels,
                                        array_count(tools_dmesg_levels),
                                        address_of state.levels, true))
-                return text_refuse(value, "unknown log level", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "unknown log level"));
 
         value = file_option_value(address_of taking, 'f');
         if (value && !tools_dmesg_mask(value, tools_dmesg_facilities,
                                        array_count(tools_dmesg_facilities),
                                        address_of state.facilities, false))
-                return text_refuse(value, "unknown log facility", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "unknown log facility"));
         if (flags & (FILE_FLAG('k') | FILE_FLAG('u')))
         {
                 state.facilities = 0;
@@ -12847,8 +12674,7 @@ static b32 tools_dmesg_main()
         b32 color = file_color_when(file_option_value(address_of taking, 'L'),
                                     FILE_COLOR_AUTO);
         if (color < 0)
-                return text_refuse(file_option_value(address_of taking, 'L'),
-                                   "invalid color mode", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'L'), "invalid color mode"));
         state.color = file_color_active(color);
 
         p64 real = system_clock_ns(0);
@@ -12861,7 +12687,7 @@ static b32 tools_dmesg_main()
         if (value && (!text_unsigned_option(value, false,
                                              address_of capacity) ||
                       !capacity || capacity >= TEXT_ARENA_BYTES))
-                return text_refuse(value, "invalid buffer size", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, value, "invalid buffer size"));
 
         string_address file = file_option_value(address_of taking, 'F');
         string_address kmsg_file = file_option_value(address_of taking, 'K');
@@ -12881,9 +12707,9 @@ static b32 tools_dmesg_main()
         if (flags & (FILE_FLAG('w') | FILE_FLAG('W')))
         {
                 if (flags & FILE_FLAG('c'))
-                        return text_refuse(null, "--read-clear and --follow cannot be combined", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "--read-clear and --follow cannot be combined"));
                 if (state.json)
-                        return text_refuse(null, "JSON follow output is not supported", 1);
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "JSON follow output is not supported"));
                 return tools_dmesg_follow(address_of state,
                                           (flags & FILE_FLAG('W')) != 0);
         }
@@ -12903,8 +12729,7 @@ static b32 tools_dmesg_main()
         bipolar got = system_call_3(syscall(syslog), action,
                                     (positive)buffer, capacity);
         if (got < 0)
-                return text_refuse("read kernel buffer failed",
-                                   file_reason(got), 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, "read kernel buffer failed", file_reason(got)));
         if (state.json)
                 text_put_string("{\n   \"dmesg\": [\n");
         tools_dmesg_buffer(address_of state, buffer, (positive)got, false);
@@ -12913,7 +12738,7 @@ static b32 tools_dmesg_main()
                                            : "   ]\n}\n");
         return text_done(0);
 #else
-        return text_refuse(null, "kernel log requires Linux", 1);
+        return text_done(string_diagnostic(&text_diagnostic, 1, null, "kernel log requires Linux"));
 #endif
 }
 
@@ -13046,18 +12871,16 @@ static bool tools_fincore_one(string_address path,
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "fincore: failed to open: %s: %s\n",
-                              path, file_reason(handle));
-                return false;
-        }
+                return string_report(log_error, false,
+                                     "fincore: failed to open: %s: %s\n",
+                                     path, file_reason(handle));
 
         file_facts facts;
         bipolar told = file_look_code(handle, (string_address)"",
                                       AT_EMPTY_PATH, address_of facts);
         if (told < 0)
         {
-                string_format(file_fail, "fincore: failed to stat: %s: %s\n",
+                string_format(log_error, "fincore: failed to stat: %s: %s\n",
                               path, file_reason(told));
                 system_close(handle);
                 return false;
@@ -13096,7 +12919,7 @@ static bool tools_fincore_one(string_address path,
                     FILE_MAP_SHARED, (positive)handle, 0);
                 if (mapped < 0)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "fincore: failed to mmap: %s: %s\n",
                                       path, file_reason(mapped));
                         system_close(handle);
@@ -13127,7 +12950,7 @@ static bool tools_fincore_one(string_address path,
                             length, (positive)vector);
                         if (answer < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "fincore: failed to do mincore: %s: %s\n",
                                               path, file_reason(answer));
                                 system_call_2(syscall(munmap),
@@ -13154,8 +12977,7 @@ static bool tools_fincore_one(string_address path,
 #else
         (void)path;
         (void)row;
-        string_format(file_fail, "fincore: mincore requires Linux\n");
-        return false;
+        return string_report(log_error, false, "fincore: mincore requires Linux\n");
 #endif
 }
 
@@ -13173,7 +12995,11 @@ static b32 tools_fincore_main()
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (taking.flags & FILE_FLAG('h'))
-                return ul_usage("fincore", "[options] file...");
+        {
+                string_format(log, "Usage: %s %s\n", "fincore", "[options] file...");
+                log_flush();
+                return 0;
+        }
         if (taking.flags & FILE_FLAG('V'))
         {
                 string_format(log, "fincore from dawning-kit\n");
@@ -13181,15 +13007,15 @@ static b32 tools_fincore_main()
                 return 0;
         }
         if (!file_operand_count)
-                return ul_bad_usage("fincore", "no file specified");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "no file specified");
         if (taking.flags & FILE_FLAG('c'))
-                return ul_bad_usage("fincore", "grand totals are not supported");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "grand totals are not supported");
         if (taking.flags & FILE_FLAG('R'))
-                return ul_bad_usage("fincore", "recursive traversal is not supported");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "recursive traversal is not supported");
         if (taking.flags & FILE_FLAG('C'))
-                return ul_bad_usage("fincore", "cachestat option is not supported");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "cachestat option is not supported");
         if (taking.flags & FILE_FLAG('A'))
-                return ul_bad_usage("fincore", "extended output metadata is not supported");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "extended output metadata is not supported");
 
         static const p8 defaults[] = {
             TOOLS_FINCORE_RES, TOOLS_FINCORE_PAGES,
@@ -13202,12 +13028,12 @@ static b32 tools_fincore_main()
                 output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
                 defaults, array_count(defaults), columns,
                 address_of column_count))
-                return ul_bad_usage("fincore", "unknown output column");
+                return string_report(log_error, 1, "%s: %s\n", "fincore", "unknown output column");
 
         text_begin("fincore");
         text_arena_used = 0;
         if (file_operand_count > positive_max / sizeof(tools_fincore_row))
-                return text_refuse(null, "too many files", 1);
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "too many files"));
         tools_fincore_row address_to rows =
             (tools_fincore_row address_to)text_arena_take(
                 file_operand_count * sizeof(*rows));

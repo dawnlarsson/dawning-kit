@@ -49,10 +49,7 @@ jobs:
           for f in kit/bit.sh kit/emit.sh \
                    kit/build kit/spark kit/asm kit/common \
                    kit/config kit/verify_config kernel/replace/apply \
-                   test/run test/shell.sh test/text.sh \
-                   test/files.sh test/kit.sh test/probe.sh \
-                   test/boot.sh \
-                   build.sh; do
+                   test/run build.sh; do
             echo "dash -n $f"
             dash -n "$f"
           done
@@ -64,10 +61,7 @@ jobs:
             kit/bit.sh kit/emit.sh kit/doc.sh kit/utils.sh kit/test.sh \
             kit/build kit/spark kit/asm kit/common \
             kit/config kit/verify_config kernel/replace/apply \
-            test/run test/shell.sh test/text.sh \
-            test/files.sh test/kit.sh test/probe.sh \
-            test/boot.sh \
-            build.sh
+            test/run build.sh
 
   suite:
     name: Every test (sh test/run)

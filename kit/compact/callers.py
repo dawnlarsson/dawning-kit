@@ -15,7 +15,7 @@ Exit is non-zero when something is left behind.
 import os, re, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from restructure import FROM_MOONWATER, FROM_LIBC
+from restructure import FROM_MOONWATER
 
 def main(root):
     gone = dict(FROM_MOONWATER)
