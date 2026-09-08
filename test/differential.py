@@ -18,7 +18,10 @@ standard output, the effect on the directory and (per the spec's policy) the
 diagnostic. Agreeing is passing; there is no separate idea of a right answer.
 
 A spec may also declare FAMILIES: seeded generators of whole shell programs,
-for the parts of a shell that are a language rather than an option list.
+for the parts of a shell that are a language rather than an option list, and
+CHECKS: functions check(farm) -> (passed, total, notes) for the few properties
+a differential cannot express, such as a denominator of names or a census the
+box cannot present.
 
 Two pinned lists live at the end of this file, written by --record and never
 by hand. The ledger records the cases where ours deliberately answers
@@ -242,43 +245,56 @@ def covering_array(parameters, strength, rng):
     """Rows over parameter value indexes so every strength-tuple appears.
 
     Greedy: each new row is the best of a handful of seeded candidates by
-    the number of still-uncovered tuples it hits. Deterministic for a seed,
-    and small -- a dozen options with two values each cover in about ten
-    rows, where the product is thousands."""
+    the number of still-uncovered tuples it hits, then improved one column
+    at a time. Deterministic for a seed, and small -- a dozen options with
+    two values each cover in about ten rows, where the product is thousands.
+    The uncovered tuples are indexed by their column combination so scoring
+    a candidate costs the number of combinations, not the number of tuples,
+    and changing one column rescores only the combinations that contain it."""
     sizes = [len(values) for values in parameters]
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
-    uncovered = set()
-    for columns in itertools.combinations(range(len(sizes)), strength):
-        for values in itertools.product(*(range(sizes[c]) for c in columns)):
-            uncovered.add((columns, values))
+    columns_of = list(itertools.combinations(range(len(sizes)), strength))
+    uncovered = {columns: set(itertools.product(*(range(sizes[c]) for c in columns)))
+                 for columns in columns_of}
+    remaining = sum(len(values) for values in uncovered.values())
+    containing = [[columns for columns in columns_of if c in columns] for c in range(len(sizes))]
+
+    def hits(row, combinations=columns_of):
+        return sum(1 for columns in combinations
+                   if tuple(row[c] for c in columns) in uncovered[columns])
+
     rows = []
-    while uncovered:
+    while remaining:
         best, best_hits = None, -1
         for _ in range(24):
             row = [rng.randrange(size) for size in sizes]
-            hits = sum(1 for columns, values in uncovered
-                       if all(row[c] == v for c, v in zip(columns, values)))
-            if hits > best_hits:
-                best, best_hits = row, hits
+            got = hits(row)
+            if got > best_hits:
+                best, best_hits = row, got
         # Improve the candidate greedily one column at a time.
         for column in rng.sample(range(len(sizes)), len(sizes)):
+            around = containing[column]
+            current = hits(best, around)
             for value in range(sizes[column]):
                 trial = list(best)
                 trial[column] = value
-                hits = sum(1 for columns, values in uncovered
-                           if all(trial[c] == v for c, v in zip(columns, values)))
-                if hits > best_hits:
-                    best, best_hits = trial, hits
+                got = best_hits - current + hits(trial, around)
+                if got > best_hits:
+                    best, best_hits, current = trial, got, hits(trial, around)
         if best_hits <= 0:
-            columns, values = next(iter(uncovered))
+            columns = next(c for c in columns_of if uncovered[c])
+            values = min(uncovered[columns])
             best = [0] * len(sizes)
             for c, v in zip(columns, values):
                 best[c] = v
         rows.append(best)
-        uncovered = {(columns, values) for columns, values in uncovered
-                     if not all(best[c] == v for c, v in zip(columns, values))}
+        for columns in columns_of:
+            values = tuple(best[c] for c in columns)
+            if values in uncovered[columns]:
+                uncovered[columns].discard(values)
+                remaining -= 1
     return rows
 
 
@@ -330,7 +346,10 @@ def grammar_cases(domain, utility, budget, rng):
         yield from emit(list(argv), utility.stdin[0], "extra")
     if budget == "singles":
         return
-    strength = 3 if budget == "full" else 2
+    # Triples only where the covering array stays tractable: past two dozen
+    # parameters the strength-3 rows cost minutes each to choose, and the
+    # full budget's deeper random tier already reaches those grammars.
+    strength = 3 if budget == "full" and len(parameters) <= 24 else 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")
@@ -1045,6 +1064,19 @@ def main(argv=None):
             added += 1
         save_rows(args.record, rows)
         print(f"  recorded {added} rows into {args.record}")
+
+    if not args.replay:
+        for domain in domains:
+            for check in getattr(specs.get(domain), "CHECKS", ()):
+                if selected and check.__name__ not in selected:
+                    continue
+                key = f"{domain}/{check.__name__}"
+                won, count, notes = check(str(farm))
+                passed[key] += won
+                total[key] += count
+                for note in notes:
+                    failures[key][("check",)] += 1
+                    print(f"  FAIL {key}: {note}")
 
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"
