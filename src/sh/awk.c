@@ -959,6 +959,8 @@ static b32 awk_regex_mark_sets;
 static b32 awk_regex_mark_first;
 
 static awk_text address_to awk_regex_escapes(string_address pattern);
+static fn awk_syntax(string_address reason);
+static bool awk_parsing;
 
 static fn awk_regex_build(regex_program address_to into, string_address pattern)
 {
@@ -967,7 +969,13 @@ static fn awk_regex_build(regex_program address_to into, string_address pattern)
 
         if (!regex_compile(plain ? plain->text : pattern, true, false, true,
                            REGEX_POLICY_DEFAULT))
+        {
+                // Written in the program, it is the program that is wrong.
+                if (awk_parsing)
+                        awk_syntax("invalid regular expression");
+
                 awk_fatal(pattern, "invalid regular expression");
+        }
 
         awk_text_drop(plain);
         regex_keep(into);
@@ -2719,9 +2727,10 @@ static bool awk_name_start(p8 character)
 /*
         The escapes a string has, in a pattern: \101 and \x41 are an A, \t
         a tab, \/ a slash, \" a quote. That is the reference awk's reading,
-        and it leaves no back-references -- \1 is the byte 1. A byte that
-        comes out as an operator is escaped again so it stays a byte. Any
-        other escape belongs to the regular expression machine.
+        and it leaves no back-references -- \1 is the byte 1. The byte goes
+        in as it is, so \056 is a dot that matches anything, which is also
+        the reference's reading. Any other escape belongs to the regular
+        expression machine.
 */
 static b32 awk_escape(string_address source, positive address_to at, positive stop);
 
@@ -2761,9 +2770,6 @@ static awk_text address_to awk_regex_escapes(string_address pattern)
                         i += 2;
                         continue;
                 }
-
-                if (string_first_of("\\.[]()*+?{}|^$", (p8)made))
-                        awk_builder_char(address_of build, '\\');
 
                 awk_builder_char(address_of build, (p8)made);
                 i = at;
@@ -6368,7 +6374,9 @@ static b32 text_awk()
         awk_source = program.data;
         awk_source_length = program.used;
         awk_source_at = 0;
+        awk_parsing = true;
         awk_parse_program();
+        awk_parsing = false;
         awk_regex_mark();
 
         if (awk_field_split)
