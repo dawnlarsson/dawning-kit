@@ -27,6 +27,7 @@ root=$(CDPATH= cd -- "$here/.." && pwd)
 cd "$root" || exit 1
 
 compiler=${CC:-gcc}
+build_label=
 
 host_system=$(uname -s)
 case $(uname -m) in
@@ -182,6 +183,7 @@ freestanding()
         source_file=$1
         output=$2
         architecture=${3:-$host_arch}
+        if [ "$#" -gt 3 ]; then shift 3; else set --; fi
 
         #       GCC can lower the AArch64 atomic builtins to libgcc's outline
         #       helpers. A spark binary has no libgcc under it, so keep the
@@ -193,9 +195,8 @@ freestanding()
         #       instructions says nothing about whether the floor actually
         #       works.
         case $architecture in
-        arm64) set -- -mno-outline-atomics ;;
-        riscv64) set -- -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
-        *)     set -- ;;
+        arm64) set -- "$@" -mno-outline-atomics ;;
+        riscv64) set -- "$@" -march=rv64imafd_zicsr_zicntr -mabi=lp64d ;;
         esac
 
         if $compiler -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
@@ -206,9 +207,28 @@ freestanding()
                 return 0
         fi
 
-        note "$source_file did not build:"
+        note "${build_label:-$source_file} did not build:"
         sed 's/^/    /' "$output.err" | head -20
         return 1
+}
+
+#       One section of test/checks.c, which is where every C check lives. The
+#       name selects the section; anything after the architecture goes to the
+#       compiler as well, which is how a variant gets its second definition
+#       (-DCHECK_allocator -DALLOCATOR_REFERENCE is the glibc allocator).
+freestanding_check()
+{
+        check_name=$1
+        check_output=$2
+        check_architecture=${3:-}
+        if [ "$#" -gt 3 ]; then shift 3; else set --; fi
+
+        build_label="test/checks.c -DCHECK_$check_name"
+        freestanding test/checks.c "$check_output" "$check_architecture" \
+                "-DCHECK_$check_name" "$@"
+        check_status=$?
+        build_label=
+        return "$check_status"
 }
 
 #       One binary, and every name it answers to pointing at it. The suites
@@ -1731,7 +1751,7 @@ hardening_entries()
 
 lane_standard()
 {
-        freestanding test/standard.c "$work/standard" || return 1
+        freestanding_check standard "$work/standard" || return 1
 
         "$work/standard" > "$work/standard.out" 2>&1
         sed -n '/FAILED/p' "$work/standard.out"
@@ -1894,7 +1914,7 @@ target_tools()
         esac
 }
 
-verify_one() { freestanding_checks_one verify test/verify.c "$@"; }
+verify_one() { freestanding_checks_one verify verify "$@"; }
 
 lane_verify() { target_lane verify_one; }
 
@@ -1904,13 +1924,13 @@ lane_verify() { target_lane verify_one; }
 #       size is a literal, into a line of moves chosen from the number. Nothing
 #       in the verify lane can reach any of that: its sizes come from loop
 #       counters, so every one of them is a call, and the expansions would ship
-#       having never run. test/exact.c is written out one size at a time by
-#       kit/exact.py for that reason.
+#       having never run. The CHECK_exact section of test/checks.c is written
+#       out one size at a time by kit/exact.py for that reason.
 #
 #       On all three machines, because the expansion differs on each: x86 has a
 #       hand written window between thirty three and a hundred and twenty eight
 #       bytes and the other two do not.
-exact_one() { freestanding_checks_one exact test/exact.c "$@"; }
+exact_one() { freestanding_checks_one exact exact "$@"; }
 
 lane_exact()
 {
@@ -1924,13 +1944,15 @@ lane_exact()
         #       every regeneration put it back.
         #
         if command -v python3 > /dev/null 2>&1; then
-                if ! python3 kit/exact.py | diff -q - test/exact.c > /dev/null; then
-                        note "test/exact.c is not what kit/exact.py writes"
-                        note "  regenerate it: python3 kit/exact.py > test/exact.c"
+                sed -n '/^#ifdef CHECK_exact$/,/^#endif \/\* CHECK_exact \*\/$/p' \
+                        test/checks.c | sed '1d;$d' > "$work/exact.section"
+                if ! python3 kit/exact.py | diff -q - "$work/exact.section" > /dev/null; then
+                        note "the CHECK_exact section of test/checks.c is not what kit/exact.py writes"
+                        note "  regenerate it: python3 kit/exact.py, pasted between its #ifdef and #endif"
                         generated=1
                 fi
         else
-                note "no python3, so exact.c was not checked against its generator"
+                note "no python3, so the exact section was not checked against its generator"
         fi
 
         outcome=0
@@ -1970,7 +1992,7 @@ known_one()
         compiler=$cross
 
         for one in $KNOWN_FILES; do
-                freestanding "test/$one.c" "$work/known.$name.$one" "$name" || {
+                freestanding_check "$one" "$work/known.$name.$one" "$name" || {
                         compiler=$saved
                         return 1
                 }
@@ -2003,31 +2025,31 @@ known_one()
         [ "$bad" = 0 ]
 }
 
-lane_declare()   { freestanding_checks_lane declare test/declare.c; }
-lane_fold()      { freestanding_checks_lane fold test/fold.c; }
-lane_reserve()   { freestanding_checks_lane reserve test/reserve.c; }
-lane_utf8()      { freestanding_checks_lane utf8 test/utf8.c; }
-lane_hex()       { freestanding_checks_lane hex test/hex.c; }
-lane_codec()     { freestanding_checks_lane codec test/codec.c; }
-lane_fixed()     { freestanding_checks_lane fixed test/fixed.c; }
-lane_table()     { freestanding_checks_lane table test/table.c; }
-lane_storage_io() { freestanding_checks_lane storage_io test/storage_io.c; }
-lane_leaving()   { freestanding_checks_lane leaving test/leaving.c; }
-lane_numbers()   { freestanding_checks_lane numbers test/number.c; }
-lane_scan()      { freestanding_checks_lane scan test/scan.c; }
-lane_process()   { freestanding_checks_lane process test/process.c; }
-lane_signal()    { freestanding_checks_lane signal test/signal.c; }
-lane_lock()      { freestanding_checks_lane lock test/lock.c; }
-lane_error()     { freestanding_checks_lane error test/error.c; }
-lane_strings()   { freestanding_checks_lane strings test/strings.c; }
-lane_stdlib()    { freestanding_checks_lane stdlib test/stdlib.c; }
-lane_clock()     { freestanding_checks_lane clock test/clock.c; }
-lane_math()      { freestanding_checks_lane math test/math.c; }
+lane_declare()   { freestanding_checks_lane declare declare; }
+lane_fold()      { freestanding_checks_lane fold fold; }
+lane_reserve()   { freestanding_checks_lane reserve reserve; }
+lane_utf8()      { freestanding_checks_lane utf8 utf8; }
+lane_hex()       { freestanding_checks_lane hex hex; }
+lane_codec()     { freestanding_checks_lane codec codec; }
+lane_fixed()     { freestanding_checks_lane fixed fixed; }
+lane_table()     { freestanding_checks_lane table table; }
+lane_storage_io() { freestanding_checks_lane storage_io storage_io; }
+lane_leaving()   { freestanding_checks_lane leaving leaving; }
+lane_numbers()   { freestanding_checks_lane numbers number; }
+lane_scan()      { freestanding_checks_lane scan scan; }
+lane_process()   { freestanding_checks_lane process process; }
+lane_signal()    { freestanding_checks_lane signal signal; }
+lane_lock()      { freestanding_checks_lane lock lock; }
+lane_error()     { freestanding_checks_lane error error; }
+lane_strings()   { freestanding_checks_lane strings strings; }
+lane_stdlib()    { freestanding_checks_lane stdlib stdlib; }
+lane_clock()     { freestanding_checks_lane clock clock; }
+lane_math()      { freestanding_checks_lane math math; }
 lane_format()
 {
         format_status=0
         for format_suite in format format_standalone; do
-                freestanding_checks_lane "$format_suite" "test/$format_suite.c" && continue
+                freestanding_checks_lane "$format_suite" "$format_suite" && continue
                 case $? in
                 2) [ "$format_status" != 0 ] || format_status=2 ;;
                 *) format_status=1 ;;
@@ -2103,7 +2125,7 @@ fi
 #       freestanding: no libgcc under an arm64 atomic, and the documented
 #       RISC-V floor rather than whatever the driver defaults to.
 build_ours() {
-        source=$1
+        check=$1
         output=$2
         target=$3
         cross=$4
@@ -2118,7 +2140,7 @@ build_ours() {
         $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
                 -fno-builtin "$@" -DWORK="\"$where\"" -w -T kit/spark.ld \
                 -Wl,-e,_start -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
-                -o "$output" "$source" 2> "$output.err"
+                -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
 }
 
 #
@@ -2127,7 +2149,7 @@ build_ours() {
 mkdir -p "$work/reference"
 
 if ! $host -O2 -w -DWORK="\"$work/reference\"" \
-        -o "$work/reference.elf" test/spool_reference.c 2> "$work/ref.err"
+        -o "$work/reference.elf" -DCHECK_spool_reference test/checks.c 2> "$work/ref.err"
 then
         printf '  the glibc reference did not build -- not run\n'
         sed 's/^/    /' "$work/ref.err" | head -10
@@ -2176,7 +2198,7 @@ for target in x86_64 arm64 riscv64; do
 
         mkdir -p "$work/$target"
 
-        if ! build_ours test/spool.c "$work/spool.$target" "$target" \
+        if ! build_ours spool "$work/spool.$target" "$target" \
                 "$cross" "$work/$target"
         then
                 report bad "$target" "did not build"
@@ -2298,7 +2320,7 @@ fi
 #       freestanding: no libgcc under an arm64 atomic, and the documented
 #       RISC-V floor rather than whatever the driver defaults to.
 build_ours() {
-        source=$1
+        check=$1
         output=$2
         target=$3
         cross=$4
@@ -2314,7 +2336,7 @@ build_ours() {
         $cross -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
                 -fno-builtin "$@" $extra -w -T kit/spark.ld -Wl,-e,_start \
                 -Wl,--build-id=none -Wl,--no-warn-rwx-segments \
-                -o "$output" "$source" 2> "$output.err"
+                -o "$output" "-DCHECK_$check" test/checks.c 2> "$output.err"
 }
 
 #
@@ -2323,16 +2345,17 @@ build_ours() {
 mkdir -p "$work/reference"
 
 if ! $host -O2 -w -DWORK="\"$work/reference\"" \
-        -o "$work/t.reference" test/stream_reference.c 2> "$work/ref.err"; then
+        -o "$work/t.reference" -DCHECK_stream_reference test/checks.c \
+        2> "$work/ref.err"; then
         printf '  the glibc reference did not build -- not run\n'
         sed 's/^/    /' "$work/ref.err" | head -10
         exit 2
 fi
 
-$host -O2 -w -o "$work/s.reference" test/stream_standard_reference.c \
-        2>> "$work/ref.err" || exit 2
-$host -O2 -w -o "$work/b.reference" test/stream_buffering_reference.c \
-        2>> "$work/ref.err" || exit 2
+$host -O2 -w -o "$work/s.reference" -DCHECK_stream_standard_reference \
+        test/checks.c 2>> "$work/ref.err" || exit 2
+$host -O2 -w -o "$work/b.reference" -DCHECK_stream_buffering_reference \
+        test/checks.c 2>> "$work/ref.err" || exit 2
 
 "$work/t.reference" > "$work/t.reference.out" 2>&1
 if timeout 10 "$work/t.reference" --allocation; then
@@ -2426,7 +2449,7 @@ for target in x86_64 arm64 riscv64; do
 
         mkdir -p "$work/$target"
 
-        if ! build_ours test/stream.c "$work/t.$target" "$target" "$cross" \
+        if ! build_ours stream "$work/t.$target" "$target" "$cross" \
                 "-DWORK=\"$work/$target\""; then
                 report no "$target build" "$(head -3 "$work/t.$target.err")"
                 continue
@@ -2453,13 +2476,13 @@ for target in x86_64 arm64 riscv64; do
                 fi
         fi
 
-        if ! build_ours test/stream_standard.c "$work/s.$target" "$target" \
+        if ! build_ours stream_standard "$work/s.$target" "$target" \
                 "$cross" ""; then
                 report no "$target standard build" "$(head -3 "$work/s.$target.err")"
                 continue
         fi
 
-        if ! build_ours test/stream_buffering.c "$work/b.$target" "$target" \
+        if ! build_ours stream_buffering "$work/b.$target" "$target" \
                 "$cross" ""; then
                 report no "$target buffering build" "$(head -3 "$work/b.$target.err")"
                 continue
@@ -2534,7 +2557,7 @@ finish
 #
 #           sh test/run allocator
 #
-#       test/allocator.c is built four times: once for each architecture
+#       The allocator section of test/checks.c is built four times: once for each architecture
 #       against src/standard/allocator.c with no C library under it, and once
 #       against glibc. Everything the test prints before its "shared-end" line
 #       is a statement about behaviour rather than about addresses, so those
@@ -2564,8 +2587,8 @@ note()
 }
 
 #       The reference first, because everything else is compared against it.
-if ! gcc -O2 -std=gnu17 -w -DALLOCATOR_REFERENCE -o "$work/reference" \
-        test/allocator.c 2>"$work/reference.log"
+if ! gcc -O2 -std=gnu17 -w -DCHECK_allocator -DALLOCATOR_REFERENCE \
+        -o "$work/reference" test/checks.c 2>"$work/reference.log"
 then
         note "allocator: the glibc reference did not build"
         cat "$work/reference.log"
@@ -2601,7 +2624,7 @@ one()
 
         # shellcheck disable=SC2086
         if ! $compiler $flags $extra $link -o "$work/$name" \
-                test/allocator.c 2>"$work/$name.log"
+                -DCHECK_allocator test/checks.c 2>"$work/$name.log"
         then
                 note "allocator $name: did not build"
                 cat "$work/$name.log"
@@ -2640,13 +2663,15 @@ exit $failed
 
 lane_allocator()
 {
-        freestanding_checks_lane allocator test/allocator.c
+        freestanding_checks_lane allocator allocator
         allocator_outcome=$?
         allocator_against_glibc || allocator_outcome=1
         return "$allocator_outcome"
 }
 
 
+#       A check is a section of test/checks.c by name, or a path when it is a
+#       fixture a generator wrote into the work directory for this run.
 freestanding_checks_one()
 {
         suite=$1
@@ -2667,11 +2692,13 @@ freestanding_checks_one()
 
         saved=$compiler
         compiler=$cross
-        freestanding "$source" "$work/$suite.$name" "$name" || {
-                compiler=$saved
-                return 1
-        }
+        built=0
+        case $source in
+        *.c) freestanding "$source" "$work/$suite.$name" "$name" || built=1 ;;
+        *)   freestanding_check "$source" "$work/$suite.$name" "$name" || built=1 ;;
+        esac
         compiler=$saved
+        [ "$built" = 0 ] || return 1
 
         if [ "$suite" = reserve ] && [ -n "$runner" ]; then
                 $runner "$work/$suite.$name" --emulated > "$work/$suite.$name.out" 2>&1
@@ -2739,7 +2766,7 @@ target_lane()
 #       hands straight to the host kernel, so all three targets open real
 #       sockets rather than only compiling the calls.
 #
-lane_socket() { freestanding_checks_lane socket test/socket.c; }
+lane_socket() { freestanding_checks_lane socket socket; }
 
 #
 #       The message building half is arithmetic and proves itself anywhere.
@@ -2749,9 +2776,9 @@ lane_socket() { freestanding_checks_lane socket test/socket.c; }
 #       `unshare -rn` and the same binary configures a real interface instead,
 #       which is how the mutation path is actually covered.
 #
-lane_net() { freestanding_checks_lane net test/net.c; }
-lane_bowl() { freestanding_checks_lane bowl test/bowl.c; }
-lane_reuse_shell() { freestanding_checks_lane reuse_shell test/reuse_shell.c; }
+lane_net() { freestanding_checks_lane net net; }
+lane_bowl() { freestanding_checks_lane bowl bowl; }
+lane_reuse_shell() { freestanding_checks_lane reuse_shell reuse_shell; }
 
 # The root-preservation probes stay entirely inside mocked filesystems.
 lane_audit()
@@ -2767,7 +2794,7 @@ lane_audit()
                 fi
         done
         tally audit-source-fixtures 5 5
-        freestanding_checks_lane audit-builtin test/audit_builtin_regressions.c || return $?
+        freestanding_checks_lane audit-builtin audit_builtin_regressions || return $?
         python3 test/audit_lsblk_regressions.py "$work/audit-lsblk.c" || return 1
         freestanding_checks_lane audit-lsblk "$work/audit-lsblk.c" || return $?
         [ "$host_system" = Linux ] || { note "audit CLI fixtures need Linux"; return 2; }
@@ -2783,17 +2810,17 @@ lane_audit()
 
 lane_slurp()
 {
-        freestanding_checks_lane slurp test/slurp.c
+        freestanding_checks_lane slurp slurp
 }
 
 lane_wait()
 {
-        freestanding_checks_lane wait test/wait_retry.c
+        freestanding_checks_lane wait wait_retry
 }
 
 lane_writer()
 {
-        freestanding_checks_lane writer test/writer_buffer.c
+        freestanding_checks_lane writer writer_buffer
 }
 
 
@@ -2923,7 +2950,7 @@ python3 test/harness.py native_extract "$lib" memory_growth memory_reserve memor
 
 status=0
 for case in byte_hunts bounded riscv_bits bulk reverse series wide bases base_field human human_nearest fields input_bases network reserve; do
-        cc -O2 -w -I"$work" "test/native_$case.c" -o "$work/$case" || { status=1; continue; }
+        cc -O2 -w -I"$work" "-DCHECK_native_$case" test/checks.c -o "$work/$case" || { status=1; continue; }
         "$work/$case" || status=1
 done
 
@@ -3011,7 +3038,7 @@ riscv_default_startup()
                 -march=rv64imafd_zicsr_zicntr -mabi=lp64d -w \
                 -Wl,-e,_start -Wl,--build-id=none \
                 -Wl,--no-warn-rwx-segments \
-                -o "$startup_image" test/probe.c \
+                -o "$startup_image" -DCHECK_probe test/checks.c \
                 2> "$work/probe.riscv64-default.err"
         then
                 note "the ordinary RISC-V ELF startup probe did not build:"
@@ -3039,7 +3066,7 @@ riscv_default_startup()
 #
 #           sh test/run probe
 #
-#       test/probe.c is the program; this is what asks it questions. The
+#       The probe section of test/checks.c is the program; this is what asks it questions. The
 #       probes existed for a long time and nothing ran them, so a stack of
 #       arguments that arrived wrong, a .bss that arrived dirty or an exit
 #       status that never came back would all have been silent.
@@ -3048,7 +3075,7 @@ lane_probe()
 (
 failed=0
 
-freestanding test/probe.c "$work/probe" || exit 1
+freestanding_check probe "$work/probe" || exit 1
 probe=$work/probe
 
 [ -x "$probe" ] || { echo "no probe at $probe" >&2; exit 1; }
@@ -3252,7 +3279,7 @@ lane_shell()
 {
         need_shell || return 1
 
-        freestanding test/env_duplicate.c "$work/env-duplicate" || return 1
+        freestanding_check env_duplicate "$work/env-duplicate" || return 1
 
         MW_ENV_DUPLICATE_LAUNCHER="$work/env-duplicate" \
                 sh test/shell.sh "$shell_binary" "$farm"
@@ -3272,7 +3299,7 @@ lane_checksum()
         checksum_status=0
         sh test/checksum.sh "$farm" || checksum_status=1
         crc_status=0
-        freestanding_checks_lane checksum_crc test/checksum_crc.c || crc_status=$?
+        freestanding_checks_lane checksum_crc checksum_crc || crc_status=$?
         [ "$checksum_status" = 0 ] || return "$checksum_status"
         return "$crc_status"
 }
@@ -3489,7 +3516,9 @@ cat > "$work/harness.c" <<'HARNESS'
 
 #define TERMINAL_FIXTURE_OUTPUT 16384
 #define TERMINAL_FIXTURE_BELL
-#include "test/terminal_fixture.inc"
+#define SHARED_terminal_fixture
+#include "test/checks.c"
+#undef SHARED_terminal_fixture
 
 static const struct
 {
@@ -4587,7 +4616,9 @@ static bool edit_test_persistent;
 #undef memory_resize_growth
 
 #define TERMINAL_FIXTURE_OUTPUT 65536
-#include "test/terminal_fixture.inc"
+#define SHARED_terminal_fixture
+#include "test/checks.c"
+#undef SHARED_terminal_fixture
 static p8 hostile_path[4096];
 
 // Independent byte oracle for the shared cursor/writer fronts. Include

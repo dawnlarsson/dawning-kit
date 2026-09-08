@@ -215,7 +215,7 @@ def harness_core_state(argv):
         (work / "linux").mkdir(exist_ok=True)
         for name in ("export.h", "linkage.h"):
             (work / "linux" / name).write_text("")
-        inputs = [str(root / "test/canvas_cells.c")]
+        inputs = ["-DCHECK_canvas_cells", str(root / "test/checks.c")]
         for name in ("glyph", "fill"):
             target = work / f"{name}.S"
             subprocess.run(["sh", str(root / "kit/asm"), arch,
@@ -1160,7 +1160,8 @@ int main(void) {
                             "-fno-stack-protector", "-fno-builtin", "-w",
                             "-T", str(root / "kit/spark.ld"), "-Wl,-e,spark_entry_probe",
                             "-Wl,--build-id=none", "-Wl,--no-warn-rwx-segments",
-                            str(root / "test/spark_entry.c"), "-o", str(binary)], check=True)
+                            "-DCHECK_spark_entry", str(root / "test/checks.c"),
+                            "-o", str(binary)], check=True)
             for mode in range(9):
                 subprocess.run([str(binary), str(mode)], check=True)
             print("spark old/new/fallback entry: 9 of 9")

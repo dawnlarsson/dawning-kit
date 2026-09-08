@@ -22,7 +22,7 @@ SLIDE = 40              # how far a move is slid in each direction
 
 out = sys.stdout.write
 
-out('''#include "../compiler_memory.c"
+out('''#include "../src/compiler_memory.c"
 /*
         Every size that is known where the call is written.
 
