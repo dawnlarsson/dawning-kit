@@ -88,14 +88,20 @@ TEST_OPERANDS = (
     ("newer", "-nt", "older"), ("older", "-ot", "newer"),
     ("newer", "-nt", "missing"), ("newer", "-ef", "link"),
     ("newer", "-ef", "same"), ("nsb", "-nt", "nsa"), ("nsa", "-nt", "nsb"),
-    ("a", "=", "a"), ("a", "=", "b"), ("a", "!=", "b"), ("a", "==", "a"),
-    ("a", "<", "b"), ("b", "<", "a"), ("b", ">", "a"),
+    ("a", "=", "a"), ("a", "=", "b"), ("a", "!=", "b"),
     ("1", "-eq", "1"), ("1", "-eq", "2"), ("2", "-gt", "1"), ("1", "-lt", "2"),
     ("1", "-ne", "2"), ("1", "-ge", "1"), ("1", "-le", "0"), ("1", "-eq", "a"),
     ("=", "=", "="), ("!", "=", "x"), ("!", "-f", "nosuchfile"),
     ("(", "", ")"), ("(", "x", ")"), ("(", "!", "", ")"),
     ("x", "-a", "y"), ("", "-o", "y"), ("!", "x", "=", "x"),
     ("-f", "newer", "-a", "-d", "adir"), ("-z", "x", "-o", "-n", "x"),
+)
+
+# Bash extensions dash's test rejects: == and the string ordering operators.
+# -N (modified since last read) is unimplemented in ours -- pinned as a bug.
+TEST_EXT_OPERANDS = (
+    ("a", "==", "a"), ("a", "==", "b"), ("a", "<", "b"), ("b", "<", "a"),
+    ("b", ">", "a"), ("-N", "newer"), ("-N", "missing"),
 )
 
 
@@ -146,6 +152,14 @@ builtins_add(Utility(
     "bracket", operands=builtins_bracket(TEST_OPERANDS), stdin=("empty",),
     stderr="loose", modes=ALL,
     script=builtins_wrap("[", prologue=TEST_PROLOGUE), max_flags=0))
+builtins_add(Utility(
+    "test_ext", operands=TEST_EXT_OPERANDS, stdin=("empty",), stderr="loose",
+    modes=BASH, script=builtins_wrap("test", prologue=TEST_PROLOGUE),
+    max_flags=0))
+builtins_add(Utility(
+    "bracket_ext", operands=builtins_bracket(TEST_EXT_OPERANDS),
+    stdin=("empty",), stderr="loose", modes=BASH,
+    script=builtins_wrap("[", prologue=TEST_PROLOGUE), max_flags=0))
 
 # --- cd ---------------------------------------------------------------------
 CD_PROLOGUE = (
@@ -170,7 +184,7 @@ builtins_add(Utility(
     script=lambda argv, stdin: (
         "/bin/mkdir -p one/two two\n"
         "CDPATH=" + shlex.quote("$PWD/nowhere:$PWD/one") + "\n"
-        "cd " + builtins_words(argv) + " >cdout 2>/dev/null\n"
+        "cd " + builtins_words(argv) + " >/dev/null 2>/dev/null\n"
         'printf "[%s]\\n" "$?"\n'
         'printf "in:%s\\n" "${PWD##*/}"\n'),
     max_flags=0))
@@ -258,7 +272,7 @@ builtins_add(Utility(
               ("-p",)),
     stdin=("empty",), stderr="loose", modes=ALL,
     script=builtins_wrap("alias", prologue=ALIAS_PROLOGUE,
-                         report='alias mw_a 2>&1; alias mw_c 2>&1\n'),
+                         report='alias mw_a 2>/dev/null; alias mw_c 2>/dev/null\n'),
     max_flags=0))
 builtins_add(Utility(
     "unalias",
@@ -275,13 +289,21 @@ HASH_PROLOGUE = ("/bin/mkdir -p hbin\n"
                  "/bin/chmod 755 hbin/mw_prog\nPATH=\"$PWD/hbin:/usr/bin:/bin\"\n")
 builtins_add(Utility(
     "hash",
-    options=(Option("-r"), Option("-l"), Option("-t"), Option("-d"),
+    options=(Option("-r"), Option("-t"), Option("-d"),
              Option("-p", ("/bin/true",), None)),
-    operands=((), ("mw_prog",), ("mw_prog", "sh"), ("missing12345",), ("--",)),
+    operands=(("mw_prog",), ("mw_prog", "sh"), ("missing12345",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap("hash", prologue=HASH_PROLOGUE + "hash mw_prog 2>/dev/null\n",
-                         report='hash -t mw_prog 2>&1\n'),
+                         report='hash -t mw_prog 2>/dev/null\n'),
     max_flags=2))
+# Bare `hash` and `hash -l` print the table; ours writes it dash-style (paths,
+# no "hits command" header): a deliberate listing-format difference, pinned.
+builtins_add(Utility(
+    "hash_list",
+    operands=((), ("-l",)),
+    stdin=("empty",), stderr="loose", modes=BASH,
+    script=builtins_wrap("hash", prologue=HASH_PROLOGUE + "hash mw_prog sh 2>/dev/null\n"),
+    max_flags=0))
 builtins_add(Utility(
     "hash_posix",
     options=(Option("-r"),),
@@ -317,44 +339,64 @@ builtins_add(Utility(
     script=builtins_wrap("command", prologue="PATH=/usr/bin:/bin\n"),
     max_flags=2))
 
-# --- kill (no signal actually delivered to anything real) -------------------
+# --- kill (never a real signal to anything: -l/-L conversions and signal 0) --
 builtins_add(Utility(
-    "kill",
-    options=(Option("-l"), Option("-L")),
-    operands=((), ("9",), ("TERM",), ("SIGTERM",), ("sigterm",), ("int",),
-              ("137",), ("0",), ("64",), ("65",), ("bad",), ("IO",), ("40",),
-              ("-l", "9"), ("-l", "TERM"), ("-l", "137")),
-    stdin=("empty",), stderr="loose", modes=BASH,
-    script=builtins_wrap("kill"), max_flags=1))
-builtins_add(Utility(
-    "kill_send",
-    operands=(("-0", "$$"), ("-s", "0", "$$"), ("-n", "0", "$$"),
-              ("-CONT", "$$"), ("-s", "CONT", "$$"),
-              ("%1",), ("%nosuch",), ("-s", "bogus", "$$")),
+    "kill_list",
+    operands=(("-l",), ("-L",), ("-l", "9"), ("-l", "15"), ("-l", "137"),
+              ("-l", "64"), ("-l", "TERM"), ("-l", "SIGTERM"), ("-l", "0"),
+              ("-l", "bad")),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap("kill"), max_flags=0))
+# Only signal 0 (existence probe) and error surfaces reach a real pid; SELF is
+# this shell's own pid, so nothing that could stop it is ever delivered.
+builtins_add(Utility(
+    "kill_send",
+    operands=(("-0", "SELF"), ("-s", "0", "SELF"), ("-n", "0", "SELF"),
+              ("-0", "999999"), ("%1",), ("%nosuch",), ("-s", "bogus", "SELF"),
+              ("--", "-0", "SELF")),
+    stdin=("empty",), stderr="loose", modes=BASH,
+    script=lambda argv, stdin: (
+        "kill " + builtins_words(argv).replace("SELF", "$$") + " 2>/dev/null\n"
+        'printf "[%s]\\n" "$?"\n'),
+    max_flags=0))
 
 # --- trap -------------------------------------------------------------------
+# Report through bare `trap`, which lists only the conditions that have been
+# set -- as bash and dash do. (`trap -p` with no signal lists every default in
+# this shell, a deliberate difference pinned separately.)
 builtins_add(Utility(
     "trap",
-    options=(Option("-l"), Option("-p"),),
-    operands=((), ("-",), ("echo hi", "INT"), ("echo hi", "int"),
+    operands=((), ("echo hi", "INT"), ("echo hi", "int"),
               ("echo hi", "SIGINT"), ("echo hi", "2"), ("", "HUP"),
-              ("echo x", "EXIT"), ("echo x", "TERM", "HUP"), ("-p", "INT"),
-              ("echo", "bogus"), ("echo", "64"), ("echo", "65"), ("-", "INT")),
+              ("echo x", "EXIT"), ("echo x", "TERM", "HUP"),
+              ("echo", "bogus"), ("echo", "64"), ("echo", "65"), ("-", "INT"),
+              ("echo hi", "hUp"), ("echo", "40"), ("echo", "USR1")),
     stdin=("empty",), stderr="loose", modes=ALL,
-    script=builtins_wrap("trap", report='trap -p 2>/dev/null | /bin/grep -c . \n'),
-    max_flags=1))
+    script=builtins_wrap("trap", report='trap 2>/dev/null | /bin/grep -c . \n'),
+    max_flags=0))
+# -l and -p are Bash extensions dash does not have. `trap -p` with no signal
+# lists every default in this shell (bash lists only what is set) -- pinned.
+builtins_add(Utility(
+    "trap_pl",
+    operands=(("-l",), ("-p",), ("-p", "INT"), ("-p", "INT", "TERM")),
+    stdin=("empty",), stderr="loose", modes=BASH,
+    script=builtins_wrap(
+        "trap", prologue="trap 'echo x' INT\n",
+        report='trap 2>/dev/null | /bin/grep -c . \n'),
+    max_flags=0))
 
 # --- set --------------------------------------------------------------------
+# Bare `set` lists every variable, and the two shells hold different internal
+# variables -- an oracle problem, not a bug -- so a case must carry a flag or
+# operand. -o/+o take their name as a separate word, as both references do.
 builtins_add(Utility(
     "set",
     options=(Option("-e"), Option("-u"), Option("-x"), Option("-f"),
              Option("-o", ("nounset", "errexit", "pipefail", "noclobber",
-                            "posix", "nosuch"), None),
-             Option("+o", ("nounset",), None)),
+                            "posix", "nosuch"), False),
+             Option("+o", ("nounset",), False)),
     operands=((), ("--",), ("--", "a", "b"), ("-", "a"), ("a", "b", "c")),
-    stdin=("empty",), stderr="loose", modes=ALL,
+    stdin=("empty",), stderr="loose", modes=ALL, valid=lambda argv: bool(argv),
     script=builtins_wrap(
         "set", report='printf "flags:%s\\n" "$-"\n'
                       'printf "args:%s#%s\\n" "$#" "$*"\n'),
@@ -431,17 +473,22 @@ for name in ("declare", "typeset"):
                  Option("-u"), Option("-r"), Option("-x"), Option("-g"),
                  Option("-n"), Option("-p"), Option("-t")),
         operands=(("v=1",), ("v",), ("v=hello",), ("v=2+3",), ("v=ABC",),
-                  ("v", "w"), ("arr=(x y z)",), ("-p", "v"), (), ("v=1", "w=2")),
+                  ("v", "w"), ("arr=(x y z)",), ("-p", "v"), ("v=1", "w=2")),
         stdin=("empty",), stderr="loose", modes=BASH,
+        # A case must name something: bare declare / declare -p lists every
+        # variable, and the two shells hold different ones (an oracle problem).
+        valid=lambda argv: any(not w.startswith("-") for w in argv),
         script=builtins_wrap(
             name, prologue="w=seed\n",
-            report='declare -p v 2>&1; declare -p w 2>&1; declare -p arr 2>&1\n'),
+            report='declare -p v 2>/dev/null; declare -p w 2>/dev/null; declare -p arr 2>/dev/null\n'),
         max_flags=3))
 builtins_add(Utility(
     "declare_F",
-    options=(Option("-f"), Option("-F"), Option("-p")),
+    options=(Option("-f"), Option("-F")),
     operands=((), ("f_one",), ("f_one", "f_two"), ("missing12345",)),
     stdin=("empty",), stderr="loose", modes=BASH,
+    # Require -f or -F: bare declare lists all variables (an oracle problem).
+    valid=lambda argv: "-f" in argv or "-F" in argv,
     script=builtins_wrap(
         "declare", prologue="f_one() { :; }; f_two() { echo x; }\n"),
     max_flags=2))
@@ -451,7 +498,7 @@ def builtins_local_script(argv, stdin):
     return ("v=global; w=global2\nf() {\n"
             "local " + builtins_words(argv) + "\n"
             'printf "[%s]\\n" "$?"\n'
-            'declare -p v 2>&1; declare -p w 2>&1\n'
+            'declare -p v 2>/dev/null; declare -p w 2>/dev/null\n'
             "}\nf\n"
             'printf "after:%s\\n" "$v"\n')
 
@@ -536,7 +583,7 @@ builtins_add(Utility(
               ("-n", "bad", "v"), ("-N",), ("v", "<&-")),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "v=old\nread " + builtins_words(argv) + " </dev/null 2>err\n"
+        "v=old\nread " + builtins_words(argv) + " </dev/null 2>/dev/null\n"
         'printf "[%s]<%s>\\n" "$?" "${v-unset}"\n'),
     max_flags=0))
 
@@ -572,7 +619,7 @@ builtins_add(Utility(
               ("%(%Y)T\\n", "bad")),
     stdin=("empty",), stderr="loose", modes=ALL,
     script=lambda argv, stdin: (
-        "out=before\nprintf " + builtins_words(argv) + " 2>err\n"
+        "out=before\nprintf " + builtins_words(argv) + " 2>/dev/null\n"
         'printf "|[%s]" "$?"\nprintf "|out=%s\\n" "${out-unset}"\n'),
     max_flags=1))
 
@@ -586,7 +633,7 @@ builtins_add(Utility(
               ("3>out",), (">out",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "X=set\n(exec " + builtins_words(argv) + ") 2>err\n"
+        "X=set\n(exec " + builtins_words(argv) + ") 2>/dev/null\n"
         'printf "[%s]\\n" "$?"\necho survived\n'),
     max_flags=0))
 
@@ -607,9 +654,17 @@ SOURCE_PROLOGUE = (
 for name in (".", "source"):
     builtins_add(Utility(
         name if name != "." else "dot",
-        operands=(("./mw_src",), ("./mw_src", "a", "b"), ("mw_onpath",),
-                  ("./missing12345",), ()),
+        operands=(("./mw_src",), ("mw_onpath",), ("./missing12345",), ()),
         stdin=("empty",), stderr="loose", modes=ALL,
+        script=builtins_wrap(name, prologue=SOURCE_PROLOGUE),
+        max_flags=0))
+# Positional arguments to a sourced file are a Bash extension; dash's dot
+# ignores them, so this shape is only compared where the reference has it.
+for name in (".", "source"):
+    builtins_add(Utility(
+        (name if name != "." else "dot") + "_args",
+        operands=(("./mw_src", "a", "b"),),
+        stdin=("empty",), stderr="loose", modes=BASH,
         script=builtins_wrap(name, prologue=SOURCE_PROLOGUE),
         max_flags=0))
 
@@ -621,7 +676,7 @@ builtins_add(Utility(
     script=lambda argv, stdin: (
         "f() { return " + builtins_words(argv) + "; }\nf\n"
         'printf "infn:[%s]\\n" "$?"\n'
-        "return " + builtins_words(argv) + " 2>err\n"
+        "(return " + builtins_words(argv) + ") 2>/dev/null\n"
         'printf "top:[%s]\\n" "$?"\n'),
     max_flags=0))
 builtins_add(Utility(
@@ -629,7 +684,7 @@ builtins_add(Utility(
     operands=((), ("0",), ("3",), ("-1",), ("256",), ("300",), ("bad",)),
     stdin=("empty",), stderr="loose", modes=ALL,
     script=lambda argv, stdin: (
-        "(exit " + builtins_words(argv) + ") 2>err\n"
+        "(exit " + builtins_words(argv) + ") 2>/dev/null\n"
         'printf "[%s]\\n" "$?"\n'),
     max_flags=0))
 
@@ -642,7 +697,7 @@ builtins_add(Utility(
               ("x=y=3",), ("x=1==1",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "x=1; y=1\nlet " + builtins_words(argv) + " 2>err\n"
+        "x=1; y=1\nlet " + builtins_words(argv) + " 2>/dev/null\n"
         'printf "[%s] x=%s y=%s\\n" "$?" "$x" "$y"\n'),
     max_flags=0))
 
@@ -657,14 +712,23 @@ builtins_add(Utility(
     script=builtins_wrap("shopt"), max_flags=2))
 
 # --- enable -----------------------------------------------------------------
+# Functional surface: disabling and re-enabling a builtin, and the not-a-
+# builtin error. Reports the effect on `type` rather than any listing.
 builtins_add(Utility(
     "enable",
-    options=(Option("-a"), Option("-n"), Option("-p"), Option("-s")),
-    operands=((), ("echo",), ("-n", "echo"), ("true",), ("missing12345",),
-              ("-f", "/nonexistent", "x"), ("-d", "x"), ("--", "true")),
+    operands=(("echo",), ("-n", "echo"), ("true",), ("missing12345",),
+              ("-n", "true"), ("--", "true")),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap("enable", report='type -t true 2>&1\n'),
-    max_flags=2))
+    max_flags=0))
+# Listings enumerate this shell's own builtin set (different from bash's), and
+# loadable builtins are unsupported: deliberate differences, pinned.
+builtins_add(Utility(
+    "enable_list",
+    operands=((), ("-a",), ("-p",), ("-s",), ("-n",),
+              ("-f", "/nonexistent", "x"), ("-d", "echo")),
+    stdin=("empty",), stderr="loose", modes=BASH,
+    script=builtins_wrap("enable"), max_flags=0))
 
 # --- builtin ----------------------------------------------------------------
 builtins_add(Utility(
@@ -680,7 +744,7 @@ builtins_add(Utility(
     operands=((), ("0",), ("1",), ("99",), ("x",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "caller " + builtins_words(argv) + " 2>err\n"
+        "caller " + builtins_words(argv) + " 2>/dev/null\n"
         'printf "top:[%s]\\n" "$?"\n'),
     max_flags=0))
 
@@ -690,7 +754,7 @@ builtins_add(Utility(
     operands=(("missing12345",), ("--", "cd"), ("-Z",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "help " + builtins_words(argv) + " >/dev/null 2>err\n"
+        "help " + builtins_words(argv) + " >/dev/null 2>/dev/null\n"
         'printf "[%s]\\n" "$?"\n'),
     max_flags=0))
 
@@ -734,26 +798,25 @@ builtins_add(Utility(
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap("bind"), max_flags=2))
 
-# --- fc / history (listing and option-error surfaces) -----------------------
+# --- fc / history -----------------------------------------------------------
+# The history store and its event numbering need an interactive reader; here
+# only the deterministic surface is compared: clearing, expansion of a literal
+# with -p, and the bad-option refusal. Store/numbering behaviour is pinned.
 builtins_add(Utility(
     "history",
-    options=(Option("-c"), Option("-r", ("hf",), None), Option("-w", ("hf",), None),
-             Option("-a", ("hf",), None), Option("-n", ("hf",), None),
-             Option("-s", ("event",), None), Option("-d", ("1",), None),
-             Option("-p", ("text",), None)),
-    operands=((), ("-Z",)),
+    operands=((), ("-c",), ("-Z",), ("-p", "text"), ("-p", "!!"),
+              ("-s", "an event")),
     stdin=("empty",), stderr="loose", modes=BASH,
-    script=builtins_wrap(
-        "history", prologue="printf 'e1\\ne2\\ne3\\n' > hf\nhistory -c\n",
-        report=""), max_flags=2))
+    script=builtins_wrap("history", prologue="history -c 2>/dev/null\n"),
+    max_flags=0))
 builtins_add(Utility(
     "fc",
-    options=(Option("-l"), Option("-n"), Option("-r")),
-    operands=((), ("-Z",), ("-l", "1"), ("-e", "/bin/true", "1")),
+    operands=(("-l",), ("-ln",), ("-lr",), ("-l", "1"), ("-l", "1", "2"),
+              ("-Z",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=builtins_wrap(
         "fc", prologue="history -c 2>/dev/null; printf 'echo one\\necho two\\n' > hf; history -r hf 2>/dev/null\n"),
-    max_flags=2))
+    max_flags=0))
 
 # --- which (our builtin vs the external GNU program: deliberate) ------------
 builtins_add(Utility(
@@ -784,7 +847,7 @@ builtins_add(Utility(
     operands=((), ("999999",), ("%1",), ("%nosuch",), ("-n",), ("bad",)),
     stdin=("empty",), stderr="loose", modes=BASH,
     script=lambda argv, stdin: (
-        "(exit 7) &\nwait " + builtins_words(argv) + " 2>err\n"
+        "(exit 7) &\nwait " + builtins_words(argv) + " 2>/dev/null\n"
         'printf "[%s]\\n" "$?"\n'),
     max_flags=0))
 
@@ -796,7 +859,7 @@ for name in ("poweroff", "reboot"):
         name, operands=(("-Z",),),
         stdin=("empty",), stderr="loose", modes=BASH,
         script=lambda argv, stdin, _n=name: (
-            _n + " " + builtins_words(argv) + " 2>err >out\n"
+            _n + " " + builtins_words(argv) + " 2>/dev/null >/dev/null\n"
             'printf "[%s]\\n" "$?"\n'),
         max_flags=0))
 

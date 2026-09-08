@@ -13555,6 +13555,49 @@ COLD fn shell_prompt_write(writer write, bool more)
 
 fn shell_help(writer write, string_address input)
 {
+        positive index = 1;
+        b32 answer = 0;
+
+        //      -d, -s and -m are the shapes bash's help takes; any other
+        //      letter is an error with the same status the reference gives.
+        if (index < shell_argc && string_is(shell_argv[index], '-') &&
+            string_get(shell_argv[index] + 1) &&
+            !word_is(shell_argv[index], "--"))
+        {
+                for (string_address letter = shell_argv[index] + 1;
+                     string_get(letter); letter++)
+                        if (!string_is(letter, 'd') && !string_is(letter, 's') &&
+                            !string_is(letter, 'm'))
+                        {
+                                string_format(shell_diagnostic,
+                                              "help: -%c: invalid option\n",
+                                              string_get(letter));
+                                return shell_answer(2);
+                        }
+
+                index++;
+        }
+
+        if (index < shell_argc && word_is(shell_argv[index], "--"))
+                index++;
+
+        //      A topic that names no builtin is a failure, as it is in bash.
+        if (index < shell_argc)
+        {
+                for (; index < shell_argc; index++)
+                        if (!shell_command_builtin_here(
+                                shell_argv[index],
+                                string_hash_33_length(shell_argv[index])))
+                        {
+                                string_format(shell_diagnostic,
+                                              "help: no help topics match `%s'\n",
+                                              shell_argv[index]);
+                                answer = 1;
+                        }
+
+                return shell_answer(answer);
+        }
+
         string_format(write, "Moonwater shell, WIP, " TERM_RED TERM_BOLD "expect crashes! \n\n" TERM_RESET "Available built-in commands:\n");
 
         shell_command address_to command = shell_commands;
