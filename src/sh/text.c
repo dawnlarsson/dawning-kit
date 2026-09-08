@@ -137,27 +137,20 @@ static positive text_visible(p8 address_to into, p8 value)
         return have;
 }
 
-static fn text_error_raw(string_address text)
+static COLD fn text_error_raw(address_any data, positive length)
 {
-        system_write_all(2, text, string_length(text));
+        system_write_all(2, data, length ? length : string_length(data));
 }
 
 // "grep: nosuch.txt: No such file or directory", the shape every one of them
 // uses, with the flush first so the complaint cannot land inside a line.
-static fn text_error(string_address about, string_address reason)
+// Returning false lets a failed guard report and return through this boundary.
+static COLD bool text_error(string_address about, string_address reason)
 {
         text_flush();
-        text_error_raw(text_name);
-        text_error_raw(": ");
-
-        if (about)
-        {
-                text_error_raw(about);
-                text_error_raw(": ");
-        }
-
-        text_error_raw(reason);
-        text_error_raw("\n");
+        return string_report(text_error_raw, false,
+                             about ? "%s: %s: %s\n" : "%s: %s\n",
+                             text_name, about ? about : reason, reason);
 }
 
 static b32 text_done(b32 code)
@@ -189,7 +182,7 @@ static b32 text_done(b32 code)
         prints and then falls through to the ordinary exit is the bug this
         shape cannot have.
 */
-static b32 text_refuse(string_address about, string_address reason, b32 code)
+static COLD b32 text_refuse(string_address about, string_address reason, b32 code)
 {
         text_error(about, reason);
 
@@ -535,8 +528,7 @@ static bool text_reader_spill(text_reader address_to reader, p8 delimiter,
                         reader->finished = true;
                         reader->failed = true;
                         address_to length = 0;
-                        text_error(about, "line too long");
-                        return false;
+                        return text_error(about, "line too long");
                 }
 
                 memory_copy(storage + used, at, take);
@@ -850,8 +842,7 @@ static bool text_files_ready()
         if (!text_files_failed)
                 return true;
 
-        text_error(null, "too many operands");
-        return false;
+        return text_error(null, "too many operands");
 }
 
 static string_address text_file_name(positive which)
@@ -3945,17 +3936,11 @@ static b32 text_tac()
         if (regex)
         {
                 if (!separator_length)
-                {
-                        text_error(null, "separator cannot be empty");
-                        return text_done(1);
-                }
+                        return text_refuse(null, "separator cannot be empty", 1);
 
                 if (!regex_compile(separator, false, false, false,
                                    REGEX_POLICY_TAC))
-                {
-                        text_error(null, "invalid regular expression");
-                        return text_done(1);
-                }
+                        return text_refuse(null, "invalid regular expression", 1);
         }
         else if (!separator_length)
         {
@@ -4062,10 +4047,7 @@ static bool text_lines_gather()
         while (text_line_next())
         {
                 if (text_lines_count >= TEXT_LINES_MAX)
-                {
-                        text_error(null, "too many lines");
-                        return false;
-                }
+                        return text_error(null, "too many lines");
 
                 p8 address_to room = (p8 address_to)text_arena_take(text_line_length + 1);
 
@@ -4351,8 +4333,7 @@ static bool text_count_option(string_address said, p8 marked,
         if (string_digits_exact(said, count))
                 return true;
 
-        text_error(null, "invalid number of lines");
-        return false;
+        return text_error(null, "invalid number of lines");
 }
 
 /*
@@ -4973,18 +4954,12 @@ static bool text_tab_parse(string_address list)
 
                 if (!text_tab_number(list + at, address_of used,
                                      address_of value))
-                {
-                        text_error(list, "invalid tab stops");
-                        return false;
-                }
+                        return text_error(list, "invalid tab stops");
 
                 at += used;
 
                 if (list[at] && list[at] != ',' && !byte_is_space(list[at]))
-                {
-                        text_error(list + at, "invalid tab stops");
-                        return false;
-                }
+                        return text_error(list + at, "invalid tab stops");
 
                 any = true;
 
@@ -4996,10 +4971,7 @@ static bool text_tab_parse(string_address list)
                                 after++;
 
                         if (list[after])
-                        {
-                                text_error(list, "tab repeat must be last");
-                                return false;
-                        }
+                                return text_error(list, "tab repeat must be last");
 
                         text_tab_repeat = value;
                         text_tab_repeat_relative = prefix == '+';
@@ -5009,32 +4981,20 @@ static bool text_tab_parse(string_address list)
                 }
 
                 if (!value)
-                {
-                        text_error(list, "tab stop cannot be zero");
-                        return false;
-                }
+                        return text_error(list, "tab stop cannot be zero");
 
                 if (text_tab_stop_count &&
                     value <= text_tab_stops[text_tab_stop_count - 1])
-                {
-                        text_error(list, "tab stops must be ascending");
-                        return false;
-                }
+                        return text_error(list, "tab stops must be ascending");
 
                 if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
-                {
-                        text_error(list, "too many tab stops");
-                        return false;
-                }
+                        return text_error(list, "too many tab stops");
 
                 text_tab_stops[text_tab_stop_count++] = value;
         }
 
         if (!any)
-        {
-                text_error(list, "empty tab list");
-                return false;
-        }
+                return text_error(list, "empty tab list");
 
         return true;
 }
@@ -10539,9 +10499,9 @@ static p8 terminal_ul_type(string_address name, bool explicit)
         if (explicit)
         {
                 text_flush();
-                text_error_raw("ul: terminal `");
-                text_error_raw(name);
-                text_error_raw("' is not known, defaulting to `dumb'\n");
+                text_error_raw("ul: terminal `", 0);
+                text_error_raw(name, 0);
+                text_error_raw("' is not known, defaulting to `dumb'\n", 0);
         }
 
         return TERMINAL_UL_DUMB;
@@ -11991,8 +11951,7 @@ static bool uniq_number_of(file_taking address_to taking, p8 letter,
         if (string_digits_exact(file_option_value(taking, letter), into))
                 return true;
 
-        text_error(null, "invalid number");
-        return false;
+        return text_error(null, "invalid number");
 }
 
 /*
@@ -12490,10 +12449,7 @@ static fn grep_color_line(string_address line, positive length, bool context,
 static bool grep_hold_make(positive lines)
 {
         if (lines > GREP_HOLD_LINES)
-        {
-                text_error(null, "context length too large");
-                return false;
-        }
+                return text_error(null, "context length too large");
 
         grep_hold_slots = lines;
         grep_hold_pool = (p8 address_to)text_arena_take(GREP_HOLD_BYTES);
@@ -12600,10 +12556,7 @@ static bool grep_hold_put(string_address line, positive length, positive number)
                 return true;
 
         if (length > GREP_HOLD_BYTES)
-        {
-                text_error(null, "context lines too large");
-                return false;
-        }
+                return text_error(null, "context lines too large");
 
         while (grep_hold_count == grep_hold_slots)
         {
@@ -12613,10 +12566,7 @@ static bool grep_hold_put(string_address line, positive length, positive number)
         }
 
         if (grep_hold_used + length > GREP_HOLD_BYTES)
-        {
-                text_error(null, "context lines too large");
-                return false;
-        }
+                return text_error(null, "context lines too large");
 
         positive slot = (grep_hold_first + grep_hold_count) % grep_hold_slots;
         positive at = grep_hold_write;
@@ -12996,10 +12946,7 @@ static p32 text_path_mode(string_address path)
 static bool grep_path_add(string_address path)
 {
         if (grep_path_count >= grep_paths_room)
-        {
-                text_error(null, "too many files");
-                return false;
-        }
+                return text_error(null, "too many files");
 
         grep_paths[grep_path_count++] = path;
         return true;
@@ -16761,27 +16708,26 @@ static bool sort_key_seen(p8 letter, string_address value)
         if (sort_parse_key(value))
                 return true;
 
-        text_error(null, "invalid key");
-        return false;
+        return text_error(null, "invalid key");
 }
 
 // "sort: -:2: disorder: apple", which is the only thing -c has to say.
 static fn sort_disorder(string_address name, positive number, text_slice address_to line)
 {
         text_flush();
-        text_error_raw(text_name);
-        text_error_raw(": ");
-        text_error_raw(name);
-        text_error_raw(":");
+        text_error_raw(text_name, 0);
+        text_error_raw(": ", 0);
+        text_error_raw(name, 0);
+        text_error_raw(":", 0);
 
         p8 digits[24];
         positive length = positive_into(digits, number);
 
         system_write_all(2, digits, length);
 
-        text_error_raw(": disorder: ");
+        text_error_raw(": disorder: ", 0);
         system_write_all(2, line->at, line->length);
-        text_error_raw("\n");
+        text_error_raw("\n", 0);
 }
 
 static b32 text_sort()
@@ -17171,28 +17117,28 @@ static fn cmp_ended(text_reader address_to side, positive at, positive line,
         p8 text[24];
 
         text_flush();
-        text_error_raw("cmp: EOF on '");
-        text_error_raw(side->name);
-        text_error_raw("'");
+        text_error_raw("cmp: EOF on '", 0);
+        text_error_raw(side->name, 0);
+        text_error_raw("'", 0);
 
         if (!at)
         {
-                text_error_raw(" which is empty\n");
+                text_error_raw(" which is empty\n", 0);
                 return;
         }
 
-        text_error_raw(" after byte ");
+        text_error_raw(" after byte ", 0);
         positive_into_string(text, at);
-        text_error_raw(text);
+        text_error_raw(text, 0);
 
         if (!listing)
         {
-                text_error_raw(", in line ");
+                text_error_raw(", in line ", 0);
                 positive_into_string(text, newline ? line : line + 1);
-                text_error_raw(text);
+                text_error_raw(text, 0);
         }
 
-        text_error_raw("\n");
+        text_error_raw("\n", 0);
 }
 
 // A skip or a limit: a count, and one of the suffixes the tool this is

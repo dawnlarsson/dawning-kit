@@ -19,9 +19,9 @@
         than the arena has says so.
 */
 
-static fn awk_leave(b32 code);
+static DEAD_END fn awk_leave(b32 code);
 
-static fn awk_out_of_memory()
+static COLD DEAD_END fn awk_out_of_memory()
 {
         text_error(null, "out of memory");
         awk_leave(2);
@@ -859,7 +859,7 @@ static b32 awk_where_environ;
 static b32 awk_where_argv;
 static b32 awk_where_argc;
 
-static fn awk_fatal(string_address about, string_address reason);
+static COLD DEAD_END fn awk_fatal(string_address about, string_address reason);
 
 static b32 awk_global_find(string_address name, positive length)
 {
@@ -2638,14 +2638,14 @@ static decimal awk_token_number;
 static awk_text address_to awk_token_text;
 static b32 awk_line_number = 1;
 
-static fn awk_fatal(string_address about, string_address reason)
+static COLD DEAD_END fn awk_fatal(string_address about, string_address reason)
 {
         awk_flush_everything();
         text_error(about, reason);
         awk_leave(2);
 }
 
-static fn awk_syntax(string_address reason)
+static COLD DEAD_END fn awk_syntax(string_address reason)
 {
         p8 where[64];
 
@@ -3450,7 +3450,6 @@ static awk_node address_to awk_primary()
         }
 
         awk_syntax("unexpected token");
-        return null;
 }
 
 static awk_node address_to awk_postfix()
@@ -4191,7 +4190,7 @@ static fn awk_value_done(awk_value address_to which)
         which->state = AWK_UNSET;
 }
 
-static fn awk_leave(b32 code)
+static DEAD_END fn awk_leave(b32 code)
 {
         awk_flush_everything();
 
@@ -6026,12 +6025,12 @@ static fn awk_start()
         awk_set_bytes(address_of awk_fields[0], "", 0);
 }
 
-static fn awk_usage()
+static COLD DEAD_END fn awk_usage()
 {
         text_error_raw("usage: awk [-F sepstring] [-v assignment]... program"
-                       " [argument...]\n");
+                       " [argument...]\n", 0);
         text_error_raw("       awk [-F sepstring] -f progfile [-f progfile]..."
-                       " [-v assignment]... [argument...]\n");
+                       " [-v assignment]... [argument...]\n", 0);
         awk_leave(1);
 }
 
@@ -6174,8 +6173,5 @@ static b32 text_awk()
                 awk_text_drop(awk_pending[i]);
         }
 
-        b32 answer = awk_run_rules();
-
-        awk_leave(answer);
-        return answer;
+        awk_leave(awk_run_rules());
 }

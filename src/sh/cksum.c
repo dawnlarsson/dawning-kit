@@ -359,10 +359,7 @@ static bool cksum_crc_path(string_address path, p32 address_to result,
                 while (input == CKSUM_ERROR_INTERRUPTED);
 
                 if (input < 0)
-                {
-                        text_error(path, file_reason(input));
-                        return false;
-                }
+                        return text_error(path, file_reason(input));
         }
 
         p32 crc = 0;
@@ -380,10 +377,7 @@ static bool cksum_crc_path(string_address path, p32 address_to result,
                 system_close((positive)input);
 
         if (got < 0)
-        {
-                text_error(path, file_reason(got));
-                return false;
-        }
+                return text_error(path, file_reason(got));
 
         p64 length = bytes;
 

@@ -558,7 +558,7 @@ static fn checksum_error_number(string_address command,
                                 string_address label)
 {
         text_flush();
-        string_format(file_fail, "%s: %s: %p: improperly formatted %s checksum line\n",
+        string_format(log_error, "%s: %s: %p: improperly formatted %s checksum line\n",
                       command, manifest, line, label);
 }
 
@@ -566,7 +566,7 @@ static fn checksum_warning(string_address command, positive count,
                            string_address one, string_address many)
 {
         text_flush();
-        string_format(file_fail, "%s: WARNING: %p%s\n", command, count,
+        string_format(log_error, "%s: WARNING: %p%s\n", command, count,
                       count == 1 ? one : many);
 }
 

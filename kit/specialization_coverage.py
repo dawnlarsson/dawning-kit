@@ -395,7 +395,7 @@ cover('folds_already', 'value', 'decimal_to_string',
 cover('folds_already', 'input', 'path_basename',
       'a literal path folds the answer to a constant string, and no caller '
       'has one; the routine exists for a path read at run time')
-cover('folds_already', 'format', 'string_format',
+cover('folds_already', 'format', 'string_format string_report',
       'the format is a literal at nearly every call site and this is the '
       'largest thing here that cannot be built: expanding it means turning '
       'one variadic call into a sequence of per-conversion calls, and C has '

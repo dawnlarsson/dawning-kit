@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        251 routines (242 public, 9 local), 251 of them on all three.
+        252 routines (243 public, 9 local), 252 of them on all three.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -286,6 +286,7 @@
           string_length                  public  yes     yes     yes
           string_length_max              public  yes     yes     yes
           string_replace_all             public  yes     yes     yes
+          string_report                  public  yes     yes     yes
           string_search                  public  yes     yes     yes
           string_set_add                 public  yes     yes     yes
           string_span                    public  yes     yes     yes
@@ -7140,8 +7141,18 @@ ASM_FUNC(positive_to_string)
     //       switch, and a specifier nobody knows is dropped along with its
     //       percent. Both are relied on by callers in the tree.
     //
+    // Reporting shares the formatter and preserves the caller's result across
+    // every writer call. Its third fixed argument uses one integer slot;
+    // floating arguments and overflow arguments keep their ordinary ABI.
+    ASM_FUNC(string_report)
+    "mov %esi, %r10d\n   mov %rdx, %rsi\n   mov $-24, %r11\n"
+    "jmp .Lstring_format_enter\n"
+    ASM_END(string_report)
     ASM_FUNC(string_format)
+    "xor %r10d, %r10d\n   mov $-32, %r11\n"
+    ".Lstring_format_enter:\n"
     "push %rbx\n   push %rbp\n   push %r13\n"
+    "mov %r11, %r13\n"
 #ifndef KERNEL_MODE
     "movzbl %al, %r11d  # al is how many vector registers the caller used\n"
 #endif
@@ -7154,7 +7165,8 @@ ASM_FUNC(positive_to_string)
     //       rather than off the increment, so no load in the routine waits on
     //       an add.
     //
-    "movzbl (%rsi), %eax\n   sub $176, %rsp  # three pushes and 176: aligned at every call\n"
+    "movzbl (%rsi), %eax\n   sub $192, %rsp  # three pushes and 192: aligned at every call\n"
+    "mov %r10d, 176(%rsp)\n"
     "mov %rdx, 128(%rsp)\n   mov %rcx, 136(%rsp)\n   mov %r8, 144(%rsp)\n   mov %r9, 152(%rsp)\n"
 #ifndef KERNEL_MODE
     "test %r11b, %r11b\n   je .Lstring_format_saved\n   movaps %xmm0, 0(%rsp)\n   movaps %xmm1, 16(%rsp)\n"
@@ -7165,8 +7177,7 @@ ASM_FUNC(positive_to_string)
     "mov %rdi, %rbx  # the writer\n"
     "mov %rsi, %rbp  # where the scan is\n"
     "mov %rsi, %rdi  # where the current run of plain text began\n"
-    "mov $-32, %r13  # four integer registers left to spend\n"
-    "lea 208(%rsp), %r11\n   mov %r11, 168(%rsp)  # the caller's stack arguments\n"
+    "lea 224(%rsp), %r11\n   mov %r11, 168(%rsp)  # the caller's stack arguments\n"
     //
     //       The hunt for the end of a run of plain text, which is where this
     //       routine spent most of itself. A byte at a time was six
@@ -7358,7 +7369,7 @@ ASM_FUNC(positive_to_string)
     //
     ".Lstring_format_tail:\n   mov %rbp, %rsi\n   sub %rdi, %rsi\n"
     ASM_CALL("rbx")
-    ".Lstring_format_done:\n   add $176, %rsp\n   pop %r13\n   pop %rbp\n"
+    ".Lstring_format_done:\n   mov 176(%rsp), %eax\n   add $192, %rsp\n   pop %r13\n   pop %rbp\n"
     "pop %rbx\n"
     ASM_RET
     //
@@ -11294,9 +11305,16 @@ ASM_FUNC(positive_to_string)
     //       trailing write, and a specifier nobody knows is dropped along with
     //       its percent. Both are what the C did.
     //
+    ASM_FUNC(string_report)
+    "mov w10, w1\n   mov x1, x2\n   mov x11, #216\n"
+    "b .Lstring_format_enter\n"
+    ASM_END(string_report)
     ASM_FUNC(string_format)
+    "mov w10, wzr\n   mov x11, #208\n"
+    ".Lstring_format_enter:\n"
     "stp x29, x30, [sp, -256]!\n   ldrb w9, [x1]  // the first byte, before it is wanted\n"
     "mov x29, sp\n   stp x19, x20, [sp, 16]\n   stp x21, x22, [sp, 32]\n   stp x23, x24, [sp, 48]\n"
+    "str w10, [sp, 64]\n"
     "stp x2, x3, [sp, 208]\n   stp x4, x5, [sp, 224]\n   stp x6, x7, [sp, 240]  // this pair ends at the caller's arguments\n"
 #ifndef KERNEL_MODE
     "stp q0, q1, [sp, 80]\n   stp q2, q3, [sp, 112]\n   stp q4, q5, [sp, 144]\n   stp q6, q7, [sp, 176]\n"
@@ -11305,7 +11323,7 @@ ASM_FUNC(positive_to_string)
     "mov x19, x0  // the writer\n"
     "mov x20, x1  // where the scan is\n"
     "mov x0, x1  // where the current run of plain text began\n"
-    "add x21, sp, 208\n   add x22, sp, 256  // one past the integer save area\n"
+    "add x21, sp, x11\n   add x22, sp, 256  // one past the integer save area\n"
     "add x24, sp, 256  // the caller's stack arguments\n"
     //
     //       The hunt for the end of a run of plain text, which is where this
@@ -11410,7 +11428,7 @@ ASM_FUNC(positive_to_string)
 #endif
     ".Lstring_format_tail:\n   sub x1, x20, x0\n"
     ASM_CALL("x19")
-    ".Lstring_format_done:\n   ldp x19, x20, [sp, 16]\n   ldp x21, x22, [sp, 32]\n   ldp x23, x24, [sp, 48]\n"
+    ".Lstring_format_done:\n   ldr w0, [sp, 64]\n   ldp x19, x20, [sp, 16]\n   ldp x21, x22, [sp, 32]\n   ldp x23, x24, [sp, 48]\n"
     "ldp x29, x30, [sp], 256\n"
     ASM_RET
     //
@@ -14515,15 +14533,21 @@ ASM_FUNC(positive_to_string)
     //       trailing write, and a specifier nobody knows is dropped along with
     //       its percent. Both are what the C did.
     //
+    ASM_FUNC(string_report)
+    "mv t2, a1\n   mv a1, a2\n   li t1, 56\n   j .Lstring_format_enter\n"
+    ASM_END(string_report)
     ASM_FUNC(string_format)
-    "addi sp, sp, -80\n   lbu t0, 0(a1)  # the first byte, before it is wanted\n"
+    "li t2, 0\n   li t1, 48\n"
+    ".Lstring_format_enter:\n"
+    "addi sp, sp, -96\n   lbu t0, 0(a1)  # the first byte, before it is wanted\n"
     "sd ra, 0(sp)\n   sd s0, 8(sp)\n   sd s1, 16(sp)\n   sd s2, 24(sp)\n"
-    "sd a2, 32(sp)\n   sd a3, 40(sp)\n   sd a4, 48(sp)\n   sd a5, 56(sp)\n"
-    "sd a6, 64(sp)\n   sd a7, 72(sp)  # the last of these ends at the caller's arguments\n"
+    "sw t2, 32(sp)\n"
+    "sd a2, 48(sp)\n   sd a3, 56(sp)\n   sd a4, 64(sp)\n   sd a5, 72(sp)\n"
+    "sd a6, 80(sp)\n   sd a7, 88(sp)  # the last of these ends at the caller's arguments\n"
     "mv s0, a0  # the writer\n"
     "mv s1, a1  # where the scan is\n"
     "mv a0, a1  # where the current run of plain text began\n"
-    "addi s2, sp, 32  # the next argument, wherever it lives\n"
+    "add s2, sp, t1  # the next argument, wherever it lives\n"
     //
     //       The run of plain text is still walked a byte at a time here, and
     //       that is the answer rather than an omission.
@@ -14581,8 +14605,8 @@ ASM_FUNC(positive_to_string)
 #endif
     ".Lstring_format_tail:\n   sub a1, s1, a0\n"
     ASM_CALL("s0")
-    ".Lstring_format_done:\n   ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n"
-    "ld s2, 24(sp)\n   addi sp, sp, 80\n"
+    ".Lstring_format_done:\n   lw a0, 32(sp)\n   ld ra, 0(sp)\n   ld s0, 8(sp)\n   ld s1, 16(sp)\n"
+    "ld s2, 24(sp)\n   addi sp, sp, 96\n"
     ASM_RET
     ASM_END(string_format)
     ".globl string_format\n"
@@ -16718,6 +16742,9 @@ fn decimal_to_string(writer write, decimal value);
 #error "string_format is assembly now and carries no extension hooks"
 #endif
 fn string_format(writer write, string_address format, ...);
+// Same formatting and writer contract; returns result without flushing or
+// terminating beyond what the selected writer itself does.
+COLD b32 string_report(writer write, b32 result, string_address format, ...);
 
 // ### Takes a path and writes out the last directory name
 // ### Get CPU time (Time Stamp Counter)

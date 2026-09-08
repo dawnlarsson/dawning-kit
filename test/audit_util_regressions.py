@@ -83,7 +83,7 @@ static p8 *text_arena;
 static positive text_arena_used;
 static bool ul_lscpu_failed;
 static positive fixture_errors;
-static void text_error(void *unused, const char *message) { (void)unused; (void)message; fixture_errors++; }
+static bool text_error(void *unused, const char *message) { (void)unused; (void)message; fixture_errors++; return false; }
 static void *memory(positive bytes) { (void)bytes; abort(); }
 static bool system_failed(positive value) { return value >= positive_max-4095; }
 static positive positive_into_string(p8 *p,positive n) { return (positive)sprintf((char *)p,"%llu",(unsigned long long)n); }

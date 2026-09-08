@@ -566,12 +566,9 @@ static bool logger_connect(logger_control address_to control)
                 return true;
 
         if (control->server || control->socket_errors)
-        {
-                text_error(control->server ? control->server
+                return text_error(control->server ? control->server
                                            : control->socket_path,
                            "cannot connect to logging socket");
-                return false;
-        }
         return true;
 }
 
@@ -609,10 +606,7 @@ static bool logger_emit(logger_control address_to control,
         if (!logger_header(control, content, LOGGER_HEADER_ROOM -
                                              LOGGER_FRAME_ROOM,
                            priority, address_of header_length))
-        {
-                text_error(null, "cannot construct syslog header");
-                return false;
-        }
+                return text_error(null, "cannot construct syslog header");
 
         memory_copy(content + header_length, control->body, length);
         positive content_length = header_length + length;
@@ -1112,9 +1106,8 @@ static bool login_records(string_address path, bool check_processes,
                 if (missing_ok && input == -ERROR_NO_ENTRY)
                         return true;
 
-                text_error(path ? path : (string_address)"standard input",
+                return text_error(path ? path : (string_address)"standard input",
                            file_reason(input));
-                return false;
         }
 
         positive held = 0;
@@ -1869,15 +1862,15 @@ static b32 tools_write()
         if (!login_message_select.count)
         {
                 if (!login_message_select.sessions)
-                        string_format(file_fail, "write: %s is not logged in\n",
+                        string_format(log_error, "write: %s is not logged in\n",
                                       login_message_select.wanted_user);
                 else if (login_message_select.explicit_line)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "write: %s is not logged in on %s\n",
                                       login_message_select.wanted_user,
                                       login_message_select.wanted_line);
                 else
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "write: %s has messages disabled\n",
                                       login_message_select.wanted_user);
                 login_message_selection_clear();
@@ -1890,7 +1883,7 @@ static b32 tools_write()
         login_message_selection_clear();
 
         if (eligible > 1)
-                string_format(file_fail,
+                string_format(log_error,
                               "write: %s is logged in more than once; writing to %s\n",
                               chosen.user, chosen.line);
 
@@ -1898,7 +1891,7 @@ static b32 tools_write()
                                             real_user);
         if (handle < 0)
         {
-                string_format(file_fail, "write: /dev/%s: %s\n", chosen.line,
+                string_format(log_error, "write: /dev/%s: %s\n", chosen.line,
                               file_reason(handle));
                 return text_done(1);
         }
@@ -2034,7 +2027,7 @@ static b32 tools_wall()
                 if (!system_call(syscall(geteuid)))
                         banner = false;
                 else
-                        file_fail("wall: --nobanner is available only for root\n",
+                        log_error("wall: --nobanner is available only for root\n",
                                   0);
         }
 
@@ -2079,7 +2072,7 @@ static b32 tools_wall()
                         positive egid = (positive)system_call(syscall(getegid));
                         if (uid && (uid != euid || gid != egid))
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                     "wall: will not read %s - use stdin.\n", one);
                                 made = false;
                         }
@@ -2134,7 +2127,7 @@ static b32 tools_wall()
                 if (sent < 0 && sent != -EACCES && sent != -ENOENT &&
                     sent != -EBUSY && sent != -ENXIO && sent != -ENODEV &&
                     sent != -EIO)
-                        string_format(file_fail, "wall: /dev/%s: %s\n", line,
+                        string_format(log_error, "wall: /dev/%s: %s\n", line,
                                       file_reason(sent));
         }
 
@@ -2384,7 +2377,7 @@ static b32 tools_utmpdump()
         }
 
         string_address path = file_operand_count ? file_operand_at(0) : null;
-        string_format(file_fail, "Utmp dump of %s\n",
+        string_format(log_error, "Utmp dump of %s\n",
                       path ? path : (string_address)"/dev/stdin");
         bool okay = login_records(path, false, false, login_utmpdump_visit);
         text_flush();
@@ -2860,10 +2853,7 @@ static b32 tools_last()
         login_last_reader reader = {0};
         bipolar loaded = login_last_reader_open(path, address_of reader);
         if (loaded < 0)
-        {
-                text_error(path, file_reason(loaded));
-                return text_done(1);
-        }
+                return text_refuse(path, file_reason(loaded), 1);
 
         login_record record;
         for (positive at = reader.records; at; at--)
@@ -6291,16 +6281,16 @@ static b32 tools_mcookie()
         {
                 if (path)
                 {
-                        text_error_raw("Got ");
+                        text_error_raw("Got ", 0);
                         p8 number[24];
                         positive length = positive_into_string(number, mixed);
                         number[length] = end;
-                        text_error_raw(number);
-                        text_error_raw(" bytes from ");
-                        text_error_raw(path);
-                        text_error_raw("\n");
+                        text_error_raw(number, 0);
+                        text_error_raw(" bytes from ", 0);
+                        text_error_raw(path, 0);
+                        text_error_raw("\n", 0);
                 }
-                text_error_raw("Got 128 bytes from getrandom() function\n");
+                text_error_raw("Got 128 bytes from getrandom() function\n", 0);
         }
 
         for (positive warm = 0; warm < 8; warm++)
@@ -6385,13 +6375,13 @@ static fn dd_summary()
         text_flush();
 
         dd_say_number(dd_in_full);
-        text_error_raw("+");
+        text_error_raw("+", 0);
         dd_say_number(dd_in_partial);
-        text_error_raw(" records in\n");
+        text_error_raw(" records in\n", 0);
         dd_say_number(dd_out_full);
-        text_error_raw("+");
+        text_error_raw("+", 0);
         dd_say_number(dd_out_partial);
-        text_error_raw(" records out\n");
+        text_error_raw(" records out\n", 0);
 
         if (dd_status_level == DD_STATUS_NOXFER)
                 return;
@@ -6404,20 +6394,20 @@ static fn dd_summary()
                                                                   true);
 
         dd_say_number(dd_written);
-        text_error_raw(dd_written == 1 ? " byte" : " bytes");
+        text_error_raw(dd_written == 1 ? " byte" : " bytes", 0);
 
         if (!dd_bare(si, si_length))
         {
-                text_error_raw(" (");
-                text_error_raw(si);
+                text_error_raw(" (", 0);
+                text_error_raw(si, 0);
 
                 if (!dd_bare(iec, iec_length))
                 {
-                        text_error_raw(", ");
-                        text_error_raw(iec);
+                        text_error_raw(", ", 0);
+                        text_error_raw(iec, 0);
                 }
 
-                text_error_raw(")");
+                text_error_raw(")", 0);
         }
 
         /*
@@ -6434,20 +6424,20 @@ static fn dd_summary()
         if (!elapsed)
                 elapsed = 1;
 
-        text_error_raw(" copied, ");
+        text_error_raw(" copied, ", 0);
 
         positive whole = elapsed / 1000000000u;
         positive rest = elapsed % 1000000000u;
 
         dd_say_number(whole);
-        text_error_raw(".");
+        text_error_raw(".", 0);
 
         p8 fraction[9];
         positive fraction_length = positive_into_padded(fraction, rest, 9, '0');
 
         system_write_all(2, fraction, fraction_length);
 
-        text_error_raw(" s, ");
+        text_error_raw(" s, ", 0);
 
         /*
                 Bytes per second from microseconds, not from whole seconds:
@@ -6467,8 +6457,8 @@ static fn dd_summary()
                            : dd_written / microseconds * 1000000u;
 
         positive_into_human_nearest_string(rate, per, false);
-        text_error_raw(rate);
-        text_error_raw("/s\n");
+        text_error_raw(rate, 0);
+        text_error_raw("/s\n", 0);
 }
 
 static bool dd_size(string_address text, positive address_to out)
@@ -6618,12 +6608,9 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
                         !dd_word(address_of value, words[word].name)))
                         word++;
                 if (word == array_count(words))
-                {
-                        text_error(value, group == 0 ? "invalid conversion" :
+                        return text_error(value, group == 0 ? "invalid conversion" :
                                           group == 1 ? "invalid input flag" :
                                                        "invalid output flag");
-                        return false;
-                }
                 *flags |= words[word].flag;
         } while (*value);
         return true;
@@ -6638,36 +6625,16 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
         coreutils uses. One writer keeps the ten of them from drifting
         apart.
 */
-static fn dd_complain(string_address before, string_address name,
+static COLD fn dd_complain(string_address before, string_address name,
                       string_address fallback, string_address after,
                       bipolar code)
 {
         text_flush();
-        text_error_raw("dd: ");
-
-        if (before)
-        {
-                text_error_raw(before);
-                text_error_raw(" ");
-        }
-
-        text_error_raw("'");
-        text_error_raw(name ? name : fallback);
-        text_error_raw("'");
-
-        if (after)
-        {
-                text_error_raw(": ");
-                text_error_raw(after);
-        }
-
-        if (code < 0)
-        {
-                text_error_raw(": ");
-                text_error_raw(file_reason(code));
-        }
-
-        text_error_raw("\n");
+        string_format(text_error_raw, "dd: %s%s'%s'%s%s%s%s\n",
+                      before ? before : (string_address)"", before ? " " : "",
+                      name ? name : fallback, after ? ": " : "",
+                      after ? after : (string_address)"", code < 0 ? ": " : "",
+                      code < 0 ? file_reason(code) : (string_address)"");
 }
 
 /*
@@ -7508,16 +7475,10 @@ static const file_long dump_od_longs[] = {
 static bool dump_od_seen(p8 letter, string_address value)
 {
         if (letter == 't' && !dump_od_types(value))
-        {
-                text_error(value, "unsupported output format");
-                return false;
-        }
+                return text_error(value, "unsupported output format");
 
         if (letter == 'e' || letter == 'F' || letter == 'f')
-        {
-                text_error(null, "floating point output is unsupported");
-                return false;
-        }
+                return text_error(null, "floating point output is unsupported");
 
         /* Legacy switches name the same formats as -t, including its host
            sizes and tuned hex-byte selection. Keep only their spelling. */
@@ -7531,10 +7492,7 @@ static bool dump_od_seen(p8 letter, string_address value)
                 dump_od_types(formats[alias - aliases]);
 
         if (dump_arguments.failed)
-        {
-                text_error(null, "too many output formats");
-                return false;
-        }
+                return text_error(null, "too many output formats");
 
         return true;
 }
@@ -7570,10 +7528,7 @@ static bool dump_hex_seen(p8 letter, string_address value)
         }
 
         if (dump_arguments.failed)
-        {
-                text_error(null, "too many output formats");
-                return false;
-        }
+                return text_error(null, "too many output formats");
 
         return true;
 }
@@ -8013,10 +7968,7 @@ static b32 dump_run(positive first)
         }
 
         if (skip && dump_arguments.od)
-        {
-                text_error(null, "cannot skip past end of combined input");
-                return text_done(1);
-        }
+                return text_refuse(null, "cannot skip past end of combined input", 1);
 
         if (held)
         {
@@ -8244,8 +8196,7 @@ static bool diff_slurp(diff_side address_to side, string_address path,
                                 return true;
                         }
 
-                        text_error(path, file_reason(handle));
-                        return false;
+                        return text_error(path, file_reason(handle));
                 }
 
                 close_handle = true;
@@ -9629,8 +9580,7 @@ static bool diff_gather(string_address path, diff_names address_to names,
                 if (allow_missing)
                         return true;
 
-                text_error(path, "No such file or directory");
-                return false;
+                return text_error(path, "No such file or directory");
         }
 
         struct linux_dirent64 address_to entry;
@@ -9894,10 +9844,7 @@ static bool diff_context_set(string_address value)
 
         if (!string_digits_checked(address_of at, 10, address_of context) || string_get(at) ||
             context > (positive_max - 1) / 2)
-        {
-                text_error(value, "invalid context length");
-                return false;
-        }
+                return text_error(value, "invalid context length");
 
         diff_context = context;
         return true;
@@ -9910,10 +9857,7 @@ static bool diff_option_seen(p8 letter, string_address value)
         if (letter == 'L')
         {
                 if (diff_label_count >= 2)
-                {
-                        text_error(value, "too many file label options");
-                        return false;
-                }
+                        return text_error(value, "too many file label options");
 
                 diff_labels[diff_label_count++] = value;
                 return true;
@@ -9924,10 +9868,7 @@ static bool diff_option_seen(p8 letter, string_address value)
                 positive style = letter == 'z' ? DIFF_NORMAL : DIFF_UNIFIED;
 
                 if (diff_style_seen && diff_style != style)
-                {
-                        text_error(null, "conflicting output style options");
-                        return false;
-                }
+                        return text_error(null, "conflicting output style options");
 
                 diff_style = style;
                 diff_style_seen = true;
@@ -10024,10 +9965,7 @@ static b32 tools_diff(void)
         }
 
         if (text_argument_count - first != 2)
-        {
-                text_error(null, "missing operand");
-                return text_done(2);
-        }
+                return text_refuse(null, "missing operand", 2);
 
         string_address left = program_argument(first);
         string_address right = program_argument(first + 1);
@@ -10796,10 +10734,7 @@ static bool ps_format_list(string_address list,
                 }
 
                 if (which == PS_FIELD_COUNT)
-                {
-                        text_error(name, "unknown user-defined format specifier");
-                        return false;
-                }
+                        return text_error(name, "unknown user-defined format specifier");
 
                 if (!custom && alias_header)
                 {
@@ -10859,10 +10794,7 @@ static b32 tools_ps(void)
                 // cursor can consume it and advance to a following word.
                 if ((!cursor.letters || !*cursor.letters) && cursor.at < cursor.argc &&
                     string_equals(cursor.argv[cursor.at], "--"))
-                {
-                        text_error("--", "unsupported option");
-                        return text_done(1);
-                }
+                        return text_refuse("--", "unsupported option", 1);
                 b32 option = argument_next(&cursor);
                 if (option == ARGUMENT_END)
                         break;
@@ -10895,8 +10827,7 @@ static b32 tools_ps(void)
                 {
                         // Other BSD personalities also change the display
                         // format and remain unsupported until implemented.
-                        text_error(cursor.word, "unsupported option");
-                        return text_done(1);
+                        return text_refuse(cursor.word, "unsupported option", 1);
                 }
                 string_address value = valued ? argument_value(&cursor, true) : null;
                 switch (option)
@@ -10913,35 +10844,23 @@ static b32 tools_ps(void)
                 case 'p':
                 case 'P':
                         if (!value || !ps_pid_list(value, option == 'p' ? &pids : &parents, option == 'p'))
-                        {
-                                text_error(value, option == 'p' ? "invalid process id list"
-                                                               : "invalid parent process id list");
-                                return text_done(1);
-                        }
+                                return text_refuse(value, option == 'p' ? "invalid process id list"
+                                                               : "invalid parent process id list", 1);
                         break;
                 case 'C':
                         if (!value || !ps_command_list(value, &selected_commands,
                                                        &command_count, &command_room))
-                        {
-                                text_error(value, "invalid command list");
-                                return text_done(1);
-                        }
+                                return text_refuse(value, "invalid command list", 1);
                         break;
                 case 's':
                         if (!value || !ps_sort_pid(value, &reverse))
-                        {
-                                text_error(value, "unsupported sort key");
-                                return text_done(1);
-                        }
+                                return text_refuse(value, "unsupported sort key", 1);
                         sorted = true;
                         break;
                 case 'o':
                         if (!value)
-                        {
-                                text_error(null, long_option ? "option requires an argument -- format"
-                                                            : "option requires an argument -- o");
-                                return text_done(1);
-                        }
+                                return text_refuse(null, long_option ? "option requires an argument -- format"
+                                                            : "option requires an argument -- o", 1);
                         if (!ps_format_list(value, &fields, &field_count, &field_room))
                                 return text_done(1);
                         break;
@@ -11000,10 +10919,7 @@ static b32 tools_ps(void)
         if (!system_snapshot_take_selected(
                 address_of ps_snapshot, SPARK_SNAPSHOT_PROCESS, owners,
                 pids.values, alternate_selectors ? 0 : pids.count))
-        {
-                text_error("/proc", "cannot read");
-                return text_done(1);
-        }
+                return text_refuse("/proc", "cannot read", 1);
 
         ps_now = ps_snapshot.header.uptime_ns / SYSTEM_NANOSECONDS;
         ps_wall = ps_snapshot.header.realtime_seconds;
@@ -11691,7 +11607,7 @@ static b32 tools_dmesg_read_file(tools_dmesg_state address_to state,
         if (handle < 0)
         {
                 text_flush();
-                string_format(file_fail, "dmesg: cannot open %s: %s\n",
+                string_format(log_error, "dmesg: cannot open %s: %s\n",
                               path, file_reason(handle));
                 return text_done(1);
         }
@@ -12087,25 +12003,23 @@ static bool tools_fincore_one(string_address path,
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "fincore: failed to open: %s: %s\n",
-                              path, file_reason(handle));
-                return false;
-        }
+                return string_report(log_error, false,
+                                     "fincore: failed to open: %s: %s\n",
+                                     path, file_reason(handle));
 
         file_facts facts;
         bipolar told = file_look_code(handle, (string_address)"",
                                       AT_EMPTY_PATH, address_of facts);
         if (told < 0)
         {
-                string_format(file_fail, "fincore: failed to stat: %s: %s\n",
+                string_format(log_error, "fincore: failed to stat: %s: %s\n",
                               path, file_reason(told));
                 system_close(handle);
                 return false;
         }
         if ((facts.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "fincore: not a regular file: %s\n", path);
                 system_close(handle);
                 return false;
@@ -12138,7 +12052,7 @@ static bool tools_fincore_one(string_address path,
                     FILE_MAP_SHARED, (positive)handle, 0);
                 if (mapped < 0)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "fincore: failed to mmap: %s: %s\n",
                                       path, file_reason(mapped));
                         system_close(handle);
@@ -12169,7 +12083,7 @@ static bool tools_fincore_one(string_address path,
                             length, (positive)vector);
                         if (answer < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "fincore: failed to do mincore: %s: %s\n",
                                               path, file_reason(answer));
                                 system_call_2(syscall(munmap),
@@ -12196,8 +12110,7 @@ static bool tools_fincore_one(string_address path,
 #else
         (void)path;
         (void)row;
-        string_format(file_fail, "fincore: mincore requires Linux\n");
-        return false;
+        return string_report(log_error, false, "fincore: mincore requires Linux\n");
 #endif
 }
 

@@ -216,7 +216,6 @@ typedef struct
         Everything here writes with a length of zero and lets the writer
         measure, which is what a literal of unknown length needs anyway.
 */
-#define file_fail log_error
 
 fn file_line(string_address text)
 {
@@ -686,7 +685,7 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code);
 static COLD fn file_too_long(string_address program, string_address verb,
                              string_address directory, string_address name)
 {
-        string_format(file_fail, "%s: %s '%s/%s': %s\n", program, verb,
+        string_format(log_error, "%s: %s '%s/%s': %s\n", program, verb,
                       directory, name, file_reason(-ERROR_NAME_TOO_LONG));
 }
 
@@ -2081,7 +2080,7 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
         if (depth == 0)
         {
-                string_format(file_fail, "%s: '%s' is nested too deep\n",
+                string_format(log_error, "%s: '%s' is nested too deep\n",
                               program, shown);
                 address_to status = 1;
                 return;
@@ -2093,7 +2092,7 @@ static fn file_change_walk_as(bipolar directory, string_address name,
         {
                 if (report_walk_errors)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "%s: cannot open directory '%s': %s\n",
                                       program, shown, file_reason(walk.error));
                         address_to status = 1;
@@ -2125,7 +2124,7 @@ static fn file_change_walk_as(bipolar directory, string_address name,
 
         if (report_walk_errors && walk.error < 0)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "%s: cannot read directory '%s': %s\n",
                               program, shown, file_reason(walk.error));
                 address_to status = 1;
@@ -2172,18 +2171,16 @@ CONST positive file_letter_bit(p8 letter)
 
 #define FILE_FLAG(letter) ((positive)1 << file_letter_bit(letter))
 
-COLD fn file_complain(string_address program, string_address message, string_address subject)
+static COLD bool file_complain(string_address program, string_address message, string_address subject)
 {
-        string_format(file_fail, "%s: %s: %s\n", program, subject, message);
+        return string_report(log_error, false, "%s: %s: %s\n", program, subject, message);
 }
 
 // What every tool says when it was given nothing to work on, and the status
 // each of them answers with.
 static COLD b32 file_missing(string_address program)
 {
-        string_format(file_fail, "%s: missing operand\n", program);
-
-        return 1;
+        return string_report(log_error, 1, "%s: missing operand\n", program);
 }
 
 /*
@@ -2196,7 +2193,7 @@ static COLD b32 file_missing(string_address program)
 */
 bool file_ask(string_address program, string_address question, string_address subject)
 {
-        string_format(file_fail, "%s: %s '%s'? ", program, question, subject);
+        string_format(log_error, "%s: %s '%s'? ", program, question, subject);
 
         p8 answer[2];
         bipolar got = system_read_once(0, answer, 1);
@@ -2358,9 +2355,7 @@ static fn file_option_supersede(file_taking address_to taking, p8 letter)
 
 static bool file_option_needs(file_taking address_to taking, string_address word)
 {
-        file_complain(taking->program, "option needs an argument", word);
-
-        return false;
+        return file_complain(taking->program, "option needs an argument", word);
 }
 
 static p8 file_long_letter(file_taking address_to taking, string_address name,
@@ -2440,20 +2435,14 @@ static bool file_take_from(file_taking address_to taking, positive index)
                 p8 named[3] = {'-', letter, end};
                 string_address shown = long_option ? cursor.word : named;
                 if (!letter || (!long_option && !string_first_of(taking->allowed, letter)))
-                {
-                        file_complain(taking->program,
+                        return file_complain(taking->program,
                                       long_option ? "unrecognized option" : "invalid option", shown);
-                        return false;
-                }
                 positive bit = file_letter_bit(letter);
                 bool optional = file_option_among(taking->optional, letter) ||
                     (long_option && file_option_among(taking->long_optional, letter));
                 bool valued = file_option_among(taking->valued, letter);
                 if (cursor.attached && !optional && !valued)
-                {
-                        file_complain(taking->program, "option does not allow an argument", shown);
-                        return false;
-                }
+                        return file_complain(taking->program, "option does not allow an argument", shown);
                 taking->flags |= (positive)1 << bit;
                 /* Short options supersede before missing-value errors; long
                    options do so only after their values have been accepted. */
@@ -3030,13 +3019,10 @@ static bool file_source_destination(string_address program, positive first,
                                                         string_address destination))
 {
         if (into && alone)
-        {
-                string_format(
-                    file_fail,
+                return string_report(
+                    log_error, false,
                     "%s: cannot combine --target-directory and --no-target-directory\n",
                     program);
-                return false;
-        }
 
         if (first >= count || (!into && first + 1 >= count))
         {
@@ -3053,11 +3039,8 @@ static bool file_source_destination(string_address program, positive first,
         if (alone || (!into && count - first == 2 && !file_is_directory_through(last)))
         {
                 if (after - first != 1)
-                {
-                        string_format(file_fail, "%s: extra operand '%s'\n", program,
+                        return string_report(log_error, false, "%s: extra operand '%s'\n", program,
                                       program_argument((b32)(first + 1)));
-                        return false;
-                }
 
                 pair(program_argument((b32)first), last);
                 log_flush();
@@ -3066,11 +3049,8 @@ static bool file_source_destination(string_address program, positive first,
         }
 
         if (!file_is_directory_through(last))
-        {
-                string_format(file_fail, "%s: target '%s' is not a directory\n", program,
+                return string_report(log_error, false, "%s: target '%s' is not a directory\n", program,
                               last);
-                return false;
-        }
 
         bool complete = true;
 
@@ -3191,10 +3171,10 @@ static fn ls_limit(string_address why)
 {
         if (!ls_broken)
         {
-                file_fail(ls_program, 0);
-                file_fail(": ", 2);
-                file_fail(why, 0);
-                file_fail("\n", 1);
+                log_error(ls_program, 0);
+                log_error(": ", 2);
+                log_error(why, 0);
+                log_error("\n", 1);
         }
 
         ls_broken = true;
@@ -4091,7 +4071,7 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 
         if (looked < 0 && !under)
         {
-                string_format(file_fail, "%s: cannot access '%s': %s\n",
+                string_format(log_error, "%s: cannot access '%s': %s\n",
                               ls_program, shown, file_reason(looked));
                 ls_status = 2;
                 return true;
@@ -4134,7 +4114,7 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
                 {
                         p8 full[FILE_PATH_MAX];
 
-                        string_format(file_fail, "%s: cannot access '%s': %s\n",
+                        string_format(log_error, "%s: cannot access '%s': %s\n",
                                       ls_program,
                                       file_path_join(full, under, shown) ? full : shown,
                                       file_reason(looked));
@@ -4209,7 +4189,7 @@ static fn ls_below(string_address path, positive depth)
                 // and says so, rather than by running out of stack.
                 if (depth == 0)
                 {
-                        string_format(file_fail, "%s: '%s/%s' is nested too deep\n",
+                        string_format(log_error, "%s: '%s/%s' is nested too deep\n",
                                       ls_program, path, name);
                         ls_status = 1;
                         continue;
@@ -4237,7 +4217,7 @@ static fn ls_directory(string_address path, bool heading, positive depth,
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
-                string_format(file_fail, "%s: cannot open directory '%s': %s\n",
+                string_format(log_error, "%s: cannot open directory '%s': %s\n",
                               ls_program, path, file_reason(walk.handle));
                 ls_status = named ? 2 : 1;
                 return;
@@ -4342,7 +4322,7 @@ static b32 file_ls_as(string_address program, bool long_default,
         if (ls_colors && string_get(ls_colors) &&
             !file_color_table_valid(ls_colors, false))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "%s: unparsable value for LS_COLORS environment variable\n",
                               program);
                 ls_colors = null;
@@ -4354,13 +4334,10 @@ static b32 file_ls_as(string_address program, bool long_default,
                                            FILE_COLOR_ALWAYS);
 
                 if (when < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "%s: invalid argument '%s' for --color\n",
                                       program,
                                       file_option_value(address_of taking, 'C'));
-                        return 1;
-                }
 
                 ls_coloring = ls_colors && string_get(ls_colors) &&
                               file_color_active(when);
@@ -4443,7 +4420,7 @@ static b32 file_ls_as(string_address program, bool long_default,
 
                 if (looked < 0)
                 {
-                        string_format(file_fail, "%s: cannot access '%s': %s\n",
+                        string_format(log_error, "%s: cannot access '%s': %s\n",
                                       program, path, file_reason(looked));
                         ls_status = 2;
                         continue;
@@ -4731,10 +4708,7 @@ static b32 file_nice()
                         else if (++first < count)
                                 given = program_argument((b32)first);
                         else
-                        {
-                                file_fail("nice: option needs an argument: -n\n", 0);
-                                return 125;
-                        }
+                                return string_report(log_error, 125, "nice: option needs an argument: -n\n");
 
                         first++;
                         continue;
@@ -4755,11 +4729,7 @@ static b32 file_nice()
                                 else if (++first < count)
                                         given = program_argument((b32)first);
                                 else
-                                {
-                                        file_fail("nice: option needs an argument: --adjustment\n",
-                                                  0);
-                                        return 125;
-                                }
+                                        return string_report(log_error, 125, "nice: option needs an argument: --adjustment\n");
 
                                 first++;
                                 continue;
@@ -4767,10 +4737,7 @@ static b32 file_nice()
                 }
 
                 if (string_is(word, '-') && !string_is(word + 1, end))
-                {
-                        string_format(file_fail, "nice: invalid option '%s'\n", word);
-                        return 125;
-                }
+                        return string_report(log_error, 125, "nice: invalid option '%s'\n", word);
 
                 break;
         }
@@ -4780,29 +4747,19 @@ static b32 file_nice()
         if (given)
         {
                 if (!nice_adjustment(given, address_of adjustment))
-                {
-                        string_format(file_fail, "nice: invalid adjustment '%s'\n",
+                        return string_report(log_error, 125, "nice: invalid adjustment '%s'\n",
                                       given);
-                        return 125;
-                }
         }
 
         if (first >= count)
         {
                 if (given)
-                {
-                        file_fail("nice: a command must be given with an adjustment\n",
-                                  0);
-                        return 125;
-                }
+                        return string_report(log_error, 125, "nice: a command must be given with an adjustment\n");
 
                 bipolar current;
 
                 if (!nice_current(address_of current))
-                {
-                        file_fail("nice: cannot get niceness\n", 0);
-                        return 125;
-                }
+                        return string_report(log_error, 125, "nice: cannot get niceness\n");
 
                 bipolar_to_string(log, current);
                 log("\n", 1);
@@ -4813,10 +4770,7 @@ static b32 file_nice()
         bipolar current;
 
         if (!nice_current(address_of current))
-        {
-                file_fail("nice: cannot get niceness\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "nice: cannot get niceness\n");
 
         bipolar wanted = current + adjustment;
 
@@ -4830,7 +4784,7 @@ static b32 file_nice()
 
         if (changed < 0)
         {
-                string_format(file_fail, "nice: cannot set niceness: %s\n",
+                string_format(log_error, "nice: cannot set niceness: %s\n",
                               file_reason(changed));
 
                 if (changed != -ERROR_ACCESS && changed != -ERROR_NOT_PERMITTED)
@@ -4843,7 +4797,7 @@ static b32 file_nice()
 
         bipolar answer = file_exec_path_try(words);
 
-        string_format(file_fail, "nice: '%s': %s\n", words[0],
+        string_format(log_error, "nice: '%s': %s\n", words[0],
                       file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
@@ -4960,7 +4914,7 @@ static bool find_facts_ready()
                         return true;
                 }
 
-                string_format(file_fail, "find: '%s': %s\n", find_path,
+                string_format(log_error, "find: '%s': %s\n", find_path,
                               file_reason(looked));
                 find_status = 1;
                 return false;
@@ -5038,7 +4992,7 @@ static b32 find_make(p8 kind)
 {
         if (!shell_array_room(find_nodes, find_node_room, find_used + 1))
         {
-                file_fail("find: out of memory while reading expression\n", 0);
+                log_error("find: out of memory while reading expression\n", 0);
                 find_bad = true;
                 return -1;
         }
@@ -5067,7 +5021,7 @@ static string_address find_value(string_address word)
 {
         if (find_at >= find_count)
         {
-                string_format(file_fail, "find: missing argument to %s\n", word);
+                string_format(log_error, "find: missing argument to %s\n", word);
                 find_bad = true;
                 return null;
         }
@@ -5270,7 +5224,7 @@ static b32 find_parse_primary()
 
                 if (!find_is(find_word(), (string_address) ")"))
                 {
-                        file_fail("find: expected ')'\n", 0);
+                        log_error("find: expected ')'\n", 0);
                         find_bad = true;
                         return -1;
                 }
@@ -5305,7 +5259,7 @@ static b32 find_parse_primary()
             array_count(find_predicates));
         if (selected == array_count(find_predicates))
         {
-                string_format(file_fail, "find: unknown predicate: %s\n", word);
+                string_format(log_error, "find: unknown predicate: %s\n", word);
                 find_bad = true;
                 return -1;
         }
@@ -5332,7 +5286,7 @@ static b32 find_parse_primary()
                                                       ? address_of find_maximum
                                                       : address_of find_minimum))
                 {
-                        string_format(file_fail, "find: invalid depth '%s'\n", value);
+                        string_format(log_error, "find: invalid depth '%s'\n", value);
                         goto bad;
                 }
                 node->kind = 'v';
@@ -5345,7 +5299,7 @@ static b32 find_parse_primary()
                         find_at++;
                 if (find_at >= find_count)
                 {
-                        file_fail("find: -exec has no ending ; or +\n", 0);
+                        log_error("find: -exec has no ending ; or +\n", 0);
                         goto bad;
                 }
                 node->extra = (b64)find_at;
@@ -5356,7 +5310,7 @@ static b32 find_parse_primary()
                         if (node->extra == node->number ||
                             !find_is(program_argument((b32)(node->extra - 1)), "{}"))
                         {
-                                file_fail("find: -exec ... + needs {} just before the +\n", 0);
+                                log_error("find: -exec ... + needs {} just before the +\n", 0);
                                 goto bad;
                         }
                         node->extra--;
@@ -5365,7 +5319,7 @@ static b32 find_parse_primary()
                                 find_batch_have + 1, 2))
                         {
                                 shell_memory_failed = true;
-                                file_fail("find: out of memory while reading -exec\n", 0);
+                                log_error("find: out of memory while reading -exec\n", 0);
                                 goto bad;
                         }
                         find_batches[find_batch_have] = (find_batch){.node = index};
@@ -5397,7 +5351,7 @@ static b32 find_parse_primary()
                 positive mode;
                 if (!file_mode_of(value, 0, false, address_of mode))
                 {
-                        string_format(file_fail, "find: invalid mode %s\n", value);
+                        string_format(log_error, "find: invalid mode %s\n", value);
                         goto bad;
                 }
                 node->number = (b64)mode;
@@ -5442,7 +5396,7 @@ static b32 find_parse_primary()
                                   : (group ? file_group_id(value) : file_user_id(value));
                 if (who < 0)
                 {
-                        string_format(file_fail, "find: '%s' is not the name of a known %s\n",
+                        string_format(log_error, "find: '%s' is not the name of a known %s\n",
                                       value, group ? "group" : "user");
                         goto bad;
                 }
@@ -5454,7 +5408,7 @@ static b32 find_parse_primary()
                 {
                         if (!file_moment_read(value, find_moment, address_of node->number))
                         {
-                                string_format(file_fail, "find: invalid date '%s'\n", value);
+                                string_format(log_error, "find: invalid date '%s'\n", value);
                                 goto bad;
                         }
                 }
@@ -5465,7 +5419,7 @@ static b32 find_parse_primary()
                                                         address_of facts);
                         if (looked < 0)
                         {
-                                string_format(file_fail, "find: '%s': %s\n", value,
+                                string_format(log_error, "find: '%s': %s\n", value,
                                               file_reason(looked));
                                 goto bad;
                         }
@@ -5477,7 +5431,7 @@ static b32 find_parse_primary()
         return index;
 
 bad_number:
-        string_format(file_fail, "find: invalid number '%s' for %s\n", value, word);
+        string_format(log_error, "find: invalid number '%s' for %s\n", value, word);
 bad:
         find_bad = true;
         return -1;
@@ -5568,7 +5522,7 @@ static fn find_batch_run(positive slot)
 
         if (!shell_array_room(find_exec_words, find_exec_word_room, template + batch->words + 1))
         {
-                file_fail("find: out of memory while building -exec arguments\n", 0);
+                log_error("find: out of memory while building -exec arguments\n", 0);
                 find_status = 1;
                 batch->words = 0;
                 batch->used = 0;
@@ -5650,7 +5604,7 @@ static bool find_exec_once(find_node address_to node)
 
         if (!shell_array_room(find_exec_words, find_exec_word_room, words + 1))
         {
-                file_fail("find: out of memory while building -exec arguments\n", 0);
+                log_error("find: out of memory while building -exec arguments\n", 0);
                 find_status = 1;
                 return false;
         }
@@ -5664,7 +5618,7 @@ static bool find_exec_once(find_node address_to node)
 
                 if (!length || length > positive_max - needed)
                 {
-                        file_fail("find: -exec arguments are too large\n", 0);
+                        log_error("find: -exec arguments are too large\n", 0);
                         find_status = 1;
                         return false;
                 }
@@ -5673,7 +5627,7 @@ static bool find_exec_once(find_node address_to node)
 
         if (!shell_array_room(find_exec_text, find_exec_text_room, needed ? needed : 1))
         {
-                file_fail("find: out of memory while expanding -exec arguments\n", 0);
+                log_error("find: out of memory while expanding -exec arguments\n", 0);
                 find_status = 1;
                 return false;
         }
@@ -5861,7 +5815,7 @@ static bool find_true(b32 which)
 
                 if (gone < 0)
                 {
-                        string_format(file_fail, "find: cannot delete '%s': %s\n", find_path,
+                        string_format(log_error, "find: cannot delete '%s': %s\n", find_path,
                                       file_reason(gone));
                         find_status = 1;
                         return false;
@@ -5937,7 +5891,7 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
 
                 if (!file_walk_open(address_of walk, parent, entry))
                 {
-                        string_format(file_fail, "find: '%s': %s\n", path,
+                        string_format(log_error, "find: '%s': %s\n", path,
                                       file_reason(walk.handle));
                         find_status = 1;
                 }
@@ -5957,7 +5911,7 @@ static fn find_walk(string_address path, string_address name, positive depth, bo
                                 // what says the walk is not complete.
                                 if (depth >= FILE_MAX_DEPTH)
                                 {
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "find: '%s' is nested too deep\n",
                                                       path);
                                         find_status = 1;
@@ -6076,11 +6030,8 @@ static b32 file_find()
                 return 1;
 
         if (find_at < count)
-        {
-                string_format(file_fail, "find: paths must precede expression: %s\n",
+                return string_report(log_error, 1, "find: paths must precede expression: %s\n",
                               program_argument((b32)find_at));
-                return 1;
-        }
 
         // The -print that is only there when nothing else acts.
         if (!find_has_action)
@@ -6533,7 +6484,7 @@ static b32 file_stat()
 
                         if (done < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "stat: cannot read file system information for '%s': %s\n",
                                               path, file_reason(done));
                                 stat_status = 1;
@@ -6556,7 +6507,7 @@ static b32 file_stat()
 
                 if (looked < 0)
                 {
-                        string_format(file_fail, "stat: cannot statx '%s': %s\n",
+                        string_format(log_error, "stat: cannot statx '%s': %s\n",
                                       path, file_reason(looked));
                         stat_status = 1;
                         continue;
@@ -6644,7 +6595,7 @@ static bool du_seen_grow()
         if (!made || system_failed(made))
         {
                 shell_memory_failed = true;
-                file_fail("du: out of memory while tracking hard links\n", 0);
+                log_error("du: out of memory while tracking hard links\n", 0);
                 du_seen_broken = true;
                 du_status = 1;
                 return false;
@@ -6708,7 +6659,7 @@ static bool du_already(file_facts address_to facts)
                 return false;
         }
 
-        file_fail("du: hard-link table is unexpectedly full\n", 0);
+        log_error("du: hard-link table is unexpectedly full\n", 0);
         du_seen_broken = true;
         du_status = 1;
 
@@ -6758,7 +6709,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
 
         if (looked < 0)
         {
-                string_format(file_fail, "du: cannot access '%s': %s\n", path,
+                string_format(log_error, "du: cannot access '%s': %s\n", path,
                               file_reason(looked));
                 du_status = 1;
                 du_was_directory = false;
@@ -6812,7 +6763,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
                         // whole of what is left to do here.
                         if (depth == 0)
                         {
-                                file_fail("du: tree is nested too deep\n", 0);
+                                log_error("du: tree is nested too deep\n", 0);
                                 du_depth_broken = true;
                                 du_status = 1;
                                 break;
@@ -6850,7 +6801,7 @@ static p64 du_walk(string_address path, positive depth, bool named, positive lev
                 // A directory that will not open at the bottom of the walk is
                 // not complained about, because nothing was going to be read
                 // out of it either way.
-                string_format(file_fail, "du: cannot read directory '%s'\n", path);
+                string_format(log_error, "du: cannot read directory '%s'\n", path);
                 du_status = 1;
         }
 
@@ -6879,10 +6830,7 @@ static bool du_exclude_seen(p8 letter, string_address value)
                 return true;
 
         if (!shell_array_room(du_excludes, du_exclude_room, du_exclude_have + 1))
-        {
-                file_fail("du: out of memory while reading exclude patterns\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "du: out of memory while reading exclude patterns\n");
 
         du_excludes[du_exclude_have++] = value;
 
@@ -6952,10 +6900,7 @@ static b32 file_du()
                 du_unit = 1048576;
 
         if (du_summary && (du_all || (flags & FILE_FLAG('d'))))
-        {
-                file_fail("du: summarizing conflicts with --all or --max-depth\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "du: summarizing conflicts with --all or --max-depth\n");
 
         // -s is --max-depth=0 said another way, and the two are the same
         // switch here so that giving both cannot mean two things.
@@ -6972,10 +6917,7 @@ static b32 file_du()
                         written++;
 
                 if (!string_digits_exact(written, address_of maximum))
-                {
-                        file_fail("du: invalid maximum depth\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "du: invalid maximum depth\n");
 
                 du_maximum = negative ? 0 : maximum;
         }
@@ -7186,10 +7128,7 @@ static b32 file_df()
         storage_mount_table mounts;
 
         if (!storage_mount_table_load(address_of mounts, null))
-        {
-                file_fail("df: cannot read mount table\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "df: cannot read mount table\n");
 
         df_amount_column columns[] = {
             {df_inodes ? (string_address) "Inodes"
@@ -7231,8 +7170,7 @@ static b32 file_df()
                                                count - first, 8)))
         {
                 storage_mount_table_release(address_of mounts);
-                file_fail("df: out of memory\n", 0);
-                return 1;
+                return string_report(log_error, 1, "df: out of memory\n");
         }
 
         memory_fill(df_samples, 0, mounts.count * sizeof(*df_samples));
@@ -7249,7 +7187,7 @@ static b32 file_df()
                            it, makes the failure worth reporting. */
                         if (df_all)
                         {
-                                string_format(file_fail, "df: %s: %s\n", mount->target,
+                                string_format(log_error, "df: %s: %s\n", mount->target,
                                               file_reason(sample->reason));
                                 df_failed = true;
                         }
@@ -7277,7 +7215,7 @@ static b32 file_df()
 
                         if (answered < 0)
                         {
-                                string_format(file_fail, "df: %s: %s\n", path,
+                                string_format(log_error, "df: %s: %s\n", path,
                                               file_reason(answered));
                                 df_failed = true;
                                 continue;
@@ -7298,7 +7236,7 @@ static b32 file_df()
                                         if (named->reason)
                                         {
                                                 string_format(
-                                                    file_fail, "df: %s: %s\n",
+                                                    log_error, "df: %s: %s\n",
                                                     path,
                                                     file_reason(named->reason));
                                                 df_failed = true;
@@ -7454,7 +7392,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         if (looked < 0)
         {
                 if (!chmod_quiet)
-                        string_format(file_fail, "chmod: cannot access '%s': %s\n",
+                        string_format(log_error, "chmod: cannot access '%s': %s\n",
                                       shown, file_reason(looked));
 
                 chmod_status = 1;
@@ -7475,7 +7413,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
                            address_of naive)))
         {
                 if (!chmod_quiet)
-                        string_format(file_fail, "chmod: invalid mode: %s\n",
+                        string_format(log_error, "chmod: invalid mode: %s\n",
                                       chmod_specification);
 
                 chmod_status = 1;
@@ -7487,7 +7425,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
         if (done < 0)
         {
                 if (!chmod_quiet)
-                        string_format(file_fail, "chmod: changing permissions of '%s': %s\n",
+                        string_format(log_error, "chmod: changing permissions of '%s': %s\n",
                                       shown, file_reason(done));
 
                 chmod_status = 1;
@@ -7509,7 +7447,7 @@ static fn chmod_one(bipolar directory, string_address name, string_address shown
 
                 file_mode_letters(set, wanted);
                 file_mode_letters(expected, naive);
-                string_format(file_fail, "chmod: %s: new permissions are %s, not %s\n",
+                string_format(log_error, "chmod: %s: new permissions are %s, not %s\n",
                               shown, set + 1, expected + 1);
                 chmod_status = 1;
         }
@@ -7558,12 +7496,9 @@ static b32 file_chmod()
                 bipolar looked = file_look_code(AT_FDCWD, like, 0, address_of facts);
 
                 if (looked < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "chmod: failed to get attributes of '%s': %s\n",
                                       like, file_reason(looked));
-                        return 1;
-                }
 
                 chmod_referenced = true;
                 chmod_reference_mode = facts.mode;
@@ -7600,10 +7535,7 @@ static b32 file_chmod()
         }
 
         if (minus_mode && chmod_referenced)
-        {
-                string_format(file_fail, "chmod: invalid mode: '%s'\n", minus_mode);
-                return 1;
-        }
+                return string_report(log_error, 1, "chmod: invalid mode: '%s'\n", minus_mode);
 
         chmod_surprising = minus_mode != null;
 
@@ -7708,7 +7640,7 @@ static fn chown_one(bipolar directory, string_address name, string_address shown
         if (done < 0)
         {
                 if (!chown_quiet)
-                        string_format(file_fail, "%s: changing ownership of '%s': %s\n",
+                        string_format(log_error, "%s: changing ownership of '%s': %s\n",
                                       chown_program, shown, file_reason(done));
 
                 chown_status = 1;
@@ -7778,12 +7710,9 @@ static b32 file_chown_common(string_address program, bool groups_only)
                 bipolar looked = file_look_code(AT_FDCWD, like, 0, address_of facts);
 
                 if (looked < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "%s: failed to get attributes of '%s': %s\n",
                                       program, like, file_reason(looked));
-                        return 1;
-                }
 
                 if (!groups_only)
                         chown_user = (bipolar)facts.owner;
@@ -7792,10 +7721,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
         }
 
         if (first >= count || (!like && first + 1 >= count))
-        {
-                string_format(file_fail, "%s: missing operand\n", program);
-                return 1;
-        }
+                return string_report(log_error, 1, "%s: missing operand\n", program);
 
         if (like)
         {
@@ -7815,10 +7741,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
                                   : file_group_id(who);
 
                 if (chown_group < 0)
-                {
-                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "%s: invalid group: %s\n", program, who);
 
                 chown_paths(first, count);
 
@@ -7851,10 +7774,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
                                  : file_user_id(user);
 
                 if (chown_user < 0)
-                {
-                        string_format(file_fail, "%s: invalid user: %s\n", program, who);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "%s: invalid user: %s\n", program, who);
         }
 
         if (group && string_get(group))
@@ -7866,10 +7786,7 @@ static b32 file_chown_common(string_address program, bool groups_only)
                                   : file_group_id(group);
 
                 if (chown_group < 0)
-                {
-                        string_format(file_fail, "%s: invalid group: %s\n", program, who);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "%s: invalid group: %s\n", program, who);
         }
 
         chown_paths(first, count);
@@ -7939,12 +7856,9 @@ static bool ln_make(string_address target, string_address name)
         if (ln_relative && ln_symbolic)
         {
                 if (!ln_relative_text(target, name, relative))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "ln: cannot make relative target '%s': File name too long\n",
                                       target);
-                        return false;
-                }
 
                 target = relative;
         }
@@ -7970,23 +7884,17 @@ static bool ln_make(string_address target, string_address name)
                                                 address_of source);
 
                 if (looked < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "ln: failed to access '%s': %s\n", target,
                                       file_reason(looked));
-                        return false;
-                }
 
                 if (file_look(AT_FDCWD, name, AT_SYMLINK_NOFOLLOW,
                               address_of destination) &&
                     file_same_identity(address_of source,
                                        address_of destination))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "ln: '%s' and '%s' are the same file\n",
                                       target, name);
-                        return false;
-                }
         }
 
         if (ln_force || ln_ask)
@@ -8001,13 +7909,10 @@ static bool ln_make(string_address target, string_address name)
                                       ln_through ? AT_SYMLINK_FOLLOW : 0);
 
         if (done < 0)
-        {
-                string_format(file_fail, "ln: failed to create %s link '%s': %s\n",
+                return string_report(log_error, false, "ln: failed to create %s link '%s': %s\n",
                               ln_symbolic ? (string_address) "symbolic"
                                           : (string_address) "hard",
                               name, file_reason(done));
-                return false;
-        }
 
         if (ln_loud)
                 string_format(log, "'%s' -> '%s'\n", name, target);
@@ -8066,10 +7971,7 @@ static b32 file_ln()
         bool alone = (flags & FILE_FLAG('T')) != 0;
 
         if (into && alone)
-        {
-                file_fail("ln: cannot combine --target-directory and --no-target-directory\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "ln: cannot combine --target-directory and --no-target-directory\n");
 
         // -n is about the destination and not the target: a link that already
         // points at a directory is a thing to replace rather than a directory
@@ -8096,10 +7998,7 @@ static b32 file_ln()
         if (alone || !directory)
         {
                 if (after - first != 1)
-                {
-                        string_format(file_fail, "ln: target '%s' is not a directory\n", last);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "ln: target '%s' is not a directory\n", last);
 
                 return ln_make(program_argument((b32)first), last) ? 0 : 1;
         }
@@ -8164,11 +8063,10 @@ static bool file_simple_operands(string_address program, positive wanted)
         if (file_simple_operand_count == wanted)
                 return true;
 
-        string_format(file_fail, "%s: %s\n", program,
+        return string_report(log_error, false, "%s: %s\n", program,
                       file_simple_operand_count < wanted
                           ? (string_address)"missing operand"
                           : (string_address)"too many operands");
-        return false;
 }
 
 static fn file_operand(b32 index)
@@ -8206,12 +8104,9 @@ static b32 file_link()
         bipolar answer = system_link_at(AT_FDCWD, source, AT_FDCWD, target, 0);
 
         if (answer < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "link: cannot create link '%s' to '%s': %s\n",
                               target, source, file_reason(answer));
-                return 1;
-        }
         return 0;
 }
 
@@ -8225,11 +8120,8 @@ static b32 file_unlink()
                                        path, 0);
 
         if (answer < 0)
-        {
-                string_format(file_fail, "unlink: cannot unlink '%s': %s\n",
+                return string_report(log_error, 1, "unlink: cannot unlink '%s': %s\n",
                               path, file_reason(answer));
-                return 1;
-        }
         return 0;
 }
 
@@ -8279,10 +8171,7 @@ static bool namei_save(string_address text, positive length,
         if (length == positive_max ||
             !shell_array_room(namei_text, namei_text_room,
                               namei_text_used + length + 1))
-        {
-                file_fail("namei: out of memory while recording path\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "namei: out of memory while recording path\n");
         address_to offset = namei_text_used;
         memory_copy_apart_end(namei_text + namei_text_used, text, length);
         namei_text_used += length + 1;
@@ -8316,7 +8205,7 @@ static namei_row address_to namei_add(string_address name, positive length,
         if (!shell_array_room(namei_rows, namei_row_room,
                               namei_row_count + 1))
         {
-                file_fail("namei: out of memory while recording path\n", 0);
+                log_error("namei: out of memory while recording path\n", 0);
                 return null;
         }
 
@@ -8398,12 +8287,9 @@ static bool namei_walk(string_address path, string_address base,
                 p8 candidate[FILE_PATH_MAX];
                 if (!namei_join_component(candidate, current,
                                           path + start, part))
-                {
-                        string_format(file_fail, "namei: %s: %s\n",
+                        return string_report(log_error, false, "namei: %s: %s\n",
                                       namei_operand,
                                       file_reason(-ERROR_NAME_TOO_LONG));
-                        return false;
-                }
 
                 namei_row address_to row = namei_add(path + start, part,
                                                      depth);
@@ -8439,12 +8325,9 @@ static bool namei_walk(string_address path, string_address base,
                         if (!namei_no_symlinks)
                         {
                                 if ((address_to hops)++ >= NAMEI_LINK_LIMIT)
-                                {
-                                        string_format(file_fail,
+                                        return string_report(log_error, false,
                                                       "namei: %s: exceeded limit of symlinks\n",
                                                       namei_operand);
-                                        return false;
-                                }
 
                                 p8 followed[FILE_PATH_MAX];
                                 if (!namei_walk(target, current, depth + 1,
@@ -8583,10 +8466,7 @@ static b32 file_namei()
                 return 0;
         }
         if (!file_operand_count)
-        {
-                string_format(file_fail, "namei: pathname argument is missing\n");
-                return 1;
-        }
+                return string_report(log_error, 1, "namei: pathname argument is missing\n");
 
         namei_row_count = 0;
         namei_text_used = 0;
@@ -8673,11 +8553,8 @@ static bool whereis_add_directory(positive kind, string_address path)
 
         if (!shell_array_room(whereis_directories, whereis_directory_room,
                               whereis_directory_count + 1))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "whereis: out of memory while recording search paths\n");
-                return false;
-        }
 
         whereis_directory address_to directory =
             whereis_directories + whereis_directory_count++;
@@ -8847,9 +8724,8 @@ static bool whereis_scan(positive kind, string_address query, bool glob)
                                               whereis_match_count + 1))
                         {
                                 file_walk_close(address_of walk);
-                                string_format(file_fail,
+                                return string_report(log_error, false,
                                               "whereis: out of memory while recording matches\n");
-                                return false;
                         }
 
                         whereis_match address_to match =
@@ -8963,12 +8839,9 @@ static b32 file_whereis()
                                         break;
                                 }
                                 else
-                                {
-                                        string_format(file_fail,
+                                        return string_report(log_error, 1,
                                                       "whereis: invalid option -- '%c'\n",
                                                       option);
-                                        return 1;
-                                }
                         }
                 }
                 else
@@ -8976,10 +8849,7 @@ static b32 file_whereis()
         }
 
         if (file_operand_failed)
-        {
-                string_format(file_fail, "whereis: out of memory\n");
-                return 1;
-        }
+                return string_report(log_error, 1, "whereis: out of memory\n");
 
         if (!selected[0] && !selected[1] && !selected[2])
                 selected[0] = selected[1] = selected[2] = true;
@@ -9009,8 +8879,7 @@ static b32 file_whereis()
                         log_flush();
                         return 0;
                 }
-                string_format(file_fail, "whereis: missing name\n");
-                return 1;
+                return string_report(log_error, 1, "whereis: missing name\n");
         }
 
         for (positive operand = 0; operand < file_operand_count; operand++)
@@ -9132,7 +9001,7 @@ static b32 file_readlink()
                         if (!valid)
                         {
                                 if (loud)
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "readlink: %s: No such file or directory\n",
                                                       path);
 
@@ -9150,7 +9019,7 @@ static b32 file_readlink()
                                 // not a link are two different answers, and
                                 // the kernel has already told them apart.
                                 if (loud)
-                                        string_format(file_fail, "readlink: %s: %s\n", path,
+                                        string_format(log_error, "readlink: %s: %s\n", path,
                                                       file_reason(length));
 
                                 status = 1;
@@ -9248,10 +9117,7 @@ static b32 file_basename()
                 suffix = program_argument((b32)(index + 1));
 
         if (!many && index + 2 < count)
-        {
-                file_fail("basename: extra operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "basename: extra operand\n");
 
         if (many)
         {
@@ -9511,10 +9377,7 @@ static b32 file_realpath()
         string_address against = file_option_value(address_of taking, 'R');
 
         if ((base && !string_get(base)) || (against && !string_get(against)))
-        {
-                file_fail("realpath: relative directory is empty\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "realpath: relative directory is empty\n");
 
         // Both directories are made canonical before anything is said
         // relative to them, or /tmp/./x would not look like /tmp/x.
@@ -9602,7 +9465,7 @@ static b32 file_realpath()
 
 failed:
                 if (!quiet)
-                        string_format(file_fail, "realpath: %s: %s\n", path, reason);
+                        string_format(log_error, "realpath: %s: %s\n", path, reason);
                 status = 1;
         }
 
@@ -9622,8 +9485,7 @@ static const file_long pathchk_longs[] = {
 
 static COLD bool pathchk_bad(string_address path, string_address why)
 {
-        string_format(file_fail, "pathchk: %s: '%s'\n", why, path);
-        return false;
+        return string_report(log_error, false, "pathchk: %s: '%s'\n", why, path);
 }
 
 static bool pathchk_portable_chars(string_address path, positive length)
@@ -9819,10 +9681,7 @@ static b32 file_mkdir()
         if (given_mode &&
             !file_mode_masked(file_option_value(address_of taking, 'm'), 0777, true,
                               file_umask(), address_of mode))
-        {
-                file_fail("mkdir: bad mode\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "mkdir: bad mode\n");
 
         if (index >= count)
                 return file_missing((string_address) "mkdir");
@@ -9856,7 +9715,7 @@ static b32 file_mkdir()
 
                 if (made < 0)
                 {
-                        string_format(file_fail, "mkdir: cannot create directory '%s': %s\n",
+                        string_format(log_error, "mkdir: cannot create directory '%s': %s\n",
                                       path, file_reason(made));
                         status = 1;
                 }
@@ -9900,20 +9759,14 @@ static b32 file_make_node(string_address program, string_address path,
                                      (positive)path, kind | mode, device);
 
         if (made < 0)
-        {
-                string_format(file_fail, "%s: cannot create '%s': %s\n",
+                return string_report(log_error, 1, "%s: cannot create '%s': %s\n",
                               program, path, file_reason(made));
-                return 1;
-        }
 
         if (given_mode &&
             system_change_mode_at(AT_FDCWD, path, mode) < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "%s: cannot set permissions of '%s'\n",
                               program, path);
-                return 1;
-        }
 
         return 0;
 }
@@ -9937,16 +9790,13 @@ static bool file_node_options(string_address program, file_taking address_to tak
 
         if (address_to given &&
             !file_node_mode(file_option_value(taking, 'm'), mode))
-        {
-                string_format(file_fail, "%s: invalid mode\n", program);
-                return false;
-        }
+                return string_report(log_error, false, "%s: invalid mode\n", program);
 
         // This image has neither SELinux nor SMACK. GNU treats -Z and a bare
         // --context as no-ops in that case, and only warns for an explicit
         // context value while leaving the creation and status untouched.
         if (file_option_value(taking, 'C'))
-                string_format(file_fail,
+                string_format(log_error,
                               "%s: warning: ignoring --context; it requires "
                               "an SELinux/SMACK-enabled kernel\n",
                               program);
@@ -10040,13 +9890,11 @@ static b32 file_mknod()
 
         if (file_operand_count != expected)
         {
-                file_fail(!file_operand_count
+                return string_report(log_error, 1, !file_operand_count
                               ? (string_address) "mknod: missing operand\n"
                               : file_operand_count < expected
                                     ? (string_address) "mknod: missing operand\n"
-                                    : (string_address) "mknod: extra operand\n",
-                          0);
-                return 1;
+                                    : (string_address) "mknod: extra operand\n");
         }
 
         string_address path = file_operand_at(0);
@@ -10061,30 +9909,21 @@ static b32 file_mknod()
                 p32 major, minor;
 
                 if (!file_device_number(file_operand_at(2), address_of major))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "mknod: invalid major device number '%s'\n",
                                       file_operand_at(2));
-                        return 1;
-                }
 
                 if (!file_device_number(file_operand_at(3), address_of minor))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "mknod: invalid minor device number '%s'\n",
                                       file_operand_at(3));
-                        return 1;
-                }
 
                 kind = type == 'b' ? MODE_BLOCK : MODE_CHARACTER;
                 device = file_device(major, minor);
         }
         else
-        {
-                string_format(file_fail, "mknod: invalid device type '%s'\n",
+                return string_report(log_error, 1, "mknod: invalid device type '%s'\n",
                               file_operand_at(1));
-                return 1;
-        }
 
         b32 status = file_make_node((string_address) "mknod", path, kind,
                                     device, mode, given_mode);
@@ -10114,11 +9953,8 @@ static bool file_sync_one(string_address path, p8 mode)
                                        path, 01 | O_NONBLOCK);
 
         if (opened < 0)
-        {
-                string_format(file_fail, "sync: error opening '%s': %s\n",
+                return string_report(log_error, false, "sync: error opening '%s': %s\n",
                               path, file_reason(read_error));
-                return false;
-        }
 
         bipolar flags = system_call_3(syscall(fcntl), (positive)opened,
                                       FILE_F_GETFL, 0);
@@ -10128,7 +9964,7 @@ static bool file_sync_one(string_address path, p8 mode)
                                   (positive)flags & ~O_NONBLOCK) >= 0;
 
         if (!good)
-                string_format(file_fail,
+                string_format(log_error,
                               "sync: couldn't reset non-blocking mode '%s'\n",
                               path);
         else
@@ -10144,7 +9980,7 @@ static bool file_sync_one(string_address path, p8 mode)
 
                 if (synced < 0)
                 {
-                        string_format(file_fail, "sync: error syncing '%s': %s\n",
+                        string_format(log_error, "sync: error syncing '%s': %s\n",
                                       path, file_reason(synced));
                         good = false;
                 }
@@ -10154,7 +9990,7 @@ static bool file_sync_one(string_address path, p8 mode)
 
         if (closed < 0)
         {
-                string_format(file_fail, "sync: failed to close '%s': %s\n",
+                string_format(log_error, "sync: failed to close '%s': %s\n",
                               path, file_reason(closed));
                 good = false;
         }
@@ -10180,17 +10016,10 @@ static b32 file_sync()
         bool filesystem = (taking.flags & FILE_FLAG('f')) != 0;
 
         if (data && filesystem)
-        {
-                file_fail("sync: cannot specify both --data and --file-system\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "sync: cannot specify both --data and --file-system\n");
 
         if (data && !file_operand_count)
-        {
-                file_fail("sync: --data needs at least one argument\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "sync: --data needs at least one argument\n");
 
         if (!file_operand_count)
                 system_call(syscall(sync));
@@ -10381,10 +10210,7 @@ static bool split_output_advance(split_output address_to output)
 static bool split_output_name(split_output address_to output)
 {
         if (!split_output_advance(output))
-        {
-                file_fail("split: output file suffixes exhausted\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "split: output file suffixes exhausted\n");
 
         p8 digits[SPLIT_SUFFIX_MAX];
         string_address suffix = output->suffix;
@@ -10398,10 +10224,7 @@ static bool split_output_name(split_output address_to output)
                 if (length > suffix_length)
                 {
                         if (output->suffix_fixed || length > SPLIT_SUFFIX_MAX)
-                        {
-                                file_fail("split: output file suffixes exhausted\n", 0);
-                                return false;
-                        }
+                                return string_report(log_error, false, "split: output file suffixes exhausted\n");
                         suffix_length = output->suffix_length = length;
                 }
 
@@ -10414,10 +10237,7 @@ static bool split_output_name(split_output address_to output)
             suffix_length >= FILE_PATH_MAX - output->prefix_length ||
             output->additional_length >=
                 FILE_PATH_MAX - output->prefix_length - suffix_length)
-        {
-                file_fail("split: output file name is too long\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "split: output file name is too long\n");
 
         positive used = output->prefix_length;
         memory_copy_apart(output->name, output->prefix, used);
@@ -10450,22 +10270,16 @@ static bool split_output_open(split_output address_to output)
         if (!split_output_name(output))
                 return false;
         if (split_same_input(output))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "split: '%s' would overwrite input; aborting\n",
                               output->name);
-                return false;
-        }
 
         output->handle = system_open_at_mode(AT_FDCWD, output->name,
                                              FILE_WRITE, 0666);
 
         if (output->handle < 0)
-        {
-                string_format(file_fail, "split: cannot open '%s': %s\n",
+                return string_report(log_error, false, "split: cannot open '%s': %s\n",
                               output->name, file_reason(output->handle));
-                return false;
-        }
 
         if (output->verbose)
                 string_format(log, "creating file '%s'\n", output->name);
@@ -10481,11 +10295,8 @@ static bool split_output_write(split_output address_to output,
         if (!split_output_open(output))
                 return false;
         if (system_write_all((positive)output->handle, bytes, length) != length)
-        {
-                string_format(file_fail, "split: write error on '%s'\n",
+                return string_report(log_error, false, "split: write error on '%s'\n",
                               output->name);
-                return false;
-        }
         return true;
 }
 
@@ -10499,11 +10310,8 @@ static bool split_output_close(split_output address_to output)
         output->need_advance = true;
 
         if (closed < 0)
-        {
-                string_format(file_fail, "split: closing '%s': %s\n",
+                return string_report(log_error, false, "split: closing '%s': %s\n",
                               output->name, file_reason(closed));
-                return false;
-        }
         return true;
 }
 
@@ -10530,7 +10338,7 @@ static bool split_fixed(bipolar in, p64 length, positive measure,
                     !split_output_close(output))
                 {
                         if (!bytes)
-                                file_fail("split: read or write error\n", 0);
+                                log_error("split: read or write error\n", 0);
                         return false;
                 }
                 length -= here;
@@ -10552,10 +10360,7 @@ static bool split_stream(bipolar in, positive piece, p8 separator, bool lines,
                                                    sizeof(file_transfer));
 
                 if (taken < 0)
-                {
-                        file_fail("split: read error\n", 0);
-                        return false;
-                }
+                        return string_report(log_error, false, "split: read error\n");
                 if (!taken)
                         return split_output_close(output);
 
@@ -10662,11 +10467,8 @@ static bool split_materialized(bipolar in, file_facts address_to facts,
                     syscall(mmap), 0, (positive)facts->size,
                     FILE_PROTECT_READ, FILE_MAP_PRIVATE, (positive)in, 0);
                 if (mapped < 0)
-                {
-                        string_format(file_fail, "split: cannot map input: %s\n",
+                        return string_report(log_error, false, "split: cannot map input: %s\n",
                                       file_reason(mapped));
-                        return false;
-                }
 
                 bool answer = split_line_bytes_memory(
                     (p8 address_to)(positive)mapped, (positive)facts->size,
@@ -10685,7 +10487,7 @@ static bool split_materialized(bipolar in, file_facts address_to facts,
 
         if (!input)
         {
-                file_fail(read_failed ? (string_address)"split: read error\n"
+                log_error(read_failed ? (string_address)"split: read error\n"
                                       : (string_address)"split: input too large\n",
                           0);
                 text_arena_used = 0;
@@ -10754,10 +10556,7 @@ static b32 file_split()
         /* file_take rejects the combined -d7 spelling; with -b this is the
            same deliberate refusal and status as GNU's mode-conflict answer. */
         if (file_operand_count > 2)
-        {
-                file_fail("split: extra operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "split: extra operand\n");
 
         bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
         bool lines = (taking.flags & FILE_FLAG('l')) != 0;
@@ -10767,10 +10566,7 @@ static b32 file_split()
         if ((positive)bytes + (positive)lines + (positive)line_bytes +
                 (positive)distribute >
             1)
-        {
-                file_fail("split: cannot split in more than one way\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "split: cannot split in more than one way\n");
 
         p8 mode = bytes ? 'b' : line_bytes ? 'C' : distribute ? 'n' : 'l';
 
@@ -10779,20 +10575,14 @@ static b32 file_split()
 
         if (measure && mode != 'n' &&
             !split_size(measure, address_of piece))
-        {
-                string_format(file_fail, "split: invalid number of bytes: '%s'\n",
+                return string_report(log_error, 1, "split: invalid number of bytes: '%s'\n",
                               measure);
-                return 1;
-        }
 
         positive chunks = 0;
         if (mode == 'n' && !split_chunks(measure, address_of chunks))
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "split: unsupported number of chunks: '%s'\n",
                               measure);
-                return 1;
-        }
 
         positive suffix_length = 2;
         string_address width = file_option_value(address_of taking, 'a');
@@ -10805,12 +10595,9 @@ static b32 file_split()
                                            address_of suffix_length) ||
                     string_get(at) || !suffix_length ||
                     suffix_length > SPLIT_SUFFIX_MAX)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "split: invalid suffix length: '%s'\n",
                                       width);
-                        return 1;
-                }
         }
 
         p8 separator = '\n';
@@ -10818,10 +10605,7 @@ static b32 file_split()
 
         if (separator_text && !split_separator(separator_text,
                                                address_of separator))
-        {
-                file_fail("split: multi-character separator\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "split: multi-character separator\n");
 
         string_address input_name = file_operand_count
                                         ? file_operand_at(0)
@@ -10839,11 +10623,8 @@ static b32 file_split()
                          : system_open_at(AT_FDCWD, input_name, FILE_READ);
 
         if (in < 0)
-        {
-                string_format(file_fail, "split: cannot open '%s': %s\n",
+                return string_report(log_error, 1, "split: cannot open '%s': %s\n",
                               input_name, file_reason(in));
-                return 1;
-        }
 
         split_output output = {
             .prefix = prefix,
@@ -10871,7 +10652,7 @@ static b32 file_split()
                                            address_of output.number) ||
                     string_get(at))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "split: invalid suffix start: '%s'\n",
                                       first_suffix);
                         if (in != 0)
@@ -10992,10 +10773,7 @@ static bool csplit_name(csplit_state address_to state, positive number)
 
         if (state->prefix_length >= FILE_PATH_MAX ||
             width >= FILE_PATH_MAX - state->prefix_length)
-        {
-                file_fail("csplit: output file name is too long\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "csplit: output file name is too long\n");
 
         memory_copy_apart(state->name, state->prefix, state->prefix_length);
         memory_fill(state->name + state->prefix_length, '0', width - length);
@@ -11034,22 +10812,16 @@ static bool csplit_section(csplit_state address_to state, positive from,
         if (!csplit_name(state, state->made))
                 return false;
         if (csplit_same_input(state))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "csplit: '%s' would overwrite input; aborting\n",
                               state->name);
-                return false;
-        }
 
         bipolar out = system_open_at_mode(AT_FDCWD, state->name,
                                           FILE_WRITE, 0666);
 
         if (out < 0)
-        {
-                string_format(file_fail, "csplit: cannot open '%s': %s\n",
+                return string_report(log_error, false, "csplit: cannot open '%s': %s\n",
                               state->name, file_reason(out));
-                return false;
-        }
 
         state->made++;
         bool written = !length ||
@@ -11058,11 +10830,8 @@ static bool csplit_section(csplit_state address_to state, positive from,
         bipolar closed = system_close(out);
 
         if (!written || closed < 0)
-        {
-                string_format(file_fail, "csplit: write error on '%s'\n",
+                return string_report(log_error, false, "csplit: write error on '%s'\n",
                               state->name);
-                return false;
-        }
 
         if (!state->quiet)
         {
@@ -11307,7 +11076,7 @@ static b32 csplit_execute_regex(csplit_state address_to state,
                    GNU ordering is represented. */
                 if (pattern->offset)
                 {
-                        file_fail("csplit: --suppress-matched with an offset is unsupported\n",
+                        log_error("csplit: --suppress-matched with an offset is unsupported\n",
                                   0);
                         return CSPLIT_FAILED;
                 }
@@ -11349,10 +11118,7 @@ static b32 file_csplit()
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (file_operand_count < 2)
-        {
-                file_fail("csplit: missing operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "csplit: missing operand\n");
 
         positive digits = 2;
         string_address digit_text = file_option_value(address_of taking, 'n');
@@ -11364,11 +11130,8 @@ static b32 file_csplit()
                 if (!string_digits_checked(address_of at, 10,
                                            address_of digits) ||
                     string_get(at) || !digits || digits > 32)
-                {
-                        string_format(file_fail, "csplit: invalid number: '%s'\n",
+                        return string_report(log_error, 1, "csplit: invalid number: '%s'\n",
                                       digit_text);
-                        return 1;
-                }
         }
 
         string_address input_name = file_operand_at(0);
@@ -11377,11 +11140,8 @@ static b32 file_csplit()
                          : system_open_at(AT_FDCWD, input_name, FILE_READ);
 
         if (in < 0)
-        {
-                string_format(file_fail, "csplit: cannot open '%s': %s\n",
+                return string_report(log_error, 1, "csplit: cannot open '%s': %s\n",
                               input_name, file_reason(in));
-                return 1;
-        }
 
         file_facts facts;
         bool looked = file_look(in, (string_address)"", AT_EMPTY_PATH,
@@ -11399,7 +11159,7 @@ static b32 file_csplit()
 
         if (!input)
         {
-                file_fail(read_failed ? "csplit: read error\n"
+                log_error(read_failed ? "csplit: read error\n"
                                       : "csplit: input too large\n", 0);
                 text_arena_used = 0;
                 return 1;
@@ -11449,7 +11209,7 @@ static b32 file_csplit()
                 {
                         if (!have_pattern)
                         {
-                                file_fail("csplit: repeat with no previous pattern\n", 0);
+                                log_error("csplit: repeat with no previous pattern\n", 0);
                                 failed = true;
                                 break;
                         }
@@ -11462,14 +11222,14 @@ static b32 file_csplit()
                         {
                                 if (!csplit_parse_regex(word, address_of pattern))
                                 {
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "csplit: invalid pattern: '%s'\n", word);
                                         failed = true;
                                         break;
                                 }
                                 if (state.suppress_matched && pattern.offset)
                                 {
-                                        file_fail("csplit: --suppress-matched with an offset is unsupported\n",
+                                        log_error("csplit: --suppress-matched with an offset is unsupported\n",
                                                   0);
                                         failed = true;
                                         break;
@@ -11477,7 +11237,7 @@ static b32 file_csplit()
                                 if (!regex_compile(pattern.expression, false, false,
                                                    false, CSPLIT_REGEX_POLICY))
                                 {
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "csplit: invalid regular expression: '%s'\n",
                                                       pattern.expression);
                                         failed = true;
@@ -11490,7 +11250,7 @@ static b32 file_csplit()
                         }
                         else if (!csplit_parse_line(word, address_of pattern))
                         {
-                                string_format(file_fail, "csplit: invalid pattern: '%s'\n",
+                                string_format(log_error, "csplit: invalid pattern: '%s'\n",
                                               word);
                                 failed = true;
                                 break;
@@ -11523,7 +11283,7 @@ static b32 file_csplit()
                                         failed = true;
                                         break;
                                 }
-                                string_format(file_fail,
+                                string_format(log_error,
                                               repeated ? "csplit: '%s': match not found on repetition %p\n"
                                                        : "csplit: '%s': match not found\n",
                                               word, repetition + 1);
@@ -11701,12 +11461,9 @@ static bool truncate_current_size(string_address path, bipolar handle,
                 size = system_seek(handle, 0, FILE_SEEK_END);
 
         if (size < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "truncate: cannot get the size of '%s': %s\n",
                               path, file_reason(size));
-                return false;
-        }
 
         address_to out = size;
         return true;
@@ -11728,9 +11485,8 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
                 if (no_create && handle == -ERROR_NO_ENTRY)
                         return true;
 
-                string_format(file_fail, "truncate: cannot open '%s' for writing: %s\n",
+                return string_report(log_error, false, "truncate: cannot open '%s' for writing: %s\n",
                               path, file_reason(handle));
-                return false;
         }
 
         file_facts facts;
@@ -11812,18 +11568,12 @@ static bool truncate_one(string_address path, b64 size, b64 reference,
         bipolar closed = system_close(handle);
 
         if (done < 0)
-        {
-                string_format(file_fail, "truncate: failed to truncate '%s': %s\n",
+                return string_report(log_error, false, "truncate: failed to truncate '%s': %s\n",
                               path, file_reason(done));
-                return false;
-        }
 
         if (closed < 0)
-        {
-                string_format(file_fail, "truncate: failed to close '%s': %s\n",
+                return string_report(log_error, false, "truncate: failed to close '%s': %s\n",
                               path, file_reason(closed));
-                return false;
-        }
 
         return true;
 }
@@ -11850,35 +11600,20 @@ static b32 file_truncate()
         p8 relation = TRUNCATE_ABSOLUTE;
 
         if (!reference_path && !size_text)
-        {
-                file_fail("truncate: you must specify either --size or --reference\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "truncate: you must specify either --size or --reference\n");
 
         if (size_text && !truncate_size(size_text, address_of size,
                                         address_of relation))
-        {
-                string_format(file_fail, "truncate: Invalid number: '%s'\n", size_text);
-                return 1;
-        }
+                return string_report(log_error, 1, "truncate: Invalid number: '%s'\n", size_text);
 
         if (reference_path && size_text && relation == TRUNCATE_ABSOLUTE)
-        {
-                file_fail("truncate: --size must be relative with --reference\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "truncate: --size must be relative with --reference\n");
 
         if (blocks && !size_text)
-        {
-                file_fail("truncate: --io-blocks requires --size\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "truncate: --io-blocks requires --size\n");
 
         if (!file_operand_count)
-        {
-                file_fail("truncate: missing file operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "truncate: missing file operand\n");
 
         b64 reference = -1;
 
@@ -11887,11 +11622,8 @@ static b32 file_truncate()
                 file_facts facts;
 
                 if (!file_look_at(reference_path, address_of facts))
-                {
-                        string_format(file_fail, "truncate: cannot stat '%s'\n",
+                        return string_report(log_error, 1, "truncate: cannot stat '%s'\n",
                                       reference_path);
-                        return 1;
-                }
 
                 bipolar handle = -1;
 
@@ -11901,12 +11633,9 @@ static b32 file_truncate()
                                                FILE_READ);
 
                 if (handle < 0 && (facts.mode & MODE_FORMAT) != MODE_FILE)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "truncate: cannot get the size of '%s': %s\n",
                                       reference_path, file_reason(handle));
-                        return 1;
-                }
 
                 bool known = truncate_current_size(reference_path, handle,
                                                    address_of facts,
@@ -12086,7 +11815,7 @@ static fn hardlink_visit(bipolar directory, string_address name,
 
         if (looked < 0)
         {
-                string_format(file_fail, "hardlink: cannot stat '%s': %s\n",
+                string_format(log_error, "hardlink: cannot stat '%s': %s\n",
                               shown, file_reason(looked));
                 hardlink_status = 1;
                 return;
@@ -12098,7 +11827,7 @@ static fn hardlink_visit(bipolar directory, string_address name,
         positive2 named = string_hash_33_length(shown);
         if (!hardlink_seen_prepare(hardlink_file_count + 1))
         {
-                file_fail("hardlink: out of memory while indexing paths\n", 0);
+                log_error("hardlink: out of memory while indexing paths\n", 0);
                 hardlink_status = 1;
                 return;
         }
@@ -12121,7 +11850,7 @@ static fn hardlink_visit(bipolar directory, string_address name,
             !shell_array_room(hardlink_paths, hardlink_path_room,
                               hardlink_path_used + length + 1))
         {
-                file_fail("hardlink: out of memory while walking files\n", 0);
+                log_error("hardlink: out of memory while walking files\n", 0);
                 hardlink_status = 1;
                 return;
         }
@@ -12213,7 +11942,7 @@ static bool hardlink_hash_one(hardlink_file address_to file)
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
         {
-                string_format(file_fail, "hardlink: cannot read '%s': %s\n",
+                string_format(log_error, "hardlink: cannot read '%s': %s\n",
                               path, file_reason(handle));
                 hardlink_status = 1;
                 file->valid = false;
@@ -12263,11 +11992,11 @@ static bool hardlink_hash_one(hardlink_file address_to file)
         else
         {
                 if (read_error)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "hardlink: short or failed read of '%s': %s\n",
                                       path, file_reason(read_error));
                 else
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "hardlink: '%s' changed while reading\n",
                                       path);
                 hardlink_status = 1;
@@ -12287,7 +12016,7 @@ static bool hardlink_equal(hardlink_file address_to one,
 
         if (one_handle < 0 || two_handle < 0)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "hardlink: cannot compare '%s' and '%s': %s\n",
                               one_path, two_path,
                               file_reason(one_handle < 0 ? one_handle
@@ -12363,7 +12092,7 @@ static bool hardlink_equal(hardlink_file address_to one,
                 two->valid = false;
         if (!stable)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               read_error
                                   ? (string_address)"hardlink: short or failed read while comparing '%s' and '%s': %s\n"
                                   : (string_address)"hardlink: file changed while comparing '%s' and '%s': %s\n",
@@ -12421,22 +12150,16 @@ static bool hardlink_cleanup(string_address temporary,
         for (positive tries = 0; tries < 128 && moved == -ERROR_EXISTS; tries++)
         {
                 if (!hardlink_temporary(destination, cleanup))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "hardlink: displaced object retained as '%s'; cleanup path is too long\n",
                                       temporary);
-                        return false;
-                }
                 moved = system_rename_at(AT_FDCWD, temporary, AT_FDCWD,
                                          cleanup, HARDLINK_RENAME_NOREPLACE);
         }
         if (moved < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: displaced object retained as '%s': %s\n",
                               temporary, file_reason(moved));
-                return false;
-        }
 
         file_facts first;
         file_facts final;
@@ -12444,21 +12167,15 @@ static bool hardlink_cleanup(string_address temporary,
             !hardlink_link_same(expected, address_of first) ||
             !file_look_link(cleanup, address_of final) ||
             !hardlink_snapshot_same(address_of first, address_of final))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: cleanup race; displaced object retained as '%s'\n",
                               cleanup);
-                return false;
-        }
 
         bipolar removed = system_remove_at(AT_FDCWD, cleanup, 0);
         if (removed < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: displaced object retained as '%s': %s\n",
                               cleanup, file_reason(removed));
-                return false;
-        }
         return true;
 }
 
@@ -12488,37 +12205,28 @@ static bool hardlink_replace(hardlink_file address_to keep,
             !file_look_link(duplicate_path, address_of duplicate_current) ||
             !hardlink_snapshot_same(address_of duplicate->facts,
                                     address_of duplicate_current))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: '%s' or '%s' changed before replacement\n",
                               keep_path, duplicate_path);
-                return false;
-        }
 
         bipolar linked = -ERROR_EXISTS;
 
         for (positive tries = 0; tries < 128 && linked == -ERROR_EXISTS; tries++)
         {
                 if (!hardlink_temporary(duplicate_path, temporary))
-                {
-                        file_fail("hardlink: temporary path is too long\n", 0);
-                        return false;
-                }
+                        return string_report(log_error, false, "hardlink: temporary path is too long\n");
                 linked = system_link_at(AT_FDCWD, keep_path, AT_FDCWD,
                                         temporary, 0);
         }
         if (linked < 0)
-        {
-                string_format(file_fail, "hardlink: cannot link '%s': %s\n",
+                return string_report(log_error, false, "hardlink: cannot link '%s': %s\n",
                               duplicate_path, file_reason(linked));
-                return false;
-        }
 
         file_facts made;
         if (!file_look_link(temporary, address_of made) ||
             !hardlink_link_same(address_of keep_current, address_of made))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "hardlink: temporary link for '%s' could not be proved\n",
                               duplicate_path);
                 keep->valid = false;
@@ -12536,10 +12244,9 @@ static bool hardlink_replace(hardlink_file address_to keep,
         {
                 hardlink_cleanup(temporary, duplicate_path, address_of made);
                 hardlink_refresh(keep, address_of made);
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: '%s' changed before exchange\n",
                               duplicate_path);
-                return false;
         }
 
         bipolar exchanged = system_rename_at(
@@ -12549,16 +12256,15 @@ static bool hardlink_replace(hardlink_file address_to keep,
         {
                 hardlink_cleanup(temporary, duplicate_path, address_of made);
                 hardlink_refresh(keep, address_of made);
-                string_format(file_fail, "hardlink: cannot replace '%s': %s\n",
+                return string_report(log_error, false, "hardlink: cannot replace '%s': %s\n",
                               duplicate_path, file_reason(exchanged));
-                return false;
         }
 
         file_facts linked_current;
         if (!file_look_link(duplicate_path, address_of linked_current) ||
             !hardlink_link_same(address_of made, address_of linked_current))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "hardlink: destination race at '%s'; displaced object retained as '%s'\n",
                               duplicate_path, temporary);
                 keep->valid = false;
@@ -12571,12 +12277,9 @@ static bool hardlink_replace(hardlink_file address_to keep,
         if (!file_look_link(temporary, address_of displaced) ||
             !hardlink_link_same(address_of duplicate_current,
                                 address_of displaced))
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "hardlink: race while replacing '%s'; unexpected displaced object retained as '%s'\n",
                               duplicate_path, temporary);
-                return false;
-        }
 
         return hardlink_cleanup(temporary, duplicate_path,
                                 address_of displaced);
@@ -12663,22 +12366,15 @@ static b32 file_hardlink()
                 string_address reflink = file_option_value(address_of taking, 'R');
                 if ((taking.bare & FILE_FLAG('R')) ||
                     !reflink || !string_equals(reflink, (string_address)"never"))
-                {
-                        file_fail("hardlink: reflink auto/always is unsupported; use --reflink=never\n",
-                                  0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "hardlink: reflink auto/always is unsupported; use --reflink=never\n");
         }
 
         string_address io_size = file_option_value(address_of taking, 'b');
         p64 parsed_io_size = FILE_TRANSFER_SIZE;
         if (io_size && (!hardlink_size(io_size, address_of parsed_io_size) ||
                         !parsed_io_size || parsed_io_size > positive_max))
-        {
-                string_format(file_fail, "hardlink: invalid I/O size: '%s'\n",
+                return string_report(log_error, 1, "hardlink: invalid I/O size: '%s'\n",
                               io_size);
-                return 1;
-        }
 
         hardlink_minimum = 1;
         hardlink_maximum = (p64)-1;
@@ -12686,10 +12382,7 @@ static b32 file_hardlink()
         string_address maximum = file_option_value(address_of taking, 'S');
         if ((minimum && !hardlink_size(minimum, address_of hardlink_minimum)) ||
             (maximum && !hardlink_size(maximum, address_of hardlink_maximum)))
-        {
-                file_fail("hardlink: invalid minimum or maximum size\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "hardlink: invalid minimum or maximum size\n");
 
         bool content = (taking.flags & FILE_FLAG('c')) != 0;
         hardlink_ignore_mode = content || (taking.flags & FILE_FLAG('p'));
@@ -12734,10 +12427,7 @@ static b32 file_hardlink()
                                       hardlink_file_count) ||
                     !shell_array_room(hardlink_spare, hardlink_spare_room,
                                       hardlink_file_count))
-                {
-                        file_fail("hardlink: out of memory while sorting files\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "hardlink: out of memory while sorting files\n");
                 for (positive i = 0; i < hardlink_file_count; i++)
                         hardlink_order[i] = i;
 
@@ -12991,19 +12681,15 @@ static bool shred_sync(bipolar handle, string_address path, bool data)
         if (done >= 0)
                 return true;
 
-        string_format(file_fail, "shred: '%s': sync failed: %s\n", path,
+        return string_report(log_error, false, "shred: '%s': sync failed: %s\n", path,
                       file_reason(done));
-        return false;
 }
 
 static bool shred_pass(bipolar handle, string_address path, positive length,
                        bool zero, file_random_state address_to random)
 {
         if (system_seek(handle, 0, FILE_SEEK_SET) < 0)
-        {
-                string_format(file_fail, "shred: '%s': seek failed\n", path);
-                return false;
-        }
+                return string_report(log_error, false, "shred: '%s': seek failed\n", path);
 
         if (zero)
                 memory_fill(file_transfer, 0, sizeof(file_transfer));
@@ -13020,11 +12706,8 @@ static bool shred_pass(bipolar handle, string_address path, positive length,
 
                 if (system_write_all((positive)handle, file_transfer, chunk) !=
                     chunk)
-                {
-                        string_format(file_fail, "shred: '%s': write failed\n",
+                        return string_report(log_error, false, "shred: '%s': write failed\n",
                                       path);
-                        return false;
-                }
 
                 left -= chunk;
         }
@@ -13058,11 +12741,8 @@ static bool shred_one(string_address path, positive iterations,
         bipolar handle = shred_open(path, force);
 
         if (handle < 0)
-        {
-                string_format(file_fail, "shred: '%s': cannot open: %s\n", path,
+                return string_report(log_error, false, "shred: '%s': cannot open: %s\n", path,
                               file_reason(handle));
-                return false;
-        }
 
         file_facts facts;
         bool good = file_look(handle, (string_address) "", AT_EMPTY_PATH,
@@ -13070,7 +12750,7 @@ static bool shred_one(string_address path, positive iterations,
 
         if (!good || (facts.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "shred: '%s': refusing non-regular file\n", path);
                 system_close(handle);
                 return false;
@@ -13082,7 +12762,7 @@ static bool shred_one(string_address path, positive iterations,
                 length = requested;
         else if (facts.size > positive_max)
         {
-                string_format(file_fail, "shred: '%s': file is too large\n", path);
+                string_format(log_error, "shred: '%s': file is too large\n", path);
                 system_close(handle);
                 return false;
         }
@@ -13100,7 +12780,7 @@ static bool shred_one(string_address path, positive iterations,
 
                         if (length > positive_max - add)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "shred: '%s': size overflow\n", path);
                                 system_close(handle);
                                 return false;
@@ -13111,7 +12791,7 @@ static bool shred_one(string_address path, positive iterations,
         }
 
         if (verbose)
-                string_format(file_fail,
+                string_format(log_error,
                               "shred: '%s': caution: storage layers may retain old copies\n",
                               path);
 
@@ -13119,7 +12799,7 @@ static bool shred_one(string_address path, positive iterations,
 
         if (iterations && good && !file_random_seed(address_of random))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "shred: '%s': kernel randomness unavailable\n", path);
                 good = false;
         }
@@ -13127,7 +12807,7 @@ static bool shred_one(string_address path, positive iterations,
         for (positive pass = 0; pass < iterations && good; pass++)
         {
                 if (verbose)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "shred: '%s': pass %p/%p (random)\n",
                                       path, pass + 1, iterations);
 
@@ -13138,7 +12818,7 @@ static bool shred_one(string_address path, positive iterations,
         if (zero && good)
         {
                 if (verbose)
-                        string_format(file_fail, "shred: '%s': pass (zero)\n",
+                        string_format(log_error, "shred: '%s': pass (zero)\n",
                                       path);
 
                 good = shred_pass(handle, path, length, true, null);
@@ -13150,7 +12830,7 @@ static bool shred_one(string_address path, positive iterations,
 
                 if (shortened < 0)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "shred: '%s': cannot truncate before removal: %s\n",
                                       path, file_reason(shortened));
                         good = false;
@@ -13163,7 +12843,7 @@ static bool shred_one(string_address path, positive iterations,
 
         if (closed < 0)
         {
-                string_format(file_fail, "shred: '%s': close failed: %s\n", path,
+                string_format(log_error, "shred: '%s': close failed: %s\n", path,
                               file_reason(closed));
                 good = false;
         }
@@ -13175,7 +12855,7 @@ static bool shred_one(string_address path, positive iterations,
                 if (!file_look_at(path, address_of named) ||
                     !file_same_identity(address_of facts, address_of named))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "shred: '%s': name changed; refusing removal\n",
                                       path);
                         good = false;
@@ -13186,13 +12866,13 @@ static bool shred_one(string_address path, positive iterations,
 
                         if (gone < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "shred: '%s': cannot remove: %s\n",
                                               path, file_reason(gone));
                                 good = false;
                         }
                         else if (verbose)
-                                string_format(file_fail, "shred: '%s': removed\n",
+                                string_format(log_error, "shred: '%s': removed\n",
                                               path);
                 }
         }
@@ -13218,47 +12898,33 @@ static b32 file_shred()
                 return file_missing((string_address) "shred");
 
         if (file_option_value(address_of taking, 'R'))
-        {
-                file_fail("shred: --random-source is unsupported; kernel randomness is mandatory\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shred: --random-source is unsupported; kernel randomness is mandatory\n");
 
         string_address remove_how = file_option_value(address_of taking, 'u');
 
         if (remove_how && !string_equals(remove_how, (string_address) "unlink"))
-        {
-                file_fail("shred: filename wiping modes are unsupported; use --remove=unlink\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shred: filename wiping modes are unsupported; use --remove=unlink\n");
 
         positive iterations = 3;
         string_address iteration_text = file_option_value(address_of taking, 'n');
 
         if (iteration_text &&
             !file_unsigned_decimal(iteration_text, address_of iterations))
-        {
-                string_format(file_fail, "shred: invalid number of passes: '%s'\n",
+                return string_report(log_error, 1, "shred: invalid number of passes: '%s'\n",
                               iteration_text);
-                return 1;
-        }
 
         positive size = 0;
         string_address size_text = file_option_value(address_of taking, 's');
 
         if (size_text && !shred_size(size_text, address_of size))
-        {
-                string_format(file_fail, "shred: invalid size: '%s'\n", size_text);
-                return 1;
-        }
+                return string_report(log_error, 1, "shred: invalid size: '%s'\n", size_text);
 
         positive flags = taking.flags;
         bool remove = (flags & FILE_FLAG('u')) != 0;
         b32 status = 0;
 
         if (remove && !remove_how)
-                file_fail("shred: warning: -u uses unlink removal without filename wiping\n",
+                log_error("shred: warning: -u uses unlink removal without filename wiping\n",
                           0);
 
         for (positive i = 0; i < file_operand_count; i++)
@@ -13344,10 +13010,9 @@ static positive shuf_uniform(file_random_state address_to random,
 
 static COLD bool shuf_output_failed(shuf_output address_to output)
 {
-        string_format(file_fail, "shuf: write error%s%s\n",
+        return string_report(log_error, false, "shuf: write error%s%s\n",
                       output->name ? (string_address)" on " : (string_address)"",
                       output->name ? output->name : (string_address)"");
-        return false;
 }
 
 static bool shuf_output_flush(shuf_output address_to output)
@@ -13403,7 +13068,7 @@ static shuf_record address_to shuf_file_records(string_address name,
 
         if (handle < 0)
         {
-                string_format(file_fail, "shuf: cannot open '%s': %s\n", name,
+                string_format(log_error, "shuf: cannot open '%s': %s\n", name,
                               file_reason(handle));
                 return null;
         }
@@ -13419,7 +13084,7 @@ static shuf_record address_to shuf_file_records(string_address name,
 
         if (!input)
         {
-                file_fail(read_failed ? (string_address) "shuf: read error\n"
+                log_error(read_failed ? (string_address) "shuf: read error\n"
                                       : (string_address) "shuf: input too large\n",
                           0);
                 return null;
@@ -13663,11 +13328,7 @@ static b32 file_shuf()
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (file_option_value(address_of taking, 'R'))
-        {
-                file_fail("shuf: --random-source is unsupported; kernel-seeded randomness is mandatory\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shuf: --random-source is unsupported; kernel-seeded randomness is mandatory\n");
 
         positive flags = taking.flags;
         bool echo = (flags & FILE_FLAG('e')) != 0;
@@ -13675,31 +13336,19 @@ static b32 file_shuf()
         string_address range_text = file_option_value(address_of taking, 'i');
 
         if (echo && range_text)
-        {
-                file_fail("shuf: cannot combine --echo and --input-range\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shuf: cannot combine --echo and --input-range\n");
         if (range_text && file_operand_count)
-        {
-                file_fail("shuf: extra operand with --input-range\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shuf: extra operand with --input-range\n");
         if (!echo && !range_text && file_operand_count > 1)
-        {
-                file_fail("shuf: extra operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "shuf: extra operand\n");
 
         positive wanted = 0;
         string_address count_text = file_option_value(address_of taking, 'n');
         bool limited = count_text != null;
 
         if (limited && !file_unsigned_decimal(count_text, address_of wanted))
-        {
-                string_format(file_fail, "shuf: invalid line count: '%s'\n",
+                return string_report(log_error, 1, "shuf: invalid line count: '%s'\n",
                               count_text);
-                return 1;
-        }
 
         positive low = 0;
         positive high = 0;
@@ -13713,7 +13362,7 @@ static b32 file_shuf()
                 if (!shuf_range(range_text, address_of low, address_of high) ||
                     high - low == positive_max)
                 {
-                        string_format(file_fail, "shuf: invalid input range: '%s'\n",
+                        string_format(log_error, "shuf: invalid input range: '%s'\n",
                                       range_text);
                         text_arena_used = 0;
                         return 1;
@@ -13739,7 +13388,7 @@ static b32 file_shuf()
 
         if (repeat && !count && (!limited || wanted))
         {
-                file_fail("shuf: no lines to repeat\n", 0);
+                log_error("shuf: no lines to repeat\n", 0);
                 text_arena_used = 0;
                 return 1;
         }
@@ -13749,7 +13398,7 @@ static b32 file_shuf()
 
         if (need_random && !file_random_seed(address_of random))
         {
-                file_fail("shuf: kernel randomness unavailable\n", 0);
+                log_error("shuf: kernel randomness unavailable\n", 0);
                 text_arena_used = 0;
                 return 1;
         }
@@ -13765,7 +13414,7 @@ static b32 file_shuf()
 
                 if (!output.opened)
                 {
-                        string_format(file_fail, "shuf: cannot open '%s': %s\n",
+                        string_format(log_error, "shuf: cannot open '%s': %s\n",
                                       output_name, file_reason(output.handle));
                         text_arena_used = 0;
                         return 1;
@@ -13786,7 +13435,7 @@ static b32 file_shuf()
 
         if (output.opened && system_close(output.handle) < 0)
         {
-                string_format(file_fail, "shuf: close failed on '%s'\n",
+                string_format(log_error, "shuf: close failed on '%s'\n",
                               output_name);
                 good = false;
         }
@@ -13974,11 +13623,7 @@ static bool dircolors_add_entry(dircolors_builder address_to builder,
 {
         if ((memory_first_of(key, ':', key_length) ||
              memory_first_of(value, ':', value_length)))
-        {
-                file_fail("dircolors: ':' in keys or values is unsupported by the shared LS_COLORS grammar\n",
-                          0);
-                return false;
-        }
+                return string_report(log_error, false, "dircolors: ':' in keys or values is unsupported by the shared LS_COLORS grammar\n");
 
         positive prefix = extension && string_is(key, '.') ? 1 : 0;
 
@@ -13986,10 +13631,7 @@ static bool dircolors_add_entry(dircolors_builder address_to builder,
             builder->used >= builder->room ||
             key_length + value_length + 2 + prefix >=
                 builder->room - builder->used)
-        {
-                file_fail("dircolors: translated table is too large\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "dircolors: translated table is too large\n");
 
         return (!extension || !string_is(key, '.') ||
                 dircolors_add(builder, (string_address) "*", 1)) &&
@@ -14007,7 +13649,7 @@ static string_address dircolors_parse(string_address input, positive length,
 {
         if (memory_first_of(input, 0, length))
         {
-                string_format(file_fail, "dircolors: %s: embedded NUL byte\n",
+                string_format(log_error, "dircolors: %s: embedded NUL byte\n",
                               name);
                 return null;
         }
@@ -14021,7 +13663,7 @@ static string_address dircolors_parse(string_address input, positive length,
 
         if (!builder.text)
         {
-                file_fail("dircolors: configuration is too large\n", 0);
+                log_error("dircolors: configuration is too large\n", 0);
                 return null;
         }
 
@@ -14083,7 +13725,7 @@ static string_address dircolors_parse(string_address input, positive length,
 
                 if (value == finish)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "dircolors: %s:%p: missing second token\n",
                                       name, line_number);
                         return null;
@@ -14100,7 +13742,7 @@ static string_address dircolors_parse(string_address input, positive length,
                 {
                         if (value_length >= FILE_PATH_MAX)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "dircolors: %s:%p: terminal pattern is too long\n",
                                               name, line_number);
                                 return null;
@@ -14144,7 +13786,7 @@ static string_address dircolors_parse(string_address input, positive length,
 
         if (!file_color_table_valid(builder.text, false))
         {
-                file_fail("dircolors: configuration cannot be represented by LS_COLORS\n",
+                log_error("dircolors: configuration cannot be represented by LS_COLORS\n",
                           0);
                 return null;
         }
@@ -14208,10 +13850,7 @@ static b32 file_dircolors()
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
         if (file_operand_count > 1)
-        {
-                file_fail("dircolors: extra operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "dircolors: extra operand\n");
 
         positive flags = taking.flags;
         bool print_database = (flags & FILE_FLAG('p')) != 0;
@@ -14219,17 +13858,9 @@ static b32 file_dircolors()
 
         if (print_database && (file_operand_count || dircolors_shell_option ||
                                print_table))
-        {
-                file_fail("dircolors: --print-database cannot be combined with a file or another output mode\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "dircolors: --print-database cannot be combined with a file or another output mode\n");
         if (print_table && dircolors_shell_option)
-        {
-                file_fail("dircolors: --print-ls-colors cannot select a shell syntax\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "dircolors: --print-ls-colors cannot select a shell syntax\n");
         if (print_database)
         {
                 log(dircolors_database, 0);
@@ -14250,11 +13881,8 @@ static b32 file_dircolors()
                              ? 0 : system_open_at(AT_FDCWD, name, FILE_READ);
 
                 if (handle < 0)
-                {
-                        string_format(file_fail, "dircolors: '%s': %s\n", name,
+                        return string_report(log_error, 1, "dircolors: '%s': %s\n", name,
                                       file_reason(handle));
-                        return 1;
-                }
 
                 bool read_failed;
                 input = text_arena_read_all((positive)handle,
@@ -14267,7 +13895,7 @@ static b32 file_dircolors()
 
                 if (!input)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       read_failed
                                           ? (string_address) "dircolors: cannot read '%s'\n"
                                           : (string_address) "dircolors: '%s' is too large\n",
@@ -14346,7 +13974,7 @@ static b32 file_rmdir()
 
                         if (gone < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "rmdir: failed to remove '%s': %s\n",
                                               path, file_reason(gone));
                                 status = 1;
@@ -14456,7 +14084,7 @@ static bool file_make_alike(string_address program, string_address destination,
             file_device(facts->rdev_major, facts->rdev_minor));
 
         if (made < 0)
-                string_format(file_fail, "%s: cannot create special file '%s': %s\n",
+                string_format(log_error, "%s: cannot create special file '%s': %s\n",
                               program, destination, file_reason(made));
 
         return made == 0;
@@ -14519,12 +14147,9 @@ static bool cp_linked(string_address source, string_address destination)
                 // A relative target is read from where the link sits, so a
                 // link made anywhere but here would point somewhere else.
                 if (!string_is(source, '/') && string_first_of(destination, '/'))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "cp: %s: can make relative symbolic links only in current directory\n",
                                       destination);
-                        return false;
-                }
 
                 done = system_symbolic_link_at(source, AT_FDCWD, destination);
         }
@@ -14532,11 +14157,8 @@ static bool cp_linked(string_address source, string_address destination)
                 done = system_link_at(AT_FDCWD, source, AT_FDCWD, destination, 0);
 
         if (done < 0)
-        {
-                string_format(file_fail, "cp: cannot create link '%s': %s\n",
+                return string_report(log_error, false, "cp: cannot create link '%s': %s\n",
                               destination, file_reason(done));
-                return false;
-        }
 
         cp_said(source, destination);
 
@@ -14548,7 +14170,7 @@ static bool file_move_remove(string_address source, positive flags)
         bipolar gone = system_remove_at(AT_FDCWD, source, flags);
         if (gone < 0)
         {
-                string_format(file_fail, "mv: cannot remove '%s': %s\n", source,
+                string_format(log_error, "mv: cannot remove '%s': %s\n", source,
                               file_reason(gone));
                 mv_across_said = true;
         }
@@ -14572,7 +14194,7 @@ static bool file_copy_one(string_address source, string_address destination,
         if (looked < 0)
         {
                 if (!moving)
-                        string_format(file_fail, "cp: cannot stat '%s': %s\n", source,
+                        string_format(log_error, "cp: cannot stat '%s': %s\n", source,
                                       file_reason(looked));
                 return false;
         }
@@ -14586,11 +14208,8 @@ static bool file_copy_one(string_address source, string_address destination,
                                       : file_look_at(destination, address_of there));
 
         if (destination_exists && file_same_identity(address_of facts, address_of there))
-        {
-                string_format(file_fail, "cp: '%s' and '%s' are the same file\n", source,
+                return string_report(log_error, false, "cp: '%s' and '%s' are the same file\n", source,
                               destination);
-                return false;
-        }
 
         if (!moving && kind == MODE_DIRECTORY)
         {
@@ -14601,12 +14220,9 @@ static bool file_copy_one(string_address source, string_address destination,
                 // through a link into the source is still inside it.
                 if (file_resolve(source, from, true) &&
                     file_resolve(destination, to, true) && realpath_under(from, to))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "cp: cannot copy a directory, '%s', into itself, '%s'\n",
                                       source, destination);
-                        return false;
-                }
         }
 
         if (!moving && kind != MODE_DIRECTORY &&
@@ -14628,7 +14244,7 @@ static bool file_copy_one(string_address source, string_address destination,
                 if (system_symbolic_link_at(target, AT_FDCWD, destination) < 0)
                 {
                         if (!moving)
-                                string_format(file_fail, "cp: cannot create link '%s'\n", destination);
+                                string_format(log_error, "cp: cannot create link '%s'\n", destination);
                         return false;
                 }
 
@@ -14670,7 +14286,7 @@ static bool file_copy_one(string_address source, string_address destination,
                 if (!copied)
                 {
                         if (!moving)
-                                string_format(file_fail, "cp: cannot copy '%s'\n", source);
+                                string_format(log_error, "cp: cannot copy '%s'\n", source);
                         return false;
                 }
 
@@ -14678,17 +14294,11 @@ static bool file_copy_one(string_address source, string_address destination,
         }
 
         if (!moving && !cp_recursive)
-        {
-                string_format(file_fail, "cp: -r not specified; omitting directory '%s'\n",
+                return string_report(log_error, false, "cp: -r not specified; omitting directory '%s'\n",
                               source);
-                return false;
-        }
 
         if (depth == 0)
-        {
-                string_format(file_fail, "cp: '%s' is nested too deep\n", source);
-                return false;
-        }
+                return string_report(log_error, false, "cp: '%s' is nested too deep\n", source);
 
         // The directory is made with the owner able to write into it whatever
         // the source allowed, so a read-only tree can still be filled, and is
@@ -14698,7 +14308,7 @@ static bool file_copy_one(string_address source, string_address destination,
 
         if (made < 0 && made != -ERROR_EXISTS)
         {
-                string_format(file_fail, "%s: cannot create directory '%s': %s\n",
+                string_format(log_error, "%s: cannot create directory '%s': %s\n",
                               program, destination, file_reason(made));
                 mv_across_said |= moving;
                 return false;
@@ -14708,7 +14318,7 @@ static bool file_copy_one(string_address source, string_address destination,
 
         if (!file_walk_open(address_of walk, AT_FDCWD, source))
         {
-                string_format(file_fail, "%s: cannot read directory '%s': %s\n",
+                string_format(log_error, "%s: cannot read directory '%s': %s\n",
                               program, source, file_reason(walk.handle));
                 if (moving)
                 {
@@ -14735,7 +14345,7 @@ static bool file_copy_one(string_address source, string_address destination,
 
         if (walk.error < 0)
         {
-                string_format(file_fail, "%s: cannot read directory '%s': %s\n",
+                string_format(log_error, "%s: cannot read directory '%s': %s\n",
                               program, source, file_reason(walk.error));
                 mv_across_said |= moving;
                 complete = false;
@@ -14895,11 +14505,8 @@ static bool install_identity(string_address text, bool group,
                 found = group ? file_group_id(text) : file_user_id(text);
 
         if (found < 0)
-        {
-                string_format(file_fail, "install: invalid %s '%s'\n",
+                return string_report(log_error, false, "install: invalid %s '%s'\n",
                               group ? "group" : "user", text);
-                return false;
-        }
 
         address_to identity = found;
         return true;
@@ -14913,10 +14520,9 @@ static bool install_leading(string_address destination)
         if (file_make_parents(parent, 0755))
                 return true;
 
-        string_format(file_fail,
+        return string_report(log_error, false,
                       "install: cannot create leading directories for '%s'\n",
                       destination);
-        return false;
 }
 
 static bool install_attributes(string_address destination,
@@ -14925,19 +14531,13 @@ static bool install_attributes(string_address destination,
         if ((install_owner >= 0 || install_group >= 0) &&
             system_change_owner_at(AT_FDCWD, destination, install_owner,
                                    install_group, 0) < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, false,
                               "install: cannot change ownership of '%s'\n",
                               destination);
-                return false;
-        }
 
         if (system_change_mode_at(AT_FDCWD, destination, install_mode) < 0)
-        {
-                string_format(file_fail, "install: cannot change mode of '%s'\n",
+                return string_report(log_error, false, "install: cannot change mode of '%s'\n",
                               destination);
-                return false;
-        }
 
         if (install_preserve && source)
         {
@@ -14945,12 +14545,9 @@ static bool install_attributes(string_address destination,
 
                 file_times_of(source, times);
                 if (system_update_times_at(AT_FDCWD, destination, times, 0) < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "install: cannot preserve times of '%s'\n",
                                       destination);
-                        return false;
-                }
         }
 
         return true;
@@ -14964,7 +14561,7 @@ static fn install_pair(string_address source, string_address destination)
 
         if (looked < 0 || (from.mode & MODE_FORMAT) != MODE_FILE)
         {
-                string_format(file_fail, "install: cannot stat '%s': %s\n",
+                string_format(log_error, "install: cannot stat '%s': %s\n",
                               source,
                               looked < 0 ? file_reason(looked)
                                          : (string_address)"Not a regular file");
@@ -14975,7 +14572,7 @@ static fn install_pair(string_address source, string_address destination)
         if (file_look_at(destination, address_of to) &&
             file_same_identity(address_of from, address_of to))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "install: '%s' and '%s' are the same file\n",
                               source, destination);
                 install_status = 1;
@@ -14992,7 +14589,7 @@ static fn install_pair(string_address source, string_address destination)
 
         if (removed < 0 && removed != -ERROR_NO_ENTRY)
         {
-                string_format(file_fail, "install: cannot remove '%s': %s\n",
+                string_format(log_error, "install: cannot remove '%s': %s\n",
                               destination, file_reason(removed));
                 install_status = 1;
                 return;
@@ -15005,7 +14602,7 @@ static fn install_pair(string_address source, string_address destination)
                                      install_mode,
                                      FILE_WRITE | FILE_EXCLUSIVE))
         {
-                string_format(file_fail, "install: cannot copy '%s' to '%s'\n",
+                string_format(log_error, "install: cannot copy '%s' to '%s'\n",
                               source, destination);
                 install_status = 1;
                 return;
@@ -15069,7 +14666,7 @@ static b32 file_install()
                         if (!file_make_parents(path, 0755) ||
                             !install_attributes(path, null))
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "install: cannot create directory '%s'\n",
                                               path);
                                 install_status = 1;
@@ -15084,10 +14681,7 @@ static b32 file_install()
         }
 
         if (install_parents && (into || count - taking.first != 2))
-        {
-                file_fail("install: -D requires one source and one destination\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "install: -D requires one source and one destination\n");
 
         if (!file_source_destination((string_address) "install", taking.first,
                                      count, into,
@@ -15148,7 +14742,7 @@ static fn mv_one(string_address source, string_address destination)
             file_look_link(destination, address_of to) &&
             file_same_identity(address_of from, address_of to))
         {
-                string_format(file_fail, "mv: '%s' and '%s' are the same file\n", source,
+                string_format(log_error, "mv: '%s' and '%s' are the same file\n", source,
                               destination);
                 mv_status = 1;
                 return;
@@ -15185,7 +14779,7 @@ static fn mv_one(string_address source, string_address destination)
                 }
         }
 
-        string_format(file_fail, "mv: cannot move '%s' to '%s': %s\n", source,
+        string_format(log_error, "mv: cannot move '%s' to '%s': %s\n", source,
                       destination, file_reason(done));
         mv_status = 1;
 }
@@ -15311,7 +14905,7 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                 if (sought < 0)
                 {
-                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                        string_format(log_error, "rm: cannot read '%s': %s\n", shown,
                                       file_reason(sought));
                         rm_status = 1;
                         return false;
@@ -15348,7 +14942,7 @@ static bool rm_contents(bipolar directory, string_address shown, positive depth)
 
                 if (walk.error < 0)
                 {
-                        string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                        string_format(log_error, "rm: cannot read '%s': %s\n", shown,
                                       file_reason(walk.error));
                         rm_status = 1;
                         return false;
@@ -15388,7 +14982,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 // there and will not be looked at is still a failure.
                 if (!rm_force || tried != -ERROR_NO_ENTRY)
                 {
-                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                        string_format(log_error, "rm: cannot remove '%s': %s\n", shown,
                                       file_reason(tried));
                         rm_status = 1;
                 }
@@ -15421,7 +15015,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         {
                 if (!rm_force || tried != -ERROR_NO_ENTRY)
                 {
-                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                        string_format(log_error, "rm: cannot remove '%s': %s\n", shown,
                                       file_reason(tried));
                         rm_status = 1;
                 }
@@ -15434,7 +15028,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
             (facts.device_major != rm_device_major ||
              facts.device_minor != rm_device_minor))
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "rm: skipping '%s', since it's on a different device\n", shown);
                 rm_status = 1;
                 return false;
@@ -15449,7 +15043,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         {
                 if (depth == 0)
                 {
-                        string_format(file_fail, "rm: '%s' is nested too deep\n", shown);
+                        string_format(log_error, "rm: '%s' is nested too deep\n", shown);
                         rm_status = 1;
                         return false;
                 }
@@ -15465,7 +15059,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                 {
                         if (!rm_force || inside != -ERROR_NO_ENTRY)
                         {
-                                string_format(file_fail, "rm: cannot read '%s': %s\n", shown,
+                                string_format(log_error, "rm: cannot read '%s': %s\n", shown,
                                               file_reason(inside));
                                 rm_status = 1;
                         }
@@ -15482,7 +15076,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
                         if (looked < 0 || file_same_identity(address_of facts,
                                                              address_of rm_root))
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "rm: refusing to read '%s': %s\n", shown,
                                               looked < 0 ? file_reason(looked)
                                                          : (string_address) "preserved root directory");
@@ -15508,7 +15102,7 @@ static bool rm_tree(bipolar directory, string_address name, string_address shown
         {
                 if (!rm_force || gone != -ERROR_NO_ENTRY)
                 {
-                        string_format(file_fail, "rm: cannot remove '%s': %s\n", shown,
+                        string_format(log_error, "rm: cannot remove '%s': %s\n", shown,
                                       file_reason(gone));
                         rm_status = 1;
                 }
@@ -15574,11 +15168,8 @@ static b32 file_rm()
         {
                 bipolar looked = file_look_code(AT_FDCWD, "/", 0, address_of rm_root);
                 if (looked < 0)
-                {
-                        string_format(file_fail, "rm: cannot preserve '/': %s\n",
+                        return string_report(log_error, 1, "rm: cannot preserve '/': %s\n",
                                       file_reason(looked));
-                        return 1;
-                }
         }
 
         while (first < count)
@@ -15595,7 +15186,7 @@ static b32 file_rm()
                         // with the kernel's reason, as the reference rm does.
                         if (!rm_force || looked != -ERROR_NO_ENTRY)
                         {
-                                string_format(file_fail, "rm: cannot remove '%s': %s\n",
+                                string_format(log_error, "rm: cannot remove '%s': %s\n",
                                               path, file_reason(looked));
                                 rm_status = 1;
                         }
@@ -15608,15 +15199,15 @@ static b32 file_rm()
                 if (here && rm_preserve_root &&
                     file_same_identity(address_of facts, address_of rm_root))
                 {
-                        file_fail("rm: it is dangerous to operate recursively on '/'\n", 0);
-                        file_fail("rm: use --no-preserve-root to override this failsafe\n", 0);
+                        log_error("rm: it is dangerous to operate recursively on '/'\n", 0);
+                        log_error("rm: use --no-preserve-root to override this failsafe\n", 0);
                         rm_status = 1;
                         continue;
                 }
 
                 if (here && !rm_recursive && !rm_empty_directories)
                 {
-                        string_format(file_fail, "rm: cannot remove '%s': Is a directory\n",
+                        string_format(log_error, "rm: cannot remove '%s': Is a directory\n",
                                       path);
                         rm_status = 1;
                         continue;
@@ -15760,11 +15351,8 @@ static b32 file_touch()
                          !string_compare(which, "mtime"))
                         modify = true;
                 else
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "touch: invalid argument '%s' for '--time'\n", which);
-                        return 1;
-                }
         }
 
         string_address from = file_option_value(address_of taking, 'r');
@@ -15774,11 +15362,8 @@ static b32 file_touch()
                 file_facts facts;
 
                 if (!file_look_at(from, address_of facts))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "touch: failed to get attributes of '%s'\n", from);
-                        return 1;
-                }
 
                 file_times_of(address_of facts, times);
         }
@@ -15799,10 +15384,7 @@ static b32 file_touch()
                                                    from ? times[at + 1] : 0,
                                                    address_of seconds,
                                                    address_of fraction))
-                        {
-                                string_format(file_fail, "touch: invalid date format '%s'\n", written);
-                                return 1;
-                        }
+                                return string_report(log_error, 1, "touch: invalid date format '%s'\n", written);
                         times[at] = (p64)seconds;
                         times[at + 1] = fraction;
                 }
@@ -15814,20 +15396,14 @@ static b32 file_touch()
         {
                 b64 seconds;
                 if (!touch_stamp(older, file_now(), address_of seconds))
-                {
-                        string_format(file_fail, "touch: invalid date format '%s'\n", older);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "touch: invalid date format '%s'\n", older);
 
                 times[0] = times[2] = (p64)seconds;
                 times[1] = times[3] = 0;
         }
 
         if (first >= count)
-        {
-                file_fail("touch: missing file operand\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "touch: missing file operand\n");
 
         if (!access && !modify)
         {
@@ -15861,7 +15437,7 @@ static b32 file_touch()
 
                         if (made < 0)
                         {
-                                string_format(file_fail, "touch: cannot touch '%s': %s\n",
+                                string_format(log_error, "touch: cannot touch '%s': %s\n",
                                               path, file_reason(made));
                                 status = 1;
                                 continue;
@@ -15876,7 +15452,7 @@ static b32 file_touch()
 
                 if (done < 0)
                 {
-                        string_format(file_fail, "touch: setting times of '%s': %s\n",
+                        string_format(log_error, "touch: setting times of '%s': %s\n",
                                       path, file_reason(done));
                         status = 1;
                 }
@@ -16014,11 +15590,8 @@ static b32 file_sleep()
 
                 if (!sleep_read(program_argument((b32)i), address_of wanted[0],
                                 address_of wanted[1]))
-                {
-                        string_format(file_fail, "sleep: invalid time interval: %s\n",
+                        return string_report(log_error, 1, "sleep: invalid time interval: %s\n",
                                       program_argument((b32)i));
-                        return 1;
-                }
 
                 // A signal that arrives partway through leaves the remainder
                 // in the second timespec, and the sleep goes on from there.
@@ -16030,10 +15603,7 @@ static b32 file_sleep()
                                                (positive)left, (positive)left);
                 while (slept == -4);
                 if (slept < 0)
-                {
-                        string_format(file_fail, "sleep: %s\n", file_reason(slept));
-                        return 1;
-                }
+                        return string_report(log_error, 1, "sleep: %s\n", file_reason(slept));
         }
 
         return 0;
@@ -16058,21 +15628,15 @@ static b32 file_stty()
 {
         if (program_argument_count() != 2 ||
             !string_equals(program_argument(1), "size"))
-        {
-                file_fail("stty: only 'size' is supported\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "stty: only 'size' is supported\n");
 
         file_window_size size = {0, 0, 0, 0};
         bipolar answer = system_control(0, FILE_TIOCGWINSZ,
                                        address_of size);
 
         if (answer < 0)
-        {
-                string_format(file_fail, "stty: standard input: %s\n",
+                return string_report(log_error, 1, "stty: standard input: %s\n",
                               file_reason(answer));
-                return 1;
-        }
 
         positive_to_string(log, size.rows);
         log(" ", 1);
@@ -16103,11 +15667,8 @@ static b32 file_tty()
                 return 2;
 
         if (file_simple_operand_count)
-        {
-                string_format(file_fail, "tty: extra operand '%s'\n",
+                return string_report(log_error, 2, "tty: extra operand '%s'\n",
                               file_simple_operand_list[0]);
-                return 2;
-        }
 
         if (taking.flags & FILE_FLAG('s'))
                 return stream_is_terminal(0) ? 0 : 1;
@@ -16123,11 +15684,8 @@ static b32 file_tty()
         }
 
         if (length < 0)
-        {
-                string_format(file_fail, "tty: ttyname error: %s\n",
+                return string_report(log_error, 4, "tty: ttyname error: %s\n",
                               file_reason(length));
-                return 4;
-        }
 
         file_line(path);
         log_flush();
@@ -16489,22 +16047,16 @@ static b32 file_seq()
         positive given = count - index;
 
         if (given < 1 || given > 3)
-        {
-                file_fail("seq: needs one, two or three numbers\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "seq: needs one, two or three numbers\n");
 
         if (pad && format_text)
-        {
-                file_fail("seq: a format cannot be combined with equal width\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "seq: a format cannot be combined with equal width\n");
 
         seq_format format = {.text = "", .flags = CONVERSION_FLAG_ZERO};
 
         if (format_text && !seq_format_read(format_text, address_of format))
         {
-                file_fail("seq: format needs exactly one %f conversion\n", 0);
+                log_error("seq: format needs exactly one %f conversion\n", 0);
                 return 1;
         }
 
@@ -16513,11 +16065,8 @@ static b32 file_seq()
         for (positive i = 0; i < given; i++)
                 if (!seq_decimal_number(program_argument((b32)(index + i)),
                                          address_of number[i]))
-                {
-                        string_format(file_fail, "seq: invalid number: %s\n",
+                        return string_report(log_error, 1, "seq: invalid number: %s\n",
                                       program_argument((b32)(index + i)));
-                        return 1;
-                }
 
         seq_decimal first = given == 1 ? (seq_decimal){1} : number[0];
         seq_decimal step = given == 3 ? number[1] : (seq_decimal){1};
@@ -16528,16 +16077,10 @@ static b32 file_seq()
         if (!seq_decimal_rescale(address_of first, scale) ||
             !seq_decimal_rescale(address_of step, scale) ||
             !seq_decimal_rescale(address_of last, scale))
-        {
-                file_fail("seq: decimal range is too large\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "seq: decimal range is too large\n");
 
         if (!step.coefficient)
-        {
-                file_fail("seq: increment must not be zero\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "seq: increment must not be zero\n");
 
         if (!format_text)
                 format.precision = precision;
@@ -16678,10 +16221,7 @@ static b32 file_yes()
                         positive space = i > first;
 
                         if (have > positive_max - length - space)
-                        {
-                                file_fail("yes: arguments are too large\n", 0);
-                                return 1;
-                        }
+                                return string_report(log_error, 1, "yes: arguments are too large\n");
 
                         length += space + have;
                 }
@@ -16690,10 +16230,7 @@ static b32 file_yes()
         positive mapped = (positive)memory(length);
 
         if (!mapped || system_failed(mapped))
-        {
-                file_fail("yes: out of memory\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "yes: out of memory\n");
 
         p8 address_to line = (p8 address_to)mapped;
         positive used = 0;
@@ -16812,10 +16349,7 @@ static bool env_put(string_address entry)
         }
 
         if (!shell_array_room(env_list, env_room, env_have + 2))
-        {
-                file_fail("env: environment is too large\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "env: environment is too large\n");
 
         env_list[env_have++] = entry;
         return true;
@@ -16834,10 +16368,7 @@ static bool env_seen(p8 letter, string_address value)
                 return true;
 
         if (!shell_array_room(env_dropped, env_dropped_room, env_drops + 1))
-        {
-                file_fail("env: unset list is too large\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "env: unset list is too large\n");
 
         env_dropped[env_drops++] = value;
 
@@ -16871,10 +16402,7 @@ static bool env_split(string_address text, positive address_to have)
                 p8 letter = string_get(text + j);
 
                 if (letter == '"' || letter == '\'' || letter == '\\' || letter == '$')
-                {
-                        file_fail("env: -S here cuts at spaces and reads nothing else\n", 0);
-                        return false;
-                }
+                        return string_report(log_error, false, "env: -S here cuts at spaces and reads nothing else\n");
         }
 
         /*
@@ -16884,10 +16412,7 @@ static bool env_split(string_address text, positive address_to have)
         */
         if (!shell_array_room(env_split_store, env_split_room, length + 1) ||
             !shell_array_room(env_words, env_words_room, given + length / 2 + 2))
-        {
-                file_fail("env: split string is too large\n", 0);
-                return false;
-        }
+                return string_report(log_error, false, "env: split string is too large\n");
 
         while (string_get(text + i))
         {
@@ -16929,7 +16454,7 @@ static b32 file_env()
                 return 125;
 
         if (taking.flags & (FILE_FLAG('b') | FILE_FLAG('d') | FILE_FLAG('g')))
-                file_fail("env: the signal options are taken here and change nothing\n", 0);
+                log_error("env: the signal options are taken here and change nothing\n", 0);
 
         positive index = taking.first;
         positive count = (positive)program_argument_count();
@@ -16967,10 +16492,7 @@ static b32 file_env()
                 return 125;
 
         if (!shell_array_room(env_words, env_words_room, have + count - index + 1))
-        {
-                file_fail("env: argument list is too large\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "env: argument list is too large\n");
 
         while (index < count)
                 env_words[have++] = program_argument((b32)index++);
@@ -16998,16 +16520,10 @@ static b32 file_env()
                 // printing the environment is not running something; there is
                 // nothing to do with either of them but say so.
                 if (where)
-                {
-                        file_fail("env: must specify command with --chdir (-C)\n", 0);
-                        return 125;
-                }
+                        return string_report(log_error, 125, "env: must specify command with --chdir (-C)\n");
 
                 if (file_option_value(address_of taking, 'a'))
-                {
-                        file_fail("env: must specify command with --argv0 (-a)\n", 0);
-                        return 125;
-                }
+                        return string_report(log_error, 125, "env: must specify command with --argv0 (-a)\n");
 
                 bool zero = (taking.flags & FILE_FLAG('0')) != 0;
 
@@ -17019,10 +16535,7 @@ static b32 file_env()
         }
 
         if (where && system_change_directory(where) < 0)
-        {
-                string_format(file_fail, "env: cannot change directory to %s\n", where);
-                return 125;
-        }
+                return string_report(log_error, 125, "env: cannot change directory to %s\n", where);
 
         string_address address_to arguments = env_words + at;
         string_address name = env_words[at];
@@ -17044,7 +16557,7 @@ static b32 file_env()
         bipolar answer =
             file_exec_path_try_in(name, arguments, env_list, path);
 
-        string_format(file_fail, "env: '%s': %s\n", name,
+        string_format(log_error, "env: '%s': %s\n", name,
                       answer == -ERROR_ACCESS ? "Permission denied"
                                               : "No such file or directory");
 
@@ -17344,22 +16857,13 @@ static b32 file_id()
         // empty answer would read as a process that has no context rather
         // than as a tool with nothing to say about it.
         if (flags & FILE_FLAG('Z'))
-        {
-                file_fail("id: --context (-Z) works only on an SELinux-enabled kernel\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "id: --context (-Z) works only on an SELinux-enabled kernel\n");
 
         if ((names || real) && !one)
-        {
-                file_fail("id: printing only names or real IDs requires -u, -g, or -G\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "id: printing only names or real IDs requires -u, -g, or -G\n");
 
         if (zero && !one)
-        {
-                file_fail("id: option --zero not permitted in default format\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "id: option --zero not permitted in default format\n");
 
         positive first = taking.first;
         positive count = (positive)program_argument_count();
@@ -17376,7 +16880,7 @@ static b32 file_id()
 
                         if (user < 0 || group < 0)
                         {
-                                string_format(file_fail, "id: '%s': no such user\n", who);
+                                string_format(log_error, "id: '%s': no such user\n", who);
                                 status = 1;
                                 continue;
                         }
@@ -17386,7 +16890,7 @@ static b32 file_id()
                         if (!id_groups_named(who, (positive)group,
                                              address_of have))
                         {
-                                file_fail("id: group list is too large\n", 0);
+                                log_error("id: group list is too large\n", 0);
                                 status = 1;
                                 continue;
                         }
@@ -17414,10 +16918,7 @@ static b32 file_id()
         positive have;
 
         if (!id_groups_process(group, group, address_of have))
-        {
-                file_fail("id: failed to get groups for the current process\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "id: failed to get groups for the current process\n");
 
         id_written(user, group, file_id_scratch, have, flags, names, zero);
 
@@ -17440,7 +16941,7 @@ static bool groups_written(positive have)
 
                 if (!file_account_label(file_id_scratch[i], true, true, text))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "groups: cannot find name for group ID %p\n",
                                       (positive)file_id_scratch[i]);
                         known = false;
@@ -17475,11 +16976,7 @@ static b32 file_groups()
                 positive effective = (positive)system_call(syscall(getegid));
 
                 if (!id_groups_process(real, effective, address_of have))
-                {
-                        file_fail("groups: failed to get groups for the current process\n",
-                                  0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "groups: failed to get groups for the current process\n");
 
                 status = groups_written(have) ? 0 : 1;
         }
@@ -17493,7 +16990,7 @@ static b32 file_groups()
 
                         if (user < 0 || group < 0)
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "groups: '%s': no such user\n", who);
                                 status = 1;
                                 continue;
@@ -17502,7 +16999,7 @@ static b32 file_groups()
                         if (!id_groups_named(who, (positive)group,
                                              address_of have))
                         {
-                                file_fail("groups: group list is too large\n", 0);
+                                log_error("groups: group list is too large\n", 0);
                                 status = 1;
                                 continue;
                         }
@@ -17533,21 +17030,15 @@ static b32 file_whoami()
                 return 1;
 
         if (file_simple_operand_count)
-        {
-                string_format(file_fail, "whoami: extra operand '%s'\n",
+                return string_report(log_error, 1, "whoami: extra operand '%s'\n",
                               file_simple_operand_list[0]);
-                return 1;
-        }
 
         positive user = (positive)system_call(syscall(geteuid));
         p8 name[FILE_NAME_MAX];
 
         if (!file_user_name(user, name, FILE_NAME_MAX))
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "whoami: cannot find name for user ID %p\n", user);
-                return 1;
-        }
 
         file_line(name);
         log_flush();
@@ -17708,11 +17199,8 @@ static b32 file_logname()
                 return 1;
 
         if (file_simple_operand_count)
-        {
-                string_format(file_fail, "logname: extra operand '%s'\n",
+                return string_report(log_error, 1, "logname: extra operand '%s'\n",
                               file_simple_operand_list[0]);
-                return 1;
-        }
 
         p8 loginuid[32];
         positive user = positive_max;
@@ -17745,10 +17233,7 @@ static b32 file_logname()
         }
 
         if (!found)
-        {
-                file_fail("logname: no login name\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "logname: no login name\n");
 
         file_line(name);
         log_flush();
@@ -17775,10 +17260,7 @@ static b32 file_hostname()
         memory_fill(address_of facts, 0, sizeof(facts));
 
         if (system_call_1(syscall(uname), (positive)address_of facts) < 0)
-        {
-                file_fail("hostname: cannot read system name\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "hostname: cannot read system name\n");
 
         if (taking.flags & FILE_FLAG('s'))
         {
@@ -17838,10 +17320,7 @@ static b32 file_uname()
         memory_fill(address_of facts, 0, sizeof(facts));
 
         if (system_call_1(syscall(uname), (positive)address_of facts) < 0)
-        {
-                file_fail("uname: cannot read system name\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "uname: cannot read system name\n");
 
         /*
                 Every field uname answers with, in the order -a writes them.
@@ -18222,21 +17701,15 @@ static b32 file_nproc()
                 return 1;
 
         if (file_simple_operand_count)
-        {
-                string_format(file_fail, "nproc: extra operand '%s'\n",
+                return string_report(log_error, 1, "nproc: extra operand '%s'\n",
                               file_simple_operand_list[0]);
-                return 1;
-        }
 
         positive ignore = 0;
         string_address ignored = file_option_value(address_of taking, 'i');
 
         if (ignored &&
             !nproc_decimal(ignored, true, false, false, address_of ignore))
-        {
-                string_format(file_fail, "nproc: invalid number: '%s'\n", ignored);
-                return 1;
-        }
+                return string_report(log_error, 1, "nproc: invalid number: '%s'\n", ignored);
 
         bool all = (taking.flags & FILE_FLAG('a')) != 0;
         positive count;
@@ -18377,10 +17850,7 @@ static b32 file_mktemp()
                 base = file_option_value(address_of taking, 'p');
 
         if (mktemp_extra_template)
-        {
-                file_fail("mktemp: too many templates\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "mktemp: too many templates\n");
 
         if (!template)
         {
@@ -18399,10 +17869,7 @@ static b32 file_mktemp()
                 length = string_length(base);
 
                 if (length > FILE_PATH_MAX - 2)
-                {
-                        file_fail("mktemp: template too long\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "mktemp: template too long\n");
 
                 memory_copy_apart(path, base, length);
 
@@ -18417,10 +17884,7 @@ static b32 file_mktemp()
         positive added = (positive)(stopped - (path + length));
 
         if (string_get(template + added))
-        {
-                file_fail("mktemp: template too long\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "mktemp: template too long\n");
 
         length += added;
 
@@ -18429,13 +17893,11 @@ static b32 file_mktemp()
         if (suffix && (string_first_of(suffix, '/') || !length ||
                        path[length - 1] != 'X'))
         {
-                file_fail(string_first_of(suffix, '/')
+                return string_report(log_error, 1, string_first_of(suffix, '/')
                               ? (string_address)
                                     "mktemp: suffix may not contain a slash\n"
                               : (string_address)
-                                    "mktemp: with --suffix, template must end in X\n",
-                          0);
-                return 1;
+                                    "mktemp: with --suffix, template must end in X\n");
         }
 
         // Only the template's own bytes are looked at for the run: a
@@ -18456,21 +17918,15 @@ static b32 file_mktemp()
                 positive suffix_length = string_length(suffix);
 
                 if (suffix_length > FILE_PATH_MAX - 1 - length)
-                {
-                        file_fail("mktemp: template too long\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "mktemp: template too long\n");
 
                 memory_copy_apart_end(path + length, suffix, suffix_length);
                 length += suffix_length;
         }
 
         if (marks < MKTEMP_LEAST)
-        {
-                string_format(file_fail, "mktemp: too few X's in template '%s'\n",
+                return string_report(log_error, 1, "mktemp: too few X's in template '%s'\n",
                               template);
-                return 1;
-        }
 
         for (positive attempt = 0; attempt < MKTEMP_ATTEMPTS; attempt++)
         {
@@ -18504,7 +17960,7 @@ static b32 file_mktemp()
                 if (answer != -ERROR_EXISTS)
                 {
                         if (!quiet)
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "mktemp: failed to create %s via template '%s'\n",
                                               directory ? "directory" : "file",
                                               template);
@@ -18521,7 +17977,7 @@ static b32 file_mktemp()
         }
 
         if (!quiet)
-                string_format(file_fail,
+                string_format(log_error,
                               "mktemp: failed to create %s via template '%s'\n",
                               directory ? "directory" : "file", template);
 
@@ -18650,10 +18106,7 @@ static b32 kill_list(positive count, positive index)
                 positive number;
 
                 if (!string_digits_exact(word, address_of number))
-                {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
-                }
+                        return string_report(log_error, 2, "kill: Illegal number: %s\n", word);
 
                 // A status carries the signal that ended a process in its low
                 // seven bits, which is what a caller of -l usually has.
@@ -18661,10 +18114,7 @@ static b32 kill_list(positive count, positive index)
                         number -= 128;
 
                 if (!number || number > KILL_MOST)
-                {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
-                }
+                        return string_report(log_error, 2, "kill: Illegal number: %s\n", word);
 
                 kill_name(number, name);
                 file_line(name);
@@ -18700,10 +18150,7 @@ static b32 file_kill()
                 if (string_is(argument + 1, 's') && string_is(argument + 2, end))
                 {
                         if (index + 1 >= count)
-                        {
-                                file_fail("kill: -s needs a signal\n", 0);
-                                return 2;
-                        }
+                                return string_report(log_error, 2, "kill: -s needs a signal\n");
 
                         number = kill_number(program_argument((b32)(index + 1)));
                         index += 2;
@@ -18715,10 +18162,7 @@ static b32 file_kill()
                 }
 
                 if (number < 0 || number > KILL_MOST)
-                {
-                        string_format(file_fail, "kill: invalid signal: %s\n", argument);
-                        return 2;
-                }
+                        return string_report(log_error, 2, "kill: invalid signal: %s\n", argument);
 
                 // One signal and no more, or a negative process group would be
                 // read as a second one.
@@ -18726,10 +18170,7 @@ static b32 file_kill()
         }
 
         if (index >= count)
-        {
-                file_fail("kill: usage: kill [-s signal | -signal] pid ...\n", 0);
-                return 2;
-        }
+                return string_report(log_error, 2, "kill: usage: kill [-s signal | -signal] pid ...\n");
 
         while (index < count)
         {
@@ -18740,14 +18181,11 @@ static b32 file_kill()
                 // not accept a leading plus on a process id.
                 bipolar who = string_bipolar(word, address_of used);
                 if (string_is(word, '+') || !used || string_get(word + used))
-                {
-                        string_format(file_fail, "kill: Illegal number: %s\n", word);
-                        return 2;
-                }
+                        return string_report(log_error, 2, "kill: Illegal number: %s\n", word);
 
                 if (system_call_2(syscall(kill), (positive)who, (positive)number) < 0)
                 {
-                        string_format(file_fail, "kill: (%s) - No such process\n", word);
+                        string_format(log_error, "kill: (%s) - No such process\n", word);
                         answer = 1;
                 }
         }
@@ -18917,23 +18355,12 @@ static b32 file_rename()
                       "  -o no-overwrite  -i interactive", log))
                 return 0;
         if (file_operand_count < 3)
-        {
-                file_fail("rename: not enough arguments\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "rename: not enough arguments\n");
         if ((taking.flags & FILE_FLAG('a')) &&
             (taking.flags & FILE_FLAG('l')))
-        {
-                file_fail("rename: options --all and --last cannot be combined\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "rename: options --all and --last cannot be combined\n");
         if (taking.flags & FILE_FLAG('s'))
-        {
-                file_fail("rename: symlink-target rewriting is not supported\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "rename: symlink-target rewriting is not supported\n");
 
         string_address before = file_operand_at(0);
         string_address after = file_operand_at(1);
@@ -18958,7 +18385,7 @@ static b32 file_rename()
                         continue;
                 if (made == 2)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "rename: new name for '%s' is too long\n",
                                       source);
                         failed = true;
@@ -18988,7 +18415,7 @@ static b32 file_rename()
                         {
                                 if (no_overwrite && answer == -ERROR_EXISTS)
                                         continue;
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "rename: %s: rename to %s failed: %s\n",
                                               source, destination,
                                               file_reason(answer));
@@ -19266,25 +18693,18 @@ static b32 file_cal()
 
         if (!file_take(address_of taking) || file_operand_failed)
                 return 1;
-        if (file_meta(address_of taking, "[-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]", file_fail))
+        if (file_meta(address_of taking, "[-1|-3|-y|-Y] [-n MONTHS] [-Ssmj] [[MONTH] YEAR]", log_error))
                 return 0;
         if (taking.flags & (FILE_FLAG('w') | FILE_FLAG('v') |
                             FILE_FLAG('c')))
-        {
-                file_fail("cal: week numbers, vertical layout and custom columns are unsupported\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: week numbers, vertical layout and custom columns are unsupported\n");
 
         string_address color = file_option_value(address_of taking, 'C');
         if (taking.flags & FILE_FLAG('C'))
         {
                 if ((taking.bare & FILE_FLAG('C')) || !color ||
                     string_compare(color, (string_address)"never"))
-                {
-                        file_fail("cal: only --color=never is supported\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "cal: only --color=never is supported\n");
         }
 
         bool proleptic = false;
@@ -19299,30 +18719,20 @@ static b32 file_cal()
                 else if (!string_compare(reform, (string_address)"1752"))
                         proleptic = false;
                 else
-                {
-                        file_fail("cal: only the 1752 and Gregorian reforms are supported\n",
-                                  0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "cal: only the 1752 and Gregorian reforms are supported\n");
         }
 
         time_t now = (time_t)file_now();
         tm broken;
         if (!localtime_r(address_of now, address_of broken))
-        {
-                file_fail("cal: cannot read the current calendar date\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: cannot read the current calendar date\n");
         b64 year = (b64)broken.tm_year + 1900;
         positive month = (positive)broken.tm_mon + 1;
         positive selected_day = 1;
         bool year_only = false;
 
         if (file_operand_count > 3)
-        {
-                file_fail("cal: too many operands\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: too many operands\n");
         if (file_operand_count == 1)
         {
                 string_address word = file_operand_at(0);
@@ -19331,10 +18741,7 @@ static b32 file_cal()
                 if (string_digits_exact(word, address_of number))
                 {
                         if (!number || number > 2147483646U)
-                        {
-                                file_fail("cal: illegal year value\n", 0);
-                                return 1;
-                        }
+                                return string_report(log_error, 1, "cal: illegal year value\n");
                         year = (b64)number;
                         year_only = true;
                 }
@@ -19347,12 +18754,9 @@ static b32 file_cal()
                         if (!file_moment_read_exact(word, (b64)now,
                                                     address_of stamp,
                                                     address_of nanoseconds))
-                        {
-                                string_format(file_fail,
+                                return string_report(log_error, 1,
                                               "cal: cannot parse date '%s'\n",
                                               word);
-                                return 1;
-                        }
                         positive hour, minute, second;
                         file_split_moment(stamp, address_of year,
                                           address_of month,
@@ -19367,17 +18771,11 @@ static b32 file_cal()
                     file_operand_at(file_operand_count == 2 ? 0 : 1));
                 positive parsed_year;
                 if (named < 1)
-                {
-                        file_fail("cal: illegal month value: use 1-12\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "cal: illegal month value: use 1-12\n");
                 if (!string_digits_exact(file_operand_at(file_operand_count - 1),
                                 address_of parsed_year) || !parsed_year ||
                     parsed_year > 2147483646U)
-                {
-                        file_fail("cal: illegal year value\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "cal: illegal year value\n");
                 month = (positive)named;
                 year = parsed_year;
                 if (file_operand_count == 3 &&
@@ -19385,10 +18783,7 @@ static b32 file_cal()
                      !selected_day ||
                      selected_day > cal_days_in_month(year, month,
                                                        proleptic)))
-                {
-                        file_fail("cal: illegal day value\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "cal: illegal day value\n");
         }
 
         bool monday = week_start == 'm';
@@ -19403,25 +18798,15 @@ static b32 file_cal()
         bool months_given = months_text != null;
 
         if (months_given && !string_digits_exact(months_text, address_of months))
-        {
-                file_fail("cal: invalid month count\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: invalid month count\n");
         if (!months)
                 months = 1;
         if ((p64)months > 25769803776ULL)
-        {
-                file_fail("cal: requested calendar range is out of bounds\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: requested calendar range is out of bounds\n");
         if ((whole_year && (three || months_given || one || twelve)) ||
             (three && (months_given || twelve)) ||
             (one && (three || months_given || twelve)))
-        {
-                file_fail("cal: conflicting calendar range options are unsupported\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: conflicting calendar range options are unsupported\n");
 
         b64 first = (year - 1) * 12 + (b64)month - 1;
         bool year_layout = whole_year ||
@@ -19456,10 +18841,7 @@ static b32 file_cal()
         cal_month_at(first + (b64)months - 1,
                      address_of last_year, address_of last_month);
         if (first_year < 0 || last_year > 2147483647)
-        {
-                file_fail("cal: requested calendar range is out of bounds\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "cal: requested calendar range is out of bounds\n");
 
         positive width = julian ? CAL_JULIAN_WIDTH : CAL_NORMAL_WIDTH;
         if (year_layout)
@@ -19571,12 +18953,9 @@ static b32 file_date()
                 else if (!string_compare(precision, "seconds"))
                         iso = (string_address) "%Y-%m-%dT%H:%M:%S+00:00";
                 else
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "date: invalid argument '%s' for '--iso-8601'\n",
                                       precision);
-                        return 1;
-                }
         }
 
         if (index < count)
@@ -19584,20 +18963,14 @@ static b32 file_date()
                 string_address argument = program_argument((b32)index++);
 
                 if (!string_is(argument, '+'))
-                {
-                        string_format(file_fail, "date: cannot set the date: %s\n",
+                        return string_report(log_error, 1, "date: cannot set the date: %s\n",
                                       argument);
-                        return 1;
-                }
 
                 format = argument + 1;
         }
 
         if (index < count)
-        {
-                file_fail("date: too many operands\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "date: too many operands\n");
 
         if (of_file)
         {
@@ -19605,21 +18978,15 @@ static b32 file_date()
                 bipolar looked = file_look_code(AT_FDCWD, of_file, 0, address_of facts);
 
                 if (looked < 0)
-                {
-                        string_format(file_fail, "date: %s: %s\n", of_file,
+                        return string_report(log_error, 1, "date: %s: %s\n", of_file,
                                       file_reason(looked));
-                        return 1;
-                }
 
                 when = (b64)facts.modified.seconds;
         }
         else if (given)
         {
                 if (!file_moment_read(given, file_now(), address_of when))
-                {
-                        string_format(file_fail, "date: invalid date '%s'\n", given);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "date: invalid date '%s'\n", given);
         }
         else
                 when = file_now();
@@ -19630,10 +18997,7 @@ static b32 file_date()
                                : (string_address) "%a %b %e %H:%M:%S %Z %Y";
 
         if (!date_shape(log, when, format))
-        {
-                file_fail("date: formatted value is too large\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "date: formatted value is too large\n");
 
         log("\n", 1);
         log_flush();
@@ -19748,12 +19112,12 @@ static bipolar xargs_execute(string_address address_to words,
                 for (positive i = 0; i < word_count; i++)
                 {
                         if (i)
-                                file_fail(" ", 1);
+                                log_error(" ", 1);
 
-                        file_fail(words[i], 0);
+                        log_error(words[i], 0);
                 }
 
-                file_fail("\n", 1);
+                log_error("\n", 1);
         }
 
         log_flush();
@@ -19848,7 +19212,7 @@ static bool xargs_execute_range(positive first, positive count)
         {
                 if (xargs_replace || count <= 1)
                 {
-                        file_fail("xargs: argument list too long\n", 0);
+                        log_error("xargs: argument list too long\n", 0);
                         xargs_answer = 1;
                         xargs_done = true;
                         return false;
@@ -19862,7 +19226,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_SYSTEM)
         {
-                file_fail("xargs: cannot fork or execute\n", 0);
+                log_error("xargs: cannot fork or execute\n", 0);
                 xargs_answer = 125;
                 xargs_done = true;
                 return false;
@@ -19870,7 +19234,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == XARGS_EXEC_SIGNAL)
         {
-                string_format(file_fail, "xargs: %s: terminated by a signal\n",
+                string_format(log_error, "xargs: %s: terminated by a signal\n",
                               command);
                 xargs_answer = 125;
                 xargs_done = true;
@@ -19882,7 +19246,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code < 0)
         {
-                string_format(file_fail, "xargs: failed to run command '%s'\n",
+                string_format(log_error, "xargs: failed to run command '%s'\n",
                               command);
                 xargs_answer = code == -ERROR_ACCESS ? 126 : 127;
                 xargs_done = true;
@@ -19891,7 +19255,7 @@ static bool xargs_execute_range(positive first, positive count)
 
         if (code == 255)
         {
-                string_format(file_fail, "xargs: %s: exited with status 255; aborting\n",
+                string_format(log_error, "xargs: %s: exited with status 255; aborting\n",
                               command);
                 xargs_answer = 124;
                 xargs_done = true;
@@ -19983,7 +19347,7 @@ static fn xargs_item_done()
 {
         if (xargs_item_broken)
         {
-                file_fail("xargs: argument line too long\n", 0);
+                log_error("xargs: argument line too long\n", 0);
                 xargs_answer = 1;
                 xargs_done = true;
                 return;
@@ -20002,7 +19366,7 @@ static fn xargs_item_done()
         {
                 if (!xargs_replaced(xargs_item))
                 {
-                        file_fail("xargs: argument list too long\n", 0);
+                        log_error("xargs: argument list too long\n", 0);
                         xargs_answer = 1;
                         xargs_done = true;
                         return;
@@ -20028,7 +19392,7 @@ static fn xargs_item_done()
 
         if (!xargs_add(xargs_item, xargs_item_length))
         {
-                file_fail("xargs: argument list too long\n", 0);
+                log_error("xargs: argument list too long\n", 0);
                 xargs_answer = 1;
                 xargs_done = true;
                 return;
@@ -20101,18 +19465,12 @@ static b32 file_xargs()
         if ((taking.flags & FILE_FLAG('n')) &&
             !xargs_count_value(file_option_value(address_of taking, 'n'),
                                address_of xargs_most))
-        {
-                file_fail("xargs: invalid number for -n\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "xargs: invalid number for -n\n");
 
         if ((taking.flags & FILE_FLAG('L')) &&
             !xargs_count_value(file_option_value(address_of taking, 'L'),
                                address_of xargs_lines))
-        {
-                file_fail("xargs: invalid number for -L\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "xargs: invalid number for -L\n");
 
         if (!xargs_replace && (taking.flags & FILE_FLAG('i')))
                 xargs_replace = "{}";
@@ -20131,20 +19489,14 @@ static b32 file_xargs()
                 string_address word = program_argument((b32)index++);
 
                 if (!xargs_add(word, string_length(word)))
-                {
-                        file_fail("xargs: command too long\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "xargs: command too long\n");
         }
 
         xargs_prefix_bytes = xargs_used;
         xargs_prefix_words = xargs_word_count;
 
         if (!xargs_keep_template())
-        {
-                file_fail("xargs: command too long\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "xargs: command too long\n");
 
         xargs_item = (p8 address_to)text_arena_take(XARGS_BATCH_BYTES + 1);
         xargs_buffer = (p8 address_to)text_arena_take(XARGS_READ_BYTES);
@@ -20162,7 +19514,7 @@ static b32 file_xargs()
 
                 if (got < 0)
                 {
-                        file_fail("xargs: read error\n", 0);
+                        log_error("xargs: read error\n", 0);
                         xargs_answer = 1;
                         break;
                 }
@@ -20304,10 +19656,7 @@ static b32 file_xargs()
         }
 
         if (quote)
-        {
-                file_fail("xargs: unmatched quote\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "xargs: unmatched quote\n");
 
         if (started && !xargs_done && !xargs_ended)
         {

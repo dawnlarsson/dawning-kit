@@ -451,8 +451,7 @@ static b32 storage_mount_fstab_record(string_address program,
             (extra && !storage_options_merge(address_of options, extra)))
         {
                 storage_options_free(address_of options);
-                string_format(diagnostic, "%s: no memory\n", program);
-                return 1;
+                return string_report(diagnostic, 1, "%s: no memory\n", program);
         }
 
         /* With one fstab operand, util-linux treats a single positive -t as
@@ -954,10 +953,7 @@ static b32 storage_umount_recursive(writer diagnostic, string_address program,
                 }
         }
         if (!found)
-        {
-                string_format(diagnostic, "%s: %s: not found\n", program, root);
-                return 1;
-        }
+                return string_report(diagnostic, 1, "%s: %s: not found\n", program, root);
         return failed;
 }
 

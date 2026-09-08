@@ -19,9 +19,8 @@ static b32 process_tool_exec_environment(
         bipolar answer = file_exec_path_try_in(words[0], words, environment,
                                                path);
 
-        string_format(file_fail, "%s: failed to run command '%s': %s\n",
+        return string_report(log_error, answer == -ERROR_NO_ENTRY ? 127 : 126, "%s: failed to run command '%s': %s\n",
                       program, words[0], file_reason(answer));
-        return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
 static b32 process_tool_exec(string_address program,
@@ -334,11 +333,7 @@ static bool stdbuf_mode(string_address text, bool input,
         if (string_is(text, 'L') && !string_get(text + 1))
         {
                 if (input)
-                {
-                        file_fail("stdbuf: line buffering stdin is meaningless\n",
-                                  0);
-                        return false;
-                }
+                        return string_report(log_error, false, "stdbuf: line buffering stdin is meaningless\n");
 
                 assignment[10] = 'L';
                 assignment[11] = end;
@@ -396,8 +391,7 @@ static bool stdbuf_mode(string_address text, bool input,
         return true;
 
 invalid:
-        string_format(file_fail, "stdbuf: invalid mode '%s'\n", text);
-        return false;
+        return string_report(log_error, false, "stdbuf: invalid mode '%s'\n", text);
 }
 
 static bool stdbuf_preload(string_address library)
@@ -446,16 +440,9 @@ static b32 process_stdbuf()
         positive count = (positive)program_argument_count();
 
         if (!modes)
-        {
-                file_fail("stdbuf: you must specify a buffering mode option\n",
-                          0);
-                return 125;
-        }
+                return string_report(log_error, 125, "stdbuf: you must specify a buffering mode option\n");
         if (taking.first >= count)
-        {
-                file_fail("stdbuf: missing operand\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "stdbuf: missing operand\n");
 
         bool input = (modes & FILE_FLAG('i')) == 0 ||
                      stdbuf_mode(file_option_value(address_of taking, 'i'),
@@ -487,30 +474,17 @@ static b32 process_stdbuf()
             (string_address) "MOONWATER_STDBUF_LIBRARY");
 
         if (!stdbuf_find_library(has_bowl_root ? bowl_root : null))
-        {
-                if (forced)
-                        string_format(file_fail,
-                                      "stdbuf: '%s' is not a compatible libstdbuf.so\n",
-                                      forced);
-                else
-                        file_fail("stdbuf: no compatible libstdbuf.so found in the native or Bowl roots\n",
-                                  0);
-                return 125;
-        }
+                return string_report(log_error, 125, forced
+                    ? "stdbuf: '%s' is not a compatible libstdbuf.so\n"
+                    : "stdbuf: no compatible libstdbuf.so found in the native or Bowl roots\n",
+                    forced);
 
         if (target_found && stdbuf_target_kind(target) == STDBUF_ELF_STATIC)
-        {
-                string_format(file_fail,
-                              "stdbuf: '%s' is statically linked; preload buffering cannot apply\n",
+                return string_report(log_error, 125, "stdbuf: '%s' is statically linked; preload buffering cannot apply\n",
                               words[0]);
-                return 125;
-        }
 
         if (!stdbuf_preload(stdbuf_library))
-        {
-                file_fail("stdbuf: environment is too large\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "stdbuf: environment is too large\n");
 
         env_have = 0;
         string_address address_to inherited = file_environment_all();
@@ -556,10 +530,7 @@ static b32 process_chroot()
         if (!file_take(address_of taking))
                 return 125;
         if (taking.first >= count)
-        {
-                file_fail("chroot: missing operand\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "chroot: missing operand\n");
 
         string_address root = program_argument((b32)taking.first++);
 
@@ -575,29 +546,20 @@ static b32 process_chroot()
                     !file_look_at((string_address) "/", address_of current) ||
                     !file_same_identity(address_of requested,
                                         address_of current))
-                {
-                        file_fail("chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n",
-                                  0);
-                        return 125;
-                }
+                        return string_report(log_error, 125,
+                            "chroot: option --skip-chdir only permitted if NEWROOT is old '/'\n");
         }
 
         bipolar changed = system_call_1(syscall(chroot), (positive)root);
 
         if (changed < 0)
-        {
-                string_format(file_fail, "chroot: cannot change root directory to '%s': %s\n",
+                return string_report(log_error, 125, "chroot: cannot change root directory to '%s': %s\n",
                               root, file_reason(changed));
-                return 125;
-        }
 
         if (!(taking.flags & FILE_FLAG('k')) &&
             (changed = system_change_directory((string_address) "/")) < 0)
-        {
-                string_format(file_fail, "chroot: cannot chdir to root directory: %s\n",
+                return string_report(log_error, 125, "chroot: cannot chdir to root directory: %s\n",
                               file_reason(changed));
-                return 125;
-        }
 
         if (taking.first < count)
                 return process_tool_exec((string_address) "chroot",
@@ -626,11 +588,8 @@ static bool process_nohup_duplicate(bipolar from, b32 to,
         bipolar answer = system_duplicate((b32)from, to, 0);
 
         if (answer < 0)
-        {
-                string_format(file_fail, "nohup: cannot redirect %s: %s\n",
+                return string_report(log_error, false, "nohup: cannot redirect %s: %s\n",
                               what, file_reason(answer));
-                return false;
-        }
 
         return true;
 }
@@ -669,10 +628,7 @@ static b32 process_nohup()
         if (!file_take(address_of taking))
                 return 125;
         if (taking.first >= count)
-        {
-                file_fail("nohup: missing operand\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "nohup: missing operand\n");
 
         bool input_terminal = stream_is_terminal(0);
         bool output_terminal = stream_is_terminal(1);
@@ -687,11 +643,8 @@ static b32 process_nohup()
                     (string_address) "/dev/null", FILE_READ | O_CLOEXEC);
 
                 if (null_input < 0)
-                {
-                        string_format(file_fail, "nohup: failed to open '/dev/null': %s\n",
+                        return string_report(log_error, 125, "nohup: failed to open '/dev/null': %s\n",
                                       file_reason(null_input));
-                        return 125;
-                }
         }
 
         if (output_terminal)
@@ -702,20 +655,19 @@ static b32 process_nohup()
                 {
                         if (null_input >= 0)
                                 system_close(null_input);
-                        string_format(file_fail, "nohup: failed to open 'nohup.out': %s\n",
+                        return string_report(log_error, 125, "nohup: failed to open 'nohup.out': %s\n",
                                       file_reason(output));
-                        return 125;
                 }
         }
 
         if (input_terminal && output_terminal)
-                string_format(file_fail,
+                string_format(log_error,
                     "nohup: ignoring input and appending output to '%s'\n",
                     output_path);
         else if (input_terminal)
-                file_fail("nohup: ignoring input\n", 0);
+                log_error("nohup: ignoring input\n", 0);
         else if (output_terminal)
-                string_format(file_fail, "nohup: appending output to '%s'\n",
+                string_format(log_error, "nohup: appending output to '%s'\n",
                               output_path);
 
         /* Flush the explanation to the original error stream before that
@@ -755,10 +707,7 @@ static b32 process_nohup()
         /* Ignored dispositions survive exec; that is precisely nohup's one
            signal operation. */
         if (!system_signal_install(SIGHUP, SIGNAL_IGNORE, 0, 0, null))
-        {
-                file_fail("nohup: cannot ignore hangup signal\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "nohup: cannot ignore hangup signal\n");
 
         return process_tool_exec((string_address) "nohup",
             program_argument_list() + taking.first);
@@ -816,18 +765,11 @@ static b32 process_pipesz()
 
         bool getting = (taking.flags & FILE_FLAG('g')) != 0;
         if (getting && (taking.flags & FILE_FLAG('s')))
-        {
-                file_fail("pipesz: options --get and --set cannot be combined\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "pipesz: options --get and --set cannot be combined\n");
         positive count = (positive)program_argument_count();
 
         if (getting && taking.first < count)
-        {
-                file_fail("pipesz: cannot specify a command with --get\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "pipesz: cannot specify a command with --get\n");
 
         positive requested = 1024 * 1024;
         if (taking.flags & FILE_FLAG('s'))
@@ -840,11 +782,7 @@ static b32 process_pipesz()
                                    address_of relation) ||
                     relation != TRUNCATE_ABSOLUTE || parsed < 0 ||
                     (p64)parsed > positive_max)
-                {
-                        string_format(file_fail,
-                                      "pipesz: invalid size: '%s'\n", value);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "pipesz: invalid size: '%s'\n", value);
                 requested = (positive)parsed;
         }
 
@@ -863,7 +801,7 @@ static b32 process_pipesz()
                 if (descriptor < 0)
                 {
                         if (!(taking.flags & FILE_FLAG('q')))
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "pipesz: cannot open '%s': %s\n",
                                               path, file_reason(descriptor));
                         if (taking.flags & FILE_FLAG('c'))
@@ -886,10 +824,8 @@ static b32 process_pipesz()
                         for (positive at = 0; at < used; at++)
                                 if (targets[at].close)
                                         system_close(targets[at].descriptor);
-                        string_format(file_fail,
-                                      "pipesz: invalid file descriptor: '%s'\n",
+                        return string_report(log_error, 1, "pipesz: invalid file descriptor: '%s'\n",
                                       value);
-                        return 1;
                 }
 
                 positive at = (positive)(memory_copy_end(
@@ -927,7 +863,7 @@ static b32 process_pipesz()
                         failed = true;
                         if (!(taking.flags & FILE_FLAG('q')))
                                 string_format(
-                                    file_fail,
+                                    log_error,
                                     "pipesz: cannot %s pipe buffer size of %s: %s\n",
                                     getting ? (string_address)"get"
                                             : (string_address)"set",
@@ -944,7 +880,7 @@ static b32 process_pipesz()
                                       counted < 0 ? 0 : (positive)unread);
                 }
                 else if (taking.flags & FILE_FLAG('v'))
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "pipesz: %s pipe buffer size set to %p\n",
                                       target->label, (positive)answer);
 
@@ -1068,49 +1004,32 @@ static b32 process_coresched()
         if ((taking.flags & FILE_FLAG('s')) &&
             !process_coresched_pid(file_option_value(address_of taking, 's'),
                                    address_of source))
-        {
-                string_format(file_fail, "coresched: invalid source PID: '%s'\n",
+                return string_report(log_error, 1, "coresched: invalid source PID: '%s'\n",
                               file_option_value(address_of taking, 's'));
-                return 1;
-        }
         if ((taking.flags & FILE_FLAG('d')) &&
             !process_coresched_pid(file_option_value(address_of taking, 'd'),
                                    address_of destination))
-        {
-                string_format(file_fail,
-                              "coresched: invalid destination PID: '%s'\n",
+                return string_report(log_error, 1, "coresched: invalid destination PID: '%s'\n",
                               file_option_value(address_of taking, 'd'));
-                return 1;
-        }
         if (!process_coresched_scope(
                 file_option_value(address_of taking, 't'), address_of scope))
-        {
-                string_format(file_fail, "coresched: invalid destination type: '%s'\n",
+                return string_report(log_error, 1, "coresched: invalid destination type: '%s'\n",
                               file_option_value(address_of taking, 't'));
-                return 1;
-        }
 
         bool command = taking.first < count;
         if (operation == CORE_GET)
         {
                 if (command || destination ||
                     (taking.flags & FILE_FLAG('t')))
-                {
-                        file_fail("coresched: bad usage of the get function\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "coresched: bad usage of the get function\n");
 
                 p64 cookie = 0;
                 bipolar answer = process_coresched_call(
                     PROCESS_SCHED_CORE_GET, source, PROCESS_SCHED_CORE_THREAD,
                     address_of cookie);
                 if (answer < 0)
-                {
-                        string_format(file_fail,
-                                      "coresched: cannot get cookie of PID %p: %s\n",
+                        return string_report(log_error, 1, "coresched: cannot get cookie of PID %p: %s\n",
                                       source, file_reason(answer));
-                        return 1;
-                }
                 string_format(log, "cookie of PID %p is ", source);
                 process_coresched_cookie(log, cookie);
                 log("\n", 1);
@@ -1121,13 +1040,9 @@ static b32 process_coresched()
         if ((operation == CORE_NEW &&
              (taking.flags & FILE_FLAG('s'))) ||
             (destination && command) || (!destination && !command))
-        {
-                file_fail(operation == CORE_NEW
+                return string_report(log_error, 1, operation == CORE_NEW
                               ? (string_address)"coresched: new requires either a destination or a command\n"
-                              : (string_address)"coresched: copy requires either a destination or a command\n",
-                          0);
-                return 1;
-        }
+                              : (string_address)"coresched: copy requires either a destination or a command\n");
 
         bipolar changed;
         if (operation == CORE_NEW)
@@ -1147,11 +1062,8 @@ static b32 process_coresched()
         }
 
         if (changed < 0)
-        {
-                string_format(file_fail, "coresched: cannot change cookie: %s\n",
+                return string_report(log_error, 1, "coresched: cannot change cookie: %s\n",
                               file_reason(changed));
-                return 1;
-        }
 
         if (taking.flags & FILE_FLAG('v'))
         {
@@ -1166,19 +1078,19 @@ static b32 process_coresched()
                 {
                         if (operation == CORE_COPY && destination)
                         {
-                                file_fail("coresched: copied cookie ", 0);
-                                process_coresched_cookie(file_fail, cookie);
-                                string_format(file_fail,
+                                log_error("coresched: copied cookie ", 0);
+                                process_coresched_cookie(log_error, cookie);
+                                string_format(log_error,
                                               " from PID %p to PID %p\n",
                                               source, destination);
                         }
                         else
                         {
-                                string_format(file_fail,
+                                string_format(log_error,
                                               "coresched: set cookie of PID %p to ",
                                               shown);
-                                process_coresched_cookie(file_fail, cookie);
-                                file_fail("\n", 1);
+                                process_coresched_cookie(log_error, cookie);
+                                log_error("\n", 1);
                         }
                 }
         }
@@ -1368,7 +1280,7 @@ static fn process_timeout_signal(b32 child, b32 signal, bool foreground,
                 p8 name[16];
 
                 kill_name((positive)signal, name);
-                string_format(file_fail,
+                string_format(log_error,
                               "timeout: sending signal %s to command '%s'\n",
                               name, command);
                 log_flush();
@@ -1392,24 +1304,15 @@ static b32 process_timeout()
         if (!file_take(address_of taking))
                 return 125;
         if (taking.first >= count)
-        {
-                file_fail("timeout: missing operand\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "timeout: missing operand\n");
 
         positive duration;
 
         if (!file_duration_read(program_argument((b32)taking.first++), true,
                                       address_of duration))
-        {
-                file_fail("timeout: invalid time interval\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "timeout: invalid time interval\n");
         if (taking.first >= count)
-        {
-                file_fail("timeout: missing command\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "timeout: missing command\n");
 
         b32 signal = SIGTERM;
         string_address signal_text = file_option_value(address_of taking, 's');
@@ -1419,11 +1322,8 @@ static b32 process_timeout()
                 bipolar named = ul_signal_number(signal_text);
 
                 if (named <= 0 || named > SIGNAL_HIGHEST)
-                {
-                        string_format(file_fail, "timeout: invalid signal '%s'\n",
+                        return string_report(log_error, 125, "timeout: invalid signal '%s'\n",
                                       signal_text);
-                        return 125;
-                }
                 signal = (b32)named;
         }
 
@@ -1433,10 +1333,7 @@ static b32 process_timeout()
         if (escalate &&
             !file_duration_read(file_option_value(address_of taking, 'k'), true,
                                       address_of kill_after))
-        {
-                file_fail("timeout: invalid time interval for --kill-after\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "timeout: invalid time interval for --kill-after\n");
 
         bool foreground = (taking.flags & FILE_FLAG('f')) != 0;
         bool preserve = (taking.flags & FILE_FLAG('p')) != 0;
@@ -1447,10 +1344,7 @@ static b32 process_timeout()
 
         if (system_signal_mask(UL_SIGNAL_BLOCK, address_of blocked,
                                address_of previous_mask, 8) < 0)
-        {
-                file_fail("timeout: cannot block relay signals\n", 0);
-                return 125;
-        }
+                return string_report(log_error, 125, "timeout: cannot block relay signals\n");
 
         log_flush();
         bipolar child = system_fork();
@@ -1459,9 +1353,8 @@ static b32 process_timeout()
         {
                 system_signal_mask(UL_SIGNAL_SET_MASK,
                                    address_of previous_mask, null, 8);
-                string_format(file_fail, "timeout: cannot fork: %s\n",
+                return string_report(log_error, 125, "timeout: cannot fork: %s\n",
                               file_reason(child));
-                return 125;
         }
 
         if (child == 0)
@@ -1524,8 +1417,7 @@ static b32 process_timeout()
         if (waited < 0)
         {
                 process_timeout_cleanup(pidfd, signal_fd, previous_mask);
-                file_fail("timeout: failure while waiting for command\n", 0);
-                return 125;
+                return string_report(log_error, 125, "timeout: failure while waiting for command\n");
         }
 
         if (waited > 0)
@@ -1573,9 +1465,7 @@ static b32 process_timeout()
                 {
                         process_timeout_cleanup(pidfd, signal_fd,
                                                 previous_mask);
-                        file_fail("timeout: failure while waiting for command\n",
-                                  0);
-                        return 125;
+                        return string_report(log_error, 125, "timeout: failure while waiting for command\n");
                 }
         }
 
@@ -1878,12 +1768,8 @@ static b32 process_script_child(string_address command,
         bipolar prepared = process_pty_child_setup(master, slave, signal_fd,
                                                    pidfd);
         if (prepared < 0)
-        {
-                string_format(file_fail,
-                              "script: cannot establish pseudo-terminal: %s\n",
+                return string_report(log_error, 1, "script: cannot establish pseudo-terminal: %s\n",
                               file_reason(prepared));
-                return 1;
-        }
 
         if (command)
         {
@@ -1940,11 +1826,8 @@ static b32 process_script_record(process_script_state address_to state,
         bipolar opened = process_pty_open(address_of master, address_of slave,
                                           true);
         if (opened < 0)
-        {
-                string_format(file_fail, "script: cannot open pseudo-terminal: %s\n",
+                return string_report(log_error, 1, "script: cannot open pseudo-terminal: %s\n",
                               file_reason(opened));
-                return 1;
-        }
 
         process_terminal_size size;
         if (system_control(0, PROCESS_TIOCGWINSZ, address_of size) >= 0)
@@ -1970,8 +1853,7 @@ static b32 process_script_record(process_script_state address_to state,
         {
                 system_close((positive)slave);
                 system_close((positive)master);
-                file_fail("script: cannot block relay signals\n", 0);
-                return 1;
+                return string_report(log_error, 1, "script: cannot block relay signals\n");
         }
 
         bipolar signal_fd = system_call_4(
@@ -1983,10 +1865,8 @@ static b32 process_script_record(process_script_state address_to state,
                                    address_of previous_mask, null, 8);
                 system_close((positive)slave);
                 system_close((positive)master);
-                string_format(file_fail,
-                              "script: cannot create signal descriptor: %s\n",
+                return string_report(log_error, 1, "script: cannot create signal descriptor: %s\n",
                               file_reason(signal_fd));
-                return 1;
         }
         log_flush();
         bipolar child = system_fork();
@@ -1995,9 +1875,8 @@ static b32 process_script_record(process_script_state address_to state,
                 process_timeout_cleanup(-1, signal_fd, previous_mask);
                 system_close((positive)slave);
                 system_close((positive)master);
-                string_format(file_fail, "script: cannot fork: %s\n",
+                return string_report(log_error, 1, "script: cannot fork: %s\n",
                               file_reason(child));
-                return 1;
         }
         if (!child)
                 exit(process_script_child(command, command_first, master,
@@ -2385,7 +2264,7 @@ static b32 process_script()
                             paths[i], state.append, state.force);
                         if (opened < 0)
                         {
-                                string_format(file_fail, "script: %s: %s\n",
+                                string_format(log_error, "script: %s: %s\n",
                                               paths[i], file_reason(opened));
                                 goto close_logs;
                         }
@@ -2846,11 +2725,8 @@ static b32 process_scriptreplay()
         process_replay_reader timing, output, input;
         bipolar opened = process_replay_open(address_of timing, timing_path);
         if (opened < 0)
-        {
-                string_format(file_fail, "scriptreplay: %s: %s\n",
+                return string_report(log_error, 1, "scriptreplay: %s: %s\n",
                               timing_path, file_reason(opened));
-                return 1;
-        }
         output.handle = input.handle = -1;
         if (out_path)
         {
@@ -2911,16 +2787,12 @@ static b32 process_scriptreplay()
         if (input.handle >= 0 && input.handle != output.handle)
                 system_close((positive)input.handle);
         if (failed)
-        {
-                file_fail("scriptreplay: malformed or truncated timing/log file\n",
-                          0);
-                return 1;
-        }
+                return string_report(log_error, 1, "scriptreplay: malformed or truncated timing/log file\n");
         system_write_all(1, "\n", 1);
         return 0;
 
 replay_open_failed:
-        string_format(file_fail, "scriptreplay: cannot read transcript: %s\n",
+        string_format(log_error, "scriptreplay: cannot read transcript: %s\n",
                       opened < 0 ? file_reason(opened)
                                  : (string_address)"invalid header");
         system_close((positive)timing.handle);
@@ -2966,11 +2838,8 @@ static b32 process_pivot_root()
                                         (positive)put_old);
 
         if (changed < 0)
-        {
-                string_format(file_fail, "pivot_root: failed to change root from %s to %s: %s\n",
+                return string_report(log_error, 1, "pivot_root: failed to change root from %s to %s: %s\n",
                               new_root, put_old, file_reason(changed));
-                return 1;
-        }
         return 0;
 }
 
@@ -3018,10 +2887,7 @@ static b32 process_ctrlaltdel()
                                         PROCESS_REBOOT_MAGIC_SECOND, command,
                                         0);
         if (changed < 0)
-        {
-                string_format(file_fail, "ctrlaltdel: cannot set %s mode: %s\n",
+                return string_report(log_error, 1, "ctrlaltdel: cannot set %s mode: %s\n",
                               mode, file_reason(changed));
-                return 1;
-        }
         return 0;
 }

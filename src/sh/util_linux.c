@@ -71,8 +71,7 @@ static COLD b32 ul_usage(string_address program, string_address syntax)
 
 static COLD b32 ul_bad_usage(string_address program, string_address message)
 {
-        string_format(file_fail, "%s: %s\n", program, message);
-        return 1;
+        return string_report(log_error, 1, "%s: %s\n", program, message);
 }
 
 
@@ -106,11 +105,8 @@ static bool ul_pid(string_address text, string_address program,
         positive got;
 
         if (!ul_unsigned(text, b32_max, address_of got))
-        {
-                string_format(file_fail, "%s: invalid %s: %s\n", program,
+                return string_report(log_error, false, "%s: invalid %s: %s\n", program,
                               kind, text);
-                return false;
-        }
 
         address_to value = (b32)got;
         return true;
@@ -505,13 +501,10 @@ static bool ul_bits_group(string_address group,
                     (string_is(group, '0') && string_is(group + 1, 'x'));
         if (!(mask ? ul_bits_mask_read(group, scratch, width)
                    : ul_bit_list_read(group, scratch, width, true)))
-        {
-                string_format(file_fail, "bits: invalid bit %s: %s\n",
+                return string_report(log_error, false, "bits: invalid bit %s: %s\n",
                               mask ? (string_address)"mask"
                                    : (string_address)"list",
                               group);
-                return false;
-        }
 
         /* Select once per group; keep the four word loops on one template. */
 #define UL_BITS_APPLY(operator) \
@@ -792,7 +785,7 @@ static b32 ul_exec_words(string_address address_to words,
 {
         log_flush();
         bipolar answer = file_exec_path_try(words);
-        string_format(file_fail, "%s: %s: %s\n", program, words[0],
+        string_format(log_error, "%s: %s: %s\n", program, words[0],
                       file_reason(answer));
         return answer == -ERROR_NO_ENTRY ? 127 : 126;
 }
@@ -867,12 +860,9 @@ static b32 ul_taskset_one(b32 pid, address_any context)
                                      (positive)(p32)pid, sizeof(current),
                                      (positive)current);
                 if (used < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "taskset: failed to get pid %b's affinity: %s\n",
                                       (bipolar)pid, file_reason(used));
-                        return 1;
-                }
 
                 ul_taskset_say(pid, (string_address)"current", work->list,
                                current, (positive)used);
@@ -886,12 +876,9 @@ static b32 ul_taskset_one(b32 pid, address_any context)
                                         sizeof(work->wanted),
                                         (positive)work->wanted);
         if (changed < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "taskset: failed to set pid %b's affinity: %s\n",
                               (bipolar)pid, file_reason(changed));
-                return 1;
-        }
 
         if (work->report)
         {
@@ -996,18 +983,12 @@ static b32 ul_renice_one(string_address operand, b32 which,
         {
                 bipolar named = file_user_id(operand);
                 if (named < 0)
-                {
-                        string_format(file_fail, "renice: unknown user %s\n",
+                        return string_report(log_error, 1, "renice: unknown user %s\n",
                                       operand);
-                        return 1;
-                }
                 id = (positive)named;
         }
         else if (!ul_unsigned(operand, b32_max, address_of id))
-        {
-                string_format(file_fail, "renice: bad value: %s\n", operand);
-                return 1;
-        }
+                return string_report(log_error, 1, "renice: bad value: %s\n", operand);
 
         string_address kind = which == UL_PRIO_PROCESS
                                   ? (string_address)"process ID"
@@ -1017,12 +998,9 @@ static b32 ul_renice_one(string_address operand, b32 which,
         bipolar raw = system_call_2(syscall(getpriority), (positive)which, id);
 
         if (raw < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "renice: failed to get priority for %p (%s): %s\n",
                               id, kind, file_reason(raw));
-                return 1;
-        }
 
         bipolar old = 20 - raw;
         /* Upstream narrows the adjustment to int before adding it. */
@@ -1037,12 +1015,9 @@ static b32 ul_renice_one(string_address operand, b32 which,
         bipolar changed = system_call_3(syscall(setpriority), (positive)which,
                                         id, (positive)wanted);
         if (changed < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "renice: failed to set priority for %p (%s): %s\n",
                               id, kind, file_reason(changed));
-                return 1;
-        }
 
         raw = system_call_2(syscall(getpriority), (positive)which, id);
         bipolar now = raw < 0 ? wanted : 20 - raw;
@@ -1447,7 +1422,7 @@ static b32 util_linux_prlimit()
                                          address_of old);
                 if (got < 0 || !ul_limit_parse(value, old, address_of made))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "prlimit: failed to parse %s limit\n",
                                       resource->name);
                         failed = 1;
@@ -1457,7 +1432,7 @@ static b32 util_linux_prlimit()
                 got = ul_prlimit(pid, resource->resource, address_of made, null);
                 if (got < 0)
                 {
-                        string_format(file_fail, "prlimit: failed to set %s: %s\n",
+                        string_format(log_error, "prlimit: failed to set %s: %s\n",
                                       resource->name, file_reason(got));
                         failed = 1;
                         continue;
@@ -1510,7 +1485,7 @@ static b32 util_linux_prlimit()
                                          address_of rows[shown].pair);
                 if (got < 0)
                 {
-                        string_format(file_fail, "prlimit: failed to get %s: %s\n",
+                        string_format(log_error, "prlimit: failed to get %s: %s\n",
                                       resource->name, file_reason(got));
                         failed = 1;
                         continue;
@@ -1609,12 +1584,9 @@ static b32 ul_chrt_one(b32 pid, address_any context)
         {
                 bipolar got = ul_sched_get(pid, address_of current);
                 if (got < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "chrt: failed to get pid %b's policy: %s\n",
                                       (bipolar)pid, file_reason(got));
-                        return 1;
-                }
                 ul_chrt_report(pid, (string_address)"current",
                                address_of current);
                 return 0;
@@ -1626,12 +1598,9 @@ static b32 ul_chrt_one(b32 pid, address_any context)
 
         bipolar changed = ul_sched_set(pid, address_of work->attr);
         if (changed < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "chrt: failed to set pid %b's policy: %s\n",
                               (bipolar)pid, file_reason(changed));
-                return 1;
-        }
 
         if (work->verbose && ul_sched_get(pid, address_of current) >= 0)
                 ul_chrt_report(pid, (string_address)"new", address_of current);
@@ -1820,12 +1789,9 @@ static b32 ul_uclamp_one(b32 pid, address_any context)
         bipolar got = ul_sched_get(pid, address_of attr);
 
         if (got < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "uclampset: failed to get pid %b's attributes: %s\n",
                               (bipolar)pid, file_reason(got));
-                return 1;
-        }
 
         if (work->setting)
         {
@@ -1844,12 +1810,9 @@ static b32 ul_uclamp_one(b32 pid, address_any context)
 
                 got = ul_sched_set(pid, address_of attr);
                 if (got < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "uclampset: failed to set pid %b's attributes: %s\n",
                                       (bipolar)pid, file_reason(got));
-                        return 1;
-                }
 
                 if (!work->verbose)
                         return 0;
@@ -2053,11 +2016,8 @@ static b32 ul_flock_poll(b32 handle, p8 kind, positive timeout, bool fcntl,
                 if (answer >= 0)
                         return 0;
                 if (answer != -UL_ERROR_AGAIN && answer != -ERROR_ACCESS)
-                {
-                        string_format(file_fail, "flock: cannot lock: %s\n",
+                        return string_report(log_error, 1, "flock: cannot lock: %s\n",
                                       file_reason(answer));
-                        return 1;
-                }
                 positive now = clock_monotonic_nanoseconds();
                 positive elapsed = now >= began ? now - began : timeout;
                 if (elapsed >= timeout)
@@ -2121,7 +2081,7 @@ static b32 ul_flock_acquire(b32 handle, p8 kind, bool nonblocking,
         if ((immediate && (answer == -UL_ERROR_AGAIN || answer == -ERROR_ACCESS)) ||
             (!immediate && timed && answer == UL_ERROR_INTERRUPTED))
                 return conflict;
-        string_format(file_fail, "flock: cannot lock: %s\n",
+        string_format(log_error, "flock: cannot lock: %s\n",
                       file_reason(answer));
         return answer == -ERROR_BAD_DESCRIPTOR ? 65 : 1;
 }
@@ -2261,7 +2221,7 @@ static b32 util_linux_flock()
                                                      FILE_READ);
                 if (handle < 0)
                 {
-                        string_format(file_fail, "flock: cannot open %s: %s\n",
+                        string_format(log_error, "flock: cannot open %s: %s\n",
                                       target, file_reason(handle));
                         return handle == -ERROR_IS_DIRECTORY ? 65 : 66;
                 }
@@ -2274,7 +2234,7 @@ static b32 util_linux_flock()
                                   timed, timeout, fcntl, start, length,
                                   conflict);
         if (answer && verbose && timed && answer == conflict)
-                string_format(file_fail,
+                string_format(log_error,
                               "flock: timeout while waiting to get lock\n");
         if (!answer && verbose)
         {
@@ -2491,12 +2451,9 @@ static b32 ul_setarch_show(string_address value, b32 pid)
                                     "personality");
                 bipolar got = ul_slurp_word(path, text, sizeof(text));
                 if (got <= 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                           "setarch: Can not get the personality for process(%b): %s\n",
                           (bipolar)pid, file_reason(got));
-                        return 1;
-                }
                 value = text;
         }
 
@@ -2509,12 +2466,9 @@ static b32 ul_setarch_show(string_address value, b32 pid)
         {
                 bipolar got = system_call_1(syscall(personality), (positive)(p32)-1);
                 if (got < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                           "setarch: Can not get current kernel personality: %s\n",
                           file_reason(got));
-                        return 1;
-                }
                 personality = (p32)got;
         }
         ul_personality_say(personality);
@@ -2616,11 +2570,11 @@ static b32 util_linux_setarch()
                 positive i;
                 for (i = 0; ul_arches[i].name; i++)
                         if (string_equals(arch, ul_arches[i].name)) { personality |= ul_arches[i].personality; break; }
-                if (!ul_arches[i].name) { string_format(file_fail, "setarch: %s: Unrecognized architecture\n", arch); return 1; }
+                if (!ul_arches[i].name) { return string_report(log_error, 1, "setarch: %s: Unrecognized architecture\n", arch); }
         }
 
         bipolar changed = system_call_1(syscall(personality), personality);
-        if (changed < 0) { string_format(file_fail, "setarch: failed to set personality to %s: %s\n", arch ? arch : (string_address)"(null)", file_reason(changed)); return 1; }
+        if (changed < 0) { return string_report(log_error, 1, "setarch: failed to set personality to %s: %s\n", arch ? arch : (string_address)"(null)", file_reason(changed)); }
 
         if (taking.first < count)
         {
@@ -2633,7 +2587,7 @@ static b32 util_linux_setarch()
         if (ul_setarch_verbose) string_format(log, "Execute command `/bin/sh'.\n");
         log_flush();
         changed = system_execute("/bin/sh", shell_words, file_environment_all());
-        string_format(file_fail, "setarch: /bin/sh: %s\n", file_reason(changed));
+        string_format(log_error, "setarch: /bin/sh: %s\n", file_reason(changed));
         return changed == -ERROR_NO_ENTRY ? 127 : 126;
 }
 
@@ -2761,10 +2715,9 @@ static b32 util_linux_waitpid()
                                      address_of inode))
                 {
                         ul_wait_close(active);
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "waitpid: failed to parse PID argument '%s'\n",
                                       operand);
-                        return 1;
                 }
 
                 bipolar descriptor =
@@ -2774,12 +2727,12 @@ static b32 util_linux_waitpid()
                         if (allow_exited && descriptor == -3)
                         {
                                 if (verbose)
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "waitpid: PID %b has exited, skipping\n",
                                                       (bipolar)pid);
                                 continue;
                         }
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "waitpid: could not open PID %b: %s\n",
                                       (bipolar)pid, file_reason(descriptor));
                         ul_wait_close(active);
@@ -2794,7 +2747,7 @@ static b32 util_linux_waitpid()
                         {
                                 system_close(descriptor);
                                 if (verbose)
-                                        string_format(file_fail,
+                                        string_format(log_error,
                                                       "waitpid: pidfd inode %p not found for PID %b\n",
                                                       (positive)inode,
                                                       (bipolar)pid);
@@ -2846,7 +2799,7 @@ static b32 util_linux_waitpid()
                 {
                         if (ready == -4)
                                 continue;
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "waitpid: failure during wait: %s\n",
                                       file_reason(ready));
                         ul_wait_close(active);
@@ -2946,10 +2899,7 @@ static bool ul_setpriv_take(p8 letter, string_address value)
         if ((ul_setpriv_seen & bit) ||
             ((letter == 'c' || letter == 'k' || letter == 'I' || letter == 's') &&
              ul_setpriv_group_option))
-        {
-                string_format(file_fail, "setpriv: duplicate or mutually exclusive option\n");
-                return false;
-        }
+                return string_report(log_error, false, "setpriv: duplicate or mutually exclusive option\n");
         ul_setpriv_seen |= bit;
         if (letter == 'c' || letter == 'k' || letter == 'I' || letter == 's')
                 ul_setpriv_group_option = letter;
@@ -3335,7 +3285,7 @@ static bipolar ul_namespace_open(string_address program, bipolar target_handle,
                                         (relative ? relative : path),
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-                string_format(file_fail, "%s: cannot open %s: %s\n",
+                string_format(log_error, "%s: cannot open %s: %s\n",
                               program, relative ? relative : path,
                               file_reason(handle));
         return handle;
@@ -4062,7 +4012,7 @@ static bool ul_lsclock_add_path(ul_lsclock_row address_to rows,
         if (handle < 0)
         {
                 if (explicit)
-                        string_format(file_fail, "lsclocks: cannot open %s: %s\n", path, file_reason(handle));
+                        string_format(log_error, "lsclocks: cannot open %s: %s\n", path, file_reason(handle));
                 return !explicit;
         }
         bool okay = true;
@@ -4101,7 +4051,7 @@ static bool ul_lsclock_add_path(ul_lsclock_row address_to rows,
         }
         system_close((positive)handle);
         if (!okay && explicit)
-                string_format(file_fail, "lsclocks: cannot read clock %s\n", path);
+                string_format(log_error, "lsclocks: cannot read clock %s\n", path);
         return okay || !explicit;
 }
 
@@ -4123,7 +4073,7 @@ static bool ul_lsclock_discover(ul_lsclock_row address_to rows,
                 if (!match) continue;
                 if (found >= array_count(paths))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                             "lsclocks: too many clock devices in /dev\n");
                         file_walk_close(address_of walk);
                         return false;
@@ -4295,11 +4245,8 @@ static b32 util_linux_lsns()
         string_address type_name = file_option_value(address_of taking, 't');
 
         if (type_name && (type = ul_lsns_type(type_name)) < 0)
-        {
-                string_format(file_fail, "lsns: unknown namespace type: %s\n",
+                return string_report(log_error, 1, "lsns: unknown namespace type: %s\n",
                               type_name);
-                return 1;
-        }
 
         b32 task = 0;
         bool task_selected = file_option_value(address_of taking, 'p') != null;
@@ -4439,11 +4386,8 @@ static b32 util_linux_lsns()
         }
 
         if (inode_selected && !inode_found)
-        {
-                string_format(file_fail, "lsns: not found namespace: %p\n",
+                return string_report(log_error, 1, "lsns: not found namespace: %p\n",
                               wanted_inode);
-                return 1;
-        }
 
         ul_table(taking.flags & FILE_FLAG('J') ? "namespaces" : null,
                  entries, groups, ul_lsns_columns, columns, column_count,
@@ -5375,7 +5319,7 @@ static bipolar ul_directory_open_at(string_address program, bipolar base,
                                         path,
                                         FILE_READ | O_DIRECTORY | O_CLOEXEC);
         if (handle < 0)
-                string_format(file_fail, "%s: cannot open %s: %s\n",
+                string_format(log_error, "%s: cannot open %s: %s\n",
                               program, path, file_reason(handle));
         return handle;
 }
@@ -5389,7 +5333,7 @@ static b32 ul_namespace_write(string_address path, address_any bytes,
         bipolar error = ul_path_write(path, bytes, length);
 
         if (error < 0)
-                string_format(file_fail, "%s: cannot write %s: %s\n",
+                string_format(log_error, "%s: cannot write %s: %s\n",
                               program, path, file_reason(error));
         return error < 0;
 }
@@ -5561,7 +5505,7 @@ static b32 ul_exec_shell(string_address program)
         bipolar error = file_exec_path_try_in(shell, words,
                                               file_environment_all(),
                                               file_environment("PATH"));
-        string_format(file_fail, "%s: cannot execute %s: %s\n",
+        string_format(log_error, "%s: cannot execute %s: %s\n",
                       program, shell, file_reason(error));
         return error == -ERROR_ACCESS ? 126 : 127;
 }
@@ -5595,8 +5539,7 @@ static bool ul_unshare_seen(p8 letter, string_address value)
 
         if (ul_namespace_range(value, map))
                 return true;
-        file_complain("unshare", "invalid mapping", value);
-        return false;
+        return file_complain("unshare", "invalid mapping", value);
 }
 
 static bool ul_namespace_mapper_present(bool group)
@@ -5610,7 +5553,7 @@ static bool ul_namespace_mapper_present(bool group)
         if (handle >= 0)
                 system_close(handle);
         else
-                string_format(file_fail, "unshare: cannot open %s: %s\n",
+                string_format(log_error, "unshare: cannot open %s: %s\n",
                               path, file_reason(handle));
         return handle >= 0;
 }
@@ -5827,7 +5770,7 @@ static bool ul_namespace_persistence_start(
                                             "ns", name);
                         if (system_mount(source, destination, 0, MS_BIND, 0) < 0)
                         {
-                                file_fail("unshare: cannot bind namespace file\n",
+                                log_error("unshare: cannot bind namespace file\n",
                                           0);
                                 failed = true;
                         }
@@ -6441,11 +6384,8 @@ static b32 util_linux_setsid()
                 log_flush();
                 child = system_fork();
                 if (child < 0)
-                {
-                        string_format(file_fail, "setsid: fork: %s\n",
+                        return string_report(log_error, 1, "setsid: fork: %s\n",
                                       file_reason(child));
-                        return 1;
-                }
                 if (child > 0)
                 {
                         if (!waiting)
@@ -6459,11 +6399,8 @@ static b32 util_linux_setsid()
 
         answer = (b32)system_call(syscall(setsid));
         if (answer < 0)
-        {
-                string_format(file_fail, "setsid: setsid failed: %s\n",
+                return string_report(log_error, 1, "setsid: setsid failed: %s\n",
                               file_reason(answer));
-                return 1;
-        }
 
         if ((taking.flags & FILE_FLAG('c')) &&
             system_control(0, UL_TIOCSCTTY, 1) < 0)
@@ -6496,11 +6433,8 @@ static b32 util_linux_setpgid()
 
         changed = system_call_2(syscall(setpgid), 0, 0);
         if (changed < 0)
-        {
-                string_format(file_fail, "setpgid: setpgid failed: %s\n",
+                return string_report(log_error, 1, "setpgid: setpgid failed: %s\n",
                               file_reason(changed));
-                return 1;
-        }
 
         if (taking.flags & FILE_FLAG('f'))
         {
@@ -6643,27 +6577,18 @@ static b32 util_linux_fallocate()
             FILE_READ_WRITE | (create ? FILE_CREATE : 0), 0666);
 
         if (handle < 0)
-        {
-                string_format(file_fail, "fallocate: cannot open %s: %s\n",
+                return string_report(log_error, 1, "fallocate: cannot open %s: %s\n",
                               path, file_reason(handle));
-                return 1;
-        }
 
         bipolar done = system_call_4(syscall(fallocate), (positive)handle,
                                      mode, offset, length);
         bipolar closed = system_close(handle);
 
         if (done < 0)
-        {
-                string_format(file_fail, "fallocate: fallocate failed: %s\n",
+                return string_report(log_error, 1, "fallocate: fallocate failed: %s\n",
                               file_reason(done));
-                return 1;
-        }
         if (closed < 0)
-        {
-                string_format(file_fail, "fallocate: write failed: %s\n", path);
-                return 1;
-        }
+                return string_report(log_error, 1, "fallocate: write failed: %s\n", path);
 
         if (flags & FILE_FLAG('v'))
         {
@@ -6782,12 +6707,9 @@ static bool ul_copyfilerange_range(string_address written, bipolar in,
                 if (copied == UL_ERROR_INTERRUPTED)
                         continue;
                 if (copied < 0)
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, false,
                                       "copyfilerange: failed to copy range: %s\n",
                                       file_reason(copied));
-                        return false;
-                }
                 if (!copied)
                         break;
 
@@ -6820,12 +6742,9 @@ static b32 util_linux_copyfilerange()
         bipolar in = system_open_at(AT_FDCWD, source, FILE_READ);
 
         if (in < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "copyfilerange: cannot open source %s: %s\n",
                               source, file_reason(in));
-                return 1;
-        }
         if (!file_look(in, (string_address)"", AT_EMPTY_PATH,
                        address_of facts))
         {
@@ -6839,7 +6758,7 @@ static b32 util_linux_copyfilerange()
 
         if (out < 0)
         {
-                string_format(file_fail,
+                string_format(log_error,
                               "copyfilerange: cannot open destination %s: %s\n",
                               destination, file_reason(out));
                 system_close(in);
@@ -6860,7 +6779,7 @@ static b32 util_linux_copyfilerange()
                                              address_of out_offset, verbose,
                                              source, destination))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "copyfilerange: invalid range: %s\n",
                                       range);
                         complete = false;
@@ -6952,12 +6871,9 @@ static b32 util_linux_fadvise()
                 handle = system_open_at(
                     AT_FDCWD, program_argument((b32)taking.first), FILE_READ);
                 if (handle < 0)
-                {
-                        string_format(file_fail, "fadvise: %s: %s\n",
+                        return string_report(log_error, 1, "fadvise: %s: %s\n",
                                       program_argument((b32)taking.first),
                                       file_reason(handle));
-                        return 1;
-                }
                 close_handle = true;
         }
 
@@ -6967,11 +6883,8 @@ static b32 util_linux_fadvise()
                 system_close(handle);
 
         if (answer < 0)
-        {
-                string_format(file_fail, "fadvise: failed to advise: %s\n",
+                return string_report(log_error, 1, "fadvise: failed to advise: %s\n",
                               file_reason(answer));
-                return 1;
-        }
 
         return 0;
 }
@@ -7029,11 +6942,8 @@ static b32 ul_ionice_get(b32 which, b32 id)
         b32 data;
 
         if (raw < 0)
-        {
-                string_format(file_fail, "ionice: ioprio_get failed: %s\n",
+                return string_report(log_error, 1, "ionice: ioprio_get failed: %s\n",
                               file_reason(raw));
-                return 1;
-        }
 
         class = (b32)((positive)raw >> UL_IOPRIO_SHIFT);
         data = (b32)((positive)raw & UL_IOPRIO_DATA_MASK);
@@ -7060,9 +6970,8 @@ static b32 ul_ionice_set(b32 which, b32 id, b32 class, b32 data,
         if (answer >= 0 || tolerant)
                 return 0;
 
-        string_format(file_fail, "ionice: ioprio_set failed: %s\n",
+        return string_report(log_error, 1, "ionice: ioprio_set failed: %s\n",
                       file_reason(answer));
-        return 1;
 }
 
 static b32 util_linux_ionice()
@@ -7299,12 +7208,9 @@ static b32 util_linux_exch()
         bipolar changed = system_rename_at(
             AT_FDCWD, old, AT_FDCWD, new, UL_RENAME_EXCHANGE);
         if (changed < 0)
-        {
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "exch: failed to exchange %s and %s: %s\n",
                               old, new, file_reason(changed));
-                return 1;
-        }
         return 0;
 }
 
@@ -7359,12 +7265,9 @@ static b32 util_linux_getino()
 
                 if (!ul_wait_operand(operand, address_of pid,
                                      address_of wanted))
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "getino: invalid PID argument '%s'\n",
                                       operand);
-                        return 1;
-                }
 
                 bipolar handle = system_call_2(
                     syscall(pidfd_open), (positive)(p32)pid, 0);
@@ -7375,10 +7278,9 @@ static b32 util_linux_getino()
                 {
                         if (handle >= 0)
                                 system_close(handle);
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "getino: could not open PID %b\n",
                                       (bipolar)pid);
-                        return 1;
                 }
 
                 if (kind)
@@ -7790,9 +7692,8 @@ static bool ul_getopt_long(string_address word, p8 dashes,
 
 static COLD b32 ul_getopt_setup_error(string_address message)
 {
-        string_format(log_error, "getopt: %s\n"
+        return string_report(log_error, 2, "getopt: %s\n"
                       "Try 'getopt --help' for more information.\n", message);
-        return 2;
 }
 
 static b32 util_linux_getopt()
@@ -8155,19 +8056,15 @@ static b32 ul_partition_program(string_address program, b32 operation)
         bipolar handle = system_open_at(AT_FDCWD, device,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "%s: cannot open %s: %s\n",
+                return string_report(log_error, 1, "%s: cannot open %s: %s\n",
                               program, device, file_reason(handle));
-                return 1;
-        }
         if (operation == UL_BLKPG_RESIZE &&
             !ul_block_start(handle, partition, address_of start))
         {
                 system_close(handle);
-                string_format(file_fail,
+                return string_report(log_error, 1,
                               "%s: %s: failed to get start of partition %p\n",
                               program, device, partition);
-                return 1;
         }
 
         ul_block_partition part;
@@ -8190,9 +8087,8 @@ static b32 ul_partition_program(string_address program, b32 operation)
                     ? (string_address)"add"
                     : operation == UL_BLKPG_DELETE
                     ? (string_address)"remove" : (string_address)"resize";
-                string_format(file_fail, "%s: failed to %s partition: %s\n",
+                return string_report(log_error, 1, "%s: failed to %s partition: %s\n",
                               program, action, file_reason(changed));
-                return 1;
         }
         return 0;
 }
@@ -8396,11 +8292,8 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "blockdev: cannot open %s: %s\n",
+                return string_report(log_error, 1, "blockdev: cannot open %s: %s\n",
                               path, file_reason(handle));
-                return 1;
-        }
 
         for (positive at = 0; at < ul_blockdev_command_count; at++)
         {
@@ -8430,11 +8323,11 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                                 string_format(log, "%s failed.\n",
                                               descriptor->description);
                         if (descriptor->letter == '0')
-                                file_fail("blockdev: could not get device size\n",
+                                log_error("blockdev: could not get device size\n",
                                           sizeof("blockdev: could not get device size\n") - 1);
                         else
                                 string_format(
-                                    file_fail,
+                                    log_error,
                                     "blockdev: ioctl error on %s: %s\n",
                                     descriptor->kernel_name,
                                     file_reason(result));
@@ -8472,11 +8365,8 @@ static b32 ul_blockdev_report_one(string_address path)
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "blockdev: cannot open %s: %s\n",
+                return string_report(log_error, 1, "blockdev: cannot open %s: %s\n",
                               path, file_reason(handle));
-                return 1;
-        }
         const p8 letters[] = {'3', 'G', '5', 'B', 'E'};
         p64 values[array_count(letters)];
         for (positive at = 0; at < array_count(letters); at++)
@@ -8488,9 +8378,8 @@ static b32 ul_blockdev_report_one(string_address path)
                 if (got < 0)
                 {
                         system_close(handle);
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "blockdev: ioctl error on %s\n", path);
-                        return 1;
                 }
         }
         positive start = 0;
@@ -8612,7 +8501,7 @@ static b32 util_linux_isosize()
                                                 FILE_READ | O_CLOEXEC);
                 if (handle < 0)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "isosize: cannot open %s: %s\n",
                                       path, file_reason(handle));
                         status = 32;
@@ -8628,12 +8517,12 @@ static b32 util_linux_isosize()
                 system_close(handle);
 
                 if (!recognised)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "isosize: %s: might not be an ISO filesystem\n",
                                       path);
                 if (read_bytes != sizeof(descriptor))
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "isosize: read error on %s\n", path);
                         status = 32;
                 }
@@ -8856,7 +8745,7 @@ static fn ul_wipefs_no_act(ul_wipefs_work address_to work,
                         positive digits = positive_into_base(
                             where, (positive)offset, 16, false);
                         where[digits] = end;
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "wipefs: %s: offset 0x%s not found\n",
                                       path, where);
                 }
@@ -8925,7 +8814,7 @@ static b32 util_linux_wipefs()
                     path, ul_wipefs_collect, address_of work);
                 if (got < 0)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "wipefs: cannot open %s: %s\n",
                                       path, file_reason(got));
                         status = 1;
@@ -9105,11 +8994,8 @@ static b32 util_linux_mkswap()
         bipolar handle = system_open_at(AT_FDCWD, path,
                                         FILE_READ_WRITE | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "mkswap: cannot open %s: %s\n",
+                return string_report(log_error, 1, "mkswap: cannot open %s: %s\n",
                               path, file_reason(handle));
-                return 1;
-        }
 
         file_facts facts;
         if (!file_look(handle, "", AT_EMPTY_PATH, address_of facts) ||
@@ -9255,11 +9141,8 @@ static b32 util_linux_swaplabel()
             AT_FDCWD, path,
             (changing ? FILE_READ_WRITE : FILE_READ) | O_CLOEXEC);
         if (handle < 0)
-        {
-                string_format(file_fail, "swaplabel: cannot open %s: %s\n",
+                return string_report(log_error, 1, "swaplabel: cannot open %s: %s\n",
                               path, file_reason(handle));
-                return 1;
-        }
 
         file_facts facts;
         p8 bytes[STORAGE_PROBE_ROOM];
@@ -9323,7 +9206,7 @@ static b32 util_linux_swaplabel()
                 memory_zero(metadata + 16, 16);
                 memory_copy(metadata + 16, label, min(length, (positive)15));
                 if (length > 15)
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "swaplabel: label is too long; truncated to 15 bytes\n");
         }
 
@@ -11922,7 +11805,7 @@ static bool ul_lsblk_select_operands(positive first)
                 }
                 if (!found)
                 {
-                        string_format(file_fail, "lsblk: %s: not a block device\n",
+                        string_format(log_error, "lsblk: %s: not a block device\n",
                                       operand);
                         failed = true;
                 }
@@ -12666,7 +12549,7 @@ static b32 util_linux_ipcmk()
                                     (p8)type, (positive)ids[type]);
                                 if (removed < 0)
                                         string_format(
-                                            file_fail,
+                                            log_error,
                                             "ipcmk: failed to remove retained %s id %b: %s\n",
                                             ul_ipc_kind((p8)type), ids[type],
                                             file_reason(removed));
@@ -12711,22 +12594,16 @@ static b32 ul_ipcrm_remove(p8 type, string_address text, bool key,
         positive value;
         if (!(key ? ul_ipc_key_number(text, address_of value)
                   : ul_unsigned(text, b32_max, address_of value)))
-        {
-                string_format(file_fail, "ipcrm: invalid %s (%s)\n",
+                return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
-                return 1;
-        }
         bipolar id = key ? ul_ipc_id_by_key(type, value) : (bipolar)value;
         bipolar removed = id < 0 ? id
                                   : ul_ipc_remove_one(type, (positive)id);
         if (removed < 0)
-        {
-                string_format(file_fail, "ipcrm: invalid %s (%s)\n",
+                return string_report(log_error, 1, "ipcrm: invalid %s (%s)\n",
                               key ? (string_address)"key"
                                   : (string_address)"id", text);
-                return 1;
-        }
         if (verbose)
         {
                 string_format(log, "removing %s id `%b'\n",
@@ -13098,11 +12975,8 @@ static b32 util_linux_mesg()
                 if (first >= 'A' && first <= 'Z')
                         first = (p8)(first + ('a' - 'A'));
                 if (first != 'y' && first != 'n')
-                {
-                        string_format(file_fail,
+                        return string_report(log_error, 1,
                                       "mesg: invalid argument: %s\n", wanted);
-                        return 1;
-                }
                 allowed = first == 'y';
         }
 
@@ -13126,7 +13000,7 @@ static b32 util_linux_mesg()
         if (handle < 0)
         {
                 if (verbose)
-                        file_fail("mesg: no tty\n", 0);
+                        log_error("mesg: no tty\n", 0);
                 return 2;
         }
 
@@ -13138,7 +13012,7 @@ static b32 util_linux_mesg()
                 if (system_call_2(syscall(fchmod), (positive)handle, mode) < 0)
                 {
                         if (verbose)
-                                file_fail("mesg: cannot change terminal mode\n", 0);
+                                log_error("mesg: cannot change terminal mode\n", 0);
                         return 2;
                 }
         }
@@ -13293,11 +13167,8 @@ static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
 
         address_to count = 0;
         if (!file_walk_open(address_of walk, AT_FDCWD, root))
-        {
-                string_format(file_fail, "rfkill: cannot open %s: %s\n",
+                return string_report(log_error, false, "rfkill: cannot open %s: %s\n",
                               root, file_reason(walk.error));
-                return false;
-        }
 
         struct linux_dirent64 address_to entry;
         bool failed = false;
@@ -13311,7 +13182,7 @@ static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
                         continue;
                 if (address_to count == UL_RFKILL_MAX)
                 {
-                        file_fail("rfkill: too many devices\n", 0);
+                        log_error("rfkill: too many devices\n", 0);
                         failed = true;
                         break;
                 }
@@ -13319,7 +13190,7 @@ static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
                 p8 directory[FILE_PATH_MAX];
                 if (!file_path_join(directory, root, name))
                 {
-                        file_fail("rfkill: sysfs path is too long\n", 0);
+                        log_error("rfkill: sysfs path is too long\n", 0);
                         failed = true;
                         break;
                 }
@@ -13354,7 +13225,7 @@ static bool ul_rfkill_take(ul_rfkill_row address_to address_to rows,
 
         if (walk.error)
         {
-                string_format(file_fail, "rfkill: cannot read %s: %s\n",
+                string_format(log_error, "rfkill: cannot read %s: %s\n",
                               root, file_reason(walk.error));
                 failed = true;
         }
@@ -13471,11 +13342,8 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
         bipolar handle = system_open_at(AT_FDCWD, device,
                                         01 | O_CLOEXEC | O_NONBLOCK);
         if (handle < 0)
-        {
-                string_format(file_fail, "rfkill: cannot open %s: %s\n",
+                return string_report(log_error, 1, "rfkill: cannot open %s: %s\n",
                               device, file_reason(handle));
-                return 1;
-        }
 
         bool toggle = string_equals(action, "toggle");
         bool block = string_equals(action, "block");
@@ -13489,7 +13357,7 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
                                                address_of value);
                 if (kind == UL_RFKILL_MATCH_INVALID)
                 {
-                        string_format(file_fail,
+                        string_format(log_error,
                                       "rfkill: invalid identifier: %s\n",
                                       identifier);
                         status = 1;
@@ -13534,7 +13402,7 @@ static b32 ul_rfkill_change(ul_rfkill_row address_to rows, positive count,
         }
 
         if (status)
-                string_format(file_fail, "rfkill: write failed: %s\n",
+                string_format(log_error, "rfkill: write failed: %s\n",
                               device);
         system_close(handle);
         return status;
@@ -13610,12 +13478,9 @@ static b32 util_linux_rfkill()
                         kind = ul_rfkill_match_kind(identifier, rows, count,
                                                     address_of value);
                         if (kind == UL_RFKILL_MATCH_INVALID)
-                        {
-                                string_format(file_fail,
+                                return string_report(log_error, 1,
                                               "rfkill: invalid identifier: %s\n",
                                               identifier);
-                                return 1;
-                        }
                 }
                 if (legacy)
                         ul_rfkill_legacy(rows, count, kind, value);

@@ -53,8 +53,10 @@ typedef void (*writer)(string_address,positive);
 @facts@
 typedef struct {char *program,*allowed,*valued;void *longs,*supersedes;positive flags,first;} file_taking;
 static int diagnostics;
-static void file_fail(char *text,positive length){(void)text;(void)length;diagnostics++;}
-static void string_format(writer out,char *fmt,...){char b[8192];va_list ap;va_start(ap,fmt);vsnprintf(b,sizeof b,fmt,ap);va_end(ap);out(b,0);}
+static void log_error(char *text,positive length){(void)text;(void)length;diagnostics++;}
+static void mock_format(writer out,char *fmt,va_list ap){char b[8192];vsnprintf(b,sizeof b,fmt,ap);out(b,0);}
+static void string_format(writer out,char *fmt,...){va_list ap;va_start(ap,fmt);mock_format(out,fmt,ap);va_end(ap);}
+static b32 string_report(writer out,b32 result,char *fmt,...){va_list ap;va_start(ap,fmt);mock_format(out,fmt,ap);va_end(ap);return result;}
 static char *file_reason(bipolar e){(void)e;return "mock error";}
 static bool string_is(char *s,char c){return *s==c;}
 static p8 string_get(char *s){return (p8)*s;}

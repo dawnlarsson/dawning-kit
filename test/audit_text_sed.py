@@ -82,8 +82,9 @@ static bipolar system_link_at(int a, const char *from, int b, const char *to, in
     return real_files && link(from,to) ? -errno : 0;
 }
 static const char *file_reason(bipolar code) { return strerror((int)-code); }
-static void text_error(const char *name, const char *reason) {
+static bool text_error(const char *name, const char *reason) {
     (void)name; if (!reason || !*reason) abort(); diagnostics++;
+    return false;
 }
 static b32 text_refuse(const char *name, const char *reason, b32 code) {
     text_error(name, reason); return code;
