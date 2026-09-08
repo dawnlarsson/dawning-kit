@@ -746,11 +746,9 @@ static fn text_begin(string_address name)
         stack stays one deep. Groups still split, because a group can capture
         and a loop cannot say what it captured.
 
-        What this is not: leftmost longest. POSIX says an alternation picks
-        the longest branch that lets the whole match succeed; this picks the
-        first branch that does, so a\|ab against "ab" matches "a" here and
-        "ab" under GNU grep. Every other difference from the reference tools
-        is a bug; that one is a choice.
+        Boolean callers stop at the first success. Callers that need a span
+        keep the longest success in the same traversal, retaining the first
+        capture assignment when two branches finish at the same position.
 */
 
 #define REGEX_CODE_MAX 4096
@@ -826,6 +824,8 @@ enum
         REGEX_POLICY_TAC = REGEX_LINE_ANCHORS,
 };
 
+enum { REGEX_BOUNDARY_NONE, REGEX_BOUNDARY_WORD, REGEX_BOUNDARY_LINE };
+
 static string_address regex_pattern;
 static positive regex_pattern_length;
 static positive regex_pattern_at;
@@ -860,7 +860,7 @@ static positive regex_loop_at[REGEX_CODE_MAX];
         -- thirteen million table lookups on a thirteen megabyte file. A
         program that is nothing but a run of characters is that run, and
         memory_search finds it thirty two positions at a time. Compiled once,
-        here, so every caller of regex_search gets it.
+        here, so every searching caller of regex_find gets it.
 
         Longer than this and the machine takes it back, which costs speed on a
         pattern nobody writes and no correctness anywhere.
@@ -875,7 +875,10 @@ static p8 regex_first_store[REGEX_FIRST_MAX][512];
 static p8 regex_last_store[REGEX_FIRST_MAX][256];
 static p8 regex_literal_store[REGEX_FIRST_MAX][REGEX_LITERAL_MAX];
 static b32 regex_first_used;
-static positive regex_stop_wanted = TEXT_UNSET;
+static p8 regex_mode;
+static positive regex_best_stop;
+static positive regex_best_limit;
+static positive regex_best_slots[REGEX_SLOT_MAX];
 static b32 regex_loop_list[REGEX_LOOPS_KEPT];
 static p8 regex_visited[REGEX_CODE_MAX];
 
@@ -896,6 +899,7 @@ typedef struct
         bool extended;
         bool icase;
         p8 policy;
+        p8 boundary;
         bool first_known;
         bool last_known;
         bool anchored;
@@ -933,6 +937,7 @@ static regex_state regex_context = {
 #define regex_extended regex_context.extended
 #define regex_icase regex_context.icase
 #define regex_policy regex_context.policy
+#define regex_boundary regex_context.boundary
 #define regex_first_known regex_context.first_known
 #define regex_last_known regex_context.last_known
 #define regex_anchored regex_context.anchored
@@ -1838,16 +1843,7 @@ static bool regex_edge_walk(b32 pc, bool first)
         }
 }
 
-/*
-        What a match can end with.
-
-        regex_search_longest asks the machine to finish at every position past
-        the one it already found, and on a line of any length that is most of
-        the work sed does. Nearly all of those questions have the same answer
-        for a reason the machine has to run to discover: the character before
-        the proposed end is not one the pattern could have ended on. This is
-        that answer, worked out once.
-*/
+// Bound the longest search by a byte on which the program can finish.
 static fn regex_find_last()
 {
         memory_fill(regex_last, 0, 256);
@@ -1979,6 +1975,7 @@ static bool regex_compile(string_address pattern, bool extended, bool icase,
         regex_icase = icase;
         regex_escapes = escapes;
         regex_policy = policy;
+        regex_boundary = REGEX_BOUNDARY_NONE;
         regex_broken = false;
         regex_alternates = false;
         regex_pattern = pattern;
@@ -2030,6 +2027,7 @@ static b32 regex_run(b32 pc, positive sp);
 
 static positive regex_depth;
 static bool regex_exhausted;
+static bool regex_first_exhausted;
 
 static b32 regex_run_inner(b32 pc, positive sp)
 {
@@ -2040,12 +2038,43 @@ static b32 regex_run_inner(b32 pc, positive sp)
                 switch (inst->code)
                 {
                 case REGEX_DONE:
-                        // Set only while a longer match than the one already
-                        // found is being asked for; see regex_search_longest.
-                        if (regex_stop_wanted != TEXT_UNSET && sp != regex_stop_wanted)
+                {
+                        if ((regex_boundary == REGEX_BOUNDARY_LINE && sp != regex_text_length) ||
+                            (regex_boundary == REGEX_BOUNDARY_WORD && sp < regex_text_length &&
+                             text_word(regex_text[sp])))
                                 return 0;
 
-                        return 1;
+                        if (regex_mode == REGEX_FIRST || regex_best_stop == TEXT_UNSET)
+                                regex_first_exhausted = regex_exhausted;
+                        if (regex_mode == REGEX_FIRST ||
+                            (regex_mode == REGEX_EXACT_LONGEST && regex_first_exhausted))
+                                return 1;
+
+                        positive stop = sp + (regex_boundary == REGEX_BOUNDARY_WORD &&
+                                               sp < regex_text_length);
+                        if (regex_best_stop == TEXT_UNSET)
+                        {
+                                regex_best_limit = regex_text_length;
+                                // The second word-prefix branch can match empty at 1.
+                                positive least = sp + (!sp && regex_boundary == REGEX_BOUNDARY_WORD);
+                                while (regex_best_limit > least && regex_last_known &&
+                                       !regex_last[regex_text[regex_best_limit - 1]])
+                                        regex_best_limit--;
+                                regex_best_limit += regex_boundary == REGEX_BOUNDARY_WORD &&
+                                                    regex_best_limit < regex_text_length;
+                        }
+
+                        if (regex_best_stop == TEXT_UNSET || stop > regex_best_stop)
+                        {
+                                regex_best_stop = stop;
+                                memory_copy_apart(regex_best_slots, regex_slots,
+                                                  regex_slot_used * sizeof(positive));
+                        }
+
+                        // No later branch can improve a match at the upper bound.
+                        // Otherwise backtrack with working SAVE slots intact.
+                        return stop == regex_best_limit;
+                }
 
                 case REGEX_CHAR:
                 {
@@ -2300,13 +2329,15 @@ static string_address text_literal_find(string_address text, positive length,
                                               anchors.y);
 }
 
-// Leftmost: the first position where the whole pattern succeeds.
-static bool regex_search(string_address text, positive length, positive from)
+// Search leftmost, or match the exact byte for tac's bounded reverse walk.
+static bool regex_find(p8 mode, string_address text, positive length, positive from)
 {
         regex_text = text;
         regex_text_length = length;
+        regex_mode = regex_alternates || regex_boundary == REGEX_BOUNDARY_WORD
+                         ? mode : REGEX_FIRST;
 
-        if (regex_literal_length)
+        if (regex_literal_length && !regex_boundary && mode != REGEX_EXACT_LONGEST)
         {
                 string_address found = text_literal_find(text, length, from, regex_literal,
                                                          regex_literal_length, regex_icase,
@@ -2320,9 +2351,12 @@ static bool regex_search(string_address text, positive length, positive from)
                 return true;
         }
 
-        for (positive at = from; at <= length; at++)
+        for (positive at = from; at <= length || mode == REGEX_EXACT_LONGEST; at++)
         {
-                if (regex_first_known)
+                if (regex_boundary == REGEX_BOUNDARY_WORD && at && mode != REGEX_EXACT_LONGEST)
+                        at += string_span_max(text + at, length - at, string_set_name);
+
+                if (regex_first_known && !regex_boundary && mode != REGEX_EXACT_LONGEST)
                 {
                         at += string_span_max(text + at, length - at,
                                               (const b8 address_to)(regex_first + 256));
@@ -2334,82 +2368,36 @@ static bool regex_search(string_address text, positive length, positive from)
                 }
 
                 regex_clear_state();
+                regex_best_stop = TEXT_UNSET;
+                bool found = false;
 
-                if (regex_run(0, at))
-                        return true;
+                // Preserve (^|\W) branch order and compare outer endpoints.
+                // Capture slots describe only the original inner pattern.
+                if (regex_boundary == REGEX_BOUNDARY_NONE || at == 0)
+                        found = regex_run(0, at);
+                if (!found && regex_boundary == REGEX_BOUNDARY_WORD && at < length &&
+                    !text_word(text[at]))
+                        found = regex_run(0, at + 1);
 
-                if (regex_gave_up() || regex_anchored)
+                if (regex_best_stop != TEXT_UNSET)
+                {
+                        memory_copy_apart(regex_slots, regex_best_slots,
+                                          regex_slot_used * sizeof(positive));
+                        found = true;
+                }
+                // Exact callers diagnose depth exhaustion at the first success;
+                // speculative longer branches leave it for the next search.
+                if (found)
+                        return mode != REGEX_EXACT_LONGEST ||
+                               !regex_first_exhausted || !regex_gave_up();
+
+                if (mode == REGEX_EXACT_LONGEST || regex_gave_up() ||
+                    regex_boundary == REGEX_BOUNDARY_LINE ||
+                    (regex_anchored && regex_boundary != REGEX_BOUNDARY_WORD))
                         return false;
         }
 
         return false;
-}
-
-/*
-        Leftmost longest, for the callers that care where the match ended.
-
-        Backtracking takes the first branch that works, and POSIX wants the
-        longest: a\|ab against "ab" is "a" to this machine and "ab" to every
-        sed on the planet. Once a match is known, the longest one starting at
-        the same place is found by asking the machine to finish at each later
-        position in turn, highest first, which is a question it can answer
-        because DONE can be made to refuse.
-
-        Greedy is not the same as longest, and not only for alternations:
-        a*a*\(ab\)* against "ab" gives the first star the a and leaves the
-        third with nothing, which is one character where GNU matches two. Any
-        pattern whose length can vary pays for this; one of fixed length
-        cannot end anywhere else and skips it.
-*/
-static bool regex_keep_longest(positive length)
-{
-        if (!regex_alternates)
-                return true;
-
-        positive at = regex_slots[0];
-        positive to = regex_slots[1];
-        positive kept[REGEX_SLOT_MAX];
-
-        memory_copy_apart(kept, regex_slots, sizeof(kept));
-
-        for (positive stop = length; stop > to; stop--)
-        {
-                if (regex_last_known && !regex_last[regex_text[stop - 1]])
-                        continue;
-
-                regex_clear_state();
-                regex_stop_wanted = stop;
-
-                bool got = regex_run(0, at);
-
-                regex_stop_wanted = TEXT_UNSET;
-
-                if (got)
-                        return true;
-        }
-
-        memory_copy_apart(regex_slots, kept, sizeof(kept));
-
-        return true;
-}
-
-static bool regex_search_longest(string_address text, positive length, positive from)
-{
-        return regex_search(text, length, from) && regex_keep_longest(length);
-}
-
-/* Match at this exact byte rather than searching at or after it. tac walks
-   possible separator starts from the right, and a bounded prefix matters:
-   after choosing the last byte of a run, the same regexp can have a shorter
-   valid match immediately before it. */
-static bool regex_match_longest(string_address text, positive length,
-                                positive at)
-{
-        regex_text = text;
-        regex_text_length = length;
-        regex_clear_state();
-
-        return regex_run(0, at) && !regex_gave_up() && regex_keep_longest(length);
 }
 
 // What the kernel says about an open descriptor, through the one statx
@@ -5530,7 +5518,7 @@ static fn tac_regex(p8 address_to data, positive length, bool before)
                 do
                 {
                         start--;
-                        found = regex_match_longest(data, cutoff, start);
+                        found = regex_find(REGEX_EXACT_LONGEST, data, cutoff, start);
                 }
                 while (start && !found);
 
@@ -6472,7 +6460,7 @@ static b32 text_nl()
                         else if (style == 'p' && patterns[section] >= 0)
                         {
                                 regex_select(nl_patterns + patterns[section]);
-                                numbered = regex_search(text_line, text_line_length, 0);
+                                numbered = regex_find(REGEX_FIRST, text_line, text_line_length, 0);
                         }
 
                         if (numbered)
@@ -8931,7 +8919,7 @@ static positive ptx_context_next(ptx_file address_to file, positive from,
         }
         else if (!ptx_sentence_pattern[0])
                 after = file->text.length;
-        else if (regex_search_longest(file->text.bytes + from,
+        else if (regex_find(REGEX_LONGEST, file->text.bytes + from,
                                       file->text.length - from, 0))
         {
                 positive begin = from + regex_slots[0];
@@ -9067,7 +9055,7 @@ static bool ptx_next_word(ptx_context address_to context,
 
         if (ptx_custom_word)
         {
-                if (!regex_search_longest(bytes + at,
+                if (!regex_find(REGEX_LONGEST, bytes + at,
                                           context->finish - at, 0))
                         return false;
 
@@ -9178,7 +9166,7 @@ static positive ptx_skip_something(ptx_file address_to file, positive at,
 
         if (ptx_custom_word)
         {
-                if (regex_match_longest(file->text.bytes + at,
+                if (regex_find(REGEX_EXACT_LONGEST, file->text.bytes + at,
                                         limit - at, 0) && regex_slots[1])
                         return at + regex_slots[1];
 
@@ -14123,7 +14111,6 @@ static bool grep_coloring;
 static bool grep_color_ne;
 static bool grep_color_reverse;
 static string_address grep_colors;
-static positive grep_match_slot;
 
 static fn grep_color_line(string_address line, positive length, bool context,
                           bool highlight);
@@ -14549,11 +14536,10 @@ static fn grep_color_line(string_address line, positive length, bool context,
                 grep_color_start(line_color);
 
         while (highlight && search <= length &&
-               regex_search_longest(line, length, search))
+               regex_find(REGEX_LONGEST, line, length, search))
         {
-                positive whole_stop = regex_slots[1];
-                positive begin = regex_slots[grep_match_slot];
-                positive stop = regex_slots[grep_match_slot + 1];
+                positive begin = regex_slots[0];
+                positive stop = regex_slots[1];
 
                 if (stop == begin)
                 {
@@ -14579,10 +14565,7 @@ static fn grep_color_line(string_address line, positive length, bool context,
                         grep_color_start(line_color);
 
                 from = stop;
-                // From the end of the word, not of the match: -w's wrapper
-                // takes the separator after a word with it, and the word
-                // after that separator needs it in front to be a word.
-                search = grep_match_slot ? stop : whole_stop;
+                search = stop;
         }
 
         text_put(line + from, length - from);
@@ -15105,7 +15088,6 @@ static b32 text_grep()
         grep_color_ne = false;
         grep_color_reverse = false;
         grep_colors = null;
-        grep_match_slot = 0;
         grep_hold_color = null;
         text_arena_used = 0;
 
@@ -15248,54 +15230,13 @@ static b32 text_grep()
         if (!have_pattern)
                 return text_refuse(null, "no pattern given", 2);
 
-        // -x and -w are the pattern with something wrapped around it, which
-        // is cheaper than a second answer from the machine.
-        if ((whole_line || whole_word) && !never)
-        {
-                // Taken before the anchors go on: a line without the fixed
-                // string cannot match with them either, and the wrapped
-                // pattern is no longer a fixed string to look at.
-                if (regex_compile(grep_pattern, extended, icase, false,
-                                  REGEX_POLICY_DEFAULT))
-                        grep_literal_keep();
-
-                p8 around[GREP_PATTERN_MAX];
-                string_address head = whole_line ? (extended ? "^(" : "^\\(")
-                                                 : (extended ? "(^|\\W)(" : "\\(^\\|\\W\\)\\(");
-                string_address tail = whole_line ? (extended ? ")$" : "\\)$")
-                                                 : (extended ? ")(\\W|$)" : "\\)\\(\\W\\|$\\)");
-                positive head_length = string_length(head);
-                positive tail_length = string_length(tail);
-                positive have = head_length + grep_pattern_length + tail_length;
-
-                if (have >= GREP_PATTERN_MAX)
-                        return text_refuse(null, "pattern too long", 2);
-
-                memory_copy_apart(around, head, head_length);
-                memory_copy_apart(around + head_length, grep_pattern,
-                                 grep_pattern_length);
-                // The wrapper opens one group for -x and two for -w before
-                // the pattern's own, so its references move along by that.
-                grep_shift_references(around + head_length, grep_pattern_length,
-                                      whole_line ? 1 : 2, extended);
-                memory_copy_apart(around + head_length + grep_pattern_length,
-                                 tail, tail_length);
-
-                around[have] = '\0';
-                memory_copy(grep_pattern, around, have + 1);
-                grep_pattern_length = have;
-
-                if (whole_word)
-                        grep_match_slot = 4;
-        }
-
         if (!never && !regex_compile(grep_pattern, extended, icase, false,
                                      REGEX_POLICY_DEFAULT))
                 return text_refuse(null, "invalid regular expression", 2);
 
-        if (!whole_line && !whole_word)
-                grep_literal_keep();
-
+        regex_boundary = whole_line ? REGEX_BOUNDARY_LINE :
+                         whole_word ? REGEX_BOUNDARY_WORD : REGEX_BOUNDARY_NONE;
+        grep_literal_keep();
         grep_literal_required();
         grep_literal_icase = icase;
 
@@ -15564,7 +15505,7 @@ static b32 text_grep()
 
                         bool hit = !never &&
                                    ((sure && text_line_length < TEXT_LINE_MAX) ||
-                                    regex_search(line, text_line_length, 0));
+                                    regex_find(REGEX_FIRST, line, text_line_length, 0));
 
                         if (hit == invert)
                         {
@@ -15646,28 +15587,19 @@ static b32 text_grep()
                                 positive from = 0;
 
                                 while (from <= text_line_length &&
-                                       regex_search_longest(line, text_line_length, from))
+                                       regex_find(REGEX_LONGEST, line, text_line_length, from))
                                 {
-                                        positive whole_stop = regex_slots[1];
-                                        positive begin = regex_slots[grep_match_slot];
-                                        positive stop = regex_slots[grep_match_slot + 1];
+                                        positive begin = regex_slots[0];
+                                        positive stop = regex_slots[1];
 
                                         if (stop == begin)
                                         {
-                                                /* -w's wrapper consumes a
-                                                   nonword byte on both sides.
-                                                   When its inner pattern is
-                                                   empty, the right separator
-                                                   is also the only possible
-                                                   left separator for a word
-                                                   immediately after it. Let
-                                                   the next search reuse that
-                                                   byte instead of stepping
-                                                   over it. */
+                                                // An empty word match leaves its
+                                                // separator for the next search.
                                                 positive next =
-                                                    grep_match_slot &&
-                                                            whole_stop > begin
-                                                        ? whole_stop - 1
+                                                    regex_boundary == REGEX_BOUNDARY_WORD &&
+                                                            stop < text_line_length
+                                                        ? stop
                                                         : begin + 1;
 
                                                 from = next > from ? next
@@ -15685,7 +15617,7 @@ static b32 text_grep()
                                                 text_put_character(text_delimiter);
                                         }
 
-                                        from = grep_match_slot ? stop : whole_stop;
+                                        from = stop;
                                 }
 
                                 shown = number;
@@ -16667,7 +16599,7 @@ static bool sed_address_matches(p8 type, positive line, b32 which, positive step
                         return false;
 
                 regex_select(sed_programs + sed_recent);
-                return regex_search(sed_pattern.bytes, sed_pattern.length, 0);
+                return regex_find(REGEX_FIRST, sed_pattern.bytes, sed_pattern.length, 0);
         }
 
         return false;
@@ -16844,7 +16776,7 @@ static bool sed_substitute(sed_command address_to command)
 
         while (at <= sed_pattern.length)
         {
-                if (!regex_search_longest(sed_pattern.bytes, sed_pattern.length, at))
+                if (!regex_find(REGEX_LONGEST, sed_pattern.bytes, sed_pattern.length, at))
                         break;
 
                 positive from = regex_slots[0];
@@ -17529,16 +17461,20 @@ enum
 
 typedef struct
 {
+        p8 kind;
+        positive how;
+        bool reverse;
+        bool blanks[2];
+} sort_ordering;
+
+typedef struct
+{
         positive first_field;
         positive first_char;
         positive second_field;
         positive second_char;
-        p8 kind;
-        positive how;
-        bool reverse;
-        bool skip_blanks_first;
-        bool skip_blanks_second;
-        bool given;
+        sort_ordering order;
+        bool whole;
         // Whether the key spelled any ordering option of its own. One that
         // did takes nothing from the command line: -r -k1n sorts the key
         // numerically and forwards, as the reference sort does.
@@ -17547,10 +17483,7 @@ typedef struct
 
 static sort_key sort_keys[SORT_KEYS_MAX];
 static b32 sort_key_count;
-static p8 sort_kind;
-static positive sort_how;
 static bool sort_reverse;
-static bool sort_skip_blanks;
 static bool sort_unique;
 static bool sort_stable;
 static bool sort_have_separator;
@@ -17601,26 +17534,20 @@ static inline INLINE positive sort_field_edge(p8 address_to at,
 static fn sort_key_span(sort_key address_to key, p8 address_to at, positive length,
                         positive address_to from, positive address_to to)
 {
-        positive begin = 0;
+        positive begin = sort_field_start(at, length, key->first_field);
         positive finish = length;
 
-        if (key->first_field)
+        if (key->order.blanks[0])
+                begin += string_span_max(at + begin, length - begin, string_set_blanks);
+
+        if (key->first_char > 1)
         {
-                begin = sort_field_start(at, length, key->first_field);
+                positive step = key->first_char - 1;
+                positive limit = sort_field_stop(at, length, key->first_field);
 
-                if (key->skip_blanks_first)
-                        begin += string_span_max(at + begin, length - begin, string_set_blanks);
-
-                if (key->first_char > 1)
-                {
-                        positive step = key->first_char - 1;
-                        positive limit = sort_field_stop(at, length, key->first_field);
-
-                        begin += step;
-
-                        if (begin > limit)
-                                begin = limit;
-                }
+                begin += step;
+                if (begin > limit)
+                        begin = limit;
         }
 
         if (key->second_field)
@@ -17629,7 +17556,7 @@ static fn sort_key_span(sort_key address_to key, p8 address_to at, positive leng
                 {
                         finish = sort_field_start(at, length, key->second_field);
 
-                        if (key->skip_blanks_second)
+                        if (key->order.blanks[1])
                                 finish += string_span_max(at + finish, length - finish,
                                                           string_set_blanks);
 
@@ -18143,8 +18070,11 @@ static PURE bipolar sort_compare_kind(p8 kind, positive how, p8 address_to a, po
         merge sort asks about a line some twenty times. Caching only the first
         key is enough: the second is consulted only where the first ties.
 */
-static positive address_to sort_span_from;
-static positive address_to sort_span_to;
+typedef struct
+{
+        positive from, to;
+} sort_span;
+static sort_span address_to sort_spans;
 static sort_number address_to sort_numbers;
 
 static PURE HOT bipolar sort_compare_keys(positive left, positive right)
@@ -18157,13 +18087,8 @@ static PURE HOT bipolar sort_compare_keys(positive left, positive right)
         {
                 bipolar answer = sort_compare_parsed(sort_numbers + left,
                                                      sort_numbers + right);
-                bool reverse = sort_key_count ? sort_keys[0].reverse : sort_reverse;
-
                 if (answer)
-                        return reverse ? -answer : answer;
-
-                if (!sort_key_count)
-                        return 0;
+                        return sort_keys[0].order.reverse ? -answer : answer;
 
                 first_key = 1;
         }
@@ -18171,16 +18096,17 @@ static PURE HOT bipolar sort_compare_keys(positive left, positive right)
         for (b32 i = first_key; i < sort_key_count; i++)
         {
                 sort_key address_to key = sort_keys + i;
-                positive from_a, to_a, from_b, to_b;
+                positive from_a = 0, to_a = a->length;
+                positive from_b = 0, to_b = b->length;
 
-                if (!i && sort_span_from)
+                if (!i && sort_spans)
                 {
-                        from_a = sort_span_from[left];
-                        to_a = sort_span_to[left];
-                        from_b = sort_span_from[right];
-                        to_b = sort_span_to[right];
+                        from_a = sort_spans[left].from;
+                        to_a = sort_spans[left].to;
+                        from_b = sort_spans[right].from;
+                        to_b = sort_spans[right].to;
                 }
-                else
+                else if (!key->whole)
                 {
                         sort_key_span(key, a->at, a->length, address_of from_a,
                                       address_of to_a);
@@ -18188,32 +18114,12 @@ static PURE HOT bipolar sort_compare_keys(positive left, positive right)
                                       address_of to_b);
                 }
 
-                bipolar answer = sort_compare_kind(key->kind, key->how,
+                bipolar answer = sort_compare_kind(key->order.kind, key->order.how,
                                                    a->at + from_a, to_a - from_a,
                                                    b->at + from_b, to_b - from_b);
 
                 if (answer)
-                        return key->reverse ? -answer : answer;
-        }
-
-        if (!sort_key_count)
-        {
-                positive from_a = 0, from_b = 0;
-
-                if (sort_skip_blanks)
-                {
-                        from_a = string_span_max(a->at, a->length,
-                                                 string_set_blanks);
-                        from_b = string_span_max(b->at, b->length,
-                                                 string_set_blanks);
-                }
-
-                bipolar answer = sort_compare_kind(sort_kind, sort_how,
-                                                   a->at + from_a, a->length - from_a,
-                                                   b->at + from_b, b->length - from_b);
-
-                if (answer)
-                        return sort_reverse ? -answer : answer;
+                        return key->order.reverse ? -answer : answer;
         }
 
         return 0;
@@ -18405,23 +18311,18 @@ static positive sort_key_flags(sort_key address_to key, string_address spec,
                                 return positive_max;
 
                         address_to kind = option;
-                        key->kind = option;
+                        key->order.kind = option;
                 }
                 else if (option == 'r')
-                        key->reverse = true;
+                        key->order.reverse = true;
                 else if (option == 'f')
-                        key->how |= SORT_FOLD;
+                        key->order.how |= SORT_FOLD;
                 else if (option == 'd')
-                        key->how |= SORT_DICTIONARY;
+                        key->order.how |= SORT_DICTIONARY;
                 else if (option == 'i')
-                        key->how |= SORT_PRINTABLE;
+                        key->order.how |= SORT_PRINTABLE;
                 else if (option == 'b')
-                {
-                        if (second)
-                                key->skip_blanks_second = true;
-                        else
-                                key->skip_blanks_first = true;
-                }
+                        key->order.blanks[second] = true;
                 else
                         return positive_max;
         }
@@ -18439,16 +18340,7 @@ static bool sort_parse_key(string_address spec)
         positive taken;
         p8 local_kind = 0;
 
-        key->first_field = 0;
-        key->first_char = 0;
-        key->second_field = 0;
-        key->second_char = 0;
-        key->kind = 0;
-        key->how = 0;
-        key->reverse = false;
-        key->skip_blanks_first = false;
-        key->skip_blanks_second = false;
-        key->ordered = false;
+        address_to key = (sort_key){0};
 
         key->first_field = string_digits(spec + at, address_of taken);
         at += taken;
@@ -18611,19 +18503,23 @@ static b32 text_sort()
         string_address output = file_option_value(address_of taking, 'o');
         string_address said = file_option_value(address_of taking, 'K');
 
-        sort_reverse = (flags & FILE_FLAG('r')) != 0;
+        sort_ordering defaults = {
+            .reverse = (flags & FILE_FLAG('r')) != 0,
+            .blanks = {(flags & FILE_FLAG('b')) != 0,
+                       (flags & FILE_FLAG('b')) != 0},
+        };
+        sort_reverse = defaults.reverse;
         sort_unique = (flags & FILE_FLAG('u')) != 0;
         sort_stable = (flags & FILE_FLAG('s')) != 0;
-        sort_skip_blanks = (flags & FILE_FLAG('b')) != 0;
 
         if (flags & FILE_FLAG('f'))
-                sort_how |= SORT_FOLD;
+                defaults.how |= SORT_FOLD;
 
         if (flags & FILE_FLAG('d'))
-                sort_how |= SORT_DICTIONARY;
+                defaults.how |= SORT_DICTIONARY;
 
         if (flags & FILE_FLAG('i'))
-                sort_how |= SORT_PRINTABLE;
+                defaults.how |= SORT_PRINTABLE;
 
         /*
                 Two ways of ordering the same lines is a question with no
@@ -18638,10 +18534,10 @@ static b32 text_sort()
                 if (!(flags & FILE_FLAG(letter)))
                         continue;
 
-                if (sort_kind)
+                if (defaults.kind)
                         return text_refuse(null, "options are incompatible", 2);
 
-                sort_kind = letter;
+                defaults.kind = letter;
         }
 
         if (said)
@@ -18675,10 +18571,10 @@ static b32 text_sort()
                         return text_refuse(said,
                                            "invalid argument for --sort", 1);
 
-                if (sort_kind && sort_kind != kind)
+                if (defaults.kind && defaults.kind != kind)
                         return text_refuse(null, "options are incompatible", 2);
 
-                sort_kind = kind;
+                defaults.kind = kind;
         }
 
         said = file_option_value(address_of taking, 't');
@@ -18701,21 +18597,23 @@ static b32 text_sort()
                 sort_separator = escaped ? '\0' : said[0];
         }
 
-        // The global flags are the default for a key that spelled none of
-        // its own, and -n after -k on the command line still has to reach
-        // the key in front of it. A key that did spell one takes none of
-        // them: -r -k1n is a numeric forward key, not a reversed one.
+        // Every comparison uses this effective key plan, including the
+        // implicit whole-record key. An explicit ordering takes no defaults:
+        // -r -k1n is a forward numeric key with a reversed whole-line tie break.
+        if (!sort_key_count)
+                sort_keys[sort_key_count++] = (sort_key){.first_field = 1};
         for (b32 i = 0; i < sort_key_count; i++)
         {
-                if (sort_keys[i].ordered)
-                        continue;
-
-                sort_keys[i].kind = sort_kind;
-                sort_keys[i].reverse = sort_reverse;
-                sort_keys[i].how = sort_how;
-                sort_keys[i].skip_blanks_first =
-                    sort_keys[i].skip_blanks_second = sort_skip_blanks;
+                sort_key address_to key = sort_keys + i;
+                if (!key->ordered)
+                        key->order = defaults;
+                key->whole = key->first_field == 1 && key->first_char <= 1 &&
+                             !key->second_field && !key->order.blanks[0];
         }
+
+        sort_key address_to first = sort_keys;
+        bool byte_order = first->whole && !first->order.kind && !first->order.how &&
+                          !first->order.reverse;
 
         if (null_data)
                 text_delimiter = '\0';
@@ -18790,41 +18688,37 @@ static b32 text_sort()
         // heads first, then retain the original comparator/span path when
         // the larger numeric views do not fit the remaining arena.
         positive number_bytes = (text_lines_count + 1) * sizeof(sort_number);
+        positive span_bytes = (text_lines_count + 1) * sizeof(sort_span);
 
-        if ((sort_key_count ? sort_keys[0].kind : sort_kind) == 'n' &&
+        if (first->order.kind == 'n' &&
             number_bytes <= TEXT_ARENA_BYTES - text_arena_used)
         {
                 sort_numbers = (sort_number address_to)text_arena_take(number_bytes);
 
                 if (!sort_numbers)
                         return text_done(2);
+        }
+        else if (!first->whole && span_bytes <= TEXT_ARENA_BYTES - text_arena_used)
+        {
+                sort_spans = (sort_span address_to)text_arena_take(span_bytes);
 
+                if (!sort_spans)
+                        return text_done(2);
+        }
+        if (sort_numbers || sort_spans)
                 for (positive i = 0; i < text_lines_count; i++)
                 {
                         text_slice address_to line = text_lines + i;
-                        positive from = 0, to = line->length;
+                        sort_span span;
 
-                        if (sort_key_count)
-                                sort_key_span(sort_keys, line->at, line->length,
-                                              address_of from, address_of to);
-
-                        sort_numbers[i] = sort_number_of(line->at + from, to - from);
+                        sort_key_span(first, line->at, line->length,
+                                      address_of span.from, address_of span.to);
+                        if (sort_numbers)
+                                sort_numbers[i] = sort_number_of(line->at + span.from,
+                                                                 span.to - span.from);
+                        else
+                                sort_spans[i] = span;
                 }
-        }
-        else if (sort_key_count)
-        {
-                sort_span_from = (positive address_to)text_arena_take(
-                    (text_lines_count + 1) * sizeof(positive));
-                sort_span_to = (positive address_to)text_arena_take(
-                    (text_lines_count + 1) * sizeof(positive));
-
-                if (!sort_span_from || !sort_span_to)
-                        return text_done(2);
-
-                for (positive i = 0; i < text_lines_count; i++)
-                        sort_key_span(sort_keys, text_lines[i].at, text_lines[i].length,
-                                      sort_span_from + i, sort_span_to + i);
-        }
 
         /*
                 -m does not sort. It takes whichever file has the smallest
@@ -18855,8 +18749,7 @@ static b32 text_sort()
         }
         else
         {
-                if (!sort_key_count && !sort_kind && !sort_how &&
-                    !sort_reverse && !sort_stable && !sort_unique && !sort_skip_blanks)
+                if (byte_order)
                         sort_radix(0, text_lines_count, 0);
                 else
                         sort_run(text_lines_count);
@@ -19496,10 +19389,8 @@ static bool expr_is(string_address text)
 /*
         The match operator, and match, which is the same thing spelled out.
 
-        Anchored at the start, which the engine here has no flag for -- so the
-        match is searched for and then refused unless it began at nothing. A
-        pattern with a group answers with what the group took, and one without
-        answers with how many characters it took.
+        Only a match at byte zero is accepted. A pattern with a group answers
+        with what the group took, and one without answers with its length.
 */
 static expr_value expr_matched(expr_value address_to subject,
                                expr_value address_to pattern)
@@ -19517,7 +19408,7 @@ static expr_value expr_matched(expr_value address_to subject,
                 return made;
         }
 
-        if (!regex_search_longest(text, length, 0) || regex_slots[0])
+        if (!regex_find(REGEX_LONGEST, text, length, 0) || regex_slots[0])
         {
                 if (regex_group_count)
                         made.text = expr_empty;

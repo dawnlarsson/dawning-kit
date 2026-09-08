@@ -17,7 +17,8 @@ def span(text, start, end):
     return text[a:b], text[:a].count('\n') + 1, text[:b].count('\n')
 body, first, last = span(src, '#define SORT_KEYS_MAX 8', 'static positive sort_key_flags')
 merge, mf, ml = span(common, '#define array_merge_sort', '/* Linux raw errors')
-dispatch, df, dl = span(src, '                if (!sort_key_count && !sort_kind && !sort_how &&', '        // -o is opened')
+plan, pf, pl = span(src, '        // Every comparison uses this effective key plan,', '        if (null_data)')
+dispatch, df, dl = span(src, '                if (byte_order)', '        // -o is opened')
 # Strip only the containing text_sort else block's closing brace.
 dispatch = dispatch[:dispatch.rfind('        }')]
 pre = r'''
@@ -64,14 +65,16 @@ static positive text_lines_count;
 post = r'''
 int main(int argc, char **argv) {
     p8 delimiter='\n';
+    sort_ordering defaults={0};
     for(int i=1;i<argc;i++) {
-        if(!strcmp(argv[i], "b")) sort_skip_blanks=true;
+        if(!strcmp(argv[i], "b")) defaults.blanks[0]=defaults.blanks[1]=true;
         else if(!strcmp(argv[i], "s")) sort_stable=true;
         else if(!strcmp(argv[i], "u")) sort_unique=true;
-        else if(!strcmp(argv[i], "r")) sort_reverse=true;
-        else if(!strcmp(argv[i], "f")) sort_how=SORT_FOLD;
+        else if(!strcmp(argv[i], "r")) sort_reverse=defaults.reverse=true;
+        else if(!strcmp(argv[i], "f")) defaults.how=SORT_FOLD;
         else if(!strcmp(argv[i], "z")) delimiter=0;
-        else if(!strcmp(argv[i], "k1b")) { sort_key_count=1; sort_keys[0]=(sort_key){.first_field=1,.skip_blanks_first=true,.ordered=true}; }
+        else if(!strcmp(argv[i], "k1")) { sort_key_count=1; sort_keys[0]=(sort_key){.first_field=1}; }
+        else if(!strcmp(argv[i], "k1b")) { sort_key_count=1; sort_keys[0]=(sort_key){.first_field=1,.order.blanks={true,false},.ordered=true}; }
         else return 3;
     }
     p8 *input=malloc(1048576); if(!input) return 4;
@@ -85,7 +88,7 @@ int main(int argc, char **argv) {
     sort_order=calloc(text_lines_count+1,sizeof(*sort_order));
     sort_spare=calloc(text_lines_count+1,sizeof(*sort_spare));
     for(positive i=0;i<text_lines_count;i++) sort_order[i]=i;
-    c05_dispatch();
+    c05_dispatch(defaults);
     positive disorder=0;
     for(positive i=1;i<text_lines_count;i++) if(sort_compare(sort_order[i-1],sort_order[i])>0) disorder++;
     fprintf(stderr,"{\"adjacent_comparator_inversions\":%lu}\n",(unsigned long)disorder);
@@ -99,8 +102,10 @@ int main(int argc, char **argv) {
 '''
 checks=[]
 for label, fix in [('fixed',False),('unguarded_control',True)]:
-    chosen=dispatch.replace(' && !sort_skip_blanks)', ')') if fix else dispatch
-    code=pre+'\n'+merge+'\n'+body+'\nstatic void c05_dispatch(void) {\n'+chosen+'}\n'+post
+    # Break accelerator eligibility alone; the comparator keeps the true plan.
+    chosen=plan.replace('bool byte_order = first->whole',
+                        'bool byte_order = (first->first_field == 1 && first->first_char <= 1 && !first->second_field)') if fix else plan
+    code=pre+'\n'+merge+'\n'+body+'\nstatic void c05_dispatch(sort_ordering defaults) {\n'+chosen+dispatch+'}\n'+post
     path=OUT/f'C05-sort-blanks-{label}.c'; path.write_text(code)
     exe=OUT/f'C05-sort-blanks-{label}'
     build=subprocess.run(['cc','-std=gnu11','-O2','-Wall','-Wextra','-Wno-unused-function','-Wno-unused-variable','-Wno-pointer-sign',str(path),'-o',str(exe)],capture_output=True,text=True)
@@ -119,6 +124,9 @@ for n in [15,16,17,32]:
     add(f'blank_empty_equal_keys_{n}',([b'\t',b' ',b'',b' a',b'a',b'\ta',b'  a',b' b']*4)[:n])
 records=[(b' \t' if i%2 else b'')+f'{i:02}'.encode() for i in reversed(range(32))]
 for flags in [(),('b','s'),('b','u'),('b','r'),('b','f'),('k1b',)]: add('mode_'+'_'.join(flags or ('raw',)),records,flags)
+for n in [15,16,17]:
+    for flags in [('s',),('u',),('k1',),('k1','s'),('k1','u')]:
+        add('whole_key_'+'_'.join(flags)+f'_{n}', (records[:8]*3)[:n], flags)
 add('zero_delimited_16',records[:16],('b','z'),b'\0')
 add('embedded_nul_16',[(b' ' if i%2 else b'')+b'a\0'+f'{i:02}'.encode() for i in reversed(range(16))])
 add('long_common_prefix_16',[b' '*2048+(b'\t' if i%2 else b'')+f'{i:02}'.encode() for i in reversed(range(16))])
@@ -149,7 +157,7 @@ for c in cases:
         r=subprocess.run([str(OUT/f'C05-sort-blanks-{b["name"]}'),*c['flags']],input=data,capture_output=True)
         row['runs'].append({'engine':b['name'],'status':r.returncode,'matches_oracle':r.stdout==expected,'stdout_sha256':h(r.stdout),'stdout_hex':r.stdout.hex() if len(r.stdout)<2000 else None,**json.loads(r.stderr)})
     results.append(row)
-report={'text_source_sha256':h(src.encode()),'host':platform.platform(),'compiler':subprocess.check_output(['cc','--version'],text=True).splitlines()[0],'extracted_spans':[{'file':'src/sh/text.c','first':first,'last':last,'sha256':h(body.encode())},{'file':'src/library.common.c','first':mf,'last':ml,'sha256':h(merge.encode())},{'file':'src/sh/text.c','first':df,'last':dl,'sha256':h(dispatch.encode()),'note':'Containing text_sort else closing brace removed, statements unchanged.'}],'fixture_scope':'Exact current sort comparator/key/radix/merge code with scalar host adapters and direct policy state; not full applet option parsing, input arena, architecture assembly, or output-error path. The fixed engine uses the exact production dispatch. The negative control removes its blank-policy guard.','builds':checks,'results':results,'summary':{b['name']:{'cases':len(results),'matches':sum(r['runs'][i]['matches_oracle'] for r in results),'mismatches':[r['name'] for r in results if not r['runs'][i]['matches_oracle']]} for i,b in enumerate(checks)}}
+report={'text_source_sha256':h(src.encode()),'host':platform.platform(),'compiler':subprocess.check_output(['cc','--version'],text=True).splitlines()[0],'extracted_spans':[{'file':'src/sh/text.c','first':first,'last':last,'sha256':h(body.encode())},{'file':'src/library.common.c','first':mf,'last':ml,'sha256':h(merge.encode())},{'file':'src/sh/text.c','first':pf,'last':pl,'sha256':h(plan.encode())},{'file':'src/sh/text.c','first':df,'last':dl,'sha256':h(dispatch.encode()),'note':'Containing text_sort else closing brace removed, statements unchanged.'}],'fixture_scope':'Exact current sort comparator/key/radix/merge code with scalar host adapters and production effective-key normalization; not full applet option parsing, input arena, architecture assembly, or output-error path. The fixed engine uses the exact production normalization and dispatch. The negative control omits leading-blank handling from the whole-record eligibility condition.','builds':checks,'results':results,'summary':{b['name']:{'cases':len(results),'matches':sum(r['runs'][i]['matches_oracle'] for r in results),'mismatches':[r['name'] for r in results if not r['runs'][i]['matches_oracle']]} for i,b in enumerate(checks)}}
 (OUT/'C05-sort-blanks-fixture-results.json').write_text(json.dumps(report,indent=2)+'\n')
 print(json.dumps(report['summary'],indent=2))
 

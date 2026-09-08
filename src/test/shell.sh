@@ -251,9 +251,6 @@ while time.monotonic() < deadline:
         except OSError:
             break
 
-    if process.poll() is not None:
-        break
-
 if process.poll() is None:
     process.kill()
 

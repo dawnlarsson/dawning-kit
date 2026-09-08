@@ -2790,6 +2790,34 @@ def both(name, arguments, data):
         report(name, " ".join(arguments), want, mine, data)
 
 
+# Longest traversal must stop at a proven endpoint, preserve equal-end
+# captures, and apply grep boundaries without stealing capture groups.
+# Explicit -wx expectations follow the documented -x precedence; the test
+# host's grep 3.12-modified incorrectly adds a blank line for that combination.
+for name, arguments, data, wanted in [
+    ("grep", ["-Eo", "(a|aa)*"], "a" * 128 + "z\n", "a" * 128 + "\n"),
+    ("grep", ["-Eo", "a|ab"], "a" + "b" * 128 + "\n", "ab\n"),
+    ("grep", ["-Ewo", "-e", "-|-b"], "--b\n", "-b\n"),
+    ("grep", ["-Ewo", "a|ab"], "ab a abc\n", "ab\na\n"),
+    ("grep", ["-Ewo", "-e", "(a)\\1", "-e", "(b)\\1"], "aa bb\n", "aa\nbb\n"),
+    ("grep", ["-Ewo", "(a)" * 9 + "\\9"], "a" * 10 + "\n", "a" * 10 + "\n"),
+    ("grep", ["-Exo", "(a)" * 9 + "\\9"], "a" * 10 + "\n", "a" * 10 + "\n"),
+    ("grep", ["-Ewxo", "a|ab"], "a\nab\na_\n", "a\nab\n"),
+    ("grep", ["-Ewxo", "(a)(b)"], "ab\n", "ab\n"),
+    ("grep", ["-Ewxo", ""], "\n", ""),
+    ("sed", ["-E", "s/(a|ab)(b|)/[\\1][\\2]/"], "ab\n", "[a][b]\n"),
+]:
+    total += 1
+    try:
+        got = subprocess.run([ours + "/" + name] + arguments, input=data,
+                             capture_output=True, text=True, timeout=10)
+        actual = got.stdout, got.returncode
+    except subprocess.TimeoutExpired:
+        actual = "timed out", -1
+    if actual != (wanted, 0):
+        bad += 1
+        report(name, " ".join(arguments), (wanted, 0), actual, data)
+
 basic = ["a", "b", "c", ".", "[ab]", "[^a]", "\\(a\\)", "\\(ab\\)", "[a-c]",
          "a*", "b*", ".*", "\\(a\\)*", "ab", "a\\|b", "\\(a\\|b\\)",
          "a\\{1,2\\}", "[abc]\\{2\\}", "a\\+", "b\\?", "\\(ab\\)*",

@@ -519,6 +519,14 @@ bash_answer 'retained function compounds keep lexical assignment identity' \
         'f(){ local a=("(x)" "("); local b="(y)"; printf "%s:%s:%s\n" "${a[0]}" "${a[1]}" "$b"; }; f; f'
 
 group globals
+bash_answer 'hidden nameref subscript writes the visible prefix without recursive publication' \
+        'i=0; declare -a ar=(zero one two); declare -n y=x; f(){ declare -gn x="ar[x=1]"; declare -g x=Z; printf "status:%s inner:%s i:%s\n" "$?" "$x" "$i"; }; x=0 f; declare -p ar x y i; :'
+bash_answer 'hidden scalar and element namerefs append through their target' \
+        'y=old; a=(first second); f(){ declare -gn x=y; declare -g x+=Z; declare -gn x="a[1]"; declare -g x+=Q; printf "%s:%s:%s\n" "$x" "$y" "${a[1]}"; }; x=temp f; printf "%s:%s\n" "$y" "${a[1]}"'
+bash_answer 'hidden nameref writes retain target readonly status' \
+        'ro=old; readonly ro; f(){ declare -gn x=ro; declare -g x=Z; printf "%s:%s\n" "$?" "$x"; }; x=temp f; printf "%s\n" "$ro"'
+bash_answer 'hidden absent RANDOM declarations retain dynamic state' \
+        'f(){ declare -g RANDOM=7; }; RANDOM=3 f; first=$RANDOM; second=$RANDOM; test "$first" != "$second"; printf "%s\n" "$?"'
 bash_answer 'global declarations update the variable below a function prefix' \
         'x=old; y=target; f(){ declare -gn x=y; printf "%s:%s\n" "$?" "$x"; declare -p x; }; x=raw f; declare -p x y'
 bash_answer 'global integer declarations evaluate against the visible prefix' \

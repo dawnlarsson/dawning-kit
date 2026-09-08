@@ -1156,7 +1156,7 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
                 positive cut = TEXT_UNSET;
                 positive stop = 0;
 
-                if (regex_search_longest(text, length, at))
+                if (regex_find(REGEX_LONGEST, text, length, at))
                 {
                         cut = regex_slots[0];
                         stop = regex_slots[1];
@@ -1168,7 +1168,7 @@ static fn awk_split_pieces(string_address text, positive length, string_address 
                                 cut = TEXT_UNSET;
 
                                 for (positive scan = at; scan < length && cut == TEXT_UNSET; scan++)
-                                        if (regex_search_longest(text, length, scan) &&
+                                        if (regex_find(REGEX_LONGEST, text, length, scan) &&
                                             regex_slots[1] > regex_slots[0])
                                         {
                                                 cut = regex_slots[0];
@@ -1944,7 +1944,7 @@ static b32 awk_read_record(awk_reader address_to which, awk_text address_to addr
         {
                 regex_select(awk_regex_dynamic(pattern));
 
-                bool got = regex_search_longest(which->data + which->at,
+                bool got = regex_find(REGEX_LONGEST, which->data + which->at,
                                                 which->filled - which->at, 0) &&
                            regex_slots[1] > regex_slots[0];
 
@@ -4531,7 +4531,7 @@ static regex_program address_to awk_program_of(awk_node address_to node)
 static bool awk_matches(awk_node address_to pattern, awk_text address_to subject)
 {
         regex_select(awk_program_of(pattern));
-        return regex_search(subject->text, subject->length, 0);
+        return regex_find(REGEX_FIRST, subject->text, subject->length, 0);
 }
 
 static fn awk_call(awk_node address_to node, awk_value address_to out);
@@ -4807,7 +4807,7 @@ static awk_text address_to awk_replace(awk_text address_to subject, regex_progra
         {
                 regex_select(program);
 
-                if (!regex_search_longest(subject->text, subject->length, at))
+                if (!regex_find(REGEX_LONGEST, subject->text, subject->length, at))
                         break;
 
                 positive start = regex_slots[0];
@@ -5110,7 +5110,7 @@ static fn awk_builtin(awk_node address_to node, awk_value address_to out)
 
                 regex_select(awk_program_of(second));
 
-                if (regex_search_longest(text->text, text->length, 0))
+                if (regex_find(REGEX_LONGEST, text->text, text->length, 0))
                 {
                         awk_set_global_number(awk_where_rstart, (decimal)(regex_slots[0] + 1));
                         awk_set_global_number(awk_where_rlength,

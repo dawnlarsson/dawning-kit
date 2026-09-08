@@ -12,7 +12,8 @@ static p8 address_to text_arena_read_all(positive handle, positive first,
    a second regular-expression implementation here. */
 static bool regex_compile(string_address pattern, bool extended, bool icase,
                           bool escapes, p8 policy);
-static bool regex_search(string_address text, positive length, positive from);
+enum { REGEX_FIRST, REGEX_LONGEST, REGEX_EXACT_LONGEST };
+static bool regex_find(p8 mode, string_address text, positive length, positive from);
 
 /* Every arena-backed vector shares one rare grow/copy path.  The common
    typed front keeps a full store to existing room on the caller's hot path. */
@@ -11244,7 +11245,7 @@ static bool csplit_find_regex(csplit_state address_to state,
                 positive stop = newline ? (positive)(newline - state->input)
                                         : state->length;
 
-                if (regex_search(state->input + at, stop - at, 0))
+                if (regex_find(REGEX_FIRST, state->input + at, stop - at, 0))
                 {
                         address_to matched_line = line;
                         address_to matched_at = at;
