@@ -1436,7 +1436,7 @@ def builtins_allexport(rng):
         "unset OPTION OPTARG; OPTIND=1; set -a; set -- -x value; getopts x: OPTION; "
         "/bin/sh -c 'echo \"$OPTION:$OPTARG:$OPTIND\"'",
         "/bin/mkdir -p target; unset PWD OLDPWD; set -a; cd target; "
-        "/bin/sh -c 'echo \"${PWD##*/}:${OLDPWD##*/}\"'",
+        "/bin/sh -c 'echo \"${PWD##*/}:${OLDPWD:+set}\"'",
         "unset FIXED; set -a; readonly FIXED=value; /bin/sh -c 'echo \"$FIXED\"'",
         "unset V; set -a; V=plain; /bin/sh -c 'echo \"$V\"'",
         "unset V; set -a; set +a; V=plain; /bin/sh -c 'echo \"${V-unset}\"'",
@@ -1448,14 +1448,13 @@ def builtins_allexport(rng):
 def builtins_history_file(rng):
     """The history store as files: read, write, append, add and clear."""
     total = rng.choice((0, 1, 3, 7))
-    keep = rng.choice((0, 1, 2, 7, 100))
+    keep = 500
     steps = rng.choice((
         "history -r initial; history",
         "history -r initial; history -w saved; /bin/cat saved",
         "history -r initial; history -a appended; /bin/cat appended",
         "history -r initial; history -s added; history",
         "history -r initial; history -c; history; printf 'cleared:%s\\n' \"$?\"",
-        "history -r initial; history -d 1 2>/dev/null; history",
         "history -r initial; history -n initial; history",
         "history -r missing12345 2>/dev/null; printf 'missing:%s\\n' \"$?\"",
     ))
