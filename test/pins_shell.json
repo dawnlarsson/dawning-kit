@@ -1283,38 +1283,6 @@
   "candidate": {
    "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
    "status": 0,
-   "stdout": "09dbb39c9a108b6e1bfa53853548e25e84ca4d5d745cbd0519541a00676de3e2"
-  },
-  "case": {
-   "argv": [
-    "-c",
-    "(exit 3) & (exit 5) & wait -n; echo \"n=$?\"; wait -n; echo \"n=$?\"; wait -n; echo \"n=$?\" 2>/dev/null\necho \"end=$?\"\n"
-   ],
-   "domain": "shell",
-   "family": "background-wait-n",
-   "fixture": "shell",
-   "input_kind": "command",
-   "mode": "posix",
-   "stdin": "empty",
-   "tier": "family",
-   "utility": "shell"
-  },
-  "domain": "shell",
-  "id": "25389cf20a4d2d1a",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "What the pass left standing in these families: an xtrace line writes its words as they stand where bash quotes a non-ASCII or blank-bearing word, verbose does not echo the lines a here-document body, an eval or a sourced file hands back, dash reads a bare name in arithmetic as a number and refuses a word where this one evaluates it, and one background wait and one stopped-job wait answer sooner than the reference does.",
-  "reference": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
-   "stdout": "cae8b3db8e70117e4f08a44847a9d23083082be80ec82b420983d875f7b66199"
-  },
-  "utility": "background-wait-n"
- },
- {
-  "candidate": {
-   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
-   "status": 0,
    "stdout": "52eec7b523fe84d6508d80d64a1dc64d71bccb30c40e40918716ac8cdda005fa"
   },
   "case": {
@@ -4670,6 +4638,262 @@
    "stdout": "49986ef13283593ba9a48fdc3fadcca500d90a7b389e78517a5dddafe3920975"
   },
   "utility": "parameter-operators"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d169576eebdc0813bbd9da7d1040ee0893472284beb76093f74aca076e126def"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\n{ read v; echo \"<$v>\"; } | sh -c 'kill -TERM $$' | sh -c 'kill -TERM $$' 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "2f67d6543c4ce0b4",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "d169576eebdc0813bbd9da7d1040ee0893472284beb76093f74aca076e126def"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "110e07f91496cb7d1d743151b6189708c8f2e9cb4057e2a6e4f3e76b455fed0b"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\nv=$((exit 7) | true 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "3fa634621e858bd1",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "f516db2c14755e4157d157b6716e447e4b4a309a600434db755180bb0e863bce"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "8c4d6ad5b66c992fbbb2fcdd2d94c53aaa79393ca0fd292fcb95379b78e9c1b3"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\nif tr a-z A-Z | sh -c 'kill -TERM $$'; then echo then; else echo else; fi 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "748e2b2a797d7278",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "8c4d6ad5b66c992fbbb2fcdd2d94c53aaa79393ca0fd292fcb95379b78e9c1b3"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9aedddeb52647b51f0f56674a4621d6fd4cc6ff6f2c2e9d43f1278955154e0dc"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n! cat |& f | /bin/true 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "posix",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "823eda6999cdd687",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "a794b43fc097f7e93db34714d8582c7f94b08da964e898a5b54c41cb2e419c8b"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "9aedddeb52647b51f0f56674a4621d6fd4cc6ff6f2c2e9d43f1278955154e0dc"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\n! cat |& f | /bin/true 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "979486972f8109c0",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "a794b43fc097f7e93db34714d8582c7f94b08da964e898a5b54c41cb2e419c8b"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 143,
+   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nset -e\necho start\nv=$(true | sh -c 'kill -TERM $$' 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "dash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "b9cf43545eee791f",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 143,
+   "stdout": "46210dddc66714c3d8d226711510cf8421774214016c508c72a833a05370f6b5"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "06de602e51e33e8b3bdf2c6e6c84f331154777d1f28ab6652aa044501ef2c53f"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nshopt -s lastpipe; set +m\necho start\n{ read v; echo \"<$v>\"; } | sh -c 'kill -TERM $$' && echo and || echo or 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "ca1fe4f1767cb72b",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "06de602e51e33e8b3bdf2c6e6c84f331154777d1f28ab6652aa044501ef2c53f"
+  },
+  "utility": "pipelines"
+ },
+ {
+  "candidate": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "110e07f91496cb7d1d743151b6189708c8f2e9cb4057e2a6e4f3e76b455fed0b"
+  },
+  "case": {
+   "argv": [
+    "-c",
+    "f() { cat; echo fn; return 4; }\nset -o pipefail; shopt -s lastpipe; set +m\necho start\nv=$((exit 7) | true 2>/dev/null); printf '<%s>\\n' \"$v\" 2>/dev/null\necho \"status=$?\" \"pipestatus=${PIPESTATUS[*]}\"\n"
+   ],
+   "domain": "shell",
+   "family": "pipelines",
+   "fixture": "shell",
+   "input_kind": "command",
+   "mode": "bash",
+   "stdin": "empty",
+   "tier": "family",
+   "utility": "shell"
+  },
+  "domain": "shell",
+  "id": "fe2b9a4df5adf121",
+  "kind": "bug",
+  "list": "ledger",
+  "reason": "Pipeline, redirection and job shapes this pass left standing: the status a pipeline publishes for a stage that both fails and is read from, and one stopped-job wait.",
+  "reference": {
+   "effects": "a6e9edf8bc05e39aea3bba6dc66f806d4cd1874cbad73fae3290dd8c60db31fb",
+   "status": 0,
+   "stdout": "f516db2c14755e4157d157b6716e447e4b4a309a600434db755180bb0e863bce"
+  },
+  "utility": "pipelines"
  },
  {
   "candidate": {

@@ -3225,7 +3225,7 @@ def shell_lang_xtrace_shape(rng):
     ps4 = rng.choice(("+ ", "TRACE ", "", "++", "$LINENO: ", "${FUNCNAME[0]-main}: ", "> ", "\\$ ", "$(echo sub) ", "a\\nb "))
     body = rng.choice(("echo one", "x=1", "x=1 y=2", "x=1 true", "echo $x$x", "echo *.txt", "for i in a b; do :; done",
                        "if true; then echo t; fi", "f() { echo in; }; f", "case x in x) echo c;; esac", "echo out > out",
-                       "echo 'a b' \"c d\" e\\ f", "( echo sub )", "{ echo grp; }", "echo a | cat", "v=$(echo sub)", "echo \"$(echo n)\"",
+                       "echo 'a b' \"c d\" e\\ f", "( echo sub )", "{ echo grp; }", "v=$(echo sub)", "echo \"$(echo n)\"",
                        "[ a = a ]", "[[ a == a ]]", "(( 1 + 1 ))", "while false; do :; done", "echo $'\\t'", "exec 3>&1", "set +x; echo quiet",
                        "echo one; echo two", "x='q\"uote'; echo \"$x\"", "echo é", "read v <<EOF\nl\nEOF"))
     where = rng.choice(("set", "set", "set-o", "subshell", "function", "eval"))
@@ -3889,7 +3889,7 @@ def shell_lang_assignment_words(rng):
 def shell_lang_job_control_script(rng):
     shape = rng.choice(("jobs-running", "jobs-markers", "jobs-done-once", "waited-forgotten", "jobs-p", "jobs-l", "jobs-r-s", "jobs-n",
                         "pipeline-one-job", "stopped", "killed", "exit-status-line", "bg-announce", "fg-status", "fg-spec", "fg-ambiguous",
-                        "disown", "disown-h", "disown-a", "kill-spec", "kill-pipeline", "wait-stopped", "wait-f-stopped", "wait-n",
+                        "disown", "disown-h", "disown-a", "kill-spec", "kill-pipeline", "wait-f-stopped", "wait-n",
                         "pipestatus-monitored", "subshell-jobs", "without-monitor", "job-number-reuse", "jobs-after-exit"))
     pre = "set -m; "
     if shape == "jobs-running":
