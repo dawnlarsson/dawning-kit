@@ -49,6 +49,11 @@ import sys
 import tempfile
 import concurrent.futures
 
+# Run as a script this module is __main__, so a spec's "from differential
+# import ..." would load a second copy and see a different INPUTS and
+# FIXTURES from the one the workers walk. Register this one under the name.
+sys.modules.setdefault("differential", sys.modules[__name__])
+
 HERE = Path(__file__).resolve().parent
 PIN_FILE = Path(__file__).resolve()
 

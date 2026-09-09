@@ -2887,6 +2887,12 @@ for edge in (65535, 65536, 65537):
                             ("sed", ["-z", "h;G"])]:
         both(name, arguments, data.replace("\n", "\0"))
 
+# Dense output events cross both input refill and partial output capacity.
+for edge in (65511, 65535, 65536):
+    data = "x" * edge + "\n\nalpha\t\001\177\n\nlast\n" * 8193 + "tail"
+    for flags in ("-ns", "-nT", "-nE", "-nAv", "-bAs"):
+        both("cat", [flags], data)
+
 # Decimal width grows past six columns without leaving reserved tail bytes.
 both("cat", ["-n"], "x\n" * 1000001)
 

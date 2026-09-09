@@ -5111,6 +5111,18 @@ __asm__(
 #ifndef KERNEL_MODE
     "cmp $64, %rsi\n   jb 5f\n"
     ASM_NARROW("cpu_has_avx2", "5f")
+    "cmp $2048, %rsi\n   jb .Lmemory_reverse_x64_avx2\n"
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_reverse_x64_avx2")
+    ASM_NARROW("cpu_has_avx512_vbmi", ".Lmemory_reverse_x64_avx2")
+    "vmovdqu64 .Lmemory_reverse_x86_mask(%rip), %zmm2\n   .balign 16\n"
+    ".Lmemory_reverse_x64_wide:\n"
+    "vpermb (%rdi), %zmm2, %zmm0\n   sub $64, %rdx\n"
+    "vpermb (%rdx), %zmm2, %zmm1\n"
+    "vmovdqu64 %zmm1, (%rdi)\n   vmovdqu64 %zmm0, (%rdx)\n"
+    "add $64, %rdi\n   sub $128, %rsi\n   cmp $128, %rsi\n"
+    "jae .Lmemory_reverse_x64_wide\n   cmp $64, %rsi\n"
+    "jae .Lmemory_reverse_x64_avx2\n   vzeroupper\n   jmp 5f\n"
+    ".Lmemory_reverse_x64_avx2:\n"
     "vmovdqu .Lmemory_reverse_x86_mask(%rip), %ymm2\n   .balign 16\n"
     "1:  vmovdqu (%rdi), %ymm0\n   sub $32, %rdx\n   vmovdqu (%rdx), %ymm1\n   vpshufb %ymm2, %ymm0, %ymm0\n"
     "vpshufb %ymm2, %ymm1, %ymm1\n   vperm2i128 $1, %ymm0, %ymm0, %ymm0\n   vperm2i128 $1, %ymm1, %ymm1, %ymm1\n"
@@ -5135,7 +5147,10 @@ __asm__(
     "jae 1b\n"
     "9:  " ASM_RET
     ".section .rodata\n   .balign 32\n"
-    ".Lmemory_reverse_x86_mask:\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n   .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
+    // AVX2's lane shuffle uses only each byte's low nibble; the same
+    // indices also reverse all 64 bytes in the VBMI body.
+    ".Lmemory_reverse_x86_mask:\n   .byte 63,62,61,60,59,58,57,56,55,54,53,52,51,50,49,48,47,46,45,44,43,42,41,40,39,38,37,36,35,34,33,32\n"
+    "   .byte 31,30,29,28,27,26,25,24,23,22,21,20,19,18,17,16,15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n"
     ASM_SECTION
     ASM_END(memory_reverse)
 
@@ -5441,10 +5456,14 @@ __asm__(
 #endif
     ASM_END(memory_span_byte)
 
-    // A stable 256-byte table is an indexed load per byte; four independent
-    // chains overlap that latency where no byte-granularity SIMD gather can.
+    // Eligible disjoint spans index a table held in four vector registers.
+    // Other calls retain four scalar lookup chains and their load/store order,
+    // including calls whose table overlaps the input.
     ASM_FUNC(memory_translate)
     "mov %rdi, %rax\n   cmp $4, %rsi\n   jb .Lmemory_translate_x64_tail\n"
+#ifndef KERNEL_MODE
+    "cmp $64, %rsi\n   jae .Lmemory_translate_x64_dispatch\n"
+#endif
     ".Lmemory_translate_x64_four:\n"
     "movzbl 0(%rdi), %ecx\n   movzbl 1(%rdi), %r8d\n"
     "movzbl 2(%rdi), %r9d\n   movzbl 3(%rdi), %r10d\n"
@@ -5461,6 +5480,31 @@ __asm__(
     "inc %rdi\n   dec %rsi\n   jnz .Lmemory_translate_x64_one\n"
     ".Lmemory_translate_x64_done:\n"
     ASM_RET
+#ifndef KERNEL_MODE
+    ".Lmemory_translate_x64_dispatch:\n"
+    ASM_NARROW("cpu_has_avx2", ".Lmemory_translate_x64_four")
+    ASM_NARROW("cpu_has_avx512", ".Lmemory_translate_x64_four")
+    ASM_NARROW("cpu_has_avx512_vbmi", ".Lmemory_translate_x64_four")
+    // Overlap retains the existing four-byte-group load/store order.
+    // Subtractions test the two intervals without overflowing an end pointer.
+    "mov %rdi, %r8\n   sub %rdx, %r8\n   jae .Lmemory_translate_x64_block_after\n"
+    "mov %rdx, %r8\n   sub %rdi, %r8\n   cmp %rsi, %r8\n"
+    "jb .Lmemory_translate_x64_four\n   jmp .Lmemory_translate_x64_wide_start\n"
+    ".Lmemory_translate_x64_block_after:\n   cmp $256, %r8\n"
+    "jb .Lmemory_translate_x64_four\n"
+    ".Lmemory_translate_x64_wide_start:\n"
+    "vmovdqu64 (%rdx), %zmm4\n   vmovdqu64 64(%rdx), %zmm5\n"
+    "vmovdqu64 128(%rdx), %zmm6\n   vmovdqu64 192(%rdx), %zmm7\n"
+    ".balign 16\n.Lmemory_translate_x64_wide:\n"
+    "vmovdqu64 (%rdi), %zmm0\n   vmovdqa64 %zmm4, %zmm1\n"
+    "vpermt2b %zmm5, %zmm0, %zmm1\n   vmovdqa64 %zmm6, %zmm2\n"
+    "vpermt2b %zmm7, %zmm0, %zmm2\n   vpmovb2m %zmm0, %k1\n"
+    "vmovdqu8 %zmm2, %zmm1{%k1}\n   vmovdqu64 %zmm1, (%rdi)\n"
+    "add $64, %rdi\n   sub $64, %rsi\n   cmp $64, %rsi\n"
+    "jae .Lmemory_translate_x64_wide\n   vzeroupper\n"
+    "cmp $4, %rsi\n   jb .Lmemory_translate_x64_tail\n"
+    "jmp .Lmemory_translate_x64_four\n"
+#endif
     ASM_END(memory_translate)
 
     /*
@@ -5538,6 +5582,7 @@ __asm__(
     ASM_RET
     ASM_END(memory_exchange_apart)
 
+    ".balign 32\n"
     ASM_FUNC(memory_copy_apart)
     KERNEL_BULK_COPY
     "mov %rdi, %rax\n   cmp $32, %rdx\n   ja 6f\n   cmp $16, %rdx\n"
@@ -15080,7 +15125,15 @@ __asm__(
     "lea -1(%r14), %rcx\n   shl $3, %ecx\n   mov $1, %ebx\n   shl %cl, %rbx\n"
     ".balign 16\n.Ldecimal_series_x86_cached:\n"
     "cmp %r12, %rsi\n   jb 8f\n   add %rbx, %r15\n   inc %edx\n   cmp $58, %edx\n"
-    "jb .Ldecimal_series_x86_cached_store\n"
+    "jae .Ldecimal_series_x86_cached_overflow\n"
+    ".Ldecimal_series_x86_cached_store:\n   add %r12, %rdi\n   cmp $8, %rsi\n"
+    "jb .Ldecimal_series_x86_cached_tail\n   mov %r15, (%rdi)\n"
+    ".Ldecimal_series_x86_cached_next:\n   add %r12, %r11\n   sub %r12, %rsi\n"
+    "jmp .Ldecimal_series_x86_cached\n"
+    ".Ldecimal_series_x86_cached_tail:\n   mov %r15d, (%rdi)\n"
+    "lea -4(%r12), %ecx\n   shl $3, %ecx\n   mov %r15, %rax\n   shr %cl, %rax\n"
+    "mov %eax, -4(%rdi,%r12)\n   jmp .Ldecimal_series_x86_cached_next\n"
+    ".Ldecimal_series_x86_cached_overflow:\n"
     "mov $48, %edx\n   lea (%rbx,%rbx,4), %rax\n   add %rax, %rax\n   sub %rax, %r15\n"
     "lea -1(%r14), %r10\n"
     ".Ldecimal_series_x86_cached_carry:\n   cmp %r13, %r10\n   je 8f\n   dec %r10\n"
@@ -15090,13 +15143,6 @@ __asm__(
     "jb .Ldecimal_series_x86_cached_store\n"
     "lea (%r8,%r8,4), %rax\n   add %rax, %rax\n   sub %rax, %r15\n"
     "jmp .Ldecimal_series_x86_cached_carry\n"
-    ".Ldecimal_series_x86_cached_store:\n   add %r12, %rdi\n   cmp $8, %rsi\n"
-    "jb .Ldecimal_series_x86_cached_tail\n   mov %r15, (%rdi)\n"
-    ".Ldecimal_series_x86_cached_next:\n   add %r12, %r11\n   sub %r12, %rsi\n"
-    "jmp .Ldecimal_series_x86_cached\n"
-    ".Ldecimal_series_x86_cached_tail:\n   mov %r15d, (%rdi)\n"
-    "lea -4(%r12), %ecx\n   shl $3, %ecx\n   mov %r15, %rax\n   shr %cl, %rax\n"
-    "mov %eax, -4(%rdi,%r12)\n   jmp .Ldecimal_series_x86_cached_next\n"
     ".Ldecimal_series_x86_unit:\n   cmp %r12, %rsi\n   jb 8f\n   lea (%rdi,%r12), %r8\n"
     "mov (%rdi), %rax\n   mov -8(%rdi,%r12), %rcx\n"
     "mov %rax, (%r8)\n   mov %rcx, -8(%r8,%r12)\n"
@@ -16552,6 +16598,7 @@ address_any memory_frob(address_any block, positive size);
 // are unchanged, including NUL and bytes with the high bit set.
 address_any memory_to_lower_ascii(address_any block, positive size);
 address_any memory_to_upper_ascii(address_any block, positive size);
+// Translate size bytes using a readable 256-byte table; size zero accesses neither pointer.
 address_any memory_translate(address_any block, positive size,
                              address_any table);
 // Swap exactly size bytes between separate ranges. The ranges must be
