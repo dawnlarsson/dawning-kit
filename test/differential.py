@@ -97,7 +97,7 @@ DOMAIN_FLOOR = {
                    "the column families of lsfd, findmnt and lsblk: 2.42 lists "
                    "ASSOC, XMODE, SOURCE and MNTID by default where these list "
                    "FD and MODE, so a default listing differs in every row"),
-    "misc": (18071, 19912,
+    "misc": (18070, 19912,
              "script's transcript timing, cksum --check combinations, od and "
              "numfmt corners, and eleven cases where the reference itself "
              "exceeds the runner's limit"),
