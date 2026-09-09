@@ -3134,16 +3134,19 @@ static bool file_source_destination(string_address program, positive first,
 
 // ls ------------------------------------------------------------
 /*
-        ls [-laARtShr1din]
+        ls [OPTION]... [FILE]...
 
         There is an ls builtin in the shell as well. This is the one with the
         flags, and the builtin should call it rather than grow a second copy:
         a listing is not the shell's business, and a program can be replaced
         on its own.
 
-        Output is one name per line. The system's ls does the same the moment
-        it is not writing to a terminal, which is every case a script cares
-        about, and columns are a terminal's problem rather than a listing's.
+        One name per line when the output is not a terminal and columns when
+        it is, with every format, order, time, quoting style and indicator
+        the reference ls answers to, decided the way it decides them: the last
+        of a set of options that answer the same question is the one that
+        counts, and the questions are kept apart (what to show, what order,
+        which time, how to spell a name, what to follow).
 
         Times are UTC. Nothing in this tree reads /usr/share/zoneinfo, and a
         listing that quietly used the wrong zone would be worse than one that
@@ -3151,6 +3154,8 @@ static bool file_source_destination(string_address program, positive first,
 */
 #define LS_MAX_ENTRIES 8192
 #define LS_ARENA (1 << 20)
+#define LS_PATTERNS 64
+#define LS_LISTED 4096
 
 typedef struct
 {
@@ -3162,11 +3167,20 @@ typedef struct
         p64 size;
         b64 modified;
         p32 modified_fraction;
+        b64 accessed;
+        p32 accessed_fraction;
+        b64 changed;
+        p32 changed_fraction;
+        b64 created;
+        p32 created_fraction;
         p64 inode;
         p64 blocks;
         p32 rdev_major;
         p32 rdev_minor;
         bool known;
+        bool created_known;
+        bool points_at_directory;
+        bool quoted;
 } ls_entry;
 
 static ls_entry ls_entries[LS_MAX_ENTRIES];
@@ -3176,40 +3190,125 @@ static positive ls_count;
 static p8 ls_arena[LS_ARENA];
 static positive ls_used;
 
-static bool ls_long;
-static bool ls_columns;
+// What was asked for, one letter per question.
+static p8 ls_format;      // l long, 1 one per line, C down columns, x across, m commas
+static p8 ls_sorting;     // n name, t time, S size, v version, X extension, w width, U none
+static p8 ls_time_key;    // m modified, a accessed, c changed, b born
+static p8 ls_time_style;  // d default, f full-iso, l long-iso, i iso, + a format of its own
+static string_address ls_time_format_old;
+static string_address ls_time_format_recent;
+static p8 ls_quoting;     // L literal, s shell, S shell-always, e shell-escape,
+                          // E shell-escape-always, c C, b escape, o locale
+static bool ls_hide_controls;
+static p8 ls_indicator;   // 0 none, / slash, f file-type, F classify
+static p8 ls_dereference; // N never, D command-line links to directories, H command line, L always
 static bool ls_hidden;
 static bool ls_almost;
 static bool ls_recursive;
-static bool ls_by_time;
-static bool ls_by_size;
-static bool ls_human;
 static bool ls_reversed;
 static bool ls_inode;
+static bool ls_blocks;
 static bool ls_numeric;
 static bool ls_as_itself;
-static bool ls_classify;
-static bool ls_slash;
-static bool ls_headings;
+static bool ls_group_directories;
+static bool ls_ignore_backups;
+static bool ls_kibibytes;
+static bool ls_owner_shown;
+static bool ls_group_shown;
+static bool ls_author;
+static bool ls_context;
+static bool ls_dired;
+static bool ls_hyperlink;
+static p8 ls_eol;
+static positive ls_width;
+static positive ls_tabsize;
+
+// Sizes in the long listing, and the blocks -s and the total count in: each
+// is a unit to divide by with a suffix to write after, or the human spelling.
+static positive ls_size_unit;
+static bool ls_size_human;
+static bool ls_size_si;
+static p8 ls_size_suffix[8];
+static positive ls_block_unit;
+static bool ls_block_human;
+static bool ls_block_si;
+static p8 ls_block_suffix[8];
+
+static string_address ls_ignore_patterns[LS_PATTERNS];
+static positive ls_ignore_count;
+static string_address ls_hide_patterns[LS_PATTERNS];
+static positive ls_hide_count;
+
+static bool ls_some_quoted;
 static bool ls_coloring;
 static bool ls_color_started;
 static bool ls_terminal;
-static bool ls_escape;
 static string_address ls_colors;
 
 static b32 ls_status;
 static bool ls_written;
 static bool ls_broken;
 static b64 ls_now;
-static p8 ls_hidden_option;
-static p8 ls_order_option;
 static string_address ls_program;
 
+// --dired needs to know where every name landed in the output, so every
+// byte the listing writes goes through one counter.
+static positive ls_out_bytes;
+static positive ls_dired_marks[2 * LS_MAX_ENTRIES];
+static positive ls_dired_count;
+static positive ls_subdired_marks[2 * LS_LISTED];
+static positive ls_subdired_count;
+
+// The directories -R has listed, by identity, so a link back into one is
+// named as already listed rather than walked again.
+static p64 ls_listed_device[LS_LISTED];
+static p64 ls_listed_inode[LS_LISTED];
+static positive ls_listed_count;
+
+static p8 ls_host[FILE_NAME_MAX];
+static p8 ls_cwd[FILE_PATH_MAX];
+
+static p8 ls_format_option;
+static p8 ls_sort_option;
+static p8 ls_time_option;
+static p8 ls_quote_option;
+static p8 ls_indicator_option;
+static p8 ls_hidden_option;
+static p8 ls_deref_option;
+static p8 ls_size_option;
+static p8 ls_control_option;
+
 static const file_supersede ls_supersedes[] = {
-    {(string_address) "aA", address_of ls_hidden_option},
-    {(string_address) "tS", address_of ls_order_option},
+    {(string_address) "1CxmlgonJMD", address_of ls_format_option},
+    {(string_address) "tSUvX3f", address_of ls_sort_option},
+    {(string_address) "cu4", address_of ls_time_option},
+    {(string_address) "NQbz", address_of ls_quote_option},
+    {(string_address) "FpjEY", address_of ls_indicator_option},
+    {(string_address) "aAf", address_of ls_hidden_option},
+    {(string_address) "HLV", address_of ls_deref_option},
+    {(string_address) "hP7", address_of ls_size_option},
+    {(string_address) "q2", address_of ls_control_option},
     {null, null},
 };
+
+static bool date_shape(writer write, b64 when, string_address format);
+bool shell_match(string_address pattern, string_address text);
+
+static fn ls_out(address_any text, positive length)
+{
+        if (!length)
+                length = string_length((string_address)text);
+
+        log(text, length);
+        ls_out_bytes += length;
+}
+
+static positive ls_counted;
+
+static fn ls_count_bytes(address_any text, positive length)
+{
+        ls_counted += length ? length : string_length((string_address)text);
+}
 
 static fn ls_limit(string_address why)
 {
@@ -3245,37 +3344,660 @@ static bool ls_keep(string_address name, positive address_to where)
         return true;
 }
 
-static PURE HOT bipolar ls_order(ls_entry address_to left,
-                                 ls_entry address_to right)
+// ---- Names as the reference spells them --------------------------------
+
+/*
+        The bytes a shell would have to quote: the empty name, whitespace and
+        control bytes, the shell's own punctuation, a hash or tilde in front,
+        and a brace standing alone. Under the escaping styles a byte outside
+        ASCII is spelled in octal and so needs quoting too.
+*/
+static bool ls_shell_needs_quotes(string_address name, positive length, bool escaping)
 {
-        if (ls_by_time)
-        {
-                if (left->modified != right->modified)
-                        return left->modified > right->modified ? -1 : 1;
+        if (!length)
+                return true;
 
-                // Two files written in the same second are not the same age,
-                // and sorting them by name instead puts them in the wrong
-                // order rather than an arbitrary one.
-                if (left->modified_fraction != right->modified_fraction)
-                        return left->modified_fraction > right->modified_fraction ? -1 : 1;
-        }
-        else if (ls_by_size)
+        for (positive at = 0; at < length; at++)
         {
+                p8 byte = string_get(name + at);
+
+                if (byte < 32 || byte == 127)
+                        return true;
+                if (byte >= 128)
+                {
+                        if (escaping)
+                                return true;
+                        continue;
+                }
+                if (string_first_of((string_address) " !\"$&'()*;<=>?[^`|\\", byte))
+                        return true;
+                if ((byte == '#' || byte == '~') && at == 0)
+                        return true;
+                if ((byte == '{' || byte == '}') && length == 1)
+                        return true;
+        }
+
+        return false;
+}
+
+/*
+        One byte of a name spelled as an escape, the way -b writes it and the
+        way a quoted name on a terminal writes it. The two differ only in
+        that -b's C spelling has a letter for the bell and for the backslash
+        itself; the quoted form never meets a backslash and writes the bell
+        in octal. Everything else is the same table.
+*/
+static positive ls_escape_byte(p8 byte, p8 address_to into, bool c_style)
+{
+        into[0] = '\\';
+        into[1] = byte == '\n'                ? 'n'
+                  : byte == '\t'              ? 't'
+                  : byte == '\r'              ? 'r'
+                  : byte == '\b'              ? 'b'
+                  : byte == '\f'              ? 'f'
+                  : byte == '\v'              ? 'v'
+                  : c_style && byte == 7      ? 'a'
+                  : c_style && byte == '\\'   ? '\\'
+                                              : 0;
+
+        if (into[1])
+                return 2;
+
+        into[1] = (p8)('0' + ((byte >> 6) & 7));
+        into[2] = (p8)('0' + ((byte >> 3) & 7));
+        into[3] = (p8)('0' + (byte & 7));
+
+        return 4;
+}
+
+static positive ls_escape_letter(p8 byte, p8 address_to into)
+{
+        return ls_escape_byte(byte, into, true);
+}
+
+static bool ls_byte_unprintable(p8 byte)
+{
+        return byte < 32 || byte >= 127;
+}
+
+// The shell styles: quotes only when needed or always, and the escaping
+// variants that spell an unprintable byte as $'\ooo' between quoted runs.
+static fn ls_quote_shell(writer write, string_address name, positive length, bool always,
+                         bool escaping)
+{
+        if (!always && !ls_shell_needs_quotes(name, length, escaping))
+        {
+                write(name, length);
+                return;
+        }
+
+        bool quote_inside = false;
+        bool double_unsafe = false;
+        bool unprintable = false;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = string_get(name + at);
+
+                if (byte == '\'')
+                        quote_inside = true;
+                if (byte == '"' || byte == '$' || byte == '`' || byte == '\\' || byte == '!')
+                        double_unsafe = true;
+                if (ls_byte_unprintable(byte))
+                        unprintable = true;
+        }
+
+        if (quote_inside && !double_unsafe && !(escaping && unprintable))
+        {
+                write("\"", 1);
+                write(name, length);
+                write("\"", 1);
+                return;
+        }
+
+        write("'", 1);
+
+        bool open = true;
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = string_get(name + at);
+
+                if (byte == '\'')
+                {
+                        if (!open)
+                        {
+                                write("'", 1);
+                                open = true;
+                        }
+                        write("'\\''", 4);
+                        continue;
+                }
+
+                if (escaping && ls_byte_unprintable(byte))
+                {
+                        if (open)
+                                write("'", 1);
+                        write("$'", 2);
+
+                        while (at < length && ls_byte_unprintable(string_get(name + at)))
+                        {
+                                p8 spelled[4];
+
+                                write(spelled, ls_escape_letter(string_get(name + at), spelled));
+                                at++;
+                        }
+                        at--;
+                        write("'", 1);
+                        open = false;
+                        continue;
+                }
+
+                if (!open)
+                {
+                        write("'", 1);
+                        open = true;
+                }
+                write(name + at, 1);
+        }
+
+        if (open)
+                write("'", 1);
+}
+
+// The C styles: a quoted string a C compiler would read back, the same
+// without its quotes and with spaces escaped, and the locale style that in
+// the C locale is the C string in single quotes.
+static fn ls_quote_c(writer write, string_address name, positive length, p8 style)
+{
+        p8 quote = style == 'c' ? '"' : style == 'o' ? '\'' : 0;
+
+        if (quote)
+                write(address_of quote, 1);
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = string_get(name + at);
+                p8 spelled[4];
+
+                if (byte == '\\')
+                        write("\\\\", 2);
+                else if (quote && byte == quote)
+                {
+                        write("\\", 1);
+                        write(address_of quote, 1);
+                }
+                else if (style == 'b' && byte == ' ')
+                        write("\\ ", 2);
+                else if (ls_byte_unprintable(byte))
+                        write(spelled, ls_escape_letter(byte, spelled));
+                else
+                        write(name + at, 1);
+        }
+
+        if (quote)
+                write(address_of quote, 1);
+}
+
+static fn ls_quote_literal(writer write, string_address name, positive length)
+{
+        if (!ls_hide_controls)
+        {
+                write(name, length);
+                return;
+        }
+
+        for (positive at = 0; at < length; at++)
+        {
+                p8 byte = string_get(name + at);
+
+                if (ls_byte_unprintable(byte))
+                        write("?", 1);
+                else
+                        write(name + at, 1);
+        }
+}
+
+static fn ls_quote(writer write, string_address name)
+{
+        positive length = string_length(name);
+
+        switch (ls_quoting)
+        {
+        case 's':
+                return ls_quote_shell(write, name, length, false, false);
+        case 'S':
+                return ls_quote_shell(write, name, length, true, false);
+        case 'e':
+                return ls_quote_shell(write, name, length, false, true);
+        case 'E':
+                return ls_quote_shell(write, name, length, true, true);
+        case 'c':
+        case 'b':
+        case 'o':
+                return ls_quote_c(write, name, length, ls_quoting);
+        }
+
+        ls_quote_literal(write, name, length);
+}
+
+// Whether the reference would put this name in quotes under a style that
+// quotes only when it must; other names in the same listing then get a
+// space in front so the columns still line up.
+static bool ls_name_quoted(string_address name)
+{
+        if (ls_quoting != 's' && ls_quoting != 'e')
+                return false;
+
+        return ls_shell_needs_quotes(name, string_length(name), ls_quoting == 'e');
+}
+
+static bool ls_aligns_quotes()
+{
+        return (ls_format == 'l' || ((ls_format == 'C' || ls_format == 'x') && ls_width)) &&
+               (ls_quoting == 's' || ls_quoting == 'e');
+}
+
+static positive ls_quoted_width(ls_entry address_to entry)
+{
+        ls_counted = 0;
+        ls_quote(ls_count_bytes, ls_arena + entry->name);
+
+        if (ls_aligns_quotes() && ls_some_quoted && !entry->quoted)
+                ls_counted++;
+
+        return ls_counted;
+}
+
+// ---- Sizes and blocks ----------------------------------------------------
+
+// The reference's power of ten spelling: below a thousand the number, then
+// the greatest unit not exceeding it, one decimal below ten, and every
+// rounding upward.
+static fn ls_human_1000(writer write, p64 value)
+{
+        static const p8 units[] = "kMGTPEZY";
+        positive unit = 0;
+        p64 divisor = 1;
+
+        if (value < 1000)
+                return positive_to_string(write, value);
+
+        while (unit + 1 < sizeof(units) - 1 && value / divisor >= 1000000)
+        {
+                divisor *= 1000;
+                unit++;
+        }
+
+        divisor *= 1000;
+
+        p64 whole = value / divisor;
+        p64 rest = value % divisor;
+        p8 text[16];
+        positive length;
+
+        if (whole < 10)
+        {
+                p64 tenths = (rest * 10 + divisor - 1) / divisor;
+
+                if (tenths == 10)
+                {
+                        whole++;
+                        tenths = 0;
+                }
+
+                if (whole < 10)
+                {
+                        length = positive_into_string(text, whole);
+                        text[length++] = '.';
+                        text[length++] = (p8)('0' + tenths);
+                        text[length++] = units[unit];
+                        return write(text, length);
+                }
+        }
+        else
+                whole += rest != 0;
+
+        if (whole >= 1000 && unit + 1 < sizeof(units) - 1)
+        {
+                p64 next = whole / 1000 + (whole % 1000 != 0);
+
+                length = positive_into_string(text, next);
+                text[length++] = units[unit + 1];
+                return write(text, length);
+        }
+
+        length = positive_into_string(text, whole);
+        text[length++] = units[unit];
+        write(text, length);
+}
+
+static fn ls_scaled(writer write, p64 value, positive unit, bool human, bool si,
+                    string_address suffix)
+{
+        if (human)
+                return si ? ls_human_1000(write, value) : positive_to_human_1024(write, value);
+
+        positive_to_string(write, unit > 1 ? value / unit + (value % unit != 0) : value);
+        write(suffix, string_length(suffix));
+}
+
+static positive ls_scaled_width(p64 value, positive unit, bool human, bool si,
+                                string_address suffix)
+{
+        ls_counted = 0;
+        ls_scaled(ls_count_bytes, value, unit, human, si, suffix);
+        return ls_counted;
+}
+
+/*
+        A --block-size argument: a number, a unit letter, or both, with B for
+        powers of a thousand and iB or nothing for powers of 1024; a leading
+        apostrophe asks for digit grouping, which the C locale has none of.
+        The suffix written after each number is the unit as it was spelled.
+*/
+static bool ls_block_size_read(string_address text, positive address_to unit,
+                               bool address_to human, bool address_to si,
+                               p8 address_to suffix)
+{
+        static const p8 letters[] = "KMGTPEZYRQ";
+        string_address at = text;
+        positive number = 1;
+        bool numeric = false;
+
+        address_to human = false;
+        address_to si = false;
+        suffix[0] = end;
+
+        if (string_is(at, '\''))
+                at++;
+
+        if (byte_is_digit(string_get(at)))
+        {
+                if (!string_digits_checked(address_of at, 10, address_of number) || !number)
+                        return false;
+                numeric = true;
+        }
+
+        if (!string_get(at))
+        {
+                if (!numeric)
+                        return false;
+                address_to unit = number;
+                return true;
+        }
+
+        string_address letter = string_first_of((string_address)letters, string_get(at));
+
+        if (!letter || string_get(at) == end)
+                return false;
+
+        positive power = (positive)(letter - (string_address)letters) + 1;
+        positive base = 1024;
+        positive suffix_length = 0;
+
+        suffix[suffix_length++] = string_get(at);
+        at++;
+
+        if (string_is(at, 'B'))
+        {
+                base = 1000;
+                suffix[0] = suffix[0] == 'K' ? 'k' : suffix[0];
+                suffix[suffix_length++] = 'B';
+                at++;
+        }
+        else if (string_is(at, 'i') && string_is(at + 1, 'B'))
+        {
+                suffix[suffix_length++] = 'i';
+                suffix[suffix_length++] = 'B';
+                at += 2;
+        }
+
+        if (string_get(at))
+                return false;
+
+        suffix[suffix_length] = end;
+
+        positive scale = 1;
+
+        for (positive i = 0; i < power; i++)
+        {
+                if (scale > positive_max / base)
+                        return false;
+                scale *= base;
+        }
+
+        address_to unit = number * scale;
+        return true;
+}
+
+// ---- Order ---------------------------------------------------------------
+
+// gnulib's filevercmp: a file suffix is set aside first, digit runs are
+// compared as numbers, a tilde sorts before everything and punctuation
+// after letters, so b.txt~ comes before b.txt and v2 before v10.
+static b32 ls_version_order_byte(p8 byte)
+{
+        if (byte_is_digit(byte))
+                return 0;
+        if (byte_is_alpha(byte))
+                return byte;
+        if (byte == '~')
+                return -1;
+        return byte + 256;
+}
+
+static b32 ls_version_run(string_address left, positive left_length, string_address right,
+                          positive right_length)
+{
+        positive l = 0;
+        positive r = 0;
+
+        while (l < left_length || r < right_length)
+        {
+                b32 first_difference = 0;
+
+                while ((l < left_length && !byte_is_digit(string_get(left + l))) ||
+                       (r < right_length && !byte_is_digit(string_get(right + r))))
+                {
+                        b32 lc = l == left_length ? 0 : ls_version_order_byte(string_get(left + l));
+                        b32 rc = r == right_length ? 0 : ls_version_order_byte(string_get(right + r));
+
+                        if (lc != rc)
+                                return lc - rc;
+                        l++;
+                        r++;
+                }
+
+                while (l < left_length && string_is(left + l, '0'))
+                        l++;
+                while (r < right_length && string_is(right + r, '0'))
+                        r++;
+
+                while (l < left_length && byte_is_digit(string_get(left + l)) &&
+                       r < right_length && byte_is_digit(string_get(right + r)))
+                {
+                        if (!first_difference)
+                                first_difference = (b32)string_get(left + l) -
+                                                   (b32)string_get(right + r);
+                        l++;
+                        r++;
+                }
+
+                if (l < left_length && byte_is_digit(string_get(left + l)))
+                        return 1;
+                if (r < right_length && byte_is_digit(string_get(right + r)))
+                        return -1;
+                if (first_difference)
+                        return first_difference;
+        }
+
+        return 0;
+}
+
+static positive ls_version_prefix(string_address name, positive length)
+{
+        positive prefix = 0;
+
+        for (positive i = 0;;)
+        {
+                if (i == length)
+                        return prefix;
+                i++;
+                prefix = i;
+                while (i + 1 < length && string_is(name + i, '.') &&
+                       (byte_is_alpha(string_get(name + i + 1)) || string_is(name + i + 1, '~')))
+                        for (i += 2; i < length && (byte_is_alnum(string_get(name + i)) ||
+                                                    string_is(name + i, '~'));
+                             i++)
+                                ;
+        }
+}
+
+static b32 ls_version_compare(string_address left, string_address right)
+{
+        positive left_length = string_length(left);
+        positive right_length = string_length(right);
+
+        if (!left_length)
+                return right_length ? -1 : 0;
+        if (!right_length)
+                return 1;
+
+        if (string_is(left, '.'))
+        {
+                if (!string_is(right, '.'))
+                        return -1;
+
+                bool left_dot = left_length == 1;
+                bool right_dot = right_length == 1;
+
+                if (left_dot)
+                        return right_dot ? 0 : -1;
+                if (right_dot)
+                        return 1;
+
+                bool left_dots = string_is(left + 1, '.') && left_length == 2;
+                bool right_dots = string_is(right + 1, '.') && right_length == 2;
+
+                if (left_dots)
+                        return right_dots ? 0 : -1;
+                if (right_dots)
+                        return 1;
+        }
+        else if (string_is(right, '.'))
+                return 1;
+
+        positive left_prefix = ls_version_prefix(left, left_length);
+        positive right_prefix = ls_version_prefix(right, right_length);
+        bool one_pass = left_prefix == left_length && right_prefix == right_length;
+        b32 answer = ls_version_run(left, left_prefix, right, right_prefix);
+
+        if (answer || one_pass)
+                return answer;
+
+        return ls_version_run(left, left_length, right, right_length);
+}
+
+static string_address ls_extension(string_address name)
+{
+        string_address dot = string_last_of(name, '.');
+
+        return dot ? dot : (string_address) "";
+}
+
+static fn ls_entry_time(ls_entry address_to entry, b64 address_to seconds,
+                        p32 address_to fraction)
+{
+        switch (ls_time_key)
+        {
+        case 'a':
+                address_to seconds = entry->accessed;
+                address_to fraction = entry->accessed_fraction;
+                return;
+        case 'c':
+                address_to seconds = entry->changed;
+                address_to fraction = entry->changed_fraction;
+                return;
+        case 'b':
+                address_to seconds = entry->created;
+                address_to fraction = entry->created_fraction;
+                return;
+        }
+
+        address_to seconds = entry->modified;
+        address_to fraction = entry->modified_fraction;
+}
+
+static bool ls_is_directory_like(ls_entry address_to entry)
+{
+        return (entry->mode & MODE_FORMAT) == MODE_DIRECTORY || entry->points_at_directory;
+}
+
+static PURE HOT bipolar ls_order(ls_entry address_to left, ls_entry address_to right)
+{
+        if (ls_group_directories && ls_sorting != 'U')
+        {
+                bool left_directory = ls_is_directory_like(left);
+                bool right_directory = ls_is_directory_like(right);
+
+                if (left_directory != right_directory)
+                        return left_directory ? -1 : 1;
+        }
+
+        string_address left_name = ls_arena + left->name;
+        string_address right_name = ls_arena + right->name;
+        bipolar answer = 0;
+
+        switch (ls_sorting)
+        {
+        case 't':
+        {
+                b64 left_seconds, right_seconds;
+                p32 left_fraction, right_fraction;
+
+                ls_entry_time(left, address_of left_seconds, address_of left_fraction);
+                ls_entry_time(right, address_of right_seconds, address_of right_fraction);
+
+                if (left_seconds != right_seconds)
+                        answer = left_seconds > right_seconds ? -1 : 1;
+                else if (left_fraction != right_fraction)
+                        answer = left_fraction > right_fraction ? -1 : 1;
+                break;
+        }
+        case 'S':
                 if (left->size != right->size)
-                        return left->size > right->size ? -1 : 1;
+                        answer = left->size > right->size ? -1 : 1;
+                break;
+        case 'v':
+                answer = ls_version_compare(left_name, right_name);
+                break;
+        case 'X':
+                answer = string_compare(ls_extension(left_name), ls_extension(right_name));
+                break;
+        case 'w':
+        {
+                positive left_width = ls_quoted_width(left);
+                positive right_width = ls_quoted_width(right);
+
+                if (left_width != right_width)
+                        answer = left_width < right_width ? -1 : 1;
+                break;
+        }
         }
 
-        return string_compare(ls_arena + left->name, ls_arena + right->name);
+        if (!answer)
+                answer = string_compare(left_name, right_name);
+
+        return ls_reversed ? -answer : answer;
 }
 
 #define ls_index_order(left, right) \
         ls_order(ls_entries + (left), ls_entries + (right))
 
 /* Bottom-up merge sort keeps comparison count at n log n on the full 8192
-   entry surface. Only eight-byte indexes move: the old Shell sort moved whole
-   ls_entry records repeatedly and still did superlinear extra comparisons on
-   reverse/random directories. BSS carries the two small index arrays without
-   adding image bytes or startup writes; they are touched only when ls sorts. */
+   entry surface. Only eight-byte indexes move. -U leaves the directory's
+   own order, reversed by -r as the reference reverses it. */
 static fn ls_sort()
 {
         for (positive i = 0; i < ls_count; i++)
@@ -3284,30 +4006,20 @@ static fn ls_sort()
         if (ls_count < 2)
                 return;
 
+        if (ls_sorting == 'U')
+        {
+                if (ls_reversed)
+                        for (positive i = 0; i < ls_count; i++)
+                                ls_sorted[i] = ls_count - 1 - i;
+                return;
+        }
+
         positive address_to from = array_merge_sort(
             ls_sorted, ls_sort_spare, ls_count, ls_index_order);
 
         if (from != ls_sorted)
                 memory_copy_apart(ls_sorted, from,
                                   ls_count * sizeof(positive));
-}
-
-static fn ls_size_field(p64 value)
-{
-        if (ls_human)
-                return positive_to_human_1024(log, value);
-
-        positive_to_string(log, value);
-}
-
-static positive ls_human_width(p64 value)
-{
-        if (!ls_human)
-                return positive_digits(value);
-
-        p8 text[6];
-
-        return positive_into_human_1024_string(text, value);
 }
 
 // A character or block device has no size worth a column; the reference ls
@@ -3319,16 +4031,19 @@ static bool ls_is_device(ls_entry address_to entry)
         return entry->known && (kind == MODE_CHARACTER || kind == MODE_BLOCK);
 }
 
-// -F and -p put a letter after a name saying what it is: the slash for a
-// directory that -p asks for on its own, and the rest of them for -F.
+// The letter after a name that says what it is: a slash for -p, the kinds
+// for --file-type, and the executable's star only for -F.
 static p8 ls_mark(positive mode)
 {
         p8 mark = file_kind_of(mode)->mark;
 
-        if (!ls_classify)
+        if (!ls_indicator)
+                return 0;
+
+        if (ls_indicator == '/')
                 return mark == '/' ? mark : 0;
 
-        if ((mode & MODE_FORMAT) == MODE_FILE && (mode & 0111))
+        if (ls_indicator == 'F' && (mode & MODE_FORMAT) == MODE_FILE && (mode & 0111))
                 return '*';
 
         return mark;
@@ -3466,6 +4181,15 @@ static file_color_span ls_suffix_color(string_address name)
         return answer;
 }
 
+static bool ls_full_path(p8 address_to full, string_address directory, string_address name)
+{
+        if (directory)
+                return file_path_join(full, directory, name);
+
+        string_copy_max_end(full, name, FILE_PATH_MAX - 1);
+        return true;
+}
+
 static file_color_span ls_name_color(string_address directory,
                                      ls_entry address_to entry,
                                      string_address name)
@@ -3494,16 +4218,10 @@ static file_color_span ls_name_color(string_address directory,
 
                 p8 full[FILE_PATH_MAX];
                 file_facts through;
-                bool fits = true;
-
-                if (directory)
-                        fits = file_path_join(full, directory, name);
-                else
-                        string_copy_max_end(full, name, FILE_PATH_MAX - 1);
 
                 // A link whose path would not fit whole cannot be followed,
                 // and is coloured as the orphan it might as well be.
-                if (!fits || !file_look_at(full, address_of through))
+                if (!ls_full_path(full, directory, name) || !file_look_at(full, address_of through))
                 {
                         file_color_span orphan = ls_color_of(LS_COLOR_OR, null);
 
@@ -3555,315 +4273,353 @@ static file_color_span ls_name_color(string_address directory,
         return ls_color_of(key, fallback);
 }
 
+// ---- Hyperlinks ----------------------------------------------------------
+
+static fn ls_url_bytes(string_address text)
+{
+        for (positive at = 0; string_get(text + at); at++)
+        {
+                p8 byte = string_get(text + at);
+
+                if (byte_is_alnum(byte) || string_first_of((string_address) "-._~/", byte))
+                {
+                        ls_out(text + at, 1);
+                        continue;
+                }
+
+                p8 escaped[3] = {'%', (p8)"0123456789ABCDEF"[byte >> 4],
+                                 (p8)"0123456789ABCDEF"[byte & 15]};
+
+                ls_out(escaped, 3);
+        }
+}
+
+// The file: URL a terminal turns into a link: this host, the absolute path,
+// every byte outside the unreserved set spelled in percent form.
+static fn ls_hyperlink_open(string_address directory, string_address name)
+{
+        p8 full[FILE_PATH_MAX];
+
+        ls_out("\033]8;;file://", 0);
+        ls_out(ls_host, 0);
+
+        if (!ls_full_path(full, directory, name))
+                string_copy_max_end(full, name, FILE_PATH_MAX - 1);
+
+        if (!string_is(full, '/'))
+        {
+                ls_url_bytes(ls_cwd);
+                if (!(string_is(ls_cwd, '/') && !string_get(ls_cwd + 1)))
+                        ls_out("/", 1);
+        }
+
+        ls_url_bytes(full);
+        ls_out("\033\\", 2);
+}
+
+static fn ls_hyperlink_close()
+{
+        ls_out("\033]8;;\033\\", 0);
+}
+
+// ---- Writing a name ------------------------------------------------------
+
+static fn ls_dired_mark(positive begin, positive stop)
+{
+        if (!ls_dired)
+                return;
+
+        if (ls_dired_count + 2 > array_count(ls_dired_marks))
+        {
+                ls_limit((string_address) "too many names for --dired");
+                return;
+        }
+
+        ls_dired_marks[ls_dired_count++] = begin;
+        ls_dired_marks[ls_dired_count++] = stop;
+}
+
 /*
-        One byte of a name spelled as an escape, the way -b writes it and the
-        way a quoted name on a terminal writes it. The two differ only in
-        that -b's C spelling has a letter for the bell and for the backslash
-        itself; the quoted form never meets a backslash and writes the bell
-        in octal. Everything else is the same table.
+        One name, coloured, quoted and linked as asked. start_column is where
+        on the line it begins: a coloured name that crosses the width of the
+        line is followed by the terminal's erase-to-end, as the reference
+        writes it, so a background colour does not bleed into the wrap.
 */
-static positive ls_escape_byte(p8 byte, p8 address_to into, bool c_style)
-{
-        into[0] = '\\';
-        into[1] = byte == '\n'                ? 'n'
-                  : byte == '\t'              ? 't'
-                  : byte == '\r'              ? 'r'
-                  : byte == '\b'              ? 'b'
-                  : byte == '\f'              ? 'f'
-                  : byte == '\v'              ? 'v'
-                  : c_style && byte == 7      ? 'a'
-                  : c_style && byte == '\\'   ? '\\'
-                                              : 0;
-
-        if (into[1])
-                return 2;
-
-        into[1] = (p8)('0' + ((byte >> 6) & 7));
-        into[2] = (p8)('0' + ((byte >> 3) & 7));
-        into[3] = (p8)('0' + (byte & 7));
-
-        return 4;
-}
-
-static fn ls_name_text(string_address name)
-{
-        positive length = string_length(name);
-        if (ls_escape)
-        {
-                for (positive at = 0; at < length;)
-                {
-                        positive plain = memory_escape_index(name + at,
-                            length - at, HEX_CONTROL | HEX_TAB | HEX_SLASH);
-
-                        if (plain)
-                        {
-                                log(name + at, plain);
-                                at += plain;
-                        }
-
-                        if (at == length)
-                                break;
-
-                        p8 escaped[4];
-
-                        log(escaped, ls_escape_byte(string_get(name + at++),
-                                                    escaped, true));
-                }
-
-                return;
-        }
-
-        bool quoted = ls_terminal && memory_escape_index(
-            name, length, HEX_CONTROL | HEX_TAB) < length;
-
-        if (!quoted)
-        {
-                log(name, length);
-                return;
-        }
-
-        for (positive at = 0; at < length;)
-        {
-                positive first = at;
-
-                at += memory_escape_index(name + at, length - at,
-                                           HEX_CONTROL | HEX_TAB);
-
-                if (at > first)
-                {
-                        log("'", 1);
-                        log(name + first, at - first);
-                        log("'", 1);
-                }
-
-                if (at == length)
-                        break;
-
-                p8 escaped[4];
-                positive escaped_length = ls_escape_byte(string_get(name + at++),
-                                                 escaped, false);
-
-                log("$'", 2);
-                log(escaped, escaped_length);
-                log("'", 1);
-        }
-}
-
 static fn ls_name_say(string_address directory, ls_entry address_to entry,
-                      string_address name)
+                      string_address name, positive start_column)
 {
-        if (!ls_coloring)
+        file_color_span color = {null, 0};
+        file_color_span reset = {null, 0};
+
+        if (ls_aligns_quotes() && ls_some_quoted && !entry->quoted)
+                ls_out(" ", 1);
+
+        if (ls_coloring)
         {
-                ls_name_text(name);
-                return;
+                color = ls_name_color(directory, entry, name);
+
+                if (color.text && !color.length)
+                        color.text = null;
         }
 
-        file_color_span color = ls_name_color(directory, entry, name);
-
-        if (!color.text || !color.length)
+        if (color.text)
         {
-                ls_name_text(name);
-                return;
+                reset = ls_color_of(LS_COLOR_RS, (string_address) "0");
+
+                if (!ls_color_started)
+                {
+                        file_color_sgr(ls_out, reset);
+                        ls_color_started = true;
+                }
+
+                file_color_sgr(ls_out, color);
         }
 
-        file_color_span reset = ls_color_of(LS_COLOR_RS, (string_address) "0");
+        if (ls_hyperlink)
+                ls_hyperlink_open(directory, name);
 
-        if (!ls_color_started)
+        positive begin = ls_out_bytes;
+
+        ls_quote(ls_out, name);
+        ls_dired_mark(begin, ls_out_bytes);
+
+        if (ls_hyperlink)
+                ls_hyperlink_close();
+
+        if (color.text)
         {
-                file_color_sgr(log, reset);
-                ls_color_started = true;
-        }
+                file_color_sgr(ls_out, reset);
 
-        file_color_sgr(log, color);
-        ls_name_text(name);
-        file_color_sgr(log, reset);
+                positive width = ls_out_bytes - begin;
+
+                if (ls_width && width &&
+                    start_column / ls_width != (start_column + width - 1) / ls_width)
+                        ls_out("\033[K", 3);
+        }
 }
 
-/* dir's -C presentation counts the bytes its shared name writer will emit.
-   The names are byte strings throughout this ls implementation; escaped
-   control bytes therefore have the exact two- or four-column spelling below
-   without needing a second quoting buffer. */
-static positive ls_name_width(string_address name)
+// ---- Times ---------------------------------------------------------------
+
+static bool ls_recent(b64 seconds)
 {
-        if (!ls_escape)
-                return string_length(name);
+        return seconds <= ls_now + 3600 && seconds > ls_now - 15778476;
+}
 
-        positive width = 0;
+static fn ls_time_say(ls_entry address_to entry)
+{
+        b64 seconds;
+        p32 fraction;
 
-        for (positive i = 0; string_get(name + i); i++)
+        ls_entry_time(entry, address_of seconds, address_of fraction);
+
+        switch (ls_time_style)
         {
-                p8 byte = string_get(name + i);
+        case 'f':
+                return file_stamp(ls_out, seconds, fraction);
+        case 'l':
+        {
+                b64 year;
+                positive month, day, hour, minute, second;
 
-                if (byte >= 32 && byte != 127 && byte != '\\')
-                        width++;
-                else if (byte == '\n' || byte == '\t' || byte == '\r' ||
-                         byte == '\b' || byte == '\f' || byte == '\v' ||
-                         byte == 7 || byte == '\\')
-                        width += 2;
+                file_split_moment(seconds, address_of year, address_of month, address_of day,
+                                  address_of hour, address_of minute, address_of second);
+                positive_to_string(ls_out, (positive)year);
+                ls_out("-", 1);
+                file_two(ls_out, month);
+                ls_out("-", 1);
+                file_two(ls_out, day);
+                ls_out(" ", 1);
+                file_two(ls_out, hour);
+                ls_out(":", 1);
+                file_two(ls_out, minute);
+                return;
+        }
+        case 'i':
+        {
+                b64 year;
+                positive month, day, hour, minute, second;
+
+                file_split_moment(seconds, address_of year, address_of month, address_of day,
+                                  address_of hour, address_of minute, address_of second);
+
+                if (ls_recent(seconds))
+                {
+                        file_two(ls_out, month);
+                        ls_out("-", 1);
+                        file_two(ls_out, day);
+                        ls_out(" ", 1);
+                        file_two(ls_out, hour);
+                        ls_out(":", 1);
+                        file_two(ls_out, minute);
+                        return;
+                }
+
+                positive_to_string(ls_out, (positive)year);
+                ls_out("-", 1);
+                file_two(ls_out, month);
+                ls_out("-", 1);
+                file_two(ls_out, day);
+                ls_out(" ", 1);
+                return;
+        }
+        case '+':
+                date_shape(ls_out, seconds,
+                           ls_recent(seconds) ? ls_time_format_recent : ls_time_format_old);
+                return;
+        }
+
+        file_stamp_short(ls_out, seconds, ls_now);
+}
+
+// ---- The listing ---------------------------------------------------------
+
+static positive ls_indent(positive from, positive to)
+{
+        while (from < to)
+        {
+                if (ls_tabsize && to / ls_tabsize > (from + 1) / ls_tabsize)
+                {
+                        ls_out("\t", 1);
+                        from += ls_tabsize - from % ls_tabsize;
+                }
                 else
-                        width += 4;
+                {
+                        ls_out(" ", 1);
+                        from++;
+                }
         }
+
+        return to;
+}
+
+static positive ls_inode_width;
+static positive ls_block_width;
+
+// What a name takes up in a column, frills included: the inode and block
+// columns in front, the quoted name, and the mark after it.
+static positive ls_frilled_width(ls_entry address_to entry)
+{
+        positive width = ls_quoted_width(entry);
+
+        if (ls_inode)
+                width += 1 + (ls_format == 'm' ? positive_digits(entry->inode) : ls_inode_width);
+        if (ls_blocks)
+                width += 1 + (ls_format == 'm'
+                                  ? ls_scaled_width(entry->blocks * 512, ls_block_unit,
+                                                    ls_block_human, ls_block_si, ls_block_suffix)
+                                  : ls_block_width);
+        if (ls_context)
+                width += 2;
+        if (ls_indicator && (entry->known || (entry->mode & MODE_FORMAT)) && ls_mark(entry->mode))
+                width++;
 
         return width;
 }
 
-static positive ls_column_limit()
+static fn ls_frills_before(ls_entry address_to entry)
 {
-        string_address given = file_environment((string_address) "COLUMNS");
-        positive width = 80;
-
-        if (given && string_get(given))
+        if (ls_inode)
         {
-                string_address at = given;
-                positive parsed;
-
-                if (string_digits_checked(address_of at, 10,
-                                           address_of parsed) &&
-                    !string_get(at) && parsed)
-                        width = parsed;
+                if (entry->known)
+                        positive_to_padded(ls_out, entry->inode,
+                                           ls_format == 'm' ? 0 : ls_inode_width, ' ', 0);
+                else
+                        string_to_field(ls_out, (string_address) "?",
+                                        ls_format == 'm' ? 1 : ls_inode_width, ' ', false);
+                ls_out(" ", 1);
         }
 
-        return width;
+        if (ls_blocks)
+        {
+                positive width = ls_format == 'm' ? 0 : ls_block_width;
+
+                if (entry->known)
+                {
+                        positive have = ls_scaled_width(entry->blocks * 512, ls_block_unit,
+                                                        ls_block_human, ls_block_si,
+                                                        ls_block_suffix);
+
+                        writer_fill(ls_out, width > have ? width - have : 0, ' ');
+                        ls_scaled(ls_out, entry->blocks * 512, ls_block_unit, ls_block_human,
+                                  ls_block_si, ls_block_suffix);
+                }
+                else
+                        string_to_field(ls_out, (string_address) "?", width ? width : 1, ' ', false);
+                ls_out(" ", 1);
+        }
+
+        if (ls_context && ls_format != 'l')
+                ls_out("? ", 2);
 }
 
-static positive ls_column_entry(positive shown)
+static fn ls_mark_after(string_address directory, ls_entry address_to entry, string_address name)
 {
-        return ls_reversed ? ls_count - 1 - shown : shown;
-}
+        bool link = entry->known && (entry->mode & MODE_FORMAT) == MODE_LINK;
+        p8 mark = ls_indicator && (entry->known || (entry->mode & MODE_FORMAT))
+                      ? ls_mark(entry->mode)
+                      : 0;
 
-/* GNU's vertical -C layout: choose the widest number of columns which leaves
-   the cursor short of COLUMNS, then fill down those columns.  Widths live in
-   ls_sort_spare after sorting has finished, so column mode adds no arena or
-   permanent buffer and keeps the directory walk and quoting path shared. */
-static fn ls_print_columns(string_address directory)
-{
-        if (!ls_count)
-                return;
+        // In the long form the arrow is written and the mark goes on what the
+        // link points at; on a line of its own the link is the only thing
+        // there is to mark.
+        if (mark && !(ls_format == 'l' && link))
+                ls_out(address_of mark, 1);
 
-        positive limit = ls_column_limit();
-
-        for (positive shown = 0; shown < ls_count; shown++)
+        if (ls_format == 'l' && link)
         {
-                positive sorted = ls_column_entry(shown);
-                ls_entry address_to entry = address_of ls_entries[ls_sorted[sorted]];
+                p8 where[FILE_PATH_MAX];
+                p8 full[FILE_PATH_MAX];
 
-                ls_sort_spare[shown] = ls_name_width(ls_arena + entry->name);
-        }
-
-        positive columns = 1;
-
-        for (positive candidate = ls_count; candidate > 1; candidate--)
-        {
-                positive rows = (ls_count + candidate - 1) / candidate;
-                positive total = 0;
-                bool fits = true;
-
-                for (positive column = 0; column < candidate; column++)
+                if (!ls_full_path(full, directory, name))
                 {
-                        positive first = column * rows;
-
-                        if (first >= ls_count)
-                                break;
-
-                        positive widest = 0;
-                        positive after = first + rows;
-
-                        if (after > ls_count)
-                                after = ls_count;
-
-                        for (positive shown = first; shown < after; shown++)
-                                if (ls_sort_spare[shown] > widest)
-                                        widest = ls_sort_spare[shown];
-
-                        if (total > positive_max - widest - 2)
-                        {
-                                fits = false;
-                                break;
-                        }
-
-                        total += widest + 2;
+                        file_too_long(ls_program,
+                                      (string_address) "cannot read symbolic link",
+                                      directory, name);
+                        ls_status = 1;
                 }
-
-                /* No padding follows the final column.  Staying strictly
-                   short avoids a terminal's exact-width automatic wrap. */
-                if (fits && total >= 2 && total - 2 < limit)
+                else if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
                 {
-                        columns = candidate;
-                        break;
-                }
-        }
+                        file_facts through;
 
-        positive rows = (ls_count + columns - 1) / columns;
+                        ls_out(" -> ", 4);
+                        ls_quote(ls_out, (string_address)where);
 
-        for (positive row = 0; row < rows; row++)
-        {
-                positive position = 0;
-
-                for (positive column = 0; column < columns; column++)
-                {
-                        positive shown = column * rows + row;
-
-                        if (shown >= ls_count)
-                                continue;
-
-                        positive sorted = ls_column_entry(shown);
-                        ls_entry address_to entry =
-                            address_of ls_entries[ls_sorted[sorted]];
-                        string_address name = ls_arena + entry->name;
-
-                        ls_name_say(directory, entry, name);
-
-                        positive next = (column + 1) * rows + row;
-
-                        if (next < ls_count)
+                        if (ls_indicator && ls_indicator != '/' &&
+                            file_look_at(full, address_of through))
                         {
-                                positive widest = 0;
-                                positive first = column * rows;
-                                positive after = first + rows;
+                                p8 there = ls_mark(through.mode);
 
-                                if (after > ls_count)
-                                        after = ls_count;
-
-                                for (positive item = first; item < after; item++)
-                                        if (ls_sort_spare[item] > widest)
-                                                widest = ls_sort_spare[item];
-
-                                positive target = position + widest + 2;
-                                positive at = position + ls_sort_spare[shown];
-                                positive tab = (at + 8) & ~(positive)7;
-
-                                while (!(target & 7) && tab <= target)
-                                {
-                                        log("\t", 1);
-                                        at = tab;
-                                        tab += 8;
-                                }
-
-                                writer_fill(log, target - at, ' ');
-                                position = target;
+                                if (there)
+                                        ls_out(address_of there, 1);
                         }
                 }
-
-                log("\n", 1);
         }
 }
 
-static fn ls_print(string_address directory)
+static fn ls_print_total()
 {
-        if (ls_columns)
-        {
-                ls_print_columns(directory);
-                return;
-        }
+        p64 blocks = 0;
 
+        for (positive i = 0; i < ls_count; i++)
+                blocks += ls_entries[i].blocks;
+
+        if (ls_dired)
+                ls_out("  ", 2);
+
+        ls_out("total ", 6);
+        ls_scaled(ls_out, blocks * 512, ls_block_unit, ls_block_human, ls_block_si,
+                  ls_block_suffix);
+        ls_out(address_of ls_eol, 1);
+}
+
+static fn ls_print_long(string_address directory)
+{
         positive link_width = 1;
         positive size_width = 1;
         positive owner_width = 1;
         positive group_width = 1;
-        positive inode_width = 1;
         positive major_width = 0;
         positive minor_width = 0;
-        p64 blocks = 0;
 
         // An entry the kernel would not describe is a "?" in every column,
         // which is one character wide and so counts for nothing here.
@@ -3874,12 +4630,6 @@ static fn ls_print(string_address directory)
                 if (!entry->known)
                         continue;
 
-                if (ls_inode)
-                        inode_width = max(inode_width, positive_digits(entry->inode));
-
-                if (!ls_long)
-                        continue;
-
                 link_width = max(link_width, positive_digits(entry->links));
 
                 if (ls_is_device(entry))
@@ -3888,24 +4638,17 @@ static fn ls_print(string_address directory)
                         minor_width = max(minor_width, positive_digits(entry->rdev_minor));
                 }
                 else
-                {
-                        positive entry_size_width = ls_human_width(entry->size);
-
-                        if (entry_size_width > size_width)
-                                size_width = entry_size_width;
-                }
+                        size_width = max(size_width,
+                                         ls_scaled_width(entry->size, ls_size_unit, ls_size_human,
+                                                         ls_size_si, ls_size_suffix));
 
                 p8 name[FILE_NAME_MAX];
 
                 file_account_label(entry->owner, false, !ls_numeric, name);
-
-                if (string_length(name) > owner_width)
-                        owner_width = string_length(name);
+                owner_width = max(owner_width, string_length(name));
 
                 file_account_label(entry->group, true, !ls_numeric, name);
-
-                if (string_length(name) > group_width)
-                        group_width = string_length(name);
+                group_width = max(group_width, string_length(name));
         }
 
         // The device column is "major, minor", and the size column is wide
@@ -3915,172 +4658,359 @@ static fn ls_print(string_address directory)
         if (major_width && device_width > size_width)
                 size_width = device_width;
 
-        if (ls_long && directory)
-        {
-                for (positive i = 0; i < ls_count; i++)
-                        blocks += ls_entries[i].blocks;
-
-                // The kernel counts in 512 byte blocks and ls has always
-                // reported in 1024 byte ones.
-                blocks /= 2;
-
-                log("total ", 0);
-
-                if (ls_human)
-                        positive_to_human_1024(log, blocks * 1024);
-                else
-                        positive_to_string(log, blocks);
-
-                log("\n", 1);
-        }
-
         for (positive k = 0; k < ls_count; k++)
         {
-                positive i = ls_reversed ? ls_count - 1 - k : k;
-                ls_entry address_to entry = address_of ls_entries[ls_sorted[i]];
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[k]];
                 string_address name = ls_arena + entry->name;
+                positive line_start = ls_out_bytes;
 
-                if (ls_inode)
-                {
-                        if (entry->known)
-                                positive_to_padded(log, entry->inode, inode_width, ' ', 0);
-                        else
-                                string_to_field(log, (string_address) "?", inode_width,
-                                                ' ', false);
+                if (ls_dired)
+                        ls_out("  ", 2);
 
-                        log(" ", 1);
-                }
+                ls_frills_before(entry);
 
-                if (ls_long && !entry->known)
+                p8 letters[12];
+                p8 who[FILE_NAME_MAX];
+
+                if (!entry->known)
                 {
                         // What the reference ls prints for an entry it could
                         // not ask about: the kind the directory gave, a
                         // question mark for every bit and every column, and
                         // the time column held at its width.
-                        p8 letters[12];
-
                         letters[0] = (entry->mode & MODE_FORMAT)
                                          ? file_kind_letter(entry->mode)
                                          : '?';
                         memory_fill(letters + 1, '?', 9);
-                        log(letters, 10);
-                        log(" ", 1);
-                        string_to_field(log, (string_address) "?", link_width, ' ', false);
-                        log(" ", 1);
-                        string_to_field(log, (string_address) "?", owner_width, ' ', true);
-                        log(" ", 1);
-                        string_to_field(log, (string_address) "?", group_width, ' ', true);
-                        log(" ", 1);
-                        string_to_field(log, (string_address) "?", size_width, ' ', false);
-                        log(" ", 1);
-                        string_to_field(log, (string_address) "?", 12, ' ', false);
-                        log(" ", 1);
+                        ls_out(letters, 10);
+                        ls_out(" ", 1);
+                        string_to_field(ls_out, (string_address) "?", link_width, ' ', false);
+                        ls_out(" ", 1);
+                        if (ls_owner_shown)
+                        {
+                                string_to_field(ls_out, (string_address) "?", owner_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
+                        if (ls_group_shown)
+                        {
+                                string_to_field(ls_out, (string_address) "?", group_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
+                        if (ls_author)
+                        {
+                                string_to_field(ls_out, (string_address) "?", owner_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
+                        if (ls_context)
+                                ls_out("? ", 2);
+                        string_to_field(ls_out, (string_address) "?", size_width, ' ', false);
+                        ls_out(" ", 1);
+                        string_to_field(ls_out, (string_address) "?", 12, ' ', false);
+                        ls_out(" ", 1);
                 }
-                else if (ls_long)
+                else
                 {
-                        p8 letters[12];
-                        p8 who[FILE_NAME_MAX];
-
                         file_mode_letters(letters, entry->mode);
-                        log(letters, 10);
-                        log(" ", 1);
-                        positive_to_padded(log, entry->links, link_width, ' ', 0);
-                        log(" ", 1);
+                        ls_out(letters, 10);
+                        ls_out(" ", 1);
+                        positive_to_padded(ls_out, entry->links, link_width, ' ', 0);
+                        ls_out(" ", 1);
 
-                        file_account_label(entry->owner, false, !ls_numeric, who);
-                        string_to_field(log, who, owner_width, ' ', true);
-                        log(" ", 1);
+                        if (ls_owner_shown)
+                        {
+                                file_account_label(entry->owner, false, !ls_numeric, who);
+                                string_to_field(ls_out, who, owner_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
 
-                        file_account_label(entry->group, true, !ls_numeric, who);
-                        string_to_field(log, who, group_width, ' ', true);
-                        log(" ", 1);
+                        if (ls_group_shown)
+                        {
+                                file_account_label(entry->group, true, !ls_numeric, who);
+                                string_to_field(ls_out, who, group_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
+
+                        if (ls_author)
+                        {
+                                file_account_label(entry->owner, false, !ls_numeric, who);
+                                string_to_field(ls_out, who, owner_width, ' ', true);
+                                ls_out(" ", 1);
+                        }
+
+                        if (ls_context)
+                                ls_out("? ", 2);
 
                         if (ls_is_device(entry))
                         {
                                 // The major number takes whatever the size
                                 // column has over the device spelling, so
                                 // the comma lines up down the listing.
-                                positive_to_padded(log, entry->rdev_major,
+                                positive_to_padded(ls_out, entry->rdev_major,
                                                    major_width + size_width - device_width,
                                                    ' ', 0);
-                                log(", ", 2);
-                                positive_to_padded(log, entry->rdev_minor, minor_width,
+                                ls_out(", ", 2);
+                                positive_to_padded(ls_out, entry->rdev_minor, minor_width,
                                                    ' ', 0);
                         }
                         else
                         {
-                                positive field_width = ls_human_width(entry->size);
+                                positive have = ls_scaled_width(entry->size, ls_size_unit,
+                                                                ls_size_human, ls_size_si,
+                                                                ls_size_suffix);
 
-                                writer_fill(log, size_width > field_width
-                                                     ? size_width - field_width
-                                                     : 0,
-                                            ' ');
-
-                                ls_size_field(entry->size);
+                                writer_fill(ls_out, size_width > have ? size_width - have : 0, ' ');
+                                ls_scaled(ls_out, entry->size, ls_size_unit, ls_size_human,
+                                          ls_size_si, ls_size_suffix);
                         }
 
-                        log(" ", 1);
-                        file_stamp_short(log, entry->modified, ls_now);
-                        log(" ", 1);
+                        ls_out(" ", 1);
+                        ls_time_say(entry);
+                        ls_out(" ", 1);
                 }
 
-                ls_name_say(directory, entry, name);
-
-                bool marking = ls_classify || ls_slash;
-                bool link = entry->known && (entry->mode & MODE_FORMAT) == MODE_LINK;
-                // An entry the kernel would not describe still carries the
-                // kind the directory gave, and a kind is all a mark needs
-                // short of a regular file's execute bits.
-                p8 mark = marking && (entry->known || (entry->mode & MODE_FORMAT))
-                              ? ls_mark(entry->mode)
-                              : 0;
-
-                // In the long form the arrow is written and the mark goes on
-                // what the link points at; on a line of its own the link is
-                // the only thing there is to mark.
-                if (mark && !(ls_long && link))
-                        log(address_of mark, 1);
-
-                if (ls_long && link)
-                {
-                        p8 where[FILE_PATH_MAX];
-                        p8 full[FILE_PATH_MAX];
-                        bool fits = true;
-
-                        if (directory)
-                                fits = file_path_join(full, directory, name);
-                        else
-                                string_copy_max_end(full, name, FILE_PATH_MAX - 1);
-
-                        if (!fits)
-                        {
-                                file_too_long(ls_program,
-                                              (string_address) "cannot read symbolic link",
-                                              directory, name);
-                                ls_status = 1;
-                        }
-                        else if (file_link_text(full, where, FILE_PATH_MAX) >= 0)
-                        {
-                                file_facts through;
-
-                                log(" -> ", 0);
-                                log(where, 0);
-
-                                // -F classifies where the link points; -p
-                                // has only a slash to give and gives it to
-                                // the name that stands there.
-                                if (ls_classify && file_look_at(full, address_of through))
-                                {
-                                        p8 there = ls_mark(through.mode);
-
-                                        if (there)
-                                                log(address_of there, 1);
-                                }
-                        }
-                }
-
-                log("\n", 1);
+                ls_name_say(directory, entry, name, ls_out_bytes - line_start);
+                ls_mark_after(directory, entry, name);
+                ls_out(address_of ls_eol, 1);
         }
+}
+
+/*
+        The reference's column layout: for every possible count of columns
+        the widths are grown entry by entry, a count stays possible while its
+        line would fit, and the largest count still possible is the one used.
+        Down the columns for -C, across the rows for -x, with tabs filling the
+        gaps where they can.
+*/
+static positive ls_column_widths[LS_MAX_ENTRIES];
+
+static fn ls_print_columns(string_address directory, bool across)
+{
+        positive width_limit = ls_width ? ls_width : positive_max;
+        positive most = ls_width ? max((positive)1, ls_width / 3) : ls_count;
+
+        if (most > ls_count)
+                most = ls_count;
+        if (!most)
+                most = 1;
+
+        for (positive i = 0; i < ls_count; i++)
+                ls_sort_spare[i] = ls_frilled_width(address_of ls_entries[ls_sorted[i]]);
+
+        positive columns = 1;
+
+        // Each candidate count is tried on its own; the widths array is
+        // reused, so the search runs from the most columns downward and
+        // stops at the first count whose line fits.
+        for (positive candidate = most; candidate >= 1; candidate--)
+        {
+                positive line = candidate * 3;
+                bool fits = true;
+
+                for (positive column = 0; column < candidate; column++)
+                        ls_column_widths[column] = 3;
+
+                positive rows = (ls_count + candidate - 1) / candidate;
+
+                for (positive index = 0; index < ls_count && fits; index++)
+                {
+                        positive column = across ? index % candidate : index / rows;
+                        positive real = ls_sort_spare[index] + (column == candidate - 1 ? 0 : 2);
+
+                        if (ls_column_widths[column] < real)
+                        {
+                                line += real - ls_column_widths[column];
+                                ls_column_widths[column] = real;
+                                fits = line < width_limit;
+                        }
+                }
+
+                if (fits || candidate == 1)
+                {
+                        columns = candidate;
+                        break;
+                }
+        }
+
+        positive rows = ls_count / columns + (ls_count % columns != 0);
+
+        if (across)
+        {
+                positive position = 0;
+
+                for (positive index = 0; index < ls_count; index++)
+                {
+                        positive column = index % columns;
+                        ls_entry address_to entry = address_of ls_entries[ls_sorted[index]];
+
+                        if (column == 0)
+                        {
+                                if (index)
+                                        ls_out(address_of ls_eol, 1);
+                                position = 0;
+                        }
+
+                        ls_frills_before(entry);
+                        ls_name_say(directory, entry, ls_arena + entry->name, position);
+                        ls_mark_after(directory, entry, ls_arena + entry->name);
+
+                        if (index + 1 < ls_count && column + 1 < columns)
+                                position = ls_indent(position + ls_sort_spare[index],
+                                                     position + ls_column_widths[column]);
+                }
+
+                ls_out(address_of ls_eol, 1);
+                return;
+        }
+
+        for (positive row = 0; row < rows; row++)
+        {
+                positive position = 0;
+                positive column = 0;
+
+                for (positive index = row; index < ls_count; index += rows, column++)
+                {
+                        ls_entry address_to entry = address_of ls_entries[ls_sorted[index]];
+
+                        ls_frills_before(entry);
+                        ls_name_say(directory, entry, ls_arena + entry->name, position);
+                        ls_mark_after(directory, entry, ls_arena + entry->name);
+
+                        if (index + rows < ls_count)
+                                position = ls_indent(position + ls_sort_spare[index],
+                                                     position + ls_column_widths[column]);
+                }
+
+                ls_out(address_of ls_eol, 1);
+        }
+}
+
+static fn ls_print_commas(string_address directory)
+{
+        positive position = 0;
+
+        for (positive index = 0; index < ls_count; index++)
+        {
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[index]];
+                positive width = ls_frilled_width(entry);
+
+                if (index)
+                {
+                        if (ls_width && position + width + 2 > ls_width)
+                        {
+                                ls_out(",", 1);
+                                ls_out(address_of ls_eol, 1);
+                                position = 0;
+                        }
+                        else
+                        {
+                                ls_out(", ", 2);
+                                position += 2;
+                        }
+                }
+
+                ls_frills_before(entry);
+                ls_name_say(directory, entry, ls_arena + entry->name, position);
+                ls_mark_after(directory, entry, ls_arena + entry->name);
+                position += width;
+        }
+
+        ls_out(address_of ls_eol, 1);
+}
+
+static fn ls_print_lines(string_address directory)
+{
+        for (positive k = 0; k < ls_count; k++)
+        {
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[k]];
+
+                ls_frills_before(entry);
+                ls_name_say(directory, entry, ls_arena + entry->name, 0);
+                ls_mark_after(directory, entry, ls_arena + entry->name);
+                ls_out(address_of ls_eol, 1);
+        }
+}
+
+static fn ls_print(string_address directory)
+{
+        ls_some_quoted = false;
+        ls_inode_width = 1;
+        ls_block_width = 1;
+
+        for (positive i = 0; i < ls_count; i++)
+        {
+                ls_entry address_to entry = address_of ls_entries[i];
+
+                entry->quoted = ls_name_quoted(ls_arena + entry->name);
+                ls_some_quoted |= entry->quoted;
+
+                if (!entry->known)
+                        continue;
+                if (ls_inode)
+                        ls_inode_width = max(ls_inode_width, positive_digits(entry->inode));
+                if (ls_blocks)
+                        ls_block_width = max(ls_block_width,
+                                             ls_scaled_width(entry->blocks * 512, ls_block_unit,
+                                                             ls_block_human, ls_block_si,
+                                                             ls_block_suffix));
+        }
+
+        if (directory && (ls_format == 'l' || ls_blocks))
+                ls_print_total();
+
+        switch (ls_format)
+        {
+        case 'l':
+                return ls_print_long(directory);
+        case 'C':
+                return ls_print_columns(directory, false);
+        case 'x':
+                return ls_print_columns(directory, true);
+        case 'm':
+                return ls_print_commas(directory);
+        }
+
+        ls_print_lines(directory);
+}
+
+// ---- Gathering entries ---------------------------------------------------
+
+static bool ls_pattern_hidden(string_address name)
+{
+        for (positive i = 0; i < ls_ignore_count; i++)
+                if (shell_match(ls_ignore_patterns[i], name))
+                        return true;
+
+        if (ls_hidden || ls_almost)
+                return false;
+
+        for (positive i = 0; i < ls_hide_count; i++)
+                if (shell_match(ls_hide_patterns[i], name))
+                        return true;
+
+        return false;
+}
+
+static fn ls_fill(ls_entry address_to entry, file_facts address_to facts)
+{
+        entry->known = true;
+        entry->mode = facts->mode;
+        entry->links = facts->hard_links;
+        entry->owner = facts->owner;
+        entry->group = facts->group;
+        entry->size = facts->size;
+        entry->modified = facts->modified.seconds;
+        entry->modified_fraction = facts->modified.nanoseconds;
+        entry->accessed = facts->accessed.seconds;
+        entry->accessed_fraction = facts->accessed.nanoseconds;
+        entry->changed = facts->changed.seconds;
+        entry->changed_fraction = facts->changed.nanoseconds;
+        entry->created_known = (facts->mask & STATX_BIRTH) != 0;
+        entry->created = entry->created_known ? facts->created.seconds : 0;
+        entry->created_fraction = entry->created_known ? facts->created.nanoseconds : 0;
+        entry->inode = facts->inode;
+        entry->blocks = facts->blocks;
+        entry->rdev_major = facts->rdev_major;
+        entry->rdev_minor = facts->rdev_minor;
 }
 
 /*
@@ -4092,12 +5022,12 @@ static fn ls_print(string_address directory)
         The reference ls asks the kernel about an entry only when a column or
         an order wants the answer, and a plain listing of a directory whose
         entries cannot be looked at prints their names and says nothing. The
-        moment -l, -i, -t, -S, -F or colour is asked for, the failure is
+        moment -l, -i, -s, -t, -S, -F or colour is asked for, the failure is
         reported, the entry is printed as unknown, and the status says so; a
         failed operand is a failed operand, and answers 2.
 */
 static bool ls_add(bipolar directory, string_address path, string_address shown,
-                   p8 type, string_address under)
+                   p8 type, string_address under, file_facts address_to given)
 {
         if (ls_count >= LS_MAX_ENTRIES)
         {
@@ -4107,18 +5037,25 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 
         file_facts facts;
         ls_entry address_to entry = address_of ls_entries[ls_count];
+        bipolar looked = 0;
 
         memory_fill(entry, 0, sizeof(ls_entry));
 
-        bipolar looked = file_look_code(directory, path, AT_SYMLINK_NOFOLLOW,
+        if (given)
+                facts = *given;
+        else
+        {
+                looked = file_look_code(directory, path,
+                                        ls_dereference == 'L' ? 0 : AT_SYMLINK_NOFOLLOW,
                                         address_of facts);
 
-        if (looked < 0 && !under)
-        {
-                string_format(file_fail, "%s: cannot access '%s': %s\n",
-                              ls_program, shown, file_reason(looked));
-                ls_status = 2;
-                return true;
+                if (looked < 0 && !under)
+                {
+                        string_format(file_fail, "%s: cannot access '%s': %s\n",
+                                      ls_program, shown, file_reason(looked));
+                        ls_status = 2;
+                        return true;
+                }
         }
 
         if (!ls_keep(shown, address_of entry->name))
@@ -4126,18 +5063,20 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 
         if (looked == 0)
         {
-                entry->known = true;
-                entry->mode = facts.mode;
-                entry->links = facts.hard_links;
-                entry->owner = facts.owner;
-                entry->group = facts.group;
-                entry->size = facts.size;
-                entry->modified = facts.modified.seconds;
-                entry->modified_fraction = facts.modified.nanoseconds;
-                entry->inode = facts.inode;
-                entry->blocks = facts.blocks;
-                entry->rdev_major = facts.rdev_major;
-                entry->rdev_minor = facts.rdev_minor;
+                ls_fill(entry, address_of facts);
+
+                // A link's target decides which group it sorts with and what
+                // mark or colour it gets, when any of those was asked for.
+                if ((facts.mode & MODE_FORMAT) == MODE_LINK &&
+                    (ls_group_directories || ls_indicator || ls_coloring || ls_format == 'l'))
+                {
+                        file_facts through;
+                        p8 full[FILE_PATH_MAX];
+
+                        if (ls_full_path(full, under, path) && file_look_at(full, address_of through))
+                                entry->points_at_directory =
+                                    (through.mode & MODE_FORMAT) == MODE_DIRECTORY;
+                }
         }
         else
         {
@@ -4150,11 +5089,11 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
                 // both must see whatever the directory declined to describe.
                 positive format = entry->mode & MODE_FORMAT;
 
-                if (ls_long || ls_inode || ls_by_time || ls_by_size ||
-                    ((ls_classify || ls_coloring) && !format) ||
-                    (ls_classify && format == MODE_FILE) ||
-                    (ls_coloring && (format == MODE_FILE ||
-                                     format == MODE_DIRECTORY)))
+                if (ls_format == 'l' || ls_inode || ls_blocks || ls_sorting == 't' ||
+                    ls_sorting == 'S' || ls_dereference == 'L' ||
+                    ((ls_indicator || ls_coloring) && !format) ||
+                    (ls_indicator == 'F' && format == MODE_FILE) ||
+                    (ls_coloring && (format == MODE_FILE || format == MODE_DIRECTORY)))
                 {
                         p8 full[FILE_PATH_MAX];
 
@@ -4173,14 +5112,22 @@ static bool ls_add(bipolar directory, string_address path, string_address shown,
 static fn ls_directory(string_address path, bool heading, positive depth,
                        bool named);
 
-// Whether an operand is a directory whose contents are listed. A link to
-// one is followed only when nothing asked about the link itself: -l, -d
-// and -F all name the link, and the reference ls prints it as one.
-static bool ls_operand_lists(string_address path)
+static bool ls_already_listed(file_facts address_to facts)
 {
-        return ls_long || ls_classify || ls_as_itself
-                   ? file_is_directory(AT_FDCWD, path)
-                   : file_is_directory_through(path);
+        p64 device = file_device_key(facts->device_major, facts->device_minor);
+
+        for (positive i = 0; i < ls_listed_count; i++)
+                if (ls_listed_device[i] == device && ls_listed_inode[i] == facts->inode)
+                        return true;
+
+        if (ls_listed_count < LS_LISTED)
+        {
+                ls_listed_device[ls_listed_count] = device;
+                ls_listed_inode[ls_listed_count] = facts->inode;
+                ls_listed_count++;
+        }
+
+        return false;
 }
 
 static fn ls_below(string_address path, positive depth)
@@ -4194,8 +5141,7 @@ static fn ls_below(string_address path, positive depth)
 
         for (positive k = 0; k < ls_count; k++)
         {
-                positive i = ls_reversed ? ls_count - 1 - k : k;
-                ls_entry address_to entry = address_of ls_entries[ls_sorted[i]];
+                ls_entry address_to entry = address_of ls_entries[ls_sorted[k]];
 
                 if ((entry->mode & MODE_FORMAT) != MODE_DIRECTORY)
                         continue;
@@ -4253,11 +5199,21 @@ static fn ls_below(string_address path, positive depth)
 
 // A directory that will not open is answered with 2 when it was named on
 // the command line and 1 when -R met it on the way down, as the reference
-// ls answers.
+// ls answers; one already listed under -R is named and passed over.
 static fn ls_directory(string_address path, bool heading, positive depth,
                        bool named)
 {
         file_walk walk;
+        file_facts identity;
+
+        if (ls_recursive && file_look_at(path, address_of identity) &&
+            ls_already_listed(address_of identity))
+        {
+                string_format(file_fail, "%s: %s: not listing already-listed directory\n",
+                              ls_program, path);
+                ls_status = 2;
+                return;
+        }
 
         if (!file_walk_open(address_of walk, AT_FDCWD, path))
         {
@@ -4280,8 +5236,15 @@ static fn ls_directory(string_address path, bool heading, positive depth,
                 if (ls_almost && file_is_dot(entry->d_name))
                         continue;
 
+                if (ls_ignore_backups && entry->d_name[0] &&
+                    entry->d_name[string_length(entry->d_name) - 1] == '~')
+                        continue;
+
+                if (ls_pattern_hidden(entry->d_name))
+                        continue;
+
                 if (!ls_add(walk.handle, entry->d_name, entry->d_name,
-                            entry->d_type, path))
+                            entry->d_type, path, null))
                         break;
         }
 
@@ -4295,10 +5258,29 @@ static fn ls_directory(string_address path, bool heading, positive depth,
         if (heading)
         {
                 if (ls_written)
-                        log("\n", 1);
+                        ls_out(address_of ls_eol, 1);
 
-                log(path, 0);
-                log(":\n", 0);
+                if (ls_dired)
+                        ls_out("  ", 2);
+
+                if (ls_hyperlink)
+                        ls_hyperlink_open(null, path);
+
+                positive begin = ls_out_bytes;
+
+                ls_quote(ls_out, path);
+
+                if (ls_dired && ls_subdired_count + 2 <= array_count(ls_subdired_marks))
+                {
+                        ls_subdired_marks[ls_subdired_count++] = begin;
+                        ls_subdired_marks[ls_subdired_count++] = ls_out_bytes;
+                }
+
+                if (ls_hyperlink)
+                        ls_hyperlink_close();
+
+                ls_out(":", 1);
+                ls_out(address_of ls_eol, 1);
         }
 
         ls_written = true;
@@ -4309,58 +5291,537 @@ static fn ls_directory(string_address path, bool heading, positive depth,
                 ls_below(path, depth);
 }
 
+// ---- Options -------------------------------------------------------------
+
 static const file_long ls_longs[] = {
-    {(string_address) "color", 'C'},
+    {(string_address) "all", 'a'},
+    {(string_address) "almost-all", 'A'},
+    {(string_address) "author", '8'},
+    {(string_address) "escape", 'b'},
+    {(string_address) "block-size", '7'},
+    {(string_address) "ignore-backups", 'B'},
+    {(string_address) "color", 'K'},
+    {(string_address) "directory", 'd'},
+    {(string_address) "dired", 'D'},
+    {(string_address) "classify", 'E'},
+    {(string_address) "file-type", 'j'},
+    {(string_address) "format", 'J'},
+    {(string_address) "full-time", 'M'},
+    {(string_address) "group-directories-first", 'O'},
+    {(string_address) "no-group", 'G'},
+    {(string_address) "human-readable", 'h'},
+    {(string_address) "si", 'P'},
+    {(string_address) "dereference-command-line", 'H'},
+    {(string_address) "dereference-command-line-symlink-to-dir", 'V'},
+    {(string_address) "hide", 'W'},
+    {(string_address) "hyperlink", 'y'},
+    {(string_address) "indicator-style", 'Y'},
+    {(string_address) "inode", 'i'},
+    {(string_address) "ignore", 'I'},
+    {(string_address) "kibibytes", 'k'},
+    {(string_address) "dereference", 'L'},
+    {(string_address) "numeric-uid-gid", 'n'},
+    {(string_address) "literal", 'N'},
+    {(string_address) "hide-control-chars", 'q'},
+    {(string_address) "show-control-chars", '2'},
+    {(string_address) "quote-name", 'Q'},
+    {(string_address) "quoting-style", 'z'},
+    {(string_address) "reverse", 'r'},
+    {(string_address) "recursive", 'R'},
+    {(string_address) "size", 's'},
+    {(string_address) "sort", '3'},
+    {(string_address) "time", '4'},
+    {(string_address) "time-style", '5'},
+    {(string_address) "tabsize", 'T'},
+    {(string_address) "width", 'w'},
+    {(string_address) "context", 'Z'},
+    {(string_address) "zero", '6'},
     {null, 0},
 };
 
-static b32 file_ls_as(string_address program, bool long_default,
-                      bool escape_default, bool column_default)
+// -I and --hide are the two options ls takes more than once.
+static bool ls_option_seen(p8 letter, string_address value)
+{
+        if ((letter != 'I' && letter != 'W') || !value)
+                return true;
+
+        string_address address_to table = letter == 'I' ? ls_ignore_patterns : ls_hide_patterns;
+        positive address_to have = letter == 'I' ? address_of ls_ignore_count
+                                                 : address_of ls_hide_count;
+
+        if (address_to have >= LS_PATTERNS)
+        {
+                string_format(file_fail, "%s: too many patterns to ignore\n", ls_program);
+                return false;
+        }
+
+        table[(address_to have)++] = value;
+        return true;
+}
+
+typedef struct
+{
+        string_address word;
+        p8 answer;
+} ls_word;
+
+// One word among several spellings, or a complaint listing them the way the
+// reference lists them: each answer once, its synonyms beside it.
+static b32 ls_word_among(string_address option, string_address value,
+                         const ls_word address_to words, positive count)
+{
+        for (positive i = 0; i < count; i++)
+                if (!string_compare(value, words[i].word))
+                        return words[i].answer;
+
+        string_format(file_fail, "%s: invalid argument '%s' for '%s'\nValid arguments are:\n",
+                      ls_program, value, option);
+
+        for (positive i = 0; i < count; i++)
+        {
+                if (i && words[i].answer == words[i - 1].answer)
+                {
+                        string_format(file_fail, ", '%s'", words[i].word);
+                        continue;
+                }
+
+                if (i)
+                        file_fail("\n", 1);
+                string_format(file_fail, "  - '%s'", words[i].word);
+        }
+
+        file_fail("\n", 1);
+        return -1;
+}
+
+static const ls_word ls_when_words[] = {
+    {"always", 'a'}, {"yes", 'a'}, {"force", 'a'},
+    {"never", 'n'}, {"no", 'n'}, {"none", 'n'},
+    {"auto", 't'}, {"tty", 't'}, {"if-tty", 't'}};
+static const ls_word ls_format_words[] = {
+    {"verbose", 'l'}, {"long", 'l'}, {"commas", 'm'}, {"horizontal", 'x'}, {"across", 'x'},
+    {"vertical", 'C'}, {"single-column", '1'}};
+static const ls_word ls_sort_words[] = {
+    {"none", 'U'}, {"size", 'S'}, {"time", 't'}, {"version", 'v'}, {"extension", 'X'},
+    {"name", 'n'}, {"width", 'w'}};
+static const ls_word ls_time_words[] = {
+    {"atime", 'a'}, {"access", 'a'}, {"use", 'a'}, {"ctime", 'c'}, {"status", 'c'},
+    {"mtime", 'm'}, {"modification", 'm'}, {"birth", 'b'}, {"creation", 'b'}};
+static const ls_word ls_quoting_words[] = {
+    {"literal", 'L'}, {"shell", 's'}, {"shell-always", 'S'}, {"shell-escape", 'e'},
+    {"shell-escape-always", 'E'}, {"c", 'c'}, {"c-maybe", 'c'}, {"escape", 'b'},
+    {"locale", 'o'}, {"clocale", 'o'}};
+static const ls_word ls_indicator_words[] = {
+    {"none", 'N'}, {"slash", '/'}, {"file-type", 'f'}, {"classify", 'F'}};
+
+static bool ls_when_active(p8 when)
+{
+        return when == 'a' || (when == 't' && ls_terminal);
+}
+
+static bool ls_count_option(string_address value, string_address what,
+                            positive address_to into)
+{
+        string_address at = value;
+        positive parsed;
+
+        if (!value || !string_digits_checked(address_of at, 10, address_of parsed) ||
+            string_get(at) || !string_get(value))
+        {
+                string_format(file_fail, "%s: invalid %s: '%s'\n", ls_program, what,
+                              value ? value : (string_address) "");
+                return false;
+        }
+
+        address_to into = parsed;
+        return true;
+}
+
+static positive ls_column_limit()
+{
+        string_address given = file_environment((string_address) "COLUMNS");
+        positive width = 80;
+
+        if (given && string_get(given))
+        {
+                string_address at = given;
+                positive parsed;
+
+                if (string_digits_checked(address_of at, 10,
+                                           address_of parsed) &&
+                    !string_get(at) && parsed)
+                        width = parsed;
+        }
+
+        return width;
+}
+
+static fn ls_dired_finish()
+{
+        if (!ls_dired)
+                return;
+
+        if (ls_dired_count)
+        {
+                ls_out("//DIRED//", 0);
+                for (positive i = 0; i < ls_dired_count; i++)
+                {
+                        ls_out(" ", 1);
+                        positive_to_string(ls_out, ls_dired_marks[i]);
+                }
+                ls_out("\n", 1);
+        }
+
+        if (ls_subdired_count)
+        {
+                ls_out("//SUBDIRED//", 0);
+                for (positive i = 0; i < ls_subdired_count; i++)
+                {
+                        ls_out(" ", 1);
+                        positive_to_string(ls_out, ls_subdired_marks[i]);
+                }
+                ls_out("\n", 1);
+        }
+
+        string_address style = ls_quoting == 's'   ? "shell"
+                               : ls_quoting == 'S' ? "shell-always"
+                               : ls_quoting == 'e' ? "shell-escape"
+                               : ls_quoting == 'E' ? "shell-escape-always"
+                               : ls_quoting == 'c' ? "c"
+                               : ls_quoting == 'b' ? "escape"
+                               : ls_quoting == 'o' ? "locale"
+                                                   : "literal";
+
+        string_format(ls_out, "//DIRED-OPTIONS// --quoting-style=%s\n", style);
+}
+
+/*
+        What an operand is, under the following policy in force: a directory
+        to list, or an entry of its own. The reference follows a command line
+        link to a directory when nothing asked about the link itself, follows
+        every command line link under -H and every link under -L, and asks
+        the kernel about the link alone otherwise; a link to nothing is an
+        entry when following was only a convenience and a failure when it was
+        asked for.
+*/
+static bool ls_operand(string_address path, file_facts address_to facts, bool address_to directory)
+{
+        bipolar looked;
+
+        if (ls_dereference == 'N')
+                looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, facts);
+        else
+        {
+                looked = file_look_code(AT_FDCWD, path, 0, facts);
+
+                if (looked == -ERROR_NO_ENTRY && ls_dereference == 'D')
+                        looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, facts);
+                else if (looked == 0 && ls_dereference == 'D' &&
+                         (facts->mode & MODE_FORMAT) != MODE_DIRECTORY)
+                        looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW, facts);
+        }
+
+        if (looked < 0)
+        {
+                string_format(file_fail, "%s: cannot access '%s': %s\n", ls_program, path,
+                              file_reason(looked));
+                ls_status = 2;
+                return false;
+        }
+
+        address_to directory = (facts->mode & MODE_FORMAT) == MODE_DIRECTORY && !ls_as_itself;
+        return true;
+}
+
+static b32 file_ls_as(string_address program, p8 default_format, p8 default_quoting)
 {
         positive count = (positive)program_argument_count();
-        ls_hidden_option = 0;
-        ls_order_option = 0;
+
         ls_program = program;
-        ls_escape = escape_default;
+        ls_format_option = 0;
+        ls_sort_option = 0;
+        ls_time_option = 0;
+        ls_quote_option = 0;
+        ls_indicator_option = 0;
+        ls_hidden_option = 0;
+        ls_deref_option = 0;
+        ls_size_option = 0;
+        ls_control_option = 0;
+        ls_ignore_count = 0;
+        ls_hide_count = 0;
+        ls_status = 0;
+        ls_written = false;
+        ls_broken = false;
+        ls_out_bytes = 0;
+        ls_dired_count = 0;
+        ls_subdired_count = 0;
+        ls_listed_count = 0;
+        ls_color_started = false;
 
         file_taking taking = {
             .program = program,
-            .allowed = (string_address) "laARtShr1dinFp",
-            .valued = (string_address) "",
-            .optional = (string_address) "C",
+            .allowed = (string_address) "aAbBcCdDfFgGhHiIkKlLmnNopqQrRsStTuUvwxXZ1",
+            .valued = (string_address) "IwT7JWYz345",
+            .optional = (string_address) "",
+            .long_optional = (string_address) "KEy",
             .longs = ls_longs,
+            .seen = ls_option_seen,
             .supersedes = ls_supersedes,
         };
 
         if (!file_take(address_of taking))
                 return 2;
 
-        ls_status = 0;
-        ls_written = false;
-        ls_broken = false;
-
         positive flags = taking.flags;
         positive first = taking.first;
 
         ls_now = file_now();
-
-        ls_long = (flags & (FILE_FLAG('l') | FILE_FLAG('n'))) != 0 ||
-                  (long_default && !(flags & FILE_FLAG('1')));
-        ls_hidden = ls_hidden_option == 'a';
-        ls_almost = ls_hidden_option == 'A';
-        ls_recursive = (flags & FILE_FLAG('R')) != 0;
-        ls_by_time = ls_order_option == 't';
-        ls_by_size = ls_order_option == 'S';
-        ls_human = (flags & FILE_FLAG('h')) != 0;
-        ls_reversed = (flags & FILE_FLAG('r')) != 0;
-        ls_inode = (flags & FILE_FLAG('i')) != 0;
-        ls_numeric = (flags & FILE_FLAG('n')) != 0;
-        ls_as_itself = (flags & FILE_FLAG('d')) != 0;
-        ls_classify = (flags & FILE_FLAG('F')) != 0;
-        ls_slash = (flags & FILE_FLAG('p')) != 0;
-        ls_coloring = false;
-        ls_color_started = false;
         ls_terminal = stream_is_terminal(1);
+
+        // The format: one name per line unless a terminal is watching, and
+        // the last word on it wins; -g, -o, -n, --full-time and --dired are
+        // all ways of asking for the long one.
+        ls_format = default_format ? default_format : ls_terminal ? 'C' : '1';
+        if (ls_format_option == 'J')
+        {
+                b32 word = ls_word_among((string_address) "--format",
+                                         file_option_value(address_of taking, 'J'),
+                                         ls_format_words, array_count(ls_format_words));
+                if (word < 0)
+                        return 2;
+                ls_format = (p8)word;
+        }
+        else if (ls_format_option && string_first_of((string_address) "lgonMD", ls_format_option))
+                ls_format = 'l';
+        else if (ls_format_option)
+                ls_format = ls_format_option;
+        if (flags & FILE_FLAG('D'))
+                ls_format = 'l';
+
+        ls_owner_shown = !(flags & FILE_FLAG('g'));
+        ls_group_shown = !(flags & (FILE_FLAG('o') | FILE_FLAG('G')));
+        ls_author = (flags & FILE_FLAG('8')) != 0;
+        ls_numeric = (flags & FILE_FLAG('n')) != 0;
+        ls_dired = (flags & FILE_FLAG('D')) != 0;
+        ls_context = (flags & FILE_FLAG('Z')) != 0;
+        ls_inode = (flags & FILE_FLAG('i')) != 0;
+        ls_blocks = (flags & FILE_FLAG('s')) != 0;
+        ls_recursive = (flags & FILE_FLAG('R')) != 0;
+        ls_as_itself = (flags & FILE_FLAG('d')) != 0;
+        ls_reversed = (flags & FILE_FLAG('r')) != 0;
+        ls_group_directories = (flags & FILE_FLAG('O')) != 0;
+        ls_ignore_backups = (flags & FILE_FLAG('B')) != 0;
+        ls_kibibytes = (flags & FILE_FLAG('k')) != 0;
+        ls_hyperlink = false;
+        ls_eol = (flags & FILE_FLAG('6')) ? 0 : '\n';
+
+        // Which entries: -f is -a with no sorting, and a later -A narrows it.
+        ls_hidden = ls_hidden_option == 'a' || ls_hidden_option == 'f';
+        ls_almost = ls_hidden_option == 'A';
+
+        // The order.
+        ls_sorting = 'n';
+        if (ls_sort_option == '3')
+        {
+                b32 word = ls_word_among((string_address) "--sort",
+                                         file_option_value(address_of taking, '3'),
+                                         ls_sort_words, array_count(ls_sort_words));
+                if (word < 0)
+                        return 2;
+                ls_sorting = (p8)word;
+        }
+        else if (ls_sort_option == 'f')
+                ls_sorting = 'U';
+        else if (ls_sort_option)
+                ls_sorting = ls_sort_option;
+
+        // Which time.
+        ls_time_key = 'm';
+        if (ls_time_option == '4')
+        {
+                b32 word = ls_word_among((string_address) "--time",
+                                         file_option_value(address_of taking, '4'),
+                                         ls_time_words, array_count(ls_time_words));
+                if (word < 0)
+                        return 2;
+                ls_time_key = (p8)word;
+        }
+        else if (ls_time_option == 'c')
+                ls_time_key = 'c';
+        else if (ls_time_option == 'u')
+                ls_time_key = 'a';
+
+        // How a time is written.
+        ls_time_style = 'd';
+        if (flags & FILE_FLAG('5'))
+        {
+                string_address style = file_option_value(address_of taking, '5');
+
+                if (string_is(style, 'p') && string_is(style + 1, 'o') &&
+                    string_is(style + 2, 's') && string_is(style + 3, 'i') &&
+                    string_is(style + 4, 'x') && string_is(style + 5, '-'))
+                        style = (string_address) "locale";
+
+                if (string_is(style, '+'))
+                {
+                        string_address newline = string_first_of(style + 1, '\n');
+
+                        ls_time_style = '+';
+                        ls_time_format_old = style + 1;
+                        ls_time_format_recent = style + 1;
+
+                        if (newline)
+                        {
+                                // Two formats on either side of the newline:
+                                // the first for old files, the second for
+                                // recent ones. The word is cut in place.
+                                address_to newline = end;
+                                ls_time_format_recent = newline + 1;
+                        }
+                }
+                else if (!string_compare(style, "full-iso"))
+                        ls_time_style = 'f';
+                else if (!string_compare(style, "long-iso"))
+                        ls_time_style = 'l';
+                else if (!string_compare(style, "iso"))
+                        ls_time_style = 'i';
+                else if (string_compare(style, "locale"))
+                {
+                        string_format(file_fail,
+                                      "%s: invalid argument '%s' for 'time style'\n"
+                                      "Valid arguments are:\n"
+                                      "  - [posix-]full-iso\n"
+                                      "  - [posix-]long-iso\n"
+                                      "  - [posix-]iso\n"
+                                      "  - [posix-]locale\n"
+                                      "  - +FORMAT (e.g., +%%H:%%M) for a 'date'-style format\n",
+                                      program, style);
+                        return 2;
+                }
+        }
+        if (flags & FILE_FLAG('M'))
+                ls_time_style = 'f';
+
+        // How a name is spelled.
+        ls_quoting = default_quoting ? default_quoting : ls_terminal ? 'e' : 'L';
+        if (ls_quote_option == 'z')
+        {
+                b32 word = ls_word_among((string_address) "--quoting-style",
+                                         file_option_value(address_of taking, 'z'),
+                                         ls_quoting_words, array_count(ls_quoting_words));
+                if (word < 0)
+                        return 2;
+                ls_quoting = (p8)word;
+        }
+        else if (ls_quote_option == 'N')
+                ls_quoting = 'L';
+        else if (ls_quote_option == 'Q')
+                ls_quoting = 'c';
+        else if (ls_quote_option == 'b')
+                ls_quoting = 'b';
+        if ((flags & FILE_FLAG('6')) && !ls_quote_option)
+                ls_quoting = 'L';
+
+        ls_hide_controls = ls_control_option ? ls_control_option == 'q'
+                                             : ls_terminal && !(flags & FILE_FLAG('6'));
+
+        // The letter after a name.
+        ls_indicator = 0;
+        if (ls_indicator_option == 'Y')
+        {
+                b32 word = ls_word_among((string_address) "--indicator-style",
+                                         file_option_value(address_of taking, 'Y'),
+                                         ls_indicator_words, array_count(ls_indicator_words));
+                if (word < 0)
+                        return 2;
+                ls_indicator = word == 'N' ? 0 : (p8)word;
+        }
+        else if (ls_indicator_option == 'E')
+        {
+                string_address when_text = file_option_value(address_of taking, 'E');
+                b32 when = when_text ? ls_word_among((string_address) "--classify", when_text,
+                                                     ls_when_words, array_count(ls_when_words))
+                                     : 'a';
+
+                if (when < 0)
+                        return 2;
+                if (ls_when_active((p8)when))
+                        ls_indicator = 'F';
+        }
+        else if (ls_indicator_option == 'p')
+                ls_indicator = '/';
+        else if (ls_indicator_option == 'j')
+                ls_indicator = 'f';
+        else if (ls_indicator_option == 'F')
+                ls_indicator = 'F';
+
+        // What is followed.
+        ls_dereference = ls_deref_option == 'L'   ? 'L'
+                         : ls_deref_option == 'H' ? 'H'
+                         : ls_deref_option == 'V' ? 'D'
+                         : (ls_as_itself || ls_indicator == 'F' || ls_format == 'l') ? 'N'
+                                                                                     : 'D';
+
+        // Sizes: -h, --si and --block-size answer for the long listing, and
+        // for the blocks column too unless -k holds that at a kibibyte.
+        ls_size_unit = 1;
+        ls_size_human = false;
+        ls_size_si = false;
+        ls_size_suffix[0] = end;
+        ls_block_unit = 1024;
+        ls_block_human = false;
+        ls_block_si = false;
+        ls_block_suffix[0] = end;
+
+        if (ls_size_option == 'h' || ls_size_option == 'P')
+        {
+                ls_size_human = ls_block_human = true;
+                ls_size_si = ls_block_si = ls_size_option == 'P';
+        }
+        else if (ls_size_option == '7')
+        {
+                string_address given = file_option_value(address_of taking, '7');
+
+                if (!ls_block_size_read(given, address_of ls_size_unit, address_of ls_size_human,
+                                        address_of ls_size_si, ls_size_suffix))
+                {
+                        string_format(file_fail, "%s: invalid --block-size argument '%s'\n",
+                                      program, given);
+                        return 2;
+                }
+
+                ls_block_unit = ls_size_unit;
+                ls_block_human = ls_size_human;
+                ls_block_si = ls_size_si;
+                memory_copy_apart(ls_block_suffix, ls_size_suffix, sizeof(ls_block_suffix));
+        }
+
+        if (ls_kibibytes)
+        {
+                ls_block_unit = 1024;
+                ls_block_human = false;
+                ls_block_si = false;
+                ls_block_suffix[0] = end;
+        }
+
+        // The line.
+        ls_width = ls_column_limit();
+        if (flags & FILE_FLAG('w'))
+        {
+                if (!ls_count_option(file_option_value(address_of taking, 'w'),
+                                     (string_address) "line width", address_of ls_width))
+                        return 2;
+        }
+        ls_tabsize = 8;
+        if (flags & FILE_FLAG('T'))
+        {
+                if (!ls_count_option(file_option_value(address_of taking, 'T'),
+                                     (string_address) "tab size", address_of ls_tabsize))
+                        return 2;
+        }
+
+        // Colour.
+        ls_coloring = false;
         ls_colors = file_environment((string_address) "LS_COLORS");
 
         if (ls_colors && string_get(ls_colors) &&
@@ -4372,30 +5833,46 @@ static b32 file_ls_as(string_address program, bool long_default,
                 ls_colors = null;
         }
 
-        if (flags & FILE_FLAG('C'))
+        if (flags & FILE_FLAG('K'))
         {
-                b32 when = file_color_when(file_option_value(address_of taking, 'C'),
-                                           FILE_COLOR_ALWAYS);
+                string_address when_text = file_option_value(address_of taking, 'K');
+                b32 when = when_text ? ls_word_among((string_address) "--color", when_text,
+                                                     ls_when_words, array_count(ls_when_words))
+                                     : 'a';
 
                 if (when < 0)
-                {
-                        string_format(file_fail,
-                                      "%s: invalid argument '%s' for --color\n",
-                                      program,
-                                      file_option_value(address_of taking, 'C'));
-                        return 1;
-                }
+                        return 2;
 
-                ls_coloring = ls_colors && string_get(ls_colors) &&
-                              file_color_active(when);
+                ls_coloring = ls_colors && string_get(ls_colors) && ls_when_active((p8)when);
         }
 
         if (ls_coloring)
                 ls_color_parse();
 
-        ls_columns = column_default && !ls_long &&
-                     !(flags & FILE_FLAG('1')) && !ls_inode &&
-                     !ls_classify && !ls_slash && !ls_coloring;
+        if (flags & FILE_FLAG('y'))
+        {
+                string_address when_text = file_option_value(address_of taking, 'y');
+                b32 when = when_text ? ls_word_among((string_address) "--hyperlink", when_text,
+                                                     ls_when_words, array_count(ls_when_words))
+                                     : 'a';
+
+                if (when < 0)
+                        return 2;
+
+                ls_hyperlink = ls_when_active((p8)when);
+
+                if (ls_hyperlink)
+                {
+                        file_machine machine;
+
+                        memory_fill(address_of machine, 0, sizeof(machine));
+                        system_call_1(syscall(uname), (positive)address_of machine);
+                        string_copy_max_end(ls_host, machine.node, FILE_NAME_MAX - 1);
+
+                        if (system_call_2(syscall(getcwd), (positive)ls_cwd, FILE_PATH_MAX) < 0)
+                                ls_cwd[0] = end;
+                }
+        }
 
         /*
                 No operand is the working directory: under -d that is the
@@ -4411,7 +5888,7 @@ static b32 file_ls_as(string_address program, bool long_default,
                         ls_used = 0;
 
                         if (ls_add(AT_FDCWD, (string_address) ".",
-                                   (string_address) ".", 0, null))
+                                   (string_address) ".", 0, null, null))
                         {
                                 ls_sort();
                                 ls_print(null);
@@ -4421,66 +5898,38 @@ static b32 file_ls_as(string_address program, bool long_default,
                         ls_directory((string_address) ".", ls_recursive,
                                      FILE_MAX_DEPTH, true);
 
+                ls_dired_finish();
                 log_flush();
-                return ls_status;
-        }
-
-        positive given = count - first;
-
-        if (ls_as_itself)
-        {
-                ls_count = 0;
-                ls_used = 0;
-
-                for (positive i = first; i < count; i++)
-                        if (!ls_add(AT_FDCWD, program_argument((b32)i),
-                                    program_argument((b32)i), 0, null))
-                                break;
-
-                if (ls_broken)
-                {
-                        log_flush();
-                        return ls_status;
-                }
-
-                ls_sort();
-                ls_print(null);
-                log_flush();
-
                 return ls_status;
         }
 
         // Everything that is not a directory is listed first, together, and
         // then each directory in turn -- which is the order the system's own
-        // ls uses and the only one where a mixed set of operands reads.
+        // ls uses and the only one where a mixed set of operands reads. The
+        // column widths of the first group count the directories too, as
+        // the reference's do.
         ls_count = 0;
         ls_used = 0;
 
         positive directories = 0;
+        positive given = count - first;
 
         for (positive i = first; i < count; i++)
         {
                 string_address path = program_argument((b32)i);
                 file_facts facts;
-                bipolar looked = file_look_code(AT_FDCWD, path, AT_SYMLINK_NOFOLLOW,
-                                                address_of facts);
+                bool directory;
 
-                if (looked < 0)
-                {
-                        string_format(file_fail, "%s: cannot access '%s': %s\n",
-                                      program, path, file_reason(looked));
-                        ls_status = 2;
+                if (!ls_operand(path, address_of facts, address_of directory))
                         continue;
-                }
 
-                if (ls_operand_lists(path))
-                {
+                if (directory)
                         directories++;
-                        continue;
-                }
 
-                if (!ls_add(AT_FDCWD, path, path, 0, null))
+                if (!ls_add(AT_FDCWD, path, path, 0, null, address_of facts))
                         break;
+
+                ls_entries[ls_count - 1].points_at_directory |= directory;
         }
 
         if (ls_broken)
@@ -4489,57 +5938,74 @@ static b32 file_ls_as(string_address program, bool long_default,
                 return ls_status;
         }
 
-        ls_headings = given > 1 || ls_recursive;
-
-        if (ls_count > 0)
-        {
-                ls_sort();
-                ls_print(null);
-                ls_written = true;
-        }
-
-        // The directory operands are listed in name order however they were
-        // typed, which is what ls does with every other list of names.
-        if (directories > LS_MAX_ENTRIES)
-        {
-                ls_limit((string_address) "too many directory operands");
-                log_flush();
-                return ls_status;
-        }
+        // The directories come out of the group once the widths are known;
+        // their order is the sort's, however they were typed.
+        ls_sort();
 
         positive order[LS_MAX_ENTRIES];
         positive have = 0;
+        positive files = 0;
 
-        for (positive i = first; i < count && have < LS_MAX_ENTRIES; i++)
+        for (positive k = 0; k < ls_count; k++)
         {
-                string_address path = program_argument((b32)i);
+                positive index = ls_sorted[k];
+                ls_entry address_to entry = address_of ls_entries[index];
 
-                if (!file_exists(AT_FDCWD, path) || !ls_operand_lists(path))
-                        continue;
-
-                order[have++] = i;
+                if ((entry->mode & MODE_FORMAT) == MODE_DIRECTORY && !ls_as_itself &&
+                    file_is_directory_through(ls_arena + entry->name))
+                        order[have++] = index;
+                else if ((entry->mode & MODE_FORMAT) != MODE_DIRECTORY || ls_as_itself)
+                        ls_sorted[files++] = index;
+                else
+                        order[have++] = index;
         }
 
-        for (positive i = 1; i < have; i++)
+        if (files)
         {
-                positive held = order[i];
-                positive j = i;
+                positive whole = ls_count;
 
-                while (j > 0 &&
-                       string_compare(program_argument((b32)order[j - 1]),
-                                      program_argument((b32)held)) > 0)
-                {
-                        order[j] = order[j - 1];
-                        j--;
-                }
-
-                order[j] = held;
+                // Widths are computed over the whole group and printing runs
+                // over the first `files` sorted entries only.
+                ls_count = files;
+                ls_print(null);
+                ls_count = whole;
+                ls_written = true;
         }
+
+        bool headings = given > 1 || ls_recursive;
+
+        // The directory names are copied out before the listing buffers are
+        // reused for the first of them.
+        p8 names[LS_ARENA / 4];
+        positive kept = 0;
 
         for (positive i = 0; i < have; i++)
-                ls_directory(program_argument((b32)order[i]), ls_headings,
-                             FILE_MAX_DEPTH, true);
+        {
+                string_address name = ls_arena + ls_entries[order[i]].name;
+                positive length = string_length(name);
 
+                if (kept + length + 1 > sizeof(names))
+                {
+                        ls_limit((string_address) "too many directory operands");
+                        log_flush();
+                        return ls_status;
+                }
+
+                memory_copy_apart(names + kept, name, length + 1);
+                kept += length + 1;
+        }
+
+        positive at = 0;
+
+        for (positive i = 0; i < have; i++)
+        {
+                string_address name = names + at;
+
+                at += string_length(name) + 1;
+                ls_directory(name, headings, FILE_MAX_DEPTH, true);
+        }
+
+        ls_dired_finish();
         log_flush();
 
         return ls_status;
@@ -4547,18 +6013,18 @@ static b32 file_ls_as(string_address program, bool long_default,
 
 static b32 file_ls()
 {
-        return file_ls_as((string_address) "ls", false, false, false);
+        return file_ls_as((string_address) "ls", 0, 0);
 }
 
 /* GNU dir is the shared ls engine with -C and -b selected by default. */
 static b32 file_dir()
 {
-        return file_ls_as((string_address) "dir", false, true, true);
+        return file_ls_as((string_address) "dir", 'C', 'b');
 }
 
 static b32 file_vdir()
 {
-        return file_ls_as((string_address) "vdir", true, true, false);
+        return file_ls_as((string_address) "vdir", 'l', 'b');
 }
 
 // Running a command ------------------------------------------------
@@ -4693,6 +6159,7 @@ static bool file_unsigned_decimal(string_address text,
         address_to number = value;
         return true;
 }
+
 
 // nice -------------------------------------------------------------
 #define NICE_PROCESS 0
