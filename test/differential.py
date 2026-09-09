@@ -792,15 +792,40 @@ def digest(result):
             "effects": hashlib.sha256(json.dumps(result["effects"], sort_keys=True).encode()).hexdigest()}
 
 
-def option_ledger(rows, case):
+def option_words(utility, argv):
+    """The words of an argv that are options rather than another option's value.
+
+    A valued option written apart from its value -- ptx -M -O -- makes the
+    next word that option's value, and a ledger row keyed on an option must
+    not match it there. Without a spec every word is an option, which is what
+    the matcher did before."""
+    valued = set()
+    if utility is not None:
+        for option in utility.options:
+            if option.values is not None:
+                valued.add(option.spell)
+    words = []
+    skip = False
+    for index, word in enumerate(argv):
+        if skip:
+            skip = False
+            continue
+        words.append(word)
+        if word in valued:
+            skip = True
+    return words
+
+
+def option_ledger(rows, case, utility=None):
     """A row keyed by option rather than by case: the whole option is refused."""
+    words = option_words(utility, case.argv)
     for row in rows:
         if "option" not in row or row.get("utility") != case.utility:
             continue
         if row.get("domain") not in (None, case.domain):
             continue
         spell = row["option"]
-        for word in case.argv:
+        for word in words:
             if word == spell or (spell.startswith("--") and word.startswith(spell + "=")) \
                     or (not spell.startswith("--") and len(spell) == 2 and word.startswith(spell) and not word.startswith("--")):
                 return row
@@ -846,6 +871,13 @@ def build_cases(domain, spec, budget, seed, selected, modes, families):
     for name, utility in sorted(utilities.items()):
         if selected and name not in selected:
             continue
+        # An input or fixture the spec misspelled would otherwise feed nothing
+        # and pass, since both programs would agree about an empty input.
+        for stdin in utility.stdin:
+            if stdin not in INPUTS:
+                raise SystemExit(f"spec_{domain}: {name} names unknown input {stdin!r}")
+        if utility.fixture not in FIXTURES:
+            raise SystemExit(f"spec_{domain}: {name} names unknown fixture {utility.fixture!r}")
         rng = random.Random(int.from_bytes(hashlib.sha256(
             f"{seed}:{domain}:{name}".encode()).digest()[:8], "little"))
         if utility.modes:
@@ -920,9 +952,11 @@ def main(argv=None):
     parser.add_argument("--shrink", action="store_true")
     parser.add_argument("--max-failures", type=int, default=12,
                         help="distinct failure classes shown per program")
-    parser.add_argument("--record", choices=("ledger", "regression"),
+    parser.add_argument("--record", choices=("ledger", "regression", "refresh"),
                         help="write every divergence (ledger) or every agreement of the "
-                             "cases run (regression) into the pinned list")
+                             "cases run (regression) into the pinned list; refresh brings "
+                             "existing rows back in line with the tree after a fix landed "
+                             "somewhere else")
     parser.add_argument("--reason", help="the reason written with --record ledger")
     parser.add_argument("--kind", default="deliberate", choices=("deliberate", "bug"))
     parser.add_argument("--no-pinned", action="store_true", help="skip ledger and regressions")
@@ -1019,6 +1053,8 @@ def main(argv=None):
     failures = collections.defaultdict(collections.Counter)
     shown = collections.Counter()
     to_record = []
+    refreshed_gone = []
+    refreshed_moved = []
     ledger_rows_by_id = {row["id"]: row for row in ledger if "id" in row}
     regression_ids = {row["id"] for row in regressions if "id" in row}
 
@@ -1051,7 +1087,7 @@ def main(argv=None):
             total[tally_key] += 1
             tiers[case.tier] += 1
             diff = differences(want, got, policy)
-            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case)
+            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case, spec)
             if want["timeout"] or want["status"] < 0:
                 invalid += 1
                 print(f"  INVALID ORACLE {key} {label_of(case)} status={want['status']} "
@@ -1061,10 +1097,23 @@ def main(argv=None):
                 # A pinned deliberate difference: the answer must hold, and
                 # must still differ from the reference.
                 if not diff:
+                    #       The difference this row recorded is gone. For a bug
+                    #       that is the bug being fixed, usually by another
+                    #       domain touching shared code, and the row should go.
+                    #       For a deliberate policy it means the policy was
+                    #       lost, which is a failure whatever the mode.
+                    if args.record == "refresh" and row.get("kind") == "bug":
+                        refreshed_gone.append(row)
+                        passed[tally_key] += 1
+                        continue
                     failures[tally_key][("ledger-agrees",)] += 1
                     print(f"  FAIL {key} {label_of(case)} agrees with the reference now -- "
                           f"remove its ledger row: {case.words()}")
                 elif digest(got) != row["candidate"]:
+                    if args.record == "refresh":
+                        refreshed_moved.append((row, digest(got)))
+                        passed[tally_key] += 1
+                        continue
                     failures[tally_key][("ledger-drift",)] += 1
                     print(f"  FAIL {key} {label_of(case)} ledger row drifted: {case.words()}")
                     print(f"       pinned {row['candidate']} now {digest(got)}")
@@ -1119,7 +1168,32 @@ def main(argv=None):
         if executor:
             executor.shutdown()
 
-    if args.record and to_record:
+    if args.record == "refresh":
+        gone = {id(row) for row in refreshed_gone}
+        moved = {id(row): answer for row, answer in refreshed_moved}
+        kept = []
+        for row in ledger:
+            if id(row) in gone:
+                continue
+            if id(row) in moved:
+                #       The answer moved, so the row still records a real
+                #       difference -- but its reason was written about the old
+                #       answer and nothing here can tell whether it still
+                #       describes this one. Say so in the row rather than let
+                #       a stale sentence pass for a checked one.
+                row["candidate"] = moved[id(row)]
+                row["reason_unverified"] = ("the answer moved after a change elsewhere; "
+                                            "this reason was not re-checked against it")
+            kept.append(row)
+        if refreshed_gone or refreshed_moved:
+            save_rows("ledger", kept)
+        print(f"  refreshed the ledger: {len(refreshed_gone)} rows dropped because the "
+              f"difference is gone, {len(refreshed_moved)} re-pinned because the answer moved")
+        for row in refreshed_moved:
+            print(f"    moved  {row[0].get('id')} {row[0].get('domain')}/{row[0].get('utility')}"
+                  f"  {row[0].get('reason', '')[:60]}")
+
+    if args.record in ("ledger", "regression") and to_record:
         rows = ledger if args.record == "ledger" else regressions
         known = {row.get("id") for row in rows}
         added = 0

@@ -1979,7 +1979,9 @@ fn shell_kill(writer write, string_address input)
                 // process. Handlers only mark pending traps until argv is back.
                 log_flush();
                 program_arguments_use(shell_argv, (b32)shell_argc);
+                kill_shell_spelling = true;
                 answer = file_kill();
+                kill_shell_spelling = false;
                 program_arguments_use(saved, saved_count);
                 shell_answer(answer);
                 return;

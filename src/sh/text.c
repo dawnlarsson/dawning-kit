@@ -329,6 +329,9 @@ static text_reader text_input;
    diagnostic.  Keep that policy at the shared reader boundary so its merge
    cursors do not grow a second open path. */
 static bool text_quiet_open;
+/* sed reads a script file, and R a line at a time, without a word about a
+   file that will not open or read -- as GNU passes over both. */
+static bool text_quiet_read;
 /* One sentinel slot is used while a sed script file is turned into text. */
 static p8 text_line[TEXT_LINE_MAX + 1];
 static positive text_line_length;
@@ -420,7 +423,8 @@ static bool text_reader_fill_amount(text_reader address_to reader,
 
                 if (got < 0)
                 {
-                        string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
+                        if (!text_quiet_read)
+                                string_diagnostic(&text_diagnostic, 0, reader->name, "Read error");
                         reader->failed = true;
                 }
 
@@ -683,11 +687,16 @@ static bool text_word(p8 character)
 static b32 text_argument_count;
 static positive text_files_count;
 static bool text_files_failed;
+// --files0-from replaces the operand list with names cut from a file.
+static string_address address_to text_file_list;
+static positive text_files_from_bad;
+static bool text_files_from(string_address path);
 
 static fn text_begin(string_address name)
 {
         /* A shell may run several built-in tools in one process. */
         text_out_used = 0;
+        text_quiet_read = false;
         text_out_handle = 1;
         text_out_failed = false;
         text_status = 0;
@@ -696,6 +705,7 @@ static fn text_begin(string_address name)
         text_files_count = 0;
         text_files_failed = false;
         text_quiet_open = false;
+        text_file_list = null;
 }
 
 /*
@@ -816,7 +826,115 @@ static fn text_file_add(b32 which)
 
 static string_address text_file_name(positive which)
 {
+        if (text_file_list)
+                return text_file_list[which];
+
         return text_files_count ? program_argument(text_files[which]) : null;
+}
+
+/*
+        A count with GNU's multiplier behind it: head -c 1K, tail -n 2kB. b is
+        512, a lower k is a thousand only with a B behind it, and the rest run
+        K M G T P E Z Y R Q with K meaning 1024 and KB a thousand. Too large a
+        count saturates rather than wrapping, because "all of it" is what a
+        count past the address space asks for.
+*/
+static bool text_count_suffixed(string_address said, positive address_to count)
+{
+        string_address letters = (string_address) "KMGTPEZYRQ";
+        positive total;
+        positive by = 1024;
+        positive power = 0;
+
+        if (!byte_is_digit(said[0]))
+                return false;
+
+        if (!file_decimal_read(address_of said, true, address_of total))
+                return false;
+
+        if (!said[0])
+        {
+                address_to count = total;
+                return true;
+        }
+
+        if (said[0] == 'b' && !said[1])
+        {
+                address_to count = total > positive_max / 512 ? positive_max
+                                                                 : total * 512;
+                return true;
+        }
+
+        for (positive step = 0; letters[step]; step++)
+                if (said[0] == letters[step] || (step == 0 && said[0] == 'k'))
+                        power = step + 1;
+
+        if (!power)
+                return false;
+
+        if (said[1] == 'B' && !said[2])
+                by = 1000;
+        else if (said[1] == 'i' && said[2] == 'B' && !said[3])
+                by = 1024;
+        else if (said[1])
+                return false;
+
+        for (positive step = 0; step < power; step++)
+                if (total > positive_max / by)
+                        total = positive_max;
+                else
+                        total *= by;
+
+        address_to count = total;
+        return true;
+}
+
+/*
+        The obsolete -N spelling is accepted only as the first word: head -3
+        yes, head a.txt -3 no, and GNU says so. The words that carry a value
+        for another option are stepped over, so head -n -3 stays a count.
+*/
+static string_address text_digits_misplaced(file_taking address_to taking)
+{
+        positive count = (positive)program_argument_count();
+
+        for (positive at = 2; at < count; at++)
+        {
+                string_address word = program_argument((b32)at);
+                string_address before = program_argument((b32)at - 1);
+
+                if (string_equals(word, "--"))
+                        return null;
+
+                if (before[0] == '-' && before[1])
+                {
+                        if (before[1] == '-')
+                        {
+                                positive name = 2;
+
+                                while (before[name] && before[name] != '=')
+                                        name++;
+
+                                if (!before[name] &&
+                                    file_option_among(taking->valued,
+                                                      file_long_letter(taking, before + 2,
+                                                                       name - 2)))
+                                        continue;
+                        }
+                        else if (!byte_is_digit(before[1]))
+                        {
+                                positive last = string_length(before) - 1;
+
+                                if (file_option_among(taking->valued, before[last]))
+                                        continue;
+                        }
+                }
+
+                if (word[0] == '-' && byte_is_digit(word[1]))
+                        return word;
+        }
+
+        return null;
 }
 
 // How many inputs a tool walks: the operands it was handed, or the one
@@ -836,7 +954,9 @@ static fn text_banner(b32 which, bool first)
                 text_put_character('\n');
 
         text_put_string("==> ");
-        text_put_string(name ? name : (string_address)"standard input");
+        text_put_string(name && !string_equals(name, "-")
+                            ? name
+                            : (string_address)"standard input");
         text_put_string(" <==\n");
 }
 
@@ -1109,6 +1229,11 @@ static b32 encoding_decode(const encoding_codec address_to codec,
 
         for (positive value = 0; value < symbols; value++)
                 values[codec->alphabet[value]] = (p8)value;
+
+        // Hexadecimal reads in either case, as GNU's base16 decoder does.
+        if (codec->bits == 4)
+                for (positive value = 10; value < 16; value++)
+                        values['a' + value - 10] = (p8)value;
 
         while (valid && text_fill())
         {
@@ -1427,6 +1552,18 @@ static const file_long basenc_longs[] = {
     {null, 0},
 };
 
+// Every -w is checked where it is written, and a wrap past the address space
+// is no wrap at all, as GNU reads it, rather than a refusal.
+static positive encoding_wrap;
+
+static bool encoding_option_seen(p8 letter, string_address value)
+{
+        if (letter == 'w' && !text_unsigned_option(value, true, address_of encoding_wrap))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid wrap size");
+
+        return true;
+}
+
 static b32 text_encoding(string_address name, positive format)
 {
         file_taking taking = {
@@ -1435,10 +1572,11 @@ static b32 text_encoding(string_address name, positive format)
             .valued = (string_address)"w",
             .longs = format == ENCODING_NONE ? basenc_longs
                                              : encoding_plain_longs,
+            .seen = encoding_option_seen,
         };
-        positive wrap = 76;
 
         text_begin(name);
+        encoding_wrap = 76;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -1460,11 +1598,7 @@ static b32 text_encoding(string_address name, positive format)
                         return text_done(string_diagnostic(&text_diagnostic, 1, null, "missing encoding type"));
         }
 
-        string_address said = file_option_value(address_of taking, 'w');
-
-        if (said && !text_unsigned_option(said, false, address_of wrap))
-                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid wrap size"));
-
+        positive wrap = encoding_wrap;
         positive operands = (positive)text_argument_count - taking.first;
 
         if (operands > 1)
@@ -1781,8 +1915,12 @@ static b32 text_comm()
         string_address left_name = text_file_name(0);
         string_address right_name = text_file_name(1);
 
+        // One buffered reader cannot stand at two places in the same
+        // stream: the first cursor's refill would take the records the
+        // second is about to be asked for.
         if (string_equals(left_name, "-") && string_equals(right_name, "-"))
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "standard input is meaningful only once"));
+                return text_done(string_diagnostic(&text_diagnostic, 1, null,
+                                                   "standard input is meaningful only once"));
 
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
@@ -1856,13 +1994,22 @@ static b32 text_comm()
 
                 if (disorder && comm_order_mode == RELATION_ORDER_FORCE)
                         break;
+
+                if (sides[0].reader.failed || sides[1].reader.failed)
+                        break;
         }
 
-        bool remaining[] = {have_left, have_right};
+        // A side that failed to read ends the answer where it stopped, and
+        // so does disorder when the order was to be checked: the total that
+        // would have followed is not written either.
+        bool stopped = sides[0].reader.failed || sides[1].reader.failed ||
+                       (disorder && comm_order_mode == RELATION_ORDER_FORCE);
+        bool remaining[] = {have_left && !stopped, have_right && !stopped};
         for (positive side = 0; side < array_count(remaining); side++)
         {
                 while (remaining[side] &&
-                       !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
+                       !(disorder && comm_order_mode == RELATION_ORDER_FORCE) &&
+                       !sides[0].reader.failed && !sides[1].reader.failed)
                 {
                         unpaired = true;
                         totals[side]++;
@@ -1877,7 +2024,12 @@ static b32 text_comm()
                 }
         }
 
-        if (taking.flags & FILE_FLAG('T'))
+        bool failed = sides[0].reader.failed || sides[1].reader.failed;
+        bool order_failed = disorder &&
+            (comm_order_mode == RELATION_ORDER_FORCE || unpaired);
+
+        if ((taking.flags & FILE_FLAG('T')) && !failed &&
+            !(disorder && comm_order_mode == RELATION_ORDER_FORCE))
         {
                 for (positive side = 0; side < array_count(totals); side++)
                 {
@@ -1887,10 +2039,6 @@ static b32 text_comm()
                 text_put_string("total");
                 text_put_character(text_delimiter);
         }
-
-        bool failed = sides[0].reader.failed || sides[1].reader.failed;
-        bool order_failed = disorder &&
-            (comm_order_mode == RELATION_ORDER_FORCE || unpaired);
 
         if (order_failed)
                 string_diagnostic(&text_diagnostic, 0, null, "input is not in sorted order");
@@ -2036,7 +2184,19 @@ static b32 text_paste()
                         continue;
                 }
 
-                text_record_open(cursors + input, name, text_line);
+                // A file that will not open ends the parallel walk before
+                // it writes a line, as it ends GNU's; -s reads each file on
+                // its own and goes on to the next.
+                if (!text_record_open(cursors + input, name, text_line) &&
+                    !(taking.flags & FILE_FLAG('s')))
+                {
+                        for (positive done = 0; done < input; done++)
+                                if (cursors[done].source == done)
+                                        text_record_close(cursors + done);
+
+                        return text_done(1);
+                }
+
                 cursors[input].source = input;
 
                 if (standard)
@@ -2044,6 +2204,7 @@ static b32 text_paste()
         }
 
         bool serial = (taking.flags & FILE_FLAG('s')) != 0;
+        bool failed = false;
 
         if (serial)
         {
@@ -2110,8 +2271,6 @@ static b32 text_paste()
                 }
         }
 
-        bool failed = false;
-
         for (positive input = 0; input < inputs; input++)
         {
                 text_record_cursor address_to cursor = cursors + input;
@@ -2173,10 +2332,26 @@ static bool join_number(string_address value, positive address_to number)
 {
         positive made;
 
-        if (!text_unsigned_option(value, false, address_of made) || !made)
+        // A field number past the address space is a field no line has,
+        // which is what GNU makes of it too, rather than a refusal.
+        if (!text_unsigned_option(value, true, address_of made) || !made)
                 return false;
 
         address_to number = made - 1;
+        return true;
+}
+
+// -1, -2 and -j may repeat, and may agree; two different answers for the
+// same side are the incompatible join fields GNU refuses.
+static bool join_key_said[2];
+
+static bool join_key_set(positive side, positive field)
+{
+        if (join_key_said[side] && join_key[side] != field)
+                return string_diagnostic(&text_diagnostic, 0, null, "incompatible join fields");
+
+        join_key_said[side] = true;
+        join_key[side] = field;
         return true;
 }
 
@@ -2262,9 +2437,13 @@ static bool join_option_seen(p8 letter, string_address value)
 {
         if (letter == 't')
         {
-                if (value[0] && value[1])
+                // One byte, the two that spell a NUL, or nothing at all,
+                // which makes the whole line the key.
+                bool zero = value[0] == '\\' && value[1] == '0' && !value[2];
+
+                if (value[0] && value[1] && !zero)
                         return false;
-                b32 separator = value[0] ? value[0] : '\n';
+                b32 separator = zero ? 0 : value[0] ? value[0] : '\n';
                 if (join_separator >= 0 && join_separator != separator)
                         return false;
                 join_separator = separator;
@@ -2273,17 +2452,17 @@ static bool join_option_seen(p8 letter, string_address value)
         {
                 positive field;
 
-                if (!join_number(value, address_of field))
+                if (!join_number(value, address_of field) ||
+                    !join_key_set((positive)(letter - '1'), field))
                         return false;
-                join_key[letter - '1'] = field;
         }
         else if (letter == 'j')
         {
                 positive field;
 
-                if (!join_number(value, address_of field))
+                if (!join_number(value, address_of field) ||
+                    !join_key_set(0, field) || !join_key_set(1, field))
                         return false;
-                join_key[0] = join_key[1] = field;
         }
         else if (letter == 'a')
         {
@@ -2681,6 +2860,7 @@ static b32 text_join()
         text_delimiter = '\n';
         text_arena_used = 0;
         join_key[0] = join_key[1] = 0;
+        join_key_said[0] = join_key_said[1] = false;
         join_unpaired = 0;
         join_only = 0;
         join_output_count = 0;
@@ -2742,7 +2922,9 @@ static b32 text_join()
                                separated, separator) : 0;
         bool disorder = false;
         bool unpaired = false;
-        bool trouble = false;
+        // A side that cannot be read ends join where GNU ends it: at once,
+        // with nothing more written.
+        bool trouble = sides[0].reader.failed || sides[1].reader.failed;
 
         if (header && (have[0] || have[1]))
         {
@@ -2763,8 +2945,14 @@ static b32 text_join()
                             separator, fold, address_of disorder);
         }
 
-        while (have[0] && have[1])
+        while (have[0] && have[1] && !trouble)
         {
+                if (sides[0].reader.failed || sides[1].reader.failed)
+                {
+                        trouble = true;
+                        break;
+                }
+
                 bipolar order = text_record_compare(
                     sides[0].key, sides[0].key_length,
                     sides[1].key, sides[1].key_length, fold);
@@ -2962,11 +3150,19 @@ static b32 text_join()
                                        group_key, group_key_length, fold));
         }
 
+        trouble = trouble || sides[0].reader.failed || sides[1].reader.failed;
+
         for (positive side = 0; side < array_count(have); side++)
         {
                 while (!trouble && have[side] &&
                        !(disorder && join_order_mode == RELATION_ORDER_FORCE))
                 {
+                        if (sides[0].reader.failed || sides[1].reader.failed)
+                        {
+                                trouble = true;
+                                break;
+                        }
+
                         unpaired = true;
                         if ((join_unpaired | join_only) & (1 << side))
                                 join_emit(side ? null : sides[0].record,
@@ -3356,6 +3552,7 @@ static const file_long wc_longs[] = {
     {(string_address) "chars", 'm'},
     {(string_address) "max-line-length", 'L'},
     {(string_address) "total", 'T'},
+    {(string_address) "files0-from", 'Z'},
     // --debug names the counting strategy on the error stream and leaves
     // the counts alone, and there is one strategy here to name. It borrows a
     // D that `allowed` refuses, so wc -D stays the error GNU makes of it.
@@ -3452,7 +3649,7 @@ static b32 text_wc()
         file_taking taking = {
             .program = (string_address) "wc",
             .allowed = (string_address) "Lclmw",
-            .valued = (string_address) "T",
+            .valued = (string_address) "TZ",
             .longs = wc_longs,
             .operand = text_file_add,
         };
@@ -3466,6 +3663,19 @@ static b32 text_wc()
                 return text_done(1);
 
         positive flags = taking.flags;
+
+        if (flags & FILE_FLAG('Z'))
+        {
+                if (text_files_count)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, text_file_name(0),
+                                                          "extra operand; file operands cannot be combined with --files0-from"));
+
+                if (!text_files_from(file_option_value(address_of taking, 'Z')))
+                        return text_done(1);
+
+                if (text_files_from_bad)
+                        text_status = 1;
+        }
         bool want_lines = (flags & FILE_FLAG('l')) != 0;
         bool want_words = (flags & FILE_FLAG('w')) != 0;
         bool want_bytes = (flags & FILE_FLAG('c')) != 0;
@@ -3491,7 +3701,7 @@ static b32 text_wc()
 
         b32 selected = (b32)want_lines + (b32)want_words + (b32)want_bytes +
                        (b32)want_chars + (b32)want_longest;
-        b32 inputs = text_input_count();
+        b32 inputs = text_file_list ? (b32)text_files_count : text_input_count();
 
         wc_want_lines = want_lines;
         wc_want_words = want_words;
@@ -3527,23 +3737,11 @@ static b32 text_wc()
                                 continue;
                         }
 
-                        if (facts.blocks)
-                        {
-                                known += facts.size;
-                                continue;
-                        }
-
-                        bipolar probe = text_open_handle(name, FILE_READ, 0);
-
-                        if (probe < 0)
-                                continue;
-
-                        if (!text_regular_size((positive)probe, address_of size))
-                                unknown = true;
-                        else
-                                known += size;
-
-                        system_close(probe);
+                        // What the inode says, even where it says nothing:
+                        // GNU pads to the digits of the sizes it was told,
+                        // and a /proc file that reports none is a zero.
+                        known += facts.size;
+                        (void)size;
                 }
 
                 if (unknown)
@@ -4057,6 +4255,15 @@ static b32 text_rev()
 
         for (b32 i = 0; i < inputs; i++)
         {
+                // util-linux reads no standard input by that name: - is a
+                // file, and there is none.
+                if (text_file_name(i) && string_equals(text_file_name(i), "-"))
+                {
+                        string_diagnostic(&text_diagnostic, 0, "-", "cannot open: No such file or directory");
+                        text_status = 1;
+                        continue;
+                }
+
                 if (!text_open(text_file_name(i)))
                         continue;
 
@@ -4224,6 +4431,91 @@ static bool text_read_at(positive handle, positive offset, p8 address_to into, p
         stopped, so this is the floor under head -n -N and tail, which used
         to count from the file's first byte.
 */
+/*
+        --files0-from: NUL-separated names in a file, or on standard input
+        when the file is -, standing in for the operand list. The names are
+        copied into the arena with their terminators, and the two GNU refuses
+        -- an empty name, and - itself when the list came from standard input
+        -- are dropped and counted so the caller can answer as its tool does.
+*/
+static bool text_files_from(string_address path)
+{
+        bool from_stdin = string_equals(path, "-");
+        positive have = 0;
+
+        text_files_from_bad = 0;
+
+        if (!text_open(from_stdin ? null : path))
+                return false;
+
+        p8 address_to held = text_arena_hold_rest(address_of have);
+        bool failed = text_input.failed;
+
+        text_close();
+
+        if (!held)
+                return false;
+
+        if (failed)
+        {
+                text_file_list = (string_address address_to)text_arena_take(
+                    sizeof(string_address));
+                text_files_count = 0;
+                text_status = 1;
+                return text_file_list != null;
+        }
+
+        p8 address_to names = (p8 address_to)text_arena_take(have + 1);
+
+        if (!names)
+                return false;
+
+        memory_copy(names, held, have);
+        names[have] = '\0';
+
+        positive count = 0;
+
+        for (positive at = 0; at < have; at++)
+                if (!names[at] || at + 1 == have)
+                        count++;
+
+        string_address address_to list = (string_address address_to)
+            text_arena_take((count + 1) * sizeof(string_address));
+
+        if (!list)
+                return false;
+
+        positive made = 0;
+
+        for (positive at = 0; at < have;)
+        {
+                string_address name = (string_address)names + at;
+                positive length = string_length(name);
+
+                at += length + 1;
+
+                if (!length)
+                {
+                        string_diagnostic(&text_diagnostic, 0, path, "invalid zero-length file name");
+                        text_files_from_bad++;
+                        continue;
+                }
+
+                if (from_stdin && string_equals(name, "-"))
+                {
+                        string_diagnostic(&text_diagnostic, 0, null, "when reading file names from standard input, no file name of '-' allowed");
+                        text_files_from_bad++;
+                        continue;
+                }
+
+                list[made++] = name;
+        }
+
+        text_file_list = list;
+        text_files_count = made;
+        return true;
+}
+
 static positive text_stream_floor()
 {
         bipolar at = system_seek(text_input.handle, 0, FILE_SEEK_CUR);
@@ -4393,12 +4685,15 @@ static fn text_head_short(positive count, bool by_bytes)
 
         No option at all leaves the caller's default standing.
 */
-static bool text_count_option(string_address said, p8 marked,
-                              bool address_to special, positive address_to count)
+/*
+        A count, and whether it was written with the sign that means the
+        other end: + for tail, - for head. The sign is sticky across the
+        options, as GNU's is -- tail --lines=+12 -c1 is the whole file from
+        byte one, not its last byte -- so a caller that saw one keeps it.
+*/
+static bool text_count_parse(string_address said, p8 marked,
+                             bool address_to special, positive address_to count)
 {
-        if (!said)
-                return true;
-
         if (said[0] == marked)
         {
                 address_to special = true;
@@ -4407,10 +4702,51 @@ static bool text_count_option(string_address said, p8 marked,
         else if (said[0] == '+' || said[0] == '-')
                 said++;
 
-        if (string_digits_exact(said, count))
+        return text_count_suffixed(said, count);
+}
+
+static bool text_count_option(string_address said, p8 marked,
+                              bool address_to special, positive address_to count)
+{
+        if (!said)
+                return true;
+
+        if (text_count_parse(said, marked, special, count))
                 return true;
 
         return string_diagnostic(&text_diagnostic, 0, null, "invalid number of lines");
+}
+
+// The last of -c and -n decides bytes or lines, and the last of -q and -v
+// decides the headers; -s and the others tail drops must not count as last.
+static p8 text_count_last;
+static p8 text_banner_last;
+static bool text_count_tail;
+static bool text_count_marked;
+
+static bool head_tail_seen(p8 letter, string_address value)
+{
+        if (letter == 'c' || letter == 'n')
+        {
+                positive count;
+
+                text_count_last = letter;
+
+                // tail keeps a sign it was once given; head's belongs to the
+                // option that carried it, measured on both.
+                if (!text_count_tail)
+                        text_count_marked = false;
+
+                if (!text_count_parse(value, text_count_tail ? '+' : '-',
+                                      address_of text_count_marked, address_of count))
+                        return string_diagnostic(&text_diagnostic, 0, value,
+                                                 letter == 'c' ? "invalid number of bytes"
+                                                               : "invalid number of lines");
+        }
+        else if (letter == 'q' || letter == 'v')
+                text_banner_last = letter;
+
+        return true;
 }
 
 /*
@@ -4438,8 +4774,8 @@ static const file_long tail_longs[] = {
     {(string_address) "retry", 'R'},
     {(string_address) "pid", 'P'},
     {(string_address) "sleep-interval", 's'},
-    {(string_address) "max-unchanged-stats", 'P'},
-    {(string_address) "debug", 'R'},
+    {(string_address) "max-unchanged-stats", 'M'},
+    {(string_address) "debug", 'D'},
     {(string_address) "zero-terminated", 'z'},
     {null, 0},
 };
@@ -4454,14 +4790,19 @@ static inline INLINE b32 text_head_tail(bool tail)
             // do: the file is read to its end and that is where GNU would
             // still be sitting. -s is how long it would have waited.
             .allowed = tail ? (string_address)"cfnqsvz" : (string_address)"cnqvz",
-            .valued = tail ? (string_address)"Pcns" : (string_address)"cn",
+            .valued = tail ? (string_address)"PMcns" : (string_address)"cn",
             .optional = tail ? (string_address)"F" : null,
             .longs = tail ? tail_longs : head_longs,
             .operand = text_file_add,
+            .seen = head_tail_seen,
             .digits = 'n',
         };
 
         text_begin(taking.program);
+        text_count_last = 0;
+        text_banner_last = 0;
+        text_count_tail = tail;
+        text_count_marked = false;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -4469,13 +4810,42 @@ static inline INLINE b32 text_head_tail(bool tail)
         if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(1);
 
+        string_address misplaced = text_digits_misplaced(address_of taking);
+
+        // tail's obsolete -N is the whole of what it was given: another
+        // option beside it is the invalid context GNU names.
+        if (!misplaced && tail && (taking.flags & FILE_FLAG('n')) &&
+            file_option_value(address_of taking, 'n') &&
+            !text_count_last &&
+            (taking.flags & ~(positive)FILE_FLAG('n')))
+                misplaced = file_option_value(address_of taking, 'n') - 1;
+
+        if (misplaced)
+                return text_done(string_diagnostic(&text_diagnostic, 1, misplaced + 1,
+                                                  tail ? "option used in invalid context"
+                                                       : "invalid trailing option"));
+
+        if (tail && (taking.flags & FILE_FLAG('R')))
+                string_diagnostic(&text_diagnostic, 0, null, "warning: --retry ignored; --retry is useful only when following");
+
+        if (tail && (taking.flags & FILE_FLAG('P')))
+                string_diagnostic(&text_diagnostic, 0, null, "warning: PID ignored; --pid=PID is useful only when following");
+
         positive count = 10;
-        bool by_bytes = taking.last == 'c';
-        bool marked = false;
+        bool by_bytes = text_count_last ? text_count_last == 'c'
+                                        : (taking.flags & FILE_FLAG('c')) != 0 &&
+                                              !(taking.flags & FILE_FLAG('n'));
+        bool marked = text_count_marked;
         bool quiet = (taking.flags & FILE_FLAG('q')) != 0;
         bool loud = (taking.flags & FILE_FLAG('v')) != 0;
         string_address said = file_option_value(address_of taking,
                                                 by_bytes ? 'c' : 'n');
+
+        if (text_banner_last)
+        {
+                quiet = text_banner_last == 'q';
+                loud = !quiet;
+        }
 
         if (taking.flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
@@ -4605,6 +4975,54 @@ static const file_long tee_longs[] = {
     {null, 0},
 };
 
+// The four words --output-error takes, and the two that end tee where a
+// destination fails rather than carrying on past it.
+static const string_address tee_error_modes[4] = {
+    (string_address) "warn", (string_address) "warn-nopipe",
+    (string_address) "exit", (string_address) "exit-nopipe"};
+static bool tee_leave;
+
+static bool tee_error_of(string_address said, positive address_to chosen)
+{
+        positive length = said ? string_length(said) : 0;
+        positive matches = 0;
+
+        if (!length)
+                return false;
+
+        for (positive i = 0; i < 4; i++)
+        {
+                if (length > string_length(tee_error_modes[i]) ||
+                    string_compare_max(said, tee_error_modes[i], length))
+                        continue;
+
+                if (string_equals(said, tee_error_modes[i]))
+                {
+                        address_to chosen = i;
+                        return true;
+                }
+
+                matches++;
+                address_to chosen = i;
+        }
+
+        return matches == 1;
+}
+
+static bool tee_option_seen(p8 letter, string_address value)
+{
+        positive chosen;
+
+        if (letter != 'O' || !value)
+                return true;
+
+        if (!tee_error_of(value, address_of chosen))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid argument for --output-error");
+
+        tee_leave = chosen >= 2;
+        return true;
+}
+
 static b32 text_tee()
 {
         positive address_to handles = null;
@@ -4619,9 +5037,11 @@ static b32 text_tee()
             .optional = (string_address) "O",
             .longs = tee_longs,
             .operand = text_file_add,
+            .seen = tee_option_seen,
         };
 
         text_begin("tee");
+        tee_leave = false;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -4630,6 +5050,7 @@ static b32 text_tee()
                 return text_done(1);
 
         bool append = (taking.flags & FILE_FLAG('a')) != 0;
+        bool leave = tee_leave;
 
         if (text_files_count)
         {
@@ -4653,8 +5074,21 @@ static b32 text_tee()
 
                 if (target < 0)
                 {
-                        string_diagnostic(&text_diagnostic, 0, name, "Cannot open file");
+                        string_diagnostic(&text_diagnostic, 0, name, file_reason(target));
                         text_status = 1;
+
+                        // An exit mode ends tee where the open failed:
+                        // nothing is copied, to any destination.
+                        if (leave)
+                        {
+                                for (positive c = 0; c < handle_count; c++)
+                                        system_close(handles[c]);
+
+                                system_call_2(syscall(munmap), (positive)handles,
+                                              text_files_count * sizeof(positive));
+                                return text_done(1);
+                        }
+
                         continue;
                 }
 
@@ -4726,9 +5160,73 @@ static const file_long nl_longs[] = {
 
 static regex_program nl_patterns[3];
 
+#define NL_NUMBER_MAX ((bipolar)0x7fffffffffffffff)
+
+// A line number or an increment: an optional minus and digits, within what a
+// signed 64-bit count can hold. GNU refuses the rest as too large.
+static bool nl_signed(string_address said, bipolar address_to into)
+{
+        bool negative = said[0] == '-';
+        positive magnitude;
+
+        if (negative)
+                said++;
+
+        if (!byte_is_digit(said[0]) ||
+            !file_decimal_read(address_of said, true, address_of magnitude) || said[0])
+                return false;
+
+        if (magnitude > (positive)NL_NUMBER_MAX + negative)
+                return false;
+
+        address_to into = negative ? (bipolar)(0 - magnitude) : (bipolar)magnitude;
+        return true;
+}
+
+// The number in its field: right aligned, left aligned, or zero filled
+// behind its sign, none of which cut a number that is wider than the field.
+static fn nl_put_number(bipolar number, positive width, p8 justify, bool zeros)
+{
+        p8 digits[24];
+        positive magnitude = number < 0 ? 0 - (positive)number : (positive)number;
+        positive length = positive_into_string(digits, magnitude);
+        positive total = length + (number < 0);
+        positive pad = total < width ? width - total : 0;
+
+        if (justify == 'l')
+        {
+                if (number < 0)
+                        text_put_character('-');
+                text_put(digits, length);
+                writer_fill(text_put, pad, ' ');
+                return;
+        }
+
+        if (zeros)
+        {
+                if (number < 0)
+                        text_put_character('-');
+                writer_fill(text_put, pad, '0');
+                text_put(digits, length);
+                return;
+        }
+
+        writer_fill(text_put, pad, ' ');
+
+        if (number < 0)
+                text_put_character('-');
+
+        text_put(digits, length);
+}
+
 // How many times over the delimiter is written, and nothing else on the line.
+// An empty delimiter -- nl -d '' -- makes an empty line the header marker,
+// which is what GNU does with it whatever its manual says.
 static b32 nl_section_of(p8 address_to delimiter)
 {
+        if (!delimiter[0])
+                return text_line_length ? 0 : 3;
+
         if (text_line_length != 2 && text_line_length != 4 && text_line_length != 6)
                 return 0;
 
@@ -4739,6 +5237,55 @@ static b32 nl_section_of(p8 address_to delimiter)
         return (b32)(text_line_length / 2);
 }
 
+// GNU checks every occurrence of an option, not only the last: nl -hx with
+// a good --header-numbering after it is still refused for the -hx.
+static bool nl_style_valid(string_address said)
+{
+        return ((said[0] == 'a' || said[0] == 't' || said[0] == 'n') && !said[1]) ||
+               said[0] == 'p';
+}
+
+static bool nl_option_seen(p8 letter, string_address value)
+{
+        positive number;
+        bipolar signed_number;
+
+        if (letter == 'b' || letter == 'f' || letter == 'h')
+        {
+                if (!nl_style_valid(value))
+                        return string_diagnostic(&text_diagnostic, 0, value,
+                                                 letter == 'h' ? "invalid header numbering style"
+                                                 : letter == 'b' ? "invalid body numbering style"
+                                                                 : "invalid footer numbering style");
+        }
+        else if (letter == 'n')
+        {
+                if (!string_equals(value, "ln") && !string_equals(value, "rn") &&
+                    !string_equals(value, "rz"))
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid line numbering format");
+        }
+        else if (letter == 'w')
+        {
+                if (!text_unsigned_option(value, false, address_of number) ||
+                    !number || number > 0x7fffffff)
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid line number field width");
+        }
+        else if (letter == 'l')
+        {
+                if (!text_unsigned_option(value, false, address_of number))
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid line number of blank lines");
+        }
+        else if (letter == 'v' || letter == 'i')
+        {
+                if (!nl_signed(value, address_of signed_number))
+                        return string_diagnostic(&text_diagnostic, 0, value,
+                                                 letter == 'v' ? "invalid starting line number"
+                                                               : "invalid line number increment");
+        }
+
+        return true;
+}
+
 static b32 text_nl()
 {
         file_taking taking = {
@@ -4747,6 +5294,7 @@ static b32 text_nl()
             .valued = (string_address) "bdfhilnsvw",
             .longs = nl_longs,
             .operand = text_file_add,
+            .seen = nl_option_seen,
         };
 
         text_begin("nl");
@@ -4758,8 +5306,8 @@ static b32 text_nl()
                 return text_done(1);
 
         positive width = 6;
-        positive number = 1;
-        positive step = 1;
+        bipolar number = 1;
+        bipolar step = 1;
         positive join = 1;
         positive blanks = 0;
         p8 styles[3] = {'n', 't', 'n'};
@@ -4813,34 +5361,47 @@ static b32 text_nl()
 
         if (said)
         {
+                if (!string_equals(said, "ln") && !string_equals(said, "rn") &&
+                    !string_equals(said, "rz"))
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid line numbering format"));
+
                 justify = said[0];
-                zeros = said[0] == 'r' && said[1] == 'z';
+                zeros = said[1] == 'z';
         }
 
         if (taking.flags & FILE_FLAG('s'))
                 separator = file_option_value(address_of taking, 's');
 
-        if (taking.flags & FILE_FLAG('w'))
-                string_digits_exact(file_option_value(address_of taking, 'w'),
-                                    address_of width);
+        if ((taking.flags & FILE_FLAG('w')) &&
+            (!text_unsigned_option(file_option_value(address_of taking, 'w'),
+                                   false, address_of width) ||
+             !width || width > 0x7fffffff))
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'w'),
+                                                  "invalid line number field width"));
 
-        if (taking.flags & FILE_FLAG('v'))
-                string_digits_exact(file_option_value(address_of taking, 'v'),
-                                    address_of number);
+        if ((taking.flags & FILE_FLAG('v')) &&
+            !nl_signed(file_option_value(address_of taking, 'v'), address_of number))
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'v'),
+                                                  "invalid starting line number"));
 
-        if (taking.flags & FILE_FLAG('i'))
-                string_digits_exact(file_option_value(address_of taking, 'i'),
-                                    address_of step);
+        if ((taking.flags & FILE_FLAG('i')) &&
+            !nl_signed(file_option_value(address_of taking, 'i'), address_of step))
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'i'),
+                                                  "invalid line number increment"));
 
-        if (taking.flags & FILE_FLAG('l'))
-                string_digits_exact(file_option_value(address_of taking, 'l'),
-                                    address_of join);
+        if ((taking.flags & FILE_FLAG('l')) &&
+            !text_unsigned_option(file_option_value(address_of taking, 'l'),
+                                  false, address_of join))
+                return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'l'),
+                                                  "invalid line number of blank lines"));
 
         if (!join)
                 join = 1;
 
         b32 inputs = text_input_count();
         positive separator_length = string_length(separator);
+        bipolar start = number;
+        bool overflowed = false;
 
         for (b32 i = 0; i < inputs; i++)
         {
@@ -4859,7 +5420,10 @@ static b32 text_nl()
                                 blanks = 0;
 
                                 if (!keep_counting)
-                                        number = 1;
+                                {
+                                        number = start;
+                                        overflowed = false;
+                                }
 
                                 text_put_character('\n');
                                 continue;
@@ -4894,21 +5458,24 @@ static b32 text_nl()
 
                         if (numbered)
                         {
-                                if (justify == 'l')
-                                        positive_to_base_field(
-                                            text_put, number, 10, width, -1,
-                                            (positive)1 << 27);
-                                else if (zeros)
+                                // A number that cannot be counted past is
+                                // written, and the next line that would need
+                                // one stops the file -- a new section starts
+                                // the count again and is not the end.
+                                if (overflowed)
                                 {
-                                        positive_to_padded(text_put, number, width, '0', 0);
-                                }
-                                else
-                                {
-                                        positive_to_padded(text_put, number, width, ' ', 0);
+                                        text_close();
+                                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "line number overflow"));
                                 }
 
+                                nl_put_number(number, width, justify, zeros);
                                 text_put(separator, separator_length);
-                                number += step;
+
+                                if ((step > 0 && number > NL_NUMBER_MAX - step) ||
+                                    (step < 0 && number < -NL_NUMBER_MAX - 1 - step))
+                                        overflowed = true;
+                                else
+                                        number += step;
                         }
                         else
                         {
@@ -5001,16 +5568,34 @@ static bool text_tab_number(string_address at, positive address_to used,
         return true;
 }
 
-static bool text_tab_parse(string_address list)
+static bool text_tab_add(positive value)
 {
-        positive at = 0;
-        bool any = false;
+        if (!value)
+                return string_diagnostic(&text_diagnostic, 0, null, "tab size cannot be 0");
 
+        if (text_tab_stop_count &&
+            value <= text_tab_stops[text_tab_stop_count - 1])
+                return string_diagnostic(&text_diagnostic, 0, null, "tab sizes must be ascending");
+
+        if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
+                return string_diagnostic(&text_diagnostic, 0, null, "too many tab stops");
+
+        // A list with something in it replaces the eight-column default; a
+        // list with nothing in it -- expand -t , -- leaves it standing.
         if (!text_tab_custom)
         {
                 text_tab_custom = true;
                 text_tab_repeat = 0;
         }
+
+        text_tab_stops[text_tab_stop_count++] = value;
+        return true;
+}
+
+static bool text_tab_parse(string_address list)
+{
+        positive at = 0;
+        bool any = false;
 
         while (list[at])
         {
@@ -5056,32 +5641,125 @@ static bool text_tab_parse(string_address list)
                         continue;
                 }
 
-                if (!value)
-                        return string_diagnostic(&text_diagnostic, 0, list, "tab stop cannot be zero");
-
-                if (text_tab_stop_count &&
-                    value <= text_tab_stops[text_tab_stop_count - 1])
-                        return string_diagnostic(&text_diagnostic, 0, list, "tab stops must be ascending");
-
-                if (text_tab_stop_count == TEXT_TAB_STOP_MAX)
-                        return string_diagnostic(&text_diagnostic, 0, list, "too many tab stops");
-
-                text_tab_stops[text_tab_stop_count++] = value;
+                if (!text_tab_add(value))
+                        return false;
         }
 
-        if (!any)
-                return string_diagnostic(&text_diagnostic, 0, list, "empty tab list");
-
+        // An empty list, -t ',', asks for nothing and leaves the default.
+        (void)any;
         return true;
 }
 
-static bool text_tab_seen(p8 letter, string_address value)
+/*
+        The obsolete -N spellings, which the two tools read differently:
+        expand -3,5 -8 is the list 3,5,8, one stop per word, while unexpand
+        runs the digits of every such word together -- unexpand -8 -4 is the
+        single stop 84, measured -- and adds the number where a comma or the
+        end of the options falls. Both interleave with -t in the order
+        written, which is why the words are walked here rather than through
+        the one-value-per-letter option table.
+*/
+static bool text_tab_prescan(file_taking address_to taking, bool unexpand)
 {
-        if (letter != 't')
-                return true;
+        positive count = (positive)program_argument_count();
+        positive value = 0;
+        bool have_value = false;
 
-        text_tab_option_seen = true;
-        return text_tab_parse(value);
+        for (positive at = 1; at < count; at++)
+        {
+                string_address word = program_argument((b32)at);
+
+                if (string_equals(word, "--"))
+                        break;
+
+                if (word[0] != '-' || !word[1])
+                        continue;
+
+                if (word[1] == '-')
+                {
+                        positive name = 2;
+
+                        while (word[name] && word[name] != '=')
+                                name++;
+
+                        if (file_long_letter(taking, word + 2, name - 2) != 't')
+                                continue;
+
+                        text_tab_option_seen = true;
+
+                        if (word[name])
+                        {
+                                if (!text_tab_parse(word + name + 1))
+                                        return false;
+                        }
+                        else if (at + 1 < count &&
+                                 !text_tab_parse(program_argument((b32)++at)))
+                                return false;
+
+                        continue;
+                }
+
+                if (byte_is_digit(word[1]))
+                {
+                        text_tab_option_seen = true;
+
+                        if (!unexpand)
+                        {
+                                if (!text_tab_parse(word + 1))
+                                        return false;
+
+                                continue;
+                        }
+
+                        for (positive c = 1; word[c]; c++)
+                        {
+                                if (word[c] == ',')
+                                {
+                                        if (have_value && !text_tab_add(value))
+                                                return false;
+
+                                        have_value = false;
+                                        value = 0;
+                                        continue;
+                                }
+
+                                if (!byte_is_digit(word[c]))
+                                        return string_diagnostic(&text_diagnostic, 0, word, "invalid tab stops");
+
+                                positive digit = word[c] - '0';
+
+                                if (value > (positive_max - digit) / 10)
+                                        return string_diagnostic(&text_diagnostic, 0, word, "tab stop value is too large");
+
+                                value = value * 10 + digit;
+                                have_value = true;
+                        }
+
+                        continue;
+                }
+
+                for (positive c = 1; word[c]; c++)
+                        if (word[c] == 't')
+                        {
+                                text_tab_option_seen = true;
+
+                                if (word[c + 1])
+                                {
+                                        if (!text_tab_parse(word + c + 1))
+                                                return false;
+                                }
+                                else if (at + 1 < count &&
+                                         !text_tab_parse(program_argument((b32)++at)))
+                                        return false;
+
+                                break;
+                        }
+        }
+
+        if (have_value && !text_tab_add(value))
+                return false;
+
+        return true;
 }
 
 static fn text_tab_finish_options()
@@ -5432,7 +6110,6 @@ static inline INLINE b32 text_tabs(bool unexpand)
             .valued = (string_address) "t",
             .longs = unexpand ? unexpand_longs : expand_longs,
             .operand = text_file_add,
-            .seen = text_tab_seen,
             .digits = 'T',
         };
 
@@ -5442,14 +6119,8 @@ static inline INLINE b32 text_tabs(bool unexpand)
         if (!file_take(address_of taking) || (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands")))
                 return text_done(1);
 
-        if (taking.flags & FILE_FLAG('T'))
-        {
-                if (text_tab_option_seen)
-                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot mix -N and --tabs syntax"));
-
-                if (!text_tab_parse(file_option_value(address_of taking, 'T')))
-                        return text_done(1);
-        }
+        if (!text_tab_prescan(address_of taking, unexpand))
+                return text_done(1);
 
         text_tab_finish_options();
         bool initial_only = (taking.flags & FILE_FLAG('i')) != 0;
@@ -6036,12 +6707,11 @@ static b32 text_fmt()
 
         if (taking.flags & FILE_FLAG('W'))
         {
-                string_address first = program_argument_count() > 1
-                                           ? program_argument(1)
-                                           : null;
+                string_address misplaced = text_digits_misplaced(address_of taking);
 
-                if (!first || first[0] != '-' || !byte_is_digit(first[1]))
-                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "-WIDTH is only accepted first"));
+                if (misplaced)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, misplaced + 1,
+                                                          "invalid option; -WIDTH is recognized only when it is the first option"));
         }
 
         positive width = FMT_WIDTH_DEFAULT;
@@ -6195,11 +6865,20 @@ static bool pr_parse_positive(string_address value, positive address_to into)
         return text_unsigned_option(value, false, into) && address_to into;
 }
 
+/*
+        +FIRST[:LAST]. A page number of zero is no page at all, and pr reads
+        the whole word as a file name instead -- measured; a word with no
+        digits in it is the invalid argument pr complains about.
+*/
+static bool pr_pages_operand;
+
 static bool pr_pages(string_address value)
 {
         positive first = 0;
         positive last = positive_max;
         positive used = 0;
+
+        pr_pages_operand = false;
 
         if (!value)
                 return false;
@@ -6215,7 +6894,10 @@ static bool pr_pages(string_address value)
         ((p8 address_to)value)[used] = saved;
 
         if (!okay || !first)
+        {
+                pr_pages_operand = okay || !first;
                 return false;
+        }
 
         if (saved)
         {
@@ -6247,15 +6929,20 @@ static fn pr_operand_add(b32 which)
 {
         string_address value = program_argument(which);
 
-        if (value[0] == '+' && byte_is_digit(value[1]))
+        if (value[0] == '+')
         {
-                if (!pr_pages(value + 1))
-                {
-                        string_diagnostic(&text_diagnostic, 0, value, "invalid page range");
-                        pr_page_option_failed = true;
-                }
+                if (pr_pages(value + 1))
+                        return;
 
-                return;
+                // A page number of nought is no page: pr reads the word as
+                // a file name instead. A word with no digits is the invalid
+                // argument pr complains about.
+                if (!pr_pages_operand)
+                {
+                        string_diagnostic(&text_diagnostic, 0, value + 1, "invalid + argument");
+                        pr_page_option_failed = true;
+                        return;
+                }
         }
 
         text_file_add(which);
@@ -6410,6 +7097,11 @@ static fn pr_put_record(pr_record address_to record, positive width)
 
                 if (character == '\b')
                 {
+                        // A backspace with nothing behind it moves nowhere
+                        // and is not written, as GNU's pr leaves it out.
+                        if (!record_column && !pr_output_column)
+                                continue;
+
                         if (!pr_truncate || record_column)
                         {
                                 text_put_character(character);
@@ -6425,8 +7117,11 @@ static fn pr_put_record(pr_record address_to record, positive width)
 
                 if (character == '\r')
                 {
+                        // Measured: a return starts the line again and
+                        // then stands in its first column, so the next tab
+                        // reaches the stop after one rather than after none.
                         text_put_character(character);
-                        record_column = 0;
+                        record_column = 1;
                         pr_output_column = 0;
                         continue;
                 }
@@ -6643,9 +7338,10 @@ static fn pr_put_header(string_address name, b64 stamp, positive page)
         positive name_length = string_length(name);
         positive page_length = page_digits + 5;
         positive occupied = date_length + name_length + page_length;
-        positive available = occupied < pr_page_width
-                                 ? pr_page_width - occupied
-                                 : 0;
+        // The margin sits in front of the header rather than inside it.
+        positive room = pr_page_width > pr_margin ? pr_page_width - pr_margin
+                                                  : 0;
+        positive available = occupied < room ? room - occupied : 0;
         positive left = available / 2;
         positive right = available - left;
 
@@ -6714,8 +7410,12 @@ static fn pr_put_page(positive count, positive rows, positive page,
                               ? pr_page_width - fixed
                               : 0;
         positive column_width = useful / pr_columns;
+        // A column narrower than the number beside it leaves nothing for
+        // the record, which is a truncation and not a width that wrapped.
         positive record_width = pr_number && !pr_merge
-                                    ? column_width - pr_number_width
+                                    ? (column_width > pr_number_width
+                                           ? column_width - pr_number_width
+                                           : 0)
                                     : column_width;
 
         for (positive row = 0; row < rows; row++)
@@ -6803,10 +7503,14 @@ static fn pr_single_file(string_address path)
                 return;
 
         b64 stamp = pr_stamp(text_input.handle);
-        string_address heading = pr_header ? pr_header
-                                           : (path ? path
-                                                   : (string_address)"");
+        // Standard input has no name in the header, however it was asked
+        // for: a bare - is the same input as no operand at all.
+        string_address heading =
+            pr_header ? pr_header
+                      : (path && !string_equals(path, "-") ? path
+                                                           : (string_address)"");
         positive page = 1;
+        positive filled = 0;
 
         pr_pending = false;
         pr_pending_length = 0;
@@ -6827,6 +7531,8 @@ static fn pr_single_file(string_address path)
                                     ? count
                                     : (count + pr_columns - 1) / pr_columns;
 
+                filled = page;
+
                 if (page >= pr_first_page && page <= pr_last_page)
                         pr_put_page(count, rows, page, heading, stamp, forced);
 
@@ -6835,6 +7541,14 @@ static fn pr_single_file(string_address path)
 
                 page++;
         }
+
+        // A first page beyond the last one that had anything on it is a
+        // complaint on the error stream and nothing else: the status stays.
+        // Nobody asked for a first page when nobody wrote a +.
+        if (pr_first_page > 1 && pr_first_page > filled)
+                string_report(writer_stderr, 0,
+                              "%s: starting page number %p exceeds page count %p\n",
+                              text_name, pr_first_page, filled);
 
         text_close();
 }
@@ -7002,9 +7716,6 @@ static b32 text_pr()
                              ? file_option_value(address_of taking, 'D')
                              : (string_address)"%Y-%m-%d %H:%M";
 
-        if (pr_header && pr_omit_header)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "header conflicts with omitted pagination"));
-
         positive printable = pr_omit_header
                                  ? pr_page_length
                                  : pr_page_length - PR_HEADER_LINES -
@@ -7082,14 +7793,19 @@ static b32 text_pr()
                         !(taking.flags & FILE_FLAG('s'))));
         text_quiet_open = (taking.flags & FILE_FLAG('r')) != 0;
 
+        // The margin is added to the page width rather than taken out of
+        // it, which is what pr's own help says of -o.
+        pr_page_width += pr_margin;
+
+        // pr complains only where the columns have no room at all; a page
+        // too narrow for the numbers beside them is one it truncates.
         positive number_fields = pr_number && pr_merge ? 1 : 0;
         positive fixed = pr_margin +
                          (pr_columns - 1) * pr_separator_length +
                          number_fields * pr_number_width;
 
         if (fixed >= pr_page_width ||
-            (pr_page_width - fixed) / pr_columns <=
-                (pr_number && !pr_merge ? pr_number_width : 0))
+            !((pr_page_width - fixed) / pr_columns))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "page width is too narrow"));
 
         if (pr_body_lines > positive_max / pr_columns ||
@@ -7979,6 +8695,17 @@ static positive ptx_unescape(p8 address_to text)
         return into;
 }
 
+// Every -g and -w is checked where it is written, not only the last.
+static bool ptx_option_seen(p8 letter, string_address value)
+{
+        positive number;
+
+        if ((letter == 'g' || letter == 'w') && !pr_parse_positive(value, address_of number))
+                return string_diagnostic(&text_diagnostic, 0, value, letter == 'g' ? "invalid gap width" : "invalid line width");
+
+        return true;
+}
+
 static b32 text_ptx()
 {
         file_taking taking = {
@@ -7987,6 +8714,7 @@ static b32 text_ptx()
             .valued = (string_address)"FMSWbgiowQ",
             .longs = ptx_longs,
             .operand = text_file_add,
+            .seen = ptx_option_seen,
         };
 
         text_begin("ptx");
@@ -8078,7 +8806,7 @@ static b32 text_ptx()
 
         if (ptx_custom_word)
         {
-                if (!regex_compile(ptx_word_pattern, false, ptx_fold, false,
+                if (!regex_compile(ptx_word_pattern, true, ptx_fold, false,
                                    REGEX_POLICY_DEFAULT))
                         return text_done(string_diagnostic(&text_diagnostic, 1, ptx_word_pattern, "unsupported word expression"));
         }
@@ -8133,7 +8861,7 @@ static b32 text_ptx()
         }
 
         if (ptx_custom_sentence && ptx_sentence_pattern[0] &&
-            !regex_compile(ptx_sentence_pattern, false, ptx_fold, false,
+            !regex_compile(ptx_sentence_pattern, true, ptx_fold, false,
                            REGEX_POLICY_DEFAULT))
                 return text_done(string_diagnostic(&text_diagnostic, 1, ptx_sentence_pattern, "unsupported sentence expression"));
 
@@ -8151,7 +8879,7 @@ static b32 text_ptx()
         ptx_plan_contexts(true);
 
         if (ptx_custom_word &&
-            !regex_compile(ptx_word_pattern, false, ptx_fold, false,
+            !regex_compile(ptx_word_pattern, true, ptx_fold, false,
                            REGEX_POLICY_DEFAULT))
                 return text_done(string_diagnostic(&text_diagnostic, 1, ptx_word_pattern, "unsupported word expression"));
 
@@ -8293,6 +9021,9 @@ static bool column_is_separator(p8 character)
 /* Split one table record exactly where util-linux's non-greedy -s tokenizer
    does.  The default blank tokenizer is greedy; an explicit separator keeps
    leading, adjacent and trailing empty fields. */
+// --table-columns-limit: the last column allowed takes the rest of the line.
+static positive column_limit;
+
 static positive column_fields(p8 address_to bytes, positive length,
                               column_cell address_to into, positive room)
 {
@@ -8313,6 +9044,9 @@ static positive column_fields(p8 address_to bytes, positive length,
                 }
 
                 positive start = at;
+
+                if (column_limit && made + 1 == column_limit)
+                        at = length;
 
                 while (at < length && !column_is_separator(bytes[at]))
                         at++;
@@ -8640,6 +9374,44 @@ static column_cell column_row_cell(column_row address_to row, positive col)
         return column_cells[row->first + col];
 }
 
+/*
+        util-linux writes a byte that is not a character of the C locale as
+        \xHH, and lays the table out by those four columns rather than the
+        one byte, so a cell is measured and written through the same two
+        routines everywhere below.
+*/
+static positive column_cell_width(column_cell cell)
+{
+        positive width = cell.length;
+
+        // A byte past ASCII is written as four characters; every other byte,
+        // a tab included, takes the one column util-linux gives it.
+        for (positive at = 0; at < cell.length; at++)
+                if (cell.bytes[at] >= 0x80)
+                        width += 3;
+
+        return width;
+}
+
+static fn column_put_cell(column_cell cell)
+{
+        positive from = 0;
+
+        for (positive at = 0; at < cell.length; at++)
+        {
+                if (cell.bytes[at] < 0x80)
+                        continue;
+
+                text_put(cell.bytes + from, at - from);
+                text_put_string("\\x");
+                text_put_character("0123456789abcdef"[cell.bytes[at] >> 4]);
+                text_put_character("0123456789abcdef"[cell.bytes[at] & 15]);
+                from = at + 1;
+        }
+
+        text_put(cell.bytes + from, cell.length - from);
+}
+
 static fn column_plain(bool fill_rows, bool spaces, positive spacing,
                        positive width)
 {
@@ -8649,15 +9421,14 @@ static fn column_plain(bool fill_rows, bool spaces, positive spacing,
         positive longest = 0;
 
         for (positive at = 0; at < column_row_count; at++)
-                if (column_cells[column_rows[at].first].length > longest)
-                        longest = column_cells[column_rows[at].first].length;
+                if (column_cell_width(column_cells[column_rows[at].first]) > longest)
+                        longest = column_cell_width(column_cells[column_rows[at].first]);
 
         if (!width || longest >= width)
         {
                 for (positive at = 0; at < column_row_count; at++)
                 {
-                        column_cell cell = column_cells[column_rows[at].first];
-                        text_put(cell.bytes, cell.length);
+                        column_put_cell(column_cells[column_rows[at].first]);
                         text_put_character('\n');
                 }
 
@@ -8696,8 +9467,8 @@ static fn column_plain(bool fill_rows, bool spaces, positive spacing,
 
                         column_cell cell =
                             column_cells[column_rows[entry].first];
-                        text_put(cell.bytes, cell.length);
-                        output_column += cell.length;
+                        column_put_cell(cell);
+                        output_column += column_cell_width(cell);
 
                         positive next = fill_rows ? entry + 1
                                                   : entry + rows;
@@ -8893,6 +9664,10 @@ static fn column_table_line(column_row address_to row, bool header,
                         positive length = column_cell_part(
                             whole, properties[col], widths[col], part,
                             address_of cell);
+
+                        if (length)
+                                length = column_cell_width(cell);
+
                         positive pad = length < widths[col]
                                            ? widths[col] - length
                                            : 0;
@@ -8901,7 +9676,7 @@ static fn column_table_line(column_row address_to row, bool header,
                             (length || shown + 1 < visible))
                                 text_tab_repeat_character(' ', pad);
 
-                        text_put(cell.bytes, cell.length);
+                        column_put_cell(cell);
 
                         if (!(properties[col] & COLUMN_RIGHT) &&
                             shown + 1 < visible)
@@ -8954,15 +9729,15 @@ static fn column_table_output(bool noheadings, positive width,
 
         if (!noheadings)
                 for (positive col = 0; col < column_name_count; col++)
-                        widths[col] = column_names[col].length;
+                        widths[col] = column_cell_width(column_names[col]);
 
         for (positive row_at = 0; row_at < column_row_count; row_at++)
                 for (positive col = 0;
                      col < column_rows[row_at].count && col < column_count;
                      col++)
                 {
-                        positive length =
-                            column_cells[column_rows[row_at].first + col].length;
+                        positive length = column_cell_width(
+                            column_cells[column_rows[row_at].first + col]);
 
                         if (length > widths[col])
                         {
@@ -9085,8 +9860,9 @@ static b32 text_column()
 
         positive flags = taking.flags;
 
-        if (flags & (FILE_FLAG('C') | FILE_FLAG('e') | FILE_FLAG('l') |
-                     FILE_FLAG('m') |
+        // --table-maxout fills the width a table already has, which is
+        // what a table without it does when nothing is truncated.
+        if (flags & (FILE_FLAG('C') | FILE_FLAG('e') |
                      FILE_FLAG('r') | FILE_FLAG('i') | FILE_FLAG('p') |
                      FILE_FLAG('q') | FILE_FLAG('Q') | FILE_FLAG('G')))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "column properties, tree, color, header-repeat and custom wrap parsing are unsupported"));
@@ -9098,11 +9874,28 @@ static b32 text_column()
         if (fill_rows && column_table)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--fillrows and --table are mutually exclusive"));
 
+        // --table-noheadings and --table-columns-limit are accepted without a
+        // table, and say nothing there, as util-linux takes them.
         positive table_options = FILE_FLAG('N') | FILE_FLAG('n') |
                                  FILE_FLAG('O') | FILE_FLAG('H') |
                                  FILE_FLAG('E') | FILE_FLAG('R') |
-                                 FILE_FLAG('T') | FILE_FLAG('W') |
-                                 FILE_FLAG('d') | FILE_FLAG('l');
+                                 FILE_FLAG('T') | FILE_FLAG('W');
+
+        column_limit = 0;
+
+        if (flags & FILE_FLAG('l'))
+        {
+                string_address said = file_option_value(address_of taking, 'l');
+
+                if (!text_unsigned_option(said, false, address_of column_limit))
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid columns limit argument"));
+
+                if (!column_limit)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "columns limit must be greater than zero"));
+
+                if (!column_table)
+                        column_limit = 0;
+        }
 
         if (!column_table && (flags & table_options))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "option --table required for all --table-*"));
@@ -9150,9 +9943,15 @@ static b32 text_column()
 
         for (positive file = 0; file < column_file_count; file++)
         {
+                string_address name = text_file_name((b32)file);
+
+                // util-linux reads no standard input by that name: - is a
+                // file, and there is none.
+                if (name && string_equals(name, "-"))
+                        return text_done(string_diagnostic(&text_diagnostic, 1, name, "No such file or directory"));
+
                 column_files[file] = (text_blob){null, 0};
-                text_blob_read(text_file_name((b32)file),
-                               column_files + file);
+                text_blob_read(name, column_files + file);
         }
 
         column_row_count = 0;
@@ -9200,6 +9999,11 @@ static b32 text_column()
                 column_plain(fill_rows, spaces, spacing, width);
                 return text_done(text_status);
         }
+
+        // Nothing read is nothing written, before any column named in an
+        // option is looked for among columns that do not exist.
+        if (!column_row_count)
+                return text_done(text_status);
 
         p8 address_to properties = (p8 address_to)text_arena_take(column_count);
         positive address_to order = (positive address_to)text_arena_take(
@@ -10073,7 +10877,9 @@ static fn terminal_scan(text_blob address_to blob,
                         continue;
                 }
 
-                if (byte_is_graphic(character))
+                // A byte past ASCII is a character one column wide to
+                // util-linux's col in the C locale, not a control to drop.
+                if (byte_is_graphic(character) || character >= 0x80)
                         terminal_col_event(state, character, 1, fill);
                 else if (state->pass)
                         terminal_col_event(state, character, 255, fill);
@@ -10328,6 +11134,19 @@ static const file_long col_longs[] = {
     {null, 0},
 };
 
+// Every -l is checked where it is written, not only the last.
+static bool col_option_seen(p8 letter, string_address value)
+{
+        positive lines;
+
+        if (letter == 'l' &&
+            (!text_unsigned_option(value, false, address_of lines) ||
+             lines > 0xffffffffU))
+                return string_diagnostic(&text_diagnostic, 0, value, "bad -l argument");
+
+        return true;
+}
+
 static b32 text_col()
 {
         file_taking taking = {
@@ -10335,6 +11154,7 @@ static b32 text_col()
             .allowed = (string_address)"bfhlpx",
             .valued = (string_address)"l",
             .longs = col_longs,
+            .seen = col_option_seen,
         };
 
         text_begin("col");
@@ -10573,6 +11393,9 @@ static b32 text_ul()
         {
                 text_arena_used = 0;
                 text_blob input = {null, 0};
+
+                if (text_file_name(file) && string_equals(text_file_name(file), "-"))
+                        return text_done(string_diagnostic(&text_diagnostic, 1, "-", "cannot open: No such file or directory"));
 
                 if (!text_blob_read(text_file_name(file), address_of input))
                         return text_done(1);
@@ -10944,6 +11767,23 @@ static b32 text_line_command()
         return text_done(1);
 }
 
+// Every -w is checked as it arrives, and the last of -b and -c wins.
+static p8 fold_counting;
+
+static bool fold_option_seen(p8 letter, string_address value)
+{
+        positive width;
+
+        if (letter == 'b' || letter == 'c')
+                fold_counting = letter;
+        else if (letter == 'w' &&
+                 (!text_unsigned_option(value, false, address_of width) ||
+                  !width || width == (positive)-1))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid number of columns");
+
+        return true;
+}
+
 static b32 text_fold()
 {
         file_taking taking = {
@@ -10952,11 +11792,13 @@ static b32 text_fold()
             .valued = (string_address) "w",
             .longs = fold_longs,
             .operand = text_file_add,
+            .seen = fold_option_seen,
             // fold -5 is fold -w 5, and the digits are the width.
             .digits = 'w',
         };
 
         text_begin("fold");
+        fold_counting = 0;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -10969,7 +11811,7 @@ static b32 text_fold()
         // -c counts characters but retains the terminal-column rules for
         // tabs, backspaces and carriage returns. Only -b makes each byte a
         // column; treating -c as its alias was observably wrong for controls.
-        bool bytes = (taking.flags & FILE_FLAG('b')) != 0;
+        bool bytes = fold_counting == 'b';
 
         if ((taking.flags & FILE_FLAG('w')) &&
             (!text_unsigned_option(file_option_value(address_of taking, 'w'), false,
@@ -11083,6 +11925,9 @@ static positive text_list_open;
 static bool text_list_single;
 static positive text_list_single_first;
 static positive text_list_single_last;
+// A position at or past the largest count is one no line can reach, and GNU
+// says so rather than treating the whole list as malformed.
+static bool text_list_too_large;
 
 static bool text_list_parse(string_address spec)
 {
@@ -11100,7 +11945,16 @@ static bool text_list_parse(string_address spec)
 
                 if (have_first && !string_digits_checked(
                         address_of cursor, 10, address_of first))
+                {
+                        text_list_too_large = true;
                         return false;
+                }
+
+                if (have_first && first == positive_max)
+                {
+                        text_list_too_large = true;
+                        return false;
+                }
 
                 at = (positive)(cursor - spec);
 
@@ -11116,7 +11970,16 @@ static bool text_list_parse(string_address spec)
 
                         if (have_last && !string_digits_checked(
                                 address_of cursor, 10, address_of last))
+                        {
+                                text_list_too_large = true;
                                 return false;
+                        }
+
+                        if (have_last && last == positive_max)
+                        {
+                                text_list_too_large = true;
+                                return false;
+                        }
 
                         at = (positive)(cursor - spec);
 
@@ -11214,6 +12077,7 @@ static const file_long cut_longs[] = {
     // -O is not in cut's own help and cut takes it anyway, which is where
     // this one comes from.
     {(string_address) "output-delimiter", 'O'},
+    {(string_address) "whitespace-delimited", 'w'},
     {(string_address) "zero-terminated", 'z'},
     {null, 0},
 };
@@ -11226,7 +12090,7 @@ static bool cut_list_seen(p8 letter, string_address value)
 {
         (void)value;
 
-        if (letter == 'b' || letter == 'c' || letter == 'f')
+        if (letter == 'b' || letter == 'c' || letter == 'f' || letter == 'F')
                 cut_lists++;
 
         return true;
@@ -11238,8 +12102,9 @@ static b32 text_cut()
             .program = (string_address) "cut",
             // -n says a multibyte character is not to be split by -b, and
             // every character here is one byte.
-            .allowed = (string_address) "Obcdfnswz",
-            .valued = (string_address) "Obcdf",
+            .allowed = (string_address) "FObcdfnswz",
+            .valued = (string_address) "FObcdf",
+            .long_optional = (string_address) "w",
             .longs = cut_longs,
             .operand = text_file_add,
             .seen = cut_list_seen,
@@ -11248,6 +12113,7 @@ static b32 text_cut()
         text_begin("cut");
 
         cut_lists = 0;
+        text_list_too_large = false;
 
         if (!file_take(address_of taking))
                 return text_done(1);
@@ -11257,29 +12123,55 @@ static b32 text_cut()
 
         positive flags = taking.flags;
         p8 delimiter = '\t';
-        bool by_field = (flags & FILE_FLAG('f')) != 0;
+        // -F is -f with blanks for delimiters and a space between the fields
+        // written, unless -d or -O say otherwise.
+        bool by_blanks = (flags & FILE_FLAG('F')) != 0;
+        bool by_field = (flags & (FILE_FLAG('f') | FILE_FLAG('F'))) != 0;
         bool by_character = (flags & (FILE_FLAG('b') | FILE_FLAG('c'))) != 0;
         bool only_delimited = (flags & FILE_FLAG('s')) != 0;
         bool have_list = by_field || by_character;
         bool complement = (flags & FILE_FLAG('C')) != 0;
-        bool whitespace = (flags & FILE_FLAG('w')) != 0;
         bool have_delimiter = (flags & FILE_FLAG('d')) != 0;
+        bool whitespace = (flags & FILE_FLAG('w')) != 0 || (by_blanks && !have_delimiter);
+        bool trimmed = false;
         b32 kinds = cut_lists;
         string_address separator = file_option_value(address_of taking, 'O');
         positive separator_length = separator ? string_length(separator) : 0;
         string_address said = file_option_value(address_of taking,
-                                                by_field ? 'f'
+                                                by_blanks ? 'F'
+                                                : by_field ? 'f'
                                                 : (flags & FILE_FLAG('b')) ? 'b'
                                                                            : 'c');
 
+        if (flags & FILE_FLAG('w'))
+        {
+                string_address word = file_option_value(address_of taking, 'w');
+
+                if (word && !string_equals(word, "trimmed"))
+                        return text_done(string_diagnostic(&text_diagnostic, 1, word, "invalid argument for --whitespace-delimited"));
+
+                trimmed = word != null;
+        }
+
         if (have_delimiter)
-                delimiter = file_option_value(address_of taking, 'd')[0];
+        {
+                string_address said = file_option_value(address_of taking, 'd');
+
+                if (said[0] && said[1])
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "the delimiter must be a single character"));
+
+                delimiter = said[0];
+        }
 
         if (flags & FILE_FLAG('z'))
                 text_delimiter = '\0';
 
         if (have_list && kinds == 1 && !text_list_parse(said))
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "invalid list"));
+                return text_done(string_diagnostic(&text_diagnostic, 1, text_list_too_large ? said : null,
+                                                  text_list_too_large
+                                                      ? (by_field ? "field number is too large"
+                                                                  : "byte/character offset is too large")
+                                                      : "invalid list"));
 
         if (!have_list)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "you must specify a list of bytes, characters, or fields"));
@@ -11293,17 +12185,18 @@ static b32 text_cut()
         if (kinds > 1)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "only one type of list may be specified"));
 
-        if (whitespace && have_delimiter)
+        if ((flags & FILE_FLAG('w')) && have_delimiter)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "-d and -w are mutually exclusive"));
 
         if (!by_field && (have_delimiter || only_delimited || whitespace))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "an input delimiter makes sense only when operating on fields"));
 
         // -w splits on runs of blanks and joins with a tab, which is the one
-        // place cut's two delimiters are not the same character.
+        // place cut's two delimiters are not the same character; -F joins
+        // with a space.
         if (whitespace && !separator)
         {
-                separator = "\t";
+                separator = by_blanks && !(flags & FILE_FLAG('w')) ? " " : "\t";
                 separator_length = 1;
         }
 
@@ -11468,6 +12361,20 @@ static b32 text_cut()
                                         continue;
                                 }
 
+                                // --whitespace-delimited=trimmed: the blanks at
+                                // either end are not delimiters of empty fields.
+                                if (trimmed)
+                                {
+                                        positive lead = string_span_max(line, line_length,
+                                                                        string_set_blanks);
+
+                                        line += lead;
+                                        line_length -= lead;
+
+                                        while (line_length && byte_is_blank(line[line_length - 1]))
+                                                line_length--;
+                                }
+
                                 bool split = whitespace
                                     ? string_span_max(line, line_length,
                                                       text_inside()) < line_length
@@ -11576,14 +12483,64 @@ static fn text_set_put(p8 address_to into, positive address_to have, p8 characte
                 text_set_broken = true;
 }
 
-static p8 text_escape(string_address spec, positive address_to at)
+/*
+        What a set says about itself, beyond its bytes: the facts GNU checks
+        before it translates anything. The class flag beside each expanded
+        byte is what lets [:lower:] and [:upper:] be checked for alignment.
+*/
+typedef struct
+{
+        bool has_class;
+        bool has_other_class;
+        bool has_upper_lower;
+        bool has_equiv;
+        bool ends_with_class;
+        positive repeats;
+        positive repeat_at;
+        p8 repeat_char;
+        string_address complaint;
+        string_address about;
+} text_set_facts;
+
+static p8 text_set_one_class[TEXT_SET_MAX];
+static p8 text_set_two_class[TEXT_SET_MAX];
+static p8 text_set_about[64];
+static bool text_set_warned_backslash;
+static bool text_set_warned_octal;
+
+static fn text_set_note(text_set_facts address_to facts, string_address complaint,
+                        string_address from, positive length)
+{
+        if (facts->complaint)
+                return;
+
+        if (length >= sizeof(text_set_about))
+                length = sizeof(text_set_about) - 1;
+
+        memory_copy(text_set_about, from, length);
+        text_set_about[length] = '\0';
+        facts->complaint = complaint;
+        facts->about = length ? (string_address)text_set_about : null;
+}
+
+// One character of a set, escapes included. An octal escape stops before it
+// passes 255 -- \400 is \040 and then a 0, as GNU reads it, with a warning
+// -- and a backslash with nothing after it is itself, also with a warning.
+static p8 text_escape(string_address spec, positive address_to at, positive length)
 {
         p8 character = spec[address_to at];
 
-        if (character != '\\' || !spec[address_to at + 1])
+        if (character != '\\')
         {
                 address_to at += 1;
                 return character;
+        }
+
+        if (address_to at + 1 >= length)
+        {
+                text_set_warned_backslash = true;
+                address_to at += 1;
+                return '\\';
         }
 
         p8 next = spec[address_to at + 1];
@@ -11597,11 +12554,24 @@ static p8 text_escape(string_address spec, positive address_to at)
 
         if (next >= '0' && next <= '7')
         {
-                positive used;
-                positive value = string_digits_octal_escape_max(
-                    spec + address_to at - 1, 3, address_of used);
+                positive value = (positive)(next - '0');
+                positive digits = 1;
 
-                address_to at += used - 1;
+                while (digits < 3 && address_to at < length &&
+                       spec[address_to at] >= '0' && spec[address_to at] <= '7')
+                {
+                        positive wider = value * 8 + (positive)(spec[address_to at] - '0');
+
+                        if (wider > 255)
+                        {
+                                text_set_warned_octal = true;
+                                break;
+                        }
+
+                        value = wider;
+                        address_to at += 1;
+                        digits++;
+                }
 
                 return (p8)value;
         }
@@ -11609,26 +12579,71 @@ static p8 text_escape(string_address spec, positive address_to at)
         return next;
 }
 
-static fn text_set_build(string_address spec, p8 address_to into, positive address_to have)
+/*
+        The expansion of one set, with its facts. other_length is the length
+        of the set this one is paired against, which is what an indefinite
+        repeat -- [x*] -- is padded up to; measured, tr ab '[x*]y' maps b to
+        y, so the repeat is as long as it must be and no longer.
+*/
+static fn text_set_build(string_address spec, p8 address_to into, p8 address_to classes,
+                         positive address_to have, text_set_facts address_to facts,
+                         positive other_length)
 {
         positive at = 0;
         positive length = string_length(spec);
 
         address_to have = 0;
+        address_to facts = (text_set_facts){0};
 
-        while (at < length)
+        while (at < length && !facts->complaint)
         {
                 if (spec[at] == '[' && spec[at + 1] == ':')
                 {
-                        positive used;
-                        b32 class = byte_class_parse(spec + at, length - at,
-                                                     address_of used);
+                        positive close = at + 2;
 
-                        if (class >= 0)
+                        while (close + 1 < length &&
+                               !(spec[close] == ':' && spec[close + 1] == ']'))
+                                close++;
+
+                        if (close + 1 < length)
                         {
+                                positive used;
+                                b32 class = byte_class_parse(spec + at, length - at,
+                                                             address_of used);
+
+                                if (close == at + 2)
+                                {
+                                        text_set_note(facts, "missing character class name",
+                                                      spec + at, close + 2 - at);
+                                        return;
+                                }
+
+                                if (class < 0)
+                                {
+                                        text_set_note(facts, "invalid character class",
+                                                      spec + at + 2, close - at - 2);
+                                        return;
+                                }
+
+                                bool upper = string_compare_max(spec + at + 2, "upper", 5) == 0;
+                                bool lower = string_compare_max(spec + at + 2, "lower", 5) == 0;
+                                p8 kind = upper ? 1 : lower ? 2 : 0;
+
+                                facts->has_class = true;
+                                if (kind)
+                                        facts->has_upper_lower = true;
+                                else
+                                        facts->has_other_class = true;
+
                                 for (b32 c = 0; c < 256; c++)
                                         if (byte_class_holds(class, (p8)c))
+                                        {
+                                                if (address_to have < TEXT_SET_MAX)
+                                                        classes[address_to have] = kind;
                                                 text_set_put(into, have, (p8)c);
+                                        }
+
+                                facts->ends_with_class = true;
                                 at += used;
                                 continue;
                         }
@@ -11637,82 +12652,141 @@ static fn text_set_build(string_address spec, p8 address_to into, positive addre
                 if (spec[at] == '[' && spec[at + 1] == '=' && at + 3 < length &&
                     spec[at + 3] == '=' && spec[at + 4] == ']')
                 {
+                        if (address_to have < TEXT_SET_MAX)
+                                classes[address_to have] = 0;
                         text_set_put(into, have, spec[at + 2]);
-                        at = at + 5;
+                        facts->has_equiv = true;
+                        facts->ends_with_class = false;
+                        at += 5;
                         continue;
                 }
 
-                positive was = at;
-                p8 first = text_escape(spec, address_of at);
-
-                // [x*n] repeats, and [x*] repeats until the other set runs out
-                // -- which here means until the array is full, since a set
-                // longer than the one it pads against is simply unused.
-                if (spec[was] == '[' && spec[was + 1] && spec[was + 2] == '*')
+                // [x*n] repeats: a count, or none at all for as many as the
+                // other set needs. The count is octal behind a leading 0, a
+                // 0 alone is the indefinite form, and anything that is not
+                // digits of the right base is refused with GNU's words.
+                if (spec[at] == '[' && at + 2 < length && spec[at + 2] == '*')
                 {
-                        p8 repeated = spec[was + 1];
-                        positive scan = was + 3;
+                        positive scan = at + 3;
                         positive count = 0;
                         bool digits = false;
-                        positive base = 10;
+                        bool bad = false;
+                        bool octal = spec[scan] == '0';
 
-                        if (spec[scan] == '0')
-                                base = 8;
-
-                        while (scan < length && byte_is_digit(spec[scan]))
+                        while (scan < length && spec[scan] != ']')
                         {
-                                positive digit = (positive)(spec[scan] - '0');
+                                p8 digit = spec[scan];
 
-                                if (count > (positive_max - digit) / base)
-                                        text_set_broken = true;
-                                else
-                                        count = count * base + digit;
+                                if (!byte_is_digit(digit) || (octal && digit > '7'))
+                                        bad = true;
+                                else if (!bad)
+                                {
+                                        positive base = octal ? 8 : 10;
+                                        positive value = (positive)(digit - '0');
+
+                                        if (count > (positive_max - value) / base)
+                                                bad = true;
+                                        else
+                                                count = count * base + value;
+                                }
 
                                 digits = true;
                                 scan++;
                         }
 
-                        if (scan < length && spec[scan] == ']')
+                        if (scan < length)
                         {
-                                if (!digits)
-                                        count = TEXT_SET_MAX - address_to have;
-
-                                positive room = TEXT_SET_MAX - address_to have;
-
-                                if (count > room)
+                                if (bad)
                                 {
-                                        if (digits)
-                                                text_set_broken = true;
-
-                                        count = room;
+                                        text_set_note(facts, "invalid repeat count in [c*n] construct",
+                                                      spec + at + 3, scan - at - 3);
+                                        return;
                                 }
 
-                                if (count)
-                                        memory_fill(into + address_to have,
-                                                    repeated, count);
+                                if (!digits || !count)
+                                {
+                                        facts->repeats++;
+                                        facts->repeat_at = address_to have;
+                                        facts->repeat_char = spec[at + 1];
+                                }
+                                else
+                                {
+                                        positive room = TEXT_SET_MAX - address_to have;
 
-                                address_to have += count;
+                                        if (count > room)
+                                        {
+                                                text_set_broken = true;
+                                                count = room;
+                                        }
 
+                                        memory_fill(into + address_to have, spec[at + 1], count);
+                                        memory_fill(classes + address_to have, 0, count);
+                                        address_to have += count;
+                                }
+
+                                facts->ends_with_class = false;
                                 at = scan + 1;
                                 continue;
                         }
                 }
 
-                if (at < length && spec[at] == '-' && at + 1 < length && spec[at + 1] != '\0')
+                positive was = at;
+                p8 first = text_escape(spec, address_of at, length);
+
+                if (at < length && spec[at] == '-' && at + 1 < length)
                 {
                         positive after = at + 1;
-                        p8 last = text_escape(spec, address_of after);
+                        p8 last = text_escape(spec, address_of after, length);
+
+                        if (first > last)
+                        {
+                                text_set_note(facts, "range-endpoints are in reverse collating sequence order",
+                                              spec + was, after - was);
+                                return;
+                        }
 
                         for (b32 c = first; c <= (b32)last; c++)
+                        {
+                                if (address_to have < TEXT_SET_MAX)
+                                        classes[address_to have] = 0;
                                 text_set_put(into, have, (p8)c);
+                        }
 
+                        facts->ends_with_class = false;
                         at = after;
                         continue;
                 }
 
+                if (address_to have < TEXT_SET_MAX)
+                        classes[address_to have] = 0;
                 text_set_put(into, have, first);
+                facts->ends_with_class = false;
         }
 
+        if (facts->repeats == 1 && other_length > address_to have)
+        {
+                positive need = other_length - address_to have;
+                positive tail = address_to have - facts->repeat_at;
+
+                if (need > TEXT_SET_MAX - address_to have)
+                {
+                        text_set_broken = true;
+                        need = TEXT_SET_MAX - address_to have;
+                }
+
+                // The tail moves up over itself, so it is copied from the
+                // back; the two arrays keep their bytes in step.
+                for (positive i = tail; i; i--)
+                {
+                        into[facts->repeat_at + need + i - 1] =
+                            into[facts->repeat_at + i - 1];
+                        classes[facts->repeat_at + need + i - 1] =
+                            classes[facts->repeat_at + i - 1];
+                }
+                memory_fill(into + facts->repeat_at, facts->repeat_char, need);
+                memory_fill(classes + facts->repeat_at, 0, need);
+                address_to have += need;
+        }
 }
 
 static const file_long tr_longs[] = {
@@ -11762,21 +12836,26 @@ static b32 text_tr()
         if (extra || (remove && !squeeze && second))
                 return text_done(string_diagnostic(&text_diagnostic, 1, extra ? extra : second, "extra operand"));
 
-        if (!second && !remove && !squeeze)
+        if ((!second && !remove && !squeeze) || (remove && squeeze && !second))
                 return text_done(string_diagnostic(&text_diagnostic, 1, first, "missing operand after"));
 
+        text_set_facts facts_one;
+        text_set_facts facts_two = {0};
+        bool translating = second && !remove;
+
         text_set_broken = false;
-        text_set_build(first, text_set_one, address_of text_set_one_length);
+        text_set_warned_backslash = false;
+        text_set_warned_octal = false;
+        text_set_build(first, text_set_one, text_set_one_class,
+                       address_of text_set_one_length, address_of facts_one, 0);
 
-        if (second)
-                text_set_build(second, text_set_two, address_of text_set_two_length);
-
-        if (text_set_broken)
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "set too large"));
+        if (facts_one.complaint)
+                return text_done(string_diagnostic(&text_diagnostic, 1, facts_one.about, facts_one.complaint));
 
         p8 in_first[256];
         p8 in_second[256];
         p8 mapped[256];
+        positive domain = 0;
 
         memory_fill(in_first, 0, sizeof(in_first));
         memory_fill(in_second, 0, sizeof(in_second));
@@ -11787,6 +12866,104 @@ static b32 text_tr()
         if (complement)
                 for (b32 c = 0; c < 256; c++)
                         in_first[c] = (p8)!in_first[c];
+
+        for (b32 c = 0; c < 256; c++)
+                domain += in_first[c];
+
+        // The length the second set is paired against: the first set as
+        // written, or the size of its complement.
+        positive length_one = complement ? domain : text_set_one_length;
+
+        if (second)
+        {
+                text_set_build(second, text_set_two, text_set_two_class,
+                               address_of text_set_two_length, address_of facts_two,
+                               length_one);
+
+                if (facts_two.complaint)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, facts_two.about, facts_two.complaint));
+        }
+
+        if (text_set_broken)
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "set too large"));
+
+        if (text_set_warned_backslash)
+                string_diagnostic(&text_diagnostic, 0, null, "warning: an unescaped backslash at end of string is not portable");
+
+        if (text_set_warned_octal)
+                string_diagnostic(&text_diagnostic, 0, null, "warning: an ambiguous octal escape is being interpreted as a 2-byte sequence");
+
+        /*
+                What GNU refuses before it reads a byte, in its words. A
+                repeat that fills to the other set has no other set to fill
+                to in string1; only one of them can be open-ended in string2,
+                and only while translating; equivalence classes and the
+                classes that are not upper and lower have no order to map by;
+                and a second set that is shorter has to end in something that
+                can be repeated to pad it.
+        */
+        if (facts_one.repeats)
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "the [c*] repeat construct may not appear in string1"));
+
+        if (facts_two.repeats > 1)
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "only one [c*] repeat construct may appear in string2"));
+
+        if (second && !translating && facts_two.repeats)
+                return text_done(string_diagnostic(&text_diagnostic, 1, null, "the [c*] construct may appear in string2 only when translating"));
+
+        if (translating)
+        {
+                if (facts_two.has_equiv)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "[=c=] expressions may not appear in string2 when translating"));
+
+                if (facts_two.has_other_class)
+                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "when translating, the only character classes that may appear in string2 are 'upper' and 'lower'"));
+
+                if (length_one > text_set_two_length && !truncate)
+                {
+                        if (!text_set_two_length)
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "when not truncating set1, string2 must be non-empty"));
+
+                        if (facts_two.ends_with_class)
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "when translating with string1 longer than string2, the latter string must not end with a character class"));
+                }
+
+                // A complemented class maps every byte it names to one byte:
+                // the second set, padded as far as it reaches, must be one
+                // byte over and over and reach exactly as far.
+                if (complement && facts_one.has_class)
+                {
+                        positive reach = truncate ? text_set_two_length
+                                         : text_set_two_length > length_one ? text_set_two_length
+                                                                            : length_one;
+                        bool one_byte = text_set_two_length != 0;
+
+                        for (positive i = 1; i < text_set_two_length && i < TEXT_SET_MAX; i++)
+                                if (text_set_two[i] != text_set_two[0])
+                                        one_byte = false;
+
+                        if (!one_byte || reach != length_one)
+                                return text_done(string_diagnostic(&text_diagnostic, 1, null, "when translating with complemented character classes, string2 must map all characters in the domain to one"));
+                }
+
+                // [:upper:] and [:lower:] in the second set must stand where
+                // a class stands in the first, so case conversion lines up.
+                if (facts_two.has_upper_lower && !complement)
+                {
+                        positive span = truncate && text_set_two_length < text_set_one_length
+                                            ? text_set_two_length
+                                            : text_set_one_length;
+
+                        for (positive i = 0; i < span && i < TEXT_SET_MAX; i++)
+                        {
+                                bool one = text_set_one_class[i] != 0;
+                                bool two = i < text_set_two_length && text_set_two_class[i] != 0;
+
+                                if (one != two)
+                                        return text_done(string_diagnostic(&text_diagnostic, 1, null, "misaligned [:upper:] and/or [:lower:] construct"));
+                        }
+                }
+        }
 
         for (positive i = 0; i < text_set_two_length && i < TEXT_SET_MAX; i++)
                 in_second[text_set_two[i]] = 1;
@@ -11800,13 +12977,28 @@ static b32 text_tr()
         {
                 if (complement)
                 {
-                        p8 last = text_set_two[(text_set_two_length < TEXT_SET_MAX
-                                                    ? text_set_two_length
-                                                    : TEXT_SET_MAX) - 1];
+                        // The complement is every byte not in the first set,
+                        // in byte order, and it maps to the second set by
+                        // position the way a written-out set does: measured,
+                        // tr -c a-z A-Z turns a newline into K. -t stops the
+                        // mapping where the second set ends.
+                        positive room = text_set_two_length < TEXT_SET_MAX
+                                            ? text_set_two_length
+                                            : TEXT_SET_MAX;
+                        positive index = 0;
 
                         for (b32 c = 0; c < 256; c++)
-                                if (in_first[c])
-                                        mapped[c] = last;
+                        {
+                                if (!in_first[c])
+                                        continue;
+
+                                if (truncate && index >= room)
+                                        break;
+
+                                mapped[c] = text_set_two[index < room ? index
+                                                                      : room - 1];
+                                index++;
+                        }
                 }
                 else
                 {
@@ -11965,10 +13157,21 @@ static bool uniq_number_of(file_taking address_to taking, p8 letter,
         if (!(taking->flags & FILE_FLAG(letter)))
                 return true;
 
-        if (string_digits_exact(file_option_value(taking, letter), into))
-                return true;
+        return text_unsigned_option(file_option_value(taking, letter), true, into);
+}
 
-        return string_diagnostic(&text_diagnostic, 0, null, "invalid number");
+static bool uniq_option_seen(p8 letter, string_address value)
+{
+        positive number;
+
+        if ((letter == 'f' || letter == 's' || letter == 'w') &&
+            !text_unsigned_option(value, true, address_of number))
+                return string_diagnostic(&text_diagnostic, 0, value,
+                                         letter == 'f' ? "invalid number of fields to skip"
+                                         : letter == 's' ? "invalid number of bytes to skip"
+                                                         : "invalid number of bytes to compare");
+
+        return true;
 }
 
 /*
@@ -12009,6 +13212,7 @@ static b32 text_uniq()
             .optional = (string_address) "AG",
             .longs = uniq_longs,
             .operand = text_file_add,
+            .seen = uniq_option_seen,
         };
 
         text_begin("uniq");
@@ -12062,8 +13266,10 @@ static b32 text_uniq()
         if (!text_open(text_file_name(0)))
                 return text_done(1);
 
-        // uniq's second operand is where the answer goes, not another input.
-        if (text_files_count > 1)
+        // uniq's second operand is where the answer goes, not another input;
+        // spelled "-" it is standard output, as GNU reads it.
+        if (text_files_count > 1 &&
+            !string_equals(program_argument(text_files[1]), "-"))
         {
                 string_address name = program_argument(text_files[1]);
                 bipolar target = text_open_handle(name, TEXT_WRITE, 0666);
@@ -13193,6 +14399,10 @@ static const file_long grep_longs[] = {
 static bool grep_fixed;
 static bool grep_extended;
 static bool grep_icase;
+// Which language the pattern is in was named more than once, with two
+// different answers: GNU refuses that rather than taking the last.
+static p8 grep_matcher;
+static bool grep_matchers_conflict;
 static bool grep_never;
 static bool grep_said_pattern;
 static b32 grep_pattern_from;
@@ -13209,12 +14419,46 @@ static fn grep_operand(b32 index)
         text_file_add(index);
 }
 
+// A word one of the three options takes and only one of the words will do.
+static bool grep_word_is(string_address value, string_address first,
+                         string_address second, string_address third)
+{
+        return string_equals(value, first) || string_equals(value, second) ||
+               (third && string_equals(value, third));
+}
+
 static bool grep_option_seen(p8 letter, string_address value)
 {
+        // Every context length and every max count is read where it was
+        // written: GNU refuses the first bad one, not the last option.
+        if (letter == 'A' || letter == 'B' || letter == 'C' || letter == 'm')
+        {
+                positive number;
+
+                if (!string_digits_exact(value, address_of number))
+                        return string_diagnostic(&text_diagnostic, 0, null,
+                                                 letter == 'm' ? "invalid max count"
+                                                               : "invalid context length argument");
+        }
+
+        if (letter == 'E' || letter == 'G' || letter == 'F')
+        {
+                if (grep_matcher && grep_matcher != letter)
+                        grep_matchers_conflict = true;
+
+                grep_matcher = letter;
+        }
+
         if (letter == 'E')
+        {
                 grep_extended = true;
+                grep_fixed = false;
+        }
         else if (letter == 'G')
+        {
                 grep_extended = false;
+                grep_fixed = false;
+        }
         else if (letter == 'F')
                 grep_fixed = true;
         else if (letter == 'i' || letter == 'y')
@@ -13286,13 +14530,6 @@ static bool grep_option_seen(p8 letter, string_address value)
         return true;
 }
 
-// A word one of the three options takes and only one of the words will do.
-static bool grep_word_is(string_address value, string_address first,
-                         string_address second, string_address third)
-{
-        return string_equals(value, first) || string_equals(value, second) ||
-               (third && string_equals(value, third));
-}
 
 /* Discarded output needs only each file's selection status, not its count
    or formatting. Verify the actual writable device, never its descriptor's
@@ -13329,12 +14566,16 @@ static b32 text_grep()
             .longs = grep_longs,
             .operand = grep_operand,
             .seen = grep_option_seen,
+            // grep -2 is two lines of context either side.
+            .digits = 'C',
         };
 
         text_begin("grep");
 
         grep_fixed = false;
         grep_extended = false;
+        grep_matcher = 0;
+        grep_matchers_conflict = false;
         grep_icase = false;
         grep_never = false;
         grep_said_pattern = false;
@@ -13362,6 +14603,9 @@ static b32 text_grep()
 
         if (text_files_failed && string_diagnostic(&text_diagnostic, 1, null, "too many operands"))
                 return text_done(2);
+
+        if (grep_matchers_conflict)
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "conflicting matchers specified"));
 
         positive flags = taking.flags;
         bool extended = grep_extended;
@@ -13532,6 +14776,10 @@ static b32 text_grep()
         // Nothing named and no -r is the one way standard input is read;
         // -r with nothing named walks the working directory instead.
         bool from_stdin = !text_files_count && !grep_recursive;
+
+        // -s is about what grep says, including what the reader would have
+        // said about a file that would not open.
+        text_quiet_open = quietly;
         bool discarded = grep_output_discarded();
         bool found_any = false;
         bool shown_any = false;
@@ -13562,6 +14810,14 @@ static b32 text_grep()
         for (b32 i = 0; i < text_files_count; i++)
         {
                 string_address name = program_argument(text_files[i]);
+
+                // A bare - is standard input, which no walk descends into.
+                if (grep_recursive && string_equals(name, "-"))
+                {
+                        grep_path_add(name);
+                        continue;
+                }
+
                 p32 mode = grep_recursive ? text_path_mode(name) : 0;
 
                 if (grep_recursive && !mode)
@@ -13634,9 +14890,12 @@ static b32 text_grep()
                 // GNU labels standard input, and -H on a pipe is the one way
                 // to see it: the name is a real string everywhere below, so
                 // nothing has to remember that it might not be.
-                string_address shown_name = name ? name
-                                                 : (label ? label
-                                                          : (string_address) "(standard input)");
+                // Standard input is named, however it was asked for: a
+                // bare - is the same input as no operand at all.
+                string_address shown_name =
+                    name && !string_equals(name, "-")
+                        ? name
+                        : (label ? label : (string_address) "(standard input)");
 
                 if (grep_tabbed)
                 {
@@ -13904,7 +15163,7 @@ static b32 text_grep()
 
                 if (listing || listing_without)
                 {
-                        if ((matches != 0) == listing)
+                        if ((matches != 0) == listing && !quiet)
                         {
                                 grep_color_field(shown_name,
                                                  string_length(shown_name),
@@ -14115,6 +15374,87 @@ typedef struct
 static sed_file sed_files[SED_FILES_MAX];
 static b32 sed_file_count;
 
+/*
+        R reads one line each time it runs, from a file it keeps open across
+        the cycles; a file that ends, or was never there, simply appends
+        nothing more. The readers are named the same way w's files are.
+*/
+static fn sed_output_start();
+
+static text_reader sed_readers[SED_FILES_MAX];
+static b32 sed_reader_names[SED_FILES_MAX];
+static bool sed_reader_open[SED_FILES_MAX];
+static b32 sed_reader_count;
+static p8 sed_line_scratch[TEXT_PATH_MAX];
+
+static b32 sed_reader_of(p8 address_to name, positive length)
+{
+        for (b32 i = 0; i < sed_reader_count; i++)
+        {
+                string_address had = sed_text + sed_reader_names[i];
+
+                if (!string_compare_max(had, name, length) && !had[length])
+                        return i;
+        }
+
+        if (sed_reader_count >= SED_FILES_MAX)
+        {
+                sed_broken = true;
+                return 0;
+        }
+
+        b32 which = sed_reader_count++;
+
+        sed_reader_names[which] = sed_text_add(name, length);
+        sed_reader_open[which] = false;
+        return which;
+}
+
+// The next line of what R names, appended where the cycle's output stands.
+static fn sed_put_reader_line(b32 which)
+{
+        text_reader address_to reader = sed_readers + which;
+
+        if (!sed_reader_open[which])
+        {
+                bool quiet = text_quiet_open;
+
+                sed_reader_open[which] = true;
+                text_quiet_open = true;
+
+                if (!text_reader_open(reader, sed_text + sed_reader_names[which]))
+                {
+                        text_quiet_open = quiet;
+                        reader->finished = true;
+                        reader->failed = false;
+                        text_status = 0;
+                        return;
+                }
+
+                text_quiet_open = quiet;
+        }
+
+        text_quiet_read = true;
+
+        if (reader->finished && reader->position >= reader->filled)
+                return;
+
+        positive length = 0;
+        bool ended = false;
+
+        bool spilled = text_reader_spill(reader, '\n', sed_line_scratch,
+                                         address_of length, address_of ended, null);
+
+        text_quiet_read = false;
+
+        if (!spilled)
+                return;
+
+        sed_output_start();
+        text_put(sed_line_scratch, length);
+        text_put_character('\n');
+}
+
 static b32 sed_file_of(p8 address_to name, positive length)
 {
         for (b32 i = 0; i < sed_file_count; i++)
@@ -14140,6 +15480,8 @@ static b32 sed_file_of(p8 address_to name, positive length)
 
 static bool sed_extended;
 static bool sed_separate;
+// How wide l breaks its line: -l, or seventy when nobody said.
+static positive sed_wrap = 70;
 
 /*
         Whether a space has room for more bytes. The pattern and hold spaces
@@ -14172,6 +15514,59 @@ static bool sed_work_byte(positive address_to have, p8 value)
                 return false;
 
         sed_work[(address_to have)++] = value;
+        return true;
+}
+
+/*
+        The case a replacement is written in.
+
+        \U and \L hold until \E or until the other one; \u and \l are the one
+        character in front of them and win over the span for that character.
+        Everything a substitution writes -- its literal bytes, the whole
+        match, a captured group -- goes through here.
+*/
+static p8 sed_case_span;
+static p8 sed_case_once;
+
+static p8 sed_case_apply(p8 value)
+{
+        p8 how = sed_case_once ? sed_case_once : sed_case_span;
+
+        sed_case_once = 0;
+
+        if (how == 'U' && value >= 'a' && value <= 'z')
+                return (p8)(value - ('a' - 'A'));
+
+        if (how == 'L' && value >= 'A' && value <= 'Z')
+                return (p8)(value + ('a' - 'A'));
+
+        return value;
+}
+
+static bool sed_case_byte(positive address_to have, p8 value)
+{
+        return sed_work_byte(have, sed_case_apply(value));
+}
+
+static bool sed_case_span_bytes(positive address_to have, p8 address_to from,
+                                positive length)
+{
+        // No case to change and nothing to change it for: the span goes
+        // across whole, as it did before there were escapes to obey.
+        if (!sed_case_span && !sed_case_once)
+        {
+                if (!sed_space_fits(address_to have, length))
+                        return false;
+
+                memory_copy(sed_work + address_to have, from, length);
+                address_to have += length;
+                return true;
+        }
+
+        for (positive at = 0; at < length; at++)
+                if (!sed_case_byte(have, from[at]))
+                        return false;
+
         return true;
 }
 
@@ -14465,6 +15860,34 @@ static bool sed_parse_address(p8 address_to type, positive address_to line,
         return false;
 }
 
+// How many groups a pattern opens, which is what a \N in a replacement may
+// name at most.
+static b32 sed_group_count(string_address pattern)
+{
+        b32 count = 0;
+
+        for (positive at = 0; pattern[at]; at++)
+        {
+                if (pattern[at] != '\\')
+                {
+                        if (sed_extended && pattern[at] == '(')
+                                count++;
+
+                        continue;
+                }
+
+                if (!pattern[at + 1])
+                        break;
+
+                if (!sed_extended && pattern[at + 1] == '(')
+                        count++;
+
+                at++;
+        }
+
+        return count;
+}
+
 static fn sed_parse()
 {
         b32 open_blocks[32];
@@ -14590,9 +16013,15 @@ static fn sed_parse()
 
                 if (kind == '}')
                 {
-                        if (open_count)
-                                sed_commands[open_blocks[--open_count]].block_stop =
-                                    sed_command_count + 1;
+                        // A close with nothing open is not a program either.
+                        if (!open_count)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        sed_commands[open_blocks[--open_count]].block_stop =
+                            sed_command_count + 1;
 
                         sed_command_count++;
                         continue;
@@ -14624,6 +16053,8 @@ static fn sed_parse()
                         command->writer = -1;
                         command->which = 0;
 
+                        bool numbered = false;
+
                         for (;;)
                         {
                                 p8 flag = sed_peek();
@@ -14631,25 +16062,74 @@ static fn sed_parse()
                                 if (flag == 'w')
                                 {
                                         p8 name[TEXT_PATH_MAX];
+                                        positive length;
 
                                         sed_at++;
-                                        command->writer = sed_file_of(
-                                            name, sed_rest_of_line(name, sizeof(name)));
+                                        length = sed_rest_of_line(name, sizeof(name));
+
+                                        // w without a name is the missing
+                                        // filename GNU refuses.
+                                        if (!length)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
+                                        command->writer = sed_file_of(name, length);
                                         break;
                                 }
 
+                                // A flag given twice, a count of nothing and
+                                // a letter s has not got are all refused
+                                // where they are written.
                                 if (flag == 'g')
+                                {
+                                        if (command->global)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         command->global = true;
+                                }
                                 else if (flag == 'p')
+                                {
+                                        if (command->printing)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         command->printing = true;
+                                }
                                 else if (flag == 'i' || flag == 'I')
                                         icase = true;
                                 else if (flag == 'm' || flag == 'M')
                                         (void)flag;
                                 else if (byte_is_digit(flag))
                                 {
+                                        if (numbered)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
+                                        numbered = true;
                                         command->which = sed_number_at();
+
+                                        if (!command->which)
+                                        {
+                                                sed_broken = true;
+                                                return;
+                                        }
+
                                         continue;
+                                }
+                                else if (flag && flag != '\n' && flag != ';' &&
+                                         flag != '}' && flag != '#')
+                                {
+                                        sed_broken = true;
+                                        return;
                                 }
                                 else
                                         break;
@@ -14659,6 +16139,23 @@ static fn sed_parse()
 
                         if (!command->which)
                                 command->which = 1;
+
+                        // A \N in the replacement names a group the pattern
+                        // has to have.
+                        for (positive c = 0; replacement[c]; c++)
+                        {
+                                if (replacement[c] != '\\' || !replacement[c + 1])
+                                        continue;
+
+                                p8 next = replacement[++c];
+
+                                if (byte_is_digit(next) &&
+                                    (b32)(next - '0') > sed_group_count(pattern))
+                                {
+                                        sed_broken = true;
+                                        return;
+                                }
+                        }
 
                         command->pattern = sed_compile_regex(pattern, icase);
                         if (command->pattern >= 0 &&
@@ -14682,7 +16179,10 @@ static fn sed_parse()
                         positive two = sed_unescape(
                             to, sed_take_until(delimiter, to, sizeof(to)));
 
-                        if (sed_map_count >= SED_MAPS_MAX)
+                        // Both halves must be there, and be the same length:
+                        // y has no character to turn the odd one into.
+                        if (sed_broken || one != two ||
+                            sed_map_count >= SED_MAPS_MAX)
                         {
                                 sed_broken = true;
                                 return;
@@ -14705,14 +16205,34 @@ static fn sed_parse()
                 {
                         p8 body[1024];
                         positive have = 0;
+                        bool escaped = sed_peek() == '\\';
+                        bool empty;
 
-                        if (sed_peek() == '\\')
+                        if (escaped)
                                 sed_at++;
 
                         if (sed_peek() == '\n')
                                 sed_at++;
 
                         sed_skip_blanks();
+
+                        // a, i and c want a backslash or a text: a bare one
+                        // at the end of the script is neither.
+                        empty = sed_at >= sed_script_length || sed_peek() == '\n';
+
+                        if (empty && !escaped)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
+                        // A backslash with nothing behind it adds nothing.
+                        if (empty)
+                        {
+                                command->kind = 'v';
+                                sed_command_count++;
+                                continue;
+                        }
 
                         while (sed_at < sed_script_length && sed_script[sed_at] != '\n')
                         {
@@ -14751,13 +16271,31 @@ static fn sed_parse()
 
                 if (kind == 'q' || kind == 'Q')
                 {
+                        // One address only, and nothing after the status but
+                        // the end of the command.
+                        if (command->second_type != SED_ADDRESS_NONE)
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
                         sed_skip_blanks();
                         command->which = sed_number_at();
+                        sed_skip_blanks();
+
+                        p8 after = sed_peek();
+
+                        if (after && after != '\n' && after != ';' && after != '}')
+                        {
+                                sed_broken = true;
+                                return;
+                        }
+
                         sed_command_count++;
                         continue;
                 }
 
-                if (kind == 'r' || kind == 'w')
+                if (kind == 'r' || kind == 'w' || kind == 'R' || kind == 'W')
                 {
                         p8 name[TEXT_PATH_MAX];
                         positive have = sed_rest_of_line(name, sizeof(name));
@@ -14768,11 +16306,35 @@ static fn sed_parse()
                                 return;
                         }
 
-                        if (kind == 'w')
+                        if (kind == 'w' || kind == 'W')
                                 command->writer = sed_file_of(name, have);
+                        else if (kind == 'R')
+                                command->writer = sed_reader_of(name, have);
                         else
                                 command->text = sed_text_add(name, have);
 
+                        sed_command_count++;
+                        continue;
+                }
+
+                // l wraps at the width -l gave, or at seventy; a width of
+                // zero never wraps, and a width written here wins for this
+                // one command.
+                if (kind == 'l')
+                {
+                        sed_skip_blanks();
+                        command->which = byte_is_digit(sed_peek())
+                                             ? sed_number_at() + 1
+                                             : 0;
+                        sed_command_count++;
+                        continue;
+                }
+
+                // v asks for a version at least as new as the word after it,
+                // which this always is.
+                if (kind == 'v')
+                {
+                        sed_label_of(sed_line_scratch, sizeof(sed_line_scratch));
                         sed_command_count++;
                         continue;
                 }
@@ -14796,12 +16358,19 @@ static fn sed_parse()
                 if (kind == 'p' || kind == 'P' || kind == 'd' || kind == 'D' ||
                     kind == '=' || kind == 'n' || kind == 'N' || kind == 'h' ||
                     kind == 'H' || kind == 'g' || kind == 'G' || kind == 'x' ||
-                    kind == 'F')
+                    kind == 'F' || kind == 'z')
                 {
                         sed_command_count++;
                         continue;
                 }
 
+                sed_broken = true;
+                return;
+        }
+
+        // A block that was opened and never closed is not a program.
+        if (open_count)
+        {
                 sed_broken = true;
                 return;
         }
@@ -14994,6 +16563,95 @@ static fn sed_write_space(b32 which)
                         sed_io_failed = true;
 }
 
+// W writes what P would print: the pattern space up to its first newline.
+static fn sed_write_first_line(b32 which)
+{
+        p8 address_to newline = memory_first_of(sed_pattern.bytes, '\n',
+                                                sed_pattern.length);
+        positive keep = sed_pattern.length;
+        bool ended = sed_pattern.ended;
+
+        if (newline)
+        {
+                sed_pattern.length = (positive)(newline - sed_pattern.bytes);
+                sed_pattern.ended = true;
+        }
+
+        sed_write_space(which);
+        sed_pattern.length = keep;
+        sed_pattern.ended = ended;
+}
+
+/*
+        l, which is the pattern space made visible: a backslash for itself,
+        the letters for the escapes that have them, three octal digits for
+        every other byte that would not show, and a dollar at the end. The
+        line is broken with a backslash at the width -l gave, seventy by
+        default, and a width of zero never breaks it.
+*/
+static fn sed_put_listing(positive wrap)
+{
+        p8 shown[8];
+        positive column = 0;
+
+        sed_output_start();
+
+        for (positive at = 0; at <= sed_pattern.length; at++)
+        {
+                positive width = 0;
+
+                if (at == sed_pattern.length)
+                {
+                        text_put_character('$');
+                        text_put_character('\n');
+                        return;
+                }
+
+                p8 character = sed_pattern.bytes[at];
+                p8 letter = character == '\\'  ? '\\'
+                            : character == 7    ? 'a'
+                            : character == '\b' ? 'b'
+                            : character == '\f' ? 'f'
+                            : character == '\n' ? 'n'
+                            : character == '\r' ? 'r'
+                            : character == '\t' ? 't'
+                            : character == 11   ? 'v'
+                                                : 0;
+
+                if (letter)
+                {
+                        shown[0] = '\\';
+                        shown[1] = letter;
+                        width = 2;
+                }
+                else if (character < 32 || character >= 127)
+                {
+                        shown[0] = '\\';
+                        shown[1] = (p8)('0' + (character >> 6));
+                        shown[2] = (p8)('0' + ((character >> 3) & 7));
+                        shown[3] = (p8)('0' + (character & 7));
+                        width = 4;
+                }
+                else
+                {
+                        shown[0] = character;
+                        width = 1;
+                }
+
+                // The break goes before what will not fit, and the backslash
+                // that marks it takes the last column of the line.
+                if (wrap && column + width > wrap - 1)
+                {
+                        text_put_character('\\');
+                        text_put_character('\n');
+                        column = 0;
+                }
+
+                text_put(shown, width);
+                column += width;
+        }
+}
+
 // What r names, whole, wherever the cycle's output had reached. A name that
 // is not there is nothing at all rather than a complaint.
 static fn sed_put_file(string_address name)
@@ -15079,6 +16737,9 @@ static bool sed_substitute(sed_command address_to command)
 
                 if (now)
                 {
+                        sed_case_span = 0;
+                        sed_case_once = 0;
+
                         for (positive c = 0; replacement[c]; c++)
                         {
                                 p8 character = replacement[c];
@@ -15103,6 +16764,23 @@ static bool sed_substitute(sed_command address_to command)
                                                     copy_to == TEXT_UNSET)
                                                         continue;
                                         }
+                                        else if (next == 'U' || next == 'L')
+                                        {
+                                                sed_case_span = next;
+                                                sed_case_once = 0;
+                                                continue;
+                                        }
+                                        else if (next == 'u' || next == 'l')
+                                        {
+                                                sed_case_once = next == 'u' ? 'U' : 'L';
+                                                continue;
+                                        }
+                                        else if (next == 'E')
+                                        {
+                                                sed_case_span = 0;
+                                                sed_case_once = 0;
+                                                continue;
+                                        }
                                         else
                                         {
                                                 p8 escaped = next == 'n'   ? '\n'
@@ -15110,7 +16788,7 @@ static bool sed_substitute(sed_command address_to command)
                                                              : next == 'r' ? '\r'
                                                                            : next;
 
-                                                if (!sed_work_byte(address_of have,
+                                                if (!sed_case_byte(address_of have,
                                                                    escaped))
                                                         return false;
 
@@ -15119,17 +16797,15 @@ static bool sed_substitute(sed_command address_to command)
                                 }
                                 else
                                 {
-                                        if (!sed_work_byte(address_of have, character))
+                                        if (!sed_case_byte(address_of have, character))
                                         return false;
                                         continue;
                                 }
 
-                                if (!sed_space_fits(have, copy_to - copy_from))
+                                if (!sed_case_span_bytes(address_of have,
+                                                         sed_pattern.bytes + copy_from,
+                                                         copy_to - copy_from))
                                         return false;
-
-                                memory_copy(sed_work + have, sed_pattern.bytes + copy_from,
-                                            copy_to - copy_from);
-                                have += copy_to - copy_from;
                         }
 
                         changed = true;
@@ -15252,12 +16928,19 @@ static bool sed_option_seen(p8 letter, string_address value)
                 return false;
         }
 
+        text_quiet_read = true;
+
         while (text_line_next(text_line, 0))
         {
                 text_line[text_line_length] = '\0';
                 sed_script_add(text_line);
         }
 
+        // A script that opened and would not read -- a directory -- is an
+        // empty script to GNU rather than a failure.
+        text_quiet_read = false;
+        text_input.failed = false;
+        text_status = 0;
         text_close();
         sed_have_script = true;
 
@@ -15268,10 +16951,24 @@ static bool sed_option_seen(p8 letter, string_address value)
    leave the input alone; a failed replacement must leave its data recoverable.
    linkat restores a moved input only if its pathname is still absent, keeping
    the backup even when another writer or the filesystem prevents recovery. */
+/* An edited file keeps the mode it had: the temporary is created private
+   so nothing can read a half-written file, and takes the input's mode just
+   before it replaces it. */
+static fn sed_keep_mode(string_address name, string_address temporary)
+{
+        file_facts facts;
+
+        if (file_look_at(name, address_of facts))
+                system_change_mode_at(AT_FDCWD, temporary,
+                                      facts.mode & 07777);
+}
+
 static bool sed_commit(string_address name, string_address temporary)
 {
         p8 kept[TEXT_PATH_MAX];
         bool backup = sed_in_place[0] != '\0';
+
+        sed_keep_mode(name, temporary);
 
         if (backup)
         {
@@ -15337,6 +17034,7 @@ static b32 text_sed()
         sed_option_status = 1;
         sed_broken = false;
         sed_io_failed = false;
+        sed_reader_count = 0;
 
         if (!file_take(address_of taking))
                 return text_done(sed_option_status);
@@ -15349,6 +17047,14 @@ static b32 text_sed()
 
         sed_quiet = (flags & FILE_FLAG('n')) != 0;
         sed_extended = (flags & (FILE_FLAG('r') | FILE_FLAG('E'))) != 0;
+        // -l takes a width; a word that is not one is no width at all,
+        // which is what GNU makes of it rather than a refusal.
+        sed_wrap = 70;
+
+        if ((flags & FILE_FLAG('l')) &&
+            !text_unsigned_option(file_option_value(address_of taking, 'l'),
+                                  false, address_of sed_wrap))
+                sed_wrap = 0;
         sed_separate = (flags & FILE_FLAG('s')) != 0;
         sed_null_data = (flags & FILE_FLAG('z')) != 0;
         sed_follow_symlinks = (flags & FILE_FLAG('F')) != 0;
@@ -15364,6 +17070,12 @@ static b32 text_sed()
         if (!have_script)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "no script"));
 
+        // A script whose first line is exactly #n asks for -n, which is the
+        // one comment sed reads.
+        if (sed_script_length >= 2 && sed_script[0] == '#' && sed_script[1] == 'n' &&
+            (sed_script_length == 2 || sed_script[2] == '\n'))
+                sed_quiet = true;
+
         // After the script has been read, not while: -f reads its file with
         // the same reader and a script is lines however the input is split.
         if (sed_null_data)
@@ -15376,6 +17088,24 @@ static b32 text_sed()
 
         // -i edits files, and there is nothing to edit when the input is a
         // pipe. GNU says so and stops with four.
+        // Every file w writes to is emptied before the first line is read,
+        // as GNU empties them, whether or not anything is ever written.
+        for (b32 c = 0; c < sed_file_count; c++)
+        {
+                string_address name = sed_text + sed_files[c].name;
+
+                if (string_equals(name, "/dev/stdout"))
+                        continue;
+
+                sed_files[c].handle = text_open_handle(name, TEXT_WRITE, 0644);
+
+                if (sed_files[c].handle < 0)
+                {
+                        string_diagnostic(&text_diagnostic, 0, name, "couldn't open file");
+                        return text_done(4);
+                }
+        }
+
         if (sed_in_place && !text_files_count)
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "no input files"));
 
@@ -15387,12 +17117,33 @@ static b32 text_sed()
         for (b32 i = 0; i < inputs && leaving < 0; i++)
         {
                 string_address name = text_file_name(i);
+                // What F prints is the name as it was given: following a
+                // link changes which file is edited, not what it is called.
+                string_address called = name;
                 p8 resolved[TEXT_PATH_MAX];
                 p8 temporary[TEXT_PATH_MAX];
                 bipolar written = -1;
 
+                // A file named "-" is that file when sed is editing in
+                // place: there is no standard input to rewrite.
+                if (sed_in_place && name && string_equals(name, "-"))
+                        name = (string_address)"./-";
+
                 if (sed_in_place && sed_follow_symlinks)
                 {
+                        file_facts facts;
+
+                        // A link is followed to what it names, and a name
+                        // that leads nowhere is the readlink GNU could not
+                        // do rather than a file it could not read.
+                        if (!file_look_at(name, address_of facts))
+                        {
+                                string_diagnostic(&text_diagnostic, 0, name,
+                                                  "couldn't readlink");
+                                text_status = 4;
+                                break;
+                        }
+
                         if (!file_resolve(name, resolved, true))
                         {
                                 string_diagnostic(&text_diagnostic, 0, name, "cannot follow symbolic link");
@@ -15491,12 +17242,28 @@ static b32 text_sed()
                                 case 'w':
                                         sed_write_space(command->writer);
                                         break;
+                                case 'W':
+                                        sed_write_first_line(command->writer);
+                                        break;
+                                case 'v':
+                                        break;
+                                case 'z':
+                                        sed_pattern.length = 0;
+                                        break;
+                                case 'l':
+                                        sed_put_listing(command->which
+                                                            ? command->which - 1
+                                                            : sed_wrap);
+                                        break;
+                                case 'R':
                                 case 'r':
                                 case 'a':
                                         if (append_count < SED_APPENDS_MAX)
                                         {
                                                 append_kind[append_count] = kind;
-                                                append_which[append_count++] = command->text;
+                                                append_which[append_count++] =
+                                                    kind == 'R' ? command->writer
+                                                                : command->text;
                                         }
                                         break;
                                 case 'b':
@@ -15550,7 +17317,7 @@ static b32 text_sed()
                                         goto cycle_done;
                                 case 'F':
                                         sed_output_start();
-                                        text_put_string(name ? name : (string_address) "-");
+                                        text_put_string(called ? called : (string_address) "-");
                                         text_put_character('\n');
                                         break;
                                 case 'n':
@@ -15629,6 +17396,12 @@ cycle_done:
 
                         for (b32 c = 0; c < append_count; c++)
                         {
+                                if (append_kind[c] == 'R')
+                                {
+                                        sed_put_reader_line((b32)append_which[c]);
+                                        continue;
+                                }
+
                                 if (append_kind[c] == 'r')
                                 {
                                         sed_put_file(sed_text + append_which[c]);
@@ -15643,6 +17416,9 @@ cycle_done:
                         if (leaving >= 0 || sed_failed || sed_io_failed)
                                 break;
                 }
+
+                if (text_input.failed)
+                        text_status = 4;
 
                 text_close();
 
@@ -15682,6 +17458,11 @@ cycle_done:
                 if (sed_files[c].handle >= 0)
                         if (system_close(sed_files[c].handle) < 0)
                                 sed_io_failed = true;
+
+        for (b32 c = 0; c < sed_reader_count; c++)
+                if (sed_reader_open[c])
+                        text_close_handle(address_of sed_readers[c].opened,
+                                          sed_readers[c].handle);
 
         if (sed_io_failed)
                 return text_done(string_diagnostic(&text_diagnostic, 4, null, "write error"));
@@ -16106,6 +17887,8 @@ static bipolar sort_human_order(p8 address_to at, positive length)
         case 'E': return sign * 6;
         case 'Z': return sign * 7;
         case 'Y': return sign * 8;
+        case 'R': return sign * 9;
+        case 'Q': return sign * 10;
         default: return 0;
         }
 }
@@ -16691,21 +18474,55 @@ static const file_long sort_longs[] = {
     {(string_address) "merge", 'm'},
     {(string_address) "output", 'o'},
     {(string_address) "stable", 's'},
-    {(string_address) "buffer-size", 'D'},
+    {(string_address) "buffer-size", 'S'},
     {(string_address) "field-separator", 't'},
-    {(string_address) "temporary-directory", 'D'},
+    {(string_address) "temporary-directory", 'T'},
     {(string_address) "compress-program", 'D'},
-    {(string_address) "batch-size", 'D'},
-    {(string_address) "parallel", 'D'},
+    {(string_address) "batch-size", 'B'},
+    {(string_address) "parallel", 'p'},
+    {(string_address) "files0-from", 'Z'},
     {(string_address) "unique", 'u'},
     {(string_address) "zero-terminated", 'z'},
     {null, 0},
 };
 
+// -S takes a count with GNU's suffixes or a percentage; the number is not
+// used, but a script that misspells it is told so.
+static bool sort_size_valid(string_address said)
+{
+        positive value;
+
+        if (!byte_is_digit(said[0]) ||
+            !file_decimal_read(address_of said, true, address_of value))
+                return false;
+
+        if (!said[0])
+                return true;
+
+        if (!string_first_of((string_address) "bkKmMgGtTpPeEzZyY%", said[0]))
+                return false;
+
+        if (!said[1])
+                return true;
+
+        if (said[0] == '%' || said[0] == 'b')
+                return false;
+
+        if (said[1] == 'B' && !said[2])
+                return true;
+
+        return said[1] == 'i' && said[2] == 'B' && !said[3];
+}
+
 // -k comes as many times as there are keys, and one value per letter cannot
-// hold them: they are parsed as the options arrive.
+// hold them: they are parsed as the options arrive. -o may come once.
+static positive sort_outputs;
+
 static bool sort_key_seen(p8 letter, string_address value)
 {
+        if (letter == 'o')
+                sort_outputs++;
+
         if (letter != 'k')
                 return true;
 
@@ -16723,7 +18540,7 @@ static b32 text_sort()
             // floating point anywhere in this file. -S and -T tune a
             // temporary file this sort has not got.
             .allowed = (string_address) "CMSTVbcdfhikmnorstuz",
-            .valued = (string_address) "DSTWkot",
+            .valued = (string_address) "BDSTWZkopt",
             .optional = (string_address) "K",
             .longs = sort_longs,
             .operand = text_file_add,
@@ -16731,6 +18548,7 @@ static b32 text_sort()
         };
 
         text_begin("sort");
+        sort_outputs = 0;
 
         if (!file_take(address_of taking))
                 return text_done(2);
@@ -16746,6 +18564,82 @@ static b32 text_sort()
         bool checking_quiet = (flags & FILE_FLAG('C')) != 0;
         string_address output = file_option_value(address_of taking, 'o');
         string_address said = file_option_value(address_of taking, 'K');
+        positive number;
+
+        if (sort_outputs > 1)
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "multiple output files specified"));
+
+        if ((flags & FILE_FLAG('c')) && (flags & FILE_FLAG('C')))
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-cC' are incompatible"));
+
+        if (checking && output)
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "options '-co' are incompatible"));
+
+        if ((flags & FILE_FLAG('S')) && !sort_size_valid(file_option_value(address_of taking, 'S')))
+                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'S'), "invalid -S argument"));
+
+        if ((flags & FILE_FLAG('B')) &&
+            (!text_unsigned_option(file_option_value(address_of taking, 'B'), false, address_of number) ||
+             number < 2 || number > 1021))
+                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'B'), "invalid --batch-size argument"));
+
+        if ((flags & FILE_FLAG('p')) &&
+            (!text_unsigned_option(file_option_value(address_of taking, 'p'), false, address_of number) ||
+             !number))
+                return text_done(string_diagnostic(&text_diagnostic, 2, file_option_value(address_of taking, 'p'), "invalid --parallel argument"));
+
+        said = file_option_value(address_of taking, 't');
+
+        if (said)
+        {
+                // One byte, or the two that spell a NUL. Anything longer is a
+                // separator no line can be split on -- \t among them, which
+                // GNU refuses and which a literal tab is the way to ask for.
+                bool escaped = said[0] == '\\' && said[1] == '0' && !said[2];
+
+                if (!said[0])
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "empty tab"));
+
+                if (said[1] && !escaped)
+                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "multi-character tab"));
+        }
+
+        said = file_option_value(address_of taking, 'K');
+
+        if (said && !string_equals(said, "quiet") && !string_equals(said, "silent") &&
+            !string_equals(said, "diagnose-first"))
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --check"));
+
+        said = file_option_value(address_of taking, 'W');
+
+        if (said && !string_equals(said, "numeric") &&
+            !string_equals(said, "human-numeric") && !string_equals(said, "month") &&
+            !string_equals(said, "version") && !string_equals(said, "general-numeric") &&
+            !string_equals(said, "random"))
+                return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --sort"));
+
+        said = file_option_value(address_of taking, 'K');
+
+        if (flags & FILE_FLAG('Z'))
+        {
+                string_address list = file_option_value(address_of taking, 'Z');
+
+                if (text_files_count)
+                        return text_done(string_diagnostic(&text_diagnostic, 2, text_file_name(0),
+                                                          "extra operand; file operands cannot be combined with --files0-from"));
+
+                if (!text_files_from(list))
+                        return text_done(2);
+
+                if (text_files_from_bad)
+                        return text_done(2);
+
+                if (!text_files_count)
+                        return text_done(string_diagnostic(&text_diagnostic, 2, list, "no input from"));
+        }
+
+        if (checking && text_files_count > 1)
+                return text_done(string_diagnostic(&text_diagnostic, 2, text_file_name(1), "extra operand not allowed with -c"));
 
         sort_ordering defaults = {
             .reverse = (flags & FILE_FLAG('r')) != 0,
@@ -16767,10 +18661,14 @@ static b32 text_sort()
 
         /*
                 Two ways of ordering the same lines is a question with no
-                answer, and GNU refuses it rather than picking one. This used
-                to take whichever was written last, which is a different sort
-                from the one the caller asked for and no way of finding out.
+                answer, and GNU refuses it rather than picking one -- but
+                only where the question is asked: global orderings are the
+                default a key without its own inherits, and a key that names
+                its own ordering never sees them. The count of orderings
+                given is kept and judged where a key takes them.
         */
+        positive default_kinds = 0;
+
         for (positive k = 0; k < 4; k++)
         {
                 p8 letter = k == 0 ? 'n' : k == 1 ? 'h' : k == 2 ? 'M' : 'V';
@@ -16778,9 +18676,7 @@ static b32 text_sort()
                 if (!(flags & FILE_FLAG(letter)))
                         continue;
 
-                if (defaults.kind)
-                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
-
+                default_kinds++;
                 defaults.kind = letter;
         }
 
@@ -16790,7 +18686,7 @@ static b32 text_sort()
                                  string_equals(said, "silent");
 
                 if (!checking_quiet && !string_equals(said, "diagnose-first"))
-                        return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid argument for --check"));
+                        return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --check"));
         }
 
         said = file_option_value(address_of taking, 'W');
@@ -16813,8 +18709,8 @@ static b32 text_sort()
                 if (!kind)
                         return text_done(string_diagnostic(&text_diagnostic, 1, said, "invalid argument for --sort"));
 
-                if (defaults.kind && defaults.kind != kind)
-                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
+                if (defaults.kind != kind)
+                        default_kinds++;
 
                 defaults.kind = kind;
         }
@@ -16848,7 +18744,20 @@ static b32 text_sort()
         {
                 sort_key address_to key = sort_keys + i;
                 if (!key->ordered)
+                {
+                        if (default_kinds > 1)
+                                return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
+
                         key->order = defaults;
+                }
+
+                // -d and -i choose which bytes a comparison sees, and a
+                // number, a size or a month has no such bytes to leave out:
+                // GNU refuses -nd and -Mi, and -V alone stands beside them.
+                if ((key->order.kind == 'n' || key->order.kind == 'h' || key->order.kind == 'M') &&
+                    (key->order.how & (SORT_DICTIONARY | SORT_PRINTABLE)))
+                        return text_done(string_diagnostic(&text_diagnostic, 2, null, "options are incompatible"));
+
                 key->whole = key->first_field == 1 && key->first_char <= 1 &&
                              !key->second_field && !key->order.blanks[0];
         }
@@ -16869,11 +18778,10 @@ static b32 text_sort()
 
         for (b32 i = 0; i < inputs; i++)
         {
+                // A file that will not open ends sort before it writes a
+                // line, as it ends GNU's.
                 if (!text_open(text_file_name(i)))
-                {
-                        run_stop[i] = text_lines_count;
-                        continue;
-                }
+                        return text_done(2);
 
                 if (!text_lines_gather())
                         return text_done(2);
@@ -16910,7 +18818,7 @@ static b32 text_sort()
                         return text_done(1);
                 }
 
-                return text_done(0);
+                return text_done(text_status ? 2 : 0);
         }
 
         sort_order = (positive address_to)text_arena_take(
@@ -17172,6 +19080,72 @@ static const file_long cmp_longs[] = {
     {null, 0},
 };
 
+/*
+        Every -n and -i is read as it arrives, as GNU reads them: of several
+        limits the smallest holds, and of several skips the largest, on each
+        side -- so cmp -i 1K -i 5:7 skips a kilobyte of both. A value that is
+        not a count is refused where it is written, whichever one came last.
+*/
+static positive cmp_limit;
+static positive cmp_skip[2];
+
+static bool cmp_skip_of(string_address said)
+{
+        positive split = 0;
+        positive left;
+        positive right;
+        p8 head[32];
+
+        while (said[split] && said[split] != ':')
+                split++;
+
+        if (said[split] != ':')
+        {
+                if (!cmp_count_of(said, address_of left))
+                        return false;
+
+                right = left;
+        }
+        else
+        {
+                if (split >= sizeof(head))
+                        split = sizeof(head) - 1;
+
+                memory_copy_end(head, said, split);
+
+                if (!split || !said[split + 1] ||
+                    !cmp_count_of(head, address_of left) ||
+                    !cmp_count_of(said + split + 1, address_of right))
+                        return false;
+        }
+
+        if (left > cmp_skip[0])
+                cmp_skip[0] = left;
+
+        if (right > cmp_skip[1])
+                cmp_skip[1] = right;
+
+        return true;
+}
+
+static bool cmp_option_seen(p8 letter, string_address value)
+{
+        positive limit;
+
+        if (letter == 'n')
+        {
+                if (!cmp_count_of(value, address_of limit))
+                        return string_diagnostic(&text_diagnostic, 0, value, "invalid --bytes value");
+
+                if (limit < cmp_limit)
+                        cmp_limit = limit;
+        }
+        else if (letter == 'i' && !cmp_skip_of(value))
+                return string_diagnostic(&text_diagnostic, 0, value, "invalid --ignore-initial value");
+
+        return true;
+}
+
 static b32 text_cmp()
 {
         file_taking taking = {
@@ -17179,9 +19153,13 @@ static b32 text_cmp()
             .allowed = (string_address) "bilns",
             .valued = (string_address) "in",
             .longs = cmp_longs,
+            .seen = cmp_option_seen,
         };
 
         text_begin("cmp");
+        cmp_limit = TEXT_UNSET;
+        cmp_skip[0] = 0;
+        cmp_skip[1] = 0;
 
         if (!file_take(address_of taking))
                 return text_done(2);
@@ -17192,56 +19170,21 @@ static b32 text_cmp()
         b32 index = (b32)taking.first;
         positive at = 0;
         positive lines = 0;
-        positive skip_left = 0;
-        positive skip_right = 0;
-        positive limit = TEXT_UNSET;
+        positive limit = cmp_limit;
         bool newline = true;
         positive width = 1;
         b32 answer = 0;
-        string_address said = file_option_value(address_of taking, 'n');
 
-        if (said && !cmp_count_of(said, address_of limit))
-                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --bytes value"));
-
-        said = file_option_value(address_of taking, 'i');
-
-        if (said)
-        {
-                // -i takes one count for both sides or, with a colon between
-                // them, one for each.
-                positive split = 0;
-                p8 head[32];
-
-                while (said[split] && said[split] != ':')
-                        split++;
-
-                if (said[split] != ':')
-                {
-                        if (!cmp_count_of(said, address_of skip_left))
-                                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --ignore-initial value"));
-
-                        skip_right = skip_left;
-                }
-                else
-                {
-                        if (split >= sizeof(head))
-                                split = sizeof(head) - 1;
-
-                        memory_copy_end(head, said, split);
-
-                        if (!cmp_count_of(head, address_of skip_left) ||
-                            !cmp_count_of(said + split + 1, address_of skip_right))
-                                return text_done(string_diagnostic(&text_diagnostic, 2, said, "invalid --ignore-initial value"));
-                }
-        }
+        if (silent && listing)
+                return text_done(string_diagnostic(&text_diagnostic, 2, null, "options -l and -s are incompatible"));
 
         b32 operands = text_argument_count - index;
 
         if (operands < 1 || operands > 4)
                 return text_done(string_diagnostic(&text_diagnostic, 2, null, operands ? "extra operand" : "missing operand"));
 
-        // The third and fourth operands say the same thing -i does, and say
-        // it last, so they win.
+        // The third and fourth operands say the same thing -i does, and the
+        // larger skip of the two ways of saying it is the one that holds.
         for (b32 which = 2; which < operands; which++)
         {
                 positive value = 0;
@@ -17249,11 +19192,16 @@ static b32 text_cmp()
                 if (!cmp_count_of(program_argument(index + which), address_of value))
                         return text_done(string_diagnostic(&text_diagnostic, 2, program_argument(index + which), "invalid byte count"));
 
-                if (which == 2)
-                        skip_left = value;
-                else
-                        skip_right = value;
+                if (value > cmp_skip[which - 2])
+                        cmp_skip[which - 2] = value;
         }
+
+        positive skip_left = cmp_skip[0];
+        positive skip_right = cmp_skip[1];
+
+        // -s answers with the status alone about a file it could not open;
+        // a directory it opened and cannot read is still named.
+        text_quiet_open = silent;
 
         // A second name that was not given is standard input, which is how
         // "cmp saved" reads a pipe against a file.
@@ -17267,10 +19215,26 @@ static b32 text_cmp()
         if (!text_reader_open(address_of cmp_right, right_name))
                 return cmp_ends(2);
 
+        // A directory opens and then refuses to be read, which GNU reports
+        // before it has compared a byte, limit or no limit, -s and all.
+        for (positive side = 0; side < 2; side++)
+        {
+                text_reader address_to reader = side ? address_of cmp_right
+                                                     : address_of cmp_left;
+
+                if (reader->opened && text_directory(reader->handle))
+                {
+                        string_diagnostic(&text_diagnostic, 0, reader->name, "Is a directory");
+                        return cmp_ends(2);
+                }
+        }
+
         /* One stream cannot be read at two independent positions. GNU cmp
-           treats two identical path spellings -- including "-" -- as the
-           same object and answers equal without consuming it. */
-        if (string_equals(left_name, right_name))
+           treats two identical named paths as the same object and answers
+           equal without consuming it -- but only where both sides start at
+           the same byte, since a skip makes them different views. */
+        if (string_equals(left_name, right_name) && skip_left == skip_right &&
+            !string_equals(left_name, "-"))
                 return cmp_ends(0);
 
         cmp_pass(address_of cmp_left, skip_left);
@@ -17557,13 +19521,21 @@ static bool expr_integer(expr_value address_to value, bipolar address_to out)
                 return true;
         }
 
-        positive taken;
-        bipolar made = string_bipolar(value->text, address_of taken);
+        // An optional minus and digits, nothing else: +1 and " 1" are
+        // strings to GNU expr, and so they are here.
+        positive at = value->text[0] == '-';
 
-        if (!taken || string_get(value->text + taken))
+        if (!byte_is_digit(value->text[at]))
                 return false;
 
-        address_to out = made;
+        while (byte_is_digit(value->text[at]))
+                at++;
+
+        if (value->text[at])
+                return false;
+
+        positive taken;
+        address_to out = string_bipolar(value->text, address_of taken);
 
         return true;
 }
@@ -17678,6 +19650,12 @@ static expr_value expr_primary()
 
                 expr_at++;
                 made.text = word;
+                return made;
+        }
+
+        if (!string_compare(word, ")"))
+        {
+                expr_stop("syntax error: unexpected ')'");
                 return made;
         }
 
@@ -17926,8 +19904,10 @@ static expr_value expr_binary(positive minimum)
                 case 8: left.number = a + b; break;
                 case 9: left.number = a - b; break;
                 case 10: left.number = a * b; break;
-                case 11: left.number = a / b; break;
-                default: left.number = a % b; break;
+                // Sixty four bits wrap, and the one quotient that does not
+                // fit them is written as the wrap rather than left to trap.
+                case 11: left.number = b == -1 ? (bipolar)(0 - (positive)a) : a / b; break;
+                default: left.number = b == -1 ? 0 : a % b; break;
                 }
         }
         return left;
