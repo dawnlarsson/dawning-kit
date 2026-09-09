@@ -45,7 +45,7 @@
         typeof(sizeof(0)) and which is therefore the compiler's own size_t by
         construction rather than by resemblance, and a character is `char`,
         because `p8` is `unsigned char` and C's string functions do not take
-        one. test/declare.c is the proof: one case file, compiled once
+        one. CHECK_declare in test/checks.c is the proof: one case file, compiled once
         against these declarations and once against the host's real headers,
         and it has to build both ways.
 
@@ -68,7 +68,7 @@
         there before this file was. A declaration cannot change what the
         assembly does, and one that lied about it would be worse than no
         declaration at all -- so the number here is measured and not
-        estimated. test/declare_cases.inc puts four hundred and forty two
+        estimated. CHECK_declare in test/checks.c puts four hundred and forty two
         lines of raw answer through these names and through the host's glibc
         and diffs the two, and exactly one line differs.
 
@@ -131,7 +131,7 @@
 
         strncpy is the one name in this group that does not mean what C means
         by it: it pads nothing. The divergence is at the top of the file and
-        both behaviours are written out in test/declare_cases.inc.
+        both behaviours are written out in CHECK_declare in test/checks.c.
 */
 void address_to memcpy(void address_to destination, const void address_to source,
                        sized size);
@@ -203,7 +203,7 @@ void bcopy(const void address_to source, void address_to destination, sized size
         -1 through 255 and a type that could not hold -1 could not say EOF.
         A program that passes a plain char with the top bit set has undefined
         behaviour in C and gets whatever the routine does with a sign
-        extended byte here, which is measured in test/declare.c against
+        extended byte here, which is measured in CHECK_declare in test/checks.c against
         glibc for every value from -1 to 255.
 */
 CONST int isalnum(int value);

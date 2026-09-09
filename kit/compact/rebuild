@@ -81,7 +81,7 @@ sh "$here/prove" "$work/plain.c" "$out" || {
 }
 
 if [ "$(uname -m)" = "arm64" ] || [ "$(uname -m)" = "aarch64" ]; then
-        sh "$root/test/native.sh" "$out" || exit 1
+        sh "$root/test/run" native "$out" || exit 1
 else
         echo "rebuild: not an arm64 machine, so nothing was executed"
 fi

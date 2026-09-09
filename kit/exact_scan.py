@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write test/exact_scan.c -- every length known at the call site.
+"""Write CHECK_exact_scan in test/checks.c -- every length known at the call site.
 
 The shape is the CHECK_exact section of test/checks.c: a literal per line, because a size taken
 from a loop counter never reaches the expansion at all.

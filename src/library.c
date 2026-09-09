@@ -16856,7 +16856,7 @@ fn string_set_add(b8 address_to set, string_address members);
 // character: the character to search for
 // traditional: string_last_of_or_end
 //
-// Not the string_last_of_or_end in src/chrn_word.asm, which is a different function at one
+// Not the string_last_of_or_end of the riscv64 word loop, which is a different function at one
 // input: string_last_of_or_end(source, 0) is the terminator there and null here.
 // Performs a single cut forward in a string by inserting a null terminator where the FIRST cut symbol is found.
 // Returns the address AFTER the cut, effectively splitting the string into two parts.
@@ -17879,7 +17879,7 @@ positive file_read(file_address source, address_any buffer, positive size, posit
 
         No preprocessor runs inside an asm string, so every field offset is a
         literal: handle 0, path 8, flags 16, data 24, loaded 32, status 40,
-        and status.size at 88. kit/verify pins all of them against the struct
+        and status.size at 88. CHECK_verify pins all of them against the struct
         the compiler laid out, so a field added in the middle fails the test
         rather than quietly reading the wrong word.
 

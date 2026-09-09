@@ -1161,7 +1161,7 @@ static b32 clock_nanosleep(clockid_t which, b32 flags,
         So the C one is a routine with its own name and an opt-in macro that
         renames it, exactly as stdlib.c does for exit under
         STANDARD_EXIT_RUNS_HANDLERS. It is off by default and must stay off:
-        test/clock.c and test/stream_buffering.c both call the
+        CHECK_clock in test/checks.c and CHECK_stream_buffering in test/checks.c both call the
         assembly sleep with a pointer, and a macro that was on by default
         would compile those into passing a pointer as a second count without
         a word of complaint.

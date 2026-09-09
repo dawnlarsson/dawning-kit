@@ -4142,9 +4142,9 @@ BUILTINS_UTILITIES = tuple(BUILTINS_UTILITIES)
 
 # ----------------------------------------------------------------------------
 #       Families: seeded whole programs, for the parts of the builtin surface
-#       that are a value space rather than an option list. These absorb
-#       test/shell_cases_builtin.py, and the value spaces test/shell_io.sh,
-#       test/shell_variables.sh and test/builtin.sh asserted by hand.
+#       that are a value space rather than an option list: redirection,
+#       variable assignment and the builtins whose argument is a value and
+#       not a flag.
 #
 #       A family gets no normalize and no timeout of its own, so anything
 #       unstable is reduced inside the script itself.
@@ -6960,7 +6960,7 @@ MISC_UTILITIES = (
                    ("--ignore-all-space", "a.txt", "spaced"), ("--ignore-space-change", "spaced", "tabbed"),
                    ("--ignore-blank-lines", "tight", "blanks"), ("--ignore-tab-expansion", "tabexpand1", "tabexpand2"),
                    ("--ignore-trailing-space", "trailing1", "trailing2"), ("--ignore-case", "-u", "a.txt", "case"),
-                   # Refused on purpose (test/surface_ledger.json); carried as option rows.
+                   # Refused on purpose; carried as option rows.
                    ("--initial-tab", "a.txt", "b"), ("-t", "a.txt", "b"), ("--expand-tabs", "a.txt", "b"),
                    ("-C", "2", "a.txt", "b"), ("--context=1", "a.txt", "b"), ("--context", "a.txt", "b"),
                    ("-e", "a.txt", "b"), ("--ed", "a.txt", "b"), ("-n", "a.txt", "b"), ("--rcs", "a.txt", "b"),
@@ -7371,7 +7371,7 @@ import shlex
 shell_ALL = ("bash", "posix", "dash")
 shell_BASH = ("bash", "posix")
 
-# ---- absorbed: test/shell_cases_lex.py ----
+# ---- the lexer families ----
 
 
 
@@ -7543,7 +7543,7 @@ def shell_lex_nested_syntax(rng):
 
 
 
-# ---- absorbed: test/shell_cases_exec.py ----
+# ---- the execution families ----
 
 
 shell_VALUE_LENGTHS = (1, 7, 31, 127, 511)
@@ -7966,7 +7966,7 @@ def shell_exec_readonly_scope(rng):
 
 
 
-# ---- absorbed: test/shell_cases_expand.py ----
+# ---- the expansion families ----
 
 
 
@@ -14101,9 +14101,8 @@ from unittest.mock import patch
 
 HARNESS_ROOT = Path(__file__).resolve().parents[1]
 
-#       GNU coreutils 9.11's installed program list, which is what
-#       test/surface_coreutils-9.11.json held: the denominator the shell's
-#       dispatch tables are measured against.
+#       GNU coreutils 9.11's installed program list: the denominator the
+#       shell's dispatch tables are measured against.
 HARNESS_COREUTILS_9_11 = {
     "package": "GNU coreutils",
     "version": "9.11",

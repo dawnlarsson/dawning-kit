@@ -41,7 +41,7 @@
         pointer has moved and the frame it was building is behind it -- so a
         thread entry needs a per-architecture assembly trampoline, which
         belongs in src/platform beside the other three-way code and not in a
-        file of ordinary C. test/lock.c has one, because a test may reach
+        file of ordinary C. CHECK_lock in test/checks.c has one, because a test may reach
         for assembly where a shipped family may not, and that trampoline is
         what proves the code below excludes.
 
