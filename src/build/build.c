@@ -42,11 +42,15 @@
         The settings.
 
         One table, read by name, with this project's answers as the defaults.
-        A build.conf beside build.sh overrides any of them, and --set name=value
-        overrides that, so nothing below this block ever names a path.
+        An optional build.conf beside build.sh overrides any of them, and
+        --set name=value on the command line overrides that, so nothing below
+        this block ever names a path, a version, a flag set or an
+        architecture.
 */
-#define BUILD_SETTING_ROOM 64
-#define BUILD_VALUE_ROOM 4096
+#define BUILD_SETTING_ROOM 128
+
+//      Beside build.sh, and optional: this repository ships none.
+#define BUILD_SETTINGS_FILE "build.conf"
 
 typedef struct build_setting
 {
@@ -969,6 +973,80 @@ static positive build_words_of(string_address line, positive bound,
         }
 
         return count;
+}
+
+//      Named here and defined with the assembly splitter, which is the other
+//      thing that cares where a line's blanks are.
+static bool build_blank(p8 byte);
+
+/*
+        A tree that is not this one.
+
+        Every setting above is this project's answer, and there are two ways to
+        give another tree's. A build.conf beside build.sh holds one
+        `name value` per line -- the same shape as the `#>` keys a profile
+        carries, because a reader who knows one knows the other -- and
+        --set name=value on the command line wins over it. Neither is required
+        and this repository ships neither, so the table is what runs here.
+
+        A name the table does not have is added rather than refused: a tree
+        with its own steps has its own settings, and this is where they live.
+*/
+static fn build_settings_read()
+{
+        build_lines walk;
+        p8 address_to store;
+
+        if (build_slurp(BUILD_SETTINGS_FILE, build_file_two,
+                        BUILD_FILE_ROOM) < 0)
+                return;
+
+        store = build_text_take(BUILD_WORD_ROOM);
+        build_lines_open(address_of walk, (string_address)build_file_two);
+
+        while (build_lines_next(address_of walk))
+        {
+                positive at = 0;
+                positive name_length = 0;
+                string_address name;
+                string_address value;
+
+                while (at < walk.length && build_blank(walk.line[at]))
+                        at++;
+
+                if (at >= walk.length || walk.line[at] == '#')
+                        continue;
+
+                while (at + name_length < walk.length &&
+                       !build_blank(walk.line[at + name_length]))
+                        name_length++;
+
+                //      Copied out of the file buffer, which the next thing to
+                //      read a file will overwrite.
+                {
+                        p8 address_to keep = build_text_take(name_length + 1);
+
+                        memory_copy(keep, walk.line + at, name_length);
+                        keep[name_length] = end;
+                        name = (string_address)keep;
+                }
+
+                at += name_length;
+
+                while (at < walk.length && build_blank(walk.line[at]))
+                        at++;
+
+                {
+                        positive length = walk.length - at;
+                        p8 address_to keep = build_text_take(length + 1);
+
+                        memory_copy(keep, walk.line + at, length);
+                        keep[length] = end;
+                        value = (string_address)keep;
+                }
+
+                build_setting_set(name, value);
+        }
 }
 
 /*
@@ -5289,16 +5367,66 @@ static fn build_usage()
                       "    build freestanding [-v] [--run] [--watch] [source] [output]\n"
                       "    build floor [arch]                      verify the ISA floor\n"
                       "    build key <name>                        a value from artifacts/.config\n"
+                      "\n"
+                      "--set name=value overrides one setting, anywhere on the line.\n"
                       "    build key-one <name>                    the same, refusing two\n"
                       "    build size <path>                       bytes, KB and MB\n");
         log_flush();
 }
 
+static string_address build_words_kept[BUILD_ARGUMENT_ROOM];
+
 b32 main()
 {
         string_address address_to arguments = program_argument_list();
         positive count = (positive)program_argument_count();
-        string_address command = count > 1 ? arguments[1] : null;
+        string_address command;
+
+        /*
+                --set name=value, read before anything else looks at the
+                arguments, so it reaches every sub-command and not only the
+                build. The words are taken out of the vector here rather than
+                skipped in each parser below, which is the whole reason this
+                is one pass over the arguments and not five.
+        */
+        build_settings_read();
+
+        {
+                positive kept = 0;
+
+                for (positive at = 0; at < count && kept + 1 < BUILD_ARGUMENT_ROOM;
+                     at++)
+                {
+                        string_address word = arguments[at];
+                        string_address pair = null;
+                        p8 address_to cut;
+
+                        if (at && word_is(word, "--set") && at + 1 < count)
+                                pair = arguments[++at];
+                        else if (at && !memory_compare(word, "--set=", 6))
+                                pair = word + 6;
+                        else
+                        {
+                                build_words_kept[kept++] = word;
+                                continue;
+                        }
+
+                        pair = build_join(pair, null);
+                        cut = (p8 address_to)string_first_of(pair, '=');
+
+                        if (!cut)
+                                return build_die("--set wants name=value");
+
+                        address_to cut = end;
+                        build_setting_set(pair, (string_address)(cut + 1));
+                }
+
+                build_words_kept[kept] = null;
+                arguments = (string_address address_to)build_words_kept;
+                count = kept;
+        }
+
+        command = count > 1 ? arguments[1] : null;
 
         //      A sub-command is only a sub-command when it cannot also be a
         //      profile: the build takes profile names as bare words, and a
@@ -5480,32 +5608,6 @@ b32 main()
                         }
                         else if (!memory_compare(word, "--host=", 7))
                                 host = word + 7;
-                        else if (!memory_compare(word, "--set", 5) &&
-                                 (word[5] == end || word[5] == '='))
-                        {
-                                //      --set name=value overrides one setting
-                                //      for this run, which is how a tree that
-                                //      is not this one points the tool at its
-                                //      own paths without editing anything.
-                                string_address pair = word[5] == '='
-                                                              ? word + 6
-                                                              : (at + 1 < count
-                                                                         ? arguments[++at]
-                                                                         : null);
-                                p8 address_to cut;
-
-                                if (!pair)
-                                        return build_die("--set wants name=value");
-
-                                pair = build_join(pair, null);
-                                cut = (p8 address_to)string_first_of(pair, '=');
-
-                                if (!cut)
-                                        return build_die("--set wants name=value");
-
-                                address_to cut = end;
-                                build_setting_set(pair, (string_address)(cut + 1));
-                        }
                         else if (word[0] == '-' && word[1] == '-')
                                 return build_die(build_join("unknown option ",
                                                             word, null));
