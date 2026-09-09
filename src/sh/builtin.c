@@ -5644,6 +5644,7 @@ COLD fn shell_unset(writer write, string_address input)
         shell_option_walk walk = {1};
         positive index;
         bool functions = false;
+        bool variables = false;
         bool reference = false;
         p8 letter;
 
@@ -5652,7 +5653,7 @@ COLD fn shell_unset(writer write, string_address input)
                 if (letter == 'f')
                         functions = true;
                 else if (letter == 'v')
-                        functions = false;
+                        variables = true;
                 else if (letter == 'n')
                         reference = true;
                 else
@@ -5666,6 +5667,12 @@ COLD fn shell_unset(writer write, string_address input)
                         return;
                 }
         }
+
+        //      Bash refuses to be told both at once; the reference shell lets
+        //      the later letter win, so only the Bash personality complains.
+        if (functions && variables && shell_bash_compat)
+                return shell_answer(string_report(log_error, 1,
+                    "unset: cannot simultaneously unset a function and a variable\n"));
 
         index = walk.index;
 
@@ -6006,6 +6013,8 @@ typedef struct
 static bool shell_declare_options(shell_declare_state address_to state)
 {
         shell_option_walk walk = {state->index, null, 0, true};
+        bool indexed_told = false;
+        bool associative_told = false;
         p8 value;
 
         while (shell_option_letter(address_of walk, address_of value))
@@ -6028,6 +6037,22 @@ static bool shell_declare_options(shell_declare_state address_to state)
                         string_format(log_error,
                                       "%s: %c%c: invalid option\n",
                                       shell_argv[0], direction, value);
+                        shell_answer(2);
+                        return false;
+                }
+
+                //      Asking for both array kinds at once is refused, and
+                //      Bash names -a whichever order the two arrived in.
+                if (attribute == SHELL_ARRAY_INDEXED && direction == '-')
+                        indexed_told = true;
+
+                if (attribute == SHELL_ARRAY_ASSOCIATIVE && direction == '-')
+                        associative_told = true;
+
+                if (indexed_told && associative_told)
+                {
+                        string_format(log_error, "%s: -a: invalid option\n",
+                                      shell_argv[0]);
                         shell_answer(2);
                         return false;
                 }
