@@ -1218,7 +1218,8 @@ static bool login_records(string_address path, bool check_processes,
 
         if (input < 0)
         {
-                if (missing_ok && input == -ERROR_NO_ENTRY)
+                if (missing_ok && (input == -ERROR_NO_ENTRY ||
+                                   input == -ERROR_ACCESS))
                         return true;
 
                 return string_diagnostic(&text_diagnostic, 0, path ? path : (string_address)"standard input", file_reason(input));
@@ -3455,6 +3456,7 @@ static const file_long login_pinky_longs[] = {
 };
 
 static const file_long login_who_longs[] = {
+    {(string_address) "lookup", 'L'},
     {(string_address) "all", 'a'},
     {(string_address) "boot", 'b'},
     {(string_address) "count", 'q'},
@@ -3477,7 +3479,7 @@ static b32 tools_who()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "who",
-            .allowed = (string_address) "abdlmpqrstuwHT",
+            .allowed = (string_address) "abdlmpqrstuwHTL",
             .valued = (string_address) "",
             .longs = login_who_longs,
             .operand = file_operand,
@@ -11722,14 +11724,6 @@ static b32 tools_ps(void)
                 if (option == ARGUMENT_END)
                         break;
                 bool long_option = option == ARGUMENT_LONG;
-                if (option == ARGUMENT_OPERAND && byte_is_digit(*cursor.word))
-                {
-                        // An undashed number is the historical PID selector.
-                        if (!ps_pid_list(cursor.word, &pids, true))
-                                return text_done(string_diagnostic(&text_diagnostic, 1,
-                                    cursor.word, "invalid process id list"));
-                        continue;
-                }
                 if (option == ARGUMENT_OPERAND && *cursor.word && *cursor.word != '-')
                 {
                         // BSD option letters are undashed; their C does not
