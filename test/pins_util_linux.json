@@ -195,14 +195,6 @@
   "domain": "util_linux",
   "kind": "deliberate",
   "list": "ledger",
-  "option": "-r",
-  "reason": "this build allocates and punches; it does not scan a file for zero runs (--dig-holes) or walk its extent map (--report-holes)",
-  "utility": "fallocate"
- },
- {
-  "domain": "util_linux",
-  "kind": "deliberate",
-  "list": "ledger",
   "option": "+FSTYPE",
   "reason": "the columns come from mountinfo: a filesystem's label, UUID, size and propagation flags are not among them",
   "utility": "findmnt"
@@ -3278,14 +3270,6 @@
   "option": "-N",
   "reason": "a mount is made in this namespace from the source and target given: another task's namespace, making the target directory, id-mapped mounts, mounting beneath or exclusively, the once-only check, the option-source policy and the target prefix are refused",
   "utility": "mount"
- },
- {
-  "domain": "util_linux",
-  "kind": "deliberate",
-  "list": "ledger",
-  "option": "--apparmor-profile",
-  "reason": "every capability, securebits, LSM label, Landlock and seccomp policy is recognised and refused before exec, so a caller can never mistake an ignored privilege request for a granted one",
-  "utility": "setpriv"
  },
  {
   "domain": "util_linux",
