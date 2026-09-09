@@ -1674,6 +1674,31 @@ def self_test():
                              f"{bare} are spelled bare at module scope, so whatever "
                              f"they hold is registered to no domain and never runs")
 
+        def test_no_definition_in_this_file_shadows_another(self):
+            """The same hazard from the other side. Assembling modules into
+            one file lets a name arrive twice, and the later one wins in
+            silence: that is how a second HARNESS_CHECKS made the engines
+            benchmark unreachable. A function or class defined twice is
+            always either dead text or a shadow, so neither is allowed."""
+            import ast
+            source = Path(__file__).resolve().read_text()
+            lines = source.splitlines(keepends=True)
+            seen, shadowed, repeated = {}, [], []
+            for node in ast.parse(source).body:
+                if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    continue
+                text = "".join(lines[node.lineno - 1:node.end_lineno])
+                if node.name in seen:
+                    (repeated if seen[node.name] == text else shadowed).append(
+                        f"{node.name} at line {node.lineno}")
+                seen.setdefault(node.name, text)
+            self.assertEqual(shadowed, [],
+                             "defined twice with different bodies, so the first is "
+                             "unreachable: " + ", ".join(shadowed))
+            self.assertEqual(repeated, [],
+                             "defined twice with the same body, which is dead text: "
+                             + ", ".join(repeated))
+
         def test_tally_is_written_per_program(self):
             tally = self.root / "tally"
             spec_dir = self.root / "specs2"
@@ -8638,15 +8663,6 @@ def shell_expand_ansi_quote_transition(rng):
 # ----------------------------------------------------------------------------
 #       Shared helpers for the whole module.
 # ----------------------------------------------------------------------------
-
-def shell_quote(text):
-    return "'" + text.replace("'", "'\"'\"'") + "'"
-
-
-def shell_program(*lines):
-    """Keep setup, mutation and observation separable for line shrinking."""
-    return "\n".join(lines) + "\n"
-
 
 def shell_words(argv):
     return " ".join(shlex.quote(word) for word in argv)
