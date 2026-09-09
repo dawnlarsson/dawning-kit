@@ -607,6 +607,15 @@ def misc_script_valid(argv):
     return False
 
 
+def misc_diff_valid(argv):
+    # -L takes the next word, so an option written after it is its label
+    # rather than an option; those argvs say nothing about either.
+    for index, word in enumerate(argv[:-1]):
+        if word == "-L" and argv[index + 1].startswith("-"):
+            return False
+    return True
+
+
 def misc_dd_valid(argv):
     # The runner's standard input and output are unnamed temporary files, and
     # dd re-sets the open flags of a side whenever a byte-suffixed quantity or
@@ -827,7 +836,7 @@ UTILITIES = (
             + tuple(("n%da" % i, "n%db" % i) for i in range(4))
             + tuple(("t%da" % i, "t%db" % i) for i in range(4)),
             stdin=("text", "empty", "nonl", "crlf"), fixture="misc_pair", stderr="exact",
-            normalize=misc_diff_normalize, max_flags=5,
+            normalize=misc_diff_normalize, valid=misc_diff_valid, max_flags=5,
             # The other generated pairs, plain and unified, as fixed cases.
             extra=tuple(("p%02da" % i, "p%02db" % i) for i in range(12, 24))
             + tuple(("-u", "p%02da" % i, "p%02db" % i) for i in range(12, 24))

@@ -10067,9 +10067,9 @@ static fn diff_announce(string_address head, string_address left,
                 right = diff_labels[1];
 
         text_put_string(head);
-        diff_name_shell_quoted(left);
+        text_put_string(left);
         text_put_string(" and ");
-        diff_name_shell_quoted(right);
+        text_put_string(right);
         text_put_string(tail);
         text_flush();
 }
@@ -10678,7 +10678,12 @@ static bool diff_context_set(string_address value)
 
         if (!string_digits_checked(address_of at, 10, address_of context) || string_get(at) ||
             context > (positive_max - 1) / 2)
-                return string_diagnostic(&text_diagnostic, 0, value, "invalid context length");
+        {
+                text_flush();
+                return string_report(writer_stderr, false,
+                    "diff: invalid context length '%s'\n"
+                    "diff: Try 'diff --help' for more information.\n", value);
+        }
 
         diff_context = context;
         return true;
@@ -10822,6 +10827,19 @@ static b32 tools_diff(void)
         string_address left = program_argument(first);
         string_address right = program_argument(first + 1);
         string_address joined;
+        file_facts present;
+
+        // A pair that is absent from both sides is nothing to compare, and
+        // --new-file has no side to take it from.
+        if (!string_equals(left, "-") && !string_equals(right, "-") &&
+            !file_look_at(left, address_of present) &&
+            !file_look_at(right, address_of present))
+        {
+                text_flush();
+                string_format(writer_stderr, "diff: %s: No such file or directory\n",
+                              left);
+                return text_done(2);
+        }
 
         // The same directory twice is identical without a walk.
         file_facts left_facts, right_facts;

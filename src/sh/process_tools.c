@@ -2356,7 +2356,21 @@ static b32 process_script()
         string_address input_path = null;
         string_address combined_path = file_option_value(address_of taking, 'B');
         if (combined_path)
+        {
+                // --log-io names both streams; a separate log for one of
+                // them, wherever it stands, takes that stream over.
                 output_path = input_path = combined_path;
+                if (file_option_value(address_of taking, 'O'))
+                {
+                        output_path = file_option_value(address_of taking, 'O');
+                        combined_path = null;
+                }
+                if (file_option_value(address_of taking, 'I'))
+                {
+                        input_path = file_option_value(address_of taking, 'I');
+                        combined_path = null;
+                }
+        }
         else
         {
                 output_path = file_option_value(address_of taking, 'O');
@@ -2617,8 +2631,14 @@ static bool process_replay_skip_header(
                 used += take;
                 if (take < room)
                 {
+                        if (!matches || used < 18)
+                        {
+                                // No opening line: nothing was consumed.
+                                reader->at -= used;
+                                return true;
+                        }
                         reader->at++;
-                        return matches && used >= 18;
+                        return true;
                 }
         }
         reader->failed = true;
