@@ -3625,6 +3625,11 @@ static fn ul_table_json(string_address name, address_any rows,
         log("\n   ]\n}\n", 8);
 }
 
+/* The legacy ipcs projection is fixed width to the end of the line; every
+   other table here stops at the last thing it has to say. */
+static bool ul_table_pad_last;
+static positive ul_table_pad_extra;
+
 static fn ul_table_out(address_any rows, positive row_size, positive count,
                        const ul_table_column address_to definitions,
                        positive definition_count, p8 address_to columns,
@@ -3726,16 +3731,23 @@ static fn ul_table_out(address_any rows, positive row_size, positive count,
                                         bool number =
                                             definitions[column].number;
                                         bool last_text =
+                                            !ul_table_pad_last &&
                                             field + 1 == column_count &&
                                             !number;
                                         bool empty_last =
+                                            !ul_table_pad_last &&
                                             field + 1 == column_count &&
                                             !bytes;
 
-                                        ul_lsns_safe_span_field(
-                                            value, bytes,
+                                        positive pad =
                                             (last_text || empty_last)
-                                                ? 0 : widths[column],
+                                                ? 0 : widths[column];
+                                        if (ul_table_pad_last && !heading &&
+                                            field + 1 == column_count)
+                                                pad += ul_table_pad_extra;
+
+                                        ul_lsns_safe_span_field(
+                                            value, bytes, pad,
                                             !number, definitions[column].printable ||
                                                 (!heading && definitions[column].decimal));
                                 }
@@ -12191,6 +12203,9 @@ typedef struct
 static ul_ipc_snapshot ul_ipc;
 static bool ul_ipc_bytes;
 static bool ul_ipc_numeric_permissions;
+/* lsipc --numeric-perms writes a whole mode, ipcs's legacy column the
+   digits alone. */
+static bool ul_ipc_octal_prefix;
 
 static const string_address ul_ipc_paths[] = {
     (string_address)"/proc/sysvipc/msg",
@@ -12401,9 +12416,11 @@ static string_address ul_ipc_permissions(p8 address_to text, positive mode)
 {
         if (ul_ipc_numeric_permissions)
         {
-                positive length = positive_into_base(text, mode & 0777,
-                                                     8, false);
-                text[length] = end;
+                positive at = 0;
+                if (ul_ipc_octal_prefix)
+                        text[at++] = '0';
+                at += positive_into_base(text + at, mode & 0777, 8, false);
+                text[at] = end;
                 return text;
         }
         static const positive bits[] = {0400, 0200, 0100, 0040, 0020,
@@ -12894,6 +12911,7 @@ static b32 util_linux_lsipc()
         ul_ipc_bytes = (taking.flags & FILE_FLAG('b')) != 0;
         ul_ipc_numeric_permissions =
             (taking.flags & FILE_FLAG('P')) != 0;
+        ul_ipc_octal_prefix = ul_ipc_numeric_permissions;
         bool json = (taking.flags & FILE_FLAG('J')) != 0;
         bool newline = (taking.flags & FILE_FLAG('n')) != 0;
         bool raw = (taking.flags & FILE_FLAG('r')) != 0;
@@ -12924,10 +12942,10 @@ static ul_table_column ul_ipcs_columns[UL_IPC_COLUMNS] = {
     [UL_IPC_PERMS] = {"perms", "perms", 10},
     [UL_IPC_SIZE] = {"bytes", "bytes", 10},
     [UL_IPC_NATTCH] = {"nattch", "nattch", 10},
-    [UL_IPC_STATUS] = {"status", "status", 0},
+    [UL_IPC_STATUS] = {"status", "status", 12},
     [UL_IPC_USEDBYTES] = {"used", "used-bytes", 12},
-    [UL_IPC_MSGS] = {"messages", "messages", 0},
-    [UL_IPC_NSEMS] = {"nsems", "nsems", 0},
+    [UL_IPC_MSGS] = {"messages", "messages", 12},
+    [UL_IPC_NSEMS] = {"nsems", "nsems", 10},
 };
 
 static fn ul_ipcs_table(p8 type)
@@ -12961,10 +12979,14 @@ static fn ul_ipcs_table(p8 type)
                 return;
         }
         ul_ipcs_columns[UL_IPC_ID].heading = views[type].id;
+        ul_table_pad_last = true;
+        ul_table_pad_extra = type == UL_IPC_SHARED ? 1 : 0;
         ul_table_out(ul_ipc.rows + first, sizeof(ul_ipc.rows[0]), rows,
                      ul_ipcs_columns, UL_IPC_COLUMNS,
                      (p8 address_to)views[type].columns, views[type].count,
                      true, false, ul_ipc_field);
+        ul_table_pad_last = false;
+        ul_table_pad_extra = 0;
 }
 
 static const file_long ul_ipcs_longs[] = {
@@ -13000,6 +13022,7 @@ static b32 util_linux_ipcs()
                 return string_report(log_error, 1, "%s: %s\n", "ipcs", "cannot read System V IPC snapshot");
         ul_ipc_bytes = !(taking.flags & FILE_FLAG('H'));
         ul_ipc_numeric_permissions = true;
+        ul_ipc_octal_prefix = false;
         if (types & UL_IPC_MESSAGE_BIT) ul_ipcs_table(UL_IPC_MESSAGE);
         if (types & UL_IPC_SHARED_BIT) ul_ipcs_table(UL_IPC_SHARED);
         if (types & UL_IPC_SEMAPHORE_BIT) ul_ipcs_table(UL_IPC_SEMAPHORE);
