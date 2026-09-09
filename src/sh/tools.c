@@ -8212,6 +8212,15 @@ static positive dump_od_width(p8 type, positive size)
 /* --strings' minimum, read where it is written. */
 static positive dump_od_strings;
 
+/*
+        A format string the reference cannot read is the one complaint it
+        does not stop for: it says so and reads the rest of the command
+        line, so a second bad -t and a bad option after it are both
+        reported, and only then does it fail. Every other value it refuses
+        ends the walk where it stands.
+*/
+static bool dump_od_type_failed;
+
 #define DUMP_OD_TYPE_OK 0
 #define DUMP_OD_TYPE_CHARACTER 1
 #define DUMP_OD_TYPE_SIZE 2
@@ -8387,19 +8396,27 @@ static bool dump_od_seen(p8 letter, string_address value)
         {
                 p8 kind = dump_od_types(value);
 
-                if (kind == DUMP_OD_TYPE_FLOAT)
+                if (kind == DUMP_OD_TYPE_TOO_MANY)
                         return string_diagnostic(&text_diagnostic, 0, null,
-                                                 "floating point output is unsupported");
-                if (kind == DUMP_OD_TYPE_SIZE)
+                                                 "too many output formats");
+
+                if (kind == DUMP_OD_TYPE_FLOAT)
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "od: floating point output is unsupported\n");
+                        dump_od_type_failed = true;
+                }
+                else if (kind == DUMP_OD_TYPE_SIZE)
                 {
                         text_flush();
                         string_format(writer_stderr,
                                       "od: invalid type string '%s';\n"
                                       "this system doesn't provide a %p-byte integral type\n",
                                       value, dump_od_type_size);
-                        return false;
+                        dump_od_type_failed = true;
                 }
-                if (kind == DUMP_OD_TYPE_CHARACTER)
+                else if (kind == DUMP_OD_TYPE_CHARACTER)
                 {
                         p8 shown[2] = {dump_od_type_byte, end};
 
@@ -8407,11 +8424,8 @@ static bool dump_od_seen(p8 letter, string_address value)
                         string_format(writer_stderr,
                                       "od: invalid character '%s' in type string '%s'\n",
                                       shown, value);
-                        return false;
+                        dump_od_type_failed = true;
                 }
-                if (kind != DUMP_OD_TYPE_OK)
-                        return string_diagnostic(&text_diagnostic, 0, value,
-                                                 "unsupported output format");
         }
 
         if (letter == 'E')
@@ -8967,11 +8981,23 @@ static b32 dump_run(positive first, positive count)
 
                 if (dump_input_is_directory(name))
                 {
-                        /* An input that could not be read leaves od with no
-                           offset to report, and a directory is one of those:
-                           the reference writes no closing address line after
-                           it. */
-                        read_failed = true;
+                        /*
+                                An input that could not be read leaves od
+                                with no offset to report, so the closing
+                                address line goes away with it -- unless a
+                                skip was still outstanding, which the
+                                reference then counts as taken: it stops
+                                asking for the rest and reports the offset
+                                the skip would have reached.
+                        */
+                        if (skip && dump_arguments.od)
+                        {
+                                offset += skip;
+                                skip = 0;
+                        }
+                        else
+                                read_failed = true;
+
                         text_close();
                         continue;
                 }
@@ -9055,7 +9081,10 @@ static b32 dump_run(positive first, positive count)
                 text_close();
         }
 
-        if (skip && dump_arguments.od)
+        /* A skip that outlived every input is only worth complaining about
+           when there was an input: where nothing could be opened at all the
+           reference has already said why, and says no more. */
+        if (skip && dump_arguments.od && opened)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot skip past end of combined input"));
 
         if (!dump_arguments.od && attempted && !opened)
@@ -9217,8 +9246,9 @@ static b32 tools_od(void)
         dump_arguments.address_width = 7;
         dump_arguments.od = true;
         dump_od_strings = 3;
+        dump_od_type_failed = false;
 
-        if (!file_take(address_of taking))
+        if (!file_take(address_of taking) || dump_od_type_failed)
                 return text_done(1);
 
         if (taking.flags & FILE_FLAG('w'))
@@ -9235,6 +9265,15 @@ static b32 tools_od(void)
                                       width);
                         return text_done(1);
                 }
+        }
+
+        /* A dump of strings takes no format, and the reference says so
+           before it reads the traditional operand shape. */
+        if ((taking.flags & FILE_FLAG('S')) && dump_arguments.count)
+        {
+                text_flush();
+                return text_done(string_report(writer_stderr, 1,
+                    "od: no type may be specified when dumping strings\n"));
         }
 
         /* -A, --endian, -j, -N and -S were read where they were written,
@@ -9282,13 +9321,6 @@ static b32 tools_od(void)
 
         if (taking.flags & FILE_FLAG('S'))
         {
-                if (dump_arguments.count)
-                {
-                        text_flush();
-                        return text_done(string_report(writer_stderr, 1,
-                            "od: no type may be specified when dumping strings\n"));
-                }
-
                 return dump_strings(taking.first, stop, dump_od_strings);
         }
 
