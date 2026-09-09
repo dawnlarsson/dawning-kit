@@ -538,6 +538,7 @@ cover('nothing_to_fold', None, '''
 bipolar_into_core buffered_write_core path_split_core positive_digits_core
 positive_into_core string_to_number_core writer_field_core
 memory_search_prepared_core memory_search_ascii_case_prepared_core
+memory_span_byte_wide
 ''', 'a private core with no declaration, so C cannot name it and no call '
      'site can hand it a literal; its wrappers carry the classification')
 

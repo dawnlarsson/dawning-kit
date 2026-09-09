@@ -889,10 +889,11 @@ def load_spec(domain):
     spec_<domain>.py module beside this file while a grammar is being written."""
     specs = globals().get("SPECS")
     if specs is not None and domain in specs:
-        utilities, families = specs[domain]
+        utilities, families, checks = specs[domain]
         namespace = type("Spec", (), {})()
         namespace.UTILITIES = utilities
         namespace.FAMILIES = families
+        namespace.CHECKS = checks
         return namespace
     if str(HERE) not in sys.path:
         sys.path.append(str(HERE))
@@ -1199,15 +1200,21 @@ def main(argv=None):
             if key in unstable_ids:
                 unstable[tally_key] += 1
                 continue
-            total[tally_key] += 1
-            tiers[case.tier] += 1
-            diff = differences(want, got, policy)
-            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case, spec)
+            #       An oracle that timed out or died of a signal answered
+            #       nothing, so the case has no answer to agree or disagree
+            #       with -- and whether the reference runs out of time
+            #       depends on what else the machine is doing. Counted apart
+            #       from both columns, like a case that contradicts itself,
+            #       so a busy machine cannot move a floor.
             if want["timeout"] or want["status"] < 0:
                 invalid += 1
                 print(f"  INVALID ORACLE {key} {label_of(case)} status={want['status']} "
                       f"timeout={want['timeout']}: {case.words()}")
                 continue
+            total[tally_key] += 1
+            tiers[case.tier] += 1
+            diff = differences(want, got, policy)
+            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case, spec)
             if row is not None and "case" in row:
                 # A pinned deliberate difference: the answer must hold, and
                 # must still differ from the reference.
@@ -1437,6 +1444,8 @@ def self_test():
             self.script(self.system / "chatty", "#!/bin/sh\nexit 0\n")
             self.script(self.farm / "sleeper", "#!/bin/sh\nsleep 5\n")
             self.script(self.system / "sleeper", "#!/bin/sh\nexit 0\n")
+            self.script(self.farm / "dawdler", "#!/bin/sh\nexit 0\n")
+            self.script(self.system / "dawdler", "#!/bin/sh\nsleep 5\n")
             self.script(self.farm / "flagged", "#!/bin/sh\nfor a; do case $a in -z) exit 2;; esac; done; printf ok\n")
             self.script(self.system / "flagged", "#!/bin/sh\nprintf ok\n")
             self.script(self.farm / "effect", "#!/bin/sh\nprintf x > a.txt\n")
@@ -1504,6 +1513,31 @@ def self_test():
             want, got = self.runner.pair(case, spec)
             self.assertTrue(got["timeout"])
             self.assertIn("timeout", differences(want, got))
+
+        def test_reference_timeout_is_counted_in_neither_column(self):
+            """An oracle that ran out of time answered nothing, so the case
+            has nothing to agree or disagree with -- and whether it runs out
+            depends on what else the machine is doing. It must leave the
+            denominator, or a busy machine moves a floor."""
+            spec = Utility("dawdler", timeout=1.0)
+            case = Case("text", "dawdler", [])
+            want, got = self.runner.pair(case, spec)
+            self.assertTrue(want["timeout"])
+            saved = globals().get("SPECS")
+            globals()["SPECS"] = {"text": ((spec,), (), ())}
+            import io
+            import contextlib
+            written = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(written):
+                    main([str(self.farm), "--domain", "text", "--budget", "singles",
+                          "--jobs", "1", "--no-pinned"])
+            finally:
+                globals()["SPECS"] = saved
+            report = written.getvalue()
+            self.assertIn("INVALID ORACLE", report)
+            self.assertIn("invalid oracles=1", report)
+            self.assertIn("differential 0 of 0", report)
 
         def test_missing_reference_is_reported_not_passed(self):
             case = Case("text", "nowhere-such", [])
@@ -1608,6 +1642,63 @@ def self_test():
                 sys.path.remove(str(spec_dir))
                 sys.modules.pop("spec_text", None)
 
+        def test_every_domain_keeps_its_checks_and_grammars(self):
+            """A grammar that stops being registered stops being tested, and
+            says nothing while it happens. Assembling seven spec modules into
+            one file made that possible: two of them spelled CHECKS, the later
+            one won, and 138 util-linux cases quietly went. So every part of
+            every registered domain is asked for by name here."""
+            specs = globals().get("SPECS")
+            if not specs:
+                self.skipTest("the grammars are not inlined into this file")
+            for domain, parts in specs.items():
+                self.assertEqual(len(parts), 3,
+                                 f"{domain} must register utilities, families and checks")
+                spec = load_spec(domain)
+                for part in ("UTILITIES", "FAMILIES", "CHECKS"):
+                    self.assertIs(getattr(spec, part), parts[
+                        ("UTILITIES", "FAMILIES", "CHECKS").index(part)],
+                        f"{domain}.{part} is not what the registry holds")
+                self.assertTrue(getattr(spec, "UTILITIES") or getattr(spec, "FAMILIES"),
+                                f"{domain} has neither a utility nor a family")
+                for check in getattr(spec, "CHECKS"):
+                    self.assertTrue(callable(check), f"{domain} check is not callable")
+            #       And the thing that actually went wrong: a section whose
+            #       grammar is still spelled bare belongs to no domain, so
+            #       nothing walks it. The registry cannot notice -- it is
+            #       looking for the prefixed name -- but a bare one at module
+            #       scope can only be a section that was not renamed.
+            bare = [spelling for spelling in ("UTILITIES", "FAMILIES", "CHECKS")
+                    if spelling in globals()]
+            self.assertEqual(bare, [],
+                             f"{bare} are spelled bare at module scope, so whatever "
+                             f"they hold is registered to no domain and never runs")
+
+        def test_no_definition_in_this_file_shadows_another(self):
+            """The same hazard from the other side. Assembling modules into
+            one file lets a name arrive twice, and the later one wins in
+            silence: that is how a second HARNESS_CHECKS made the engines
+            benchmark unreachable. A function or class defined twice is
+            always either dead text or a shadow, so neither is allowed."""
+            import ast
+            source = Path(__file__).resolve().read_text()
+            lines = source.splitlines(keepends=True)
+            seen, shadowed, repeated = {}, [], []
+            for node in ast.parse(source).body:
+                if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+                    continue
+                text = "".join(lines[node.lineno - 1:node.end_lineno])
+                if node.name in seen:
+                    (repeated if seen[node.name] == text else shadowed).append(
+                        f"{node.name} at line {node.lineno}")
+                seen.setdefault(node.name, text)
+            self.assertEqual(shadowed, [],
+                             "defined twice with different bodies, so the first is "
+                             "unreachable: " + ", ".join(shadowed))
+            self.assertEqual(repeated, [],
+                             "defined twice with the same body, which is dead text: "
+                             + ", ".join(repeated))
+
         def test_tally_is_written_per_program(self):
             tally = self.root / "tally"
             spec_dir = self.root / "specs2"
@@ -1689,7 +1780,7 @@ def engines_arguments():
     for item in args.binary:
         label, separator, path = item.partition("=")
         if not separator or not label or label in binaries:
-            parser.error("binary engines_arguments need distinct nonempty LABEL=PATH pairs")
+            parser.error("binary arguments need distinct nonempty LABEL=PATH pairs")
         binary = Path(path).resolve(strict=True)
         if not binary.is_file() or not os.access(binary, os.X_OK):
             parser.error(f"not an executable file: {binary}")
@@ -1903,7 +1994,7 @@ def engines_shell_workloads(root, size, legacy=True):
         "trap": loop('kill -USR1 $$', 'n=0; trap \'n=$((n+1))\' USR1',
                      'printf "%s:%s\\n" "$n" "$i"', turns=min(count, 2000)),
     }
-    scripts["parse-engines_arguments"] = (': alpha beta gamma long_variable_name delta\n' * count +
+    scripts["parse-arguments"] = (': alpha beta gamma long_variable_name delta\n' * count +
                                   'printf "done\\n"\n')
     scripts["parse-quotes"] = (': \'single quoted\' "double quoted" escaped\\ word "${missing:-fallback}"\n' * count +
                                'printf "done\\n"\n')
@@ -2043,7 +2134,7 @@ def harness_engines():
                     "cpu_median_ms": {label: statistics.median(values)
                                       for label, values in cpu_samples.items()},
                     "cpu_samples_ms": cpu_samples,
-                    "applet": tool, "engines_arguments": operands,
+                    "applet": tool, "arguments": operands,
                     "stdin_sha256": hashlib.sha256(source.read_bytes()).hexdigest() if source else None,
                     "invalid": invalid,
                     "ratio_to_first": {label: value / medians[labels[0]]
@@ -2060,31 +2151,20 @@ def harness_engines():
                 if args.json:
                     args.json.write_text(json.dumps(result, indent=2) + "\n")
     if not result["rows"]:
-        raise SystemExit("filter selected no engines_workloads")
+        raise SystemExit("filter selected no workloads")
     if args.json:
         args.json.write_text(json.dumps(result, indent=2) + "\n")
 
 
-HARNESS_CHECKS = {"engines": harness_engines}
+def harness_engines_main(argv):
+    """--harness engines ARGS, from harness_main: the engine benchmark.
 
-
-def harness_entry():
-    """--harness NAME [ARGS], from main(): run the program called NAME.
-
-    main() has already put the words after --harness into sys.argv, so the
-    first of them is the name and the rest belong to that program's own
-    argument parser.
+    The other folded programs read the words they were given; this one was a
+    command of its own and parses sys.argv, so the words go back there under
+    a program name that says how it was reached.
     """
-    names = ", ".join(sorted(HARNESS_CHECKS))
-    if len(sys.argv) < 2:
-        sys.stderr.write("--harness wants a name: %s\n" % names)
-        return 2
-    name = sys.argv[1]
-    if name not in HARNESS_CHECKS:
-        sys.stderr.write("no harness called %s; there is %s\n" % (name, names))
-        return 2
-    sys.argv = ["%s --harness %s" % (sys.argv[0], name)] + sys.argv[2:]
-    return HARNESS_CHECKS[name]() or 0
+    sys.argv = ["%s --harness engines" % sys.argv[0], *argv]
+    return harness_engines() or 0
 
 # ==== inlined domain specs (assembled by the pass; edit the grammar here) ====
 
@@ -6115,7 +6195,7 @@ def files_column_layout(farm):
     return passed, total, notes
 
 
-CHECKS = (files_column_layout,)
+FILES_CHECKS = (files_column_layout,)
 
 # ---- domain: misc (from spec_misc.py) ----
 
@@ -8583,15 +8663,6 @@ def shell_expand_ansi_quote_transition(rng):
 # ----------------------------------------------------------------------------
 #       Shared helpers for the whole module.
 # ----------------------------------------------------------------------------
-
-def shell_quote(text):
-    return "'" + text.replace("'", "'\"'\"'") + "'"
-
-
-def shell_program(*lines):
-    """Keep setup, mutation and observation separable for line shrinking."""
-    return "\n".join(lines) + "\n"
-
 
 def shell_words(argv):
     return " ".join(shlex.quote(word) for word in argv)
@@ -14063,7 +14134,7 @@ def ul_check_lscpu_summary(farm):
     return 1, 1, []
 
 
-CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary)
+UTIL_LINUX_CHECKS = (ul_check_denominator, ul_check_rfkill, ul_check_lscpu_summary)
 
 # ---- harness: standalone checks (from harness.py) ----
 
@@ -17708,6 +17779,7 @@ def harness_code_map(argv):
 
 
 HARNESS_CHECKS = {
+    "engines": harness_engines_main,
     "core_state": harness_core_state,
     "spark_entry": harness_spark_entry,
     "build_tools": harness_build_tools,
@@ -17737,13 +17809,13 @@ def harness_entry():
 # ---- registry ----
 
 SPECS = {
-    "awk": (globals().get("AWK_UTILITIES", ()), globals().get("AWK_FAMILIES", ())),
-    "builtins": (globals().get("BUILTINS_UTILITIES", ()), globals().get("BUILTINS_FAMILIES", ())),
-    "files": (globals().get("FILES_UTILITIES", ()), globals().get("FILES_FAMILIES", ())),
-    "misc": (globals().get("MISC_UTILITIES", ()), globals().get("MISC_FAMILIES", ())),
-    "shell": (globals().get("SHELL_UTILITIES", ()), globals().get("SHELL_FAMILIES", ())),
-    "text": (globals().get("TEXT_UTILITIES", ()), globals().get("TEXT_FAMILIES", ())),
-    "util_linux": (globals().get("UTIL_LINUX_UTILITIES", ()), globals().get("UTIL_LINUX_FAMILIES", ())),
+    "awk": (globals().get("AWK_UTILITIES", ()), globals().get("AWK_FAMILIES", ()), globals().get("AWK_CHECKS", ())),
+    "builtins": (globals().get("BUILTINS_UTILITIES", ()), globals().get("BUILTINS_FAMILIES", ()), globals().get("BUILTINS_CHECKS", ())),
+    "files": (globals().get("FILES_UTILITIES", ()), globals().get("FILES_FAMILIES", ()), globals().get("FILES_CHECKS", ())),
+    "misc": (globals().get("MISC_UTILITIES", ()), globals().get("MISC_FAMILIES", ()), globals().get("MISC_CHECKS", ())),
+    "shell": (globals().get("SHELL_UTILITIES", ()), globals().get("SHELL_FAMILIES", ()), globals().get("SHELL_CHECKS", ())),
+    "text": (globals().get("TEXT_UTILITIES", ()), globals().get("TEXT_FAMILIES", ()), globals().get("TEXT_CHECKS", ())),
+    "util_linux": (globals().get("UTIL_LINUX_UTILITIES", ()), globals().get("UTIL_LINUX_FAMILIES", ()), globals().get("UTIL_LINUX_CHECKS", ())),
 }
 
 
