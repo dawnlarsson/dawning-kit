@@ -258,6 +258,13 @@ def covering_array(parameters, strength, rng):
     if not sizes or strength < 1:
         return []
     strength = min(strength, len(sizes))
+    # A three-wise array over parameters with long value lists is millions of
+    # tuples and hours of greedy search for a walk nobody reads; the pairwise
+    # array over the same parameters is seconds and finds the same classes.
+    if strength > 2:
+        widest = sorted(sizes)[-3:]
+        if widest[0] * widest[1] * widest[2] > 4000:
+            strength = 2
     combos = list(itertools.combinations(range(len(sizes)), strength))
     uncovered = {c: set(itertools.product(*(range(sizes[i]) for i in c))) for c in combos}
     by_column = {i: [c for c in combos if i in c] for i in range(len(sizes))}
