@@ -187,12 +187,8 @@ static bool shell_start_options(string_address address_to arguments,
                                 }
                                 else if (!shell_option_named(arguments[++at],
                                                              on))
-                                {
-                                        string_format(log_error,
-                                                      "sh: invalid option: %s\n",
-                                                      arguments[at]);
-                                        return false;
-                                }
+                                        return string_report(log_error, false,
+                                            "sh: invalid option: %s\n", arguments[at]);
                         }
                         else if (value == 'O' && shell_bash_compat)
                         {
@@ -207,13 +203,8 @@ static bool shell_start_options(string_address address_to arguments,
                                             shell_shopt_find(arguments[++at]);
 
                                         if (item >= SHELL_SHOPT_NAMES)
-                                        {
-                                                string_format(
-                                                    log_error,
-                                                    "sh: invalid shell option: %s\n",
-                                                    arguments[at]);
-                                                return false;
-                                        }
+                                                return string_report(log_error, false,
+                                                    "sh: invalid shell option: %s\n", arguments[at]);
                                         if (item == SHELL_SHOPT_EXPAND_ALIASES)
                                                 shell_alias_startup_told = true;
                                         if (on)
@@ -227,10 +218,8 @@ static bool shell_start_options(string_address address_to arguments,
                         else if (!shell_option_letter_told(value, on))
                         {
                                 p8 said[2] = {value, end};
-                                string_format(log_error,
-                                              "sh: invalid option: %s%s\n",
-                                              on ? "-" : "+", said);
-                                return false;
+                                return string_report(log_error, false,
+                                    "sh: invalid option: %s%s\n", on ? "-" : "+", said);
                         }
 
                         if (value == 's')
@@ -484,19 +473,12 @@ b32 main()
                                      ? process_arguments - first - 2 : 0;
 
                 if (first >= process_arguments)
-                {
-                        log_error("sh: -c wants a command\n", 0);
-                        return shell_bash_compat &&
-                                       (shell_options & SHELL_FLAG('e'))
-                                   ? 1 : 2;
-                }
+                        return string_report(log_error, shell_bash_compat && (shell_options & SHELL_FLAG('e')) ? 1 : 2,
+                            "sh: -c wants a command\n");
 
                 command = arguments[first];
                 if (!shell_start_parameters(arguments, first + 2, count))
-                {
-                        log_error("sh: no room for arguments\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "sh: no room for arguments\n");
 
                 //      With no name operand $0 is unspecified, and what
                 //      dash does is use the path it was invoked as. That is
@@ -515,10 +497,7 @@ b32 main()
                 positive count = process_arguments - first - 1;
 
                 if (!shell_start_parameters(arguments, first + 1, count))
-                {
-                        log_error("sh: no room for arguments\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "sh: no room for arguments\n");
 
                 shell_script_name = script;
                 shell_option_flags = (string_address) "";
@@ -527,10 +506,7 @@ b32 main()
         else if (invocation.next < process_arguments &&
                  !shell_start_parameters(arguments, invocation.next,
                                           process_arguments - invocation.next))
-        {
-                log_error("sh: no room for arguments\n", 0);
-                return 1;
-        }
+                return string_report(log_error, 1, "sh: no room for arguments\n");
 
         interactive = shell_is_interactive = invocation.interactive >= 0
                           ? invocation.interactive
@@ -609,10 +585,7 @@ b32 main()
 
                         if (!held_command ||
                             (positive)held_command >= (positive)-4095)
-                        {
-                                log_error("sh: no room for the command\n", 0);
-                                return 1;
-                        }
+                                return string_report(log_error, 1, "sh: no room for the command\n");
 
                         memory_copy(held_command, command, length + 1);
 
@@ -650,10 +623,7 @@ b32 main()
                 //      Room for another read on top of whatever is being
                 //      held back, so a line has no length it cannot reach.
                 if (!shell_array_room(shell_buffer, shell_buffer_room, held + MAX_INPUT_STEP + 1))
-                {
-                        log_error("sh: no room to read\n", 0);
-                        return 1;
-                }
+                        return string_report(log_error, 1, "sh: no room to read\n");
 
                 if (script_file)
                         input = exec_script_fd;

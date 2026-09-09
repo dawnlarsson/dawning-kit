@@ -11,12 +11,13 @@ static char *operand;
 static bool root_operand,root_opened,prompt,child_present;
 static bipolar root_error,operand_error,opened_error,open_error,remove_error,seek_error,read_error,child_error;
 static int opens,unlinks,rmdirs,seeks,reads,closes,prompts;
+static void mock_log(char *text,positive length){(void)text;(void)length;}
+#define log mock_log
 struct linux_dirent64 {char d_name[256];};
 typedef struct {bipolar handle,error;positive have,at;p8 block[FILE_BLOCK];} file_walk;
 static bool file_take(file_taking *t){t->flags=options;t->first=1;rm_collision_option=collision;return true;}
 static int program_argument_count(void){return 2;}
 static char *program_argument(int n){(void)n;return operand;}
-static int file_missing(char *s){(void)s;return 1;}
 static bipolar file_look_code(bipolar d,char *n,positive f,file_facts *out){
  bool root=(!strcmp(n,"/")&&f==0)||(d==42&&!*n&&root_opened)||(d==AT_FDCWD&&f!=0&&root_operand);
  *out=(file_facts){.mode=MODE_DIRECTORY,.device_major=8,.device_minor=1,.inode=root?2:3};
@@ -29,7 +30,6 @@ static bool file_look(bipolar d,char*n,positive f,file_facts *out){return file_l
 static bool file_is_directory(bipolar d,char*n){file_facts out;return file_look(d,n,AT_SYMLINK_NOFOLLOW,&out)&&(out.mode&MODE_FORMAT)==MODE_DIRECTORY;}
 static bool file_ask(char*a,char*b,char*c){(void)a;(void)b;(void)c;prompts++;return prompt;}
 static char *rm_wording(file_facts*f){(void)f;return "remove";}
-static void rm_said(char*s,bool d){(void)s;(void)d;}
 static bipolar system_open_at(bipolar d,char*n,positive f){(void)d;(void)n;(void)f;opens++;return open_error?open_error:42;}
 static bipolar system_remove_at(bipolar d,char*n,positive f){
  if(f==AT_REMOVEDIR){rmdirs++;return remove_error;}
@@ -46,7 +46,6 @@ static struct linux_dirent64 *file_walk_next(file_walk *w){
  return 0;
 }
 static bool file_path_join(p8 *out,char *d,char *n){return snprintf((char*)out,FILE_PATH_MAX,"%s/%s",d,n)<FILE_PATH_MAX;}
-static void file_too_long(char*a,char*b,char*c,char*d){(void)a;(void)b;(void)c;(void)d;diagnostics++;}
 @file_is_dot@
 @file_same_identity@
 static bool rm_tree(bipolar,char*,char*,positive);

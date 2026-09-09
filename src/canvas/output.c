@@ -217,7 +217,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
 
         if (format == DRM_FORMAT_INVALID)
         {
-                log_canvas_error("no 32 bit format on this plane, skipping output\n");
+                pr_err("[moonwater canvas] " "no 32 bit format on this plane, skipping output\n");
                 return NULL;
         }
 
@@ -228,7 +228,7 @@ static struct output *output_add(struct canvas *canvas, struct drm_mode_set *mod
         output->buffer = drm_client_buffer_create_dumb(&canvas->client, width, height, format);
         if (IS_ERR(output->buffer))
         {
-                log_canvas_error("could not create a %ux%u scanout buffer\n", width, height);
+                pr_err("[moonwater canvas] " "could not create a %ux%u scanout buffer\n", width, height);
                 kfree(output);
                 return NULL;
         }
@@ -374,11 +374,9 @@ static _Bool desktop_commit(void)
                 committed->set_result = set;
 
                 if (set)
-                        log_canvas("%ux%u would not go on the screen (%d)\n",
-                                   output->width, output->height, set);
+                        pr_info("[moonwater canvas] " "%ux%u would not go on the screen (%d)\n", output->width, output->height, set);
                 else
-                        log_canvas("%ux%u is on the screen\n",
-                                   output->width, output->height);
+                        pr_info("[moonwater canvas] " "%ux%u is on the screen\n", output->width, output->height);
         }
 
         list_for_each_entry(output, &desktop.outputs, link)
@@ -509,11 +507,7 @@ static int canvas_build(struct canvas *canvas, _Bool biggest)
                 */
                 connector = mode_set->num_connectors ? mode_set->connectors[0] : NULL;
 
-                log_canvas("screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n",
-                           connector && connector->name ? connector->name : "?",
-                           mode_set->mode->hdisplay, mode_set->mode->vdisplay,
-                           drm_mode_vrefresh(mode_set->mode), desktop.scale,
-                           connector ? output_mode_count(connector) : 0);
+                pr_info("[moonwater canvas] " "screen %s %ux%u at %u Hz, drawn %ux, %u mode(s) offered\n", connector && connector->name ? connector->name : "?", mode_set->mode->hdisplay, mode_set->mode->vdisplay, drm_mode_vrefresh(mode_set->mode), desktop.scale, connector ? output_mode_count(connector) : 0);
 
                 output = output_add(canvas, mode_set);
                 if (!output)
@@ -563,8 +557,7 @@ static int canvas_start(struct canvas *canvas)
 
                 if (ret)
                 {
-                        log_canvas_error("no screen to draw on (%d), leaving the display alone\n",
-                                         ret);
+                        pr_err("[moonwater canvas] " "no screen to draw on (%d), leaving the display alone\n", ret);
                         return ret;
                 }
 
@@ -576,10 +569,9 @@ static int canvas_start(struct canvas *canvas)
                 // A rejected mode owns no useful picture. Release its outputs
                 // before retrying, or standing aside for the console client.
                 if (attempt)
-                        log_canvas_error("no mode would set (%d), leaving the display alone\n",
-                                         ret);
+                        pr_err("[moonwater canvas] " "no mode would set (%d), leaving the display alone\n", ret);
                 else
-                        log_canvas("that mode would not set (%d), taking the offered one\n", ret);
+                        pr_info("[moonwater canvas] " "that mode would not set (%d), taking the offered one\n", ret);
                 canvas_release(canvas);
                 if (attempt)
                         return ret;
@@ -614,8 +606,7 @@ static int canvas_start(struct canvas *canvas)
                 list_for_each_entry(output, &desktop.outputs, link)
                         count++;
 
-                log_canvas("desktop %dx%d, %u output(s)\n",
-                           desktop.width, desktop.height, count);
+                pr_info("[moonwater canvas] " "desktop %dx%d, %u output(s)\n", desktop.width, desktop.height, count);
         }
 
         // Something to use it with. A desktop with nothing on it is not a
@@ -623,7 +614,7 @@ static int canvas_start(struct canvas *canvas)
         if (!desktop.terminal)
         {
                 desktop.terminal = true;
-                log_canvas("terminal: %d\n", spawn_terminal());
+                pr_info("[moonwater canvas] " "terminal: %d\n", spawn_terminal());
         }
 
         return 0;

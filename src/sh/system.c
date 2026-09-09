@@ -155,22 +155,6 @@ static bipolar start_shell_until_ready(b32 device, positive address_to started)
         return shell;
 }
 
-// Reading a wait status as an exit code alone reports a crash as a clean exit
-// of zero -- which is the one thing this line exists to make visible.
-static fn report_exit(positive status)
-{
-        positive signal = status & 0x7f;
-
-        if (signal)
-                string_format(log, init_label "%s killed by signal %p, restarting\n",
-                              init_program, signal);
-        else
-                string_format(log, init_label "%s exited (%p), restarting\n",
-                              init_program, status >> 8 & 0xff);
-
-        log_flush();
-}
-
 /*
         A pty needs somewhere for its other end to appear.
 
@@ -297,7 +281,13 @@ static DEAD_END b32 system_init()
                         log_flush();
                 }
                 else
-                        report_exit(status);
+                {
+                        string_format(log, status & 0x7f
+                            ? init_label "%s killed by signal %p, restarting\n"
+                            : init_label "%s exited (%p), restarting\n", init_program,
+                            status & 0x7f ? status & 0x7f : status >> 8 & 0xff);
+                        log_flush();
+                }
 
                 if (clock_monotonic_nanoseconds() - started >= SHELL_SETTLED_NS)
                 {

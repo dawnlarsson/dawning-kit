@@ -30,8 +30,9 @@ typedef struct
 typedef struct
 {
         p8 first_skip[256], last_bytes[256], literal[RX_LITERAL_MAX];
-        positive literal_length;
-        positive2 literal_anchors;
+        positive literal_length, fixed_length, fixed_work;
+        positive2 literal_anchors, fixed_anchors;
+        p8 fixed_literal[RX_NODE_MAX];
 } rx_hints;
 
 typedef struct
@@ -465,6 +466,54 @@ static fn rx_required(const rx_node *nodes, p16 first, rx_hints *hints)
         }
 }
 
+/* A deterministic graph can reuse the prepared literal search when its
+   captures are not observed. Bound both the expansion and interpreter work;
+   the graph itself stays compact and remains the resource-limited fallback. */
+static bool rx_fixed(const rx_node *nodes, p16 first, rx_hints *hints, positive *work)
+{
+        for (p16 at = first; at; at = nodes[at].next)
+        {
+                const rx_node *node = nodes + at;
+                positive begin = hints->fixed_length, child_work = 0;
+                if (node->kind == RX_BYTE)
+                {
+                        if (begin < RX_NODE_MAX)
+                                hints->fixed_literal[begin] = node->argument;
+                        hints->fixed_length++;
+                        child_work = 1;
+                }
+                else if (node->kind == RX_CAPTURE ||
+                         (node->kind == RX_COUNT && node->minimum == node->maximum))
+                {
+                        if (!rx_fixed(nodes, node->left, hints, &child_work))
+                                return false;
+                        if (node->kind == RX_CAPTURE)
+                                child_work += 2;
+                        else
+                        {
+                                positive size = hints->fixed_length - begin;
+                                positive count = node->minimum;
+                                if (count > RX_NODE_MAX / (child_work + 1))
+                                        return false;
+                                /* Every byte costs at least one work unit, so this
+                                   multiplication is bounded by the work check. */
+                                hints->fixed_length = begin + count * size;
+                                if (hints->fixed_length <= RX_NODE_MAX)
+                                        for (positive i = 1; i < count && size; i++)
+                                                memory_copy_apart(hints->fixed_literal + begin + i * size,
+                                                                  hints->fixed_literal + begin, size);
+                                child_work = 1 + count * (child_work + 1);
+                        }
+                }
+                else
+                        return false;
+                if (child_work > RX_NODE_MAX - *work)
+                        return false;
+                *work += child_work;
+        }
+        return true;
+}
+
 /* Compile above the current mark. Neither a failed compile nor its scratch
    metadata changes a published descriptor or the pool's ownership cursor. */
 static bool rx_compile(rx_pool *pool, regex_program *out, string_address pattern,
@@ -478,7 +527,9 @@ static bool rx_compile(rx_pool *pool, regex_program *out, string_address pattern
                 c.cursor.nodes = 1;
         p16 first = c.cursor.nodes;
         rx_hints *hints = pool->hints + c.cursor.hints++;
-        memory_fill(hints, 0, sizeof(*hints));
+        /* Every accepted proof byte is constructed before publication;
+           rewinding a hint slot does not require clearing unused capacity. */
+        memory_fill(hints, 0, __builtin_offsetof(rx_hints, fixed_literal));
         c.program = (regex_program){.nodes = pool->nodes, .sets = (const p8 (*)[256])pool->sets,
                                 .hints = hints, .policy = policy, .flags = icase ? RX_IGNORE_CASE : 0};
         rx_fragment root = rx_alternation(address_of c);
@@ -510,6 +561,14 @@ static bool rx_compile(rx_pool *pool, regex_program *out, string_address pattern
         if (root.first && pool->nodes[root.first].kind == RX_BEGIN)
                 c.program.flags |= RX_ANCHORED;
         rx_required(pool->nodes, root.first, hints);
+        positive fixed_work = 0;
+        if (!literal && rx_fixed(pool->nodes, root.first, hints, &fixed_work) &&
+            hints->fixed_length)
+        {
+                hints->fixed_work = fixed_work + 1;
+                hints->fixed_anchors = memory_search_prepare(
+                    hints->fixed_literal, hints->fixed_length, icase);
+        }
         if (literal)
                 c.program.flags |= RX_LITERAL_PROVES;
         hints->literal_anchors = memory_search_prepare(hints->literal, hints->literal_length, icase);
@@ -866,17 +925,26 @@ static p8 rx_find(rx_match *match, const regex_program *program, p8 mode, bool c
                                     ? (p8)((program->groups + 1) * 2) : 2;
         if (start > length)
                 return RX_NO_MATCH;
-        if ((program->flags & RX_LITERAL_PROVES) && !program->boundary && mode != REGEX_EXACT_LONGEST)
+        const rx_hints *hints = program->hints;
+        bool fixed = hints->fixed_work && match->active_captures == 2 &&
+                     !program->boundary && mode != REGEX_EXACT_LONGEST &&
+                     !match->pending_exhaustion && match->frame_capacity >= RX_NODE_MAX &&
+                     length - start < match->work_limit / hints->fixed_work;
+        if (fixed && hints->fixed_length > length - start)
+                return RX_NO_MATCH;
+        if (((program->flags & RX_LITERAL_PROVES) || fixed) &&
+            !program->boundary && mode != REGEX_EXACT_LONGEST)
         {
-                const rx_hints *hints = program->hints;
+                positive size = fixed ? hints->fixed_length : hints->literal_length;
                 string_address found = text_literal_find(bytes, length, start,
-                    (string_address)hints->literal, hints->literal_length,
-                    (program->flags & RX_IGNORE_CASE) != 0, hints->literal_anchors);
+                    (string_address)(fixed ? hints->fixed_literal : hints->literal), size,
+                    (program->flags & RX_IGNORE_CASE) != 0,
+                    fixed ? hints->fixed_anchors : hints->literal_anchors);
                 if (!found)
                         return RX_NO_MATCH;
                 memory_fill(match->slots, -1, match->active_captures * sizeof(positive));
                 match->slots[0] = (positive)(found - bytes);
-                match->slots[1] = match->slots[0] + hints->literal_length;
+                match->slots[1] = match->slots[0] + size;
                 return RX_MATCH;
         }
         for (positive at = start; at <= length; at++)
@@ -956,7 +1024,7 @@ static bool regex_find(p8 mode, string_address text, positive length, positive f
                             mode & ~REGEX_CAPTURES, mode & REGEX_CAPTURES, text, length, from);
         if (result == RX_COMPLEX)
         {
-                text_error(null, "regular expression too complex");
+                string_diagnostic(&text_diagnostic, 0, null, "regular expression too complex");
                 text_status = 2;
         }
         return result == RX_MATCH;

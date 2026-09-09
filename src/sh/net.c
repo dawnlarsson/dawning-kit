@@ -140,12 +140,6 @@ static bool net_word_is(string_address word, const char *full, positive least)
         return length >= least && !string_compare_max(word, (string_address)full, length);
 }
 
-static COLD fn net_complain(string_address message)
-{
-        string_format(net_out, "ip: %s\n", message);
-        net_flush();
-}
-
 //      The errno the kernel gave, said as plainly as this can say it.
 static COLD b32 net_refused(string_address doing, bipolar status)
 {
@@ -928,7 +922,8 @@ static b32 net_watch(void)
 
         if (events < 0)
         {
-                net_complain((string_address) "cannot listen for link changes");
+                string_format(net_out, "ip: %s\n", (string_address) "cannot listen for link changes");
+                net_flush();
                 return 1;
         }
 
@@ -1077,7 +1072,8 @@ static b32 net_ip(void)
 
         if (handle < 0)
         {
-                net_complain((string_address) "cannot open a netlink socket");
+                string_format(net_out, "ip: %s\n", (string_address) "cannot open a netlink socket");
+                net_flush();
                 return 1;
         }
 
@@ -1119,7 +1115,8 @@ static b32 net_ip(void)
                 }
                 else
                 {
-                        net_complain((string_address) "link: only 'show' and 'set NAME up'");
+                        string_format(net_out, "ip: %s\n", (string_address) "link: only 'show' and 'set NAME up'");
+                        net_flush();
                         status = 1;
                 }
         }
@@ -1142,7 +1139,8 @@ static b32 net_ip(void)
                         if (!net_split_prefix(net_word(3), address_of host,
                                               address_of bits))
                         {
-                                net_complain((string_address) "addr add: not an address");
+                                string_format(net_out, "ip: %s\n", (string_address) "addr add: not an address");
+                                net_flush();
                                 status = 1;
                         }
                         else if ((index = net_index_of((b32)handle, net_word(5), null)) < 0)
@@ -1159,8 +1157,9 @@ static b32 net_ip(void)
                 }
                 else
                 {
-                        net_complain((string_address)
-                                     "addr: only 'show' and 'add A.B.C.D/N dev NAME'");
+                        string_format(net_out, "ip: %s\n", (string_address)
+                                                             "addr: only 'show' and 'add A.B.C.D/N dev NAME'");
+                        net_flush();
                         status = 1;
                 }
         }
@@ -1186,7 +1185,8 @@ static b32 net_ip(void)
 
                         if (gateway < 0)
                         {
-                                net_complain((string_address) "route add: not an address");
+                                string_format(net_out, "ip: %s\n", (string_address) "route add: not an address");
+                                net_flush();
                                 status = 1;
                         }
                         else if (net_words() == 8 &&
@@ -1203,14 +1203,16 @@ static b32 net_ip(void)
                 }
                 else
                 {
-                        net_complain((string_address)
-                                     "route: only 'show' and 'add default via A.B.C.D'");
+                        string_format(net_out, "ip: %s\n", (string_address)
+                                                             "route: only 'show' and 'add default via A.B.C.D'");
+                        net_flush();
                         status = 1;
                 }
         }
         else
         {
-                net_complain((string_address) "unknown object; try link, addr or route");
+                string_format(net_out, "ip: %s\n", (string_address) "unknown object; try link, addr or route");
+                net_flush();
                 status = 1;
         }
 

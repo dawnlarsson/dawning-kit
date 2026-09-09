@@ -131,7 +131,7 @@ static struct canvas *canvas_take_over(struct drm_device *dev)
 
                 if (!canvas_font)
                 {
-                        log_canvas("no console font to draw with\n");
+                        pr_info("[moonwater canvas] " "no console font to draw with\n");
                         return NULL;
                 }
 
@@ -238,8 +238,7 @@ static int canvas_claim(const char *path, unsigned int minor)
                 return -EBUSY;
 
         drm_client_register(&canvas->client);
-        log_canvas("attached to %s, %s display\n", canvas->client.dev->driver->name,
-                   canvas_is_virtual(canvas->client.dev) ? "a guest's" : "a real");
+        pr_info("[moonwater canvas] " "attached to %s, %s display\n", canvas->client.dev->driver->name, canvas_is_virtual(canvas->client.dev) ? "a guest's" : "a real");
 
         return 0;
 }
@@ -285,7 +284,7 @@ static COLD void canvas_probe(struct work_struct *work)
 
         if (canvas_attempts >= CANVAS_ATTEMPTS)
         {
-                log_canvas("gave up waiting for a card\n");
+                pr_info("[moonwater canvas] " "gave up waiting for a card\n");
                 return;
         }
 

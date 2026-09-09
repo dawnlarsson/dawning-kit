@@ -2,6 +2,15 @@
 
 The [regex implementation audit](REGEX_PROOF.md) records the counted-graph fold,
 its complete source accounting, regression evidence and runtime tradeoffs.
+The [native shared-floor profile](FREQUENCY_FLOOR.md) ranks remaining performance
+work by measured CPU share and distinguishes it from static source reach.
+The [diagnostic fold](ERROR_FOLD.md) records the shared reporting entry, source
+and binary reductions, and preserved error-policy boundaries.
+The [wrapper-removal pass](WRAPPER_REMOVAL.md) removes the remaining thin
+diagnostic helpers and records the resulting source and binary tradeoffs.
+The [performance recovery pass](PERFORMANCE_RECOVERY.md) measures the combined
+regex, text-reader, shell and shared-search changes against the prior binary
+and installed reference tools.
 
 This is a source map for finding and costing architectural reductions. It joins
 the sealed production inventory to semantic classifications, source extents,
@@ -44,6 +53,9 @@ verdicts. Use the later implementation record when an earlier review says
 | [Counted regex and completion audit](REGEX_PROOF.md) | Applied in `92359fd` and `c6f5a6a`; 766 production lines removed, with recorded performance and resource tradeoffs. |
 | [General tidy](../../artifacts/general-tidy-2026-09-08/review.md) | Removes 46 further production lines and 172 source tokens: unused shell APIs/state and the previously proposed D13 dd operand table. Repairs stale sed state and lsblk include paths in maintained audit fixtures. |
 | [Storage and teardown repairs](../../artifacts/resolve-2026-09-08/review.md) | Reuses retired function-body ranges, streams mapfile records, and releases orphaned Canvas cursor buffers. Removes 69 production lines overall; adds 622 tokens for ownership and correctness checks. |
+| [Wrapper removal](WRAPPER_REMOVAL.md) | Removes 55 C functions, four logging macros and 449 production lines; centralizes diagnostic transport and prefix/flush selection in `library.c`. Callers gain 5,738 lexer tokens and the normal binary grows 11,248 bytes. |
+| [Performance recovery](PERFORMANCE_RECOVERY.md) | Fixed regex proofs reuse shared search assembly; reader/output fusion removes copies; reverse arena selection skips lower gaps; short byte searches avoid feature dispatch. Paired native results and resource tradeoffs are recorded separately. |
+| [Diagnostic fold](ERROR_FOLD.md) | Removes 1,401 production lines and 830 lexer tokens. Adds one assembly entry sharing the formatter across three architectures; removes diagnostic aliases and repeated report/return blocks. |
 
 The [mapfile follow-up](../../artifacts/resolve-2026-09-08/mapfile/review.md)
 distinguishes invalid explicit descriptors from Bash-compatible open-descriptor
@@ -74,9 +86,20 @@ storage helpers, and remaps 308 location IDs. Existing retained-body functions
 were re-read against the replacement. Targeted mapfile, executor and Canvas
 notes retain their family classifications; the old top-only storage constraint
 has been replaced by the current range and reference-count contracts.
+The diagnostic pass remaps 2,090 location IDs and adds the reviewed assembly
+entry `string_report`. Twenty changed C bodies are conservatively returned to
+family classification: their diagnostic changes were reviewed, while the full
+surrounding functions were not re-reviewed in this pass.
+The stricter wrapper-removal pass deletes 55 C entries, adds three reviewed
+assembly entries and remaps 2,329 location IDs. Twelve changed bodies return to
+family classification because only their changed paths were re-reviewed.
+The performance recovery adds one reviewed regex proof constructor, remaps 556
+location IDs and returns four changed bodies to family classification. The
+changed paths and their bounds/lifetimes received independent review; this does
+not promote the complete surrounding bodies.
 
 The source digest is
-`ef3419884580a4403419fa5f1b270faad1e9ccee0f79d1ea91b233ff337d55a6`.
+`4690fc035019b719dcc31ba150cba6d34169786f871d273cb077a9eb9915e441`.
 The generated artifact records its checkout commit and each source file's
 SHA-256; during integration the digest identifies the working source even when
 the commit still names its baseline. The following measurements are pinned to
@@ -85,31 +108,32 @@ that source snapshot. Classification completeness is not correctness evidence.
 | Inventory | Count |
 | --- | ---: |
 | Production files | 81 |
-| Production physical lines | 192,407 |
-| Ordinary C bodies | 3,647 |
-| Generated C entries | 148 |
+| Production physical lines | 190,656 |
+| Ordinary C bodies | 3,595 |
+| Generated C entries | 146 |
 | C aliases | 100 |
-| Assembly symbols, including aliases; architecture variants grouped | 349 |
-| Total production symbols | **4,244** |
+| Assembly symbols, including aliases; architecture variants grouped | 353 |
+| Total production symbols | 4,194 |
 | Semantic production families | 403 |
-| Individually reviewed bodies | 271 |
-| Classifications derived from family context | 3,634 |
-| Classifications derived from aliases or generators | 339 |
-| Additional support entries | 1,570 |
+| Individually reviewed bodies | 238 |
+| Classifications derived from family context | 3,619 |
+| Classifications derived from aliases or generators | 337 |
+| Additional support entries | 1,577 |
 
-The map contains 232 source files including the tracked support layer. Production
-C coverage equals the sealed 3,895-entry inventory exactly. The 349 assembly
-symbols comprise 335 in the library inclusion graph, eight additional platform
+The map contains 147 source files including the consolidated support layer. Production
+C coverage equals the sealed 3,841-entry inventory exactly. The 353 assembly
+symbols comprise 339 in the library inclusion graph, eight additional platform
 signal/setjmp symbols, and six Canvas/kernel symbols. Architecture variants are
 shown inside each symbol. The additional platform symbols were outside the
 earlier library seal; they are now visible and explicitly classified.
 
 Every production entry has a family, role, responsibility, confidence and review
 basis. Family constraints are shared research requirements; individual contract
-notes are recorded where evidence supports them. The 271 reviewed bodies cover
-16,125 attributed lines, or 11.3% of all function-attributed source. Classification
+notes are recorded where evidence supports them. The 238 reviewed bodies cover
+10,963 attributed lines, or 7.8% of all function-attributed source. Classification
 coverage is complete against this inventory; individual body review is partial.
-Assembly instruction bodies were not freshly re-audited for this map.
+The performance pass reviewed the x86-64 short-search dispatch and kernel gate;
+its unchanged ARM64/RV64 bodies retain their earlier review evidence.
 
 ### Where the source lives
 
@@ -117,22 +141,25 @@ These areas are disjoint; AWK is included in utilities.
 
 | Area | Physical LOC | Share |
 | --- | ---: | ---: |
-| Utilities | 80,407 | 41.8% |
-| Shell language and runtime | 37,321 | 19.4% |
-| C standard library | 22,219 | 11.5% |
-| Assembly library | 18,843 | 9.8% |
-| Terminal, editor and system tools | 9,573 | 5.0% |
-| Canvas | 7,480 | 3.9% |
+| Utility implementations | 79,035 | 41.5% |
+| Shell language and runtime | 36,890 | 19.3% |
+| C standard library | 22,202 | 11.6% |
+| Assembly library | 18,990 | 10.0% |
+| Terminal, editor and system tools | 9,565 | 5.0% |
+| Canvas | 7,460 | 3.9% |
 | Platform and ABI | 7,257 | 3.8% |
 | Common C helpers | 3,812 | 2.0% |
 | Network protocols | 2,291 | 1.2% |
-| Kernel and Spark | 1,858 | 1.0% |
-| Program entries | 746 | 0.4% |
-| Bowl runtime | 600 | 0.3% |
+| Kernel and Spark | 1,838 | 1.0% |
+| Program entries | 715 | 0.4% |
+| Bowl runtime | 601 | 0.3% |
 
-The largest files are `src/sh/file.c` (20,333 lines), `src/library.c` (18,843),
-`src/sh/text.c` (18,072), `src/sh/util_linux.c` (13,660),
-`src/sh/builtin.c` (13,545) and `src/sh/tools.c` (12,284).
+The largest files are `src/sh/file.c` (19,613 lines),
+`src/library.c` (18,990 lines),
+`src/sh/text.c` (17,878 lines),
+`src/sh/util_linux.c` (13,458 lines),
+`src/sh/builtin.c` (13,339 lines),
+`src/sh/tools.c` (12,125 lines).
 
 ### Largest C families
 
@@ -141,19 +168,19 @@ blanks inside spans. Declarations and other residual source are separate.
 
 | Family | Entries | Attributed LOC |
 | --- | ---: | ---: |
-| Parameter lookup and transformations | 41 | 2,202 |
-| Jobs, waits and terminal process groups | 62 | 1,840 |
-| Difference engine | 41 | 1,689 |
-| History storage, expansion and fc | 35 | 1,634 |
-| Declarations and variable listings | 38 | 1,616 |
-| Stream editor | 31 | 1,510 |
-| Pattern search command | 30 | 1,403 |
-| Directory listings | 30 | 1,225 |
+| Parameter lookup and transformations | 40 | 2,191 |
+| Jobs, waits and terminal process groups | 59 | 1,770 |
+| Difference engine | 41 | 1,674 |
+| Declarations and variable listings | 35 | 1,599 |
+| History storage, expansion and fc | 35 | 1,593 |
+| Stream editor | 31 | 1,505 |
+| Pattern search command | 30 | 1,388 |
+| Directory listings | 30 | 1,219 |
 | Shell command grammar | 38 | 1,207 |
 | Editor editing operations | 35 | 1,191 |
 
-These ten families total 15,517 lines: **12.2% of the 127,574 lines attributed
-to C entries**. The largest 25 account for 24.0%. Size is distributed across
+These ten families total 15,337 lines: **12.2% of the 125,804 lines attributed
+to C entries**. The largest 25 account for 24.1%. Size is distributed across
 many features; a large reduction will probably require a design shared across
 families or several complete subsystem replacements. That is an inference from
 the distribution, not a measured deletion estimate. Assembly-family rankings
@@ -163,14 +190,14 @@ architecture implementations and distinct conversion contracts.
 Source accounting conserves the whole tree:
 
 ```text
-192,407 production physical lines
-  = 142,699 attributed to function/symbol spans
-  +  17,709 other code-bearing lines
-  +  22,826 other comment lines
-  +   9,173 other blank lines
+190,656 production physical lines
+  = 141,026 attributed to function/symbol spans
+  +  17,726 other code-bearing lines
+  +  22,781 other comment lines
+  +   9,123 other blank lines
 ```
 
-The 49,708-line residual includes tables, declarations, macro templates and
+The 49,630-line residual includes tables, declarations, macro templates and
 assembly scaffolding. It cannot be counted as removable overhead. A replacement
 must include its new descriptors and declarations in its measured cost.
 
