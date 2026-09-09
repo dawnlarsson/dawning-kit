@@ -253,6 +253,9 @@ def main():
     parser.add_argument('--check', action='store_true',
                         help='require the production source to match the last '
                              'complete audit')
+    parser.add_argument('--seal', action='store_true',
+                        help='write the seal from the tree as it stands, for '
+                             'after a change has been accounted for')
     arguments = parser.parse_args()
     definitions = inventory()
 
@@ -268,6 +271,45 @@ def main():
     canvas = marked_assembly(ROOT / 'src/canvas')
     canvas_names = {item[2] for item in canvas}
     kernel = marked_assembly(ROOT / 'kernel/replace')
+
+    if arguments.seal:
+        """
+                The seal is a hash of the production sources as well as a
+                count, so any edit moves it and every one of them has to be
+                rewritten by hand. Doing that by hand is how a wrong number
+                gets written down, so the writing is mechanical and the
+                deciding is not: this says what moved and leaves the reader
+                to say whether it should have.
+        """
+        counts = {
+            'sha256': source_digest(),
+            'c_functions': str(len(definitions)),
+            'library_asm': str(len(library)),
+            'library_arch_bodies': str(library_bodies),
+            'library_aliases': str(len(library_aliases)),
+            'canvas_asm': str(len(canvas_names)),
+            'canvas_arch_bodies': str(len(canvas)),
+            'kernel_asm_bodies': str(len(kernel)),
+        }
+        was = {}
+        if SEAL.is_file():
+            was = dict(line.split(None, 1)
+                       for line in SEAL.read_text().splitlines()
+                       if line and not line.startswith('#'))
+        text = SEAL.read_text() if SEAL.is_file() else (
+            '# Production-function inventory seal; not a proof of review '
+            'coverage or correctness.\n' +
+            ''.join(f'{key} \n' for key in counts))
+        for key, value in counts.items():
+            text = re.sub(rf'^{key} .*$', f'{key} {value}', text, flags=re.M)
+        SEAL.write_text(text)
+        for key, value in counts.items():
+            if was.get(key) != value:
+                before = was.get(key, 'nothing')
+                if key == 'sha256':
+                    before, value = before[:12], value[:12]
+                print(f'function audit: {key} {before} -> {value}')
+        return 0
 
     if arguments.check:
         if not SEAL.is_file():
