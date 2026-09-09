@@ -1020,8 +1020,11 @@ static b32 tools_logger()
                         if (!string_digits_exact(identity, address_of control.process) ||
                             !control.process || control.process > p32_max)
                                 return text_done(string_report(writer_stderr, 1,
-                                                               "logger: failed to parse id: '%s'\n",
-                                                               identity));
+                                    "logger: failed to parse id: '%s': %s\n",
+                                    identity,
+                                    control.process
+                                        ? (string_address)"Numerical result out of range"
+                                        : (string_address)"Numerical result out of range"));
                 }
                 else
                         control.process = (positive)system_call(syscall(getpid));
@@ -1032,7 +1035,12 @@ static b32 tools_logger()
 
         string_address rfc_flags = file_option_value(address_of taking, '4');
         if (rfc_flags && !logger_rfc_flags(address_of control, rfc_flags))
-                return text_done(string_diagnostic(&text_diagnostic, 1, rfc_flags, "unsupported RFC 5424 qualifier"));
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "logger: ignoring unknown option argument: %s\n",
+                              rfc_flags);
+        }
 
         if (!control.tag)
         {
@@ -5256,6 +5264,7 @@ static b32 tools_numfmt()
                 if (!numfmt_format_read(value, address_of numfmt.format))
                         return text_done(string_diagnostic(&text_diagnostic, 1, value, "format needs exactly one %f conversion"));
                 numfmt.have_format = true;
+                numfmt.grouping |= numfmt.format.grouping;
         }
 
         if (numfmt.grouping && numfmt.have_format)
@@ -6539,6 +6548,13 @@ static b32 tools_mcookie()
             !(string_is(maximum_text, '0') && !string_get(maximum_text + 1)) &&
             !split_size(maximum_text, address_of maximum))
                 return text_done(string_diagnostic(&text_diagnostic, 1, maximum_text, "invalid maximum size"));
+
+        if (maximum_text && !file_option_value(address_of taking, 'f'))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                              "mcookie: --max-size ignored when used without --file\n");
+        }
 
         file_random_state random;
         if (!file_random_seed(address_of random))
@@ -10022,10 +10038,17 @@ static fn diff_unified_output(string_address left, string_address right)
 static fn diff_announce(string_address head, string_address left,
                         string_address right, string_address tail)
 {
+        // --label renames a file everywhere diff speaks of it, the brief
+        // and identical reports included.
+        if (diff_labels[0])
+                left = diff_labels[0];
+        if (diff_labels[1])
+                right = diff_labels[1];
+
         text_put_string(head);
-        text_put_string(left);
+        diff_name_shell_quoted(left);
         text_put_string(" and ");
-        text_put_string(right);
+        diff_name_shell_quoted(right);
         text_put_string(tail);
         text_flush();
 }
@@ -11989,6 +12012,7 @@ typedef struct
         bool json;
         bool noescape;
         bool color;
+        bool iso;
         bool previous_known;
 } tools_dmesg_state;
 
@@ -12426,11 +12450,11 @@ static fn tools_dmesg_emit(tools_dmesg_state address_to state,
                                         tools_dmesg_timestamp(delta, true,
                                                               delta_negative);
                         }
-                        if (state->ctime)
+                        if (state->ctime || state->iso)
                                 tools_dmesg_calendar(state,
                                                      record->microseconds,
                                                      false);
-                        if (!state->relative && !state->ctime)
+                        if (!state->relative && !state->ctime && !state->iso)
                         {
                                 if (state->color)
                                         text_put_string("\033[32m");
@@ -12696,6 +12720,8 @@ static b32 tools_dmesg_main()
                         state.relative = true;
                 else if (string_equals(value, "delta"))
                         state.delta = true;
+                else if (string_equals(value, "iso"))
+                        state.iso = true;
                 else if (!string_equals(value, "raw"))
                         return text_done(string_diagnostic(&text_diagnostic, 1, value, "unsupported time format"));
         }
@@ -13073,6 +13099,8 @@ static b32 tools_fincore_main()
         p8 columns[TOOLS_FINCORE_COLUMNS];
         positive column_count = 0;
         string_address output = file_option_value(address_of taking, 'o');
+        if (output && !string_get(output))
+                return 1;
         if (!ul_table_column_list(
                 output, tools_fincore_columns, TOOLS_FINCORE_COLUMNS,
                 defaults, array_count(defaults), columns,
