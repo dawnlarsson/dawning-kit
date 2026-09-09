@@ -459,13 +459,13 @@ static b32 process_stdbuf()
                          (FILE_FLAG('i') | FILE_FLAG('o') | FILE_FLAG('e'));
         positive count = (positive)program_argument_count();
 
+        if (taking.first >= count)
+                return string_report(log_error, 125, "stdbuf: missing operand\n"
+                                                     "Try 'stdbuf --help' for more information.\n");
         if (!modes)
                 return string_report(log_error, 125,
                                      "stdbuf: you must specify a buffering mode option\n"
                                      "Try 'stdbuf --help' for more information.\n");
-        if (taking.first >= count)
-                return string_report(log_error, 125, "stdbuf: missing operand\n"
-                                                     "Try 'stdbuf --help' for more information.\n");
 
         bool input = (modes & FILE_FLAG('i')) == 0 ||
                      stdbuf_mode(file_option_value(address_of taking, 'i'),

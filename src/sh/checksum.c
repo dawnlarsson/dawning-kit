@@ -913,12 +913,12 @@ static b32 checksum_main()
         checksum_zero = (taking.flags & FILE_FLAG('z')) != 0;
 
         // coreutils' own refusals, in its order and words.
-        if (tagged && checksum_text_given)
-                return checksum_usage_error(command, "--tag does not support --text mode");
-        if (tagged && checking)
-                return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
         if (checksum_zero && checking)
                 return checksum_usage_error(command, "the --zero option is not supported when verifying checksums");
+        if (tagged && checking)
+                return checksum_usage_error(command, "the --tag option is meaningless when verifying checksums");
+        if (tagged && checksum_text_given)
+                return checksum_usage_error(command, "--tag does not support --text mode");
         if (checking && checksum_mode_given)
                 return checksum_usage_error(command, "the --binary and --text options are meaningless when verifying checksums");
         if (!checking)

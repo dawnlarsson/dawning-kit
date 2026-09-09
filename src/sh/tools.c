@@ -6548,7 +6548,7 @@ static b32 tools_mcookie()
             !split_size(maximum_text, address_of maximum))
                 return text_done(string_diagnostic(&text_diagnostic, 1, maximum_text, "invalid maximum size"));
 
-        if (maximum_text && !file_option_value(address_of taking, 'f'))
+        if (maximum_text && maximum && !file_option_value(address_of taking, 'f'))
         {
                 text_flush();
                 string_format(writer_stderr,
@@ -8400,6 +8400,7 @@ static b32 dump_run(positive first, positive count)
         bool starred = false;
         bool wrote = false;
         bool opened = false;
+        bool attempted = false;
         bool read_failed = false;
         positive inputs = first < count ? count - first : 1;
 
@@ -8420,6 +8421,8 @@ static b32 dump_run(positive first, positive count)
                         text_status = 1;
                         continue;
                 }
+
+                attempted = true;
 
                 if (!text_open(name))
                         continue;
@@ -8514,7 +8517,7 @@ static b32 dump_run(positive first, positive count)
         if (skip && dump_arguments.od)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "cannot skip past end of combined input"));
 
-        if (!dump_arguments.od && first < count && !opened)
+        if (!dump_arguments.od && attempted && !opened)
         {
                 text_flush();
                 writer_stderr("hexdump: all input file arguments failed\n", 0);
@@ -12125,7 +12128,7 @@ static bool tools_dmesg_span_number(p8 address_to address_to cursor,
 }
 
 static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
-                                      p32 inherited,
+                                      p32 inherited, bool first,
                                       tools_dmesg_record address_to record)
 {
         memory_fill(record, 0, sizeof(*record));
@@ -12147,7 +12150,7 @@ static bool tools_dmesg_legacy_record(p8 address_to bytes, positive length,
                 record->priority = (p32)priority;
                 record->priority_known = true;
         }
-        else
+        else if (!first)
                 record->continuation = true;
 
         p8 address_to stamp = at;
@@ -12533,7 +12536,7 @@ static fn tools_dmesg_buffer(tools_dmesg_state address_to state,
                     ? tools_dmesg_kmsg_record(bytes + at, record_length,
                                                address_of record)
                     : tools_dmesg_legacy_record(bytes + at, record_length,
-                                                inherited,
+                                                inherited, at == 0,
                                                 address_of record);
                 if (valid)
                 {
@@ -12682,9 +12685,6 @@ static b32 tools_dmesg_main()
                 return text_done(string_report(writer_stderr, 1,
                     "dmesg: only kmsg supports multi-line messages\n"));
         }
-        if ((flags & FILE_FLAG('J')) &&
-            (flags & (FILE_FLAG('T') | FILE_FLAG('e') | FILE_FLAG('d'))))
-                return text_done(string_diagnostic(&text_diagnostic, 1, null, "JSON time transformations are not supported"));
         if (flags & (FILE_FLAG('a') | FILE_FLAG('b')))
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "--since and --until are not supported"));
 
@@ -12772,7 +12772,8 @@ static b32 tools_dmesg_main()
                         state.facilities |= 0xfffffe;
         }
 
-        b32 color = file_color_when(file_option_value(address_of taking, 'L'),
+        string_address when = file_option_value(address_of taking, 'L');
+        b32 color = file_color_when(when && string_is(when, '=') ? when + 1 : when,
                                     FILE_COLOR_AUTO);
         if (color < 0)
                 return text_done(string_diagnostic(&text_diagnostic, 1, file_option_value(address_of taking, 'L'), "invalid color mode"));
@@ -12792,6 +12793,8 @@ static b32 tools_dmesg_main()
 
         string_address file = file_option_value(address_of taking, 'F');
         string_address kmsg_file = file_option_value(address_of taking, 'K');
+        if (flags & FILE_FLAG('S'))
+                file = kmsg_file = null;
         if (file || kmsg_file)
         {
                 // --follow is inert on a file; --read-clear prints the file
