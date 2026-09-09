@@ -71,8 +71,5 @@ installation flow.
 Some believe that if you leave a bowl of water outside under a full moon, it absorbs celestial energy. 
 I thought it was a funny name for this, as much of this project is unproven and experimental.
 
-# AI
-AI is used in the development of moonwater, primarily with GPT 6 Astra.
-
 ## License
 Apache-2.0 license
