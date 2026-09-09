@@ -2200,6 +2200,7 @@ static b32 file_word_among(string_address program, string_address option,
         }
 
         log_error("\n", 1);
+        string_format(log_error, "Try '%s --help' for more information.\n", program);
         return -1;
 }
 
@@ -16311,15 +16312,69 @@ static bool shuf_emit_range(shuf_output address_to output, positive low,
         return true;
 }
 
+/*
+        -n and -i are read as they are written, not once at the end.
+
+        Every -n is a ceiling and the smallest of them holds -- shuf -n5 -n2
+        writes two lines and so does shuf -n2 -n5 -- so one value per letter
+        cannot say what was asked for. Both are also refused where they are
+        written: a second -i is a second answer to one question, and a count
+        or a range that is not one is refused even where a later option would
+        have replaced it.
+*/
+static positive shuf_wanted;
+static bool shuf_limited;
+static bool shuf_ranged;
+
+static bool shuf_seen(p8 letter, string_address value)
+{
+        if (letter == 'n' && value)
+        {
+                positive lines;
+
+                if (!file_unsigned_decimal(value, address_of lines))
+                        return string_report(log_error, false,
+                                             "shuf: invalid line count: '%s'\n", value);
+
+                if (!shuf_limited || lines < shuf_wanted)
+                        shuf_wanted = lines;
+
+                shuf_limited = true;
+        }
+
+        if (letter == 'i' && value)
+        {
+                positive low;
+                positive high;
+
+                if (!shuf_range(value, address_of low, address_of high) ||
+                    high - low == positive_max)
+                        return string_report(log_error, false,
+                                             "shuf: invalid input range: '%s'\n", value);
+
+                if (shuf_ranged)
+                        return string_report(log_error, false,
+                                             "shuf: multiple -i options specified\n");
+
+                shuf_ranged = true;
+        }
+
+        return true;
+}
+
 static b32 file_shuf()
 {
         file_operands_begin();
+        shuf_wanted = 0;
+        shuf_limited = false;
+        shuf_ranged = false;
         file_taking taking = {
             .program = (string_address) "shuf",
             .allowed = (string_address) "einorz",
             .valued = (string_address) "inoR",
             .longs = shuf_longs,
             .operand = file_operand,
+            .seen = shuf_seen,
         };
 
         if (!file_take(address_of taking) || file_operand_failed)
@@ -16343,13 +16398,14 @@ static b32 file_shuf()
                 return 1;
         }
 
-        positive wanted = 0;
-        string_address count_text = file_option_value(address_of taking, 'n');
-        bool limited = count_text != null;
+        positive wanted = shuf_wanted;
+        bool limited = shuf_limited;
 
-        if (limited && !file_unsigned_decimal(count_text, address_of wanted))
-                return string_report(log_error, 1, "shuf: invalid line count: '%s'\n",
-                              count_text);
+        //      No lines are wanted, so no input is read: a file that is not
+        //      there or cannot be read is never opened, and the answer is a
+        //      successful nothing.
+        if (limited && !wanted)
+                return 0;
 
         positive low = 0;
         positive high = 0;
@@ -17759,14 +17815,6 @@ static b32 file_cp()
         if (!file_targets_told((string_address) "cp"))
                 return 1;
 
-        //      This image has no SELinux. -Z and a bare --context are
-        //      no-ops there, and a named context is warned about and
-        //      otherwise ignored; cp says "SELinux-enabled" where mkdir
-        //      and mknod say "SELinux/SMACK-enabled".
-        if (file_option_value(address_of taking, 'Z'))
-                log_error("cp: warning: ignoring --context; it requires an "
-                          "SELinux-enabled kernel\n", 0);
-
         bool wants_context = false;
 
         if (!cp_words_read((string_address) "--preserve",
@@ -17784,11 +17832,29 @@ static b32 file_cp()
                            cp_reflink_words, array_count(cp_reflink_words), null))
                 return 1;
 
+        //      This image has no SELinux. -Z and a bare --context are
+        //      no-ops there, and a named context is warned about and
+        //      otherwise ignored; cp says "SELinux-enabled" where mkdir and
+        //      mknod say "SELinux/SMACK-enabled". The reference warns after
+        //      it has read the option values and before it weighs them
+        //      against one another, so this sits between the two.
+        if (file_option_value(address_of taking, 'Z'))
+                log_error("cp: warning: ignoring --context; it requires an "
+                          "SELinux-enabled kernel\n", 0);
+
         // A label asked for by name is one this kernel cannot give.
         if (wants_context)
         {
                 log_error("cp: cannot preserve security context without an "
                           "SELinux-enabled kernel\n", 0);
+                return 1;
+        }
+
+        //      A copy is one kind of link or the other, never both.
+        if ((taking.flags & FILE_FLAG('l')) && (taking.flags & FILE_FLAG('s')))
+        {
+                log_error("cp: cannot make both hard and symbolic links\n", 0);
+                log_error("Try 'cp --help' for more information.\n", 0);
                 return 1;
         }
 
@@ -22303,16 +22369,19 @@ static b32 file_kill()
 
         if (show_state)
         {
-                positive given = count - index + (state_pid ? 1 : 0);
+                //      --show-process-state=PID carries the process with it
+                //      and the reference then looks at nothing else; a bare
+                //      -d takes the one operand, and wants exactly one.
+                if (state_pid)
+                        return kill_process_state(state_pid);
 
-                if (!given)
+                if (index >= count)
                         return string_report(log_error, 1, "kill: too few arguments\n");
 
-                if (given > 1)
+                if (count - index > 1)
                         return string_report(log_error, 1, "kill: too many arguments\n");
 
-                return kill_process_state(state_pid ? state_pid
-                                                    : program_argument((b32)index));
+                return kill_process_state(program_argument((b32)index));
         }
 
         if (index >= count)
