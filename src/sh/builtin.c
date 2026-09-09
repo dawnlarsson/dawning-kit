@@ -5273,6 +5273,16 @@ COLD fn shell_shopt(writer write, string_address input)
                 if (quiet)
                         return shell_answer(0);
 
+                // shopt -o with nothing named is the view set -o writes, in
+                // the same order and the same field; only -s or -u filtering
+                // needs the table walk below.
+                if (set_options && !set && !unset)
+                {
+                        shell_options_listed(write, as_commands);
+
+                        return shell_answer(0);
+                }
+
                 for (positive at = 0; at < count; at++)
                 {
                         bool on = set_options ? shell_option_on(at)
