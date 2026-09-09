@@ -3771,7 +3771,8 @@ builtins_add(Utility(
     "trap_pl",
     operands=(("-l",), ("-p",), ("-p", "INT"), ("-p", "INT", "TERM"),
               ("-p", "EXIT"), ("-p", "RTMIN"), ("-p", "NOPE"),
-              ("--", "-p"), ("-p", "--"), ("-lp",)),
+              ("--", "-p"), ("-p", "--"), ("-lp",), ("-pl",),
+              ("-x",), ("-x", "INT"), ("-px", "INT"), ("-P", "INT")),
     stdin=("empty",), stderr="loose", modes=ALL,
     script=builtins_wrap(
         "trap", prologue="trap 'echo x' INT\n",

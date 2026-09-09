@@ -10238,33 +10238,50 @@ COLD fn shell_trap(writer write, string_address input)
         while (index < shell_argc && shell_argv[index][0] == '-' &&
                shell_argv[index][1] && !word_is(shell_argv[index], "--"))
         {
-                string_address at = shell_argv[index] + 1;
-
-                for (; at[0]; at++)
+                for (string_address at = shell_argv[index] + 1; at[0]; at++)
                 {
+                        //      dash names the first letter and stops, and
+                        //      that ends the script: trap is special.
                         if (!shell_bash_compat)
                         {
+                                p8 said[2] = {at[0], end};
+
                                 string_format(log_error,
-                                    "trap: Illegal option -%s\n",
-                                    shell_argv[index] + 1);
+                                    "trap: Illegal option -%s\n", said);
                                 exec_special_error_note();
 
                                 return shell_answer(2);
                         }
 
                         if (at[0] == 'l')
+                        {
                                 listing = true;
-                        else if (at[0] == 'p')
-                                print = true;
-                        else
-                                break;
-                }
+                                continue;
+                        }
 
-                //      A letter Bash does not have leaves the word to be read
-                //      as an operand, which is how `trap -x` reaches the
-                //      condition parser and is refused there.
-                if (at[0])
-                        break;
+                        if (at[0] == 'p')
+                        {
+                                print = true;
+                                continue;
+                        }
+
+                        //      Bash names the letter and prints how it is
+                        //      called; the word is never read as an operand,
+                        //      so `trap -x INT` sets nothing.
+                        {
+                                p8 said[2] = {at[0], end};
+
+                                string_format(log_error,
+                                    "trap: -%s: invalid option\n", said);
+                                string_format(log_error, "trap: usage: trap "
+                                    "[-Plp] [[action] signal_spec ...]\n");
+
+                                if (shell_posix_on())
+                                        exec_special_error_note();
+
+                                return shell_answer(2);
+                        }
+                }
 
                 index++;
         }
