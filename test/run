@@ -1,10 +1,20 @@
 #!/bin/sh
 #
-#       Every test in the tree, in one order.
+#       Every test in the tree, in one order, and every benchmark beside it.
 #
 #           sh test/run                 every lane this machine can run
 #           sh test/run shell text      only the lanes named
 #           sh test/run --list          what the lanes are
+#
+#           sh test/run bench           every benchmark
+#           sh test/run bench floor     only the benchmarks named
+#           sh test/run bench --list    what the benchmarks are
+#
+#       Two modes, one command. Tests assert and count; benchmarks measure and
+#       report. Neither runs the other: bench is the first word or it is not
+#       bench mode, and no lane below builds a benchmark. What used to be
+#       kit/bench and the drivers beside it is the section before the walk at
+#       the end of this file.
 #
 #       The suites used to be eight places with four ways of starting them,
 #       and the ones that needed a binary built first were started by hand or
@@ -6402,7 +6412,7 @@ for name in taskset qemu-x86_64 qemu-aarch64 qemu-riscv64; do
 done
 PATH="$work/bench-bin:$PATH" CC="$work/bench-bin/gcc" \
         MOONWATER_TEST_BENCH_PROGRAM="$work/bench-program" \
-        sh kit/bench reserve 128 'two words' > "$work/bench-log" 2>&1
+        sh test/run bench reserve -- 128 'two words' > "$work/bench-log" 2>&1
 bench_status=$?
 bench_arguments=$(grep -c -x -F 'BENCH_ARGS:2<128><two words>' "$work/bench-log")
 same 'arguments preserved on all targets' '0:3' "$bench_status:$bench_arguments"
@@ -7794,8 +7804,1327 @@ printf '  %-12s %s of %s\n' canvas "$pass" "$((pass + fail))"
 )
 
 #
+#       The benchmarks.
+#
+#           sh test/run bench                every benchmark
+#           sh test/run bench floor hex      only the ones named
+#           sh test/run bench --list         what the benchmarks are
+#           sh test/run bench reserve -- 128 sparse   arguments for the ones named
+#
+#       This is the other half of the one command: `sh test/run` runs the
+#       tests and `sh test/run bench` runs the benchmarks, and neither runs
+#       the other. It was kit/bench and the four drivers beside it. A
+#       benchmark is not a test -- nothing below asserts anything, nothing
+#       below writes to the tally, and no lane above builds any of it.
+#
+#       The C benchmarks are sections of test/checks.c named BENCH_<name>,
+#       built by the same freestanding link the C checks get and for the same
+#       reason: the thing being measured is library.c's own assembly, and a
+#       libc in the link would supply the very functions in question. That
+#       link is spelled out again below rather than reused from freestanding()
+#       above, because it is the contract the published numbers were taken
+#       under, down to the absence of -w.
+#
+#       Foreign targets run under qemu. A qemu tick is the emulator's work and
+#       not the machine's, so what comes out is a ratio worth reading and an
+#       absolute number that is not. A Linux host target runs directly.
+#
+
+benchmarks="floor baseline numbers bases hex escape codec fixed table padded input-bases fields human human-nearest hash-33 span-byte fill-u32 fill-u64 paths reverse writer-field writer-text text-hot prefix-known translate ascii-case ascii-case-fold line-break bounded-fold ascii-convert ascii-search grep-search grep-count last-of words clock scan-literal random allocator reserve storage-read compare-max string-copy stream-get stream-write format-bounds startup shell tools awk find boot-time engines"
+
+#       One benchmark's section and one line about it. A name with no section
+#       is one of the drivers below, which time a whole binary against the
+#       host's own programs rather than one routine against a floor.
+bench_about()
+{
+        bench_section=
+        case $1 in
+        floor)   bench_section=BENCH_floor
+                 bench_line="every routine in library.c, against the speed of the machine" ;;
+        baseline) bench_section=BENCH_baseline
+                 bench_line="the assembly against the C byte loop it replaced" ;;
+        numbers) bench_section=BENCH_numbers
+                 bench_line="decimal conversion at the call shapes the library exposes" ;;
+        bases)   bench_section=BENCH_bases
+                 bench_line="buffer conversion in the non-decimal bases" ;;
+        hex)     bench_section=BENCH_hex
+                 bench_line="bulk hex output against the former checksum loop" ;;
+        escape)  bench_section=BENCH_escape
+                 bench_line="shared escaping against the former writer loops" ;;
+        codec)   bench_section=BENCH_codec
+                 bench_line="the radix codec bodies, apart from the shell's streaming" ;;
+        fixed)   bench_section=BENCH_fixed
+                 bench_line="exact decimal records against an independent C carry loop" ;;
+        table)   bench_section=BENCH_table
+                 bench_line="the production table renderer, after its own byte checks" ;;
+        padded)  bench_section=BENCH_padded
+                 bench_line="the padded-decimal writer against the C call shape it replaced" ;;
+        input-bases) bench_section=BENCH_input_bases
+                 bench_line="bounded base-input parsing at the folded call shapes" ;;
+        fields)  bench_section=BENCH_fields
+                 bench_line="contiguous fixed-width decimal fields against the C bodies they fold" ;;
+        human)   bench_section=BENCH_human
+                 bench_line="compact binary-size formatting at both public call shapes" ;;
+        human-nearest) bench_section=BENCH_human_nearest
+                 bench_line="dd's nearest human formatter against the former C body" ;;
+        hash-33) bench_section=BENCH_hash_33
+                 bench_line="the DJB2 byte hash: dependent scalar loop against four-byte assembly" ;;
+        span-byte) bench_section=BENCH_span_byte
+                 bench_line="bounded equal-byte prefix: a scalar caller loop against the assembly" ;;
+        fill-u32) bench_section=BENCH_fill_u32
+                 bench_line="the shared canvas 32-bit span fill against its two floors" ;;
+        fill-u64) bench_section=BENCH_fill_u64
+                 bench_line="aligned 64-bit pattern fill against scalar and bulk-store floors" ;;
+        paths)   bench_section=BENCH_paths
+                 bench_line="the former path C bodies against the shared assembly" ;;
+        reverse) bench_section=BENCH_reverse
+                 bench_line="memory_reverse and the rev fold against the C shapes they replace" ;;
+        writer-field) bench_section=BENCH_writer_field
+                 bench_line="the counted and string field primitives against their C helper" ;;
+        writer-text) bench_section=BENCH_writer_text
+                 bench_line="buffered output policy: the former C against the assembly core" ;;
+        text-hot) bench_section=BENCH_text_hot
+                 bench_line="the hot text-loop folds against the scalar loops they replace" ;;
+        prefix-known) bench_section=BENCH_prefix_known
+                 bench_line="literal-size equal-span walk against the out-of-line routine" ;;
+        translate) bench_section=BENCH_translate
+                 bench_line="in-place byte-table translation against the former scalar C" ;;
+        ascii-case) bench_section=BENCH_ascii_case
+                 bench_line="ASCII-folded bounded comparison against a scalar reference" ;;
+        ascii-case-fold) bench_section=BENCH_ascii_case_fold
+                 bench_line="literal-size ASCII-folded compare against the floor routine" ;;
+        line-break) bench_section=BENCH_line_break
+                 bench_line="canvas line breaking against the former byte walk" ;;
+        bounded-fold) bench_section=BENCH_bounded_fold
+                 bench_line="literal-bound string operations at the production shapes" ;;
+        ascii-convert) bench_section=BENCH_ascii_convert
+                 bench_line="ASCII case conversion: inlined former loops against reusable assembly" ;;
+        ascii-search) bench_section=BENCH_ascii_search
+                 bench_line="fixed ASCII-insensitive search against the C loop it replaces" ;;
+        grep-search) bench_section=BENCH_grep_search
+                 bench_line="grep's literal hunt, its rare byte prepared once or chosen again" ;;
+        grep-count) bench_section=BENCH_grep_count
+                 bench_line="fixed-needle record counting at three layers" ;;
+        last-of) bench_section=BENCH_last_of
+                 bench_line="bounded reverse byte search against a scalar reference" ;;
+        words)   bench_section=BENCH_words
+                 bench_line="stateful ASCII word counting against a scalar reference" ;;
+        clock)   bench_section=BENCH_clock
+                 bench_line="calendar text traffic and the directive parser's cost" ;;
+        scan-literal) bench_section=BENCH_scan_literal
+                 bench_line="sscanf literal matching against its control and traffic floors" ;;
+        random)  bench_section=BENCH_random
+                 bench_line="random()'s draw against call/control and additive-ring floors" ;;
+        allocator) bench_section=BENCH_allocator
+                 bench_line="the malloc/free class fast path against its call and list floors" ;;
+        reserve) bench_section=BENCH_reserve
+                 bench_line="movable growth, timed apart from allocation and touching" ;;
+        storage-read) bench_section=BENCH_storage_read
+                 bench_line="the production reader over warm memfd reads" ;;
+        compare-max) bench_section=BENCH_compare_max
+                 bench_line="dynamic-bound string_compare_max against its two floors" ;;
+        string-copy) bench_section=BENCH_string_copy
+                 bench_line="string_copy over caller-shaped sizes against its proxies" ;;
+        stream-get) bench_section=BENCH_stream_get
+                 bench_line="buffered stream_get_byte hits against ABI and state-machine floors" ;;
+        stream-write) bench_section=BENCH_stream_write
+                 bench_line="resident buffered writes against their copy and state floor" ;;
+        format-bounds) bench_section=BENCH_format_bounds
+                 bench_line="bounded printf padding: retained bytes against requested bytes" ;;
+        startup) bench_section=BENCH_startup
+                 bench_line="runtime startup: CPU selection, identity and stack publication" ;;
+        shell)   bench_line="the shell against dash and bash on shell-owned work" ;;
+        tools)   bench_line="the text and file utilities against the host's own" ;;
+        awk)     bench_line="awk's owned hot paths against the awk on the machine" ;;
+        find)    bench_line="find's walker floor, apart from matching and metadata" ;;
+        boot-time) bench_line="how long the stack takes to reach a shell, from the guest clock" ;;
+        engines) bench_line="two builds of the multicall binary against each other" ;;
+        *)       bench_line= ;;
+        esac
+}
+
+#       One benchmark on one architecture. The flags are kit/bench's, which
+#       are freestanding()'s without -w: a warning out of a benchmark body is
+#       worth seeing, and nothing here is built by the suite.
+bench_target()
+{
+        bench_name=$1
+        bench_arch=$2
+        bench_compiler=$3
+        bench_runner=$4
+        shift 4
+
+        case $bench_arch in
+        arm64) bench_arch_flags=-mno-outline-atomics ;;
+        riscv64) bench_arch_flags='-march=rv64imafd_zicsr_zicntr -mabi=lp64d' ;;
+        *)     bench_arch_flags= ;;
+        esac
+
+        if ! command -v "$bench_compiler" > /dev/null 2>&1; then
+                echo "$bench_arch: NOT RUN -- no $bench_compiler"
+                return 2
+        fi
+
+        if [ -n "$bench_runner" ] && ! command -v "$bench_runner" > /dev/null 2>&1; then
+                echo "$bench_arch: NOT RUN -- no $bench_runner"
+                return 2
+        fi
+
+        bench_binary=$work/bench.$bench_name.$bench_arch
+
+        # shellcheck disable=SC2086
+        "$bench_compiler" $bench_arch_flags \
+                -O2 -static -nostdlib -nostartfiles -fno-stack-protector \
+                -fno-builtin -T kit/spark.ld -Wl,-e,_start -Wl,--build-id=none \
+                -Wl,--no-warn-rwx-segments \
+                -o "$bench_binary" "-D$bench_section" test/checks.c || return 1
+
+        if [ -n "$bench_runner" ]; then
+                echo "$bench_arch (emulated instruction shape; not hardware timing):"
+        else
+                echo "$bench_arch (native hardware):"
+        fi
+
+        if [ -z "$bench_runner" ] && command -v taskset > /dev/null 2>&1; then
+                taskset -c 0 "$bench_binary" "$@"
+        else
+                $bench_runner "$bench_binary" "$@"
+        fi
+}
+
+#       A C benchmark is the same section on all three machines. A target
+#       that could not run at all makes the whole thing incomplete, because a
+#       ratio missing an architecture is not the comparison it looks like.
+bench_c()
+{
+        bench_c_name=$1
+        shift
+        bench_failed=0
+        bench_missing=0
+
+        for target in x86_64 arm64 riscv64; do
+                target_tools "$target"
+                outcome=0
+                bench_target "$bench_c_name" "$target" \
+                        "$target_compiler" "$target_runner" "$@" || outcome=$?
+
+                case $outcome in
+                0) ;;
+                2) bench_missing=1 ;;
+                *) bench_failed=1 ;;
+                esac
+        done
+
+        [ "$bench_failed" = 0 ] || return 1
+
+        if [ "$bench_missing" != 0 ]; then
+                echo "$bench_c_name: incomplete; every reported target above must run"
+                return 2
+        fi
+}
+
+#
+#       Compare the shell with dash and bash on shell-owned work.
+#
+#           sh test/run bench shell -- [path-to-moonwater-shell]
+#
+#       With no path, build programs/shell.c into a temporary binary. The
+#       benchmark deliberately uses no external commands in its timed bodies:
+#       it measures entry, parsing, expansion, builtins, functions and pipes,
+#       rather than whichever coreutils happen to be installed on the host.
+#
+#       BENCH_RUNS controls the number of measured samples (default 7), and
+#       BENCH_SECONDS the minimum duration of each sample (default 0.15).
+#       Reported times are medians per shell invocation; lower is better.
+#
+bench_shell()
+(
+        set -e
+        work=$(mktemp -d)
+        trap 'rm -rf "$work"' EXIT HUP INT TERM
+
+        subject=${1:-${MOONWATER_SHELL:-}}
+
+        if [ -z "$subject" ]; then
+                subject=$work/moonwater-shell
+                echo "building $subject" >&2
+                sh kit/build programs/shell.c "$subject"
+        fi
+
+        case $subject in
+        /*) ;;
+        *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+        esac
+
+        [ -x "$subject" ] || {
+                echo "bench shell: not executable: $subject" >&2
+                exit 1
+        }
+
+        dash=$(command -v dash || true)
+        bash=$(command -v bash || true)
+
+        [ -n "$dash" ] || { echo "  shell        NOT RUN -- dash is required" >&2; exit 2; }
+        [ -n "$bash" ] || { echo "  shell        NOT RUN -- bash is required" >&2; exit 2; }
+        command -v python3 >/dev/null 2>&1 || {
+                echo "  shell        NOT RUN -- python3 is required for a monotonic clock" >&2
+                exit 2
+        }
+
+        "$subject" -c ':' >/dev/null 2>&1 || {
+                echo "bench shell: $subject could not run a command" >&2
+                exit 1
+        }
+
+        exec python3 - "$subject" "$dash" "$bash" "$work" \
+                "${BENCH_RUNS:-7}" "${BENCH_SECONDS:-0.15}" <<'PY'
+import math
+import os
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ours, dash, bash, work, runs_text, seconds_text = sys.argv[1:]
+
+try:
+    runs = int(runs_text)
+    target_seconds = float(seconds_text)
+except ValueError:
+    raise SystemExit("bench_shell: BENCH_RUNS and BENCH_SECONDS must be numbers")
+
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_shell: BENCH_RUNS must be positive and BENCH_SECONDS > 0")
+
+# Pin the driver when Linux permits it. Children inherit the same affinity,
+# which removes migrations without putting taskset startup in the measurement.
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        allowed = os.sched_getaffinity(0)
+        os.sched_setaffinity(0, {min(allowed)})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment.update({"LC_ALL": "C", "ENV": "/dev/null", "BASH_ENV": "/dev/null"})
+
+scripts = {
+    "parse": "\n".join(": # parser token stream" for _ in range(4000))
+    + "\nprintf '%s\\n' 4000\n",
+    "loop+builtin": """i=0
+while [ "$i" -lt 20000 ]; do
+        i=$((i + 1))
+done
+printf '%s\\n' "$i"
+""",
+    "parameter": """i=0
+x=abcdefghijklmnop
+while [ "$i" -lt 10000 ]; do
+        a=${x#?}
+        b=${x%?}
+        c=${#x}
+        i=$((i + 1))
+done
+printf '%s:%s:%s:%s\\n' "$a" "$b" "$c" "$i"
+""",
+    "case": """i=0
+while [ "$i" -lt 15000 ]; do
+        case abcdef in
+                a*e?) x=yes ;;
+                *) x=no ;;
+        esac
+        i=$((i + 1))
+done
+printf '%s:%s\\n' "$x" "$i"
+""",
+    "function": """f() { :; }
+i=0
+while [ "$i" -lt 15000 ]; do
+        f
+        i=$((i + 1))
+done
+printf '%s\\n' "$i"
+""",
+    "pipeline": """i=0
+while [ "$i" -lt 4000 ]; do
+        printf '%s\\n' "$i"
+        i=$((i + 1))
+done | {
+        count=0
+        while IFS= read -r value; do
+                count=$((count + 1))
+        done
+        printf '%s\\n' "$count"
+}
+""",
+}
+
+work_path = Path(work)
+cases = [("startup", ("-c", ":"))]
+for name, source in scripts.items():
+    path = work_path / f"{name}.sh"
+    path.write_text(source, encoding="ascii")
+    cases.append((name, (str(path),)))
+
+shells = [("ours", ours), ("dash", dash), ("bash", bash)]
+
+def capture(executable, arguments):
+    result = subprocess.run(
+        (executable, *arguments),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=environment,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    return result.stdout
+
+def invoke(executable, arguments):
+    result = subprocess.run(
+        (executable, *arguments),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        env=environment,
+        check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+
+def elapsed(executable, arguments, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        invoke(executable, arguments)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments):
+    # Two untimed executions warm the binary, script pages and branch paths.
+    invoke(executable, arguments)
+    invoke(executable, arguments)
+
+    count = 1
+    while elapsed(executable, arguments, count) < target_seconds:
+        count *= 2
+
+    samples = [elapsed(executable, arguments, count) / count for _ in range(runs)]
+    return statistics.median(samples)
+
+results = {}
+print(f"subject: {ours}")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; times are median milliseconds per invocation\n")
+def relative_cell(value, reference):
+    change = value / reference - 1.0
+    if abs(change) < 0.005:
+        return "about equal"
+    direction = "slower" if change > 0 else "faster"
+    return f"{abs(change) * 100:.0f}% {direction}"
+
+print(
+    f"{'workload':<15} {'ours':>10} {'dash':>10} {'bash':>10}"
+    f" {'ours versus dash':>18}"
+)
+print(f"{'-' * 15} {'-' * 10} {'-' * 10} {'-' * 10} {'-' * 18}")
+
+try:
+    for case_name, arguments in cases:
+        expected = capture(dash, arguments)
+        for shell_name, executable in shells:
+            actual = capture(executable, arguments)
+            if actual != expected:
+                raise RuntimeError(
+                    f"{shell_name} produced different output for {case_name}; "
+                    "refusing to benchmark unequal work"
+                )
+
+        row = {}
+        # Rotate the starting shell by workload so thermal/order bias is not
+        # always paid by the same implementation.
+        offset = len(results) % len(shells)
+        ordered = shells[offset:] + shells[:offset]
+        for shell_name, executable in ordered:
+            row[shell_name] = measure(executable, arguments)
+        results[case_name] = row
+        print(
+            f"{case_name:<15}"
+            f" {row['ours'] * 1000:10.3f}"
+            f" {row['dash'] * 1000:10.3f}"
+            f" {row['bash'] * 1000:10.3f}"
+            f" {relative_cell(row['ours'], row['dash']):>18}"
+        )
+except RuntimeError as error:
+    raise SystemExit(f"bench_shell: {error}")
+
+def geomean_ratios(name):
+    logs = [math.log(row[name] / row["dash"]) for row in results.values()]
+    return math.exp(sum(logs) / len(logs))
+
+ours_ratio = geomean_ratios("ours")
+bash_ratio = geomean_ratios("bash")
+overall = {"ours": ours_ratio, "dash": 1.0, "bash": bash_ratio}
+fastest = min(overall, key=overall.get)
+
+print("\noverall geometric-mean result:")
+print(f"  fastest: {fastest}")
+print(f"  ours is {relative_cell(ours_ratio, 1.0)} than dash")
+print(f"  ours is {relative_cell(ours_ratio, bash_ratio)} than bash")
+PY
+)
+
+#
+#       Compare the text and file utilities with the host implementations.
+#
+#           sh test/run bench tools -- [path-to-moonwater-multicall]
+#
+#       The input is generated once outside every timed region. Each direct
+#       utility is reached through argv[0], its output is first required to be
+#       byte-identical to the host tool, and only then is it timed. Output goes
+#       to a regular file in both paths so grep cannot skip discarded output.
+#       Lower is better. BENCH_RUNS defaults to 7 and BENCH_SECONDS to 0.15.
+#
+bench_tools()
+(
+        set -e
+        work=$(mktemp -d)
+        trap 'rm -rf "$work"' EXIT HUP INT TERM
+        subject=${1:-${MOONWATER_TOOLS:-}}
+
+        if [ -z "$subject" ]; then
+                subject=$work/moonwater
+                echo "building $subject" >&2
+                sh kit/build programs/shell.c "$subject"
+        fi
+
+        case $subject in
+        /*) ;;
+        *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+        esac
+
+        [ -x "$subject" ] || {
+                echo "bench tools: not executable: $subject" >&2
+                exit 1
+        }
+
+        command -v python3 >/dev/null 2>&1 || {
+                echo "  tools        NOT RUN -- python3 is required" >&2
+                exit 2
+        }
+
+        exec python3 - "$subject" "$work" "${BENCH_RUNS:-7}" \
+                "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import shutil
+import statistics
+import subprocess
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_tools: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+work_path = Path(work)
+benchmark_output = tempfile.TemporaryFile(dir=work_path)
+data = work_path / "records"
+find_tree = work_path / "find-tree"
+comm_left = work_path / "comm-left"
+comm_right = work_path / "comm-right"
+join_left = work_path / "join-left"
+join_right = work_path / "join-right"
+
+with data.open("wb") as output:
+    for i in range(240_000):
+        kind = b"alpha" if i % 3 else b"beta"
+        mark = b"needle" if i % 17 == 0 else b"plain"
+        output.write(kind + b":" + f"{i % 1000:03d}".encode() + b":" + mark + b"\n")
+
+for directory in range(80):
+    place = find_tree / f"Dir-{directory:03d}"
+    place.mkdir(parents=True)
+    for entry in range(300):
+        (place / f"Entry-{directory:03d}-{entry:03d}.TxT").touch()
+
+with comm_left.open("wb") as left, \
+     comm_right.open("wb") as right, \
+     join_left.open("wb") as left_join, \
+     join_right.open("wb") as right_join:
+    for i in range(120_000):
+        record = f"{i:06d}\n".encode()
+        if i % 2 == 0:
+            left.write(record)
+        if i % 3 == 0:
+            right.write(record)
+        left_join.write(f"{i:06d} left-{i % 97:02d}\n".encode())
+        right_join.write(f"{i:06d} right-{i % 89:02d}\n".encode())
+
+tool_names = ["cat", "wc", "grep", "cut", "tr", "sed", "awk",
+              "sort", "uniq", "head", "tail", "rev", "find"]
+
+# These applets use Linux-only kernel paths in Moonwater (AF_ALG for the
+# checksum one), so keep the long-standing portable benchmark usable on
+# development hosts while making the Linux performance gate comprehensive.
+if sys.platform.startswith("linux"):
+    tool_names.extend(("base64", "base32", "od", "comm", "paste", "join",
+                       "cksum", "sha256sum", "hexdump"))
+
+ours = work_path / "ours"
+ours.mkdir()
+references = {}
+for name in tool_names:
+    target = ours / name
+    target.symlink_to(subject)
+    found = shutil.which(name)
+    if not found:
+        raise SystemExit(f"bench_tools: host {name} is required")
+    references[name] = found
+
+cases = [
+    ("cat", "cat", (str(data),), None),
+    ("cat-number", "cat", ("-n", str(data)), None),
+    ("cat-visible", "cat", ("-v", str(data)), None),
+    ("wc-lines", "wc", ("-l", str(data)), None),
+    ("grep-count", "grep", ("-c", "needle", str(data)), None),
+    ("cut-field", "cut", ("-d:", "-f2", str(data)), None),
+    ("cut-prefix", "cut", ("-c1-5", str(data)), None),
+    ("cut-suffix", "cut", ("-c7-", str(data)), None),
+    ("tr-case", "tr", ("a-z", "A-Z"), data),
+    ("tr-delete", "tr", ("-d", "a"), data),
+    ("tr-squeeze", "tr", ("-s", "a-z"), data),
+    ("sed-substitute", "sed", ("s/alpha/omega/g", str(data)), None),
+    ("awk-fields", "awk", ("-F:", "{s += $2} END {print s}", str(data)), None),
+    ("sort", "sort", (str(data),), None),
+    ("uniq", "uniq", ("-c", str(data)), None),
+    ("head", "head", ("-n", "1000", str(data)), None),
+    ("tail", "tail", ("-n", "1000", str(data)), None),
+    ("rev", "rev", (str(data),), None),
+    ("find-iname", "find", (str(find_tree), "-iname", "*.TXT"), None),
+]
+
+if sys.platform.startswith("linux"):
+    cases.extend((
+        ("base64", "base64", ("-w0", str(data)), None),
+        ("base32", "base32", ("-w0", str(data)), None),
+        ("od-hex", "od", ("-An", "-tx1", str(data)), None),
+        ("hexdump-canonical", "hexdump", ("-C", str(data)), None),
+        ("comm", "comm", (str(comm_left), str(comm_right)), None),
+        ("paste", "paste", (str(comm_left), str(comm_right)), None),
+        ("join", "join", (str(join_left), str(join_right)), None),
+        ("cksum", "cksum", (str(data),), None),
+        ("sha256sum", "sha256sum", (str(data),), None),
+    ))
+
+def execute(executable, arguments, stdin_path, capture):
+    source = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
+    benchmark_output.seek(0)
+    benchmark_output.truncate()
+    try:
+        result = subprocess.run(
+            (str(executable), *arguments), stdin=source,
+            stdout=benchmark_output,
+            stderr=subprocess.PIPE, env=environment, check=False,
+        )
+    finally:
+        if stdin_path:
+            source.close()
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(
+            f"{executable} {' '.join(arguments)} exited {result.returncode}"
+            + (f": {detail}" if detail else "")
+        )
+    benchmark_output.seek(0)
+    return benchmark_output.read() if capture else b""
+
+def elapsed(executable, arguments, stdin_path, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        execute(executable, arguments, stdin_path, False)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments, stdin_path):
+    execute(executable, arguments, stdin_path, False)
+    execute(executable, arguments, stdin_path, False)
+    count = 1
+    while elapsed(executable, arguments, stdin_path, count) < target_seconds:
+        count *= 2
+    samples = [elapsed(executable, arguments, stdin_path, count) / count
+               for _ in range(runs)]
+    return statistics.median(samples)
+
+print(f"subject: {subject}")
+print(f"input: {data.stat().st_size / (1024 * 1024):.1f} MiB, 240000 lines")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; output is verified before timing\n")
+print(f"{'workload':<18} {'ours ms':>10} {'host ms':>10} {'ours versus host':>20}")
+print(f"{'-' * 18} {'-' * 10} {'-' * 10} {'-' * 20}")
+
+ratios = []
+for label, tool, arguments, stdin_path in cases:
+    our_executable = ours / tool
+    host_executable = references[tool]
+    got = execute(our_executable, arguments, stdin_path, True)
+    want = execute(host_executable, arguments, stdin_path, True)
+    if got != want:
+        raise RuntimeError(
+            f"{label}: output differs ({len(got)} bytes ours, {len(want)} host)"
+        )
+    our_time = measure(our_executable, arguments, stdin_path)
+    host_time = measure(host_executable, arguments, stdin_path)
+    ratio = our_time / host_time
+    ratios.append(ratio)
+    change = ratio - 1.0
+    if abs(change) < .005:
+        comparison = "about equal"
+    else:
+        comparison = f"{abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'}"
+    print(f"{label:<18} {our_time * 1000:10.3f} {host_time * 1000:10.3f} {comparison:>20}")
+
+overall = statistics.geometric_mean(ratios)
+change = overall - 1.0
+print("\noverall geometric-mean result:")
+print(f"  ours is {abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'} than the host tools")
+PY
+)
+
+#
+#       Compare AWK's owned hot paths with the host AWK.
+#
+#           sh test/run bench awk -- [path-to-moonwater-multicall]
+#
+#       Inputs are generated once and outputs must agree before timing. The
+#       cases separate field discovery without value copies, field reads and
+#       updates, repeated short-key lookup, unique long-key insertion/growth,
+#       and builtin case conversion.
+#
+bench_awk()
+(
+        set -e
+        work=$(mktemp -d)
+        trap 'rm -rf "$work"' EXIT HUP INT TERM
+        subject=${1:-${MOONWATER_TOOLS:-}}
+
+        if [ -z "$subject" ]; then
+                subject=$work/moonwater
+                sh kit/build programs/shell.c "$subject"
+        fi
+
+        case $subject in
+        /*) ;;
+        *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+        esac
+
+        [ -x "$subject" ] || { echo "bench awk: not executable: $subject" >&2; exit 1; }
+        command -v python3 >/dev/null 2>&1 || {
+                echo "  awk          NOT RUN -- python3 is required" >&2
+                exit 2
+        }
+
+        exec python3 - "$subject" "$work" "${BENCH_RUNS:-7}" \
+                "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_awk: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+work_path = Path(work)
+ours = work_path / "awk"
+ours.symlink_to(subject)
+host = shutil.which("awk")
+if not host:
+    raise SystemExit("bench_awk: host awk is required")
+baseline = os.environ.get("AWK_BASELINE")
+if baseline and not os.access(baseline, os.X_OK):
+    raise SystemExit(f"bench_awk: AWK_BASELINE is not executable: {baseline}")
+if baseline:
+    baseline_directory = work_path / "baseline"
+    baseline_directory.mkdir()
+    baseline_awk = baseline_directory / "awk"
+    baseline_awk.symlink_to(baseline)
+    baseline = str(baseline_awk)
+
+fields = work_path / "fields"
+short = work_path / "short-keys"
+long = work_path / "long-keys"
+case = work_path / "case"
+empty = work_path / "empty"
+empty.touch()
+
+with fields.open("w", encoding="ascii") as out:
+    for i in range(300_000):
+        out.write(f"kind{i & 31}:{i % 1000:03d}:value\n")
+
+with short.open("w", encoding="ascii") as out:
+    for i in range(500_000):
+        out.write(f"k{i & 4095:07d}\n")
+
+with long.open("w", encoding="ascii") as out:
+    for i in range(140_000):
+        out.write(f"long-key-{i:08d}-abcdefghijklmnop\n")
+
+with case.open("w", encoding="ascii") as out:
+    for i in range(180_000):
+        out.write(f"AbCdEfGhIjKlMnOpQrStUvWxYz-{i:06d}\n")
+
+cases = (
+    ("field count", fields, "-F:", "{ s += NF } END { print s }"),
+    ("field arithmetic", fields, "-F:", "{ s += $2 } END { print s }"),
+    ("field update", fields, "-F:", "{ $2 += 1; s += $2 } END { print s }"),
+    ("default sub miss", empty,
+     'BEGIN {$0="x"; for (i=0;i<500000;i++) sub(/z/,"Z"); print}'),
+    ("short-key lookup", short, "{ a[$1]++ } END { for (k in a) s += a[k]; print s }"),
+    ("long-key insert", long, "{ a[$1] = NR } END { print length(a) }"),
+    ("tolower copy", case, "{ s += length(tolower($1)) } END { print s }"),
+)
+
+def command(executable, case):
+    label, path, *arguments = case
+    return (str(executable), *arguments, str(path))
+
+def execute(executable, case, capture):
+    result = subprocess.run(
+        command(executable, case), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False,
+    )
+    if result.returncode:
+        raise RuntimeError(
+            f"{case[0]} exited {result.returncode}: "
+            + result.stderr.decode("utf-8", "replace").strip()
+        )
+    return result.stdout if capture else b""
+
+def elapsed(executable, case, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        execute(executable, case, False)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure_all(executables, case):
+    for _, executable in executables:
+        execute(executable, case, False)
+
+    count = 1
+    while min(elapsed(executable, case, count)
+              for _, executable in executables) < target_seconds:
+        count *= 2
+
+    samples = {name: [] for name, _ in executables}
+    for trial in range(runs):
+        offset = trial % len(executables)
+        ordered = executables[offset:] + executables[:offset]
+        for name, executable in ordered:
+            samples[name].append(elapsed(executable, case, count) / count)
+
+    return {name: statistics.median(values)
+            for name, values in samples.items()}
+
+print(f"subject: {subject}")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; output is verified before timing\n")
+if baseline:
+    print(f"{'workload':<20} {'ours ms':>10} {'base ms':>10}"
+          f" {'host ms':>10} {'ours/base':>11} {'ours/host':>11}")
+    print(f"{'-' * 20} {'-' * 10} {'-' * 10} {'-' * 10}"
+          f" {'-' * 11} {'-' * 11}")
+else:
+    print(f"{'workload':<20} {'ours ms':>10} {'host ms':>10} {'ours/host':>12}")
+    print(f"{'-' * 20} {'-' * 10} {'-' * 10} {'-' * 12}")
+
+try:
+    for case_spec in cases:
+        got = execute(ours, case_spec, True)
+        want = execute(host, case_spec, True)
+        if got != want:
+            raise RuntimeError(
+                f"{case_spec[0]} output differs: ours {got!r}, host {want!r}"
+            )
+        executables = [("ours", ours), ("host", host)]
+        if baseline:
+            base_output = execute(baseline, case_spec, True)
+            if base_output != want:
+                raise RuntimeError(f"{case_spec[0]} baseline output differs")
+            executables.insert(1, ("base", baseline))
+
+        measured = measure_all(executables, case_spec)
+        if baseline:
+            print(f"{case_spec[0]:<20} {measured['ours'] * 1000:10.3f}"
+                  f" {measured['base'] * 1000:10.3f}"
+                  f" {measured['host'] * 1000:10.3f}"
+                  f" {measured['ours'] / measured['base']:11.2f}x"
+                  f" {measured['ours'] / measured['host']:11.2f}x")
+        else:
+            print(f"{case_spec[0]:<20} {measured['ours'] * 1000:10.3f}"
+                  f" {measured['host'] * 1000:10.3f}"
+                  f" {measured['ours'] / measured['host']:12.2f}x")
+except RuntimeError as error:
+    raise SystemExit(f"bench_awk: {error}")
+PY
+)
+
+#
+#       Measure find's walker floor separately from matching and metadata.
+#
+#           sh test/run bench find -- [path-to-moonwater-multicall]
+#
+#       The generated tree has 10,101 entries. -false is the lower-bound
+#       user-space walker: no output and no predicate facts. -name and -iname
+#       add matching; -size forces the statx work that metadata cannot avoid.
+#       Linux perf adds user cycles/instructions per entry when it is usable,
+#       and qemu -strace verifies traversal syscall counts for a static build.
+#
+bench_find()
+(
+        set -e
+        work=$(mktemp -d)
+        trap 'rm -rf "$work"' EXIT HUP INT TERM
+        subject=${1:-${MOONWATER_TOOLS:-}}
+
+        if [ -z "$subject" ]; then
+                subject=$work/moonwater
+                echo "building $subject" >&2
+                sh kit/build programs/shell.c "$subject"
+        fi
+
+        case $subject in
+        /*) ;;
+        *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
+        esac
+
+        [ -x "$subject" ] || {
+                echo "bench find: not executable: $subject" >&2
+                exit 1
+        }
+
+        command -v python3 >/dev/null 2>&1 || {
+                echo "  find         NOT RUN -- python3 is required" >&2
+                exit 2
+        }
+
+        exec python3 - "$subject" "$work" "${BENCH_RUNS:-9}" \
+                "${BENCH_SECONDS:-0.15}" <<'PY'
+import os
+import re
+import shutil
+import statistics
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+subject, work, runs_text, seconds_text = sys.argv[1:]
+runs = int(runs_text)
+target_seconds = float(seconds_text)
+if runs < 1 or target_seconds <= 0:
+    raise SystemExit("bench_find: BENCH_RUNS and BENCH_SECONDS must be positive")
+
+if hasattr(os, "sched_getaffinity") and hasattr(os, "sched_setaffinity"):
+    try:
+        os.sched_setaffinity(0, {min(os.sched_getaffinity(0))})
+    except (OSError, ValueError):
+        pass
+
+environment = os.environ.copy()
+environment["LC_ALL"] = "C"
+place = Path(work)
+tree = place / "tree"
+ours_dir = place / "ours"
+ours_dir.mkdir()
+ours = ours_dir / "find"
+ours.symlink_to(subject)
+host = shutil.which("find")
+if not host:
+    raise SystemExit("bench_find: host find is required")
+
+directories = 100
+files_each = 100
+for directory in range(directories):
+    below = tree / f"Dir{directory:03d}"
+    below.mkdir(parents=True)
+    for number in range(files_each):
+        suffix = ".Needle" if number % 10 == 0 else ".txt"
+        (below / f"File{number:03d}{suffix}").touch()
+
+entries = 1 + directories + directories * files_each
+directory_entries = directories + 1
+cases = (
+    ("walker-floor", (str(tree), "-false")),
+    ("name", (str(tree), "-name", "*.Needle")),
+    ("iname", (str(tree), "-iname", "*.needle")),
+    ("metadata", (str(tree), "-type", "f", "-size", "0c")),
+)
+
+def invoke(executable, arguments, capture=False):
+    result = subprocess.run(
+        (str(executable), *arguments), stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE if capture else subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False,
+    )
+    if result.returncode:
+        detail = result.stderr.decode("utf-8", "replace").strip()
+        raise RuntimeError(f"{executable} {' '.join(arguments)}: {detail}")
+    return result.stdout
+
+def elapsed(executable, arguments, count):
+    started = time.perf_counter_ns()
+    for _ in range(count):
+        invoke(executable, arguments)
+    return (time.perf_counter_ns() - started) / 1_000_000_000
+
+def measure(executable, arguments):
+    invoke(executable, arguments)
+    invoke(executable, arguments)
+    count = 1
+    while elapsed(executable, arguments, count) < target_seconds:
+        count *= 2
+    samples = [elapsed(executable, arguments, count) / count for _ in range(runs)]
+    return statistics.median(samples)
+
+def perf_counts(executable, arguments):
+    perf = shutil.which("perf")
+    if not perf:
+        return None
+    result = subprocess.run(
+        (perf, "stat", "-x,", "-r", str(runs), "-e",
+         "cycles:u,instructions:u", str(executable), *arguments),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False, text=True,
+    )
+    found = {}
+    for line in result.stderr.splitlines():
+        fields = line.split(",")
+        if len(fields) < 3:
+            continue
+        try:
+            value = float(fields[0])
+        except ValueError:
+            continue
+        event = fields[2].split(":", 1)[0]
+        if event in ("cycles", "instructions"):
+            found[event] = value
+    return found if len(found) == 2 else None
+
+def syscall_counts(arguments):
+    qemu = shutil.which("qemu-x86_64")
+    if not qemu:
+        return None
+    result = subprocess.run(
+        (qemu, "-strace", str(ours), *arguments),
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE, env=environment, check=False, text=True,
+    )
+    if result.returncode:
+        return None
+    counts = {}
+    for line in result.stderr.splitlines():
+        match = re.match(r"^[0-9]+ ([A-Za-z0-9_]+)\(", line)
+        if match:
+            name = match.group(1)
+            counts[name] = counts.get(name, 0) + 1
+    return counts
+
+print(f"subject: {subject}")
+print(f"tree: {entries} entries in {directory_entries} directories")
+print(f"samples: {runs}, at least {target_seconds:.2f}s each, one CPU when available")
+print("lower is better; outputs are checked against host find before timing\n")
+print(f"{'workload':<14} {'ours ms':>9} {'host ms':>9} {'ours ns/e':>11} {'host ns/e':>11} {'result':>14}")
+print(f"{'-' * 14} {'-' * 9} {'-' * 9} {'-' * 11} {'-' * 11} {'-' * 14}")
+
+results = {}
+for label, arguments in cases:
+    got = invoke(ours, arguments, True)
+    want = invoke(host, arguments, True)
+    if sorted(got.splitlines()) != sorted(want.splitlines()):
+        raise RuntimeError(f"{label}: output differs from host find")
+    our_time = measure(ours, arguments)
+    host_time = measure(host, arguments)
+    results[label] = our_time
+    change = our_time / host_time - 1
+    result = f"{abs(change) * 100:.0f}% {'slower' if change > 0 else 'faster'}"
+    print(f"{label:<14} {our_time * 1000:9.3f} {host_time * 1000:9.3f} "
+          f"{our_time * 1e9 / entries:11.1f} {host_time * 1e9 / entries:11.1f} {result:>14}")
+
+print("\nuser-space counters (subject):")
+for label in ("walker-floor", "name", "iname"):
+    arguments = dict(cases)[label]
+    counts = perf_counts(ours, arguments)
+    if counts:
+        print(f"  {label:<12} {counts['cycles'] / entries:7.1f} cycles/entry, "
+              f"{counts['instructions'] / entries:7.1f} instructions/entry")
+    else:
+        print("  perf counters unavailable")
+        break
+
+counts = syscall_counts(dict(cases)["iname"])
+if counts:
+    traversal = sum(counts.get(name, 0)
+                    for name in ("statx", "openat", "getdents64", "close"))
+    floor = 1 + 4 * directory_entries
+    print("\ntraversal syscalls (-iname):")
+    print(f"  statx {counts.get('statx', 0)}, openat {counts.get('openat', 0)}, "
+          f"getdents64 {counts.get('getdents64', 0)}, close {counts.get('close', 0)}")
+    print(f"  {traversal} total, {traversal / entries:.4f}/entry; "
+          f"modelled floor {floor} ({floor / entries:.4f}/entry)")
+
+print("\nallocation/copy model (subject):")
+print("  expression: one reusable node-table growth, zero per-entry allocations")
+print("  traversal: one hardware-floor path_join copy per entry")
+print("  -iname simple: zero scratch copies; complex glob: one fused lowercase copy per entry")
+print("  -iname pattern folded once")
+print(f"  matcher overhead above walker floor: "
+      f"{(results['iname'] - results['walker-floor']) * 1e9 / entries:.1f} ns/entry")
+PY
+)
+
+#
+#       How long the stack takes to reach a shell, and where the time goes.
+#
+#           sh test/run bench boot-time -- [runs] [extra kernel arguments]
+#
+#       Boots dist/bootx64.efi under qemu and reports, from the GUEST clock:
+#       when moonwater starts, when the canvas has a picture on it, and when
+#       the shell runs. Also whether the prompt appeared at all, because a
+#       configuration that starts init sooner and never reaches a prompt is
+#       not faster, and two of them look identical from a timestamp.
+#
+#       THREE MEASUREMENT TRAPS ARE ANSWERED HERE, each of which produced a
+#       confident wrong number before it was found.
+#
+#       qemu BLOCK BUFFERS ITS STDOUT when it is redirected to a file. Killing
+#       the guest then throws away whatever had not filled a block, so a VM
+#       that printed a prompt at 0.78 seconds looks like a VM that never
+#       printed one. `-serial file:` writes the guest console straight out and
+#       is the only form used here.
+#
+#       THE PROMPT IS WRITTEN MID-LINE and kernel messages interleave after
+#       it, so a line-oriented grep does not see it until some later message
+#       happens to end the line. That read as a 15 second regression in a
+#       configuration that was fine. The prompt is looked for in raw bytes.
+#
+#       HOST WALL CLOCK MEASURES qemu, not the guest. Start-up varies by more
+#       than the differences being chased. Every number below is a printk
+#       timestamp, taken inside the guest.
+#
+bench_boot_time()
+(
+runs=${1:-5}
+shift 2>/dev/null || true
+extra=${*:-}
+image=${MOONWATER_IMAGE:-dist/bootx64.efi}
+
+command -v qemu-system-x86_64 > /dev/null 2>&1 || {
+        echo "  boot-time    NOT RUN -- no qemu-system-x86_64"; exit 2; }
+[ -f "$image" ] || { echo "  boot-time    NOT RUN -- no $image"; exit 2; }
+
+marker=$(mktemp)
+cat > "$marker" <<'PY'
+import sys
+try:
+        data = open(sys.argv[1], "rb").read()
+except OSError:
+        sys.exit(1)
+sys.exit(0 if b"$ " in data else 1)
+PY
+
+one()
+{
+        log=$(mktemp -u)
+        qemu-system-x86_64 -m 2G -smp 2 -cpu host -enable-kvm \
+                -kernel "$image" -no-reboot -display none \
+                -serial "file:$log" \
+                -append "console=ttyS0 drm_client_lib.active= printk.time=1 $extra" \
+                < /dev/null > /dev/null 2>&1 &
+        pid=$!
+        n=0
+        while [ $n -lt 250 ]; do
+                [ -s "$log" ] && python3 "$marker" "$log" && break
+                sleep 0.02
+                n=$((n + 1))
+        done
+        kill $pid 2>/dev/null
+        wait $pid 2>/dev/null
+
+        at() { grep -m1 "$1" "$log" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -1; }
+        mw=$(at 'Moonwater start')
+        sc=$(grep -m1 'is on the screen' "$log" 2>/dev/null |
+             grep -oE '^\[ *[0-9]+\.[0-9]+' | tr -d '[ ' | head -1)
+        it=$(at 'Run /init')
+        if [ -s "$log" ] && python3 "$marker" "$log"; then p=1; else p=0; fi
+        echo "${mw:-NONE} ${sc:-NONE} ${it:-NONE} $p"
+        rm -f "$log"
+}
+
+middle() { printf '%s\n' "$@" | tr ' ' '\n' | grep -v '^$\|NONE' | sort -n |
+           awk '{a[NR]=$1} END {print a[int((NR + 1) / 2)]}'; }
+
+mws=''; scs=''; its=''; seen=0; n=0
+while [ "$n" -lt "$runs" ]; do
+        # shellcheck disable=SC2046
+        set -- $(one)
+        mws="$mws $1"; scs="$scs $2"; its="$its $3"; seen=$((seen + $4))
+        n=$((n + 1))
+done
+rm -f "$marker"
+
+# shellcheck disable=SC2086
+printf '  moonwater starts   %s s\n' "$(middle $mws)"
+# shellcheck disable=SC2086
+printf '  canvas on screen   %s s\n' "$(middle $scs)"
+# shellcheck disable=SC2086
+printf '  shell runs         %s s\n' "$(middle $its)"
+printf '  prompt reached     %d of %d boots\n' "$seen" "$runs"
+[ "$seen" -eq "$runs" ] || echo "  NOT EVERY BOOT REACHED A PROMPT -- the timings above are not a result"
+)
+
+#
+#       Matched multicall-engine throughput, which lives with the differential
+#       engine because it is the same kind of program: it drives binaries and
+#       compares their bytes. It needs two identically built snapshots to
+#       compare, so it is the one benchmark a bare `sh test/run bench` cannot
+#       supply arguments for.
+#
+bench_engines()
+{
+        if [ "$#" -eq 0 ]; then
+                echo "  engines      NOT RUN -- it compares two builds, and needs to be told which:"
+                echo "               sh test/run bench engines -- --binary before=PATH --binary after=PATH"
+                return 2
+        fi
+
+        python3 test/differential.py --harness engines "$@"
+}
+
+bench_one()
+{
+        bench_this=$1
+        shift
+
+        case $bench_this in
+        shell)     bench_shell "$@" ;;
+        tools)     bench_tools "$@" ;;
+        awk)       bench_awk "$@" ;;
+        find)      bench_find "$@" ;;
+        boot-time) bench_boot_time "$@" ;;
+        engines)   bench_engines "$@" ;;
+        *)         bench_c "$bench_this" "$@" ;;
+        esac
+}
+
+#
+#       Bench mode's own walk, which is the lane walk above with the tally
+#       left out: a benchmark reports numbers, not counts, and the only
+#       verdict is whether each one ran.
+#
+bench_main()
+{
+        if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
+                for name in $benchmarks; do
+                        bench_about "$name"
+                        printf '  %-19s %s\n' "$name" "$bench_line"
+                done
+                return 0
+        fi
+
+        requested=""
+
+        while [ "$#" -gt 0 ]; do
+                case $1 in
+                --) shift; break ;;
+                -*) echo "run: bench: no option called $1" >&2; return 2 ;;
+                *)  requested="$requested $1"; shift ;;
+                esac
+        done
+
+        for name in $requested; do
+                case " $benchmarks " in
+                *" $name "*) ;;
+                *) echo "run: no benchmark called $name" >&2; return 2 ;;
+                esac
+        done
+
+        [ -n "$requested" ] || requested=$benchmarks
+
+        broken=""
+        notrun=""
+
+        for name in $requested; do
+                bench_about "$name"
+                printf '\n%s -- %s\n' "$name" "$bench_line"
+
+                outcome=0
+                bench_one "$name" "$@" || outcome=$?
+
+                [ "$outcome" = 0 ] && continue
+                [ "$outcome" = 2 ] && { notrun="$notrun $name"; continue; }
+
+                broken="$broken $name"
+        done
+
+        echo
+
+        if [ -n "$broken" ]; then
+                echo "failed:$broken"
+                [ -z "$notrun" ] || echo "did not run:$notrun"
+                return 1
+        fi
+
+        if [ -n "$notrun" ]; then
+                echo "did not run:$notrun"
+                echo "so this is not every benchmark, it is every one that ran"
+                return 1
+        fi
+
+        echo "every benchmark ran"
+}
+
+#
 #       Walking the list.
 #
+
+if [ "$#" -gt 0 ] && [ "$1" = bench ]; then
+        shift
+        bench_main "$@"
+        exit $?
+fi
 
 if [ "$#" -gt 0 ] && [ "$1" = "--list" ]; then
         for lane in $lanes; do
