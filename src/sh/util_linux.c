@@ -12341,14 +12341,64 @@ static const file_long ul_lsblk_longs[] = {
     {"ascii", 'i'}, {"list", 'l'}, {"perms", 'm'},
     {"noheadings", 'n'}, {"output", 'o'}, {"paths", 'p'},
     {"raw", 'r'}, {"topology", 't'}, {"zoned", 'z'},
-    {"sysroot", 's'}, {"help", 'h'}, {"version", 'V'}, {null, 0},
+    {"sysroot", 's'}, {"ct", 'c'}, {"ct-filter", 'C'},
+    {"highlight", 'g'}, {"filter", 'Q'},
+    {"help", 'h'}, {"version", 'V'}, {null, 0},
 };
+
+/*      A counter is name[:parameter[:function]] and the function it has when
+        none is written is count, which is the number of rows printed.  The
+        parameter belongs to the functions that read a column and is read
+        past here. */
+static b32 ul_lsblk_counter_check(string_address text,
+                                  positive address_to name_length)
+{
+        if (!text || !string_get(text))
+                return string_report(log_error, 1, "%s: %s\n", "lsblk",
+                                     "counter not properly specified");
+
+        string_address colon = string_first_of(text, ':');
+        address_to name_length = colon ? (positive)(colon - text)
+                                       : string_length(text);
+        if (!address_to name_length)
+                return string_report(log_error, 1, "%s: %s\n", "lsblk",
+                                     "counter not properly specified");
+
+        if (colon)
+        {
+                string_address second = string_first_of(colon + 1, ':');
+                if (second && !string_equals(second + 1, "count"))
+                        return string_report(
+                            log_error, 1, "%s: unsupported counter type: %s\n",
+                            "lsblk", second + 1);
+        }
+
+        return 0;
+}
+
+static fn ul_lsblk_counter(string_address text, positive name_length,
+                           positive rows)
+{
+        p8 name[UL_COLUMN_NAME];
+        positive kept = min(name_length, (positive)UL_COLUMN_NAME - 1);
+        memory_copy_apart(name, (address_any)text, kept);
+        name[kept] = 0;
+
+        p8 counted[32];
+        positive digits = positive_into_string(counted, rows);
+        log("\nSummary:\n", sizeof("\nSummary:\n") - 1);
+        writer_fill(log, digits < 16 ? 16 - digits : 0, ' ');
+        log(counted, digits);
+        log(" ", 1);
+        log(name, kept);
+        log("\n", 1);
+}
 
 static b32 util_linux_lsblk()
 {
         file_taking taking = {
             .program = "lsblk", .allowed = "ADJOPSabdfilmnoprtszVh",
-            .valued = "os", .longs = ul_lsblk_longs,
+            .valued = "oscCgQ", .longs = ul_lsblk_longs,
         };
         b32 answer;
         if (ul_options_done(address_of taking, "[options] [device ...]",
@@ -12373,6 +12423,19 @@ static b32 util_linux_lsblk()
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "output-all/pairs metadata is not supported");
         if (file_option_value(address_of taking, 's'))
                 return string_report(log_error, 1, "%s: %s\n", "lsblk", "--sysroot is not supported");
+        if (file_option_value(address_of taking, 'C') ||
+            file_option_value(address_of taking, 'Q'))
+                return string_report(log_error, 1, "%s: %s\n", "lsblk", "display filters are not supported");
+        /*  A counter is read with the options, before any row is written. */
+        positive counter_name = 0;
+        if (taking.flags & FILE_FLAG('c'))
+        {
+                b32 fault = ul_lsblk_counter_check(
+                    file_option_value(address_of taking, 'c'),
+                    address_of counter_name);
+                if (fault)
+                        return fault;
+        }
 
         /* --fs, --perms, --topology and --scsi are not exclusive: each is a
            set of default columns and the last one written wins. */
@@ -12456,6 +12519,9 @@ static b32 util_linux_lsblk()
                              !(taking.flags & FILE_FLAG('n')),
                              raw,
                              ul_lsblk_field);
+        if (taking.flags & FILE_FLAG('c'))
+                ul_lsblk_counter(file_option_value(address_of taking, 'c'),
+                                 counter_name, ul_lsblk.row_count);
         log_flush();
         return ul_lsblk_operand_status();
 }

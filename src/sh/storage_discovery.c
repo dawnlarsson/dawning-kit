@@ -833,6 +833,10 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("types", 't'),
             STORAGE_ARGUMENT("options", 'O'),
             STORAGE_ARGUMENT("output", 'o'),
+            /*  Paths are written as hyperlinks only for a terminal, and
+                nothing here writes to one, so the choice is read and the
+                paths are written plainly whichever way it fell. */
+            STORAGE_ARGUMENT("hyperlink", 'y'),
         };
         storage_findmnt_options options = {
             .columns = {STORAGE_TARGET, STORAGE_SOURCE,
@@ -849,7 +853,7 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
 
         while ((option = storage_argument_next(
                     address_of taking, (string_address)"nrlvPfiSTMtoO",
-                    (string_address)"STMtoO", arguments,
+                    (string_address)"STMtoOy", arguments,
                     array_count(arguments), address_of value)) !=
                ARGUMENT_END)
         {
@@ -900,6 +904,8 @@ b32 storage_findmnt(positive argc, string_address address_to argv,
                         else
                                 options.mountpoint_query = true;
                 }
+                else if (option == 'y')
+                        ; /* The hyperlink choice: no terminal, no links. */
                 else if (option == 't')
                         options.type = value;
                 else if (option == 'O')
