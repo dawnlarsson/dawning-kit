@@ -103066,38 +103066,6 @@ PINNED = r"""
   "candidate": {
    "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
    "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
-    "--",
-    "."
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "files_yes",
-   "tier": "singles",
-   "utility": "find"
-  },
-  "domain": "files",
-  "id": "ce0e1c929fdf9211",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "eb0fe79be99eea0f8e8ac323e2e6e020f65ee0ed49de3e52010341a187e3f09f"
-  },
-  "utility": "find"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
    "stdout": "96415964201857dcfd88ef89476a37d0eddd6ba437b3a1f383db6175125ede97"
   },
   "case": {
@@ -111488,38 +111456,6 @@ PINNED = r"""
   },
   "case": {
    "argv": [
-    "--",
-    "0"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "sleep"
-  },
-  "domain": "files",
-  "id": "64d3cf641b204fdb",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "utility": "sleep"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "case": {
-   "argv": [
     "-nx",
     "c.txt"
    ],
@@ -114408,38 +114344,6 @@ PINNED = r"""
   "kind": "bug",
   "list": "ledger",
   "reason_id": "r136",
-  "utility": "whereis"
- },
- {
-  "candidate": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 0,
-   "stdout": "3ab57dea4c91b113cea6a437a292d12faa51a8e3234eefacb80d4d16018fea61"
-  },
-  "case": {
-   "argv": [
-    "--",
-    "ls"
-   ],
-   "domain": "files",
-   "family": null,
-   "fixture": "files",
-   "input_kind": "command",
-   "mode": null,
-   "stdin": "empty",
-   "tier": "singles",
-   "utility": "whereis"
-  },
-  "domain": "files",
-  "id": "53bca955e6a9a884",
-  "kind": "bug",
-  "list": "ledger",
-  "reason": "an option the program does not have: the reference names the word and says where to look next, and these answer in their own words or not at all. Walked for every program since the pass that found twenty-one of twenty-one were a line short here; what is left is the tail that needs the offending word threaded through a diagnostic that does not carry it yet",
-  "reference": {
-   "effects": "0cf939b11c075d78b34928501291d8b4bf90b244bee7ca5d9c750e48b90041f5",
-   "status": 1,
-   "stdout": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
   "utility": "whereis"
  },
  {

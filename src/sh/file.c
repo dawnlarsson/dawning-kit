@@ -8607,6 +8607,16 @@ static b32 file_find()
 
                         index++;
                 }
+                else if (string_equals(word, (string_address) "--"))
+                {
+                        //      Two dashes close the leading options and are
+                        //      not a root: the roots begin after them. Later
+                        //      in the line the word is a predicate that does
+                        //      not exist, which is what the reference calls
+                        //      it, so this is only recognised here.
+                        index++;
+                        break;
+                }
                 else
                         break;
 
@@ -11714,8 +11724,11 @@ static b32 file_whereis()
                 }
                 collecting = -1;
 
-                if (string_equals(word, (string_address)"-f") ||
-                    string_equals(word, (string_address)"--"))
+                //      -f says the names follow. Two dashes are not a
+                //      spelling util-linux gives this program, and fall
+                //      through to the letter loop, which calls a letter it
+                //      does not know bad usage -- as the reference does.
+                if (string_equals(word, (string_address)"-f"))
                 {
                         names = true;
                         continue;
@@ -19213,15 +19226,25 @@ static b32 file_sleep()
         if (count < 2)
                 return string_report(log_error, 1, "%s: missing operand\n", (string_address) "sleep");
 
+        bool intervals_only = false;
+
         for (positive i = 1; i < count; i++)
         {
                 p64 wanted[2] = {0, 0};
                 string_address word = program_argument((b32)i);
 
+                //      Two dashes close the options: they are not an
+                //      interval themselves, and every word after them is
+                //      one however it begins.
+                if (!intervals_only && string_equals(word, "--"))
+                {
+                        intervals_only = true;
+                        continue;
+                }
+
                 // sleep takes no options, so a word that begins with a dash
                 // is one the option reader refuses rather than an interval.
-                if (string_is(word, '-') && string_get(word + 1) &&
-                    !string_equals(word, "--"))
+                if (!intervals_only && string_is(word, '-') && string_get(word + 1))
                 {
                         //      Two dashes name the whole word, one names
                         //      the letter, and either way the reference says
