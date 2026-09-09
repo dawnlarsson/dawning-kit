@@ -67,7 +67,7 @@
         A .set is a second label on the same address, so there is no wrapper
         and no jump, and which names get one depends on who is linking.
 
-        255 routines (246 public, 9 local), 255 of them on all three.
+        256 routines (246 public, 10 local), 255 of them on all three and 1 local to one.
         Raw C purity: 0 function bodies, 0 object definitions, 0 body macros, and 0 object macros (all forbidden).
 
           routine                        scope   x86_64  arm64   riscv64
@@ -190,6 +190,7 @@
           memory_search_prepared         public  yes     yes     yes
           memory_search_prepared_core    local   yes     yes     yes
           memory_span_byte               public  yes     yes     yes
+          memory_span_byte_wide          local   yes     --      --
           memory_sum_bytes               public  yes     yes     yes
           memory_to_lower_ascii          public  yes     yes     yes
           memory_to_upper_ascii          public  yes     yes     yes
@@ -327,6 +328,9 @@
           writer_fill                    public  yes     yes     yes
           writer_stderr                  public  yes     yes     yes
           writer_stderr_once             public  yes     yes     yes
+
+        Private to one machine, by choice:
+          memory_span_byte_wide -- local to x86_64
 */
 
 #ifndef STANDARD_MODERN_C

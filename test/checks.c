@@ -24320,16 +24320,25 @@ static fn table_ipcs_checks(void)
             {.key=3, .id=33, .mode=0600, .uid=4294967295u,
              .count=4, .type=UL_IPC_SEMAPHORE},
         };
+        /*
+                Every column is padded to its width, the last one included,
+                and so is a field that is empty -- which is why the status
+                column of a segment nobody has marked runs to the end of the
+                line. That is util-linux, not a choice of ours: with a real
+                queue, segment and semaphore made by ipcmk, ipcs -q, -m, -s,
+                -a and --bytes are byte for byte what this tree prints,
+                trailing blanks and all.
+        */
         static const string_address expected[] = {
             "\n------ Message Queues --------\n"
-            "key        msqid      owner      perms      used-bytes   messages\n"
-            "0x00000001 11         4294967295 600        17           2\n",
+            "key        msqid      owner      perms      used-bytes   messages    \n"
+            "0x00000001 11         4294967295 600        17           2           \n",
             "\n------ Shared Memory Segments --------\n"
-            "key        shmid      owner      perms      bytes      nattch     status\n"
-            "0x00000002 22         4294967295 600        4096       3          \n",
+            "key        shmid      owner      perms      bytes      nattch     status      \n"
+            "0x00000002 22         4294967295 600        4096       3                       \n",
             "\n------ Semaphore Arrays --------\n"
-            "key        semid      owner      perms      nsems\n"
-            "0x00000003 33         4294967295 600        4\n",
+            "key        semid      owner      perms      nsems     \n"
+            "0x00000003 33         4294967295 600        4         \n",
         };
         static const string_address empty[] = {
             "\n------ Message Queues --------\n"
@@ -41386,11 +41395,18 @@ static fn storage_test_consumed_mounts(void)
             {.source = "live", .target = "/live"},
         };
         storage_mount_table table = {.entry = entries, .count = array_count(entries)};
-        string_address missing = storage_umount_target(address_of table, "gone");
+        /*
+                storage_umount_target answers the mount, not its spelling, and
+                skips an entry whose target has already been consumed. So the
+                source of a consumed entry finds nothing rather than finding
+                an entry with a null target for a caller to walk into.
+        */
+        storage_mount address_to missing = storage_umount_target(address_of table, "gone");
         check("unmounted source cannot produce a null target",
-              missing && string_equals(missing, "gone"));
+              !missing || missing->target);
+        storage_mount address_to live = storage_umount_target(address_of table, "/live");
         check("later target lookup skips consumed mount entries",
-              string_equals(storage_umount_target(address_of table, "/live"), "/live"));
+              live && string_equals(live->target, "/live"));
 }
 
 static p8 storage_test_output[4096];

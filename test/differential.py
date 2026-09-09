@@ -154225,6 +154225,160 @@ PINNED = r"""
   "id": "21a1463d05cd4500",
   "list": "regression",
   "utility": "umount"
+ },
+ {
+  "domain": "shell",
+  "id": "25389cf20a4d2d1a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "background-wait-n"
+ },
+ {
+  "domain": "shell",
+  "id": "2744a762846a8cb4",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "background-wait-n"
+ },
+ {
+  "domain": "shell",
+  "id": "5d4288d74b66872e",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "names_bash"
+ },
+ {
+  "domain": "shell",
+  "id": "aea32b584f8f8bc3",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "names_bash"
+ },
+ {
+  "domain": "shell",
+  "id": "3af41b6cc20e7efc",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "names_posix"
+ },
+ {
+  "domain": "shell",
+  "id": "f43db0a04530d2cf",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "names_posix"
+ },
+ {
+  "domain": "shell",
+  "id": "823eda6999cdd687",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "pipelines"
+ },
+ {
+  "domain": "shell",
+  "id": "979486972f8109c0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "pipelines"
+ },
+ {
+  "domain": "shell",
+  "id": "5c7ded1b61f64a1a",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "set_options"
+ },
+ {
+  "domain": "shell",
+  "id": "68fc7591fb3e4a39",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "terminal_vanish"
+ },
+ {
+  "domain": "util_linux",
+  "id": "1fa6fe3ecc289445",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "6715bf55c090e9d8",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsclocks"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0e5b764780589095",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4d7892adc6cb6e90",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "fbf2a80a29652b31",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lslocks_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "916cf0210bea60b9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "b513dd0b30e1c6c0",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "lsns_live"
+ },
+ {
+  "domain": "util_linux",
+  "id": "0c9778e885e12fc2",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "12f57d94cbde3fa9",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "35518d7d06b1a6b7",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "4c32894abb910e94",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
+ },
+ {
+  "domain": "util_linux",
+  "id": "5acf0dfc2a44123d",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "setsid"
  }
 ]
 """
