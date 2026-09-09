@@ -6363,6 +6363,7 @@ static b32 file_nice()
 typedef struct
 {
         p8 kind;
+        p8 mode;
         b32 unit;
         p8 comparison;
         b32 left;
@@ -6370,6 +6371,7 @@ typedef struct
         string_address text;
         b64 number;
         b64 extra;
+        bipolar output;
 } find_node;
 
 typedef struct
@@ -6427,6 +6429,16 @@ typedef struct
 static find_ancestor find_ancestors[FILE_MAX_DEPTH + 1];
 
 static string_address find_path;
+static string_address find_root_path;
+static bool find_daystart;
+
+// The three below are written where the walk's own state is in scope, and
+// the parser above them needs to name them.
+#define FIND_REGEX_POLICY 5
+
+static bipolar find_output_open(string_address path);
+static fn find_printf_walk(string_address format, bipolar handle);
+static bool find_regex_holds(find_node address_to node, string_address text);
 static string_address find_name;
 static file_facts address_to find_facts;
 static positive find_depth;
@@ -6692,6 +6704,7 @@ static bool find_pattern_holds(find_node address_to node, string_address text,
 #define FIND_SETS_FOLLOW 4
 #define FIND_SETS_ACTION 8
 #define FIND_TAKES_VALUE 16
+#define FIND_SETS_DAYSTART 32
 
 static const struct
 {
@@ -6709,7 +6722,7 @@ static const struct
     {(string_address) "-print0", '0', FIND_SETS_ACTION},
     {(string_address) "-delete", 'D', FIND_SETS_ACTION | FIND_SETS_DEEPEST},
     {(string_address) "-prune", 'r', 0},
-    {(string_address) "-quit", 'q', 0},
+    {(string_address) "-quit", 'q', FIND_SETS_ACTION},
     {(string_address) "-empty", 'y', 0},
     {(string_address) "-nouser", 'U', 0},
     {(string_address) "-nogroup", 'G', 0},
@@ -6739,6 +6752,32 @@ static const struct
     {"-gid", 'g', FIND_TAKES_VALUE},
     {"-newer", 'w', FIND_TAKES_VALUE},
     {"-newermt", 'w', FIND_TAKES_VALUE},
+    {"-anewer", 'w', FIND_TAKES_VALUE},
+    {"-cnewer", 'w', FIND_TAKES_VALUE},
+    {(string_address) "-daystart", 'v', FIND_SETS_DAYSTART},
+    {(string_address) "-noleaf", 'v', 0},
+    {(string_address) "-warn", 'v', 0},
+    {(string_address) "-nowarn", 'v', 0},
+    {(string_address) "-ignore_readdir_race", 'v', 0},
+    {(string_address) "-noignore_readdir_race", 'v', 0},
+    {(string_address) "-readable", 'A', 0},
+    {(string_address) "-writable", 'A', 0},
+    {(string_address) "-executable", 'A', 0},
+    {"-execdir", 'x', FIND_SETS_ACTION},
+    {"-ok", 'x', FIND_SETS_ACTION},
+    {"-okdir", 'x', FIND_SETS_ACTION},
+    {"-regex", 'R', FIND_TAKES_VALUE},
+    {"-iregex", 'R', FIND_TAKES_VALUE},
+    {"-regextype", 'v', FIND_TAKES_VALUE},
+    {"-samefile", 'S', FIND_TAKES_VALUE},
+    {"-xtype", 'Y', FIND_TAKES_VALUE},
+    {"-used", 'B', FIND_TAKES_VALUE},
+    {"-ilname", 'L', FIND_TAKES_VALUE},
+    {"-iwholename", 'P', FIND_TAKES_VALUE},
+    {"-printf", 'l', FIND_SETS_ACTION | FIND_TAKES_VALUE},
+    {"-fprintf", 'l', FIND_SETS_ACTION | FIND_TAKES_VALUE},
+    {"-fprint", 'e', FIND_SETS_ACTION | FIND_TAKES_VALUE},
+    {"-fprint0", 'e', FIND_SETS_ACTION | FIND_TAKES_VALUE},
 };
 
 static b32 find_parse_or();
@@ -6802,6 +6841,58 @@ static b32 find_parse_primary()
 
         find_at++;
 
+        // -newerXY is a family rather than a word: X says which of this
+        // file's times to take and Y which of the other's.
+        if (!string_compare_max(word, "-newer", 6) && string_length(word) == 8 &&
+            string_first_of((string_address) "aBcm", word[6]) &&
+            string_first_of((string_address) "aBcmt", word[7]))
+        {
+                string_address named = find_value(word);
+                b32 index = find_make('W');
+
+                if (!named || index < 0 || find_bad)
+                        return -1;
+
+                find_node address_to made = find_nodes + index;
+
+                made->comparison = word[6];
+                made->mode = word[7];
+
+                if (word[7] == 't')
+                {
+                        if (!file_moment_read(named, find_moment, address_of made->number))
+                        {
+                                string_format(file_fail, "find: invalid date '%s'\n", named);
+                                find_bad = true;
+                                return -1;
+                        }
+                }
+                else
+                {
+                        file_facts facts;
+                        bipolar looked = file_look_code(AT_FDCWD, named, 0, address_of facts);
+
+                        if (looked < 0)
+                        {
+                                string_format(file_fail, "find: '%s': %s\n", named,
+                                              file_reason(looked));
+                                find_bad = true;
+                                return -1;
+                        }
+
+                        file_moment address_to when =
+                            word[7] == 'a'   ? address_of facts.accessed
+                            : word[7] == 'B' ? address_of facts.created
+                            : word[7] == 'c' ? address_of facts.changed
+                                             : address_of facts.modified;
+
+                        made->number = when->seconds;
+                        made->extra = when->nanoseconds;
+                }
+
+                return index;
+        }
+
         positive selected = string_table_find(
             word, find_predicates, sizeof(find_predicates[0]),
             array_count(find_predicates));
@@ -6822,12 +6913,77 @@ static b32 find_parse_primary()
         find_node address_to node = find_nodes + index;
 
         find_deepest |= (sets & FIND_SETS_DEEPEST) != 0;
+        if (sets & FIND_SETS_DAYSTART)
+        {
+                find_daystart = true;
+                find_moment = file_now() - file_now() % CLOCK_SECONDS_PER_DAY +
+                              CLOCK_SECONDS_PER_DAY;
+        }
         find_one_system |= (sets & FIND_SETS_ONE_SYSTEM) != 0;
         find_follow |= (sets & FIND_SETS_FOLLOW) != 0;
         find_has_action |= (sets & FIND_SETS_ACTION) != 0;
 
         switch (node->kind)
         {
+        case 'R':
+                node->text = value;
+                node->comparison = find_is(word, "-iregex") ? 'i' : 0;
+                if (!regex_compile(value, false, node->comparison == 'i', false,
+                                   FIND_REGEX_POLICY))
+                {
+                        string_format(file_fail,
+                                      "find: invalid regular expression '%s'\n", value);
+                        goto bad;
+                }
+                break;
+
+        case 'A':
+                node->number = word[1] == 'r' ? 'r' : word[1] == 'w' ? 'w' : 'x';
+                break;
+
+        case 'Y':
+                node->number = string_get(value);
+                break;
+
+        case 'S':
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, value, 0, address_of facts);
+
+                if (looked < 0)
+                {
+                        string_format(file_fail, "find: '%s': %s\n", value,
+                                      file_reason(looked));
+                        goto bad;
+                }
+
+                node->number = (b64)facts.inode;
+                node->extra = (b64)file_device_key(facts.device_major,
+                                                   facts.device_minor);
+                break;
+        }
+
+        case 'l':
+                // -fprintf names the file first and the format second.
+                if (find_is(word, "-fprintf"))
+                {
+                        node->output = find_output_open(value);
+                        value = find_value(word);
+
+                        if (!value || find_bad)
+                                return -1;
+                }
+                else
+                        node->output = -1;
+
+                node->text = value;
+                break;
+
+        case 'e':
+                node->comparison = find_is(word, "-fprint0") ? '0' : 0;
+                node->output = find_output_open(value);
+                break;
+
         case '>':
         case '<':
                 if (!file_unsigned_decimal(value, node->kind == '>'
@@ -6840,7 +6996,16 @@ static b32 find_parse_primary()
                 node->kind = 'v';
                 break;
 
+        case 'v':
+                // -regextype names a dialect; only the one below is here,
+                // and a name for it is taken and passed over.
+                break;
+
         case 'x':
+                node->mode = find_is(word, "-execdir")  ? 'd'
+                             : find_is(word, "-ok")     ? 'o'
+                             : find_is(word, "-okdir")  ? 'O'
+                                                        : 0;
                 node->number = (b64)find_at;
                 while (find_at < find_count && !find_is(find_word(), ";") &&
                        !find_is(find_word(), "+"))
@@ -6908,6 +7073,7 @@ static b32 find_parse_primary()
         case 'z':
         case 'k':
         case 'i':
+        case 'B':
         case 'T':
         {
                 positive number;
@@ -6952,6 +7118,9 @@ static b32 find_parse_primary()
                 break;
         }
         case 'w':
+                node->comparison = find_is(word, "-anewer")   ? 'a'
+                                   : find_is(word, "-cnewer") ? 'c'
+                                                              : 'm';
                 if (find_is(word, "-newermt"))
                 {
                         if (!file_moment_read(value, find_moment, address_of node->number))
@@ -7003,6 +7172,7 @@ static b32 find_parse_and()
                         word = find_word();
                 }
                 else if (!word || find_is(word, (string_address) ")") ||
+                         find_is(word, (string_address) ",") ||
                          find_is(word, (string_address) "-o") ||
                          find_is(word, (string_address) "-or"))
                         break;
@@ -7013,6 +7183,37 @@ static b32 find_parse_and()
                         return -1;
 
                 b32 node = find_make('&');
+
+                if (node < 0)
+                        return -1;
+
+                find_nodes[node].left = left;
+                find_nodes[node].right = right;
+                left = node;
+        }
+
+        return left;
+}
+
+static b32 find_parse_or();
+
+static b32 find_parse_comma()
+{
+        b32 left = find_parse_or();
+
+        while (!find_bad && find_is(find_word(), (string_address) ","))
+        {
+                find_at++;
+
+                b32 right = find_parse_or();
+
+                if (find_bad || right < 0)
+                {
+                        find_bad = true;
+                        return -1;
+                }
+
+                b32 node = find_make(',');
 
                 if (node < 0)
                         return -1;
@@ -7143,12 +7344,54 @@ static positive file_replace_literal(string_address word, string_address marker,
         return length + 1;
 }
 
+// The word -exec puts in place of {}: the path the walk built, or the name
+// beside a dot for the -execdir shapes, which name a file in its own
+// directory rather than from where find was started.
+static string_address find_exec_subject(find_node address_to node, p8 address_to into)
+{
+        if (node->mode != 'd' && node->mode != 'O')
+                return find_path;
+
+        into[0] = '.';
+        into[1] = '/';
+        path_tail_copy(into + 2, FILE_PATH_MAX - 2, find_path);
+
+        return (string_address)into;
+}
+
+// What -ok and -okdir ask before they run: the command, an ellipsis, the
+// name, and a question mark. Anything but a yes is a no.
+static bool find_exec_asked(find_node address_to node, string_address subject)
+{
+        string_format(file_fail, "< %s ... %s > ? ",
+                      program_argument((b32)node->number), subject);
+
+        p8 answer[2];
+        bipolar got = system_read_once(0, answer, 1);
+
+        if (got != 1)
+                return false;
+
+        bool yes = answer[0] == 'y' || answer[0] == 'Y';
+
+        while (answer[0] != '\n' && system_read_once(0, answer, 1) == 1)
+                ;
+
+        return yes;
+}
+
 static bool find_exec_once(find_node address_to node)
 {
         positive used = 0;
         positive have = 0;
-        positive path_length = string_length(find_path);
+        p8 beside[FILE_PATH_MAX];
+        string_address subject = find_exec_subject(node, beside);
+        positive path_length = string_length(subject);
         positive words = (positive)(node->extra - node->number);
+
+        if ((node->mode == 'o' || node->mode == 'O') &&
+            !find_exec_asked(node, subject))
+                return false;
 
         if (!shell_array_room(find_exec_words, find_exec_word_room, words + 1))
         {
@@ -7162,7 +7405,7 @@ static bool find_exec_once(find_node address_to node)
         for (b32 i = (b32)node->number; i < (b32)node->extra; i++)
         {
                 positive length = file_replace_literal(program_argument(i), "{}", 2,
-                                                        find_path, path_length, null);
+                                                        subject, path_length, null);
 
                 if (!length || length > positive_max - needed)
                 {
@@ -7184,13 +7427,446 @@ static bool find_exec_once(find_node address_to node)
         {
                 find_exec_words[have++] = find_exec_text + used;
                 used += file_replace_literal(program_argument(i), "{}", 2,
-                                              find_path, path_length,
+                                              subject, path_length,
                                               find_exec_text + used);
         }
 
         find_exec_words[have] = null;
 
         return file_run(find_exec_words) == 0;
+}
+
+/*
+        -printf, which is a format language of its own.
+
+        Every directive answers with one field and nothing else, the way
+        stat's -c does, and the ones that name a time are handed to date's
+        own formatter so there is a single calendar here. A width or a
+        precision in front of a directive is applied to whatever it wrote,
+        which is why every field is rendered into a buffer first.
+*/
+static p8 find_field[FILE_PATH_MAX];
+static positive find_field_used;
+
+static fn find_field_write(address_any text, positive length)
+{
+        string_address from = text;
+
+        if (!length)
+                length = string_length(from);
+
+        for (positive i = 0; i < length && find_field_used + 1 < sizeof(find_field); i++)
+                find_field[find_field_used++] = from[i];
+
+        find_field[find_field_used] = end;
+}
+
+static file_moment address_to find_moment_of(p8 letter)
+{
+        return letter == 'A'   ? address_of find_facts->accessed
+               : letter == 'C' ? address_of find_facts->changed
+               : letter == 'B' ? address_of find_facts->created
+                               : address_of find_facts->modified;
+}
+
+// The path below the starting point, which is what %P is: the walk's own
+// path with the root and the slash after it taken off.
+static string_address find_below_root()
+{
+        positive length = string_length(find_root_path);
+        string_address path = find_path;
+
+        if (!string_compare_max(path, find_root_path, length))
+        {
+                path += length;
+
+                while (string_is(path, '/'))
+                        path++;
+        }
+
+        return path;
+}
+
+static bool find_printf_one(p8 letter, string_address format, positive address_to at)
+{
+        p8 name[FILE_PATH_MAX];
+
+        switch (letter)
+        {
+        case 'p':
+                find_field_write(find_path, 0);
+                return true;
+        case 'f':
+                path_tail_copy(name, FILE_PATH_MAX, find_path);
+                find_field_write(name, 0);
+                return true;
+        case 'h':
+                path_head_copy(name, FILE_PATH_MAX, find_path);
+                find_field_write(name, 0);
+                return true;
+        case 'H':
+                find_field_write(find_root_path, 0);
+                return true;
+        case 'P':
+                find_field_write(find_below_root(), 0);
+                return true;
+        case 'd':
+                positive_to_string(find_field_write, find_depth);
+                return true;
+        case 'l':
+                if (find_facts_ready() &&
+                    (find_facts->mode & MODE_FORMAT) == MODE_LINK &&
+                    file_link_text(find_path, name, FILE_PATH_MAX) >= 0)
+                        find_field_write(name, 0);
+                return true;
+        case 'y':
+        case 'Y':
+        {
+                file_facts through;
+                positive mode = find_facts_ready() ? find_facts->mode : 0;
+
+                if (letter == 'Y' && (mode & MODE_FORMAT) == MODE_LINK)
+                {
+                        if (!file_look_at(find_path, address_of through))
+                        {
+                                find_field_write("N", 1);
+                                return true;
+                        }
+
+                        mode = through.mode;
+                }
+
+                p8 kind = !mode                            ? '?'
+                          : (mode & MODE_FORMAT) == MODE_FILE ? 'f'
+                                                              : file_kind_letter(mode);
+
+                find_field_write(address_of kind, 1);
+                return true;
+        }
+        }
+
+        if (!find_facts_ready())
+                return true;
+
+        switch (letter)
+        {
+        case 's':
+                positive_to_string(find_field_write, find_facts->size);
+                return true;
+        case 'b':
+                positive_to_string(find_field_write, find_facts->blocks);
+                return true;
+        case 'k':
+                positive_to_string(find_field_write,
+                                   find_facts->blocks / 2 + (find_facts->blocks % 2 != 0));
+                return true;
+        case 'S':
+        {
+                // How sparse a file is: the room it takes over the room its
+                // length would need, which is above one for a file with
+                // holes and below one for a small file in a whole block.
+                p64 room = find_facts->blocks * 512;
+                p64 length = find_facts->size;
+
+                if (!length)
+                {
+                        find_field_write(room ? "inf" : "0", 0);
+                        return true;
+                }
+
+                positive_to_string(find_field_write, room / length);
+                find_field_write(".", 1);
+                positive_to_padded(find_field_write, room * 10 / length % 10, 1, '0', 0);
+                return true;
+        }
+        case 'i':
+                positive_to_string(find_field_write, find_facts->inode);
+                return true;
+        case 'n':
+                positive_to_string(find_field_write, find_facts->hard_links);
+                return true;
+        case 'D':
+                positive_to_string(find_field_write,
+                                   file_device_key(find_facts->device_major,
+                                                   find_facts->device_minor));
+                return true;
+        case 'm':
+                find_field_write(name, positive_into_base(name, find_facts->mode & 07777, 8, false));
+                return true;
+        case 'M':
+                file_mode_letters(name, find_facts->mode);
+                find_field_write(name, 10);
+                return true;
+        case 'u':
+                file_account_label(find_facts->owner, false, true, name);
+                find_field_write(name, 0);
+                return true;
+        case 'U':
+                positive_to_string(find_field_write, find_facts->owner);
+                return true;
+        case 'g':
+                file_account_label(find_facts->group, true, true, name);
+                find_field_write(name, 0);
+                return true;
+        case 'G':
+                positive_to_string(find_field_write, find_facts->group);
+                return true;
+        case 'a':
+        case 'c':
+        case 't':
+        {
+                file_moment address_to when =
+                    letter == 'a'   ? address_of find_facts->accessed
+                    : letter == 'c' ? address_of find_facts->changed
+                                    : address_of find_facts->modified;
+
+                date_shape(find_field_write, when->seconds,
+                           (string_address) "%a %b %e %H:%M:%S.");
+                positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
+                find_field_write("0 ", 2);
+                date_shape(find_field_write, when->seconds, (string_address) "%Y");
+                return true;
+        }
+        case 'A':
+        case 'C':
+        case 'T':
+        {
+                file_moment address_to when = find_moment_of(letter);
+                p8 which = string_get(format + address_to at);
+
+                if (!which)
+                        return true;
+
+                address_to at += 1;
+
+                if (which == '@')
+                {
+                        bipolar_to_string(find_field_write, when->seconds);
+                        find_field_write(".", 1);
+                        positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
+                        find_field_write("0", 1);
+                        return true;
+                }
+
+                if (which == '+')
+                {
+                        date_shape(find_field_write, when->seconds,
+                                   (string_address) "%Y-%m-%d+%H:%M:%S.");
+                        positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
+                        find_field_write("0", 1);
+                        return true;
+                }
+
+                // The letters that end in seconds carry the fraction with
+                // them, which is the one place find's clock is finer than
+                // the calendar's own.
+                if (which == 'S' || which == 'T' || which == 'X')
+                {
+                        date_shape(find_field_write, when->seconds,
+                                   which == 'S' ? (string_address) "%S"
+                                                : (string_address) "%H:%M:%S");
+                        find_field_write(".", 1);
+                        positive_to_padded(find_field_write, when->nanoseconds, 9, '0', 0);
+                        find_field_write("0", 1);
+                        return true;
+                }
+
+                p8 shape[3] = {'%', which, end};
+
+                date_shape(find_field_write, when->seconds, shape);
+                return true;
+        }
+        }
+
+        return false;
+}
+
+static fn find_printf_walk(string_address format, bipolar handle)
+{
+        p8 line[FILE_PATH_MAX * 2];
+        positive used = 0;
+
+        for (positive at = 0; string_get(format + at) && used + 1 < sizeof(line);)
+        {
+                p8 byte = string_get(format + at++);
+
+                if (byte == '\\')
+                {
+                        p8 next = string_get(format + at);
+                        p8 named = next == 'n'    ? '\n'
+                                   : next == 't'  ? '\t'
+                                   : next == 'r'  ? '\r'
+                                   : next == 'b'  ? '\b'
+                                   : next == 'f'  ? '\f'
+                                   : next == 'v'  ? '\v'
+                                   : next == 'a'  ? 7
+                                   : next == '\\' ? '\\'
+                                   : next == '0'  ? 0
+                                                  : 0xff;
+
+                        if (next && named != 0xff)
+                        {
+                                line[used++] = named;
+                                at++;
+                                continue;
+                        }
+
+                        if (byte_is_digit(next))
+                        {
+                                positive number = 0;
+                                positive digits = 0;
+
+                                while (digits < 3 && byte_is_digit(string_get(format + at)))
+                                {
+                                        number = number * 8 +
+                                                 (positive)(string_get(format + at) - '0');
+                                        at++;
+                                        digits++;
+                                }
+
+                                line[used++] = (p8)number;
+                                continue;
+                        }
+
+                        line[used++] = byte;
+                        continue;
+                }
+
+                if (byte != '%')
+                {
+                        line[used++] = byte;
+                        continue;
+                }
+
+                if (string_is(format + at, '%'))
+                {
+                        line[used++] = '%';
+                        at++;
+                        continue;
+                }
+
+                // The flags, width and precision in front of the directive,
+                // read the way a printf reads them.
+                positive begin = at;
+                bool left = false;
+
+                while (string_first_of((string_address) "-+ #0", string_get(format + at)) &&
+                       string_get(format + at))
+                {
+                        left |= string_is(format + at, '-');
+                        at++;
+                }
+
+                positive width = 0;
+                positive precision = positive_max;
+
+                while (byte_is_digit(string_get(format + at)))
+                        width = width * 10 + (positive)(string_get(format + at++) - '0');
+
+                if (string_is(format + at, '.'))
+                {
+                        at++;
+                        precision = 0;
+
+                        while (byte_is_digit(string_get(format + at)))
+                                precision = precision * 10 +
+                                            (positive)(string_get(format + at++) - '0');
+                }
+
+                p8 letter = string_get(format + at);
+
+                if (!letter)
+                {
+                        // A directive with nothing after it is written out
+                        // as it stands, which is what the reference does.
+                        for (positive i = begin - 1; i < at && used + 1 < sizeof(line); i++)
+                                line[used++] = string_get(format + i);
+                        break;
+                }
+
+                at++;
+
+                if (letter == '{')
+                {
+                        while (string_get(format + at) && !string_is(format + at, '}'))
+                                at++;
+                        if (string_get(format + at))
+                                at++;
+                        continue;
+                }
+
+                find_field_used = 0;
+                find_field[0] = end;
+
+                if (!find_printf_one(letter, format, address_of at))
+                {
+                        // An unknown directive is written back as it stands.
+                        for (positive i = begin - 1; i < at && used + 1 < sizeof(line); i++)
+                                line[used++] = string_get(format + i);
+                        continue;
+                }
+
+                positive length = find_field_used;
+
+                if (precision != positive_max && precision < length)
+                        length = precision;
+
+                positive pad = width > length ? width - length : 0;
+
+                if (!left)
+                        while (pad-- && used + 1 < sizeof(line))
+                                line[used++] = ' ';
+
+                for (positive i = 0; i < length && used + 1 < sizeof(line); i++)
+                        line[used++] = find_field[i];
+
+                if (left)
+                        while (pad-- && used + 1 < sizeof(line))
+                                line[used++] = ' ';
+        }
+
+        if (handle >= 0)
+                system_write_all((positive)handle, line, used);
+        else
+                log(line, used);
+}
+
+// -fprint and friends write into a file rather than onto the output, and
+// the file is made once however many entries reach it.
+static bipolar find_output_open(string_address path)
+{
+        bipolar handle = system_open_at_mode(AT_FDCWD, path, FILE_WRITE, 0666);
+
+        if (handle < 0)
+        {
+                string_format(file_fail, "find: '%s': %s\n", path, file_reason(handle));
+                find_bad = true;
+        }
+
+        return handle;
+}
+
+// -readable, -writable and -executable ask the kernel the question the
+// caller would have to ask by trying.
+static bool find_access_holds(p8 which)
+{
+        positive mode = which == 'r' ? 4 : which == 'w' ? 2 : 1;
+
+        return system_access_at(AT_FDCWD, find_path, mode) == 0;
+}
+
+// -regex and -iregex match the whole path, which is the one thing the
+// shared matcher has to be told: a find is a match only when it covers
+// every byte of the name.
+static bool find_regex_holds(find_node address_to node, string_address text)
+{
+        if (!regex_compile(node->text, false, node->comparison == 'i', false,
+                           FIND_REGEX_POLICY))
+                return false;
+
+        positive length = string_length(text);
+
+        return regex_find(REGEX_EXACT_LONGEST, text, length, 0);
 }
 
 // The shell's own matcher, which -name and -path and grep's globs all go
@@ -7212,6 +7888,10 @@ static bool find_true(b32 which)
 
         case '|':
                 return find_true(node->left) || find_true(node->right);
+
+        case ',':
+                find_true(node->left);
+                return find_true(node->right);
 
         case '!':
                 return !find_true(node->left);
@@ -7321,13 +8001,25 @@ static bool find_true(b32 which)
                                         find_age(node->unit, node->extra), node->number);
 
         case 'w':
+        case 'W':
+        {
                 if (!find_facts_ready())
                         return false;
 
-                if (find_facts->modified.seconds != node->number)
-                        return find_facts->modified.seconds > node->number;
+                p8 which = node->kind == 'W' ? node->comparison
+                           : node->comparison ? node->comparison
+                                              : 'm';
+                file_moment address_to mine =
+                    which == 'a'   ? address_of find_facts->accessed
+                    : which == 'c' ? address_of find_facts->changed
+                    : which == 'B' ? address_of find_facts->created
+                                   : address_of find_facts->modified;
 
-                return (b64)find_facts->modified.nanoseconds > node->extra;
+                if (mine->seconds != node->number)
+                        return mine->seconds > node->number;
+
+                return (b64)mine->nanoseconds > node->extra;
+        }
 
         case 'd':
                 file_line(find_path);
@@ -7336,6 +8028,66 @@ static bool find_true(b32 which)
         case '0':
                 log(find_path, 0);
                 log("\0", 1);
+                return true;
+
+        case 'R':
+                return find_regex_holds(node, find_path);
+
+        case 'A':
+                return find_access_holds((p8)node->number);
+
+        case 'S':
+                if (!find_facts_ready())
+                        return false;
+                return (b64)find_facts->inode == node->number &&
+                       (b64)file_device_key(find_facts->device_major,
+                                            find_facts->device_minor) == node->extra;
+
+        case 'Y':
+        {
+                file_facts through;
+                positive mode = 0;
+
+                if (!find_facts_ready())
+                        return false;
+
+                // -xtype asks what a link points at, and what a name that is
+                // not a link is; a link to nothing is a link.
+                if ((find_facts->mode & MODE_FORMAT) == MODE_LINK)
+                        mode = file_look_at(find_path, address_of through)
+                                   ? through.mode
+                                   : find_facts->mode;
+                else
+                        mode = find_facts->mode;
+
+                return find_type_holds((p8)node->number, mode);
+        }
+
+        case 'B':
+                if (!find_facts_ready())
+                        return false;
+                return find_holds_count(node->comparison,
+                                        (find_facts->accessed.seconds -
+                                         find_facts->changed.seconds) /
+                                            CLOCK_SECONDS_PER_DAY,
+                                        node->number);
+
+        case 'l':
+                find_printf_walk(node->text, node->output);
+                return true;
+
+        case 'e':
+                if (node->output >= 0)
+                {
+                        system_write_all((positive)node->output, find_path,
+                                         string_length(find_path));
+                        system_write_all((positive)node->output,
+                                         node->comparison == '0' ? "" : "\n",
+                                         node->comparison == '0' ? 0 : 1);
+
+                        if (node->comparison == '0')
+                                system_write_all((positive)node->output, "", 1);
+                }
                 return true;
 
         case 'r':
@@ -7551,6 +8303,7 @@ static b32 file_find()
         find_pruned = false;
         find_status = 0;
         find_device = 0;
+        find_daystart = false;
         find_moment = file_now();
 
         while (index < count)
@@ -7568,6 +8321,21 @@ static b32 file_find()
                 {
                         find_follow = false;
                         find_follow_named = false;
+                }
+                else if (!string_compare_max(word, "-O", 2))
+                {
+                        // The optimisation level names how the reference
+                        // orders its own tests, which is not an answer.
+                }
+                else if (find_is(word, (string_address) "-D"))
+                {
+                        if (index + 1 >= count)
+                        {
+                                file_fail("find: -D needs a list of debug options\n", 0);
+                                return 1;
+                        }
+
+                        index++;
                 }
                 else
                         break;
@@ -7596,7 +8364,7 @@ static b32 file_find()
 
         find_at = index;
         find_count = count;
-        find_root = find_parse_or();
+        find_root = find_parse_comma();
 
         if (find_bad)
                 return 1;
@@ -7632,14 +8400,18 @@ static b32 file_find()
         }
 
         if (roots_last == roots_first)
+        {
+                find_root_path = (string_address) ".";
                 find_walk((string_address) ".", (string_address) ".", 0, true,
                           AT_FDCWD, (string_address) ".", 0);
+        }
         else
                 for (positive i = roots_first; i < roots_last && !find_quit; i++)
                 {
                         string_address root = program_argument((b32)i);
                         p8 name[FILE_PATH_MAX];
 
+                        find_root_path = root;
                         path_tail_copy(name, FILE_PATH_MAX, root);
                         find_walk(root, name, 0, true, AT_FDCWD, root, 0);
                 }
