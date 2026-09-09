@@ -2529,11 +2529,37 @@ static bool ul_setarch_verbose;
 static bool ul_setarch_list;
 static bool ul_setarch_do_show;
 
+static p8 ul_setarch_immediate;
+static string_address ul_setarch_shown;
+
+static fn ul_setarch_list_write()
+{
+        for (positive i = 0; ul_arches[i].name; i++)
+                string_format(log, "%s\n", ul_arches[i].name);
+        log_flush();
+}
+
 static bool ul_setarch_take(p8 letter, string_address value)
 {
         if (letter == 'v') ul_setarch_verbose = true;
-        else if (letter == 'l') ul_setarch_list = true;
-        else if (letter == 's') ul_setarch_do_show = true;
+        else if (letter == 'l')
+        {
+                /* Answered where it stands: the words after it are never
+                   looked at, malformed or not. */
+                ul_setarch_list = true;
+                ul_setarch_immediate = 'l';
+                return false;
+        }
+        else if (letter == 's')
+        {
+                ul_setarch_do_show = true;
+                if (value)
+                {
+                        ul_setarch_shown = value;
+                        ul_setarch_immediate = 's';
+                        return false;
+                }
+        }
         else if (letter == 'u') {
                 ul_setarch_options |= UL_UNAME26;
                 if (ul_setarch_verbose) string_format(log, "Switching on UNAME26.\n");
@@ -2567,14 +2593,24 @@ static b32 util_linux_setarch()
                 arch = program_argument((b32)first++);
         ul_setarch_options = 0;
         ul_setarch_verbose = ul_setarch_list = ul_setarch_do_show = false;
-        if (!file_take_from(address_of taking, first)) return 1;
+        ul_setarch_immediate = 0;
+        ul_setarch_shown = null;
+        if (!file_take_from(address_of taking, first))
+        {
+                if (ul_setarch_immediate == 'l')
+                {
+                        ul_setarch_list_write();
+                        return 0;
+                }
+                if (ul_setarch_immediate == 's')
+                        return ul_setarch_show(ul_setarch_shown, 0);
+                return 1;
+        }
         if (ul_meta(address_of taking,
                     "[<arch>] [options] [<program> [argument ...]]",
                     address_of answer)) return answer;
         if (ul_setarch_list) {
-                for (positive i = 0; ul_arches[i].name; i++)
-                        string_format(log, "%s\n", ul_arches[i].name);
-                log_flush();
+                ul_setarch_list_write();
                 return 0;
         }
         if (taking.flags & FILE_FLAG('p')) {
@@ -8341,8 +8377,7 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                 if (result < 0)
                 {
                         system_close(handle);
-                        if (verbose &&
-                            descriptor->operation <= UL_BLOCK_QUERY_SIGNED32)
+                        if (verbose && descriptor->letter != '0')
                                 string_format(log, "%s failed.\n",
                                               descriptor->description);
                         log_flush();
@@ -8458,7 +8493,7 @@ static b32 util_linux_blockdev()
         if (report && ul_blockdev_command_count)
                 return string_report(log_error, 1, "%s: %s\n", "blockdev", "--report cannot be combined with commands");
         if (!report && ul_blockdev_command_count && taking.first == count)
-                return string_report(log_error, 1, "%s: %s\n", "blockdev", "no device specified");
+                return ul_usage_error("blockdev", "no device specified");
         bool verbose = ul_blockdev_verbosity == 'v';
         bool quiet = ul_blockdev_verbosity == 'q';
 
