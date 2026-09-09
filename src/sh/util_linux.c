@@ -13971,6 +13971,11 @@ static b32 util_linux_rfkill()
                                         array_count(rfkill_formats));
         if (clash)
                 return clash;
+        /*  An empty column list is refused before the command word and the
+            identifiers are looked at, and without a word. */
+        if (file_option_value(address_of taking, 'o') &&
+            !string_get(file_option_value(address_of taking, 'o')))
+                return 1;
 
         positive arguments = (positive)program_argument_count();
         string_address action = taking.first < arguments
@@ -14027,9 +14032,20 @@ static b32 util_linux_rfkill()
                         kind = ul_rfkill_match_kind(identifier, rows, count,
                                                     address_of value);
                         if (kind == UL_RFKILL_MATCH_INVALID)
+                        {
+                                /*  The table is written even when a name in
+                                    it was not one: JSON keeps its brackets
+                                    around nothing. */
+                                if (taking.flags & FILE_FLAG('J'))
+                                {
+                                        log("{\n   \"rfkilldevices\": [\n\n   ]\n}\n",
+                                            sizeof("{\n   \"rfkilldevices\": [\n\n   ]\n}\n") - 1);
+                                        log_flush();
+                                }
                                 return string_report(log_error, 1,
                                               "rfkill: invalid identifier: %s\n",
                                               identifier);
+                        }
                 }
                 if (legacy)
                         ul_rfkill_legacy(rows, count, kind, value);
