@@ -7246,7 +7246,13 @@ static b32 tools_dd(void)
                         if (numbers[n].bytes
                                 ? !dd_quantity(value, numbers[n].value, numbers[n].bytes)
                                 : !dd_size(value, numbers[n].value))
-                                return string_diagnostic(&text_diagnostic, 1, argument, "invalid number");
+                        {
+                                if (dd_refused)
+                                        return 1;
+                                text_flush();
+                                return string_report(writer_stderr, 1,
+                                    "dd: invalid number: '%s'\n", value);
+                        }
                         if (numbers[n].seen)
                                 *numbers[n].seen = true;
                         if (numbers[n].spelling)
