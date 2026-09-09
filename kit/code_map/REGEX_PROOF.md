@@ -206,7 +206,7 @@ tests and 80 desktop/mobile browser checks pass.
 ## Reproduce the maintained regressions
 
 Build `programs/shell.c` with `sh kit/build`, create the normal multicall name farm,
-and run `test/text.sh`, `test/awk.sh`, `test/files.sh`, and `test/shell.sh` against it.
+and run `sh test/run text awk files shell` against it.
 Build and run `test/reuse_shell.c` for retained metadata, failed publication,
 repeated-count capacity, erased groups and capture-slot reuse checks. Use
 `CC=aarch64-linux-gnu-gcc` or `CC=riscv64-linux-gnu-gcc` for the corresponding builds.
