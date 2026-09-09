@@ -1143,7 +1143,14 @@ def main(argv=None):
             if id(row) in gone:
                 continue
             if id(row) in moved:
+                #       The answer moved, so the row still records a real
+                #       difference -- but its reason was written about the old
+                #       answer and nothing here can tell whether it still
+                #       describes this one. Say so in the row rather than let
+                #       a stale sentence pass for a checked one.
                 row["candidate"] = moved[id(row)]
+                row["reason_unverified"] = ("the answer moved after a change elsewhere; "
+                                            "this reason was not re-checked against it")
             kept.append(row)
         if refreshed_gone or refreshed_moved:
             save_rows("ledger", kept)
