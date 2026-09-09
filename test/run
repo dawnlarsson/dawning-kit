@@ -8051,6 +8051,7 @@ bench_shell()
                 sh kit/build programs/shell.c "$subject"
         fi
 
+        # shellcheck disable=SC1007
         case $subject in
         /*) ;;
         *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
@@ -8306,6 +8307,7 @@ bench_tools()
                 sh kit/build programs/shell.c "$subject"
         fi
 
+        # shellcheck disable=SC1007
         case $subject in
         /*) ;;
         *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
@@ -8531,6 +8533,7 @@ bench_awk()
                 sh kit/build programs/shell.c "$subject"
         fi
 
+        # shellcheck disable=SC1007
         case $subject in
         /*) ;;
         *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
@@ -8725,6 +8728,7 @@ bench_find()
                 sh kit/build programs/shell.c "$subject"
         fi
 
+        # shellcheck disable=SC1007
         case $subject in
         /*) ;;
         *) subject=$(CDPATH= cd -- "$(dirname -- "$subject")" && pwd)/$(basename -- "$subject") ;;
