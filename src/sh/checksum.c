@@ -610,16 +610,17 @@ static fn checksum_line_put(const checksum_algorithm address_to algorithm,
 /* cksum's collected operands and the named sums' argv tail differ only at
    the input boundary; hashing, errors and escaped line output are shared. */
 static b32 checksum_generate(const checksum_algorithm address_to algorithm,
-                             bipolar transform, positive first, bool tagged)
+                             bipolar transform, positive first, bool tagged,
+                             bool from_files)
 {
         positive count = (positive)program_argument_count();
-        positive inputs = tagged ? (positive)text_input_count()
-                                 : first < count ? count - first : 1;
+        positive inputs = from_files ? (positive)text_input_count()
+                                     : first < count ? count - first : 1;
         b32 answer = 0;
 
         for (positive i = 0; i < inputs; i++)
         {
-                string_address name = tagged ? text_file_name(i)
+                string_address name = from_files ? text_file_name(i)
                     : first < count ? program_argument((b32)(first + i)) : null;
                 name = name ? name : (string_address) "-";
                 p8 digest[64];
@@ -652,14 +653,9 @@ static fn checksum_check_result_put(string_address name,
    for portable newline-delimited output. */
 static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
                                 p8 address_to expected,
-                                string_address address_to filename,
-                                bool address_to lower)
+                                string_address address_to filename)
 {
         positive at = 0;
-
-        // GNU compares the digest as text: upper-case hex is well formed
-        // but never matches what it computes.
-        address_to lower = true;
 
         // A record from a Windows editor ends in CR LF; GNU drops the CR.
         if (text_line_length && text_line[text_line_length - 1] == '\r')
@@ -693,14 +689,13 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 
                 digest_at = at;
                 at += digits;
-                // One space, then an optional mode marker: a second space
-                // or the asterisk of a binary record.
-                if (text_line[at] != ' ')
+                // One space, then the mode marker: a second space, or the
+                // asterisk of a binary record.
+                if (text_line[at] != ' ' ||
+                    (text_line[at + 1] != ' ' && text_line[at + 1] != '*'))
                         return false;
 
-                at++;
-                if (text_line[at] == ' ' || text_line[at] == '*')
-                        at++;
+                at += 2;
 
                 text_line[text_line_length] = end;
                 name = text_line + at;
@@ -708,15 +703,11 @@ static bool checksum_line_parse(const checksum_algorithm address_to algorithm,
 
         for (positive i = 0; i < algorithm->bytes; i++)
         {
-                p8 first = text_line[digest_at + i * 2];
-                p8 second = text_line[digest_at + i * 2 + 1];
-                positive high = digit_known(first, 16);
-                positive low = digit_known(second, 16);
+                positive high = digit_known(text_line[digest_at + i * 2], 16);
+                positive low = digit_known(text_line[digest_at + i * 2 + 1], 16);
 
                 if (high >= 16 || low >= 16)
                         return false;
-                if ((first >= 'A' && first <= 'F') || (second >= 'A' && second <= 'F'))
-                        address_to lower = false;
 
                 expected[i] = (p8)((high << 4) | low);
         }
@@ -793,12 +784,13 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         p8 expected[64];
                         p8 digest[64];
                         string_address filename;
-                        bool lower;
 
                         line++;
+                        // An empty record is passed over in silence.
+                        if (!text_line_length)
+                                continue;
                         if (!checksum_line_parse(algorithm, expected,
-                                                 address_of filename,
-                                                 address_of lower))
+                                                 address_of filename))
                         {
                                 malformed++;
                                 if (checksum_warn)
@@ -831,7 +823,7 @@ static b32 checksum_verify(const checksum_algorithm address_to algorithm,
                         }
 
                         verified++;
-                        if (memory_compare(expected, digest, algorithm->bytes) || !lower)
+                        if (memory_compare(expected, digest, algorithm->bytes))
                         {
                                 mismatched++;
                                 failed = true;
@@ -901,8 +893,8 @@ static b32 checksum_main()
         file_taking taking = {
             .program = command,
             .allowed = algorithm->variable_length
-                           ? (string_address) "bctlw"
-                           : (string_address) "bctw",
+                           ? (string_address) "bctlwz"
+                           : (string_address) "bctwz",
             .valued = algorithm->variable_length
                           ? (string_address) "l"
                           : null,
@@ -954,7 +946,7 @@ static b32 checksum_main()
                 answer = checksum_verify(algorithm, transform,
                                          address_of taking);
         else
-                answer = checksum_generate(algorithm, transform, taking.first, tagged);
+                answer = checksum_generate(algorithm, transform, taking.first, tagged, false);
 
         system_close((positive)transform);
         return text_done(answer);

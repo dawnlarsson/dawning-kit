@@ -418,7 +418,7 @@ static b32 cksum_digest(const checksum_algorithm address_to algorithm, bool tagg
         if (transform < 0)
                 return text_done(string_diagnostic(address_of text_diagnostic, 1, algorithm->type, "kernel AF_ALG hash support or requested algorithm is unavailable"));
 
-        b32 answer = checksum_generate(algorithm, transform, 0, tagged);
+        b32 answer = checksum_generate(algorithm, transform, 0, tagged, true);
         system_close((positive)transform);
         return text_done(answer);
 }

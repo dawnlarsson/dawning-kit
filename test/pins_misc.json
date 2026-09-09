@@ -3,6 +3,62 @@
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
+  "option": "--length",
+  "reason": "deliberate: long spelling of the unimplemented variable BLAKE2 length.",
+  "utility": "b2sum"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-l",
+  "reason": "deliberate: variable BLAKE2 digest lengths need the parameter block keyed by output length, which the kernel's blake2b-512 transform does not expose; a truncated 512-bit digest is not the same value.",
+  "utility": "b2sum"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "conv=ascii",
+  "reason": "deliberate: EBCDIC translation is a pair of 256-byte code page tables and a character set this tree does not otherwise carry; a copy that silently left the bytes alone would be worse than a refusal.",
+  "utility": "dd"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "conv=block",
+  "reason": "deliberate: fixed-record conversion needs the cbs padding and trailing-space contract, including how it interacts with conv=sync; it is refused rather than approximated by copying the bytes through.",
+  "utility": "dd"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "conv=ebcdic",
+  "reason": "deliberate: EBCDIC translation is a pair of 256-byte code page tables and a character set this tree does not otherwise carry; a copy that silently left the bytes alone would be worse than a refusal.",
+  "utility": "dd"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "conv=ibm",
+  "reason": "deliberate: EBCDIC translation is a pair of 256-byte code page tables and a character set this tree does not otherwise carry; a copy that silently left the bytes alone would be worse than a refusal.",
+  "utility": "dd"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "conv=unblock",
+  "reason": "deliberate: fixed-record conversion needs the cbs padding and trailing-space contract, including how it interacts with conv=sync; it is refused rather than approximated by copying the bytes through.",
+  "utility": "dd"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
   "option": "--color",
   "reason": "deliberate: ANSI coloring changes the output byte protocol and requires WHEN policy plus palette handling; plain deterministic patches remain the contract.",
   "utility": "diff"
@@ -275,6 +331,14 @@
   "domain": "misc",
   "kind": "deliberate",
   "list": "ledger",
+  "option": "-T",
+  "reason": "deliberate: short spelling of --initial-tab, the output alignment modifier refused with the rest of the output tab renderer.",
+  "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
   "option": "-W",
   "reason": "deliberate: width controls only the unimplemented side-by-side renderer and is rejected rather than accepted without effect.",
   "utility": "diff"
@@ -358,5 +422,309 @@
   "option": "-y",
   "reason": "deliberate: side-by-side layout needs display-width, tab and truncation semantics; emitting normal diff output would falsely claim that layout.",
   "utility": "diff"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--since",
+  "reason": "deliberate: time selection needs the free-form date parser and a stable mapping from the boot clock to it; a partial recognizer would silently select the wrong window.",
+  "utility": "dmesg"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--until",
+  "reason": "deliberate: long spelling of the unimplemented time selection.",
+  "utility": "dmesg"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--cachestat",
+  "reason": "deliberate: long spelling of the forced cachestat syscall.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--output-all",
+  "reason": "deliberate: the dirty, writeback and evicted page counters come from cachestat fields this reader does not collect; the column set is refused rather than filled with zeros.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--recursive",
+  "reason": "deliberate: long spelling of the unimplemented recursive traversal.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--total",
+  "reason": "deliberate: long spelling of the unimplemented grand total row.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-C",
+  "reason": "deliberate: forcing cachestat asks for one specific syscall; this reads page residency through cachestat when the kernel has it and mincore otherwise, and will not claim the forced form.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-R",
+  "reason": "deliberate: recursive traversal needs directory walking with the same ordering and error contract as the file operands; it is refused rather than silently visiting nothing.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-c",
+  "reason": "deliberate: a grand total is a synthetic row whose columns are sums with their own width and JSON rules; it is refused rather than printed as a plausible extra file.",
+  "utility": "fincore"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--format",
+  "reason": "deliberate: long spelling of the unimplemented hexdump format language.",
+  "utility": "hexdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-e",
+  "reason": "deliberate: hexdump's format language is a printf-like interpreter with iteration counts, byte counts and its own conversions; accepting a subset would silently print the wrong bytes.",
+  "utility": "hexdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-f",
+  "reason": "deliberate: a file of format strings is the same unimplemented language read from elsewhere.",
+  "utility": "hexdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--dns",
+  "reason": "deliberate: long spelling of the unimplemented reverse lookup.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--present",
+  "reason": "deliberate: long spelling of the unimplemented time selection.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--since",
+  "reason": "deliberate: long spelling of the unimplemented time selection.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--until",
+  "reason": "deliberate: long spelling of the unimplemented time selection.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-d",
+  "reason": "deliberate: reverse DNS lookup of a stored address is a resolver call per record; last would answer with names this tree cannot verify, so the numeric address stands.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-p",
+  "reason": "deliberate: time selection needs GNU's free-form date parser (\"yesterday\", \"-2days\", partial timestamps); a partial recognizer would silently select the wrong window.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-s",
+  "reason": "deliberate: time selection needs the free-form date parser; see --present.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-t",
+  "reason": "deliberate: time selection needs the free-form date parser; see --present.",
+  "utility": "last"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--journald",
+  "reason": "deliberate: the journal export protocol is a separate framing (field names, binary lengths) from syslog; it is refused rather than sent as a syslog line.",
+  "utility": "logger"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--sd-id",
+  "reason": "deliberate: RFC 5424 structured data has its own escaping, ordering and identity rules; emitting a partial element would produce a syntactically valid message with the wrong meaning.",
+  "utility": "logger"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--sd-param",
+  "reason": "deliberate: the parameter half of the unimplemented structured-data element.",
+  "utility": "logger"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-F",
+  "reason": "deliberate: floating point output needs a binary float formatter (and, for -F, long double) whose rounding this freestanding tree does not provide; the type is refused rather than printed wrongly.",
+  "utility": "od"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-e",
+  "reason": "deliberate: floating point output needs a binary float formatter (and, for -F, long double) whose rounding this freestanding tree does not provide; the type is refused rather than printed wrongly.",
+  "utility": "od"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-f",
+  "reason": "deliberate: floating point output needs a binary float formatter (and, for -F, long double) whose rounding this freestanding tree does not provide; the type is refused rather than printed wrongly.",
+  "utility": "od"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-l",
+  "reason": "deliberate: the long format reads the account's home directory, shell, project and plan files; it is refused rather than printed with the fields it can reach.",
+  "utility": "pinky"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "aux",
+  "reason": "deliberate: the BSD personality is a different column set and selection rule, not more rows; accepting it and printing the ordinary columns would silently answer another question.",
+  "utility": "ps"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "ax",
+  "reason": "deliberate: BSD selection letters, refused with the rest of that personality.",
+  "utility": "ps"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "u",
+  "reason": "deliberate: the BSD user format, refused with the rest of that personality.",
+  "utility": "ps"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--output-limit",
+  "reason": "deliberate: long spelling of the unimplemented output limit.",
+  "utility": "script"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-o",
+  "reason": "deliberate: an output size limit needs the transcript writer to count bytes across every log and stop the session mid-record; it is refused rather than accepted and ignored.",
+  "utility": "script"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--summary",
+  "reason": "deliberate: long spelling of the unimplemented summary report.",
+  "utility": "scriptreplay"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-S",
+  "reason": "deliberate: the summary is a separate report over the timing file's header records; it is refused rather than printed incomplete.",
+  "utility": "scriptreplay"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--follow",
+  "reason": "deliberate: long spelling of the refused follow mode.",
+  "utility": "utmpdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "--reverse",
+  "reason": "deliberate: long spelling of the refused reverse import.",
+  "utility": "utmpdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-f",
+  "reason": "deliberate: follow mode waits on a growing file forever, which is a session rather than a dump; it is refused rather than returning after one pass.",
+  "utility": "utmpdump"
+ },
+ {
+  "domain": "misc",
+  "kind": "deliberate",
+  "list": "ledger",
+  "option": "-r",
+  "reason": "deliberate: writing records back into a login database mutates system state from parsed text; this tool reads that state and never rewrites it.",
+  "utility": "utmpdump"
  }
 ]

@@ -1866,6 +1866,18 @@ static bool process_script_command_text(p8 address_to into, positive room,
         return true;
 }
 
+/* Whether a log names a regular file, the only kind two logs may not
+   share. */
+static bool process_script_log_regular(process_script_log address_to log_file)
+{
+        file_facts facts;
+
+        return log_file && log_file->handle >= 0 &&
+               file_look(log_file->handle, (string_address)"", AT_EMPTY_PATH,
+                         address_of facts) &&
+               (facts.mode & MODE_FORMAT) == MODE_FILE;
+}
+
 static b32 process_script_child(string_address command,
                                 positive command_first, b32 master, b32 slave,
                                 bipolar signal_fd, bipolar pidfd,
@@ -2383,9 +2395,11 @@ static b32 process_script()
                 timing->path = (string_address)"/dev/stderr";
         }
 
-        if (process_script_log_same(state.out, state.in) ||
-            process_script_log_same(state.out, timing) ||
-            process_script_log_same(state.in, timing))
+        // Two names for one device (the usual /dev/null twice) are no
+        // conflict; util-linux minds only a shared regular file.
+        if (process_script_log_regular(state.out) &&
+            (process_script_log_same(state.out, state.in) ||
+             process_script_log_same(state.out, timing)))
         {
                 string_report(log_error, 1, "%s: %s\n", "script", "log files must name distinct objects");
                 goto close_logs;

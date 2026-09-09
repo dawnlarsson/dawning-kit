@@ -3421,6 +3421,11 @@ static bool login_who_visit(login_record address_to record)
         return true;
 }
 
+static const file_long login_pinky_longs[] = {
+    {(string_address) "lookup", 'L'},
+    {null, 0},
+};
+
 static const file_long login_who_longs[] = {
     {(string_address) "all", 'a'},
     {(string_address) "boot", 'b'},
@@ -3755,9 +3760,10 @@ static b32 tools_pinky()
         file_operands_begin();
         file_taking taking = {
             .program = (string_address) "pinky",
-            .allowed = (string_address) "sfwiqbhlp",
+            .allowed = (string_address) "sfwiqbhlpL",
             .valued = (string_address) "",
             .operand = file_operand,
+            .longs = login_pinky_longs,
             .seen = login_pinky_seen,
         };
 
@@ -5142,7 +5148,7 @@ static fn numfmt_record(p8 address_to bytes, positive length)
    when a later one would supersede it. */
 static bool numfmt_option_seen(p8 letter, string_address value)
 {
-        if (letter == 'd' && value && string_length(value) != 1)
+        if (letter == 'd' && value && string_length(value) > 1)
         {
                 text_flush();
                 writer_stderr("numfmt: the delimiter must be a single character\n", 0);
@@ -5292,13 +5298,14 @@ static b32 tools_numfmt()
 
         text_delimiter = (flags & FILE_FLAG('z')) ? '\0' : '\n';
 
-        // GNU's two warnings about options that another option overrides.
-        if (numfmt.have_format && numfmt.format.width && numfmt.padding)
+        // GNU's two warnings about options that another option overrides,
+        // both of which it prints only under --debug.
+        if (numfmt.debug && numfmt.have_format && numfmt.format.width && numfmt.padding)
         {
                 text_flush();
                 writer_stderr("numfmt: --format padding overriding --padding\n", 0);
         }
-        if ((flags & FILE_FLAG('h')) && file_operand_count)
+        if (numfmt.debug && (flags & FILE_FLAG('h')) && file_operand_count)
         {
                 text_flush();
                 writer_stderr("numfmt: --header ignored with command-line input\n", 0);
@@ -6913,8 +6920,15 @@ static bool dd_flags(string_address value, p8 group, positive address_to flags)
 
         do
         {
-                if (!*value && !group)
-                        return true;
+                if (!*value)
+                {
+                        text_flush();
+                        return string_report(writer_stderr, false,
+                            "dd: invalid %s: ''\nTry 'dd --help' for more information.\n",
+                            group == 0 ? (string_address)"conversion"
+                            : group == 1 ? (string_address)"input flag"
+                                         : (string_address)"output flag");
+                }
                 positive word = 0;
                 while (word < array_count(words) &&
                        (words[word].group != group ||
@@ -7890,6 +7904,7 @@ static const file_long dump_od_longs[] = {
     {(string_address) "width", 'w'},
     {(string_address) "endian", 'E'},
     {(string_address) "strings", 'S'},
+    {(string_address) "traditional", 'T'},
     {null, 0},
 };
 
@@ -8363,7 +8378,7 @@ static b32 dump_run(positive first, positive count)
         bool starred = false;
         bool wrote = false;
         bool opened = false;
-        bool any_read = false;
+        bool read_failed = false;
         positive inputs = first < count ? count - first : 1;
 
         for (positive which = 0; which < inputs; which++)
@@ -8399,8 +8414,10 @@ static b32 dump_run(positive first, positive count)
                 {
                         positive taken = dump_skip_input(skip);
 
-                        skip -= taken;
-                        offset += taken;
+                        // od reports a skip it could not reach; hexdump
+                        // takes the offset as its own and reads nothing.
+                        offset += dump_arguments.od ? taken : skip;
+                        skip -= dump_arguments.od ? taken : skip;
                 }
 
                 if (!left)
@@ -8465,9 +8482,9 @@ static b32 dump_run(positive first, positive count)
                 }
 
                 /* An input that could not be read leaves od with no offset to
-                   report; one that was read, even to nothing, has one. */
-                if (!text_input.failed)
-                        any_read = true;
+                   report, so the closing address line goes away with it. */
+                if (text_input.failed)
+                        read_failed = true;
 
                 text_close();
         }
@@ -8489,7 +8506,7 @@ static b32 dump_run(positive first, positive count)
                 wrote = true;
         }
 
-        if ((dump_arguments.od && any_read) || wrote ||
+        if ((dump_arguments.od && opened && !read_failed) || wrote ||
             (!dump_arguments.od && opened && dump_arguments.skip))
         {
                 if (!dump_arguments.address_none)
@@ -8619,7 +8636,7 @@ static b32 tools_od(void)
 {
         file_taking taking = {
             .program = (string_address) "od",
-            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOSstvwxX",
+            .allowed = (string_address) "AaBbcDdeEFfhHiIjlLNoOSsTtvwxX",
             .valued = (string_address) "AEjNSt",
             .optional = (string_address) "w",
             .long_optional = (string_address) "Sw",
@@ -8675,11 +8692,10 @@ static b32 tools_od(void)
 
         if (radix)
         {
-                if (radix[0] == 'n' && !radix[1])
+                if (radix[0] == 'n')
                         dump_arguments.address_none = true;
-                else if (!radix[1] &&
-                         (radix[0] == 'd' || radix[0] == 'o' ||
-                          radix[0] == 'x'))
+                else if (radix[0] == 'd' || radix[0] == 'o' ||
+                         radix[0] == 'x')
                 {
                         dump_arguments.address_base = radix[0] == 'd' ? 10
                                                       : radix[0] == 'o' ? 8
@@ -8729,6 +8745,13 @@ static b32 tools_od(void)
 
         if (taking.flags & FILE_FLAG('S'))
         {
+                if (dump_arguments.count)
+                {
+                        text_flush();
+                        return text_done(string_report(writer_stderr, 1,
+                            "od: no type may be specified when dumping strings\n"));
+                }
+
                 string_address wanted = file_option_value(address_of taking, 'S');
                 positive minimum = 3;
 
@@ -11293,6 +11316,9 @@ typedef struct
 {
         positive address_to values;
         positive count, room;
+        // How many selector operands contributed, which decides whether
+        // the written order is the listing order.
+        positive lists;
 } ps_ids;
 
 static bool ps_pid_list(string_address list, ps_ids address_to ids,
@@ -11334,22 +11360,11 @@ static bool ps_pid_list(string_address list, ps_ids address_to ids,
         if (!any)
                 return false;
 
-        // procps lists the processes of a later selector before those of
-        // an earlier one, each list in its own order.
-        positive address_to merged = null;
-        positive merged_count = 0;
-        positive merged_room = 0;
-
         for (positive at = 0; at < fresh_count; at++)
-                if (!ps_value_add(&merged, &merged_count, &merged_room, fresh[at]))
-                        return false;
-        for (positive at = 0; at < ids->count; at++)
-                if (!ps_value_add(&merged, &merged_count, &merged_room, ids->values[at]))
+                if (!ps_value_add(&ids->values, &ids->count, &ids->room, fresh[at]))
                         return false;
 
-        ids->values = merged;
-        ids->count = merged_count;
-        ids->room = merged_room;
+        ids->lists++;
         return true;
 }
 
@@ -11843,9 +11858,10 @@ static b32 tools_ps(void)
 
         bool matched = false;
 
-        // Processes named by -p alone come out in the order they were
+        // Processes named by one -p list come out in the order they were
         // named, repeats included; procps reads exactly those entries.
-        if (pids.count && !alternate_selectors && !every && !sorted)
+        // Separate selector operands are a set, gathered in process order.
+        if (pids.count && pids.lists == 1 && !alternate_selectors && !every && !sorted)
         {
                 for (positive at = 0; at < pids.count; at++)
                         for (positive p = 0; p < ps_count; p++)
@@ -11900,12 +11916,9 @@ static b32 tools_ps(void)
                         if (!repeats)
                                 continue;
                 }
-                // Without a terminal of its own, procps' default selection
-                // (same user, same terminal) matches nothing at all.
                 else if (!every &&
-                         (!ps_own_tty ||
-                          !(process->uid == ps_own_uid &&
-                            (positive)process->tty == ps_own_tty)))
+                         !(process->uid == ps_own_uid &&
+                           (positive)process->tty == ps_own_tty))
                         continue;
 
                 matched = true;
