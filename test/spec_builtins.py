@@ -1253,8 +1253,10 @@ def builtins_array_machinery(rng):
         setup = rng.choice(("declare -A a=([k]=one [j]=two)",
                             "declare -A a=()",
                             "declare -A a; a['a b']=spaced; a['x=y']=equals"))
+        # No bare declare -p here: the sorted report below carries it, and an
+        # associative listing has no defined order to compare unsorted.
         change = rng.choice(("a[new]=added", "a[k]+=more", "unset 'a[k]'",
-                             "declare -p a", "a=([only]=one)", ":"))
+                             "a=([only]=one)", ":"))
         query = rng.choice(('"${a[@]}"', '"${!a[@]}"', '"${#a[@]}"',
                             '"${a[k]-none}"', '"${a[missing]-none}"'))
     # An associative array has no defined order, so its keys and its
