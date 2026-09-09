@@ -10027,9 +10027,10 @@ static fn trap_write_condition(writer write, positive number,
         write(" ", 1);
 
         //      Bash writes a signal as SIGINT and a condition as EXIT; dash
-        //      writes the bare name for both, and this listing is compared
-        //      against whichever shell the name was invoked as.
-        if (shell_bash_compat && number && number <= TRAP_NUMBER_MAX)
+        //      and Bash's POSIX mode write the bare name for both, and this
+        //      listing is compared against whichever shell was invoked.
+        if (shell_bash_compat && !shell_posix_on() && number &&
+            number <= TRAP_NUMBER_MAX)
                 write("SIG", 3);
 
         if (number < TRAP_NAMES - 1)
@@ -10037,6 +10038,15 @@ static fn trap_write_condition(writer write, positive number,
         else if (number >= TRAP_ERR && number <= TRAP_DEBUG)
                 string_format(write, "%s", trap_condition_names[number -
                                                                 TRAP_ERR]);
+        else if (number <= TRAP_NUMBER_MAX)
+        {
+                //      The real-time signals have no entry in the name table
+                //      and are spelled RTMIN+n and RTMAX, as kill -l has them.
+                p8 name[16];
+
+                kill_name(number, name);
+                write(name, string_length(name));
+        }
         else
                 positive_to_string(write, number);
 
