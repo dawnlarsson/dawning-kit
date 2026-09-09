@@ -1,13 +1,17 @@
 /*
-        Every C check in the tree, in one file.
+        Every C check and every C benchmark in the tree, in one file.
 
             gcc ... -DCHECK_verify test/checks.c              what test/verify.c was
             gcc ... -DCHECK_spool_reference test/checks.c     its glibc twin
             gcc ... -DCHECK_allocator -DALLOCATOR_REFERENCE test/checks.c
+            gcc ... -DBENCH_floor test/checks.c               what kit/floor.c was
 
         A section is one former file, byte for byte, between #ifdef
         CHECK_<name> and its #endif. test/run picks one by defining that name
-        and nothing else in this file is compiled. The reference variants --
+        and nothing else in this file is compiled. The benchmarks are sections
+        of their own under BENCH_<name>, at the end of the file, where the
+        former kit/bench_*.c went; `sh test/run bench` builds those and
+        `sh test/run` builds none of them. The reference variants --
         the same body linked against glibc so the trace it prints can be
         diffed against ours -- are sections of their own, named _reference,
         except the allocator, which was always one file built twice and keeps
@@ -15,11 +19,12 @@
         CHECK_format with FORMAT_STANDALONE set, as test/format_standalone.c
         was.
 
-        Ten pieces are shared between sections: the counters every counted
+        Twelve pieces are shared between sections: the counters every counted
         test reports through, the named-case walk, the case tables the
         freestanding and glibc variants both run, the stream and spool bodies,
-        and the terminal fixture the term and edit harnesses in test/run link.
-        Each appears once, below, under SHARED_<name>, and a section reaches
+        the terminal fixture the term and edit harnesses in test/run link, and
+        the timing scaffold and scalar references the benchmarks were written
+        against. Each appears once, below, under SHARED_<name>, and a section reaches
         it where its #include line stood by defining that name and including
         this file again:
 
@@ -3989,6 +3994,176 @@ static fn terminal_fixture_start(unsigned int columns, unsigned int rows)
         ROWS = rows;
         full_reset();
 }
+#elif defined(SHARED_bench_measure)
+/*
+        The timing scaffold shared by the small standalone benchmarks.
+
+        A benchmark supplies only the work it means to measure.  Trial
+        preparation, best-of selection, fixed-point reporting and the tiny
+        insertion sort used by paired medians live here so their policy cannot
+        drift between callers.
+*/
+
+#ifndef DAWNING_BENCH_MEASURE_C
+#define DAWNING_BENCH_MEASURE_C
+
+typedef fn (*bench_work)(void);
+
+/* Optional state reset performed immediately before the clock starts. */
+static bench_work bench_prepare;
+
+static p64 bench_best(bench_work work, positive tries)
+{
+        p64 best = 0;
+
+        for (positive which = 0; which < tries; which++)
+        {
+                p64 started;
+                p64 elapsed;
+
+                if (bench_prepare)
+                        bench_prepare();
+
+                started = get_cpu_time();
+                work();
+                elapsed = get_cpu_time() - started;
+
+                if (!which || elapsed < best)
+                        best = elapsed;
+        }
+
+        return best;
+}
+
+static fn bench_report(string_address name, bench_work work, positive tries,
+                       positive units, string_address unit)
+{
+        p64 ticks = bench_best(work, tries);
+        positive scaled = (positive)(ticks * 100 / units);
+        p8 fraction[3];
+
+        positive_into_padded(fraction, scaled % 100, 2, '0');
+        fraction[2] = end;
+        string_format(log, "  %s  %p.%s ticks/%s\n", name, scaled / 100,
+                      fraction, unit);
+}
+
+static fn order(positive address_to values, positive count)
+{
+        for (positive i = 1; i < count; i++)
+        {
+                positive value = values[i];
+                positive at = i;
+
+                while (at && values[at - 1] > value)
+                {
+                        values[at] = values[at - 1];
+                        at--;
+                }
+
+                values[at] = value;
+        }
+}
+
+#ifdef BENCH_PAIRED_INDEXED
+typedef positive (*bench_indexed_work)(positive);
+
+static p64 bench_indexed_once(bench_indexed_work run)
+{
+        p64 started = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += run(round & (SUBJECTS - 1));
+
+        return get_cpu_time() - started;
+}
+
+static positive bench_paired_median(bench_indexed_work one,
+                                    bench_indexed_work two)
+{
+        positive samples[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 first;
+                p64 second;
+
+                if (trial & 1)
+                {
+                        second = bench_indexed_once(two);
+                        first = bench_indexed_once(one);
+                }
+                else
+                {
+                        first = bench_indexed_once(one);
+                        second = bench_indexed_once(two);
+                }
+
+                samples[trial] =
+                    (positive)(second * 10000 / (first ? first : 1));
+        }
+
+        order(samples, TRIES);
+        return samples[TRIES / 2];
+}
+#endif
+
+#endif
+#elif defined(SHARED_bench_reference)
+/*
+        Scalar references for the assembly string benchmarks.
+
+        These stay out of line on purpose.  The public assembly is reached by
+        a call too; inlining only this side would measure call elimination at
+        short lengths instead of the byte loop the routines replaced.
+*/
+
+#ifndef DAWNING_BENCH_REFERENCE_C
+#define DAWNING_BENCH_REFERENCE_C
+
+#define BENCH_NOT_INLINED __attribute__((noinline, noclone))
+
+BENCH_NOT_INLINED positive reference_length(string_address source)
+{
+        string_address step = source;
+
+        while (string_get(step))
+                step++;
+
+        return step - source;
+}
+
+BENCH_NOT_INLINED b32 reference_compare(string_address source,
+                                        string_address input)
+{
+        while (string_get(source) && string_get(input))
+        {
+                if string_not (source, address_to input)
+                        break;
+
+                source++;
+                input++;
+        }
+
+        return string_get(source) - string_get(input);
+}
+
+BENCH_NOT_INLINED string_address reference_first_of(string_address source,
+                                                     p8 character)
+{
+        while (string_get(source))
+        {
+                if string_is (source, character)
+                        return source;
+
+                source++;
+        }
+
+        return character ? null : source;
+}
+
+#undef BENCH_NOT_INLINED
+#endif
 #else /* the sections */
 
 #ifdef CHECK_standard
@@ -44609,4 +44784,9008 @@ b32 main(void)
         return proof_failures != 0;
 }
 #endif
+
+/*
+        The benchmarks, which are sections too.
+
+            gcc ... -DBENCH_floor test/checks.c        what kit/floor.c was
+            gcc ... -DBENCH_grep_count test/checks.c   what kit/bench_grep_count.c was
+
+        sh test/run bench builds these and sh test/run never does. They are
+        the former kit/bench_*.c, one section each, byte for byte, with the
+        two pieces they shared -- the timing scaffold that was
+        kit/bench_measure.c and the scalar references that were
+        kit/bench_reference.c -- reached through the SHARED_ names above,
+        where their #include lines stood.
+
+        Six are not in test/run's catalogue, because nothing on this side of
+        the machine can run them: BENCH_exec, BENCH_network_spawn,
+        BENCH_shell_document and BENCH_tiny are built by kit/spark and run
+        inside the booted image, BENCH_startup_empty is the host-kernel floor
+        they subtract, and BENCH_one is one function at one length for
+        kit/insns, which picks which with -DWHICH -DLENGTH -DROUNDS.
+*/
+
+#ifdef BENCH_floor
+/*
+        Every routine in library.c, against the speed of the machine.
+
+        The lower-bound candidate is a loop that moves the unavoidable traffic
+        and computes nothing.  A semantic routine's useful question is how
+        much slower it remains.  This is an empirical bound, not a declaration:
+        when the real routine beats it, the report says the bound is unresolved
+        instead of printing an impossible efficiency or pretending victory.
+
+        Traffic matters and is measured rather than multiplied.  Two streams
+        can overlap in the load/store machinery, and reads and writes are not
+        symmetric.  Multiplying a one-stream time by a byte count produced
+        impossible results above 100 percent.  Copy, fill and paired-read each
+        have their own assembly floor which performs the same traffic shape.
+
+        The number to distrust is a small one: at four bytes a call costs more
+        than the work, so the column says what the routine costs to reach, not
+        how fast it runs. The large sizes are the ones that mean anything about
+        the loop.
+
+            sh test/run bench floor
+
+        A native run is hardware evidence.  A foreign run under qemu remains
+        useful for instruction-shape comparison, but is labelled as emulated
+        by the dispatcher and must not be quoted as an architectural floor.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+
+static p8 one[1 << 22] __attribute__((aligned(64)));
+static p8 two[1 << 22] __attribute__((aligned(64)));
+static p8 out[1 << 22] __attribute__((aligned(64)));
+
+static positive sizes[] = {64, 4096, 65536, 1048576};
+
+/*
+        The floor, in assembly, for the same reason the routines are.
+
+        Two earlier versions of this were wrong in opposite directions and both
+        looked plausible. Stepping a cache line at a time moves the same
+        traffic but issues a sixty fourth of the loads, so in cache it beats
+        anything that must look at every byte and every routine read as slack
+        that was not there. Writing it in C with an asm body and a memory
+        clobber made the compiler reload each turn, so the floor measured
+        itself and every routine came out above it.
+
+        A ceiling has to be built the way the thing under it is built. This
+        reads every byte at the widest load the machine has, accumulates into
+        registers nothing ever looks at, and is written out by hand so no
+        compiler decides how to schedule it.
+*/
+__asm__(
+    ".text\n"
+    ASM_FUNC(floor_ticks)
+#if X64
+    "lfence\n   rdtsc\n   shl $32, %rdx\n   or %rdx, %rax\n   lfence\n"
+#elif ARM64
+    "isb\n   mrs x0, cntvct_el0\n   isb\n"
+#else
+    "fence iorw, iorw\n   rdtime a0\n   fence iorw, iorw\n"
+#endif
+    ASM_RET
+    ASM_END(floor_ticks)
+    ASM_FUNC(floor_read)
+#if X64
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rsi\n   jb 4f\n"
+    "vmovdqu 0(%rdi), %ymm0\n   vmovdqu 32(%rdi), %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vmovdqu 96(%rdi), %ymm3\n"
+    "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "7:  cmp $256, %rsi\n   jb 4f\n"
+    "vmovdqu64 0(%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n"
+    "vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "add $256, %rdi\n   sub $256, %rsi\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  add (%rdi), %rax\n   add $8, %rdi\n   sub $8, %rsi\n   cmp $8, %rsi\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "mov x2, #0\n   cbz x1, 9f\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x0, #32]\n"
+    "add x0, x0, #64\n   sub x1, x1, #64\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  ldr x3, [x0]\n   add x2, x2, x3\n   add x0, x0, #8\n"
+    "subs x1, x1, #8\n   b.hi 6b\n"
+    "9:  mov x0, x2\n"
+#else
+    "li a2, 0\n   beqz a1, 9f\n"
+    "1:  li a3, 8\n   bltu a1, a3, 9f\n"
+    "ld a4, 0(a0)\n   add a2, a2, a4\n   addi a0, a0, 8\n   addi a1, a1, -8\n   j 1b\n"
+    "9:  mv a0, a2\n"
+#endif
+    ASM_RET
+    ASM_END(floor_read)
+);
+
+positive floor_read(address_any block, positive size);
+positive floor_ticks(void);
+
+__asm__(
+    ".text\n"
+    ASM_FUNC(floor_read_two)
+#if X64
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rdx\n   jb 4f\n"
+    "vmovdqu 0(%rdi), %ymm0\n   vmovdqu 32(%rdi), %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vmovdqu 96(%rdi), %ymm3\n"
+    "vmovdqu 0(%rsi), %ymm4\n   vmovdqu 32(%rsi), %ymm5\n"
+    "vmovdqu 64(%rsi), %ymm6\n   vmovdqu 96(%rsi), %ymm7\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n   jmp 1b\n"
+    "7:  cmp $256, %rdx\n   jb 4f\n"
+    "vmovdqu64 0(%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n"
+    "vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "vmovdqu64 0(%rsi), %zmm4\n   vmovdqu64 64(%rsi), %zmm5\n"
+    "vmovdqu64 128(%rsi), %zmm6\n   vmovdqu64 192(%rsi), %zmm7\n"
+    "add $256, %rdi\n   add $256, %rsi\n   sub $256, %rdx\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n"
+    "6:  add (%rdi), %rax\n   add (%rsi), %rax\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "mov x3, #0\n   cbz x2, 9f\n"
+    "1:  cmp x2, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x0, #32]\n"
+    "ldp q4, q5, [x1]\n   ldp q6, q7, [x1, #32]\n"
+    "add x0, x0, #64\n   add x1, x1, #64\n"
+    "sub x2, x2, #64\n   b 1b\n"
+    "5:  cbz x2, 9f\n"
+    "6:  ldr x4, [x0], #8\n   ldr x5, [x1], #8\n"
+    "add x3, x3, x4\n   add x3, x3, x5\n"
+    "subs x2, x2, #8\n   b.hi 6b\n"
+    "9:  mov x0, x3\n"
+#else
+    "li a3, 0\n   beqz a2, 9f\n"
+    "1:  li a4, 32\n   bltu a2, a4, 5f\n"
+    "ld a4, 0(a0)\n   ld a5, 8(a0)\n   ld a6, 16(a0)\n   ld a7, 24(a0)\n"
+    "ld t0, 0(a1)\n   ld t1, 8(a1)\n   ld t2, 16(a1)\n   ld t3, 24(a1)\n"
+    "addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n   j 1b\n"
+    "5:  beqz a2, 9f\n"
+    "6:  ld a4, 0(a0)\n   ld a5, 0(a1)\n"
+    "add a3, a3, a4\n   add a3, a3, a5\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bnez a2, 6b\n"
+    "9:  mv a0, a3\n"
+#endif
+    ASM_RET
+    ASM_END(floor_read_two)
+    ASM_FUNC(floor_copy)
+#if X64
+    "xor %eax, %eax\n   test %rdx, %rdx\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rdx\n   jb 4f\n"
+    "vmovdqu 0(%rsi), %ymm0\n   vmovdqu 32(%rsi), %ymm1\n"
+    "vmovdqu 64(%rsi), %ymm2\n   vmovdqu 96(%rsi), %ymm3\n"
+    "vmovdqu %ymm0, 0(%rdi)\n   vmovdqu %ymm1, 32(%rdi)\n"
+    "vmovdqu %ymm2, 64(%rdi)\n   vmovdqu %ymm3, 96(%rdi)\n"
+    "add $128, %rdi\n   add $128, %rsi\n   sub $128, %rdx\n   jmp 1b\n"
+    "7:  cmp $256, %rdx\n   jb 4f\n"
+    "vmovdqu64 0(%rsi), %zmm0\n   vmovdqu64 64(%rsi), %zmm1\n"
+    "vmovdqu64 128(%rsi), %zmm2\n   vmovdqu64 192(%rsi), %zmm3\n"
+    "vmovdqu64 %zmm0, 0(%rdi)\n   vmovdqu64 %zmm1, 64(%rdi)\n"
+    "vmovdqu64 %zmm2, 128(%rdi)\n   vmovdqu64 %zmm3, 192(%rdi)\n"
+    "add $256, %rdi\n   add $256, %rsi\n   sub $256, %rdx\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rdx, %rdx\n   jz 9f\n"
+    "6:  mov (%rsi), %rax\n   mov %rax, (%rdi)\n"
+    "add $8, %rdi\n   add $8, %rsi\n   sub $8, %rdx\n"
+    "cmp $8, %rdx\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "cbz x2, 9f\n"
+    "1:  cmp x2, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x1]\n   ldp q2, q3, [x1, #32]\n"
+    "stp q0, q1, [x0]\n   stp q2, q3, [x0, #32]\n"
+    "add x0, x0, #64\n   add x1, x1, #64\n"
+    "sub x2, x2, #64\n   b 1b\n"
+    "5:  cbz x2, 9f\n"
+    "6:  ldr x3, [x1], #8\n   str x3, [x0], #8\n"
+    "subs x2, x2, #8\n   b.hi 6b\n"
+    "9:  mov x0, #0\n"
+#else
+    "beqz a2, 9f\n"
+    "1:  li a3, 32\n   bltu a2, a3, 5f\n"
+    "ld a3, 0(a1)\n   ld a4, 8(a1)\n   ld a5, 16(a1)\n   ld a6, 24(a1)\n"
+    "sd a3, 0(a0)\n   sd a4, 8(a0)\n   sd a5, 16(a0)\n   sd a6, 24(a0)\n"
+    "addi a0, a0, 32\n   addi a1, a1, 32\n   addi a2, a2, -32\n   j 1b\n"
+    "5:  beqz a2, 9f\n"
+    "6:  ld a3, 0(a1)\n   sd a3, 0(a0)\n"
+    "addi a0, a0, 8\n   addi a1, a1, 8\n   addi a2, a2, -8\n   bnez a2, 6b\n"
+    "9:  li a0, 0\n"
+#endif
+    ASM_RET
+    ASM_END(floor_copy)
+    ASM_FUNC(floor_fill)
+#if X64
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "vpxor %ymm0, %ymm0, %ymm0\n"
+    "1:  cmp $128, %rsi\n   jb 4f\n"
+    "vmovdqu %ymm0, 0(%rdi)\n   vmovdqu %ymm0, 32(%rdi)\n"
+    "vmovdqu %ymm0, 64(%rdi)\n   vmovdqu %ymm0, 96(%rdi)\n"
+    "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "7:  vpxord %zmm0, %zmm0, %zmm0\n"
+    "8:  cmp $256, %rsi\n   jb 4f\n"
+    "vmovdqu64 %zmm0, 0(%rdi)\n   vmovdqu64 %zmm0, 64(%rdi)\n"
+    "vmovdqu64 %zmm0, 128(%rdi)\n   vmovdqu64 %zmm0, 192(%rdi)\n"
+    "add $256, %rdi\n   sub $256, %rsi\n   jmp 8b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  mov %rax, (%rdi)\n   add $8, %rdi\n   sub $8, %rsi\n"
+    "cmp $8, %rsi\n   jae 6b\n"
+    "9:  \n"
+#elif ARM64
+    "movi v0.16b, #0\n   cbz x1, 9f\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "stp q0, q0, [x0]\n   stp q0, q0, [x0, #32]\n"
+    "add x0, x0, #64\n   sub x1, x1, #64\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  str xzr, [x0], #8\n   subs x1, x1, #8\n   b.hi 6b\n"
+    "9:  mov x0, #0\n"
+#else
+    "beqz a1, 9f\n"
+    "1:  li a2, 32\n   bltu a1, a2, 5f\n"
+    "sd zero, 0(a0)\n   sd zero, 8(a0)\n"
+    "sd zero, 16(a0)\n   sd zero, 24(a0)\n"
+    "addi a0, a0, 32\n   addi a1, a1, -32\n   j 1b\n"
+    "5:  beqz a1, 9f\n"
+    "6:  sd zero, 0(a0)\n   addi a0, a0, 8\n"
+    "addi a1, a1, -8\n   bnez a1, 6b\n"
+    "9:  li a0, 0\n"
+#endif
+    ASM_RET
+    ASM_END(floor_fill)
+);
+
+positive floor_read_two(address_any one, address_any two, positive size);
+positive floor_copy(address_any out, address_any in, positive size);
+positive floor_fill(address_any out, positive size);
+
+static positive floor_one(p8 address_to p, positive n)
+{
+        return floor_read(p, n);
+}
+
+static positive floor_two(p8 address_to a, p8 address_to b, positive n)
+{
+        return floor_read_two(a, b, n);
+}
+
+static volatile positive sink;
+
+#define TIMED_ONCE(rounds, body)                                              \
+        ({                                                                    \
+                p64 s = floor_ticks();                                        \
+                for (b32 k = 0; k < (rounds); k++) { body; }                  \
+                floor_ticks() - s;                                            \
+        })
+
+static fn row(string_address name, positive size, positive ratio)
+{
+        // State the paired median as remaining cost: zero percent over is the
+        // lower bound.  If the candidate wins, the baseline was not a floor.
+        positive over = ratio > 10000 ? ratio - 10000 : 0;
+
+        string_format(log, "  %s", name);
+        for (positive i = string_length(name); i < 24; i++)
+                string_format(log, " ");
+        string_format(log, "%p", size);
+        for (positive i = 0; i < 9; i++) string_format(log, " ");
+        if (ratio < 10000)
+                string_format(log, "unresolved: candidate beat baseline\n");
+        else
+                string_format(log, "%p.%p%% slower\n", over / 100,
+                              over % 100);
+}
+
+#define PAIRED_ROW(name, size, rounds, floor_body, candidate_body)            \
+        do {                                                                  \
+                positive ratios[5];                                           \
+                for (positive trial = 0; trial < 5; trial++)                  \
+                {                                                             \
+                        p64 floor_time;                                        \
+                        p64 candidate_time;                                    \
+                        if (trial & 1)                                         \
+                        {                                                     \
+                                candidate_time = TIMED_ONCE(rounds, candidate_body); \
+                                floor_time = TIMED_ONCE(rounds, floor_body);   \
+                        }                                                     \
+                        else                                                  \
+                        {                                                     \
+                                floor_time = TIMED_ONCE(rounds, floor_body);   \
+                                candidate_time = TIMED_ONCE(rounds, candidate_body); \
+                        }                                                     \
+                        ratios[trial] = (positive)(candidate_time * 10000 /   \
+                                                   (floor_time ? floor_time : 1)); \
+                }                                                             \
+                order(ratios, 5);                                             \
+                row(name, size, ratios[2]);                                   \
+        } while (0)
+
+b32 main(void)
+{
+        for (positive i = 0; i < sizeof(one); i++)
+        {
+                one[i] = (p8)(i % 251 + 1);
+                two[i] = one[i];
+        }
+
+        moonwater_cpu_detect();
+
+        /*
+                The kernel shape: a kernel build has no vector body, so what
+                it runs is the word at a time path under every routine here,
+                and the floor for that path is the scalar loop. Built with
+                -DFLOOR_NARROW this measures exactly that, natively, which a
+                kernel cannot do for itself.
+        */
+#ifdef FLOOR_NARROW
+        cpu_has_avx2 = 0;
+        cpu_has_avx512 = 0;
+        string_format(log, "  (narrow bodies against the scalar floor: the kernel shape)\n");
+#endif
+
+        string_format(log, "  routine                 size     gap to traffic lower bound\n");
+        string_format(log, "  -----------------------------------------------------\n");
+
+        for (positive z = 0; z < sizeof(sizes) / sizeof(sizes[0]); z++)
+        {
+                positive n = sizes[z];
+                b32 rounds = (b32)((1 << 24) / n) + 1;
+
+                PAIRED_ROW("memory_fill", n, rounds,
+                           sink += floor_fill(out, n), memory_fill(out, 7, n));
+                PAIRED_ROW("memory_copy", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_copy(out, one, n));
+                PAIRED_ROW("memory_copy_apart", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           memory_copy_apart(out, one, n));
+                PAIRED_ROW("memory_count", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += memory_count(one, n, 7));
+                PAIRED_ROW("memory_first_of", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)memory_first_of(one, 0, n));
+                PAIRED_ROW("memory_compare", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += (positive)memory_compare(one, two, n));
+
+                one[n - 1] = 0;
+                PAIRED_ROW("string_length", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += string_length(one));
+                PAIRED_ROW("string_first_of", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)string_first_of(one, 0));
+                PAIRED_ROW("string_last_of_or_end", n, rounds,
+                           sink += floor_one(one, n),
+                           sink += (positive)string_last_of_or_end(one, 3));
+                two[n - 1] = 0;
+                PAIRED_ROW("string_compare", n, rounds,
+                           sink += floor_two(one, two, n),
+                           sink += (positive)string_compare(one, two));
+                PAIRED_ROW("string_copy", n, rounds,
+                           sink += floor_copy(out, one, n),
+                           string_copy(out, one));
+                one[n - 1] = (p8)((n - 1) % 251 + 1);
+                two[n - 1] = one[n - 1];
+
+                string_format(log, "\n");
+        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_floor */
+
+#ifdef BENCH_baseline
+#include "../src/compiler_memory.c"
+
+/*
+        The assembly against the C byte loop it replaced.
+
+        library.c's string_length, string_compare and string_first_of forward
+        to assembly on x86_64, arm64 and riscv64 and to a byte loop anywhere
+        else. This runs both halves side by side at the lengths the choice
+        actually turns on, so "a word at a time is faster" is a number rather
+        than a belief.
+
+        Foreign targets run under qemu, and a qemu tick is the emulator's work
+        and not the machine's. What it measures honestly is how much less work
+        there is to do; what it cannot tell you is what a real board would say.
+
+        Built and run by `sh test/run bench baseline`, which is the same
+        freestanding link the checks in this file get.
+*/
+
+#define SHARED_bench_reference
+#include "checks.c"
+#undef SHARED_bench_reference
+
+static positive lengths[] = {4, 8, 16, 32, 64, 256, 4096};
+
+#define LENGTH_COUNT (sizeof(lengths) / sizeof(lengths[0]))
+#define ROUNDS 65536
+
+static p8 subject[8192];
+static p8 mirror[8192];
+
+// Somewhere the answers have to go that the optimiser cannot argue away.
+static volatile positive sink;
+
+fn line(string_address name, positive size, p64 byte_ticks, p64 word_ticks)
+{
+        string_format(log, "  %s %p bytes: byte %p  word %p\n",
+                      name, size, (positive)byte_ticks, (positive)word_ticks);
+}
+
+b32 main()
+{
+        string_format(log, "assembly against the byte loop, %p calls each\n",
+                      (positive)ROUNDS);
+
+        for (positive e = 0; e < LENGTH_COUNT; e++)
+        {
+                positive size = lengths[e];
+
+                for (positive i = 0; i < size; i++)
+                        subject[i] = (p8)('a' + i % 26);
+
+                subject[size] = 0;
+                memory_copy_apart(mirror, subject, size + 1);
+
+                p64 start = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += reference_length(subject);
+
+                p64 middle = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += string_length(subject);
+
+                p64 finish = get_cpu_time();
+
+                line((string_address)"string_length   ", size,
+                     middle - start, finish - middle);
+
+                start = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += (positive)reference_compare(subject, mirror);
+
+                middle = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += (positive)string_compare(subject, mirror);
+
+                finish = get_cpu_time();
+
+                line((string_address)"string_compare  ", size,
+                     middle - start, finish - middle);
+
+                // A character that is not there, so the whole string is walked
+                // rather than however far the first 'q' happens to be.
+                start = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += (positive)reference_first_of(subject, '#');
+
+                middle = get_cpu_time();
+
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += (positive)string_first_of(subject, '#');
+
+                finish = get_cpu_time();
+
+                line((string_address)"string_first_of ", size,
+                     middle - start, finish - middle);
+        }
+
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_baseline */
+
+#ifdef BENCH_numbers
+/*
+        Decimal conversion at the call shapes the library actually exposes.
+
+        The reference is the scalar divide-by-ten/scratch/copy loop that the
+        callers used before positive_into folded it.  The assembly column is
+        positive_into itself.  positive_to_string is shown separately because
+        its writer call is part of that API and therefore not directly
+        comparable with a buffer writer, but it is the existing chunked
+        implementation against which a new shared digit core must be checked.
+
+        A native run reports hardware ticks.  A qemu run reports emulator
+        work: useful as a regression ratio, never as a hardware-floor claim.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define VALUE_COUNT 64
+#define ROUNDS (1u << 17)
+#define TRIES 7
+
+static p8 output[64];
+static volatile positive sink;
+
+NOT_INLINED positive scalar_into(p8 address_to into, positive value)
+{
+        p8 scratch[24];
+        positive have = 0;
+
+        do
+        {
+                scratch[have++] = (p8)('0' + value % 10);
+                value /= 10;
+        } while (value);
+
+        for (positive i = 0; i < have; i++)
+                into[i] = scratch[have - i - 1];
+
+        return have;
+}
+
+NOT_INLINED fn discard_writer(address_any data, positive length)
+{
+        volatile p8 address_to bytes = (volatile p8 address_to)data;
+
+        sink += length + bytes[0] + bytes[length - 1];
+}
+
+static positive small_values[VALUE_COUNT];
+static positive middle_values[VALUE_COUNT];
+static positive mixed_values[VALUE_COUNT];
+static positive wide_values[VALUE_COUNT];
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive i = 0; i < VALUE_COUNT; i++)
+        {
+                small_values[i] = i < 32 ? i : (i * 313u) % 10000u;
+
+                positive middle_base = 10000;
+                for (positive d = 0; d < i % 3; d++)
+                        middle_base *= 10;
+                middle_values[i] = middle_base + (i * 7919u) % middle_base;
+
+                positive digits = i % 20 + 1;
+                positive base = 1;
+                for (positive d = 1; d < digits; d++)
+                        base *= 10;
+                mixed_values[i] = base + (i * 7919u) % base;
+
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                wide_values[i] = state | (1ull << 63);
+        }
+
+        /* Exact boundaries and both ends keep branch wins honest. */
+        small_values[0] = 0;
+        small_values[1] = 9;
+        small_values[2] = 10;
+        small_values[3] = 99;
+        small_values[4] = 100;
+        small_values[5] = 9999;
+        middle_values[0] = 10000;
+        middle_values[1] = 99999;
+        middle_values[2] = 100000;
+        middle_values[3] = 999999;
+        middle_values[4] = 1000000;
+        middle_values[5] = 9999999;
+        mixed_values[0] = 99999999ull;
+        mixed_values[1] = 100000000ull;
+        mixed_values[2] = 9999999999999999ull;
+        mixed_values[3] = 10000000000000000ull;
+        wide_values[0] = positive_max;
+        wide_values[1] = 10000000000000000000ull;
+}
+
+static p64 scalar_run(positive address_to values)
+{
+        p64 best = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 start = get_cpu_time();
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += scalar_into(output, values[r & (VALUE_COUNT - 1)]);
+                p64 took = get_cpu_time() - start;
+                if (took < best)
+                        best = took;
+        }
+
+        return best;
+}
+
+static p64 assembly_run(positive address_to values)
+{
+        p64 best = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 start = get_cpu_time();
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += positive_into(output,
+                                              values[r & (VALUE_COUNT - 1)]);
+                p64 took = get_cpu_time() - start;
+                if (took < best)
+                        best = took;
+        }
+
+        return best;
+}
+
+static p64 writer_run(positive address_to values)
+{
+        p64 best = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 start = get_cpu_time();
+                for (positive r = 0; r < ROUNDS; r++)
+                        positive_to_string(discard_writer,
+                                           values[r & (VALUE_COUNT - 1)]);
+                p64 took = get_cpu_time() - start;
+                if (took < best)
+                        best = took;
+        }
+
+        return best;
+}
+
+static fn row(string_address name, positive address_to values)
+{
+        p64 scalar = scalar_run(values);
+        p64 assembly = assembly_run(values);
+        p64 writer = writer_run(values);
+
+        string_format(log, "  %s: scalar %p  into %p  chunked-writer %p"
+                           "  into/scalar %p%%\n",
+                      name, (positive)scalar, (positive)assembly,
+                      (positive)writer,
+                      (positive)(assembly * 100 / (scalar ? scalar : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "decimal conversion, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"small 1-4 digit", small_values);
+        row((string_address)"middle 5-7 digit", middle_values);
+        row((string_address)"mixed 1-20 digit", mixed_values);
+        row((string_address)"wide 19-20 digit", wide_values);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_numbers */
+
+#ifdef BENCH_bases
+/*
+        Buffer conversion in non-decimal bases.
+
+        The reference is printf_render's former C body: a runtime-base divide
+        loop into a scratch buffer, followed by a backwards copy. The assembly
+        is positive_into_base. Decimal has its own deeper benchmark in
+        bench_numbers.c; this one measures every power-of-two lane from two
+        through thirty two and the generic base-36 lane.
+
+        Native runs are hardware ticks. Qemu runs are emulator work and only
+        useful as regression ratios, never as hardware-floor measurements.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define VALUE_COUNT 64
+#define ROUNDS (1u << 17)
+#define TRIES 7
+
+static p8 output[64];
+static positive values[VALUE_COUNT];
+static volatile positive sink;
+
+NOT_INLINED positive scalar_base(p8 address_to into, positive value,
+                                 positive base, bool upper)
+{
+        p8 scratch[64];
+        positive have = 0;
+
+        do
+        {
+                positive digit = value % base;
+
+                scratch[have++] =
+                    (p8)(digit < 10 ? '0' + digit
+                                    : (upper ? 'A' : 'a') + digit - 10);
+                value /= base;
+        } while (value);
+
+        for (positive i = 0; i < have; i++)
+                into[i] = scratch[have - i - 1];
+
+        return have;
+}
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive i = 0; i < VALUE_COUNT; i++)
+        {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                values[i] = state;
+        }
+
+        values[0] = 0;
+        values[1] = 7;
+        values[2] = 8;
+        values[3] = 15;
+        values[4] = 16;
+        values[5] = 07777;
+        values[6] = ~(positive)0;
+}
+
+static p64 scalar_run(positive base, bool upper)
+{
+        p64 best = ~(positive)0;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 start = get_cpu_time();
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += scalar_base(output,
+                                            values[r & (VALUE_COUNT - 1)],
+                                            base, upper);
+                p64 took = get_cpu_time() - start;
+                if (took < best)
+                        best = took;
+        }
+
+        return best;
+}
+
+static p64 assembly_run(positive base, bool upper)
+{
+        p64 best = ~(positive)0;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 start = get_cpu_time();
+                for (positive r = 0; r < ROUNDS; r++)
+                        sink += positive_into_base(
+                            output, values[r & (VALUE_COUNT - 1)], base, upper);
+                p64 took = get_cpu_time() - start;
+                if (took < best)
+                        best = took;
+        }
+
+        return best;
+}
+
+static fn row(string_address name, positive base, bool upper)
+{
+        p64 scalar = scalar_run(base, upper);
+        p64 assembly = assembly_run(base, upper);
+
+        string_format(log, "  %s: scalar %p  assembly %p  assembly/scalar %p%%\n",
+                      name, (positive)scalar, (positive)assembly,
+                      (positive)(assembly * 100 / (scalar ? scalar : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "base conversion, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"binary", 2, false);
+        row((string_address)"base 4", 4, false);
+        row((string_address)"octal", 8, false);
+        row((string_address)"hexadecimal lower", 16, false);
+        row((string_address)"hexadecimal upper", 16, true);
+        row((string_address)"base 32 lower", 32, false);
+        row((string_address)"base 32 upper", 32, true);
+        row((string_address)"base 36 lower", 36, false);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_bases */
+
+#ifdef BENCH_hex
+/* Bulk hex output: the former checksum loop versus the shared ASM encoder. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 24)
+
+static p8 input[MAXIMUM];
+static p8 former_output[MAXIMUM * 2];
+static p8 assembly_output[MAXIMUM * 2];
+static volatile positive sink;
+
+__attribute__((noinline, noclone)) static positive former_hex(
+    p8 address_to destination, p8 address_to source, positive size)
+{
+        static const p8 digits[] = "0123456789abcdef";
+        for (positive at = 0; at < size; at++)
+        {
+                destination[at * 2] = digits[source[at] >> 4];
+                destination[at * 2 + 1] = digits[source[at] & 15];
+        }
+        return size * 2;
+}
+
+static p64 run(bool assembly, positive size, positive rounds)
+{
+        p64 start = get_cpu_time();
+        for (positive at = 0; at < rounds; at++)
+                sink += assembly ? memory_into_hex(assembly_output, input, size) :
+                                   former_hex(former_output, input, size);
+        return get_cpu_time() - start;
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {1, 8, 15, 16, 17, 32, 64, 4096, MAXIMUM};
+        for (positive at = 0; at < MAXIMUM; at++)
+                input[at] = (p8)(at * 197 + (at >> 8));
+        for (positive row = 0; row < sizeof(sizes) / sizeof(sizes[0]); row++)
+        {
+                positive size = sizes[row];
+                positive ratios[TRIES];
+                positive rounds = TARGET_BYTES / size;
+                if (rounds > (1u << 20))
+                        rounds = 1u << 20;
+                if (former_hex(former_output, input, size) !=
+                    memory_into_hex(assembly_output, input, size) ||
+                    memory_compare(former_output, assembly_output, size * 2))
+                        return 1;
+                for (positive trial = 0; trial < TRIES; trial++)
+                {
+                        p64 former, assembly;
+                        if (trial & 1)
+                        {
+                                assembly = run(true, size, rounds);
+                                former = run(false, size, rounds);
+                        }
+                        else
+                        {
+                                former = run(false, size, rounds);
+                                assembly = run(true, size, rounds);
+                        }
+                        ratios[trial] = (positive)(assembly * 10000 / (former ? former : 1));
+                }
+                order(ratios, TRIES);
+                string_format(log, "memory_into_hex %p bytes: paired median ASM/C %p.%p%%\n",
+                              size, ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        }
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_hex */
+
+#ifdef BENCH_escape
+/* Shared escaping versus the former writer loops. Native timings only measure
+   hardware; QEMU remains useful for checking equal bytes. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define TRIES 9
+#define MAXIMUM 65536
+static p8 input[MAXIMUM + 1], output[MAXIMUM * 6 + 2], expected[MAXIMUM * 6 + 2];
+static positive used;
+#ifdef ESCAPE_BENCH_POLICY
+static const p8 hex_policy = ESCAPE_BENCH_POLICY;
+#else
+static p8 hex_policy = 63;
+#endif
+static volatile positive sink;
+
+__attribute__((noinline, noclone)) static fn capture(address_any data, positive length)
+{
+        memory_copy(output + used, data, length);
+        used += length;
+}
+
+static fn former_hex(positive size, p8 policy)
+{
+        static const p8 categories[256] = {
+            [0 ... 8] = HEX_CONTROL, [9] = HEX_TAB,
+            [10 ... 31] = HEX_CONTROL, [' '] = HEX_SPACE,
+            ['"'] = HEX_QUOTE, ['\\'] = HEX_SLASH, [127] = HEX_CONTROL,
+            [128 ... 255] = HEX_HIGH,
+        };
+        positive start = 0;
+        for (positive at = 0; at < size; at++)
+        {
+                if (!(categories[input[at]] & policy))
+                        continue;
+                if (at > start)
+                        capture(input + start, at - start);
+                p8 escaped[4] = {'\\', 'x'};
+                memory_into_hex(escaped + 2, input + at, 1);
+                capture(escaped, sizeof(escaped));
+                start = at + 1;
+        }
+        if (size > start)
+                capture(input + start, size - start);
+}
+
+static fn former_json(void)
+{
+        p8 address_to at = input;
+        p8 address_to start = input;
+        capture("\"", 1);
+        while (*at)
+        {
+                p8 byte = *at;
+                if (byte >= 32 && byte != '"' && byte != '\\')
+                {
+                        at++;
+                        continue;
+                }
+                if (at > start)
+                        capture(start, at - start);
+                if (byte == '"' || byte == '\\')
+                {
+                        p8 escaped[2] = {'\\', byte};
+                        capture(escaped, sizeof(escaped));
+                }
+                else
+                {
+                        p8 escaped[6] = {'\\', 'u', '0', '0'};
+                        memory_into_hex(escaped + 4, &byte, 1);
+                        capture(escaped, sizeof(escaped));
+                }
+                at++;
+                start = at;
+        }
+        if (at > start)
+                capture(start, at - start);
+        capture("\"", 1);
+}
+
+static p64 run(bool assembly, positive size, positive rounds, bool json)
+{
+        p64 start = get_cpu_time();
+        for (positive at = 0; at < rounds; at++)
+        {
+                used = 0;
+                if (assembly)
+                {
+                        if (json) writer_json_string(capture, input);
+                        else writer_hex_escaped(capture, input, size, hex_policy);
+                }
+                else if (json) former_json();
+                else former_hex(size, hex_policy);
+                sink += used;
+        }
+        return get_cpu_time() - start;
+}
+
+b32 main(void)
+{
+#ifndef ESCAPE_BENCH_POLICY
+        if (program_argument_count() > 1)
+        {
+                positive policy = string_to_positive(program_argument(1));
+                if (policy > 63) return 2;
+                hex_policy = policy;
+        }
+#endif
+        static const positive sizes[] = {1, 2, 3, 4, 6, 7, 8, 16, 20, 21,
+                                         32, 128, 4096, MAXIMUM};
+        static string_address shapes[] = {"plain", "sparse", "dense", "mixed", "high"};
+        for (positive json = 0; json < 2; json++)
+                for (positive shape = 0; shape < array_count(shapes); shape++)
+                        for (positive row = 0; row < array_count(sizes); row++)
+                        {
+                                positive size = sizes[row], ratios[TRIES];
+                                for (positive at = 0; at < size; at++)
+                                {
+                                        input[at] = 'a' + at % 26;
+                                        if (shape == 1 && at % 127 == 7) input[at] = '\n';
+                                        if (shape == 2) input[at] = 1 + at % 31;
+                                        if (shape == 3 && at % 3) input[at] = at % 2 ? '\\' : 7;
+                                        if (shape == 4) input[at] = 128 + at % 128;
+                                }
+                                input[size] = 0;
+                                run(false, size, 1, json);
+                                positive expected_size = used;
+                                memory_copy(expected, output, used);
+                                run(true, size, 1, json);
+                                if (expected_size != used || memory_compare(expected, output, used))
+                                        return 1;
+                                positive rounds = (1u << 22) / size;
+                                if (rounds > 100000) rounds = 100000;
+                                for (positive trial = 0; trial < TRIES; trial++)
+                                {
+                                        p64 former, assembly;
+                                        if (trial & 1)
+                                        {
+                                                assembly = run(true, size, rounds, json);
+                                                former = run(false, size, rounds, json);
+                                        }
+                                        else
+                                        {
+                                                former = run(false, size, rounds, json);
+                                                assembly = run(true, size, rounds, json);
+                                        }
+                                        ratios[trial] = assembly * 10000 / (former ? former : 1);
+                                }
+                                order(ratios, TRIES);
+                                string_format(log, "%s policy%p %s %p bytes: paired median ASM/C %p.",
+                                    json ? "JSON" : "hex", json ? 64 : hex_policy, shapes[shape], size,
+                                    ratios[TRIES / 2] / 100);
+                                positive_to_padded(log, ratios[TRIES / 2] % 100, 2, '0', 0);
+                                log("%\n", 2);
+                                log_flush();
+                        }
+        return 0;
+}
+#endif /* BENCH_escape */
+
+#ifdef BENCH_codec
+/* Body-to-body timing, separate from the shell's streaming benchmark. The C
+   references retain the folded engine's runtime-width bit loops. QEMU runs
+   establish correctness only; their ticks are not hardware measurements. */
+#include "../src/compiler_memory.c"
+
+#define NO_INLINE __attribute__((noinline, noclone))
+static p8 input[5120], encoded[8192], decoded[5120], values[256];
+static volatile positive sink;
+
+NO_INLINE static positive encode_c(p8 address_to into, p8 address_to source,
+                                   positive groups, string_address alphabet,
+                                   positive width)
+{
+        positive bits = width == 9 ? 1 : width;
+        positive bytes = bits == 6 ? 3 : bits == 5 ? 5 : 1;
+        positive symbols = bytes * 8 / bits;
+        for (positive group = 0; group < groups; group++)
+        {
+                positive value = 0;
+                for (positive at = 0; at < bytes; at++)
+                        value = (value << 8) | *source++;
+                for (positive at = 0; at < symbols; at++)
+                {
+                        positive shift = width == 9 ? at : (symbols - at - 1) * bits;
+                        *into++ = alphabet[(value >> shift) & (((positive)1 << bits) - 1)];
+                }
+        }
+        return groups;
+}
+
+NO_INLINE static positive decode_c(p8 address_to into, p8 address_to source,
+                                   positive groups, address_any table,
+                                   positive width)
+{
+        positive bits = width == 9 ? 1 : width;
+        positive bytes = bits == 6 ? 3 : bits == 5 ? 5 : 1;
+        positive symbols = bytes * 8 / bits;
+        p8 address_to map = table;
+        positive accumulator = 0, held = 0;
+        for (positive at = 0; at < groups * symbols; at++)
+        {
+                p8 value = map[source[at]];
+                if (value == 255) return at / symbols;
+                accumulator = width == 9 ? accumulator | ((positive)value << held)
+                    : (accumulator << bits) | value;
+                held += bits;
+                if (held >= 8)
+                {
+                        held -= 8;
+                        *into++ = (p8)(accumulator >> held);
+                        accumulator &= ((positive)1 << held) - 1;
+                }
+        }
+        return groups;
+}
+
+typedef positive (*codec_function)(address_any, address_any, positive,
+                                    address_any, positive);
+static positive measured(codec_function function, address_any into,
+                          address_any source, positive groups,
+                          address_any table, positive bits)
+{
+        positive best = positive_max;
+        for (positive trial = 0; trial < 7; trial++)
+        {
+                positive start = get_cpu_time();
+                for (positive round = 0; round < 2048; round++)
+                        sink += function(into, source, groups, table, bits);
+                positive elapsed = get_cpu_time() - start;
+                if (elapsed < best) best = elapsed;
+        }
+        sink += ((p8 address_to)into)[0];
+        return best;
+}
+
+b32 main(void)
+{
+        const char *alphabets[] = {
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_",
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567", "0123456789ABCDEFGHIJKLMNOPQRSTUV",
+            "0123456789ABCDEF", "01", "01",
+        };
+        p8 widths[] = {6, 6, 5, 5, 4, 1, 9};
+        for (positive at = 0; at < sizeof(input); at++)
+                input[at] = (p8)(at * 197 + at / 97);
+#if X64
+        p8 vector = cpu_has_avx2;
+        p8 wide = cpu_has_avx512, vbmi = cpu_has_avx512_vbmi;
+        for (positive mode = 0; mode < 3; mode++)
+        {
+                cpu_has_avx2 = mode ? vector : 0;
+                cpu_has_avx512 = mode > 1 ? wide : 0;
+                cpu_has_avx512_vbmi = mode > 1 ? vbmi : 0;
+                string_format(log, "avx2=%p avx512=%p vbmi=%p\n", (positive)cpu_has_avx2,
+                              (positive)cpu_has_avx512, (positive)cpu_has_avx512_vbmi);
+#endif
+        for (positive kind = 0; kind < sizeof(widths); kind++)
+        {
+                positive bits = widths[kind] == 9 ? 1 : widths[kind];
+                memory_fill(values, 255, sizeof(values));
+                for (positive at = 0; at < ((positive)1 << bits); at++)
+                        values[(p8)alphabets[kind][at]] = (p8)at;
+                for (positive groups = 1; groups <= 1024; groups *= 32)
+                {
+                        positive before = measured((codec_function)encode_c, encoded,
+                            input, groups, (address_any)alphabets[kind], widths[kind]);
+                        positive after = measured((codec_function)memory_encode_power2,
+                            encoded, input, groups, (address_any)alphabets[kind], widths[kind]);
+                        string_format(log, "encode kind=%p groups=%p C=%p ASM=%p ticks\n",
+                                      kind, groups, before, after);
+                        before = measured((codec_function)decode_c, decoded, encoded,
+                                          groups, values, widths[kind]);
+                        after = measured((codec_function)memory_decode_power2, decoded,
+                                         encoded, groups, values, widths[kind]);
+                        string_format(log, "decode kind=%p groups=%p C=%p ASM=%p ticks\n",
+                                      kind, groups, before, after);
+                        log_flush();
+                }
+        }
+#if X64
+        }
+        cpu_has_avx2 = vector;
+        cpu_has_avx512 = wide;
+        cpu_has_avx512_vbmi = vbmi;
+#endif
+        return 0;
+}
+#endif /* BENCH_codec */
+
+#ifdef BENCH_fixed
+#include "../src/compiler_memory.c"
+
+static p8 records[65536];
+static volatile positive observed;
+
+/* Independent C carry loop, with identical complete-record boundaries. */
+static __attribute__((noinline)) positive series_c(
+    p8 address_to into, positive room, positive length,
+    positive first, positive finish, bipolar step)
+{
+        positive used = length;
+        while (room - used >= length)
+        {
+                memory_copy_apart(into + used, into + used - length, length);
+                positive carry = step < 0 ? (positive)0 - (positive)step : (positive)step;
+                for (positive at = finish; carry && at > first;)
+                {
+                        p8 address_to byte = into + used + --at;
+                        if (*byte == '.') continue;
+                        b32 digit = *byte - '0', part = carry % 10;
+                        carry /= 10;
+                        digit += step < 0 ? -part : part;
+                        if (digit < 0) { digit += 10; carry++; }
+                        if (digit >= 10) { digit -= 10; carry++; }
+                        *byte = '0' + digit;
+                }
+                if (carry) break;
+                used += length;
+        }
+        return used;
+}
+
+b32 main(void)
+{
+        const bipolar steps[] = {1, -1, 25, -25};
+        for (positive s = 0; s < array_count(steps); s++)
+                for (positive pass = 0; pass < 4; pass++)
+                {
+                        bool assembly = pass & 1;
+                        positive started = get_cpu_time();
+                        for (positive run = 0; run < 1000; run++)
+                        {
+                                memory_copy_apart(records, steps[s] < 0
+                                    ? "9999999\n" : "0000000\n", 8);
+                                positive used = assembly
+                                    ? memory_decimal_series(records, sizeof(records), 8, 0, 7, steps[s])
+                                    : series_c(records, sizeof(records), 8, 0, 7, steps[s]);
+                                observed += used + records[used - 2];
+                        }
+                        positive elapsed = get_cpu_time() - started;
+                        log(assembly ? "asm step " : "C step ", 0);
+                        bipolar_to_string(log, steps[s]);
+                        log(": ", 2);
+                        positive_to_string(log, elapsed);
+                        log(" ticks / 65536000 bytes\n", 0);
+                }
+        log_flush();
+        return observed == 0;
+}
+#endif /* BENCH_fixed */
+
+#ifdef BENCH_table
+/* Time the production table renderer after its independent byte/line checks. */
+#define TABLE_BENCHMARK
+#define CHECK_table
+#undef BENCH_table
+#include "checks.c"
+#endif /* BENCH_table */
+
+#ifdef BENCH_padded
+/*
+        The assembly padded-decimal writer against the exact C call shape it
+        replaced: convert into twenty-four bytes, emit every pad byte in its
+        own writer call, then emit the optional prefix and the digit run.
+
+        A native run is hardware time. A qemu run is emulator work only.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define VALUE_COUNT 64
+#define ROUNDS (1u << 15)
+#define TRIES 7
+
+static volatile positive sink;
+static positive values[VALUE_COUNT];
+
+NOT_INLINED fn discard_writer(address_any data, positive length)
+{
+        volatile p8 address_to bytes = (volatile p8 address_to)data;
+
+        sink += length + bytes[0] + bytes[length - 1];
+}
+
+NOT_INLINED fn former_padded(writer write, positive value, positive width,
+                             p8 pad, p8 prefix)
+{
+        p8 digits[24];
+        positive length = positive_into(digits, value);
+        positive occupied = length + (prefix != 0);
+
+        while (pad && width > occupied)
+        {
+                write(address_of pad, 1);
+                width--;
+        }
+
+        if (prefix)
+                write(address_of prefix, 1);
+
+        write(digits, length);
+}
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive i = 0; i < VALUE_COUNT; i++)
+        {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                values[i] = i < 32 ? i * 313u : state;
+        }
+
+        values[0] = 0;
+        values[1] = 9;
+        values[2] = 10;
+        values[3] = 99;
+        values[4] = 100;
+        values[5] = 9999;
+        values[6] = 10000;
+        values[7] = positive_max;
+}
+
+static p64 former_once(positive width, p8 prefix)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+                former_padded(discard_writer,
+                              values[r & (VALUE_COUNT - 1)], width,
+                              ' ', prefix);
+
+        return get_cpu_time() - start;
+}
+
+static p64 assembly_once(positive width, p8 prefix)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+                positive_to_padded(discard_writer,
+                                   values[r & (VALUE_COUNT - 1)], width,
+                                   ' ', prefix);
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive width, p8 prefix)
+{
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        // Alternate who runs first. Frequency changes over a long callback
+        // row otherwise consistently reward the first implementation and can
+        // turn the same binary from an apparent win into an apparent loss.
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 got_former;
+                p64 got_assembly;
+
+                if (t & 1)
+                {
+                        got_assembly = assembly_once(width, prefix);
+                        got_former = former_once(width, prefix);
+                }
+                else
+                {
+                        got_former = former_once(width, prefix);
+                        got_assembly = assembly_once(width, prefix);
+                }
+
+                if (got_former < former)
+                        former = got_former;
+
+                if (got_assembly < assembly)
+                        assembly = got_assembly;
+        }
+
+        string_format(log, "  %s: former-C %p  assembly %p  asm/C %p%%\n",
+                      name, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "padded decimal writer, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"width 0", 0, 0);
+        row((string_address)"small pad to 6", 6, 0);
+        row((string_address)"wide pad to 32", 32, 0);
+        row((string_address)"signed pad to 32", 32, '-');
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_padded */
+
+#ifdef BENCH_input_bases
+/*
+        Bounded base-input parsing at the call shapes that were folded.
+
+        The scalar columns are the exact fixed-base loops the shell used:
+        octal has one contiguous digit range, hexadecimal folds two letter
+        ranges, and base 36 is the generic classifier. Both columns are called
+        through the same function-pointer shape so dispatch overhead is equal.
+
+        Native runs are hardware ticks. Qemu runs are emulator work and only
+        useful as regression ratios, never as hardware-floor measurements.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define SUBJECTS 64
+#define ROUNDS (1u << 20)
+#define TRIES 11
+
+/*
+        Hardware-counter mode builds one isolated side of one row:
+
+          -DINPUT_BASE_PERF_ROW=1..5
+          -DINPUT_BASE_PERF_ASSEMBLY=0|1
+
+        Rows are octal short/word, hexadecimal short/word, then base 36.
+        Both sides still use the same noinline indirect-call harness.
+*/
+#ifndef INPUT_BASE_PERF_ASSEMBLY
+#define INPUT_BASE_PERF_ASSEMBLY 0
+#endif
+
+typedef positive (*fixed_parser)(string_address, positive, positive address_to);
+typedef positive (*base_parser)(string_address, positive, positive,
+                                positive address_to);
+
+static p8 subjects[SUBJECTS][96];
+static positive limits[SUBJECTS];
+static volatile positive sink;
+
+NOT_INLINED positive scalar_octal(string_address source, positive bound,
+                                  positive address_to used)
+{
+        positive value = 0;
+        positive at = 0;
+
+        while (at < bound && source[at] >= '0' && source[at] <= '7')
+        {
+                value = (value << 3) + (positive)(source[at] - '0');
+                at++;
+        }
+
+        if (used)
+                address_to used = at;
+        return value;
+}
+
+NOT_INLINED positive scalar_hex(string_address source, positive bound,
+                                positive address_to used)
+{
+        positive value = 0;
+        positive at = 0;
+
+        while (at < bound)
+        {
+                p8 character = source[at];
+                positive digit;
+
+                if (character >= '0' && character <= '9')
+                        digit = (positive)(character - '0');
+                else if (character >= 'a' && character <= 'f')
+                        digit = (positive)(character - 'a' + 10);
+                else if (character >= 'A' && character <= 'F')
+                        digit = (positive)(character - 'A' + 10);
+                else
+                        break;
+
+                value = (value << 4) + digit;
+                at++;
+        }
+
+        if (used)
+                address_to used = at;
+        return value;
+}
+
+NOT_INLINED positive scalar_generic(string_address source, positive bound,
+                                    positive base, positive address_to used)
+{
+        positive value = 0;
+        positive at = 0;
+
+        while (at < bound)
+        {
+                p8 character = source[at];
+                positive digit;
+
+                if (character >= '0' && character <= '9')
+                        digit = (positive)(character - '0');
+                else if (character >= 'a' && character <= 'z')
+                        digit = (positive)(character - 'a' + 10);
+                else if (character >= 'A' && character <= 'Z')
+                        digit = (positive)(character - 'A' + 10);
+                else
+                        break;
+
+                if (digit >= base)
+                        break;
+
+                value = value * base + digit;
+                at++;
+        }
+
+        if (used)
+                address_to used = at;
+        return value;
+}
+
+static fn make_subjects(positive base, positive maximum)
+{
+        for (positive which = 0; which < SUBJECTS; which++)
+        {
+                positive length = 1 + which % maximum;
+
+                for (positive at = 0; at < length; at++)
+                {
+                        positive digit = (which * 13 + at * 17) % base;
+
+                        subjects[which][at] =
+                            (p8)(digit < 10 ? '0' + digit
+                                            : ((at & 1) ? 'A' : 'a') + digit - 10);
+                }
+
+                // Included in the bound, so both parsers pay their stopping
+                // classifier rather than timing only the all-valid fast path.
+                subjects[which][length] = '@';
+                limits[which] = length + 1;
+        }
+}
+
+NOT_INLINED static p64 run_fixed(fixed_parser parser)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+        {
+                positive which = round & (SUBJECTS - 1);
+                positive used;
+                positive value;
+
+                value = parser(subjects[which], limits[which], address_of used);
+                sink += value + used;
+        }
+
+        return get_cpu_time() - start;
+}
+
+NOT_INLINED static p64 run_base(base_parser parser, positive base)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+        {
+                positive which = round & (SUBJECTS - 1);
+                positive used;
+                positive value;
+
+                value = parser(subjects[which], limits[which], base,
+                               address_of used);
+                sink += value + used;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 median(p64 values[TRIES])
+{
+        for (positive at = 1; at < TRIES; at++)
+        {
+                p64 value = values[at];
+                positive before = at;
+
+                while (before && values[before - 1] > value)
+                {
+                        values[before] = values[before - 1];
+                        before--;
+                }
+
+                values[before] = value;
+        }
+
+        return values[TRIES / 2];
+}
+
+#ifdef INPUT_BASE_PERF_ROW
+NOT_INLINED static fn perf_fixed(fixed_parser parser)
+{
+        for (positive trial = 0; trial < TRIES; trial++)
+                for (positive round = 0; round < ROUNDS; round++)
+                {
+                        positive which = round & (SUBJECTS - 1);
+                        positive used;
+                        positive value = parser(subjects[which], limits[which],
+                                                address_of used);
+
+                        sink += value + used;
+                }
+}
+
+NOT_INLINED static fn perf_base(base_parser parser, positive base)
+{
+        for (positive trial = 0; trial < TRIES; trial++)
+                for (positive round = 0; round < ROUNDS; round++)
+                {
+                        positive which = round & (SUBJECTS - 1);
+                        positive used;
+                        positive value = parser(subjects[which], limits[which],
+                                                base, address_of used);
+
+                        sink += value + used;
+                }
+}
+#endif
+
+static fn fixed_row(string_address name, fixed_parser scalar,
+                    fixed_parser assembly, positive base, positive maximum)
+{
+        make_subjects(base, maximum);
+
+        p64 scalar_samples[TRIES];
+        p64 assembly_samples[TRIES];
+
+        // Alternate order so frequency scaling or host contention cannot
+        // consistently favor the scalar or assembly half of a row.
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 scalar_ticks;
+                p64 assembly_ticks;
+
+                if (trial & 1)
+                {
+                        assembly_ticks = run_fixed(assembly);
+                        scalar_ticks = run_fixed(scalar);
+                }
+                else
+                {
+                        scalar_ticks = run_fixed(scalar);
+                        assembly_ticks = run_fixed(assembly);
+                }
+
+                scalar_samples[trial] = scalar_ticks;
+                assembly_samples[trial] = assembly_ticks;
+        }
+
+        p64 old = median(scalar_samples);
+        p64 floor = median(assembly_samples);
+
+        string_format(log,
+                      "  %s: scalar %p  assembly %p  assembly/scalar %p%%\n",
+                      name, (positive)old, (positive)floor,
+                      (positive)(floor * 100 / (old ? old : 1)));
+}
+
+static fn base_row(string_address name, base_parser scalar, positive base,
+                   positive maximum)
+{
+        make_subjects(base, maximum);
+
+        p64 scalar_samples[TRIES];
+        p64 assembly_samples[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 scalar_ticks;
+                p64 assembly_ticks;
+
+                if (trial & 1)
+                {
+                        assembly_ticks = run_base(string_digits_base_max, base);
+                        scalar_ticks = run_base(scalar, base);
+                }
+                else
+                {
+                        scalar_ticks = run_base(scalar, base);
+                        assembly_ticks = run_base(string_digits_base_max, base);
+                }
+
+                scalar_samples[trial] = scalar_ticks;
+                assembly_samples[trial] = assembly_ticks;
+        }
+
+        p64 old = median(scalar_samples);
+        p64 floor = median(assembly_samples);
+
+        string_format(log,
+                      "  %s: scalar %p  assembly %p  assembly/scalar %p%%\n",
+                      name, (positive)old, (positive)floor,
+                      (positive)(floor * 100 / (old ? old : 1)));
+}
+
+b32 main()
+{
+#ifdef INPUT_BASE_PERF_ROW
+#if INPUT_BASE_PERF_ROW == 1
+        make_subjects(8, 3);
+#if INPUT_BASE_PERF_ASSEMBLY
+        perf_fixed(string_digits_octal_escape_max);
+#else
+        perf_fixed(scalar_octal);
+#endif
+#elif INPUT_BASE_PERF_ROW == 2
+        make_subjects(8, 22);
+#if INPUT_BASE_PERF_ASSEMBLY
+        perf_fixed(string_digits_octal_max);
+#else
+        perf_fixed(scalar_octal);
+#endif
+#elif INPUT_BASE_PERF_ROW == 3
+        make_subjects(16, 2);
+#if INPUT_BASE_PERF_ASSEMBLY
+        perf_fixed(string_digits_hexadecimal_escape_max);
+#else
+        perf_fixed(scalar_hex);
+#endif
+#elif INPUT_BASE_PERF_ROW == 4
+        make_subjects(16, 16);
+#if INPUT_BASE_PERF_ASSEMBLY
+        perf_fixed(string_digits_hexadecimal_max);
+#else
+        perf_fixed(scalar_hex);
+#endif
+#elif INPUT_BASE_PERF_ROW == 5
+        make_subjects(36, 13);
+#if INPUT_BASE_PERF_ASSEMBLY
+        perf_base(string_digits_base_max, 36);
+#else
+        perf_base(scalar_generic, 36);
+#endif
+#else
+#error INPUT_BASE_PERF_ROW must be 1 through 5
+#endif
+        return sink == (positive)-1;
+#else
+        string_format(log, "bounded base parsing, paired median of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        fixed_row((string_address)"octal escape, 1-3", scalar_octal,
+                  string_digits_octal_escape_max, 8, 3);
+        fixed_row((string_address)"octal word, 1-22", scalar_octal,
+                  string_digits_octal_max, 8, 22);
+        fixed_row((string_address)"hex escape, 1-2", scalar_hex,
+                  string_digits_hexadecimal_escape_max, 16, 2);
+        fixed_row((string_address)"hex word, 1-16", scalar_hex,
+                  string_digits_hexadecimal_max, 16, 16);
+        base_row((string_address)"base 36, 1-13", scalar_generic, 36, 13);
+        log_flush();
+        return 0;
+#endif
+}
+#endif /* BENCH_input_bases */
+
+#ifdef BENCH_fields
+/*
+        Contiguous fixed-width decimal fields against the C bodies they fold:
+        a direct two-digit pair and the former scale/divide loops for six and
+        nine places. Values stay inside each caller's proven field domain.
+
+        Native results are hardware time. Qemu results are emulator work only.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define VALUE_COUNT 64
+#define ROUNDS (1u << 17)
+#define TRIES 7
+
+static p8 output[24];
+static positive values[VALUE_COUNT];
+static volatile positive sink;
+
+NOT_INLINED positive former_pair(p8 address_to into, positive value)
+{
+        into[0] = (p8)('0' + (value / 10) % 10);
+        into[1] = (p8)('0' + value % 10);
+        return 2;
+}
+
+NOT_INLINED positive former_scaled(p8 address_to into, positive value,
+                                   positive scale)
+{
+        positive length = 0;
+
+        while (scale)
+        {
+                into[length++] = (p8)('0' + (value / scale) % 10);
+                scale /= 10;
+        }
+
+        return length;
+}
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive i = 0; i < VALUE_COUNT; i++)
+        {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                values[i] = state;
+        }
+
+        values[0] = 0;
+        values[1] = 1;
+        values[2] = 9;
+        values[3] = 10;
+        values[4] = 99;
+        values[5] = 999999;
+        values[6] = 999999999;
+}
+
+static p64 former_once(positive width)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+        {
+                positive value = values[r & (VALUE_COUNT - 1)];
+                positive length;
+
+                if (width == 2)
+                        length = former_pair(output, value % 100);
+                else if (width == 6)
+                        length = former_scaled(output, value % 1000000, 100000);
+                else
+                        length = former_scaled(output, value % 1000000000, 100000000);
+
+                sink += length + output[0] + output[width - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 assembly_once(positive width)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+        {
+                positive value = values[r & (VALUE_COUNT - 1)];
+                positive length;
+
+                if (width == 2)
+                {
+                        value %= 100;
+                        length = positive_into_pair(output, value);
+                }
+                else if (width == 6)
+                {
+                        value %= 1000000;
+                        length = positive_into_padded(output, value, width, '0');
+                }
+                else
+                {
+                        value %= 1000000000;
+                        length = positive_into_padded(output, value, width, '0');
+                }
+
+                sink += length + output[0] + output[width - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive width)
+{
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 got_former;
+                p64 got_assembly;
+
+                if (t & 1)
+                {
+                        got_assembly = assembly_once(width);
+                        got_former = former_once(width);
+                }
+                else
+                {
+                        got_former = former_once(width);
+                        got_assembly = assembly_once(width);
+                }
+
+                if (got_former < former)
+                        former = got_former;
+                if (got_assembly < assembly)
+                        assembly = got_assembly;
+        }
+
+        string_format(log, "  %s: former-C %p  assembly %p  asm/C %p%%\n",
+                      name, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "contiguous padded decimal, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"width 2", 2);
+        row((string_address)"width 6", 6);
+        row((string_address)"width 9", 9);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_fields */
+
+#ifdef BENCH_human
+/*
+        Compact binary-size formatting at both public call shapes.
+
+        The former column is the overflow-safe C policy removed from file.c:
+        a power-of-1024 walk and upward rounding around the existing decimal
+        primitives. The assembly column is the shared buffer or writer API.
+        Both writer forms preserve the same callback boundaries.
+
+        Native runs are hardware ticks. Qemu ratios are emulator work only.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define VALUE_COUNT 64
+#define ROUNDS (1u << 16)
+#define TRIES 7
+
+static p8 output[8];
+static positive values[4][VALUE_COUNT];
+static volatile positive sink;
+
+NOT_INLINED positive former_human_buffer(p8 address_to into, positive value)
+{
+        p8 units[7] = "BKMGTPE";
+        positive divisor = 1;
+        positive unit = 0;
+
+        while (value / divisor >= 1024 && unit < 6)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        if (!unit)
+                return positive_into_string(into, value);
+
+        positive quotient = value / divisor;
+        positive remainder = value % divisor;
+        positive length;
+
+        if (quotient >= 10)
+                length = positive_into(into, quotient + (remainder != 0));
+        else
+        {
+                positive fraction = (remainder * 10 + divisor - 1) / divisor;
+
+                if (fraction == 10)
+                {
+                        quotient++;
+                        fraction = 0;
+                }
+
+                if (quotient >= 10)
+                        length = positive_into(into, quotient);
+                else
+                {
+                        length = positive_into(into, quotient);
+                        into[length++] = '.';
+                        length += positive_into(into + length, fraction);
+                }
+        }
+
+        into[length++] = units[unit];
+        into[length] = end;
+        return length;
+}
+
+NOT_INLINED fn former_human_writer(writer write, positive value)
+{
+        p8 units[7] = "BKMGTPE";
+        positive divisor = 1;
+        positive unit = 0;
+
+        while (value / divisor >= 1024 && unit < 6)
+        {
+                divisor *= 1024;
+                unit++;
+        }
+
+        if (!unit)
+                return positive_to_string(write, value);
+
+        positive quotient = value / divisor;
+        positive remainder = value % divisor;
+        if (quotient >= 10)
+        {
+                positive_to_string(write, quotient + (remainder != 0));
+                write(units + unit, 1);
+                return;
+        }
+
+        positive fraction = (remainder * 10 + divisor - 1) / divisor;
+
+        if (fraction == 10)
+        {
+                quotient++;
+                fraction = 0;
+        }
+
+        positive_to_string(write, quotient);
+
+        if (quotient < 10)
+        {
+                write(".", 1);
+                positive_to_string(write, fraction);
+        }
+
+        write(units + unit, 1);
+}
+
+NOT_INLINED fn discard_writer(address_any data, positive length)
+{
+        volatile p8 address_to bytes = (volatile p8 address_to)data;
+
+        sink += length + bytes[0] + bytes[length - 1];
+}
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive i = 0; i < VALUE_COUNT; i++)
+        {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+
+                values[0][i] = state & 1023;
+                values[1][i] = 1024 + state % (8 * 1024);
+                values[2][i] = 10 * 1024 + state % (1014 * 1024);
+                values[3][i] = state;
+        }
+
+        values[0][0] = 0;
+        values[0][1] = 1023;
+        values[1][0] = 1024;
+        values[1][1] = 9 * 1024;
+        values[1][2] = 9 * 1024 + 1;
+        values[2][0] = 1024 * 1024 - 1;
+        values[2][1] = 1024 * 1024;
+        values[3][0] = positive_max;
+        values[3][1] = ((positive)15 << 60) + 1;
+}
+
+static p64 buffer_once(positive shape, bool assembly)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+                sink += assembly
+                            ? positive_into_human_1024_string(
+                                  output, values[shape][r & (VALUE_COUNT - 1)])
+                            : former_human_buffer(
+                                  output, values[shape][r & (VALUE_COUNT - 1)]);
+
+        return get_cpu_time() - start;
+}
+
+static p64 writer_once(positive shape, bool assembly)
+{
+        p64 start = get_cpu_time();
+
+        for (positive r = 0; r < ROUNDS; r++)
+                if (assembly)
+                        positive_to_human_1024(
+                            discard_writer, values[shape][r & (VALUE_COUNT - 1)]);
+                else
+                        former_human_writer(
+                            discard_writer, values[shape][r & (VALUE_COUNT - 1)]);
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive shape, bool writer_form)
+{
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 got_former;
+                p64 got_assembly;
+
+                if (t & 1)
+                {
+                        got_assembly = writer_form ? writer_once(shape, true)
+                                                   : buffer_once(shape, true);
+                        got_former = writer_form ? writer_once(shape, false)
+                                                 : buffer_once(shape, false);
+                }
+                else
+                {
+                        got_former = writer_form ? writer_once(shape, false)
+                                                 : buffer_once(shape, false);
+                        got_assembly = writer_form ? writer_once(shape, true)
+                                                   : buffer_once(shape, true);
+                }
+
+                if (got_former < former)
+                        former = got_former;
+                if (got_assembly < assembly)
+                        assembly = got_assembly;
+        }
+
+        string_format(log, "  %s: former-C %p  assembly %p  asm/C %p%%\n",
+                      name, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "compact binary sizes, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"buffer plain", 0, false);
+        row((string_address)"buffer fractional", 1, false);
+        row((string_address)"buffer integer", 2, false);
+        row((string_address)"buffer mixed u64", 3, false);
+        row((string_address)"writer plain", 0, true);
+        row((string_address)"writer fractional", 1, true);
+        row((string_address)"writer integer", 2, true);
+        row((string_address)"writer mixed u64", 3, true);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_human */
+
+#ifdef BENCH_human_nearest
+/* dd's nearest human formatter: exact former C body against the ASM leaf. */
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define ROUNDS (1u << 18)
+#define VALUE_COUNT 64
+#define TRIES 7
+
+static p8 output[9];
+static volatile positive sink;
+
+// Verbatim policy removed from tools.c. Keeping the whole body -- including
+// decimal emission and suffix construction -- makes this a body-to-body
+// measurement rather than a scaling-loop proxy.
+NOT_INLINED positive former_dd_human(p8 address_to into, positive n, bool binary)
+{
+        positive base = binary ? 1024 : 1000;
+        positive amount = n;
+        positive tenths = 0;
+        positive rounding = 0;
+        positive exponent = 0;
+        p8 letters[11] = {0, 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y', 'R', 'Q'};
+        p8 digits[24];
+        positive have = 0;
+        positive used = 0;
+        positive fraction = 0;
+        bool point = false;
+
+        if (base <= amount)
+        {
+                do
+                {
+                        positive ten = (amount % base) * 10 + tenths;
+                        positive two = (ten % base) * 2 + (rounding >> 1);
+
+                        amount /= base;
+                        tenths = ten / base;
+                        rounding = two < base ? ((two + rounding) != 0)
+                                              : 2 + (base < two + rounding);
+                        exponent++;
+                }
+                while (base <= amount && exponent < 10);
+
+                if (amount < 10)
+                {
+                        if (2 < rounding + (tenths & 1))
+                        {
+                                tenths++;
+                                rounding = 0;
+                                if (tenths == 10)
+                                {
+                                        amount++;
+                                        tenths = 0;
+                                }
+                        }
+
+                        if (amount < 10)
+                        {
+                                point = true;
+                                fraction = tenths;
+                                tenths = rounding = 0;
+                        }
+                }
+        }
+
+        if (5 < tenths + (0 < rounding + (amount & 1)))
+        {
+                amount++;
+                if (amount == base && exponent < 10)
+                {
+                        exponent++;
+                        point = true;
+                        fraction = 0;
+                        amount = 1;
+                }
+        }
+
+        if (!amount)
+                digits[have++] = '0';
+
+        while (amount)
+        {
+                digits[have++] = (p8)('0' + amount % 10);
+                amount /= 10;
+        }
+
+        while (have)
+                into[used++] = digits[--have];
+
+        if (point)
+        {
+                into[used++] = '.';
+                into[used++] = (p8)('0' + fraction);
+        }
+        into[used++] = ' ';
+        if (exponent)
+                into[used++] = !binary && exponent == 1 ? 'k' : letters[exponent];
+        if (binary && exponent)
+                into[used++] = 'i';
+        into[used++] = 'B';
+        into[used] = end;
+        return used;
+}
+
+static positive values[2][3][VALUE_COUNT];
+
+static fn make_values()
+{
+        positive state = 0x9e3779b97f4a7c15ull;
+
+        for (positive binary = 0; binary < 2; binary++)
+        {
+                positive base = binary ? 1024 : 1000;
+                for (positive i = 0; i < VALUE_COUNT; i++)
+                {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        values[binary][0][i] = state % base;
+                        values[binary][1][i] = base + state % (8 * base);
+                        values[binary][2][i] = state;
+                }
+
+                values[binary][0][0] = 0;
+                values[binary][0][1] = base - 1;
+                values[binary][1][0] = base;
+                values[binary][1][1] = 9 * base - 1;
+                values[binary][2][0] = positive_max;
+                values[binary][2][1] = binary ? 1023 * 1024 : 999999;
+        }
+}
+
+static p64 run_once(bool assembly, bool binary, positive shape)
+{
+        p64 start = get_cpu_time();
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                positive value = values[binary][shape][i & (VALUE_COUNT - 1)];
+                positive length = assembly
+                                      ? positive_into_human_nearest_string(output, value,
+                                                                            binary)
+                                      : former_dd_human(output, value, binary);
+                sink += length + output[0] + output[length - 1];
+        }
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, bool binary, positive shape)
+{
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 got_former, got_assembly;
+                if (t & 1)
+                {
+                        got_assembly = run_once(true, binary, shape);
+                        got_former = run_once(false, binary, shape);
+                }
+                else
+                {
+                        got_former = run_once(false, binary, shape);
+                        got_assembly = run_once(true, binary, shape);
+                }
+
+                if (got_former < former)
+                        former = got_former;
+                if (got_assembly < assembly)
+                        assembly = got_assembly;
+        }
+
+        string_format(log, "  %s: former-C %p  assembly %p  asm/C %p%%\n",
+                      name, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        make_values();
+        moonwater_cpu_detect();
+
+        string_format(log, "nearest human sizes, best of %p, %p calls\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        row((string_address)"SI plain", false, 0);
+        row((string_address)"SI fractional", false, 1);
+        row((string_address)"SI mixed u64", false, 2);
+        row((string_address)"IEC plain", true, 0);
+        row((string_address)"IEC fractional", true, 1);
+        row((string_address)"IEC mixed u64", true, 2);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_human_nearest */
+
+#ifdef BENCH_hash_33
+/* DJB2 byte hash: dependent scalar loop against four-byte assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 25)
+
+static p8 block[MAXIMUM + 16];
+static volatile positive sink;
+
+NOT_INLINED static positive former_hash(address_any block_address, positive length)
+{
+        p8 address_to text = block_address;
+        positive value = 5381;
+
+        for (positive at = 0; at < length; at++)
+                value = value * 33 + text[at];
+
+        return value;
+}
+
+typedef positive (*hash_call)(address_any block_address, positive length);
+static hash_call volatile hash_calls[2] = {former_hash, memory_hash_33};
+
+NOT_INLINED static positive2 former_string_hash_length(string_address text)
+{
+        positive2 answer;
+
+        answer.y = string_length(text);
+        answer.x = memory_hash_33(text, answer.y);
+        return answer;
+}
+
+typedef positive2 (*string_hash_call)(string_address text);
+static string_hash_call volatile string_hash_calls[2] = {
+    former_string_hash_length, string_hash_33_length};
+
+static bool correctness(void)
+{
+        static const positive offsets[] = {0, 1, 3, 7, 15, 4093, 4095};
+
+        for (positive at = 0; at < sizeof(block); at++)
+                block[at] = (p8)(at * 37 + 11);
+
+        for (positive oi = 0; oi < sizeof(offsets) / sizeof(*offsets); oi++)
+                for (positive length = 0; length <= 257; length++)
+                {
+                        positive offset = offsets[oi];
+
+                        if (offset + length > sizeof(block))
+                                continue;
+
+                        if (memory_hash_33(block + offset, length) !=
+                            former_hash(block + offset, length))
+                                return false;
+                }
+
+        for (positive oi = 0; oi < sizeof(offsets) / sizeof(*offsets); oi++)
+                for (positive length = 0; length <= 257; length++)
+                {
+                        positive offset = offsets[oi];
+                        positive2 want;
+                        positive2 got;
+
+                        if (offset + length >= sizeof(block))
+                                continue;
+
+                        for (positive at = 0; at < length; at++)
+                                block[offset + at] = (p8)(at % 251 + 1);
+                        block[offset + length] = 0;
+                        want = former_string_hash_length(
+                            (string_address)(block + offset));
+                        got = string_hash_33_length(
+                            (string_address)(block + offset));
+
+                        if (got.x != want.x || got.y != want.y)
+                                return false;
+                }
+
+        return true;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / (length ? length : 1);
+
+        if (rounds < 8)
+                rounds = 8;
+        if (rounds > (1u << 22))
+                rounds = 1u << 22;
+        return rounds;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+                sink += hash_calls[assembly](block, length);
+
+        return get_cpu_time() - start;
+}
+
+static p64 run_string(bool assembly, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                positive2 answer = string_hash_calls[assembly]((string_address)block);
+
+                sink += answer.x + answer.y;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(positive length)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %p bytes  median asm/C %p.%p%%\n", length,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+static fn string_row(positive length)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        for (positive at = 0; at < length; at++)
+                block[at] = (p8)(at % 251 + 1);
+        block[length] = 0;
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run_string(true, rounds);
+                        former = run_string(false, rounds);
+                }
+                else
+                {
+                        former = run_string(false, rounds);
+                        assembly = run_string(true, rounds);
+                }
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %p bytes  median one-pass/two-pass %p.%p%%\n",
+                      length, ratios[TRIES / 2] / 100,
+                      ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {0, 1, 4, 8, 12, 16, 24,
+                                         32, 64, 128, 256, 4096, MAXIMUM};
+
+        if (!correctness())
+        {
+                string_format(log, "memory_hash_33 correctness failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_hash_33, paired median of %p\n",
+                      (positive)TRIES);
+        for (positive at = 0; at < sizeof(sizes) / sizeof(*sizes); at++)
+                row(sizes[at]);
+
+        string_format(log, "string_hash_33_length, paired median of %p\n",
+                      (positive)TRIES);
+        for (positive at = 0; at < sizeof(sizes) / sizeof(*sizes); at++)
+                string_row(sizes[at]);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_hash_33 */
+
+#ifdef BENCH_span_byte
+/* Bounded equal-byte prefix: scalar caller loop against library assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 25)
+
+static p8 block[MAXIMUM + 16];
+static volatile positive sink;
+
+NOT_INLINED static positive former_span(address_any address, p8 value,
+                                        positive length)
+{
+        p8 address_to bytes = address;
+        positive at = 0;
+
+        while (at < length && bytes[at] == value)
+                at++;
+
+        return at;
+}
+
+typedef positive (*span_call)(address_any, p8, positive);
+static span_call volatile span_calls[2] = {former_span, memory_span_byte};
+
+static bool correctness(void)
+{
+        static const positive long_lengths[] = {255, 256, 257, 4095};
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive length = 0; length <= 20; length++)
+                                for (positive mismatch = 0; mismatch <= length; mismatch++)
+                                {
+                                        memory_fill(block + offset, (p8)value, length);
+                                        if (mismatch < length)
+                                                block[offset + mismatch] = (p8)(value + 1);
+                                        if (memory_span_byte(block + offset, (p8)value,
+                                                             length) != mismatch)
+                                                return false;
+                                }
+
+        for (positive value = 0; value < 256; value++)
+                for (positive offset = 0; offset < 16; offset++)
+                        for (positive li = 0;
+                             li < sizeof(long_lengths) / sizeof(*long_lengths); li++)
+                        {
+                                positive length = long_lengths[li];
+                                positive positions[] = {0, 1, 15, 16, length / 2,
+                                                        length - 1, length};
+
+                                for (positive pi = 0;
+                                     pi < sizeof(positions) / sizeof(*positions); pi++)
+                                {
+                                        positive mismatch = positions[pi];
+
+                                        memory_fill(block + offset, (p8)value, length);
+                                        if (mismatch < length)
+                                                block[offset + mismatch] = (p8)(value + 1);
+                                        if (memory_span_byte(block + offset, (p8)value,
+                                                             length) != mismatch)
+                                                return false;
+                                }
+                        }
+        return true;
+}
+
+static positive rounds_for(positive n){positive r=TARGET_BYTES/(n?n:1);if(r<8)r=8;if(r>(1u<<22))r=1u<<22;return r;}
+static p64 run(positive implementation, positive n, positive rounds)
+{
+        p64 start = get_cpu_time();
+        while (rounds--) sink += span_calls[implementation](block, '0', n);
+        return get_cpu_time() - start;
+}
+
+static fn row(positive n, positive shape)
+{
+        positive raw[TRIES], rounds = rounds_for(n);
+        memory_fill(block, '0', n);
+        if (shape && n) block[shape == 1 ? n - 1 : 0] = '1';
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 elapsed[2];
+                for (positive i = 0; i < 2; i++)
+                {
+                        positive which = (i + trial) % 2;
+                        elapsed[which] = run(which, n, rounds);
+                }
+                raw[trial] = elapsed[1] * 10000 / max(elapsed[0], (p64)1);
+        }
+        order(raw, TRIES);
+        string_format(log, "  %s %p bytes  asm/C %p.%p%%\n",
+                      shape == 2 ? "first" : shape ? "late" : "equal", n,
+                      raw[TRIES / 2] / 100, raw[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        static const positive sizes[]={0,1,2,4,8,16,24,32,64,128,256,4096,MAXIMUM};
+        if(!correctness()){string_format(log,"memory_span_byte correctness failed\n");log_flush();return 1;}
+        string_format(log,"memory_span_byte, paired median of %p\n",(positive)TRIES);
+        for (positive i = 0; i < array_count(sizes); i++)
+                for (positive shape = 0; shape < 3; shape++) row(sizes[i], shape);
+        log_flush();return 0;
+}
+#endif /* BENCH_span_byte */
+
+#ifdef BENCH_fill_u32
+/* 32-bit span fill: the shared Canvas/window primitive against its two floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define TRIES 9
+#define TARGET_BYTES (1u << 26)
+#define MAXIMUM 4096
+
+static unsigned int block[MAXIMUM + 2] __attribute__((aligned(64)));
+
+/* REP pays setup; the scalar body pays a back edge per four words. */
+__asm__(
+    ".text\n"
+    ASM_FUNC(fill_u32_scalar_floor)
+#if X64
+    "mov %edx, %eax\n   mov %eax, %r8d\n   shl $32, %r8\n   or %r8, %rax\n"
+    "cmp $4, %rsi\n   jb 2f\n"
+    "1:  mov %rax, (%rdi)\n   mov %rax, 8(%rdi)\n   add $16, %rdi\n"
+    "sub $4, %rsi\n   cmp $4, %rsi\n   jae 1b\n"
+    "2:  test $2, %sil\n   jz 3f\n   mov %rax, (%rdi)\n   add $8, %rdi\n"
+    "3:  test $1, %sil\n   jz 4f\n   mov %eax, (%rdi)\n"
+    "4:\n"
+#elif ARM64
+    "mov w2, w2\n   orr x3, x2, x2, lsl #32\n"
+    "1:  cmp x1, #4\n   b.lo 2f\n   stp x3, x3, [x0], #16\n"
+    "sub x1, x1, #4\n   b 1b\n"
+    "2:  tbz x1, #1, 3f\n   str x3, [x0], #8\n"
+    "3:  tbz x1, #0, 4f\n   str w2, [x0]\n   4:\n"
+#else
+    "slli a2, a2, 32\n   srli a2, a2, 32\n   slli t0, a2, 32\n"
+    "or t0, t0, a2\n   li t1, 2\n"
+    "1:  blt a1, t1, 2f\n   sd t0, 0(a0)\n   addi a0, a0, 8\n"
+    "addi a1, a1, -2\n   j 1b\n"
+    "2:  beqz a1, 3f\n   sw a2, 0(a0)\n   3:\n"
+#endif
+    ASM_RET
+    ASM_END(fill_u32_scalar_floor)
+    ASM_FUNC(fill_u32_bulk_floor)
+#if X64
+    "mov %edx, %eax\n   mov %eax, %r8d\n   shl $32, %r8\n   or %r8, %rax\n"
+    "mov %rsi, %rcx\n   shr $1, %rcx\n   rep stosq\n"
+    "test $1, %sil\n   jz 1f\n   mov %eax, (%rdi)\n   1:\n"
+#elif ARM64
+    "b fill_u32_scalar_floor\n"
+#else
+    "j fill_u32_scalar_floor\n"
+#endif
+    ASM_RET
+    ASM_END(fill_u32_bulk_floor)
+);
+
+fn fill_u32_scalar_floor(address_any destination, positive count,
+                         unsigned int value);
+fn fill_u32_bulk_floor(address_any destination, positive count,
+                       unsigned int value);
+
+typedef fn (*fill_call)(address_any, positive, unsigned int);
+static fill_call volatile calls[] = {
+    memory_fill_u32, fill_u32_scalar_floor, fill_u32_bulk_floor,
+};
+
+static bool correctness(void)
+{
+        for (positive offset = 0; offset < 2; offset++)
+                for (positive count = 0; count <= MAXIMUM; count++)
+                {
+                        memory_fill(block, 0xa5, sizeof(block));
+                        memory_fill_u32(block + offset, count, 0x13579bdfu);
+
+                        for (positive i = 0; i < MAXIMUM + 2; i++)
+                        {
+                                unsigned int expected =
+                                    i >= offset && i < offset + count
+                                        ? 0x13579bdfu
+                                        : 0xa5a5a5a5u;
+
+                                if (block[i] != expected)
+                                        return false;
+                        }
+                }
+
+        return true;
+}
+
+static p64 run(unsigned int which, positive count, positive rounds,
+               positive offset)
+{
+        p64 started = get_cpu_time();
+
+        while (rounds--)
+                calls[which](block + offset, count, 0x13579bdfu);
+
+        return get_cpu_time() - started;
+}
+
+static fn row(positive count, positive offset)
+{
+        positive scalar[TRIES], bulk[TRIES];
+        positive rounds = TARGET_BYTES / max(count * sizeof(*block), 1ul);
+
+        if (rounds < 32)
+                rounds = 32;
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 ours, floor;
+
+                if (trial & 1)
+                {
+                        floor = run(1, count, rounds, offset);
+                        ours = run(0, count, rounds, offset);
+                }
+                else
+                {
+                        ours = run(0, count, rounds, offset);
+                        floor = run(1, count, rounds, offset);
+                }
+
+                scalar[trial] = (positive)(ours * 10000 / max(floor, 1ull));
+                if (trial & 1)
+                {
+                        floor = run(2, count, rounds, offset);
+                        ours = run(0, count, rounds, offset);
+                }
+                else
+                {
+                        ours = run(0, count, rounds, offset);
+                        floor = run(2, count, rounds, offset);
+                }
+                bulk[trial] = (positive)(ours * 10000 / max(floor, 1ull));
+        }
+
+        order(scalar, TRIES);
+        order(bulk, TRIES);
+        string_format(log,
+                      "  %p words +%p  current/scalar %p.%p%%  current/bulk %p.%p%%\n",
+                      count, offset, scalar[TRIES / 2] / 100,
+                      scalar[TRIES / 2] % 100, bulk[TRIES / 2] / 100,
+                      bulk[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {
+            1, 2, 3, 4, 8, 16, 32, 64, 96, 128, 160, 192,
+            200, 208, 216, 224, 232, 240, 248, 256,
+            320, 384, 512, 1024, 4096,
+        };
+
+        if (!correctness())
+        {
+                string_format(log, "memory_fill_u32 correctness failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_fill_u32, paired median of %p\n",
+                      (positive)TRIES);
+
+        for (positive i = 0; i < sizeof(sizes) / sizeof(*sizes); i++)
+        {
+                row(sizes[i], 0);
+                row(sizes[i], 1);
+        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_fill_u32 */
+
+#ifdef BENCH_fill_u64
+/* Naturally aligned 64-bit pattern fill against scalar and bulk-store floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define TRIES 9
+#define TARGET_BYTES (1u << 26)
+#define MAXIMUM 4096
+
+static positive block[MAXIMUM + 2] __attribute__((aligned(64)));
+
+__asm__(
+    ".text\n"
+    ASM_FUNC(fill_u64_scalar_floor)
+#if X64
+    "1:  cmp $4, %rsi\n   jb 2f\n"
+    "mov %rdx, (%rdi)\n   mov %rdx, 8(%rdi)\n"
+    "mov %rdx, 16(%rdi)\n   mov %rdx, 24(%rdi)\n"
+    "add $32, %rdi\n   sub $4, %rsi\n   jmp 1b\n"
+    "2:  test $2, %sil\n   jz 3f\n   mov %rdx, (%rdi)\n"
+    "mov %rdx, 8(%rdi)\n   add $16, %rdi\n"
+    "3:  test $1, %sil\n   jz 4f\n   mov %rdx, (%rdi)\n   4:\n"
+#elif ARM64
+    "1:  cmp x1, #4\n   b.lo 2f\n"
+    "stp x2, x2, [x0], #16\n   stp x2, x2, [x0], #16\n"
+    "sub x1, x1, #4\n   b 1b\n"
+    "2:  tbz x1, #1, 3f\n   stp x2, x2, [x0], #16\n"
+    "3:  tbz x1, #0, 4f\n   str x2, [x0]\n   4:\n"
+#else
+    "li t0, 4\n"
+    "1:  blt a1, t0, 2f\n   sd a2, 0(a0)\n   sd a2, 8(a0)\n"
+    "sd a2, 16(a0)\n   sd a2, 24(a0)\n   addi a0, a0, 32\n"
+    "addi a1, a1, -4\n   j 1b\n"
+    "2:  andi t0, a1, 2\n   beqz t0, 3f\n"
+    "sd a2, 0(a0)\n   sd a2, 8(a0)\n   addi a0, a0, 16\n"
+    "3:  andi t0, a1, 1\n   beqz t0, 4f\n   sd a2, 0(a0)\n   4:\n"
+#endif
+    ASM_RET
+    ASM_END(fill_u64_scalar_floor)
+    ASM_FUNC(fill_u64_bulk_floor)
+#if X64
+    "mov %rdx, %rax\n   mov %rsi, %rcx\n   rep stosq\n"
+#elif ARM64
+    "b fill_u64_scalar_floor\n"
+#else
+    "j fill_u64_scalar_floor\n"
+#endif
+    ASM_RET
+    ASM_END(fill_u64_bulk_floor)
+);
+
+fn fill_u64_scalar_floor(address_any, positive, positive);
+fn fill_u64_bulk_floor(address_any, positive, positive);
+
+typedef fn (*fill_call)(address_any, positive, positive);
+static fill_call volatile calls[] = {
+    memory_fill_u64_aligned, fill_u64_scalar_floor, fill_u64_bulk_floor,
+};
+
+static bool correctness(void)
+{
+        for (positive offset = 0; offset < 2; offset++)
+                for (positive count = 0; count <= MAXIMUM; count++)
+                {
+                        memory_fill(block, 0xa5, sizeof(block));
+                        memory_fill_u64_aligned(block + offset, count,
+                                                0x13579bdf2468ace0ull);
+
+                        for (positive i = 0; i < MAXIMUM + 2; i++)
+                        {
+                                positive expected =
+                                    i >= offset && i < offset + count
+                                        ? 0x13579bdf2468ace0ull
+                                        : 0xa5a5a5a5a5a5a5a5ull;
+
+                                if (block[i] != expected)
+                                        return false;
+                        }
+                }
+
+        return true;
+}
+
+static p64 run(unsigned int which, positive count, positive rounds,
+               positive offset)
+{
+        p64 started = get_cpu_time();
+
+        while (rounds--)
+                calls[which](block + offset, count, 0x13579bdf2468ace0ull);
+
+        return get_cpu_time() - started;
+}
+
+static fn row(positive count, positive offset)
+{
+        positive scalar[TRIES], bulk[TRIES];
+        positive rounds = TARGET_BYTES / max(count * sizeof(*block), 1ul);
+
+        if (rounds < 32)
+                rounds = 32;
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 ours, floor;
+
+                if (trial & 1)
+                {
+                        floor = run(1, count, rounds, offset);
+                        ours = run(0, count, rounds, offset);
+                }
+                else
+                {
+                        ours = run(0, count, rounds, offset);
+                        floor = run(1, count, rounds, offset);
+                }
+
+                scalar[trial] = (positive)(ours * 10000 / max(floor, 1ull));
+
+                if (trial & 1)
+                {
+                        floor = run(2, count, rounds, offset);
+                        ours = run(0, count, rounds, offset);
+                }
+                else
+                {
+                        ours = run(0, count, rounds, offset);
+                        floor = run(2, count, rounds, offset);
+                }
+
+                bulk[trial] = (positive)(ours * 10000 / max(floor, 1ull));
+        }
+
+        order(scalar, TRIES);
+        order(bulk, TRIES);
+        string_format(log,
+                      "  %p words +%p  current/scalar %p.%p%%  current/bulk %p.%p%%\n",
+                      count, offset, scalar[TRIES / 2] / 100,
+                      scalar[TRIES / 2] % 100, bulk[TRIES / 2] / 100,
+                      bulk[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {
+            1, 2, 3, 4, 8, 16, 32, 48, 64, 80, 88, 96, 100, 104,
+            108, 112, 120, 128, 160, 192, 256, 512, 1024, 4096,
+        };
+
+        if (!correctness())
+        {
+                string_format(log, "memory_fill_u64_aligned correctness failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_fill_u64_aligned, paired median of %p\n",
+                      (positive)TRIES);
+
+        for (positive i = 0; i < sizeof(sizes) / sizeof(*sizes); i++)
+        {
+                row(sizes[i], 0);
+                row(sizes[i], 1);
+        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_fill_u64 */
+
+#ifdef BENCH_paths
+/* Former path C bodies against the shared three-architecture ASM paths. */
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 5
+#define PATH_CAPACITY 4096
+
+enum { BENCH_JOIN, BENCH_TAIL, BENCH_HEAD };
+
+static p8 output[PATH_CAPACITY];
+static p8 long_directory[2048];
+static p8 long_name[1024];
+static p8 long_path[3072];
+static volatile positive sink;
+
+NOT_INLINED positive former_path_join(p8 address_to into, positive limit,
+                                      string_address directory,
+                                      string_address name)
+{
+        positive length = string_length_max(directory, limit - 1);
+
+        memory_copy_apart(into, directory, length);
+
+        if (length > 0 && into[length - 1] != '/' && length + 1 < limit)
+                into[length++] = '/';
+
+        positive tail = string_length_max(name, limit - 1 - length);
+
+        return (positive)(memory_copy_apart_end(into + length, name, tail) - into);
+}
+
+NOT_INLINED positive former_path_tail(p8 address_to into, string_address path)
+{
+        positive length = string_length(path);
+
+        if (!length)
+        {
+                into[0] = end;
+                return 0;
+        }
+
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+
+        if (length == 1 && path[0] == '/')
+        {
+                into[0] = '/';
+                into[1] = end;
+                return 1;
+        }
+
+        positive start = length;
+
+        while (start > 0 && path[start - 1] != '/')
+                start--;
+
+        positive found = length - start;
+
+        if (found > PATH_CAPACITY - 1)
+                found = PATH_CAPACITY - 1;
+
+        memory_copy_apart_end(into, path + start, found);
+        return found;
+}
+
+NOT_INLINED positive former_path_head(p8 address_to into, string_address path)
+{
+        positive length = string_length(path);
+
+        while (length > 1 && path[length - 1] == '/')
+                length--;
+
+        positive cut = length;
+
+        while (cut > 0 && path[cut - 1] != '/')
+                cut--;
+
+        if (!cut)
+        {
+                into[0] = '.';
+                into[1] = end;
+                return 1;
+        }
+
+        while (cut > 1 && path[cut - 1] == '/')
+                cut--;
+
+        memory_copy_apart_end(into, path, cut);
+        return cut;
+}
+
+static fn paths_make_long()
+{
+        for (positive i = 0; i < sizeof(long_directory) - 1; i++)
+                long_directory[i] = i && !(i % 31) ? '/' : (p8)('a' + i % 23);
+        long_directory[sizeof(long_directory) - 1] = end;
+
+        for (positive i = 0; i < sizeof(long_name) - 1; i++)
+                long_name[i] = i && !(i % 47) ? '/' : (p8)('A' + i % 19);
+        long_name[sizeof(long_name) - 1] = end;
+
+        positive at = 0;
+        for (positive i = 0; i < sizeof(long_directory) - 1; i++)
+                long_path[at++] = long_directory[i];
+        long_path[at++] = '/';
+        for (positive i = 0; i < sizeof(long_name) - 1; i++)
+                long_path[at++] = long_name[i];
+        long_path[at] = end;
+}
+
+static p64 path_run(bool assembly, positive operation,
+                    string_address directory, string_address name,
+                    string_address path, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+        {
+                positive length;
+
+                if (operation == BENCH_JOIN)
+                        length = assembly
+                                     ? path_join(output, PATH_CAPACITY,
+                                                 directory, name)
+                                     : former_path_join(output, PATH_CAPACITY,
+                                                        directory, name);
+                else if (operation == BENCH_TAIL)
+                        length = assembly
+                                     ? path_tail_copy(output, PATH_CAPACITY, path)
+                                     : former_path_tail(output, path);
+                else
+                        length = assembly
+                                     ? path_head_copy(output, PATH_CAPACITY, path)
+                                     : former_path_head(output, path);
+
+                sink += length + output[0] + output[length ? length - 1 : 0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn path_row(string_address label, positive operation,
+                   string_address directory, string_address name,
+                   string_address path, positive rounds)
+{
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 one;
+                p64 two;
+
+                if (t & 1)
+                {
+                        two = path_run(true, operation, directory, name, path, rounds);
+                        one = path_run(false, operation, directory, name, path, rounds);
+                }
+                else
+                {
+                        one = path_run(false, operation, directory, name, path, rounds);
+                        two = path_run(true, operation, directory, name, path, rounds);
+                }
+
+                if (one < former)
+                        former = one;
+                if (two < assembly)
+                        assembly = two;
+        }
+
+        string_format(log, "  %s: former-C %p  assembly %p  asm/C %p%%\n",
+                      label, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        paths_make_long();
+        moonwater_cpu_detect();
+
+        string_format(log, "paths, best of %p\n", (positive)TRIES);
+
+        path_row("join short", BENCH_JOIN, "usr", "bin", "usr/bin", 1u << 18);
+        path_row("join nested", BENCH_JOIN, "/usr/local/share", "moonwater/bin",
+                 "/usr/local/share/moonwater/bin", 1u << 16);
+        path_row("join long", BENCH_JOIN, long_directory, long_name, long_path,
+                 1u << 13);
+
+        path_row("tail short", BENCH_TAIL, "usr", "bin", "usr/bin", 1u << 18);
+        path_row("tail nested", BENCH_TAIL, "/usr/local/share", "moonwater/bin",
+                 "/usr/local/share/moonwater/bin///", 1u << 16);
+        path_row("tail long", BENCH_TAIL, long_directory, long_name, long_path,
+                 1u << 13);
+
+        path_row("head short", BENCH_HEAD, "usr", "bin", "usr/bin", 1u << 18);
+        path_row("head nested", BENCH_HEAD, "/usr/local/share", "moonwater/bin",
+                 "/usr/local/share/moonwater/bin///", 1u << 16);
+        path_row("head long", BENCH_HEAD, long_directory, long_name, long_path,
+                 1u << 13);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_paths */
+
+#ifdef BENCH_reverse
+/* memory_reverse and the rev fold against the literal C shapes they replace. */
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 7
+#define MAXIMUM ((1u << 20) + 128)
+#define OUT_MAX (1u << 16)
+#define TARGET_BYTES (1u << 22)
+
+static p8 block[MAXIMUM];
+static p8 output[OUT_MAX];
+static positive output_used;
+static volatile positive sink;
+
+NOT_INLINED address_any former_memory_reverse(address_any memory, positive size)
+{
+        p8 address_to left = memory;
+        p8 address_to right = left + size;
+
+        while (left < right)
+        {
+                p8 value;
+
+                right--;
+                if (left >= right)
+                        break;
+
+                value = address_to left;
+                address_to left++ = address_to right;
+                address_to right = value;
+        }
+
+        return memory;
+}
+
+/*
+        These are text_put_character and the bounded half of text_put, with a
+        flush represented by a volatile observation instead of a system call.
+        The former rev body really did call the first once per byte.  The fold
+        reverses the line in place and calls the second once, so this measures
+        the actual old/new memory work without charging either side for I/O.
+*/
+static inline fn former_flush()
+{
+        if (output_used)
+                sink += output[0] + output[output_used - 1] + output_used;
+        output_used = 0;
+}
+
+static inline fn former_put_character(p8 value)
+{
+        if (output_used == OUT_MAX)
+                former_flush();
+
+        output[output_used++] = value;
+}
+
+NOT_INLINED fn former_rev_line(p8 address_to line, positive size)
+{
+        for (positive c = size; c > 0; c--)
+                former_put_character(line[c - 1]);
+}
+
+NOT_INLINED fn folded_rev_line(p8 address_to line, positive size)
+{
+        memory_reverse(line, size);
+
+        if (output_used + size > OUT_MAX)
+                former_flush();
+
+        memory_copy(output + output_used, line, size);
+        output_used += size;
+}
+
+static fn prepare(positive size)
+{
+        // A palindrome makes every repeated folded call emit the same bytes
+        // as the former body without adding a restore copy to either timing.
+        for (positive i = 0; i < (size + 1) / 2; i++)
+        {
+                p8 value = (p8)(i * 37 + size * 11);
+
+                block[i] = value;
+                block[size - 1 - i] = value;
+        }
+}
+
+static positive rounds_for(positive size)
+{
+        positive rounds = TARGET_BYTES / (size ? size : 1);
+
+        if (rounds > (1u << 18))
+                rounds = 1u << 18;
+        if (rounds < 8)
+                rounds = 8;
+        return rounds;
+}
+
+static p64 primitive_run(bool assembly, positive size, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+        {
+                address_any answer = assembly ? memory_reverse(block, size)
+                                              : former_memory_reverse(block, size);
+
+                sink += (positive)answer + block[0] + block[size - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 rev_run(bool folded, positive size, positive rounds)
+{
+        output_used = 0;
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+                if (folded)
+                        folded_rev_line(block, size);
+                else
+                        former_rev_line(block, size);
+
+        p64 finish = get_cpu_time();
+        former_flush();
+        return finish - start;
+}
+
+static fn primitive_row(positive size)
+{
+        positive rounds = rounds_for(size);
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        prepare(size);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 one, two;
+
+                if (trial & 1)
+                {
+                        two = primitive_run(true, size, rounds);
+                        one = primitive_run(false, size, rounds);
+                }
+                else
+                {
+                        one = primitive_run(false, size, rounds);
+                        two = primitive_run(true, size, rounds);
+                }
+
+                if (one < former) former = one;
+                if (two < assembly) assembly = two;
+        }
+
+        string_format(log,
+                      "  primitive %p bytes: former-C %p  assembly %p  asm/C %p%%\n",
+                      size, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+static fn rev_row(positive size)
+{
+        positive rounds = rounds_for(size);
+        p64 former = positive_max;
+        p64 folded = positive_max;
+
+        prepare(size);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 one, two;
+
+                if (trial & 1)
+                {
+                        two = rev_run(true, size, rounds);
+                        one = rev_run(false, size, rounds);
+                }
+                else
+                {
+                        one = rev_run(false, size, rounds);
+                        two = rev_run(true, size, rounds);
+                }
+
+                if (one < former) former = one;
+                if (two < folded) folded = two;
+        }
+
+        string_format(log,
+                      "  rev fold  %p bytes: former-loop %p  folded %p  new/old %p%%\n",
+                      size, (positive)former, (positive)folded,
+                      (positive)(folded * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        static const positive primitive_sizes[] = {
+            8, 32, 64, 256, 4096, 65536, 1u << 20,
+        };
+        static const positive rev_sizes[] = {8, 32, 64, 256, 4096, 32768};
+
+        moonwater_cpu_detect();
+        string_format(log, "memory_reverse, best of %p\n", (positive)TRIES);
+
+        for (positive i = 0;
+             i < sizeof(primitive_sizes) / sizeof(primitive_sizes[0]); i++)
+                primitive_row(primitive_sizes[i]);
+
+        for (positive i = 0; i < sizeof(rev_sizes) / sizeof(rev_sizes[0]); i++)
+                rev_row(rev_sizes[i]);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_reverse */
+
+#ifdef BENCH_writer_field
+/*
+        The counted and string field primitives against the literal C helper
+        shape they replace: compute minimum-width padding, preserve one writer
+        call per pad byte, and make one counted body call only when nonempty.
+
+        The string rows include exact/narrow fields of length 0, 1, 8 and 64
+        and their width-64 padded forms. That makes the fixed wrapper/frame
+        cost visible instead of letting a long padding loop hide it. Native
+        runs are hardware ticks; qemu ratios are emulator work only.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 7
+#define TARGET_CALLBACKS (1u << 20)
+#define MAX_ROUNDS (1u << 18)
+#define MIN_ROUNDS (1u << 12)
+
+static p8 texts[4][80];
+static const positive lengths[4] = {0, 1, 8, 64};
+static volatile positive sink;
+
+NOT_INLINED fn discard_writer(address_any data, positive length)
+{
+        volatile p8 address_to bytes = (volatile p8 address_to)data;
+
+        sink += length + bytes[0] + bytes[length - 1];
+}
+
+NOT_INLINED fn former_writer_field(writer write, address_any data,
+                                   positive length, positive width,
+                                   b8 pad, bool left)
+{
+        positive padding = width > length ? width - length : 0;
+
+        if (!left)
+                writer_fill(write, padding, (p8)pad);
+
+        if (length)
+                write(data, length);
+
+        if (left)
+                writer_fill(write, padding, (p8)pad);
+}
+
+NOT_INLINED fn former_string_to_field(writer write, string_address text,
+                                      positive width, b8 pad, bool left)
+{
+        positive length = string_length(text);
+        positive padding = width > length ? width - length : 0;
+
+        if (!left)
+                writer_fill(write, padding, (p8)pad);
+
+        if (length)
+                write(text, length);
+
+        if (left)
+                writer_fill(write, padding, (p8)pad);
+}
+
+static positive rounds_for(positive length, positive width)
+{
+        positive callbacks = (width > length ? width - length : 0) +
+                             (length != 0);
+        positive rounds = TARGET_CALLBACKS / (callbacks ? callbacks : 1);
+
+        if (rounds > MAX_ROUNDS)
+                rounds = MAX_ROUNDS;
+        if (rounds < MIN_ROUNDS)
+                rounds = MIN_ROUNDS;
+        return rounds;
+}
+
+static p64 raw_once(bool assembly, positive shape, positive width,
+                    bool left, positive rounds)
+{
+        positive length = lengths[shape];
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+                if (assembly)
+                        writer_field(discard_writer, texts[shape], length,
+                                     width, (b8)0xa5, left);
+                else
+                        former_writer_field(discard_writer, texts[shape], length,
+                                            width, (b8)0xa5, left);
+
+        return get_cpu_time() - start;
+}
+
+static p64 string_once(bool assembly, positive shape, positive width,
+                       bool left, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+                if (assembly)
+                        string_to_field(discard_writer, texts[shape], width,
+                                        (b8)0xa5, left);
+                else
+                        former_string_to_field(discard_writer, texts[shape], width,
+                                               (b8)0xa5, left);
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, bool string_form, positive shape,
+              positive width, bool left)
+{
+        positive rounds = rounds_for(lengths[shape], width);
+        p64 former = positive_max;
+        p64 assembly = positive_max;
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 one;
+                p64 two;
+
+                if (trial & 1)
+                {
+                        two = string_form
+                                  ? string_once(true, shape, width, left, rounds)
+                                  : raw_once(true, shape, width, left, rounds);
+                        one = string_form
+                                  ? string_once(false, shape, width, left, rounds)
+                                  : raw_once(false, shape, width, left, rounds);
+                }
+                else
+                {
+                        one = string_form
+                                  ? string_once(false, shape, width, left, rounds)
+                                  : raw_once(false, shape, width, left, rounds);
+                        two = string_form
+                                  ? string_once(true, shape, width, left, rounds)
+                                  : raw_once(true, shape, width, left, rounds);
+                }
+
+                if (one < former)
+                        former = one;
+                if (two < assembly)
+                        assembly = two;
+        }
+
+        string_format(log,
+                      "  %s (%p calls): former-C %p  assembly %p  asm/C %p%%\n",
+                      name, rounds, (positive)former, (positive)assembly,
+                      (positive)(assembly * 100 / (former ? former : 1)));
+}
+
+b32 main()
+{
+        for (positive shape = 0; shape < 4; shape++)
+        {
+                positive length = lengths[shape];
+
+                for (positive i = 0; i < length; i++)
+                        texts[shape][i] = (p8)(1 + (i * 47 + length) % 255);
+                texts[shape][length] = end;
+        }
+
+        moonwater_cpu_detect();
+        string_format(log, "writer fields, best of %p\n", (positive)TRIES);
+
+        row((string_address)"raw empty width 0", false, 0, 0, false);
+        row((string_address)"raw 1 width 1", false, 1, 1, false);
+        row((string_address)"raw 8 width 8", false, 2, 8, false);
+        row((string_address)"raw 1 width 8 right", false, 1, 8, false);
+        row((string_address)"raw 1 width 8 left", false, 1, 8, true);
+
+        row((string_address)"string 0 width 0", true, 0, 0, false);
+        row((string_address)"string 1 width 1", true, 1, 1, false);
+        row((string_address)"string 8 width 8", true, 2, 8, false);
+        row((string_address)"string 64 width 64", true, 3, 64, false);
+        row((string_address)"string 0 width 64 right", true, 0, 64, false);
+        row((string_address)"string 1 width 64 right", true, 1, 64, false);
+        row((string_address)"string 8 width 64 right", true, 2, 64, false);
+        row((string_address)"string 8 width 64 left", true, 2, 64, true);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_writer_field */
+
+#ifdef BENCH_writer_text
+/* Buffered output policy: former C against the shared assembly core. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+// Keep the former general-purpose body general. GCC otherwise clones a copy
+// for the constant capacity in each row and times that specialised copy
+// against the public assembly ABI, which is not the implementation replaced.
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define BUFFER_ROUNDS (1u << 18)
+#define BYTE_ROUNDS (1u << 20)
+#define SYSCALL_ROUNDS 2048
+#define CAPACITY 4096
+
+static p8 output[CAPACITY];
+static p8 payload[CAPACITY * 2];
+static positive used;
+static positive null_handle;
+static volatile positive sink;
+static volatile positive benchmark_capacity = CAPACITY;
+static volatile positive benchmark_reserve_length = 16;
+
+NOT_INLINED static b32 former_flush(positive handle, p8 address_to buffer,
+                                    positive address_to count)
+{
+        if (!address_to count)
+                return true;
+
+        positive wanted = address_to count;
+        positive written = system_write_all(handle, buffer, wanted);
+        address_to count = 0;
+        return written == wanted;
+}
+
+NOT_INLINED static b32 former_put(positive handle, p8 address_to buffer,
+                                  positive capacity, positive address_to count,
+                                  address_any data, positive length, bool hold_equal)
+{
+        if (!length)
+                return true;
+
+        if (length > capacity || (!hold_equal && length == capacity))
+        {
+                if (!former_flush(handle, buffer, count))
+                        return false;
+
+                return system_write_all(handle, data, length) == length;
+        }
+
+        if (length > capacity - address_to count &&
+            !former_flush(handle, buffer, count))
+                return false;
+
+        memory_copy(buffer + address_to count, data, length);
+        address_to count += length;
+        return true;
+}
+
+NOT_INLINED static p8 address_to former_reserve(
+    positive handle, p8 address_to buffer, positive capacity,
+    positive address_to count, positive length)
+{
+        if (length > capacity)
+                return null;
+
+        if (length > capacity - address_to count &&
+            !former_flush(handle, buffer, count))
+                return null;
+
+        p8 address_to answer = buffer + address_to count;
+        address_to count += length;
+        return answer;
+}
+
+// Hot no-flush traffic floor: the caller-proven span needs one old-count load,
+// one new-count store and one returned address. It deliberately omits the
+// capacity and flush semantics the public routine must retain.
+NOT_INLINED static p8 address_to reserve_floor(p8 address_to buffer,
+                                               positive address_to count,
+                                               positive length)
+{
+        p8 address_to answer = buffer + address_to count;
+        address_to count += length;
+        return answer;
+}
+
+NOT_INLINED static b32 former_byte(positive handle, p8 address_to buffer,
+                                   positive capacity, positive address_to count,
+                                   p8 byte)
+{
+        if (!capacity)
+                return system_write_all(handle, address_of byte, 1) == 1;
+
+        if (address_to count >= capacity &&
+            !former_flush(handle, buffer, count))
+                return false;
+
+        buffer[address_to count] = byte;
+        address_to count += 1;
+        return true;
+}
+
+NOT_INLINED static fn former_log(address_any data, positive length)
+{
+        if (!length)
+                length = string_length(data);
+
+        /* The replaced logger was exactly this adapter with a tail call into
+           the already-assembly buffered core.  Keep that core on both sides
+           so this row isolates sticky-status overhead rather than comparing
+           two different buffered writers. */
+        (fn)buffered_write(1, log_writer_buffer, CAPACITY,
+                          address_of log_writer_buffer_length, data, length);
+}
+
+static p64 put_once(positive length, bool hold_equal, bool assembly,
+                    positive rounds, positive pending)
+{
+        positive capacity = benchmark_capacity;
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+        {
+                b32 success;
+                used = pending;
+
+                if (assembly)
+                {
+                        if (hold_equal)
+                                success = buffered_write_deferred_equal(
+                                    null_handle, output, capacity, address_of used,
+                                    payload, length);
+                        else
+                                success = buffered_write(null_handle, output, capacity,
+                                                         address_of used, payload, length);
+                }
+                else
+                        success = former_put(null_handle, output, capacity,
+                                             address_of used, payload, length,
+                                             hold_equal);
+
+                sink += used + output[0] + (positive)success;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 byte_once(bool assembly)
+{
+        positive capacity = benchmark_capacity;
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < BYTE_ROUNDS; i++)
+        {
+                b32 success;
+                used = i & (capacity - 1);
+
+                if (assembly)
+                        success = buffered_write_byte(null_handle, output, capacity,
+                                                      address_of used, (p8)i);
+                else
+                        success = former_byte(null_handle, output, capacity,
+                                              address_of used, (p8)i);
+
+                sink += used + output[i & (capacity - 1)] + (positive)success;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 reserve_once(b32 which)
+{
+        positive capacity = benchmark_capacity;
+        positive length = benchmark_reserve_length;
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < BUFFER_ROUNDS; i++)
+        {
+                // Keep this row at the no-syscall semantic floor. Flush and
+                // failure paths have their own rows and focused tests.
+                used = i & 2047;
+                p8 address_to at;
+
+                if (which == 1)
+                        at = buffered_reserve(null_handle, output, capacity,
+                                              address_of used, length);
+                else if (which == 2)
+                        at = reserve_floor(output, address_of used, length);
+                else
+                        at = former_reserve(null_handle, output, capacity,
+                                            address_of used, length);
+
+                at[0] = (p8)i;
+                at[length - 1] = (p8)(i >> 8);
+                sink += used + at[0] + at[length - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 flush_once(bool assembly)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < SYSCALL_ROUNDS; i++)
+        {
+                b32 success;
+                used = CAPACITY;
+
+                if (assembly)
+                        success = buffered_flush(null_handle, output, address_of used);
+                else
+                        success = former_flush(null_handle, output, address_of used);
+
+                sink += used + (positive)success;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static p64 log_once(positive length, bool assembly)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < BUFFER_ROUNDS; i++)
+        {
+                log_writer_buffer_length = 0;
+
+                if (assembly)
+                        log(payload, length);
+                else
+                        former_log(payload, length);
+
+                sink += log_writer_buffer_length + log_writer_buffer[0];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive length, bool hold_equal,
+              positive rounds, positive pending, bool byte, bool flush)
+{
+        positive ratios[TRIES];
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (t & 1)
+                {
+                        assembly = byte ? byte_once(true)
+                                        : (flush ? flush_once(true)
+                                                 : put_once(length, hold_equal, true,
+                                                            rounds, pending));
+                        former = byte ? byte_once(false)
+                                      : (flush ? flush_once(false)
+                                               : put_once(length, hold_equal, false,
+                                                          rounds, pending));
+                }
+                else
+                {
+                        former = byte ? byte_once(false)
+                                      : (flush ? flush_once(false)
+                                               : put_once(length, hold_equal, false,
+                                                          rounds, pending));
+                        assembly = byte ? byte_once(true)
+                                        : (flush ? flush_once(true)
+                                                 : put_once(length, hold_equal, true,
+                                                            rounds, pending));
+                }
+
+                ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+static fn log_row(string_address name, positive length)
+{
+        positive ratios[TRIES];
+
+        /* Preserve the report accumulated by the non-logger rows before the
+           benchmark deliberately reuses the process log buffer as scratch. */
+        log_flush();
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (t & 1)
+                {
+                        assembly = log_once(length, true);
+                        former = log_once(length, false);
+                }
+                else
+                {
+                        former = log_once(length, false);
+                        assembly = log_once(length, true);
+                }
+
+                ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        log_writer_buffer_length = 0;
+        string_format(log, "  %s  median current/former %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+static fn reserve_row()
+{
+        positive ratios[TRIES];
+        positive assembly_each[TRIES];
+        positive floor_each[TRIES];
+
+        for (positive t = 0; t < TRIES; t++)
+        {
+                p64 former;
+                p64 assembly;
+                p64 floor;
+
+                if (t & 1)
+                {
+                        assembly = reserve_once(1);
+                        floor = reserve_once(2);
+                        former = reserve_once(0);
+                }
+                else
+                {
+                        former = reserve_once(0);
+                        floor = reserve_once(2);
+                        assembly = reserve_once(1);
+                }
+
+                ratios[t] = (positive)(assembly * 10000 / (former ? former : 1));
+                assembly_each[t] = (positive)(assembly * 100 / BUFFER_ROUNDS);
+                floor_each[t] = (positive)(floor * 100 / BUFFER_ROUNDS);
+        }
+
+        order(ratios, TRIES);
+        order(assembly_each, TRIES);
+        order(floor_each, TRIES);
+        string_format(log, "  reserve 16  median asm/C %p.%p%%\n",
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        positive assembly = assembly_each[TRIES / 2];
+        positive floor = floor_each[TRIES / 2];
+        if (assembly >= floor)
+                string_format(log,
+                              "              asm %p.%p cycles/op, no-flush floor %p.%p, gap %p.%p\n",
+                              assembly / 100, assembly % 100,
+                              floor / 100, floor % 100,
+                              (assembly - floor) / 100,
+                              (assembly - floor) % 100);
+        else
+                string_format(log,
+                              "              asm %p.%p cycles/op beat the %p.%p floor proxy; unresolved\n",
+                              assembly / 100, assembly % 100,
+                              floor / 100, floor % 100);
+}
+
+b32 main(void)
+{
+        for (positive i = 0; i < sizeof(payload); i++)
+                payload[i] = (p8)(i * 37 + 11);
+
+        null_handle = (positive)system_call_4(syscall(openat),
+                                               (positive)(bipolar)AT_FDCWD,
+                                               (positive)"/dev/null", 1, 0);
+
+        string_format(log, "buffered writer, paired median of %p\n", (positive)TRIES);
+        row((string_address)"buffer 8", 8, false, BUFFER_ROUNDS, 0, false, false);
+        row((string_address)"buffer 64", 64, false, BUFFER_ROUNDS, 0, false, false);
+        reserve_row();
+        row((string_address)"byte", 0, false, 0, 0, true, false);
+        row((string_address)"combined overflow", 8, false, SYSCALL_ROUNDS,
+            CAPACITY - 4, false, false);
+        row((string_address)"direct exact", CAPACITY, false, SYSCALL_ROUNDS,
+            0, false, false);
+        row((string_address)"hold exact", CAPACITY, true, SYSCALL_ROUNDS,
+            0, false, false);
+        row((string_address)"flush", 0, false, 0, 0, false, true);
+        log_row((string_address)"log buffer 8", 8);
+        log_row((string_address)"log buffer 64", 64);
+
+        system_call_1(syscall(close), null_handle);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_writer_text */
+
+#ifdef BENCH_text_hot
+/* Hot text-loop folds against the literal scalar loops they replace. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define BLOCK 4096
+#define ROUNDS (1u << 15)
+
+static p8 one[BLOCK];
+static p8 two[BLOCK];
+static volatile positive sink;
+
+static bool prefix_boundaries(void)
+{
+        p8 left[272];
+        p8 right[272];
+
+        for (positive left_offset = 0; left_offset < 8; left_offset++)
+                for (positive right_offset = 0; right_offset < 8; right_offset++)
+                        for (positive length = 0; length <= 257; length++)
+                        {
+                                for (positive at = 0; at < length; at++)
+                                        left[left_offset + at] =
+                                            right[right_offset + at] = (p8)(at * 37 + length);
+
+                                if (memory_common_prefix(left + left_offset,
+                                                         right + right_offset,
+                                                         length) != length)
+                                        return false;
+
+                                if (!length)
+                                        continue;
+
+                                positive positions[] = {
+                                    0, length / 2, length - 1, 7, 8, 31, 32,
+                                };
+
+                                for (positive which = 0;
+                                     which < sizeof(positions) / sizeof(positions[0]);
+                                     which++)
+                                {
+                                        positive position = positions[which];
+
+                                        if (position >= length)
+                                                continue;
+
+                                        right[right_offset + position] ^= 1;
+
+                                        if (memory_common_prefix(left + left_offset,
+                                                                 right + right_offset,
+                                                                 length) != position)
+                                                return false;
+
+                                        right[right_offset + position] ^= 1;
+                                }
+                        }
+
+        return true;
+}
+
+NOT_INLINED static bipolar former_compare(p8 address_to a, positive la,
+                                          p8 address_to b, positive lb)
+{
+        positive at = 0;
+        positive length = la < lb ? la : lb;
+
+        while (at < length)
+        {
+                if (a[at] != b[at])
+                        return a[at] < b[at] ? -1 : 1;
+                at++;
+        }
+
+        return la == lb ? 0 : la < lb ? -1 : 1;
+}
+
+NOT_INLINED static bipolar folded_compare(p8 address_to a, positive la,
+                                          p8 address_to b, positive lb)
+{
+        positive length = la < lb ? la : lb;
+        bipolar order = memory_compare(a, b, length);
+
+        if (order)
+                return order < 0 ? -1 : 1;
+
+        return la == lb ? 0 : la < lb ? -1 : 1;
+}
+
+NOT_INLINED static positive former_equal_block(p8 address_to a,
+                                               p8 address_to b,
+                                               positive length)
+{
+        positive lines = 0;
+
+        for (positive at = 0; at < length; at++)
+        {
+                if (a[at] != b[at])
+                        return lines + 1;
+                if (a[at] == '\n')
+                        lines++;
+        }
+
+        return lines;
+}
+
+NOT_INLINED static positive folded_equal_block(p8 address_to a,
+                                               p8 address_to b,
+                                               positive length)
+{
+        if (memory_compare(a, b, length))
+                return 1;
+
+        return memory_count(a, length, '\n');
+}
+
+NOT_INLINED static positive former_late_difference(p8 address_to a,
+                                                   p8 address_to b,
+                                                   positive length)
+{
+        positive lines = 0;
+        positive at = 0;
+
+        while (at < length && a[at] == b[at])
+        {
+                if (a[at] == '\n')
+                        lines++;
+                at++;
+        }
+
+        return at + lines;
+}
+
+NOT_INLINED static positive folded_late_difference(p8 address_to a,
+                                                   p8 address_to b,
+                                                   positive length)
+{
+        if (!memory_compare(a, b, length))
+                return length + memory_count(a, length, '\n');
+
+        positive prefix = memory_common_prefix(a, b, length);
+
+        return prefix + memory_count(a, prefix, '\n');
+}
+
+NOT_INLINED static positive former_newline(p8 address_to data, positive length)
+{
+        positive at = 0;
+
+        while (at < length && data[at] != '\n')
+                at++;
+
+        return at;
+}
+
+NOT_INLINED static positive folded_newline(p8 address_to data, positive length)
+{
+        p8 address_to found = memory_first_of(data, '\n', length);
+        return found ? (positive)(found - data) : length;
+}
+
+static p64 compare_once(bool folded)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += (positive)(folded ? folded_compare(one, BLOCK, two, BLOCK)
+                                          : former_compare(one, BLOCK, two, BLOCK));
+
+        return get_cpu_time() - start;
+}
+
+static p64 equal_once(bool folded)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += folded ? folded_equal_block(one, two, BLOCK)
+                               : former_equal_block(one, two, BLOCK);
+
+        return get_cpu_time() - start;
+}
+
+static p64 newline_once(bool folded)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += folded ? folded_newline(one, BLOCK)
+                               : former_newline(one, BLOCK);
+
+        return get_cpu_time() - start;
+}
+
+static p64 late_once(bool folded)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += folded ? folded_late_difference(one, two, BLOCK)
+                               : former_late_difference(one, two, BLOCK);
+
+        return get_cpu_time() - start;
+}
+
+static p64 prefix_once(bool folded)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                if (folded)
+                        sink += memory_common_prefix(one, two, BLOCK);
+                else
+                {
+                        positive prefix = 0;
+
+                        while (prefix < BLOCK && one[prefix] == two[prefix])
+                                prefix++;
+
+                        sink += prefix;
+                }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, p64 (*run)(bool))
+{
+        positive ratios[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 folded;
+
+                if (trial & 1)
+                {
+                        folded = run(true);
+                        former = run(false);
+                }
+                else
+                {
+                        former = run(false);
+                        folded = run(true);
+                }
+
+                ratios[trial] = (positive)(folded * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median folded/scalar %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        if (!prefix_boundaries())
+        {
+                string_format(log, "memory_common_prefix boundary check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        for (positive at = 0; at < BLOCK; at++)
+        {
+                one[at] = (p8)(at * 37 + 11);
+                if ((at & 63) == 63)
+                        one[at] = '\n';
+                two[at] = one[at];
+        }
+
+        moonwater_cpu_detect();
+        string_format(log, "hot text folds, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"sort equal 4K", compare_once);
+        row((string_address)"cmp equal+line count 4K", equal_once);
+
+        two[BLOCK - 1] ^= 1;
+        row((string_address)"common prefix late 4K", prefix_once);
+        row((string_address)"cmp late difference 4K", late_once);
+        two[BLOCK - 1] ^= 1;
+
+        /* sed P/D's first newline is deliberately late for the scan row. */
+        for (positive at = 0; at < BLOCK; at++)
+                one[at] = 'x';
+        one[BLOCK - 1] = '\n';
+        row((string_address)"sed newline late 4K", newline_once);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_text_hot */
+
+#ifdef BENCH_prefix_known
+/* Literal-size equal-span walk against the out-of-line hardware routine.
+   Mismatch positions are exhaustively guarded by the exact_prefix section of test/checks.c;
+   this harness intentionally measures the maximum-traffic shape. */
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define SUBJECTS 64
+#define ROUNDS (1u << 19)
+#define TRIES 9
+
+static p8 left[SUBJECTS][144];
+static p8 right[SUBJECTS][144];
+static volatile positive sink;
+
+#define BENCH_PAIRED_INDEXED
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+static fn prepare(void)
+{
+        for (positive which = 0; which < SUBJECTS; which++)
+                for (positive at = 0; at < 144; at++)
+                        left[which][at] = right[which][at] =
+                            (p8)(at * 37 + which * 11);
+}
+
+#define DEFINE_SIZE(N)                                                        \
+        NOT_INLINED static positive routine_##N(positive which)               \
+        {                                                                     \
+                return (memory_common_prefix)(left[which], right[which], (N));\
+        }                                                                     \
+        NOT_INLINED static positive folded_##N(positive which)                \
+        {                                                                     \
+                return common_prefix_known(left[which], right[which], (N));   \
+        }
+
+DEFINE_SIZE(1)
+DEFINE_SIZE(2)
+DEFINE_SIZE(3)
+DEFINE_SIZE(4)
+DEFINE_SIZE(5)
+DEFINE_SIZE(6)
+DEFINE_SIZE(7)
+DEFINE_SIZE(8)
+DEFINE_SIZE(9)
+DEFINE_SIZE(10)
+DEFINE_SIZE(11)
+DEFINE_SIZE(12)
+DEFINE_SIZE(13)
+DEFINE_SIZE(14)
+DEFINE_SIZE(15)
+DEFINE_SIZE(16)
+DEFINE_SIZE(17)
+DEFINE_SIZE(18)
+DEFINE_SIZE(19)
+DEFINE_SIZE(20)
+DEFINE_SIZE(21)
+DEFINE_SIZE(22)
+DEFINE_SIZE(23)
+DEFINE_SIZE(24)
+DEFINE_SIZE(31)
+DEFINE_SIZE(32)
+DEFINE_SIZE(40)
+DEFINE_SIZE(64)
+DEFINE_SIZE(80)
+DEFINE_SIZE(96)
+DEFINE_SIZE(127)
+DEFINE_SIZE(128)
+
+static fn row(positive size, bench_indexed_work routine,
+              bench_indexed_work folded)
+{
+        positive got = bench_paired_median(routine, folded);
+
+        string_format(log, "  %p bytes: folded/routine %p.%p%%\n", size,
+                      got / 100, got % 100);
+}
+
+b32 main(void)
+{
+        prepare();
+        moonwater_cpu_detect();
+        string_format(log, "literal common prefix, paired median of %p\n",
+                      (positive)TRIES);
+#define ROW(N) row((N), routine_##N, folded_##N)
+        ROW(1); ROW(2); ROW(3); ROW(4); ROW(5); ROW(6); ROW(7); ROW(8);
+        ROW(9); ROW(10); ROW(11); ROW(12); ROW(13); ROW(14); ROW(15);
+        ROW(16); ROW(17); ROW(18); ROW(19); ROW(20); ROW(21); ROW(22);
+        ROW(23); ROW(24); ROW(31); ROW(32); ROW(40);
+        ROW(64); ROW(80); ROW(96); ROW(127); ROW(128);
+#undef ROW
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_prefix_known */
+
+#ifdef BENCH_translate
+/* In-place byte-table translation: former scalar C against library assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 26)
+
+static p8 former_block[MAXIMUM];
+static p8 assembly_block[MAXIMUM];
+static p8 translation[256];
+static volatile positive sink;
+
+NOT_INLINED static address_any former_translate(address_any block,
+                                                positive length,
+                                                address_any table_address)
+{
+        p8 address_to bytes = block;
+        p8 address_to table = table_address;
+
+        for (positive at = 0; at < length; at++)
+                bytes[at] = table[bytes[at]];
+
+        return block;
+}
+
+static fn prepare(positive length)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                p8 value = (p8)(at * 37 + 11);
+                former_block[at] = value;
+                assembly_block[at] = value;
+        }
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+
+        if (rounds < 8)
+                rounds = 8;
+        if (rounds > (1u << 20))
+                rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p8 address_to block = assembly ? assembly_block : former_block;
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                address_any answer = assembly
+                                         ? memory_translate(block, length, translation)
+                                         : former_translate(block, length, translation);
+                sink += (positive)answer + block[0] + block[length - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static bool row(positive length)
+{
+        positive rounds = rounds_for(length);
+        positive ratios[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                prepare(length);
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                if (memory_compare(former_block, assembly_block, length))
+                        return false;
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %p bytes  median asm/C %p.%p%%\n", length,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+        return true;
+}
+
+static bool boundaries(void)
+{
+        p8 guarded[264];
+        p8 expected[264];
+
+        for (positive length = 0; length <= 257; length++)
+        {
+                for (positive at = 0; at < sizeof(guarded); at++)
+                        guarded[at] = expected[at] = (p8)(at * 19 + length);
+
+                for (positive at = 0; at < length; at++)
+                        expected[3 + at] = translation[expected[3 + at]];
+
+                if (memory_translate(guarded + 3, length, translation) != guarded + 3 ||
+                    memory_compare(guarded, expected, sizeof(guarded)))
+                        return false;
+        }
+
+        return true;
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {8, 64, 4096, MAXIMUM};
+
+        for (positive value = 0; value < 256; value++)
+                translation[value] = (p8)(value * 197 + 101);
+
+        if (!boundaries())
+        {
+                string_format(log, "memory_translate boundary check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_translate, paired median of %p\n",
+                      (positive)TRIES);
+
+        for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
+                if (!row(sizes[at]))
+                {
+                        string_format(log, "memory_translate result mismatch\n");
+                        log_flush();
+                        return 1;
+                }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_translate */
+
+#ifdef BENCH_ascii_case
+/* ASCII-folded bounded comparison: scalar reference against library assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 26)
+
+static p8 one[MAXIMUM + 8];
+static p8 two[MAXIMUM + 8];
+static volatile positive sink;
+
+static p8 folded(p8 value)
+{
+        return value >= 'a' && value <= 'z' ? (p8)(value - 32) : value;
+}
+
+NOT_INLINED static bipolar former_compare(p8 address_to a, p8 address_to b,
+                                          positive length)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                p8 left = folded(a[at]);
+                p8 right = folded(b[at]);
+
+                if (left != right)
+                        return (bipolar)left - (bipolar)right;
+        }
+
+        return 0;
+}
+
+static bool correctness(void)
+{
+        p8 a;
+        p8 b;
+
+        for (positive left = 0; left < 256; left++)
+                for (positive right = 0; right < 256; right++)
+                {
+                        a = (p8)left;
+                        b = (p8)right;
+
+                        bipolar want = (bipolar)folded(a) - (bipolar)folded(b);
+                        b32 got = memory_compare_ascii_case(address_of a,
+                                                            address_of b, 1);
+
+                        if (got != want)
+                        {
+                                string_format(log, "pair check failed: %p %p signs %p %p\n",
+                                              left, right, (positive)(want < 0),
+                                              (positive)(got < 0));
+                                return false;
+                        }
+                }
+
+        for (positive left_offset = 0; left_offset < 8; left_offset++)
+                for (positive right_offset = 0; right_offset < 8; right_offset++)
+                        for (positive length = 0; length <= 257; length++)
+                        {
+                                for (positive at = 0; at < length; at++)
+                                {
+                                        one[left_offset + at] = (p8)(at * 37 + length);
+                                        two[right_offset + at] = one[left_offset + at];
+
+                                        if ((at & 7) == 3 && one[left_offset + at] >= 'A' &&
+                                            one[left_offset + at] <= 'Z')
+                                                two[right_offset + at] += 32;
+                                }
+
+                                if (memory_compare_ascii_case(one + left_offset,
+                                                              two + right_offset,
+                                                              length))
+                                {
+                                        string_format(log,
+                                                      "equal check failed: offsets %p %p length %p\n",
+                                                      left_offset, right_offset, length);
+                                        return false;
+                                }
+
+                                if (!length)
+                                        continue;
+
+                                positive positions[] = {0, length / 2, length - 1,
+                                                        7, 8, 15, 16, 31, 32};
+
+                                for (positive which = 0;
+                                     which < sizeof(positions) / sizeof(positions[0]);
+                                     which++)
+                                {
+                                        positive position = positions[which];
+
+                                        if (position >= length)
+                                                continue;
+
+                                        p8 address_to changed = two + right_offset + position;
+                                        p8 saved = address_to changed;
+                                        address_to changed = saved == 0xff ? 0 : (p8)(saved + 1);
+
+                                        bipolar want = former_compare(one + left_offset,
+                                                                       two + right_offset,
+                                                                       length);
+                                        b32 got = memory_compare_ascii_case(
+                                            one + left_offset, two + right_offset, length);
+
+                                        if (got != want)
+                                        {
+                                                string_format(log,
+                                                              "span check failed: offsets %p %p length %p position %p signs %p %p\n",
+                                                              left_offset, right_offset, length,
+                                                              position, (positive)(want < 0),
+                                                              (positive)(got < 0));
+                                                return false;
+                                        }
+
+                                        address_to changed = saved;
+                                }
+                        }
+
+        return true;
+}
+
+static fn prepare(positive length, bool late)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                p8 value = (p8)(at * 37 + 11);
+                one[at] = value;
+                two[at] = value >= 'A' && value <= 'Z' && (at & 1)
+                              ? (p8)(value + 32)
+                              : value;
+        }
+
+        if (late)
+                two[length - 1] ^= 1;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+        if (rounds < 8) rounds = 8;
+        if (rounds > (1u << 20)) rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+                sink += (positive)(assembly
+                                       ? memory_compare_ascii_case(one, two, length)
+                                       : former_compare(one, two, length));
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive length, bool late)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        prepare(length, late);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        if (!correctness())
+        {
+                string_format(log, "memory_compare_ascii_case check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        moonwater_cpu_detect();
+        string_format(log, "ASCII case compare, paired median of %p\n",
+                      (positive)TRIES);
+        // HTTP field names are ordinarily four to thirty two bytes. Keep the
+        // short rows explicit: a bulk fold is not a win merely because its
+        // four-kilobyte row is.
+        row((string_address)"equal 4", 4, false);
+        row((string_address)"equal 8", 8, false);
+        row((string_address)"equal 12", 12, false);
+        row((string_address)"equal 16", 16, false);
+        row((string_address)"equal 24", 24, false);
+        row((string_address)"equal 32", 32, false);
+        row((string_address)"equal 4K", 4096, false);
+        row((string_address)"equal 1M", MAXIMUM, false);
+        row((string_address)"late 4K", 4096, true);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_ascii_case */
+
+#ifdef BENCH_ascii_case_fold
+/* Literal-size ASCII-folded compare against the out-of-line floor routine. */
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define INLINE_ALWAYS __attribute__((always_inline))
+#define SUBJECTS 64
+#define ROUNDS (1u << 19)
+#define TRIES 9
+
+static p8 left[SUBJECTS][40];
+static p8 right[SUBJECTS][40];
+static volatile positive sink;
+
+#define BENCH_PAIRED_INDEXED
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+static inline INLINE_ALWAYS p8 case_byte(p8 value)
+{
+        return value >= 'a' && value <= 'z' ? (p8)(value - 32) : value;
+}
+
+static inline INLINE_ALWAYS b32 case_known(const p8 address_to one,
+                                           const p8 address_to two,
+                                           positive size)
+{
+        for (positive at = 0; at < size; at++)
+        {
+                p8 a = case_byte(one[at]);
+                p8 b = case_byte(two[at]);
+
+                if (a != b)
+                        return (b32)a - (b32)b;
+        }
+
+        return 0;
+}
+
+static fn prepare(void)
+{
+        for (positive which = 0; which < SUBJECTS; which++)
+                for (positive at = 0; at < 40; at++)
+                {
+                        p8 value = (p8)(at * 37 + which * 11);
+
+                        left[which][at] = value;
+                        right[which][at] =
+                            value >= 'A' && value <= 'Z' && ((at + which) & 1)
+                                ? (p8)(value + 32)
+                                : value;
+                }
+}
+
+#define DEFINE_SIZE(N)                                                        \
+        NOT_INLINED static positive routine_##N(positive which)               \
+        {                                                                     \
+                return (positive)(memory_compare_ascii_case)(                 \
+                    left[which], right[which], (N));                          \
+        }                                                                     \
+        NOT_INLINED static positive folded_##N(positive which)                \
+        {                                                                     \
+                return (positive)case_known(left[which], right[which], (N));  \
+        }
+
+DEFINE_SIZE(4)
+DEFINE_SIZE(8)
+DEFINE_SIZE(12)
+DEFINE_SIZE(16)
+DEFINE_SIZE(24)
+DEFINE_SIZE(32)
+
+static fn row(positive size, bench_indexed_work routine,
+              bench_indexed_work folded)
+{
+        positive got = bench_paired_median(routine, folded);
+
+        string_format(log, "  %p bytes: folded/routine %p.%p%%\n", size,
+                      got / 100, got % 100);
+}
+
+b32 main(void)
+{
+        prepare();
+        moonwater_cpu_detect();
+        string_format(log, "literal ASCII-case compare, paired median of %p\n",
+                      (positive)TRIES);
+        row(4, routine_4, folded_4);
+        row(8, routine_8, folded_8);
+        row(12, routine_12, folded_12);
+        row(16, routine_16, folded_16);
+        row(24, routine_24, folded_24);
+        row(32, routine_32, folded_32);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_ascii_case_fold */
+
+#ifdef BENCH_line_break
+/* Canvas line breaking: the former byte walk against shared bounded hunts. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM 4096
+#define TARGET_BYTES (1u << 25)
+
+static p8 text[MAXIMUM];
+static volatile positive sink;
+
+NOT_INLINED static positive former_line_end(string_address input,
+                                             positive length,
+                                             positive start,
+                                             positive columns,
+                                             bool wrap)
+{
+        positive i;
+        positive last_space = 0;
+
+        for (i = start; i < length; i++)
+        {
+                if (input[i] == '\n')
+                        return i;
+
+                if (!wrap)
+                        continue;
+
+                if (input[i] == ' ')
+                        last_space = i;
+
+                if (i - start + 1 > columns)
+                        return last_space > start ? last_space : i;
+        }
+
+        return length;
+}
+
+NOT_INLINED static positive shared_line_end(string_address input,
+                                             positive length,
+                                             positive start,
+                                             positive columns,
+                                             bool wrap)
+{
+        positive remaining;
+        positive scanned;
+        string_address found;
+
+        if (start >= length)
+                return length;
+
+        remaining = length - start;
+        scanned = remaining;
+
+        if (wrap && remaining > columns)
+                scanned = columns + 1;
+
+        found = memory_first_of((address_any)(input + start), '\n', scanned);
+
+        if (found)
+                return (positive)(found - input);
+
+        if (!wrap || remaining <= columns)
+                return length;
+
+        found = memory_last_of((address_any)(input + start), ' ', scanned);
+
+        return found && found > input + start ? (positive)(found - input)
+                                              : start + columns;
+}
+
+static positive random_state = 0x93d7654bu;
+
+static positive next_random(void)
+{
+        random_state = random_state * 1664525u + 1013904223u;
+        return random_state;
+}
+
+static bool correctness(void)
+{
+        for (positive length = 0; length < 257; length++)
+                for (positive trial = 0; trial < 257; trial++)
+                {
+                        positive columns = next_random() % 65;
+                        positive start = next_random() % (length + 2);
+                        bool wrap = (bool)(next_random() & 1);
+
+                        for (positive at = 0; at < length; at++)
+                        {
+                                positive pick = next_random() & 31;
+                                text[at] = pick == 0 ? '\n' : pick < 6 ? ' '
+                                                                         : 'a';
+                        }
+
+                        if (former_line_end(text, length, start, columns, wrap) !=
+                            shared_line_end(text, length, start, columns, wrap))
+                                return false;
+                }
+
+        return true;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / (length ? length : 1);
+        if (rounds < 32) rounds = 32;
+        if (rounds > (1u << 20)) rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(bool shared, positive length, positive columns, bool wrap,
+               positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+                sink += shared ? shared_line_end(text, length, 0, columns, wrap)
+                               : former_line_end(text, length, 0, columns, wrap);
+
+        return get_cpu_time() - start;
+}
+
+static void row(string_address name, positive length, positive columns, bool wrap,
+                positive space)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        memory_fill(text, 'a', length);
+        if (space < length)
+                text[space] = ' ';
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 shared;
+
+                if (trial & 1)
+                {
+                        shared = run(true, length, columns, wrap, rounds);
+                        former = run(false, length, columns, wrap, rounds);
+                }
+                else
+                {
+                        former = run(false, length, columns, wrap, rounds);
+                        shared = run(true, length, columns, wrap, rounds);
+                }
+
+                ratios[trial] = (positive)(shared * 10000 / (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  shared/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        if (!correctness())
+        {
+                string_format(log, "line-break correctness failed\n");
+                log_flush();
+                return 1;
+        }
+
+        moonwater_cpu_detect();
+        string_format(log, "Canvas line break, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"label 8", 8, 8, false, MAXIMUM);
+        row((string_address)"label 16", 16, 16, false, MAXIMUM);
+        row((string_address)"label 32", 32, 32, false, MAXIMUM);
+        row((string_address)"label 64", 64, 64, false, MAXIMUM);
+        row((string_address)"label 128", 128, 128, false, MAXIMUM);
+        row((string_address)"wrap 16 no space", 128, 16, true, MAXIMUM);
+        row((string_address)"wrap 32 mid space", 128, 32, true, 20);
+        row((string_address)"wrap 64 mid space", 192, 64, true, 40);
+        row((string_address)"wrap 80 mid space", 256, 80, true, 48);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_line_break */
+
+#ifdef BENCH_bounded_fold
+/*
+        Literal-bound string operations at the production shapes which can
+        actually reach compiler_memory.c's bounded specializers.
+
+        HTTP compares seven and eight bytes, resolv.conf compares eleven, and
+        interface names are copied through a fifteen-byte bound.  Each row
+        keeps the literal at the call site on the expanded side and hides the
+        same value behind a volatile load on the assembly-routine side.  The
+        source rotates through short, full, equal, early-different and
+        late-different cases so no row measures one friendly exit alone.
+*/
+#include "../src/compiler_memory.c"
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define SUBJECTS 64
+#define ROUNDS (1u << 19)
+#define TRIES 9
+
+static p8 left[SUBJECTS][32];
+static p8 right[SUBJECTS][32];
+static p8 target[SUBJECTS][32];
+static volatile positive sink;
+
+#define BENCH_PAIRED_INDEXED
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+static fn prepare(void)
+{
+        for (positive which = 0; which < SUBJECTS; which++)
+        {
+                positive stop = which & 15;
+
+                for (positive at = 0; at < 32; at++)
+                        left[which][at] = right[which][at] =
+                            (p8)('a' + (which * 3 + at * 5) % 23);
+
+                if ((which & 3) == 0)
+                        left[which][stop] = right[which][stop] = 0;
+                else if ((which & 3) == 1)
+                        right[which][0] ^= 0x11;
+                else if ((which & 3) == 2)
+                        right[which][14] ^= 0x21;
+        }
+}
+
+#define DEFINE_BOUND(B)                                                       \
+        NOT_INLINED static positive length_routine_##B(positive which)        \
+        {                                                                     \
+                return (string_length_max)(left[which], (B));                 \
+        }                                                                     \
+        NOT_INLINED static positive length_folded_##B(positive which)         \
+        {                                                                     \
+                return string_length_max(left[which], (B));                   \
+        }                                                                     \
+        NOT_INLINED static b32 compare_routine_##B(positive which)            \
+        {                                                                     \
+                return (string_compare_max)(left[which], right[which],        \
+                                            (B));                             \
+        }                                                                     \
+        NOT_INLINED static b32 compare_folded_##B(positive which)             \
+        {                                                                     \
+                return string_compare_max(left[which], right[which], (B));    \
+        }                                                                     \
+        NOT_INLINED static positive copy_routine_##B(positive which)          \
+        {                                                                     \
+                return (positive)(string_copy_max_end)(                       \
+                    target[which], left[which], (B));                         \
+        }                                                                     \
+        NOT_INLINED static positive copy_folded_##B(positive which)           \
+        {                                                                     \
+                return (positive)string_copy_max_end(                         \
+                    target[which], left[which], (B));                         \
+        }
+
+DEFINE_BOUND(7)
+DEFINE_BOUND(8)
+DEFINE_BOUND(11)
+DEFINE_BOUND(15)
+
+static fn show(string_address name, positive bound,
+               bench_indexed_work routine, bench_indexed_work folded)
+{
+        positive got = bench_paired_median(routine, folded);
+
+        string_format(log, "  %s %p: folded/routine %p.%p%%\n", name, bound,
+                      got / 100, got % 100);
+}
+
+#define SHOW(B)                                                               \
+        show((string_address)"length", (B), length_routine_##B,              \
+             length_folded_##B);                                              \
+        show((string_address)"compare", (B),                                \
+             (bench_indexed_work)compare_routine_##B,                         \
+             (bench_indexed_work)compare_folded_##B);                         \
+        show((string_address)"copy-end", (B), copy_routine_##B,              \
+             copy_folded_##B)
+
+b32 main(void)
+{
+        prepare();
+        moonwater_cpu_detect();
+        string_format(log, "literal bounded strings, paired median of %p\n",
+                      (positive)TRIES);
+        SHOW(7);
+        SHOW(8);
+        SHOW(11);
+        SHOW(15);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_bounded_fold */
+
+#ifdef BENCH_ascii_convert
+/* ASCII case conversion: inlined former loops against reusable assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 7
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 24)
+
+enum case_operation { LOWER_CASE, UPPER_CASE };
+enum case_method {
+        FORMER_LOOP,
+        FORMER_FIXED,
+        SCALAR_CALLS,
+        BULK_ASSEMBLY,
+        TABLE_ASSEMBLY
+};
+
+static p8 former_block[MAXIMUM + 16];
+static p8 fixed_block[MAXIMUM + 16];
+static p8 scalar_block[MAXIMUM + 16];
+static p8 bulk_block[MAXIMUM + 16];
+static p8 table_block[MAXIMUM + 16];
+static p8 lower_table[256];
+static p8 upper_table[256];
+static volatile positive sink;
+
+NOT_INLINED static address_any former_convert(p8 address_to block,
+                                              positive length,
+                                              enum case_operation operation)
+{
+        for (positive at = 0; at < length; at++)
+        {
+                p8 value = block[at];
+
+                if (operation == LOWER_CASE)
+                        block[at] = value >= 'A' && value <= 'Z'
+                                        ? (p8)(value + 32) : value;
+                else
+                        block[at] = value >= 'a' && value <= 'z'
+                                        ? (p8)(value - 32) : value;
+        }
+
+        return block;
+}
+
+// dd has selected its conv mode outside the loop, unlike the shell expansion
+// loop above whose direction is data. Keep both caller shapes in the lane.
+NOT_INLINED static address_any former_fixed_convert(
+    p8 address_to block, positive length, enum case_operation operation)
+{
+        if (operation == LOWER_CASE)
+                for (positive at = 0; at < length; at++)
+                {
+                        p8 value = block[at];
+                        block[at] = value >= 'A' && value <= 'Z'
+                                        ? (p8)(value + 32) : value;
+                }
+        else
+                for (positive at = 0; at < length; at++)
+                {
+                        p8 value = block[at];
+                        block[at] = value >= 'a' && value <= 'z'
+                                        ? (p8)(value - 32) : value;
+                }
+
+        return block;
+}
+
+NOT_INLINED static address_any scalar_convert(p8 address_to block,
+                                              positive length,
+                                              enum case_operation operation)
+{
+        for (positive at = 0; at < length; at++)
+                block[at] = operation == LOWER_CASE
+                                ? byte_to_lower(block[at])
+                                : byte_to_upper(block[at]);
+
+        return block;
+}
+
+static fn fill(p8 address_to block, positive length, positive salt)
+{
+        for (positive at = 0; at < length; at++)
+                block[at] = (p8)(at * 37 + salt);
+}
+
+static bool correctness_one(enum case_operation operation)
+{
+        p8 guarded[4128];
+        p8 expected[4128];
+        p8 fixed[4128];
+        p8 scalar[4128];
+        p8 bulk[4128];
+        p8 table[4128];
+        static const positive offsets[] = {0, 1, 7, 15, 31, 4093, 4095};
+        static const positive lengths[] = {0, 1, 2, 15, 16, 17, 31, 32, 33};
+        p8 address_to translation = operation == LOWER_CASE
+                                        ? lower_table : upper_table;
+
+        for (positive value = 0; value < 256; value++)
+        {
+                p8 byte = (p8)value;
+                p8 wanted = operation == LOWER_CASE
+                                ? (byte >= 'A' && byte <= 'Z'
+                                       ? (p8)(byte + 32) : byte)
+                                : (byte >= 'a' && byte <= 'z'
+                                       ? (p8)(byte - 32) : byte);
+
+                if ((operation == LOWER_CASE ? byte_to_lower(byte)
+                                             : byte_to_upper(byte)) != wanted ||
+                    translation[value] != wanted)
+                        return false;
+        }
+
+        for (positive oi = 0; oi < sizeof(offsets) / sizeof(offsets[0]); oi++)
+                for (positive li = 0; li < sizeof(lengths) / sizeof(lengths[0]); li++)
+                {
+                        positive offset = offsets[oi];
+                        positive length = lengths[li];
+
+                        if (offset + length > sizeof(guarded))
+                                continue;
+
+                        fill(guarded, sizeof(guarded), offset + length);
+                        memory_copy(expected, guarded, sizeof(guarded));
+                        memory_copy(fixed, guarded, sizeof(guarded));
+                        memory_copy(scalar, guarded, sizeof(guarded));
+                        memory_copy(bulk, guarded, sizeof(guarded));
+                        memory_copy(table, guarded, sizeof(guarded));
+
+                        former_convert(expected + offset, length, operation);
+                        former_fixed_convert(fixed + offset, length, operation);
+                        scalar_convert(scalar + offset, length, operation);
+                        address_any bulk_answer = operation == LOWER_CASE
+                                                      ? memory_to_lower_ascii(
+                                                            bulk + offset, length)
+                                                      : memory_to_upper_ascii(
+                                                            bulk + offset, length);
+
+                        if (bulk_answer != bulk + offset ||
+                            memory_translate(table + offset, length, translation) !=
+                            table + offset ||
+                            memory_compare(guarded, expected, offset) ||
+                            memory_compare(expected, fixed, sizeof(guarded)) ||
+                            memory_compare(expected, scalar, sizeof(guarded)) ||
+                            memory_compare(expected, bulk, sizeof(guarded)) ||
+                            memory_compare(expected, table, sizeof(guarded)))
+                                return false;
+                }
+
+        return true;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+
+        if (rounds < 8)
+                rounds = 8;
+        if (rounds > (1u << 20))
+                rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(enum case_method method, enum case_operation operation,
+               positive length, positive rounds)
+{
+        p8 address_to block = method == FORMER_LOOP ? former_block
+                              : method == FORMER_FIXED ? fixed_block
+                              : method == SCALAR_CALLS ? scalar_block
+                              : method == BULK_ASSEMBLY ? bulk_block
+                                                       : table_block;
+        p8 address_to translation = operation == LOWER_CASE
+                                        ? lower_table : upper_table;
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                address_any answer = method == FORMER_LOOP
+                                         ? former_convert(block, length, operation)
+                                     : method == FORMER_FIXED
+                                         ? former_fixed_convert(block, length, operation)
+                                     : method == SCALAR_CALLS
+                                         ? scalar_convert(block, length, operation)
+                                     : method == BULK_ASSEMBLY
+                                         ? (operation == LOWER_CASE
+                                                ? memory_to_lower_ascii(block, length)
+                                                : memory_to_upper_ascii(block, length))
+                                         : memory_translate(block, length, translation);
+                sink += (positive)answer + block[0] + block[length - 1];
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(enum case_operation operation, positive length)
+{
+        positive scalar_ratios[TRIES];
+        positive bulk_ratios[TRIES];
+        positive fixed_ratios[TRIES];
+        positive table_ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 fixed;
+                p64 scalar;
+                p64 bulk;
+                p64 table;
+
+                fill(former_block, length, trial + 11);
+                memory_copy(fixed_block, former_block, length);
+                memory_copy(scalar_block, former_block, length);
+                memory_copy(bulk_block, former_block, length);
+                memory_copy(table_block, former_block, length);
+
+                if (trial & 1)
+                {
+                        table = run(TABLE_ASSEMBLY, operation, length, rounds);
+                        bulk = run(BULK_ASSEMBLY, operation, length, rounds);
+                        scalar = run(SCALAR_CALLS, operation, length, rounds);
+                        fixed = run(FORMER_FIXED, operation, length, rounds);
+                        former = run(FORMER_LOOP, operation, length, rounds);
+                }
+                else
+                {
+                        former = run(FORMER_LOOP, operation, length, rounds);
+                        fixed = run(FORMER_FIXED, operation, length, rounds);
+                        scalar = run(SCALAR_CALLS, operation, length, rounds);
+                        bulk = run(BULK_ASSEMBLY, operation, length, rounds);
+                        table = run(TABLE_ASSEMBLY, operation, length, rounds);
+                }
+
+                if (memory_compare(former_block, fixed_block, length) ||
+                    memory_compare(former_block, scalar_block, length) ||
+                    memory_compare(former_block, bulk_block, length) ||
+                    memory_compare(former_block, table_block, length))
+                {
+                        string_format(log, "  result mismatch at %p bytes\n", length);
+                        return;
+                }
+
+                scalar_ratios[trial] = (positive)(scalar * 10000 /
+                                                   (former ? former : 1));
+                bulk_ratios[trial] = (positive)(bulk * 10000 /
+                                                 (former ? former : 1));
+                fixed_ratios[trial] = (positive)(bulk * 10000 /
+                                                  (fixed ? fixed : 1));
+                table_ratios[trial] = (positive)(table * 10000 /
+                                                  (former ? former : 1));
+        }
+
+        order(scalar_ratios, TRIES);
+        order(bulk_ratios, TRIES);
+        order(fixed_ratios, TRIES);
+        order(table_ratios, TRIES);
+        string_format(log,
+                      "  %p bytes  scalar/dispatch %p.%p%%  bulk/dispatch %p.%p%%  bulk/fixed %p.%p%%  table/dispatch %p.%p%%\n",
+                      length, scalar_ratios[TRIES / 2] / 100,
+                      scalar_ratios[TRIES / 2] % 100,
+                      bulk_ratios[TRIES / 2] / 100,
+                      bulk_ratios[TRIES / 2] % 100,
+                      fixed_ratios[TRIES / 2] / 100,
+                      fixed_ratios[TRIES / 2] % 100,
+                      table_ratios[TRIES / 2] / 100,
+                      table_ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {1, 8, 16, 24, 32, 48, 64,
+                                         128, 256, 4096, MAXIMUM};
+
+        for (positive value = 0; value < 256; value++)
+        {
+                lower_table[value] = value >= 'A' && value <= 'Z'
+                                         ? (p8)(value + 32) : (p8)value;
+                upper_table[value] = value >= 'a' && value <= 'z'
+                                         ? (p8)(value - 32) : (p8)value;
+        }
+
+        if (!correctness_one(LOWER_CASE) || !correctness_one(UPPER_CASE))
+        {
+                string_format(log, "ASCII conversion correctness failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "ASCII lower, paired median of %p\n", (positive)TRIES);
+        for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
+                row(LOWER_CASE, sizes[at]);
+
+        string_format(log, "ASCII upper, paired median of %p\n", (positive)TRIES);
+        for (positive at = 0; at < sizeof(sizes) / sizeof(sizes[0]); at++)
+                row(UPPER_CASE, sizes[at]);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_ascii_convert */
+
+#ifdef BENCH_ascii_search
+/* Fixed ASCII-insensitive search against the literal C loop it replaces. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define ROOM (1u << 20)
+
+static p8 hay[ROOM + 64];
+static p8 needle[64];
+static volatile positive sink;
+
+static p8 lower_ascii(p8 value)
+{
+        return value >= 'A' && value <= 'Z' ? (p8)(value + 32) : value;
+}
+
+NOT_INLINED static address_any former_find(p8 address_to text, positive length,
+                                            p8 address_to want, positive size)
+{
+        if (!size)
+                return text;
+
+        p8 head = want[0];
+        p8 upper = head >= 'a' && head <= 'z' ? (p8)(head - 32) : head;
+
+        for (positive at = 0; at + size <= length;)
+        {
+                positive left = length - at - size + 1;
+                p8 address_to low = memory_first_of(text + at, head, left);
+                p8 address_to high = upper == head
+                                         ? null
+                                         : memory_first_of(text + at, upper, left);
+                p8 address_to hit = !low ? high : (!high || low < high ? low : high);
+
+                if (!hit)
+                        return null;
+
+                at = (positive)(hit - text);
+                positive i = 1;
+
+                while (i < size && lower_ascii(text[at + i]) == want[i])
+                        i++;
+
+                if (i == size)
+                        return text + at;
+
+                at++;
+        }
+
+        return null;
+}
+
+static p64 run(bool assembly, positive length, positive size, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive i = 0; i < rounds; i++)
+                sink += (positive)(assembly
+                                       ? memory_search_ascii_case(hay, length,
+                                                                  needle, size)
+                                       : former_find(hay, length, needle, size));
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive length, string_address wanted,
+              bool late, positive traffic)
+{
+        positive size = string_length(wanted);
+
+        memory_copy(needle, wanted, size);
+
+        if (late)
+        {
+                positive at = length - size;
+
+                for (positive i = 0; i < size; i++)
+                {
+                        p8 value = needle[i];
+                        hay[at + i] = value >= 'a' && value <= 'z'
+                                          ? (p8)(value - 32)
+                                          : value;
+                }
+        }
+
+        positive rounds = traffic / (length ? length : 1) + 1;
+        positive ratios[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, size, rounds);
+                        former = run(false, length, size, rounds);
+                }
+                else
+                {
+                        former = run(false, length, size, rounds);
+                        assembly = run(true, length, size, rounds);
+                }
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                             (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median asm/former %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        moonwater_cpu_detect();
+
+        for (positive i = 0; i < ROOM; i++)
+                hay[i] = (p8)("alpha beta gamma delta epsilon "[i % 31]);
+
+        string_format(log, "ASCII-insensitive fixed search, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"1 MiB absent rare", ROOM,
+            (string_address)"zqxjv", false, 1u << 15);
+        row((string_address)"4 KiB late hit", 4096,
+            (string_address)"epsilon zeta", true, 1);
+
+        for (positive i = 0; i < ROOM; i++)
+                hay[i] = 'a';
+
+        row((string_address)"4 KiB common false candidates", 4096,
+            (string_address)"aaaaaaab", false, 1);
+
+        for (positive i = 0; i < 96; i++)
+                hay[i] = (p8)("alpha beta gamma delta epsilon "[i % 31]);
+
+        row((string_address)"32 byte absent", 32,
+            (string_address)"zeta", false, 1u << 16);
+        row((string_address)"32 byte late hit", 32,
+            (string_address)"epsilon", true, 1u << 16);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_ascii_search */
+
+#ifdef BENCH_grep_search
+/*
+        Grep's repeated literal hunt: preparing the rare byte once versus
+        asking memory_search to choose its anchors again after every match.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define ROOM (1u << 20)
+
+static p8 hay[ROOM + 64];
+static p8 needle[64];
+static volatile positive sink;
+
+struct prepared_search
+{
+        p8 address_to needle;
+        positive size;
+        positive anchor;
+        positive second_anchor;
+        bool icase;
+};
+
+static fn prepare(struct prepared_search address_to search,
+                  p8 address_to wanted, positive size, bool icase)
+{
+        positive2 anchors = memory_search_prepare(wanted, size, icase);
+
+        search->needle = wanted;
+        search->size = size;
+        search->anchor = anchors.x;
+        search->second_anchor = anchors.y;
+        search->icase = icase;
+}
+
+NOT_INLINED static p8 address_to prepared_find(
+    p8 address_to text, positive length,
+    const struct prepared_search address_to search)
+{
+        return search->icase
+                   ? memory_search_ascii_case_prepared(
+                         text, length, search->needle, search->size,
+                         search->anchor)
+                   : memory_search_prepared(text, length, search->needle,
+                                            search->size, search->anchor,
+                                            search->second_anchor);
+}
+
+static positive scan(bool prepared, positive length,
+                     struct prepared_search address_to search)
+{
+        positive at = 0;
+        positive count = 0;
+
+        while (at <= length)
+        {
+                p8 address_to found = prepared
+                                          ? prepared_find(hay + at, length - at,
+                                                          search)
+                                          : (search->icase
+                                                 ? memory_search_ascii_case(
+                                                       hay + at, length - at,
+                                                       search->needle, search->size)
+                                                 : memory_search(
+                                                       hay + at, length - at,
+                                                       search->needle, search->size));
+
+                if (!found)
+                        break;
+
+                count++;
+                at = (positive)(found - hay) + max(search->size, 1ull);
+        }
+
+        return count;
+}
+
+static p64 run(bool prepared, positive length,
+               struct prepared_search address_to search, positive rounds)
+{
+        p64 started = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+                sink += scan(prepared, length, search);
+
+        return get_cpu_time() - started;
+}
+
+static fn row(string_address name, string_address wanted, bool icase,
+              positive traffic)
+{
+        struct prepared_search search;
+        positive size = string_length(wanted);
+        positive rounds = traffic / ROOM + 1;
+        positive ratios[TRIES];
+
+        memory_copy(needle, wanted, size);
+        prepare(address_of search, needle, size, icase);
+
+        if (scan(false, ROOM, address_of search) !=
+            scan(true, ROOM, address_of search))
+        {
+                string_format(log, "  %s: answers differ\n", name);
+                return;
+        }
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 current;
+                p64 prepared_time;
+
+                if (trial & 1)
+                {
+                        prepared_time = run(true, ROOM, address_of search, rounds);
+                        current = run(false, ROOM, address_of search, rounds);
+                }
+                else
+                {
+                        current = run(false, ROOM, address_of search, rounds);
+                        prepared_time = run(true, ROOM, address_of search, rounds);
+                }
+
+                ratios[trial] = (positive)(prepared_time * 10000 /
+                                            (current ? current : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  prepared/current %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        moonwater_cpu_detect();
+
+        for (positive at = 0; at < ROOM; at++)
+                hay[at] = (p8)("alpha:123:plain\n"[at % 16]);
+
+        for (positive at = 121; at + 6 < ROOM; at += 256)
+                memory_copy(hay + at, (address_any)"needle", 6);
+
+        string_format(log, "prepared grep search, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"needle every 256 bytes", (string_address)"needle",
+            false, 1u << 25);
+        row((string_address)"absent rare", (string_address)"zqxjv", false,
+            1u << 25);
+        row((string_address)"folded needle", (string_address)"NEEDLE", true,
+            1u << 25);
+
+        for (positive at = 0; at < ROOM; at++)
+                hay[at] = 'a';
+
+        row((string_address)"common false candidates",
+            (string_address)"aaaaaaab", false, 1u << 25);
+        row((string_address)"dense matches", (string_address)"aaaa", false,
+            1u << 22);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_grep_search */
+
+#ifdef BENCH_grep_count
+/*
+        Fixed-needle record counting at three layers:
+
+        read-only is an explicit serialized traffic lower-bound candidate;
+        byte count is a semantic delimiter-count proxy; repeated is grep's
+        former prepared-search/newline-search loop; and fused is the
+        record-aware assembly core which keeps its anchors live.
+
+        The absolute result is counter ticks per KiB.  On x86_64 those are TSC
+        ticks; under qemu they are useful only as paired ratios, as the bench
+        driver in test/run says.  Output is consumed through sink and every shape is checked
+        against a deliberately obvious record-by-record reference first.
+*/
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define PAGE 4096
+
+#if defined(__x86_64__)
+#define ROOM (1u << 22)
+#define ROUNDS 32
+#else
+#define ROOM (1u << 16)
+#define ROUNDS 4
+#endif
+
+static p8 block[ROOM + 64];
+static p8 needle[] = "needle";
+static volatile positive sink;
+static positive2 anchors;
+
+/* The explicit read-only traffic candidate from the floor benchmark, kept beside the
+   semantic microkernel so both are timed with the same fences and corpus. */
+__asm__(
+    ".text\n"
+    ASM_FUNC(grep_floor_ticks)
+#if X64
+    "lfence\n   rdtsc\n   shl $32, %rdx\n   or %rdx, %rax\n   lfence\n"
+#elif ARM64
+    "isb\n   mrs x0, cntvct_el0\n   isb\n"
+#else
+    "fence iorw, iorw\n   rdtime a0\n   fence iorw, iorw\n"
+#endif
+    ASM_RET
+    ASM_END(grep_floor_ticks)
+    ASM_FUNC(grep_floor_read)
+#if X64
+    "xor %eax, %eax\n   test %rsi, %rsi\n   jz 9f\n"
+    "cmpb $0, cpu_has_avx2(%rip)\n   je 5f\n"
+    "cmpb $0, cpu_has_avx512(%rip)\n   jne 7f\n"
+    "1:  cmp $128, %rsi\n   jb 4f\n"
+    "vmovdqu 0(%rdi), %ymm0\n   vmovdqu 32(%rdi), %ymm1\n"
+    "vmovdqu 64(%rdi), %ymm2\n   vmovdqu 96(%rdi), %ymm3\n"
+    "add $128, %rdi\n   sub $128, %rsi\n   jmp 1b\n"
+    "7:  cmp $256, %rsi\n   jb 4f\n"
+    "vmovdqu64 0(%rdi), %zmm0\n   vmovdqu64 64(%rdi), %zmm1\n"
+    "vmovdqu64 128(%rdi), %zmm2\n   vmovdqu64 192(%rdi), %zmm3\n"
+    "add $256, %rdi\n   sub $256, %rsi\n   jmp 7b\n"
+    "4:  vzeroupper\n"
+    "5:  test %rsi, %rsi\n   jz 9f\n"
+    "6:  add (%rdi), %rax\n   add $8, %rdi\n   sub $8, %rsi\n"
+    "cmp $8, %rsi\n   jae 6b\n   9:\n"
+#elif ARM64
+    "mov x2, #0\n   cbz x1, 9f\n"
+    "1:  cmp x1, #64\n   b.lo 5f\n"
+    "ldp q0, q1, [x0]\n   ldp q2, q3, [x0, #32]\n"
+    "add x0, x0, #64\n   sub x1, x1, #64\n   b 1b\n"
+    "5:  cbz x1, 9f\n"
+    "6:  ldr x3, [x0]\n   add x2, x2, x3\n   add x0, x0, #8\n"
+    "subs x1, x1, #8\n   b.hi 6b\n   9:  mov x0, x2\n"
+#else
+    "li a2, 0\n   beqz a1, 9f\n"
+    "1:  li a3, 8\n   bltu a1, a3, 9f\n"
+    "ld a4, 0(a0)\n   add a2, a2, a4\n   addi a0, a0, 8\n"
+    "addi a1, a1, -8\n   j 1b\n   9:  mv a0, a2\n"
+#endif
+    ASM_RET
+    ASM_END(grep_floor_read)
+);
+
+positive grep_floor_read(address_any data, positive size);
+p64 grep_floor_ticks(void);
+
+static positive reference(p8 address_to data, positive size)
+{
+        positive count = 0;
+        positive start = 0;
+
+        while (start < size)
+        {
+                positive stop = start;
+
+                while (stop < size && data[stop] != '\n')
+                        stop++;
+
+                for (positive at = start; at + 6 <= stop; at++)
+                        if (!memory_compare(data + at, needle, 6))
+                        {
+                                count++;
+                                break;
+                        }
+
+                start = stop + (stop < size);
+        }
+
+        return count;
+}
+
+NOT_INLINED static positive repeated(p8 address_to data, positive size)
+{
+        positive count = 0;
+        positive at = 0;
+
+        while (at + 6 <= size)
+        {
+                p8 address_to found = memory_search_prepared(
+                    data + at, size - at, needle, 6, anchors.x, anchors.y);
+
+                if (!found)
+                        break;
+
+                count++;
+                found += 6;
+
+                p8 address_to delimiter = memory_first_of(
+                    found, '\n', size - (positive)(found - data));
+
+                if (!delimiter)
+                        break;
+
+                at = (positive)(delimiter - data) + 1;
+        }
+
+        return count;
+}
+
+NOT_INLINED static positive fused(p8 address_to data, positive size)
+{
+        return memory_count_records_with_prepared(
+            data, size, needle, 6, anchors.x, anchors.y, '\n');
+}
+
+static p64 run(positive which)
+{
+        p64 started = grep_floor_ticks();
+
+        for (positive round = 0; round < ROUNDS; round++)
+                sink += which == 0 ? grep_floor_read(block, ROOM)
+                                   : which == 1 ? memory_count(block, ROOM, '\n')
+                                   : which == 2 ? repeated(block, ROOM)
+                                                : fused(block, ROOM);
+
+        return grep_floor_ticks() - started;
+}
+
+static fn row(string_address name, positive which)
+{
+        positive samples[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+                samples[trial] = (positive)run(which);
+
+        order(samples, TRIES);
+        positive ticks = samples[TRIES / 2];
+        positive thousandths = ticks * 1024 * 1000 /
+                               ((positive)ROOM * ROUNDS);
+
+        string_format(log, "  %s  %p.%p ticks/KiB\n", name,
+                      thousandths / 1000, thousandths % 1000);
+}
+
+static fn gap(void)
+{
+        positive ratios[TRIES];
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 floor_time;
+                p64 fused_time;
+
+                if (trial & 1)
+                {
+                        fused_time = run(3);
+                        floor_time = run(0);
+                }
+                else
+                {
+                        floor_time = run(0);
+                        fused_time = run(3);
+                }
+
+                ratios[trial] = (positive)(fused_time * 10000 /
+                                            (floor_time ? floor_time : 1));
+        }
+
+        order(ratios, TRIES);
+        positive ratio = ratios[TRIES / 2];
+
+        if (ratio < 10000)
+                string_format(log, "  lower-bound status  unresolved "
+                                   "(read-only candidate slower than fused)\n");
+        else
+                string_format(log, "  fused gap to read-only bound  %p.%p%% slower\n",
+                              (ratio - 10000) / 100,
+                              (ratio - 10000) % 100);
+}
+
+static bipolar named(string_address name)
+{
+        if (!string_compare(name, (string_address)"read"))
+                return 0;
+        if (!string_compare(name, (string_address)"delimiter"))
+                return 1;
+        if (!string_compare(name, (string_address)"repeated"))
+                return 2;
+        if (!string_compare(name, (string_address)"fused"))
+                return 3;
+
+        return -1;
+}
+
+static bool boundaries(void)
+{
+        p8 small[320];
+
+        for (positive size = 0; size <= 257; size++)
+                for (positive shift = 0; shift < 23; shift++)
+                {
+                        for (positive at = 0; at < size; at++)
+                                small[at] = (at + shift) % 17 == 16 ? '\n' : 'x';
+
+                        for (positive at = shift; at + 6 <= size; at += 43)
+                                memory_copy(small + at, needle, 6);
+
+                        positive expected = reference(small, size);
+
+                        if (repeated(small, size) != expected ||
+                            fused(small, size) != expected)
+                                return false;
+                }
+
+        return true;
+}
+
+/* Each end of the exact span is placed against an inaccessible page in turn.
+   The three shapes
+   cover an absent sparse anchor, one match in nearly every short record and
+   a final record without a delimiter; the model remains byte-at-a-time and
+   independent of both optimized searches. */
+static bool guarded_boundaries(void)
+{
+        p8 address_to base = (p8 address_to)memory(3 * PAGE);
+
+        if (!base ||
+            system_call_3(syscall(mprotect), (positive)base, PAGE,
+                          FILE_PROTECT_NONE) < 0 ||
+            system_call_3(syscall(mprotect), (positive)(base + 2 * PAGE), PAGE,
+                          FILE_PROTECT_NONE) < 0)
+                return false;
+
+        p8 address_to room = base + PAGE;
+
+        for (positive size = 0; size <= 257; size++)
+                for (positive side = 0; side < 2; side++)
+                        for (positive shape = 0; shape < 3; shape++)
+                        {
+                                p8 address_to data = side ? room + PAGE - size
+                                                          : room;
+
+                                for (positive at = 0; at < size; at++)
+                                        data[at] = shape == 0 ? 'x' :
+                                                   (at % 11 == 10 ? '\n' : 'q');
+
+                                if (shape)
+                                        for (positive at = shape - 1;
+                                             at + 6 <= size; at += 11)
+                                                memory_copy(data + at, needle, 6);
+
+                                if (shape == 2 && size && data[size - 1] == '\n')
+                                        data[size - 1] = 'q';
+
+                                if (fused(data, size) != reference(data, size))
+                                {
+                                        memory_free(base, 3 * PAGE);
+                                        return false;
+                                }
+                        }
+
+        memory_free(base, 3 * PAGE);
+        return true;
+}
+
+b32 main(void)
+{
+        moonwater_cpu_detect();
+        anchors = memory_search_prepare(needle, 6, false);
+
+        for (positive at = 0; at < ROOM; at++)
+                block[at] = (p8)"alpha:123:plain\n"[at % 16];
+
+        for (positive at = 121; at + 6 < ROOM; at += 272)
+                memory_copy(block + at, needle, 6);
+
+        /* A named lane gives perf a long, quiet interval for retired-event
+           counters. Its denominator is 16 * ROUNDS * ROOM bytes. */
+        if (program_argument_count() > 1)
+        {
+                bipolar which = named(program_argument(1));
+
+                if (which < 0)
+                        return 2;
+
+                for (positive pass = 0; pass < 16; pass++)
+                        sink += (positive)run((positive)which);
+
+                return 0;
+        }
+
+        if (!boundaries() || !guarded_boundaries() ||
+            repeated(block, ROOM) != fused(block, ROOM))
+        {
+                string_format(log, "grep record count check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "grep record count, %p-byte resident input\n",
+                      (positive)ROOM);
+        row((string_address)"read-only traffic candidate", 0);
+        row((string_address)"full-byte delimiter count", 1);
+        row((string_address)"repeated search + newline", 2);
+        row((string_address)"fused semantic scan", 3);
+        gap();
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_grep_count */
+
+#ifdef BENCH_last_of
+/* Bounded reverse byte search: scalar reference against library assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM (1u << 20)
+#define TARGET_BYTES (1u << 26)
+#define NEEDLE 0xa7
+
+static p8 block[MAXIMUM + 64];
+static volatile positive sink;
+
+NOT_INLINED static address_any former_last(address_any memory, b8 value,
+                                           positive length)
+{
+        p8 address_to bytes = memory;
+
+        while (length)
+        {
+                length--;
+                if (bytes[length] == (p8)value)
+                        return bytes + length;
+        }
+
+        return null;
+}
+
+static bool correctness(void)
+{
+        static const positive values[] = {0, 37, 255};
+        p8 guarded[336];
+
+        if (memory_last_of(null, 0, 0) != null)
+                return false;
+
+        for (positive offset = 0; offset < 16; offset++)
+                for (positive length = 0; length <= 257; length++)
+                        for (positive v = 0; v < sizeof(values) / sizeof(values[0]); v++)
+                        {
+                                p8 needle = (p8)values[v];
+
+                                for (positive at = 0; at < sizeof(guarded); at++)
+                                        guarded[at] = (p8)(needle + 1);
+
+                                if (memory_last_of(guarded + offset, (b8)needle,
+                                                   length) != null)
+                                        return false;
+
+                                for (positive position = 0; position < length; position++)
+                                {
+                                        guarded[offset + position] = needle;
+
+                                        if (memory_last_of(guarded + offset, (b8)needle,
+                                                           length) !=
+                                            guarded + offset + position)
+                                                return false;
+
+                                        guarded[offset + position] = (p8)(needle + 1);
+                                }
+
+                                if (length > 1)
+                                {
+                                        guarded[offset] = needle;
+                                        guarded[offset + length - 1] = needle;
+
+                                        if (memory_last_of(guarded + offset, (b8)needle,
+                                                           length) !=
+                                            guarded + offset + length - 1)
+                                                return false;
+                                }
+                        }
+
+        return true;
+}
+
+static fn prepare(positive length, positive hit)
+{
+        for (positive at = 0; at < length; at++)
+                block[at] = (p8)(at * 2 + 2);
+
+        if (hit < length)
+                block[hit] = NEEDLE;
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+        if (rounds < 8) rounds = 8;
+        if (rounds > (1u << 20)) rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                address_any found = assembly
+                                        ? memory_last_of(block, (b8)NEEDLE, length)
+                                        : former_last(block, (b8)NEEDLE, length);
+                sink += (positive)found;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive length, positive hit)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        prepare(length, hit);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        if (!correctness())
+        {
+                string_format(log, "memory_last_of check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        moonwater_cpu_detect();
+        string_format(log, "memory_last_of, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"absent 8", 8, 8);
+        row((string_address)"absent 64", 64, 64);
+        row((string_address)"absent 4K", 4096, 4096);
+        row((string_address)"absent 1M", MAXIMUM, MAXIMUM);
+        row((string_address)"front hit 4K", 4096, 0);
+        row((string_address)"end hit 64", 64, 63);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_last_of */
+
+#ifdef BENCH_words
+/* Stateful ASCII word counting: scalar reference against library assembly. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define NOT_INLINED __attribute__((noinline, noclone))
+#define TRIES 9
+#define MAXIMUM 65536
+#define TARGET_BYTES (1u << 26)
+
+static p8 block[MAXIMUM + 16];
+static volatile positive sink;
+
+static bool is_space(p8 value)
+{
+        return value == 0x20 || (value >= 0x09 && value <= 0x0d);
+}
+
+NOT_INLINED static positive2 former_words(address_any memory, positive length,
+                                          bool inside)
+{
+        p8 address_to bytes = memory;
+        positive2 answer = {.x = 0, .y = inside ? 1 : 0};
+
+        for (positive at = 0; at < length; at++)
+        {
+                bool next = !is_space(bytes[at]);
+
+                if (next && !answer.y)
+                        answer.x++;
+
+                answer.y = next;
+        }
+
+        return answer;
+}
+
+static bool same(positive2 a, positive2 b)
+{
+        return a.x == b.x && a.y == b.y;
+}
+
+static bool correctness(void)
+{
+        p8 byte;
+
+        for (positive value = 0; value < 256; value++)
+                for (positive inside = 0; inside < 2; inside++)
+                {
+                        byte = (p8)value;
+                        if (!same(memory_count_words(address_of byte, 1, (bool)inside),
+                                  former_words(address_of byte, 1, (bool)inside)))
+                                return false;
+                }
+
+        for (positive offset = 0; offset < 16; offset++)
+                for (positive length = 0; length <= 257; length++)
+                {
+                        static const p8 alphabet[] = {
+                            0, 8, 9, 10, 11, 12, 13, 14, 31, 32, 33, 127, 128, 255,
+                        };
+
+                        for (positive at = 0; at < length; at++)
+                                block[offset + at] = alphabet[(at * 7 + length) %
+                                                              sizeof(alphabet)];
+
+                        for (positive inside = 0; inside < 2; inside++)
+                        {
+                                positive2 want = former_words(block + offset, length,
+                                                               (bool)inside);
+                                positive2 got = memory_count_words(block + offset, length,
+                                                                   (bool)inside);
+
+                                if (!same(want, got))
+                                        return false;
+
+                                positive splits[] = {0, length / 2, length, 7, 8,
+                                                     15, 16, 31, 32, 63, 64};
+
+                                for (positive which = 0;
+                                     which < sizeof(splits) / sizeof(splits[0]);
+                                     which++)
+                                {
+                                        positive split = splits[which];
+
+                                        if (split > length)
+                                                continue;
+
+                                        positive2 first = memory_count_words(
+                                            block + offset, split, (bool)inside);
+                                        positive2 second = memory_count_words(
+                                            block + offset + split, length - split,
+                                            (bool)first.y);
+
+                                        if (first.x + second.x != want.x ||
+                                            second.y != want.y)
+                                                return false;
+                                }
+                        }
+                }
+
+        return true;
+}
+
+static fn prepare(positive length, positive shape)
+{
+        static const p8 prose[] = "one two\tthree\nfour\r\nfive six ";
+
+        for (positive at = 0; at < length; at++)
+                block[at] = shape == 0   ? ' '
+                            : shape == 1 ? 'x'
+                            : shape == 2 ? ((at & 1) ? ' ' : 'x')
+                                         : prose[at % (sizeof(prose) - 1)];
+}
+
+static positive rounds_for(positive length)
+{
+        positive rounds = TARGET_BYTES / length;
+        if (rounds < 16) rounds = 16;
+        if (rounds > (1u << 20)) rounds = 1u << 20;
+        return rounds;
+}
+
+static p64 run(bool assembly, positive length, positive rounds)
+{
+        p64 start = get_cpu_time();
+
+        for (positive round = 0; round < rounds; round++)
+        {
+                positive2 answer = assembly
+                                       ? memory_count_words(block, length, false)
+                                       : former_words(block, length, false);
+                sink += answer.x + answer.y;
+        }
+
+        return get_cpu_time() - start;
+}
+
+static fn row(string_address name, positive length, positive shape)
+{
+        positive ratios[TRIES];
+        positive rounds = rounds_for(length);
+
+        prepare(length, shape);
+
+        for (positive trial = 0; trial < TRIES; trial++)
+        {
+                p64 former;
+                p64 assembly;
+                if (trial & 1)
+                {
+                        assembly = run(true, length, rounds);
+                        former = run(false, length, rounds);
+                }
+                else
+                {
+                        former = run(false, length, rounds);
+                        assembly = run(true, length, rounds);
+                }
+                ratios[trial] = (positive)(assembly * 10000 /
+                                            (former ? former : 1));
+        }
+
+        order(ratios, TRIES);
+        string_format(log, "  %s  median asm/C %p.%p%%\n", name,
+                      ratios[TRIES / 2] / 100, ratios[TRIES / 2] % 100);
+}
+
+b32 main(void)
+{
+        if (!correctness())
+        {
+                string_format(log, "memory_count_words check failed\n");
+                log_flush();
+                return 1;
+        }
+
+        string_format(log, "memory_count_words, paired median of %p\n",
+                      (positive)TRIES);
+        row((string_address)"spaces 64", 64, 0);
+        row((string_address)"word 64", 64, 1);
+        row((string_address)"alternating 64", 64, 2);
+        row((string_address)"prose 64", 64, 3);
+        row((string_address)"spaces 64K", MAXIMUM, 0);
+        row((string_address)"word 64K", MAXIMUM, 1);
+        row((string_address)"alternating 64K", MAXIMUM, 2);
+        row((string_address)"prose 64K", MAXIMUM, 3);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_words */
+
+#ifdef BENCH_clock
+/* Calendar text traffic and directive-parser costs. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define CLOCK_BENCH_ROUNDS (1u << 20)
+#define CLOCK_BENCH_TRIES 5
+#define CLOCK_FORMAT_DIRECTIVES 10
+#define CLOCK_SCAN_DIRECTIVES 9
+
+static p8 clock_bench_output[256];
+static p8 clock_bench_input[256];
+static tm clock_bench_broken;
+static volatile positive clock_bench_sink;
+
+static const char address_to clock_bench_literal =
+        "ordinary calendar text has no directives; this deliberately makes "
+        "the byte traffic, rather than date arithmetic, the measured work.";
+
+static const char address_to clock_bench_format =
+        "%Y-%m-%dT%H:%M:%S %A %B %p %z";
+static const char address_to clock_bench_scan_format =
+        "%Y-%m-%dT%H:%M:%S %A %B %p";
+static const char address_to clock_bench_scan_input =
+        "2024-08-17T13:42:51 Saturday August PM";
+
+static positive (*volatile clock_bench_strftime)(
+        p8 address_to, positive, const char address_to, const tm address_to) =
+        strftime;
+static p8 address_to (*volatile clock_bench_strptime)(
+        const char address_to, const char address_to, tm address_to) = strptime;
+static p8 address_to (*volatile clock_bench_asctime)(
+        const tm address_to, p8 address_to) = asctime_r;
+
+static fn clock_bench_copy()
+{
+        positive length = string_length((string_address)clock_bench_literal);
+
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+        {
+                memory_copy_apart(clock_bench_output,
+                                  (address_any)clock_bench_literal, length);
+                clock_bench_sink += clock_bench_output[i & 63];
+        }
+}
+
+static fn clock_bench_compare()
+{
+        positive length = string_length((string_address)clock_bench_literal);
+
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink +=
+                        (positive)memory_compare(clock_bench_literal,
+                                                 clock_bench_input, length);
+}
+
+static fn clock_bench_scan_floor()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+        {
+                const char address_to format = clock_bench_literal;
+                const char address_to input = (const char address_to)clock_bench_input;
+
+                while (address_to format != end)
+                {
+                        positive run;
+
+                        if (byte_is_space((p8)(address_to format)))
+                        {
+                                format += string_span_of_set(
+                                        (string_address)format, " \t\n\r\v\f");
+                                input += string_span_of_set(
+                                        (string_address)input, " \t\n\r\v\f");
+                                continue;
+                        }
+
+                        run = string_span_without_set(
+                                (string_address)format, "% \t\n\r\v\f");
+                        clock_bench_sink += (positive)memory_compare(
+                                (address_any)format, (address_any)input, run);
+                        format += run;
+                        input += run;
+                }
+
+                clock_bench_sink += (positive)input;
+        }
+}
+
+static fn clock_bench_format_literal()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink += clock_bench_strftime(
+                        clock_bench_output, sizeof(clock_bench_output),
+                        clock_bench_literal, address_of clock_bench_broken);
+}
+
+static fn clock_bench_format_directives()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink += clock_bench_strftime(
+                        clock_bench_output, sizeof(clock_bench_output),
+                        clock_bench_format, address_of clock_bench_broken);
+}
+
+static fn clock_bench_scan_literal()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink += (positive)clock_bench_strptime(
+                        (const char address_to)clock_bench_input,
+                        clock_bench_literal,
+                        address_of clock_bench_broken);
+}
+
+static fn clock_bench_scan_directives()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink += (positive)clock_bench_strptime(
+                        clock_bench_scan_input, clock_bench_scan_format,
+                        address_of clock_bench_broken);
+}
+
+static fn clock_bench_asctime_work()
+{
+        for (positive i = 0; i < CLOCK_BENCH_ROUNDS; i++)
+                clock_bench_sink += (positive)clock_bench_asctime(
+                        address_of clock_bench_broken, clock_bench_output);
+}
+
+static fn clock_bench_report(string_address name, bench_work work,
+                             positive units, string_address unit)
+{
+        bench_report(name, work, CLOCK_BENCH_TRIES,
+                     CLOCK_BENCH_ROUNDS * units, unit);
+}
+
+static bench_work clock_bench_named(string_address name)
+{
+        if (string_compare(name, (string_address)"copy-floor") == 0)
+                return clock_bench_copy;
+        if (string_compare(name, (string_address)"compare-floor") == 0)
+                return clock_bench_compare;
+        if (string_compare(name, (string_address)"scan-floor") == 0)
+                return clock_bench_scan_floor;
+        if (string_compare(name, (string_address)"format-literal") == 0)
+                return clock_bench_format_literal;
+        if (string_compare(name, (string_address)"format-directives") == 0)
+                return clock_bench_format_directives;
+        if (string_compare(name, (string_address)"scan-literal") == 0)
+                return clock_bench_scan_literal;
+        if (string_compare(name, (string_address)"scan-directives") == 0)
+                return clock_bench_scan_directives;
+        if (string_compare(name, (string_address)"asctime") == 0)
+                return clock_bench_asctime_work;
+
+        return null;
+}
+
+b32 main(void)
+{
+        positive literal_length =
+                string_length((string_address)clock_bench_literal);
+
+        memory_copy_apart(clock_bench_input,
+                          (address_any)clock_bench_literal,
+                          literal_length + 1);
+
+        clock_bench_broken.tm_sec = 51;
+        clock_bench_broken.tm_min = 42;
+        clock_bench_broken.tm_hour = 13;
+        clock_bench_broken.tm_mday = 17;
+        clock_bench_broken.tm_mon = 7;
+        clock_bench_broken.tm_year = 124;
+        clock_bench_broken.tm_wday = 6;
+        clock_bench_broken.tm_yday = 229;
+        clock_bench_broken.tm_zone = "UTC";
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work =
+                        clock_bench_named(program_argument(1));
+
+                if (is_null(work))
+                        return 2;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "clock text, best of %p (%p rounds)\n",
+                      (positive)CLOCK_BENCH_TRIES,
+                      (positive)CLOCK_BENCH_ROUNDS);
+        clock_bench_report((string_address)"copy floor", clock_bench_copy,
+                           literal_length, (string_address)"byte");
+        clock_bench_report((string_address)"strftime literal",
+                           clock_bench_format_literal, literal_length,
+                           (string_address)"byte");
+        clock_bench_report((string_address)"strftime directives",
+                           clock_bench_format_directives,
+                           CLOCK_FORMAT_DIRECTIVES,
+                           (string_address)"directive");
+        clock_bench_report((string_address)"compare floor",
+                           clock_bench_compare, literal_length,
+                           (string_address)"byte");
+        clock_bench_report((string_address)"parser floor",
+                           clock_bench_scan_floor, literal_length,
+                           (string_address)"byte");
+        clock_bench_report((string_address)"strptime literal",
+                           clock_bench_scan_literal, literal_length,
+                           (string_address)"byte");
+        clock_bench_report((string_address)"strptime directives",
+                           clock_bench_scan_directives, CLOCK_SCAN_DIRECTIVES,
+                           (string_address)"directive");
+        clock_bench_report((string_address)"asctime", clock_bench_asctime_work,
+                           25, (string_address)"byte");
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_clock */
+
+#ifdef BENCH_scan_literal
+/* sscanf literal matching against its control and semantic traffic floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define SCAN_LITERAL_ROUNDS (1u << 20)
+#define SCAN_LITERAL_TRIES 5
+
+static const char address_to scan_literal_format =
+        "header.alpha-0123456789/body.beta-abcdefghijklmnopqrstuvwxyz/"
+        "payload.gamma-ABCDEFGHIJKLMNOPQRSTUVWXYZ/trailer.delta-9876543210";
+static p8 scan_literal_input[256];
+static volatile positive scan_literal_sink;
+
+static b32 (*volatile scan_literal_call)(string_address, string_address, ...) =
+        sscanf;
+
+static fn scan_literal_control()
+{
+        for (positive i = 0; i < SCAN_LITERAL_ROUNDS; i++)
+                scan_literal_sink += scan_literal_call(
+                        (string_address)scan_literal_input,
+                        (string_address)"");
+}
+
+/* The unavoidable semantic work for one ordinary literal run: find the run,
+   bound it by the input terminator, and answer its exact common prefix. */
+static fn scan_literal_floor()
+{
+        for (positive i = 0; i < SCAN_LITERAL_ROUNDS; i++)
+        {
+                positive run = string_span_without_set(
+                        (string_address)scan_literal_format, "% \t\n\r\v\f");
+                positive available = string_length_max(
+                        (string_address)scan_literal_input, run);
+                positive matched = memory_common_prefix(
+                        (address_any)scan_literal_format,
+                        (address_any)scan_literal_input, available);
+
+                scan_literal_sink += run + available + matched;
+        }
+}
+
+static fn scan_literal_subject()
+{
+        for (positive i = 0; i < SCAN_LITERAL_ROUNDS; i++)
+                scan_literal_sink += scan_literal_call(
+                        (string_address)scan_literal_input,
+                        (string_address)scan_literal_format);
+}
+
+static fn scan_literal_report(string_address name, bench_work work,
+                              positive units, string_address unit)
+{
+        bench_report(name, work, SCAN_LITERAL_TRIES,
+                     SCAN_LITERAL_ROUNDS * units, unit);
+}
+
+static bench_work scan_literal_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control") == 0)
+                return scan_literal_control;
+        if (string_compare(name, (string_address)"floor") == 0)
+                return scan_literal_floor;
+        if (string_compare(name, (string_address)"subject") == 0)
+                return scan_literal_subject;
+
+        return null;
+}
+
+b32 main(void)
+{
+        positive bytes = string_length((string_address)scan_literal_format);
+
+        memory_copy_apart(scan_literal_input,
+                          (address_any)scan_literal_format, bytes + 1);
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work =
+                        scan_literal_named(program_argument(1));
+
+                if (is_null(work))
+                        return 2;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "sscanf literal, best of %p (%p rounds, %p bytes)\n",
+                      (positive)SCAN_LITERAL_TRIES,
+                      (positive)SCAN_LITERAL_ROUNDS, bytes);
+        scan_literal_report((string_address)"empty call control",
+                            scan_literal_control, 1,
+                            (string_address)"call");
+        scan_literal_report((string_address)"semantic traffic floor",
+                            scan_literal_floor, bytes,
+                            (string_address)"byte");
+        scan_literal_report((string_address)"sscanf literal",
+                            scan_literal_subject, bytes,
+                            (string_address)"byte");
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_scan_literal */
+
+#ifdef BENCH_random
+/* random() draw cost against call/control and additive-ring floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define RANDOM_BENCH_ROUNDS (1u << 22)
+#define RANDOM_BENCH_TRIES 7
+#define RANDOM_BENCH_DEGREE 31
+
+static volatile positive random_bench_sink;
+static p32 random_bench_state[RANDOM_BENCH_DEGREE];
+static positive random_bench_front = 3;
+static positive random_bench_rear;
+
+static b32 (*volatile random_bench_call)() = random;
+
+static __attribute__((noinline, noclone)) b32 random_bench_empty()
+{
+        return 1;
+}
+
+static b32 (*volatile random_bench_control_call)() = random_bench_empty;
+
+static __attribute__((noinline, noclone)) b32 random_bench_floor_draw()
+{
+        p32 sum = random_bench_state[random_bench_front] +
+                  random_bench_state[random_bench_rear];
+
+        random_bench_state[random_bench_front] = sum;
+        random_bench_front++;
+        random_bench_rear++;
+
+        if (random_bench_front == RANDOM_BENCH_DEGREE)
+                random_bench_front = 0;
+        if (random_bench_rear == RANDOM_BENCH_DEGREE)
+                random_bench_rear = 0;
+
+        return (b32)(sum >> 1);
+}
+
+static b32 (*volatile random_bench_floor_call)() = random_bench_floor_draw;
+
+static fn random_bench_control()
+{
+        for (positive i = 0; i < RANDOM_BENCH_ROUNDS; i++)
+                random_bench_sink += (positive)random_bench_control_call();
+}
+
+static fn random_bench_floor()
+{
+        for (positive i = 0; i < RANDOM_BENCH_ROUNDS; i++)
+                random_bench_sink += (positive)random_bench_floor_call();
+}
+
+static fn random_bench_subject()
+{
+        for (positive i = 0; i < RANDOM_BENCH_ROUNDS; i++)
+                random_bench_sink += (positive)random_bench_call();
+}
+
+static fn random_bench_report(string_address name, bench_work work)
+{
+        bench_report(name, work, RANDOM_BENCH_TRIES,
+                     RANDOM_BENCH_ROUNDS, (string_address)"draw");
+}
+
+static bench_work random_bench_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control") == 0)
+                return random_bench_control;
+        if (string_compare(name, (string_address)"floor") == 0)
+                return random_bench_floor;
+        if (string_compare(name, (string_address)"subject") == 0)
+                return random_bench_subject;
+
+        return null;
+}
+
+b32 main(void)
+{
+        for (positive i = 0; i < RANDOM_BENCH_DEGREE; i++)
+                random_bench_state[i] = (p32)(i * 1103515245u + 12345u);
+
+        srandom(1);
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work = random_bench_named(program_argument(1));
+
+                if (is_null(work))
+                        return 2;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "random draw, best of %p (%p rounds)\n",
+                      (positive)RANDOM_BENCH_TRIES,
+                      (positive)RANDOM_BENCH_ROUNDS);
+        random_bench_report((string_address)"empty ABI control",
+                            random_bench_control);
+        random_bench_report((string_address)"additive ring floor",
+                            random_bench_floor);
+        random_bench_report((string_address)"random", random_bench_subject);
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_random */
+
+#ifdef BENCH_allocator
+/* malloc/free class fast path against its call and free-list traffic floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define ALLOCATOR_BENCH_ROUNDS (1u << 22)
+#define ALLOCATOR_BENCH_TRIES 7
+#define ALLOCATOR_BENCH_SIZE 64
+
+typedef address_any (*allocator_bench_take_call)(positive);
+typedef fn (*allocator_bench_give_call)(address_any);
+
+static volatile positive allocator_bench_sink;
+
+/* One header word and a payload, aligned as a real class block is. */
+static positive allocator_bench_floor_storage[12]
+        __attribute__((aligned(ALLOCATOR_ALIGNMENT)));
+static address_any allocator_bench_floor_head;
+
+static __attribute__((noinline, noclone)) address_any
+allocator_bench_empty_take(positive bytes)
+{
+        (void)bytes;
+        return (address_any)(allocator_bench_floor_storage + 2);
+}
+
+static __attribute__((noinline, noclone)) fn
+allocator_bench_empty_give(address_any block)
+{
+        (void)block;
+}
+
+static __attribute__((noinline, noclone)) address_any
+allocator_bench_floor_take(positive bytes)
+{
+        (void)bytes;
+        address_any block = allocator_bench_floor_head;
+
+        allocator_bench_floor_head = address_to allocator_link(block);
+        address_to allocator_tag(block) = 4;
+        return block;
+}
+
+static __attribute__((noinline, noclone)) fn
+allocator_bench_floor_give(address_any block)
+{
+        address_to allocator_tag(block) = ALLOCATOR_FREED + 4;
+        address_to allocator_link(block) = allocator_bench_floor_head;
+        allocator_bench_floor_head = block;
+}
+
+static allocator_bench_take_call volatile allocator_bench_empty_take_call =
+        allocator_bench_empty_take;
+static allocator_bench_give_call volatile allocator_bench_empty_give_call =
+        allocator_bench_empty_give;
+static allocator_bench_take_call volatile allocator_bench_floor_take_call =
+        allocator_bench_floor_take;
+static allocator_bench_give_call volatile allocator_bench_floor_give_call =
+        allocator_bench_floor_give;
+static allocator_bench_take_call volatile allocator_bench_subject_take_call =
+        malloc;
+static allocator_bench_give_call volatile allocator_bench_subject_give_call =
+        free;
+
+static fn allocator_bench_control()
+{
+        for (positive i = 0; i < ALLOCATOR_BENCH_ROUNDS; i++)
+        {
+                address_any block =
+                        allocator_bench_empty_take_call(ALLOCATOR_BENCH_SIZE);
+
+                allocator_bench_sink += (positive)block;
+                allocator_bench_empty_give_call(block);
+        }
+}
+
+static fn allocator_bench_floor()
+{
+        for (positive i = 0; i < ALLOCATOR_BENCH_ROUNDS; i++)
+        {
+                address_any block =
+                        allocator_bench_floor_take_call(ALLOCATOR_BENCH_SIZE);
+
+                allocator_bench_sink += (positive)block;
+                allocator_bench_floor_give_call(block);
+        }
+}
+
+static fn allocator_bench_subject()
+{
+        for (positive i = 0; i < ALLOCATOR_BENCH_ROUNDS; i++)
+        {
+                address_any block =
+                        allocator_bench_subject_take_call(ALLOCATOR_BENCH_SIZE);
+
+                allocator_bench_sink += (positive)block;
+                allocator_bench_subject_give_call(block);
+        }
+}
+
+static fn allocator_bench_report(string_address name, bench_work work)
+{
+        bench_report(name, work, ALLOCATOR_BENCH_TRIES,
+                     ALLOCATOR_BENCH_ROUNDS, (string_address)"pair");
+}
+
+static bench_work allocator_bench_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control") == 0)
+                return allocator_bench_control;
+        if (string_compare(name, (string_address)"floor") == 0)
+                return allocator_bench_floor;
+        if (string_compare(name, (string_address)"subject") == 0)
+                return allocator_bench_subject;
+
+        return null;
+}
+
+b32 main(void)
+{
+        address_any floor_block =
+                (address_any)(allocator_bench_floor_storage + 2);
+
+        allocator_bench_floor_head = floor_block;
+        address_to allocator_link(floor_block) = null;
+        address_to allocator_tag(floor_block) = ALLOCATOR_FREED + 4;
+
+        /* Warm the real class so the measured subject never reaches mmap. */
+        address_any warm = malloc(ALLOCATOR_BENCH_SIZE);
+        free(warm);
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work =
+                        allocator_bench_named(program_argument(1));
+
+                if (is_null(work))
+                        return 2;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "malloc/free class fast path, best of %p (%p pairs)\n",
+                      (positive)ALLOCATOR_BENCH_TRIES,
+                      (positive)ALLOCATOR_BENCH_ROUNDS);
+        allocator_bench_report((string_address)"empty ABI control",
+                               allocator_bench_control);
+        allocator_bench_report((string_address)"free-list traffic floor",
+                               allocator_bench_floor);
+        allocator_bench_report((string_address)"malloc + free",
+                               allocator_bench_subject);
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_allocator */
+
+#ifdef BENCH_reserve
+/* Run a fresh process per sample: ru_maxrss is a lifetime high-water mark.
+   Usage: reserve [MiB, 1..128] [sparse]. Only growth is timed; allocation and
+   initial touching precede it. Virtual capacity is not counted as RSS. */
+#include "../src/compiler_memory.c"
+
+b32 main(void)
+{
+        positive mib = 64;
+        if (program_argument_count() > 1)
+                mib = string_to_number_unsigned(program_argument(1), null, 10);
+        if (!mib || mib > 128)
+                return 2;
+        bool sparse = program_argument_count() > 2 &&
+                !string_compare(program_argument(2), (string_address)"sparse");
+        positive have = mib * 1024 * 1024, used = have;
+        address_any held = memory(have);
+        if (!held || (positive)held >= (positive)-4095)
+                return 1;
+        if (sparse)
+                system_call_3(syscall(madvise), (positive)held, have, 15);
+        if (!sparse)
+                memory_fill(held, 0x5a, have);
+        ((p8 address_to)held)[0] = 0x3e;
+        ((p8 address_to)held)[used - 1] = 0x7a;
+
+        p64 started = get_cpu_time();
+        bool grown = memory_reserve(address_of held, address_of have,
+                                    used, used + 1, 1, 64);
+        p64 ticks = get_cpu_time() - started;
+        positive usage[18] = {0};
+        bipolar measured = system_call_2(syscall(getrusage), 0, (positive)usage);
+        bool valid = grown && ((p8 address_to)held)[0] == 0x3e &&
+                ((p8 address_to)held)[used - 1] == 0x7a;
+        string_format(log,
+                "reserve mib=%p sparse=%p ticks=%p peak_rss_kib=%p minor_faults=%p valid=%p\n",
+                mib, (positive)sparse, ticks, usage[4], usage[8], (positive)valid);
+        memory_release(address_of held, address_of have, address_of used, 1);
+        return valid && measured == 0 ? 0 : 1;
+}
+#endif /* BENCH_reserve */
+
+#ifdef BENCH_storage_read
+/* Real production reader, real warm memfd reads. Only reads are timed;
+   file creation, initial touching, formatting and validation are outside.
+   Usage: storage-read [bytes 1..65536] [iterations 1..1000000]. */
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
+
+b32 main(void)
+{
+        positive size = 4096, loops = 262144;
+        if (program_argument_count() > 1)
+                size = string_to_number_unsigned(program_argument(1), null, 10);
+        if (program_argument_count() > 2)
+                loops = string_to_number_unsigned(program_argument(2), null, 10);
+        if (!size || size > 65536 || !loops || loops > 1000000)
+                return 2;
+        bipolar handle = system_call_2(syscall(memfd_create),
+                                        (positive)"storage-read-benchmark", 0);
+        if (handle < 0)
+                return 1;
+        p8 bytes[65536];
+        memory_fill(bytes, 0x5a, size);
+        if (system_write_all((positive)handle, bytes, size) != size ||
+            storage_read(handle, bytes, size, 0) != size)
+                return 1;
+
+        positive total = 0;
+        p64 start = get_cpu_time();
+        for (positive i = 0; i < loops; i++)
+                total += storage_read(handle, bytes, size, 0);
+        p64 ticks = get_cpu_time() - start;
+        bool valid = total == loops * size &&
+                     bytes[0] == 0x5a && bytes[size - 1] == 0x5a;
+        system_close((positive)handle);
+        string_format(log,
+                      "storage-read bytes=%p loops=%p ticks=%p valid=%p\n",
+                      size, loops, ticks, (positive)valid);
+        return valid ? 0 : 1;
+}
+#endif /* BENCH_storage_read */
+
+#ifdef BENCH_compare_max
+/* Dynamic-bound string_compare_max against semantic and traffic floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define COMPARE_MAX_ROUNDS (1u << 22)
+#define COMPARE_MAX_TRIES 7
+#define COMPARE_MAX_SHORT 23
+#define COMPARE_MAX_LONG 256
+
+typedef b32 (*compare_max_call)(string_address, string_address, positive);
+typedef b32 (*compare_max_traffic)(const address_any, const address_any,
+                                   positive);
+
+static volatile bipolar compare_max_sink;
+static p8 compare_max_left[COMPARE_MAX_LONG + 1] __attribute__((aligned(64)));
+static p8 compare_max_right[COMPARE_MAX_LONG + 1] __attribute__((aligned(64)));
+
+static __attribute__((noinline, noclone)) b32
+compare_max_empty(string_address left, string_address right, positive size)
+{
+        (void)left;
+        (void)right;
+        (void)size;
+        return 1;
+}
+
+/* Exact minimum semantics for the mismatch-at-byte-zero corpus. */
+static __attribute__((noinline, noclone)) b32
+compare_max_first_floor(string_address left, string_address right, positive size)
+{
+        if (!size)
+                return 0;
+        return (b32)left[0] - (b32)right[0];
+}
+
+static compare_max_call volatile compare_max_empty_call = compare_max_empty;
+static compare_max_call volatile compare_max_first_floor_call =
+        compare_max_first_floor;
+static compare_max_call volatile compare_max_subject_call = string_compare_max;
+static compare_max_traffic volatile compare_max_traffic_call = memory_compare;
+
+static fn compare_max_control_first()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_empty_call(
+                        compare_max_left, compare_max_right, COMPARE_MAX_SHORT);
+}
+
+static fn compare_max_floor_first()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_first_floor_call(
+                        compare_max_left, compare_max_right, COMPARE_MAX_SHORT);
+}
+
+static fn compare_max_subject_first()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_subject_call(
+                        compare_max_left, compare_max_right, COMPARE_MAX_SHORT);
+}
+
+static fn compare_max_subject_equal()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_subject_call(
+                        compare_max_left, compare_max_left, COMPARE_MAX_LONG);
+}
+
+static fn compare_max_subject_short_equal()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_subject_call(
+                        compare_max_left, compare_max_left, COMPARE_MAX_SHORT);
+}
+
+static fn compare_max_floor_short_equal()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_traffic_call(
+                        compare_max_left, compare_max_left, COMPARE_MAX_SHORT);
+}
+
+/*
+        No byte is zero inside this corpus, so memory_compare performs the
+        unavoidable two-stream read and equality decision. It is a traffic
+        proxy lower bound, not a full string semantic implementation.
+*/
+static fn compare_max_floor_equal()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_traffic_call(
+                        compare_max_left, compare_max_left, COMPARE_MAX_LONG);
+}
+
+static fn compare_max_subject_late()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_subject_call(
+                        compare_max_left, compare_max_right, COMPARE_MAX_LONG);
+}
+
+static fn compare_max_floor_late()
+{
+        for (positive i = 0; i < COMPARE_MAX_ROUNDS; i++)
+                compare_max_sink += compare_max_traffic_call(
+                        compare_max_left, compare_max_right, COMPARE_MAX_LONG);
+}
+
+static fn compare_max_report(string_address name, bench_work work)
+{
+        bench_report(name, work, COMPARE_MAX_TRIES,
+                     COMPARE_MAX_ROUNDS, (string_address)"call");
+}
+
+static bench_work compare_max_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control-first") == 0)
+                return compare_max_control_first;
+        if (string_compare(name, (string_address)"floor-first") == 0)
+                return compare_max_floor_first;
+        if (string_compare(name, (string_address)"subject-first") == 0)
+                return compare_max_subject_first;
+        if (string_compare(name, (string_address)"floor-equal") == 0)
+                return compare_max_floor_equal;
+        if (string_compare(name, (string_address)"subject-equal") == 0)
+                return compare_max_subject_equal;
+        if (string_compare(name, (string_address)"floor-short-equal") == 0)
+                return compare_max_floor_short_equal;
+        if (string_compare(name, (string_address)"subject-short-equal") == 0)
+                return compare_max_subject_short_equal;
+        if (string_compare(name, (string_address)"floor-late") == 0)
+                return compare_max_floor_late;
+        if (string_compare(name, (string_address)"subject-late") == 0)
+                return compare_max_subject_late;
+        return null;
+}
+
+b32 main(void)
+{
+        for (positive i = 0; i < COMPARE_MAX_LONG; i++)
+                compare_max_left[i] = compare_max_right[i] =
+                        (p8)('a' + (i * 7) % 23);
+
+        compare_max_left[COMPARE_MAX_LONG] = end;
+        compare_max_right[COMPARE_MAX_LONG] = end;
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work = compare_max_named(program_argument(1));
+                if (is_null(work))
+                        return 2;
+
+                /* First and late mismatch use the same buffers, selected here. */
+                if (string_compare(program_argument(1),
+                                   (string_address)"subject-first") == 0 ||
+                    string_compare(program_argument(1),
+                                   (string_address)"floor-first") == 0)
+                        compare_max_right[0]++;
+                else if (string_compare(program_argument(1),
+                                        (string_address)"subject-late") == 0 ||
+                         string_compare(program_argument(1),
+                                        (string_address)"floor-late") == 0)
+                        compare_max_right[COMPARE_MAX_LONG - 1]++;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "string_compare_max dynamic bound, best of %p (%p calls)\n",
+                      (positive)COMPARE_MAX_TRIES,
+                      (positive)COMPARE_MAX_ROUNDS);
+
+        compare_max_right[0]++;
+        compare_max_report((string_address)"empty ABI control",
+                           compare_max_control_first);
+        compare_max_report((string_address)"first-byte semantic floor",
+                           compare_max_floor_first);
+        compare_max_report((string_address)"first-byte mismatch",
+                           compare_max_subject_first);
+        compare_max_right[0]--;
+
+        compare_max_report((string_address)"short equal traffic proxy",
+                           compare_max_floor_short_equal);
+        compare_max_report((string_address)"equal 23 bytes",
+                           compare_max_subject_short_equal);
+
+        compare_max_report((string_address)"equal traffic proxy",
+                           compare_max_floor_equal);
+        compare_max_report((string_address)"equal 256 bytes",
+                           compare_max_subject_equal);
+
+        compare_max_right[COMPARE_MAX_LONG - 1]++;
+        compare_max_report((string_address)"late traffic proxy",
+                           compare_max_floor_late);
+        compare_max_report((string_address)"late mismatch",
+                           compare_max_subject_late);
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_compare_max */
+
+#ifdef BENCH_string_copy
+/* string_copy over caller-shaped sizes, against semantic and traffic proxies. */
+#include "../src/compiler_memory.c"
+
+#define COPY_BENCH_ROOM ((1u << 20) + 64)
+#define COPY_BENCH_BYTES (1u << 26)
+#define COPY_BENCH_TRIES 7
+
+typedef fn (*copy_bench_work)(positive, positive);
+typedef string_address (*copy_bench_call)(string_address, string_address);
+typedef address_any (*copy_bench_traffic_call)(address_any, address_any,
+                                               positive);
+
+static volatile positive copy_bench_sink;
+static p8 copy_bench_source[COPY_BENCH_ROOM] __attribute__((aligned(64)));
+static p8 copy_bench_output[COPY_BENCH_ROOM] __attribute__((aligned(64)));
+
+static __attribute__((noinline, noclone)) string_address
+copy_bench_empty(string_address destination, string_address source)
+{
+        (void)source;
+        return destination;
+}
+
+/* Exact scalar semantics; a reference candidate, not a performance floor. */
+static __attribute__((noinline, noclone)) string_address
+copy_bench_scalar(string_address destination, string_address source)
+{
+        string_address answer = destination;
+        p8 byte;
+
+        do
+        {
+                byte = address_to source++;
+                address_to destination++ = byte;
+        }
+        while (byte);
+
+        return answer;
+}
+
+static copy_bench_call volatile copy_bench_empty_call = copy_bench_empty;
+static copy_bench_call volatile copy_bench_scalar_call = copy_bench_scalar;
+static copy_bench_call volatile copy_bench_subject_call = string_copy;
+static copy_bench_traffic_call volatile copy_bench_traffic = memory_copy_apart;
+
+static fn copy_bench_control(positive size, positive rounds)
+{
+        (void)size;
+        for (positive i = 0; i < rounds; i++)
+                copy_bench_sink += (positive)copy_bench_empty_call(
+                        copy_bench_output, copy_bench_source);
+}
+
+static fn copy_bench_floor(positive size, positive rounds)
+{
+        for (positive i = 0; i < rounds; i++)
+                copy_bench_sink += (positive)copy_bench_traffic(
+                        copy_bench_output, copy_bench_source, size);
+}
+
+static fn copy_bench_scalar_floor(positive size, positive rounds)
+{
+        (void)size;
+        for (positive i = 0; i < rounds; i++)
+                copy_bench_sink += (positive)copy_bench_scalar_call(
+                        copy_bench_output, copy_bench_source);
+}
+
+static fn copy_bench_subject(positive size, positive rounds)
+{
+        (void)size;
+        for (positive i = 0; i < rounds; i++)
+                copy_bench_sink += (positive)copy_bench_subject_call(
+                        copy_bench_output, copy_bench_source);
+}
+
+static p64 copy_bench_best(copy_bench_work work, positive size,
+                           positive rounds)
+{
+        p64 best = 0;
+
+        for (positive which = 0; which < COPY_BENCH_TRIES; which++)
+        {
+                p64 started = get_cpu_time();
+                p64 elapsed;
+
+                work(size, rounds);
+                elapsed = get_cpu_time() - started;
+
+                if (!best || elapsed < best)
+                        best = elapsed;
+        }
+
+        return best;
+}
+
+static fn copy_bench_report(string_address name, copy_bench_work work,
+                            positive size, positive rounds)
+{
+        p64 ticks = copy_bench_best(work, size, rounds);
+        positive scaled = (positive)(ticks * 100 / rounds);
+        p8 fraction[3];
+
+        positive_into_padded(fraction, scaled % 100, 2, '0');
+        fraction[2] = end;
+        string_format(log, "    %s  %p.%s ticks/call\n", name, scaled / 100,
+                      fraction);
+}
+
+static copy_bench_work copy_bench_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control") == 0)
+                return copy_bench_control;
+        if (string_compare(name, (string_address)"floor") == 0)
+                return copy_bench_floor;
+        if (string_compare(name, (string_address)"scalar") == 0)
+                return copy_bench_scalar_floor;
+        if (string_compare(name, (string_address)"subject") == 0)
+                return copy_bench_subject;
+        return null;
+}
+
+b32 main(void)
+{
+        static const positive sizes[] = {5, 23, 128, 4096, 1u << 20};
+
+        for (positive i = 0; i < COPY_BENCH_ROOM - 1; i++)
+                copy_bench_source[i] = (p8)('a' + (i * 7) % 23);
+        copy_bench_source[COPY_BENCH_ROOM - 1] = end;
+
+        if (program_argument_count() > 2)
+        {
+                copy_bench_work work = copy_bench_named(program_argument(1));
+                positive size = string_to_positive(program_argument(2));
+
+                if (is_null(work) || !size || size >= COPY_BENCH_ROOM)
+                        return 2;
+
+                copy_bench_source[size - 1] = end;
+                positive rounds = COPY_BENCH_BYTES / size;
+                if (!rounds)
+                        rounds = 1;
+                work(size, rounds);
+                return 0;
+        }
+
+        string_format(log, "string_copy caller shapes, best of %p (~%p bytes/row)\n",
+                      (positive)COPY_BENCH_TRIES,
+                      (positive)COPY_BENCH_BYTES);
+
+        for (positive which = 0; which < sizeof(sizes) / sizeof(sizes[0]); which++)
+        {
+                positive size = sizes[which];
+                positive rounds = COPY_BENCH_BYTES / size;
+
+                copy_bench_source[size - 1] = end;
+                string_format(log, "  %p bytes (%p calls)\n", size, rounds);
+                copy_bench_report((string_address)"empty ABI control",
+                                  copy_bench_control, size, rounds);
+                copy_bench_report((string_address)"copy-only traffic proxy",
+                                  copy_bench_floor, size, rounds);
+                copy_bench_report((string_address)"scalar semantic reference",
+                                  copy_bench_scalar_floor, size, rounds);
+                copy_bench_report((string_address)"string_copy",
+                                  copy_bench_subject, size, rounds);
+                copy_bench_source[size - 1] = 'q';
+        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_string_copy */
+
+#ifdef BENCH_stream_get
+/* Buffered stream_get_byte hits against ABI and state-machine floors. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define STREAM_GET_ROUNDS (1u << 24)
+#define STREAM_GET_BUFFER 4096
+#define STREAM_GET_TRIES 7
+
+typedef b32 (*stream_get_call)(stream address_to);
+
+static volatile positive stream_get_sink;
+static p8 stream_get_bytes[STREAM_GET_BUFFER];
+static stream stream_get_handle;
+
+static __attribute__((noinline, noclone)) b32
+stream_get_empty(stream address_to handle)
+{
+        (void)handle;
+        return 1;
+}
+
+/* Minimum buffered-hit state transition, with the same EOF answer. */
+static __attribute__((noinline, noclone)) b32
+stream_get_floor(stream address_to handle)
+{
+        if (handle->read_head == handle->read_tail)
+                return EOF;
+        return (b32)handle->buffer[handle->read_head++];
+}
+
+static stream_get_call volatile stream_get_empty_call = stream_get_empty;
+static stream_get_call volatile stream_get_floor_call = stream_get_floor;
+static stream_get_call volatile stream_get_subject_call = stream_get_byte;
+
+static fn stream_get_reset_if_needed()
+{
+        if (stream_get_handle.read_head == stream_get_handle.read_tail)
+                stream_get_handle.read_head = 0;
+}
+
+static fn stream_get_control()
+{
+        for (positive i = 0; i < STREAM_GET_ROUNDS; i++)
+        {
+                stream_get_reset_if_needed();
+                stream_get_sink += (positive)stream_get_empty_call(
+                        address_of stream_get_handle);
+        }
+}
+
+static fn stream_get_floor_work()
+{
+        for (positive i = 0; i < STREAM_GET_ROUNDS; i++)
+        {
+                stream_get_reset_if_needed();
+                stream_get_sink += (positive)stream_get_floor_call(
+                        address_of stream_get_handle);
+        }
+}
+
+static fn stream_get_subject()
+{
+        for (positive i = 0; i < STREAM_GET_ROUNDS; i++)
+        {
+                stream_get_reset_if_needed();
+                stream_get_sink += (positive)stream_get_subject_call(
+                        address_of stream_get_handle);
+        }
+}
+
+//      Every try begins at the front of the resident buffer, and the
+//      rewind is not part of what the clock sees.
+static fn stream_get_rewind()
+{
+        stream_get_handle.read_head = 0;
+}
+
+static fn stream_get_report(string_address name, bench_work work)
+{
+        bench_report(name, work, STREAM_GET_TRIES,
+                     STREAM_GET_ROUNDS, (string_address)"byte");
+}
+
+static bench_work stream_get_named(string_address name)
+{
+        if (string_compare(name, (string_address)"control") == 0)
+                return stream_get_control;
+        if (string_compare(name, (string_address)"floor") == 0)
+                return stream_get_floor_work;
+        if (string_compare(name, (string_address)"subject") == 0)
+                return stream_get_subject;
+        return null;
+}
+
+/* Resident fgets workloads: short destination buffers must not repeatedly
+   scan the unread suffix. No I/O or allocator is part of these timings. */
+static b32 stream_line_bench(void)
+{
+        static const positive rooms[] = {1, 2, 8, 64, 256, 4096};
+        static p8 output[STREAM_GET_BUFFER + 1];
+        for (positive spacing = 0; spacing <= 64; spacing += 8)
+        {
+                memory_fill(stream_get_bytes, 'x', sizeof(stream_get_bytes));
+                if (spacing)
+                        for (positive at = spacing - 1; at < STREAM_GET_BUFFER; at += spacing)
+                                stream_get_bytes[at] = '\n';
+                for (positive row = 0; row < array_count(rooms); row++)
+                {
+                        positive room = rooms[row], times[STREAM_GET_TRIES];
+                        positive rounds = (1u << 22) / room;
+                        if (rounds < 4096) rounds = 4096;
+                        for (positive trial = 0; trial < STREAM_GET_TRIES; trial++)
+                        {
+                                stream_get_handle.read_head = 0;
+                                positive start = get_cpu_time();
+                                for (positive at = 0; at < rounds; at++)
+                                {
+                                        if (STREAM_GET_BUFFER - stream_get_handle.read_head < room)
+                                                stream_get_handle.read_head = 0;
+                                        if (!stream_get_line(output, (b32)room + 1,
+                                                             &stream_get_handle)) return 1;
+                                        stream_get_sink += output[0];
+                                }
+                                times[trial] = get_cpu_time() - start;
+                        }
+                        order(times, STREAM_GET_TRIES);
+                        string_format(log, "line spacing=%p room=%p ticks=%p rounds=%p\n",
+                                      spacing, room, times[STREAM_GET_TRIES / 2], rounds);
+                }
+        }
+        log_flush();
+        return 0;
+}
+
+b32 main(void)
+{
+        for (positive i = 0; i < STREAM_GET_BUFFER; i++)
+                stream_get_bytes[i] = (p8)(i * 13 + 1);
+
+        stream_get_handle.descriptor = -1;
+        stream_get_handle.flags = STREAM_READABLE | STREAM_MODE_KNOWN;
+        stream_get_handle.buffer = stream_get_bytes;
+        stream_get_handle.buffer_size = STREAM_GET_BUFFER;
+        stream_get_handle.read_head = 0;
+        stream_get_handle.read_tail = STREAM_GET_BUFFER;
+        bench_prepare = stream_get_rewind;
+
+        if (program_argument_count() > 1)
+        {
+                if (string_equals(program_argument(1), "line"))
+                        return stream_line_bench();
+                bench_work work = stream_get_named(program_argument(1));
+                if (is_null(work))
+                        return 2;
+                work();
+                return 0;
+        }
+
+        string_format(log, "stream_get_byte buffered hit, best of %p (%p bytes)\n",
+                      (positive)STREAM_GET_TRIES,
+                      (positive)STREAM_GET_ROUNDS);
+        stream_get_report((string_address)"empty ABI control", stream_get_control);
+        stream_get_report((string_address)"buffered state floor",
+                          stream_get_floor_work);
+        stream_get_report((string_address)"stream_get_byte", stream_get_subject);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_stream_get */
+
+#ifdef BENCH_stream_write
+/* Resident buffered writes against their unavoidable copy/state floor. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define STREAM_WRITE_ROUNDS (1u << 22)
+#define STREAM_WRITE_BUFFER 4096
+#define STREAM_WRITE_TRIES 7
+#define STREAM_WRITE_LENGTH 23
+
+typedef sized (*stream_write_call)(address_any, sized, sized,
+                                   stream address_to);
+typedef positive (*stream_put_bytes_call)(stream address_to, address_any,
+                                          positive);
+
+static volatile positive stream_write_sink;
+static p8 stream_write_input[STREAM_WRITE_LENGTH];
+static p8 stream_write_buffer[STREAM_WRITE_BUFFER];
+static stream stream_write_handle;
+
+static stream_write_call volatile stream_write_subject_call = stream_write;
+static stream_put_bytes_call volatile stream_put_bytes_subject_call =
+        stream_put_bytes;
+
+static fn stream_write_reset()
+{
+        /* Keep every trial on the resident buffered path, with no getpid. */
+        stream_write_handle.write_used = 1;
+}
+
+/* Minimum resident transition: the bytes move once and become staged. */
+static fn stream_write_floor_work()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                memory_copy(stream_write_handle.buffer +
+                                    stream_write_handle.write_used,
+                            stream_write_input, STREAM_WRITE_LENGTH);
+                stream_write_handle.write_used += STREAM_WRITE_LENGTH;
+                stream_write_sink += STREAM_WRITE_LENGTH;
+        }
+}
+
+static fn stream_put_bytes_subject()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                stream_write_sink += stream_put_bytes_subject_call(
+                        address_of stream_write_handle, stream_write_input,
+                        STREAM_WRITE_LENGTH);
+        }
+}
+
+static fn stream_write_subject_one()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                stream_write_sink += (positive)stream_write_subject_call(
+                        stream_write_input, 1, STREAM_WRITE_LENGTH,
+                        address_of stream_write_handle);
+        }
+}
+
+/* A non-unit item shape catches collateral cost in the general path. */
+static fn stream_write_subject_items()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                stream_write_sink += (positive)stream_write_subject_call(
+                        stream_write_input, 8, 2,
+                        address_of stream_write_handle);
+        }
+}
+
+/* Line buffering must retain its newline scan and general flush decision. */
+static fn stream_put_bytes_line()
+{
+        for (positive i = 0; i < STREAM_WRITE_ROUNDS; i++)
+        {
+                stream_write_reset();
+                stream_write_handle.flags |= STREAM_LINE_BUFFERED;
+                stream_write_sink += stream_put_bytes_subject_call(
+                        address_of stream_write_handle, stream_write_input,
+                        STREAM_WRITE_LENGTH);
+                stream_write_handle.flags &= ~STREAM_LINE_BUFFERED;
+        }
+}
+
+static fn stream_write_report(string_address name, bench_work work)
+{
+        bench_report(name, work, STREAM_WRITE_TRIES,
+                     STREAM_WRITE_ROUNDS, (string_address)"call");
+}
+
+static bench_work stream_write_named(string_address name)
+{
+        if (string_compare(name, (string_address)"floor-resident") == 0)
+                return stream_write_floor_work;
+        if (string_compare(name, (string_address)"subject-put") == 0)
+                return stream_put_bytes_subject;
+        if (string_compare(name, (string_address)"subject-one") == 0)
+                return stream_write_subject_one;
+        if (string_compare(name, (string_address)"subject-items") == 0)
+                return stream_write_subject_items;
+        if (string_compare(name, (string_address)"subject-line") == 0)
+                return stream_put_bytes_line;
+        return null;
+}
+
+b32 main(void)
+{
+        for (positive i = 0; i < STREAM_WRITE_LENGTH; i++)
+                stream_write_input[i] = (p8)(i * 13 + 1);
+
+        stream_write_handle.descriptor = -1;
+        stream_write_handle.flags = STREAM_WRITABLE | STREAM_MODE_KNOWN;
+        stream_write_handle.buffer = stream_write_buffer;
+        stream_write_handle.buffer_size = STREAM_WRITE_BUFFER;
+        stream_write_handle.write_used = 1;
+
+        if (program_argument_count() > 1)
+        {
+                bench_work work =
+                        stream_write_named(program_argument(1));
+                if (is_null(work))
+                        return 2;
+                work();
+                return 0;
+        }
+
+        string_format(log,
+                      "stream_write buffered resident path, best of %p "
+                      "(%p calls)\n",
+                      (positive)STREAM_WRITE_TRIES,
+                      (positive)STREAM_WRITE_ROUNDS);
+        stream_write_report(
+                (string_address)"resident copy/state floor (state-specific)",
+                stream_write_floor_work);
+        stream_write_report((string_address)"stream_put_bytes",
+                            stream_put_bytes_subject);
+        stream_write_report((string_address)"stream_write size=1",
+                            stream_write_subject_one);
+        stream_write_report((string_address)"stream_write size=8",
+                            stream_write_subject_items);
+        stream_write_report((string_address)"line-buffered no newline",
+                            stream_put_bytes_line);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_stream_write */
+
+#ifdef BENCH_format_bounds
+/*
+        Bounded printf padding: retained bytes versus requested bytes.
+
+        The wide case is deliberately a count-only snprintf.  Its answer is
+        one hundred million, but its destination has no resident byte to
+        fill; work proportional to the field width is therefore formatter
+        overhead rather than useful output.  The ordinary mixed-format row
+        keeps the optimization honest against the short widths programs use.
+*/
+#include "../src/compiler_memory.c"
+
+#define FORMAT_BOUNDS_TRIALS 9
+#define FORMAT_BOUNDS_NORMAL_ROUNDS (1u << 17)
+
+static volatile bipolar format_bounds_sink;
+static p8 format_bounds_room[64];
+
+static __attribute__((noinline, noclone)) bipolar format_bounds_normal(
+    positive value)
+{
+        return snprintf(format_bounds_room, sizeof(format_bounds_room),
+                        (string_address) "%08d:%-12s:%6.3f", (b32)value,
+                        (string_address) "moon", (decimal)1.25);
+}
+
+static p64 format_bounds_wide_once(void)
+{
+        p64 began = get_cpu_time();
+
+        format_bounds_sink +=
+            snprintf(null, 0, (string_address) "%100000000d", 7);
+
+        return get_cpu_time() - began;
+}
+
+static p64 format_bounds_normal_once(void)
+{
+        p64 began = get_cpu_time();
+
+        for (positive round = 0; round < FORMAT_BOUNDS_NORMAL_ROUNDS; round++)
+                format_bounds_sink += format_bounds_normal(round);
+
+        return get_cpu_time() - began;
+}
+
+static p64 format_bounds_rounding_once(void)
+{
+        p64 began = get_cpu_time();
+        for (positive round = 0; round < FORMAT_BOUNDS_NORMAL_ROUNDS; round++)
+        {
+                p64 bits = 0x3ff0000000000000ull |
+                    ((round * 0x9e3779b97f4a7c15ull) & 0xfffffffffffffull);
+                decimal value = memory_cast(decimal, bits);
+                format_bounds_sink += snprintf(format_bounds_room,
+                    sizeof(format_bounds_room), "%.6f|%.6a|%.2f", value, value, value);
+        }
+        return get_cpu_time() - began;
+}
+
+static fn format_bounds_order(p64 address_to values)
+{
+        for (positive at = 1; at < FORMAT_BOUNDS_TRIALS; at++)
+        {
+                p64 value = values[at];
+                positive place = at;
+
+                while (place && values[place - 1] > value)
+                {
+                        values[place] = values[place - 1];
+                        place--;
+                }
+
+                values[place] = value;
+        }
+}
+
+b32 main(void)
+{
+        p64 wide[FORMAT_BOUNDS_TRIALS];
+        p64 normal[FORMAT_BOUNDS_TRIALS];
+        p64 rounding[FORMAT_BOUNDS_TRIALS];
+        bool run_wide = true;
+        bool run_normal = true;
+        bool run_rounding = true;
+
+        if (program_argument_count() > 1)
+        {
+                run_wide = !string_compare(program_argument(1),
+                                           (string_address) "wide");
+                run_normal = !string_compare(program_argument(1),
+                                             (string_address) "normal");
+                run_rounding = !string_compare(program_argument(1),
+                                               (string_address) "rounding");
+
+                if (!run_wide && !run_normal && !run_rounding)
+                        return 2;
+        }
+
+        for (positive trial = 0; trial < FORMAT_BOUNDS_TRIALS; trial++)
+        {
+                if (run_wide)
+                        wide[trial] = format_bounds_wide_once();
+                if (run_normal)
+                        normal[trial] = format_bounds_normal_once();
+                if (run_rounding)
+                        rounding[trial] = format_bounds_rounding_once();
+        }
+
+        if (run_wide)
+        {
+                format_bounds_order(wide);
+                string_format(
+                    log,
+                    "  count-only width 100000000  %p ticks/call median of %p\n",
+                    wide[FORMAT_BOUNDS_TRIALS / 2], FORMAT_BOUNDS_TRIALS);
+        }
+
+        if (run_normal)
+        {
+                format_bounds_order(normal);
+                string_format(
+                    log,
+                    "  ordinary mixed format      %p ticks/%p calls median of %p\n",
+                    normal[FORMAT_BOUNDS_TRIALS / 2],
+                    FORMAT_BOUNDS_NORMAL_ROUNDS, FORMAT_BOUNDS_TRIALS);
+        }
+
+        if (run_rounding)
+        {
+                format_bounds_order(rounding);
+                string_format(log, "  decimal/hex sticky rounding %p ticks/%p calls median of %p\n",
+                    rounding[FORMAT_BOUNDS_TRIALS / 2], FORMAT_BOUNDS_NORMAL_ROUNDS,
+                    FORMAT_BOUNDS_TRIALS);
+        }
+
+        string_format(log, "  retained sink              %b\n",
+                      (b32)format_bounds_sink);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_format_bounds */
+
+#ifdef BENCH_startup
+/* Runtime startup components: CPU selection, identity, and stack publication. */
+#include "../src/compiler_memory.c"
+#define SHARED_bench_measure
+#include "checks.c"
+#undef SHARED_bench_measure
+
+#define STARTUP_ROUNDS (1u << 16)
+#define STARTUP_TRIES 7
+
+typedef fn (*startup_void_call)(void);
+typedef positive (*startup_identity_call)(void);
+typedef string_address address_to (*startup_environment_call)(void);
+
+static volatile positive startup_sink;
+static startup_void_call volatile startup_cpu_call = moonwater_cpu_detect;
+static startup_void_call volatile startup_begin_call = stdlib_program_starting;
+static startup_identity_call volatile startup_identity =
+        stdlib_process_identity;
+static startup_identity_call volatile startup_initial_identity =
+        program_initial_identity;
+static startup_environment_call volatile startup_environment =
+        program_environment_list;
+
+/* Required x86 serialization/instruction traffic, without policy branches. */
+static __attribute__((noinline, noclone)) fn startup_cpu_floor_call(void)
+{
+#if X64
+        __asm__ volatile(
+                "push %%rbx\n\t"
+                "mov $1, %%eax\n\t"
+                "xor %%ecx, %%ecx\n\t"
+                "cpuid\n\t"
+                "bt $27, %%ecx\n\t"
+                "jnc 1f\n\t"
+                "xor %%ecx, %%ecx\n\t"
+                "xgetbv\n\t"
+                "mov $7, %%eax\n\t"
+                "xor %%ecx, %%ecx\n\t"
+                "cpuid\n\t"
+                "1:\n\t"
+                "pop %%rbx"
+                :
+                :
+                : "rax", "rcx", "rdx", "cc", "memory");
+#endif
+}
+
+static startup_void_call volatile startup_cpu_floor = startup_cpu_floor_call;
+
+static fn startup_cpu_floor_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+                startup_cpu_floor();
+}
+
+static fn startup_cpu_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+        {
+                startup_cpu_call();
+                startup_sink += cpu_has_avx2 + cpu_has_avx512;
+        }
+}
+
+static fn startup_identity_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+                startup_sink += startup_identity();
+}
+
+static fn startup_initial_identity_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+                startup_sink += startup_initial_identity();
+}
+
+/* Exact environment half of stdlib_program_starting, without the PID trap. */
+static fn startup_environment_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+        {
+                environ = startup_environment();
+                startup_sink += (positive)environ;
+        }
+}
+
+static fn startup_begin_work()
+{
+        for (positive i = 0; i < STARTUP_ROUNDS; i++)
+        {
+                startup_begin_call();
+                startup_sink += (positive)environ;
+        }
+}
+
+static fn startup_report(string_address name, bench_work work)
+{
+        bench_report(name, work, STARTUP_TRIES,
+                     STARTUP_ROUNDS, (string_address)"call");
+}
+
+static bench_work startup_named(string_address name)
+{
+        if (string_compare(name, (string_address)"cpu") == 0)
+                return startup_cpu_work;
+        if (string_compare(name, (string_address)"cpu-floor") == 0)
+                return startup_cpu_floor_work;
+        if (string_compare(name, (string_address)"identity") == 0)
+                return startup_identity_work;
+        if (string_compare(name, (string_address)"initial-identity") == 0)
+                return startup_initial_identity_work;
+        if (string_compare(name, (string_address)"environment") == 0)
+                return startup_environment_work;
+        if (string_compare(name, (string_address)"begin") == 0)
+                return startup_begin_work;
+        return null;
+}
+
+b32 main(void)
+{
+        if (program_argument_count() > 1)
+        {
+                bench_work work = startup_named(program_argument(1));
+
+                if (is_null(work))
+                        return 2;
+
+                work();
+                return 0;
+        }
+
+        string_format(log, "runtime startup components, best of %p (%p calls)\n",
+                      (positive)STARTUP_TRIES, (positive)STARTUP_ROUNDS);
+        startup_report((string_address)"CPU instruction/serialization floor",
+                       startup_cpu_floor_work);
+        startup_report((string_address)"CPU feature selection",
+                       startup_cpu_work);
+        startup_report((string_address)"process identity syscall",
+                       startup_identity_work);
+        startup_report((string_address)"loader identity handoff",
+                       startup_initial_identity_work);
+        startup_report((string_address)"environment publication floor",
+                       startup_environment_work);
+        startup_report((string_address)"stdlib startup", startup_begin_work);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_startup */
+
+#ifdef BENCH_exec
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+
+// Times fork + exec + wait for a target, repeatedly. The fork and wait cost is
+// identical for both formats, so the difference between two runs is the cost
+// of the loader.
+//
+// A measurement and not a test, which is why it is here and not in test.
+// It needs /dev/spark and the two images beside it, so it runs inside the
+// booted image:
+//
+//     SPARK_CPPFLAGS=-DBENCH_tiny sh kit/spark test/checks fs/tiny.spark
+//     SPARK_CPPFLAGS=-DBENCH_exec sh kit/spark test/checks fs/bench
+
+#define CLOCK_MONOTONIC 1
+
+#define AT_EMPTY_PATH 0x1000
+
+#define ROUNDS 400
+
+timespec started;
+timespec finished;
+
+positive now_ns()
+{
+        timespec t;
+        system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC, (positive)address_of t);
+        return (positive)t.tv_sec * 1000000000 + (positive)t.tv_nsec;
+}
+
+static bool bench_wait_child(bipolar child)
+{
+        positive status = 0;
+        return child > 0 &&
+               system_wait4_retry(child, address_of status, 0, null) == child &&
+               !status;
+}
+
+// path == null measures fork + exit + wait with no exec at all, which is the
+// floor: whatever that costs is not the loader's fault. Subtracting it from
+// the other two leaves the cost of actually loading the image.
+positive run_many_flags(string_address path, positive flags)
+{
+        string_address argv[] = {path, null};
+        positive start = now_ns();
+        bool failed = false;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                bipolar child = system_call_2(syscall(clone), flags, 0);
+
+                if (child == 0)
+                {
+                        if (path)
+                        {
+                                system_call_3(syscall(execve), (positive)path, (positive)argv, 0);
+                                // A successful exec never returns.  Keep a missing or
+                                // rejected fixture from looking like an exceptionally
+                                // fast child.
+                                system_call_1(syscall(exit), 127);
+                        }
+                        system_call_1(syscall(exit), 0);
+                }
+
+                if (child < 0)
+                {
+                        failed = true;
+                        continue;
+                }
+
+                if (!bench_wait_child(child))
+                        failed = true;
+        }
+
+        return failed ? 0 : now_ns() - start;
+}
+
+positive run_many(string_address path)
+{
+        return run_many_flags(path, SIGCHLD);
+}
+
+// Repeats a measurement and keeps the fastest, which is the one least
+// disturbed by scheduling noise.
+positive best_of_flags(string_address path, positive flags, positive tries)
+{
+        positive best = 0;
+
+        for (positive i = 0; i < tries; i++)
+        {
+                positive t = run_many_flags(path, flags);
+                if (!t)
+                        return 0;
+                if (!best || t < best)
+                        best = t;
+        }
+
+        return best;
+}
+
+positive best_of(string_address path, positive tries)
+{
+        return best_of_flags(path, SIGCHLD, tries);
+}
+
+// Spawns through /dev/spark, which creates the task with no address space to
+// copy instead of forking one and throwing it away.
+b32 device = -1;
+
+positive bench_spawn_device(string_address path)
+{
+        struct spawn request;
+        p8 argv_block[128];
+        positive path_length = string_length(path);
+
+        memory_copy(argv_block, path, path_length + 1);
+
+        request.path = (unsigned long)path;
+        request.argv = (unsigned long)argv_block;
+        request.argv_bytes = path_length + 1;
+        request.argv_count = 1;
+        request.envp = 0;
+        request.envp_bytes = 0;
+        request.envp_count = 0;
+        request.envp_generation = 0;
+
+        positive start = now_ns();
+        bool failed = false;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+
+                if (child < 0)
+                {
+                        string_format(log, "spawn ioctl failed: %b\n", child);
+                        log_flush();
+                        return 0;
+                }
+
+                if (!bench_wait_child(child))
+                        failed = true;
+        }
+
+        return failed ? 0 : now_ns() - start;
+}
+
+/* The shell's exported environment normally does not change between
+   commands. A nonzero generation lets the kernel retain that immutable block
+   on this open descriptor; zero deliberately measures the copying path. */
+positive bench_spawn_environment_submission(string_address path,
+                                             positive generation)
+{
+        struct spawn request;
+        p8 argv_block[128];
+        p8 env_block[8192];
+        positive path_length = string_length(path);
+
+        memory_copy(argv_block, path, path_length + 1);
+        memory_fill(env_block, 'x', sizeof(env_block));
+        for (positive at = 63; at < sizeof(env_block); at += 64)
+                env_block[at] = 0;
+        request.path = (unsigned long)path;
+        request.argv = (unsigned long)argv_block;
+        request.argv_bytes = path_length + 1;
+        request.argv_count = 1;
+        request.envp = (unsigned long)env_block;
+        request.envp_bytes = sizeof(env_block);
+        request.envp_count = sizeof(env_block) / 64;
+        request.envp_generation = generation;
+
+        positive elapsed = 0;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                positive start = now_ns();
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+                elapsed += now_ns() - start;
+                if (!bench_wait_child(child))
+                        return 0;
+        }
+
+        return elapsed;
+}
+
+// execveat on an already open descriptor skips pathname resolution entirely.
+// The gap between this and execve by path is what the walk costs, and so what
+// registering images up front could win back.
+positive bench_execveat(string_address path)
+{
+        string_address argv[] = {path, null};
+        b32 image = system_call_4(syscall(openat), AT_FDCWD, (positive)path, FILE_READ, 0);
+
+        if (image < 0)
+                return 0;
+
+        positive start = now_ns();
+        bool failed = false;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+
+                if (child == 0)
+                {
+                        system_call_5(syscall(execveat), image, (positive) "",
+                                      (positive)argv, 0, AT_EMPTY_PATH);
+                        system_call_1(syscall(exit), 127);
+                }
+
+                if (!bench_wait_child(child))
+                        failed = true;
+        }
+
+        positive elapsed = now_ns() - start;
+        system_call_1(syscall(close), image);
+        return failed ? 0 : elapsed;
+}
+
+/* Time only the ioctl which creates the child, then reap that child outside
+   its timed interval.  Launching all 400 at once made this a scheduler-contention
+   benchmark and moved the answer by nearly two to one between identical boots. */
+positive bench_spawn_submission(string_address path)
+{
+        struct spawn request;
+        p8 argv_block[128];
+        positive path_length = string_length(path);
+
+        memory_copy(argv_block, path, path_length + 1);
+
+        request.path = (unsigned long)path;
+        request.argv = (unsigned long)argv_block;
+        request.argv_bytes = path_length + 1;
+        request.argv_count = 1;
+        request.envp = 0;
+        request.envp_bytes = 0;
+        request.envp_count = 0;
+        request.envp_generation = 0;
+
+        positive elapsed = 0;
+        bool failed = false;
+
+        for (positive i = 0; i < ROUNDS; i++)
+        {
+                positive start = now_ns();
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+                elapsed += now_ns() - start;
+
+                if (!bench_wait_child(child))
+                        failed = true;
+        }
+
+        return failed ? 0 : elapsed;
+}
+
+fn report(string_address label, positive total)
+{
+        string_format(log, "%s  total %p us   per exec %p ns\n",
+                      label, total / 1000, total / ROUNDS);
+        log_flush();
+}
+
+fn report_difference(string_address label, positive baseline, positive candidate)
+{
+        positive difference;
+        positive tenths;
+
+        if (!baseline || !candidate)
+                return;
+
+        if (candidate <= baseline)
+        {
+                difference = baseline - candidate;
+                tenths = difference * 1000 / baseline;
+                string_format(log, "%s  %p ns/exec faster  (%p.%p percent)\n",
+                              label, difference / ROUNDS,
+                              tenths / 10, tenths % 10);
+        }
+        else
+        {
+                difference = candidate - baseline;
+                tenths = difference * 1000 / baseline;
+                string_format(log, "%s  %p ns/exec slower  (%p.%p percent)\n",
+                              label, difference / ROUNDS,
+                              tenths / 10, tenths % 10);
+        }
+
+        log_flush();
+}
+
+b32 main()
+{
+        struct stats stats_before = {0};
+        struct stats stats_after = {0};
+
+        log_direct((string_address) "spark process floor\n", 20);
+
+        // warm the page cache for both images first
+        run_many("/tiny.elf");
+        run_many("/tiny.spark");
+
+        positive floor = best_of(null, 5);
+        positive elf = best_of("/tiny.elf", 5);
+        positive spark = best_of("/tiny.spark", 5);
+
+        if (!floor || !elf || !spark)
+        {
+                log_error("benchmark child could not execute\n", 0);
+                return 1;
+        }
+
+        device = system_call_4(syscall(openat), AT_FDCWD,
+                                     (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
+
+        positive dev = 0;
+        if (device >= 0)
+        {
+                if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                                  (positive)address_of stats_before))
+                {
+                        log_error("could not read initial Spark counters\n", 0);
+                        return 1;
+                }
+                bench_spawn_device("/tiny.spark");
+                dev = bench_spawn_device("/tiny.spark");
+                positive again = bench_spawn_device("/tiny.spark");
+                if (again && again < dev)
+                        dev = again;
+                if (system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                                  (positive)address_of stats_after))
+                {
+                        log_error("could not read final Spark counters\n", 0);
+                        return 1;
+                }
+        }
+        else
+        {
+                string_format(log, "could not open %s: %b\n", SPARK_DEVICE, device);
+                log_flush();
+        }
+
+        positive at_fd = bench_execveat("/tiny.spark");
+        positive at2 = bench_execveat("/tiny.spark");
+        if (at2 && at2 < at_fd)
+                at_fd = at2;
+
+        positive copied_env = 0;
+        positive cached_env = 0;
+        if (device >= 0)
+        {
+                copied_env = bench_spawn_environment_submission("/tiny.spark", 0);
+                cached_env = bench_spawn_environment_submission("/tiny.spark", 1);
+        }
+
+        positive nowait = 0;
+        if (device >= 0)
+        {
+                bench_spawn_submission("/tiny.spark");
+                nowait = bench_spawn_submission("/tiny.spark");
+                positive nw2 = bench_spawn_submission("/tiny.spark");
+                if (nw2 && nw2 < nowait)
+                        nowait = nw2;
+        }
+
+        if (!at_fd || (device >= 0 && (!dev || !nowait)) ||
+            (device >= 0 && (!copied_env || !cached_env)) ||
+            (device >= 0 && stats_after.loads - stats_before.loads != 3 * ROUNDS))
+        {
+                log_error("benchmark launch path did not complete its work\n", 0);
+                return 1;
+        }
+
+        log_direct((string_address) "results\n", 8);
+
+        report("fork+wait only ", floor);
+        report("fork  + elf    ", elf);
+        report("fork  + spark  ", spark);
+        if (at_fd)
+                report("fork + execveat ", at_fd);
+        if (dev)
+                report("/dev/spark     ", dev);
+        if (nowait)
+                report("/dev/spark submit", nowait);
+        if (copied_env && cached_env)
+        {
+                report("submit, copy 8K env ", copied_env);
+                report("submit, cache 8K env", cached_env);
+                report_difference("  cached environment      ",
+                                  copied_env, cached_env);
+        }
+
+        string_format(log, "\nclear comparisons (lower is faster):\n");
+        report_difference("  Spark image versus ELF ", elf, spark);
+        if (dev)
+                report_difference("  fresh-mm versus fork  ", spark, dev);
+
+        if (stats_after.spawns > stats_before.spawns)
+        {
+                positive spawns = stats_after.spawns - stats_before.spawns;
+                positive loads = stats_after.loads - stats_before.loads;
+                positive task = stats_after.task_ns - stats_before.task_ns;
+                positive exec = stats_after.exec_ns - stats_before.exec_ns;
+                positive loader = stats_after.loader_ns - stats_before.loader_ns;
+                positive mapped = stats_after.map_ns - stats_before.map_ns;
+
+                string_format(log, "\nkernel side, averaged over %p sequential spawns:\n",
+                              spawns);
+                string_format(log, "  completed image loads %p\n", loads);
+                string_format(log, "  creating the task  %p ns\n", task / spawns);
+                string_format(log, "  loading the image  %p ns\n", exec / spawns);
+                if (loads)
+                {
+                        loader /= loads;
+                        mapped /= loads;
+                        exec /= spawns;
+                        string_format(log, "    spark binfmt     %p ns\n", loader);
+                        string_format(log, "      exec commit    %p ns\n",
+                                      loader > mapped ? loader - mapped : 0);
+                        string_format(log, "      mapping regions %p ns\n",
+                                      mapped);
+                        string_format(log, "    generic prologue %p ns\n",
+                                      exec > loader ? exec - loader : 0);
+                }
+                log_flush();
+        }
+
+        string_format(log, "load cost:  elf %p ns   spark %p ns\n",
+                      elf > floor ? (elf - floor) / ROUNDS : 0,
+                      spark > floor ? (spark - floor) / ROUNDS : 0);
+        log_flush();
+
+        return 0;
+}
+#endif /* BENCH_exec */
+
+#ifdef BENCH_network_spawn
+/*
+        Boot-service launch floor: fork+exec against /dev/spark for the exact
+        two-word /ip service shape, with an empty environment.
+
+        Build into a Moonwater image and run there:
+
+                SPARK_CPPFLAGS=-DBENCH_network_spawn sh kit/spark test/checks \
+                        fs/bench-network-spawn
+
+        `ip link` exits, unlike `ip watch`, but enters the same multicall image
+        with the same argv/env/fd contract. Its netlink work is identical on
+        both paths, so the paired gap is the launch cost. Kernel-side Spark
+        counters are reported over the device-spawn rounds as a second clock.
+*/
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+
+#define CLOCK_MONOTONIC 1
+#define ROUNDS 100
+#define TRIES 3
+
+static string_address ip_path = (string_address) "/ip";
+static string_address ip_arguments[] = {(string_address) "/ip",
+                                        (string_address) "link", null};
+static string_address empty_environment[] = {null};
+static b32 device = -1;
+
+static positive now_ns(void)
+{
+        timespec now = {0, 0};
+
+        system_call_2(syscall(clock_gettime), CLOCK_MONOTONIC,
+                      (positive)address_of now);
+        return (positive)now.tv_sec * 1000000000 + (positive)now.tv_nsec;
+}
+
+static positive run_fork_exec(void)
+{
+        positive started = now_ns();
+
+        for (positive at = 0; at < ROUNDS; at++)
+        {
+                bipolar child = system_call_2(syscall(clone), SIGCHLD, 0);
+                positive status = 0;
+
+                if (child == 0)
+                {
+                        system_call_3(syscall(execve), (positive)ip_path,
+                                      (positive)ip_arguments,
+                                      (positive)empty_environment);
+                        system_call_1(syscall(exit), 127);
+                }
+
+                if (child < 0)
+                        return 0;
+
+                if (system_wait4_retry(child, address_of status, 0, null) != child ||
+                    status)
+                        return 0;
+        }
+
+        return now_ns() - started;
+}
+
+static positive run_spark(void)
+{
+        static p8 argv_block[] = "/ip\0link\0";
+        struct spawn request = {
+            .path = (unsigned long)"/ip",
+            .argv = (unsigned long)argv_block,
+            .argv_bytes = sizeof(argv_block) - 1,
+            .argv_count = 2,
+            .envp = 0,
+            .envp_bytes = 0,
+            .envp_count = 0,
+        };
+        positive started = now_ns();
+
+        for (positive at = 0; at < ROUNDS; at++)
+        {
+                bipolar child = system_call_3(syscall(ioctl), device,
+                                              SPARK_IOCTL_SPAWN,
+                                              (positive)address_of request);
+                positive status = 0;
+
+                if (child < 0)
+                        return 0;
+
+                if (system_wait4_retry(child, address_of status, 0, null) != child ||
+                    status)
+                        return 0;
+        }
+
+        return now_ns() - started;
+}
+
+static positive best(positive (*run)(void))
+{
+        positive answer = 0;
+
+        for (positive at = 0; at < TRIES; at++)
+        {
+                positive elapsed = run();
+
+                if (!elapsed)
+                        return 0;
+
+                if (!answer || elapsed < answer)
+                        answer = elapsed;
+        }
+
+        return answer;
+}
+
+b32 main(void)
+{
+        struct stats before = {0};
+        struct stats after = {0};
+        b32 terminal;
+        b32 quiet;
+        positive fork_ns;
+        positive spark_ns;
+
+        device = system_call_4(syscall(openat), AT_FDCWD,
+                               (positive)SPARK_DEVICE, FILE_READ_WRITE, 0);
+        if (device < 0)
+        {
+                string_format(log_error, "cannot open %s: %b\n",
+                              SPARK_DEVICE, device);
+                return 1;
+        }
+
+        terminal = system_call_1(syscall(dup), standard_output_descriptor);
+        quiet = system_call_4(syscall(openat), AT_FDCWD,
+                              (positive)"/dev/null", FILE_WRITE, 0);
+        if (terminal < 0 || quiet < 0)
+                return 1;
+
+        log_flush();
+        system_call_3(syscall(dup3), quiet, standard_output_descriptor, 0);
+
+        /* Warm image, netlink and scheduler paths before either timed best. */
+        run_fork_exec();
+        run_spark();
+
+        fork_ns = best(run_fork_exec);
+        system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                      (positive)address_of before);
+        spark_ns = best(run_spark);
+        system_call_3(syscall(ioctl), device, SPARK_IOCTL_STATS,
+                      (positive)address_of after);
+
+        system_call_3(syscall(dup3), terminal, standard_output_descriptor, 0);
+        system_call_1(syscall(close), quiet);
+        system_call_1(syscall(close), terminal);
+
+        if (!fork_ns || !spark_ns)
+        {
+                string_format(log_error, "a launch path failed\n");
+                return 1;
+        }
+
+        string_format(log, "boot service /ip link, best of %p x %p\n",
+                      (positive)TRIES, (positive)ROUNDS);
+        string_format(log, "  fork+exec  %p ns/launch\n", fork_ns / ROUNDS);
+        string_format(log, "  spark      %p ns/launch\n", spark_ns / ROUNDS);
+        if (fork_ns >= spark_ns)
+                string_format(log, "  saved      %p ns/launch\n",
+                              (fork_ns - spark_ns) / ROUNDS);
+        else
+                string_format(log, "  extra      %p ns/launch\n",
+                              (spark_ns - fork_ns) / ROUNDS);
+
+        if (after.spawns > before.spawns)
+        {
+                positive count = after.spawns - before.spawns;
+
+                string_format(log, "  kernel task %p ns, exec %p ns (%p spawns)\n",
+                              (after.task_ns - before.task_ns) / count,
+                              (after.exec_ns - before.exec_ns) / count, count);
+        }
+
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_network_spawn */
+
+#ifdef BENCH_shell_document
+#include "../src/compiler_memory.c"
+#include "../src/spark.c"
+#include "../src/sh/shell.c"
+
+/* Isolate the shared here-body expansion path from parsing/forking. Build
+   this same probe in both source revisions with test/run's freestanding
+   flags. Arguments: body bytes (16..1048576), repetitions, optional "dollar".
+   Literal runs should go directly into the retained token arena, without a
+   second body-sized expansion/mark allocation. The checksum must agree. */
+b32 main()
+{
+        positive bytes = program_argument(1)
+                             ? string_digits(program_argument(1), null) : 65536;
+        positive repeats = program_argument(2)
+                               ? string_digits(program_argument(2), null) : 1000;
+        bool dollar = program_argument(3) &&
+                      word_is(program_argument(3), "dollar");
+        positive sum = 0;
+        p8 address_to body;
+
+        if (bytes < 16 || bytes > 1048576 || !repeats || repeats > 1000000)
+                return 2;
+        body = memory(bytes + 1);
+        if (!body || (positive)body >= (positive)-4095)
+                return 2;
+        memory_fill(body, 'x', bytes);
+        body[bytes] = end;
+        shell_env_init(environ);
+        env_set("word", "abcdefg");
+        if (dollar)
+                memory_copy(body + bytes - 7, "${word}", 7);
+
+        for (positive at = 0; at < repeats; at++)
+        {
+                string_address out;
+                positive made;
+                token_used = 0;
+                token_overflow = false;
+                made = exec_here_expand(body, bytes, address_of out);
+                if (made != bytes || token_overflow || exec_line_aborted() ||
+                    out[bytes - 1] != (dollar ? 'g' : 'x'))
+                        return 1;
+                sum += made;
+        }
+        memory_free(body, bytes + 1);
+        string_format(log, "%p\n", sum);
+        log_flush();
+        return 0;
+}
+#endif /* BENCH_shell_document */
+
+#ifdef BENCH_tiny
+#include "../src/compiler_memory.c"
+
+// The smallest thing that can be exec'd: does nothing, exits immediately.
+// Whatever time it takes to run this is almost entirely the cost of loading it.
+b32 main()
+{
+        return 0;
+}
+#endif /* BENCH_tiny */
+
+#ifdef BENCH_startup_empty
+/*
+        The host-kernel floor for startup measurements: enter, issue exit(0),
+        and do nothing else.  This deliberately does not include Moonwater's
+        runtime, so its process/image cost can be subtracted from the tiny
+        main in bench_tiny.c rather than guessed from a full shell.
+*/
+__asm__(
+    ".text\n"
+    ".global _start\n"
+    ".type _start, @function\n"
+    "_start:\n"
+#if defined(__x86_64__)
+    "xor %edi, %edi\n"
+    "mov $60, %eax\n"
+    "syscall\n"
+#elif defined(__aarch64__)
+    "mov x0, #0\n"
+    "mov x8, #93\n"
+    "svc #0\n"
+#elif defined(__riscv)
+    "li a0, 0\n"
+    "li a7, 93\n"
+    "ecall\n"
+#else
+#error unsupported startup benchmark architecture
+#endif
+    ".size _start, .-_start\n"
+);
+#endif /* BENCH_startup_empty */
+
+#ifdef BENCH_one
+#include "../src/compiler_memory.c"
+
+#ifndef LENGTH
+#define LENGTH 4
+#endif
+#ifndef ROUNDS
+#define ROUNDS 1
+#endif
+#ifndef WHICH
+#define WHICH 0
+#endif
+
+#define SHARED_bench_reference
+#include "checks.c"
+#undef SHARED_bench_reference
+
+static p8 subject[8192];
+static p8 mirror[8192];
+static volatile positive sink;
+
+b32 main()
+{
+        for (positive i = 0; i < LENGTH; i++)
+                subject[i] = (p8)('a' + i % 26);
+
+        subject[LENGTH] = 0;
+        memory_copy_apart(mirror, subject, LENGTH + 1);
+
+        for (positive r = 0; r < ROUNDS; r++)
+        {
+#if WHICH == 0
+                sink += reference_length(subject);
+#elif WHICH == 1
+                sink += string_length(subject);
+#elif WHICH == 2
+                sink += (positive)reference_compare(subject, mirror);
+#elif WHICH == 3
+                sink += (positive)string_compare(subject, mirror);
+#elif WHICH == 4
+                sink += (positive)reference_first_of(subject, '#');
+#elif WHICH == 5
+                sink += (positive)string_first_of(subject, '#');
+#endif
+        }
+
+        return 0;
+}
+#endif /* BENCH_one */
 #endif
