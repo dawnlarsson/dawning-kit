@@ -1888,6 +1888,8 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("match-tag", 's'),
             STORAGE_ARGUMENT("match-token", 't'),
             STORAGE_ARGUMENT("output", 'o'),
+            STORAGE_ARGUMENT("cache-file", 'c'),
+            STORAGE_ARGUMENT("garbage-collect", 'g'),
         };
         storage_blkid_context context;
         string_address inline_devices[8];
@@ -1902,8 +1904,8 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
         context.output = output;
 
         while ((option = storage_argument_next(
-                    address_of taking, (string_address)"ULsto",
-                    (string_address)"ULsto", options, array_count(options),
+                    address_of taking, (string_address)"ULstocg",
+                    (string_address)"ULstoc", options, array_count(options),
                     address_of value)) != ARGUMENT_END)
         {
                 if (option == ARGUMENT_OPERAND)
@@ -1945,6 +1947,11 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
                         continue;
                 }
 
+                /* This build probes each device: there is no cache to read
+                   or to collect, so both are accepted and do nothing. */
+                if (option == 'c' || option == 'g')
+                        continue;
+
                 if (option == 's')
                 {
                         positive length = string_length(value);
@@ -1976,9 +1983,6 @@ b32 storage_blkid_run(positive argc, string_address address_to argv,
 
                 goto usage;
         }
-
-        if (context.mode == STORAGE_OUTPUT_VALUE && !context.select_seen)
-                goto usage;
 
         if (device_count)
         {
@@ -2019,8 +2023,8 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
         // Two for a usage error, as upstream answers: one is "not found".
         if (argc != 2)
         {
-                error("findfs: usage: findfs UUID=value|LABEL=value|"
-                      "PARTUUID=value|PARTLABEL=value\n", 0);
+                error("findfs: bad usage\n"
+                      "Try 'findfs --help' for more information.\n", 0);
                 return 2;
         }
 
@@ -2044,7 +2048,10 @@ b32 storage_findfs_run(positive argc, string_address address_to argv,
         }
 
         if (!storage_resolve_tag(argv[1], path, sizeof(path)))
+        {
+                string_format(error, "findfs: unable to resolve '%s'\n", argv[1]);
                 return 1;
+        }
 
         string_format(output, "%s\n", path);
         return 0;

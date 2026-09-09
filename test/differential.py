@@ -18,7 +18,10 @@ standard output, the effect on the directory and (per the spec's policy) the
 diagnostic. Agreeing is passing; there is no separate idea of a right answer.
 
 A spec may also declare FAMILIES: seeded generators of whole shell programs,
-for the parts of a shell that are a language rather than an option list.
+for the parts of a shell that are a language rather than an option list, and
+CHECKS: functions check(farm) -> (passed, total, notes) for the few properties
+a differential cannot express, such as a denominator of names or a census the
+box cannot present.
 
 Two pinned lists live at the end of this file, written by --record and never
 by hand. The ledger records the cases where ours deliberately answers
@@ -62,7 +65,8 @@ PIN_FILE = Path(__file__).resolve()
 # worker's copy is __mp_main__), so without this alias the spec would import
 # a second copy of this file and its additions would land in the other one:
 # a fixture it declared is not found, and an input it named feeds nothing.
-sys.modules.setdefault("differential", sys.modules[__name__])
+if __name__ in ("__main__", "__mp_main__"):
+    sys.modules.setdefault("differential", sys.modules[__name__])
 PIN_BEGIN = "# ---- pinned rows begin (written by --record; never by hand) ----"
 PIN_END = "# ---- pinned rows end ----"
 OUTPUT_LIMIT = 1 << 20
@@ -356,14 +360,15 @@ def grammar_cases(domain, utility, budget, rng):
         yield from emit(list(argv), utility.stdin[0], "extra")
     if budget == "singles":
         return
-    strength = 3 if budget == "full" else 2
-    # Strength 3 over a program with a long operand or input list is a
-    # covering array of tens of thousands of rows, which the greedy builder
-    # takes hours over; such a program keeps its pairs and the deeper random
-    # tier instead. The three largest parameters decide.
-    sizes = sorted(len(values) for values in parameters)
-    if strength == 3 and len(sizes) >= 3 and sizes[-1] * sizes[-2] * sizes[-3] > 4000:
-        strength = 2
+    # Triples only where the covering array stays tractable: past two dozen
+    # parameters, or where the three largest of them multiply past a few
+    # thousand, choosing strength-3 rows costs minutes each. The full
+    # budget's deeper random tier already reaches those grammars.
+    widest = sorted((len(values) for values in parameters), reverse=True)[:3]
+    product = 1
+    for size in widest:
+        product *= size
+    strength = 3 if budget == "full" and len(parameters) <= 24 and product <= 4000 else 2
     for row in covering_array(parameters, strength, random.Random(rng.random())):
         argv, stdin = assemble(utility, row, parameters)
         yield from emit(argv, stdin, "pairs" if strength == 2 else "triples")
@@ -1095,6 +1100,19 @@ def main(argv=None):
             added += 1
         save_rows(args.record, rows)
         print(f"  recorded {added} rows into {args.record}")
+
+    if not args.replay:
+        for domain in domains:
+            for check in getattr(specs.get(domain), "CHECKS", ()):
+                if selected and check.__name__ not in selected:
+                    continue
+                key = f"{domain}/{check.__name__}"
+                won, count, notes = check(str(farm))
+                passed[key] += won
+                total[key] += count
+                for note in notes:
+                    failures[key][("check",)] += 1
+                    print(f"  FAIL {key}: {note}")
 
     for key in sorted(set(total) | set(absent)):
         line = f"  {key:28} {passed[key]} of {total[key]}"

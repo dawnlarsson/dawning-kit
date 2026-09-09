@@ -3314,6 +3314,7 @@ lane_util_linux() { differential_domain util_linux; }
 lane_shell()
 {
         need_shell || return 1
+        freestanding_checks_lane lexer_spans || return 1
         python3 test/harness.py shell_functions --shell "$shell_binary" || return 1
         differential_domain shell
 }
