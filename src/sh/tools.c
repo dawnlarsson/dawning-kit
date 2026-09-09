@@ -736,6 +736,19 @@ static bool logger_message_id_valid(string_address message_id)
 static bool logger_stream(logger_control address_to control,
                           string_address path)
 {
+        if (path)
+        {
+                bipolar opened = text_open_handle(path, FILE_READ, 0);
+
+                if (opened < 0)
+                {
+                        text_flush();
+                        string_format(writer_stderr, "logger: file %s: %s\n",
+                                      path, file_reason(opened));
+                        return false;
+                }
+                system_close((positive)opened);
+        }
         if (!text_open(path))
                 return false;
 
@@ -885,6 +898,23 @@ static bool logger_journald(logger_control address_to control,
         text_close();
         if (!entry || failed)
                 return false;
+
+        for (positive at = 0; at < length;)
+        {
+                positive stop = at + memory_span_without_byte(entry + at, '\n',
+                                                              length - at);
+                positive name = memory_span_without_byte(entry + at, '=',
+                                                         stop - at);
+
+                if (stop > at && (name == stop - at || !name))
+                {
+                        text_flush();
+                        string_format(writer_stderr,
+                            "logger: journald entry could not be written\n");
+                        return false;
+                }
+                at = stop < length ? stop + 1 : length;
+        }
 
         if (control->standard_error)
         {
@@ -1071,6 +1101,13 @@ static b32 tools_logger()
             string_length(control.tag) > 48)
                 return text_done(string_diagnostic(&text_diagnostic, 1, control.tag, "tag is too long for RFC 5424"));
 
+        if (file_operand_count && file_option_value(address_of taking, 'f'))
+        {
+                text_flush();
+                string_format(writer_stderr,
+                    "logger: --file <file> and <message> are mutually exclusive; file is ignored\n");
+        }
+
         if (taking.flags & FILE_FLAG('J'))
         {
                 bool answer = logger_journald(
@@ -1096,12 +1133,6 @@ static b32 tools_logger()
                 return text_done(1);
 
         bool answer;
-        if (file_operand_count && file_option_value(address_of taking, 'f'))
-        {
-                text_flush();
-                string_format(writer_stderr,
-                    "logger: --file <file> and <message> are mutually exclusive; file is ignored\n");
-        }
         if (file_operand_count)
                 answer = logger_operands(address_of control);
         else
@@ -5358,6 +5389,13 @@ static b32 tools_numfmt()
 
                 while (!numfmt.stop && text_line_next())
                 {
+                        // A newline inside a NUL-delimited record is blank
+                        // space between fields, and GNU rewrites it as one.
+                        if (text_delimiter == '\0' && !numfmt.delimiter_given)
+                                for (positive at = 0; at < text_line_length; at++)
+                                        if (text_line[at] == '\n')
+                                                text_line[at] = ' ';
+
                         if (records++ < numfmt.header)
                                 text_put(text_line, text_line_length);
                         else
@@ -6558,9 +6596,10 @@ static b32 tools_mcookie()
 
         positive maximum = 4096;
         string_address maximum_text = file_option_value(address_of taking, 'm');
-        if (maximum_text &&
-            !(string_is(maximum_text, '0') && !string_get(maximum_text + 1)) &&
-            !split_size(maximum_text, address_of maximum))
+        if (maximum_text && string_is(maximum_text, '0') &&
+            !string_get(maximum_text + 1))
+                maximum = 0;
+        else if (maximum_text && !split_size(maximum_text, address_of maximum))
                 return text_done(string_diagnostic(&text_diagnostic, 1, maximum_text, "invalid maximum size"));
 
         if (maximum_text && maximum && !file_option_value(address_of taking, 'f'))
@@ -7232,9 +7271,18 @@ static b32 tools_dd(void)
         if ((conv & DD_LCASE) && (conv & DD_UCASE))
                 return string_diagnostic(&text_diagnostic, 1, null, "cannot combine lcase and ucase");
 
-        if (!ibs || !obs || ibs > positive_max - 31 || obs > positive_max - 31)
+        if (!ibs || ibs > positive_max - 31)
         {
-                return string_diagnostic(&text_diagnostic, 1, null, "invalid number");
+                text_flush();
+                return string_report(writer_stderr, 1,
+                                     "dd: invalid number: '%s'\n", input_size);
+        }
+
+        if (!obs || obs > positive_max - 31)
+        {
+                text_flush();
+                return string_report(writer_stderr, 1,
+                                     "dd: invalid number: '%s'\n", output_size);
         }
 
         if ((count_set && count > (positive)bipolar_max) ||
@@ -12838,7 +12886,7 @@ static b32 tools_dmesg_main()
         string_address file = file_option_value(address_of taking, 'F');
         string_address kmsg_file = file_option_value(address_of taking, 'K');
         if (flags & FILE_FLAG('S'))
-                file = kmsg_file = null;
+                file = null;
         if (file || kmsg_file)
         {
                 // --follow is inert on a file; --read-clear prints the file
