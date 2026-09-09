@@ -85,28 +85,28 @@ DOMAIN_BUDGET = {"text": "full", "awk": "full", "builtins": "default",
                  "misc": "default"}
 
 DOMAIN_FLOOR = {
-    #       domain: (cases that agreed, cases run, what the gap is) when the
-    #       floor was set. An entry is absent once its domain agrees on
+    #       domain: (cases that agreed, cases run, the noise to ignore, what
+    #       the gap is) when the floor was set. An entry is absent once its domain agrees on
     #       everything, which four of the seven already do.
     #
-    #       The number is a few below the lowest of several runs on one tree,
-    #       because a handful of cases still flip that the unstable list has
-    #       not caught -- three runs of the shell gave 10664, 10664 and, with
-    #       the rest of the suite competing for the machine, 10662. The margin
-    #       is for that and for nothing else: a regression is tens or hundreds
-    #       of cases, so a floor a few wide still catches one, where a floor
-    #       set to the exact number fails on a busy machine and teaches
-    #       everybody to ignore it.
-    "shell": (10660, 19190,
+    #       The fourth field is how far above the floor a run may land before
+    #       it is a gain rather than a good day. A handful of cases still flip
+    #       that the unstable list has not caught -- three runs of the shell
+    #       gave 10664 and a fourth, with the rest of the suite competing for
+    #       the machine, 10662 -- so the floor sits a little under the lowest
+    #       and says how much of what is above it to ignore. Without that a
+    #       green run nags on every pass, and a gate that always speaks is one
+    #       nobody reads.
+    "shell": (10660, 19190, 8,
               "the pseudo-terminal families: a transcript carries the prompt and "
               "job notices a terminal interleaves by timing, and bash writes its "
               "history on exit, so the answers need a normaliser before their "
               "divergences mean anything"),
-    "util_linux": (16535, 17539,
+    "util_linux": (16535, 17539, 8,
                    "the column families of lsfd, findmnt and lsblk: 2.42 lists "
                    "ASSOC, XMODE, SOURCE and MNTID by default where these list "
                    "FD and MODE, so a default listing differs in every row"),
-    "misc": (18064, 19901,
+    "misc": (18064, 19901, 8,
              "script's transcript timing, cksum --check combinations, and od "
              "and numfmt corners"),
 }
@@ -1392,17 +1392,21 @@ def main(argv=None):
                          if key.startswith(domain + "/"))
             ran = sum(count for key, count in total.items()
                       if key.startswith(domain + "/"))
-            want, of, why = floor
+            want, of, slack, why = floor
             if agreed < want:
                 floored = False
                 print(f"  FLOOR {domain}: {agreed} of {ran} agree, below the {want} of {of} "
                       f"this domain is held to -- a regression inside a known gap")
                 print(f"        the gap is {why}")
-            elif agreed > want:
-                print(f"  floor {domain}: {agreed} of {ran} agree, above the recorded "
-                      f"{want} of {of}; lower the floor in DOMAIN_FLOOR to keep the gain")
+            elif agreed > want + slack:
+                #       Past what the floor allows for the cases that still
+                #       flip, so it is a gain rather than a good day.
+                print(f"  floor {domain}: {agreed} of {ran} agree, {agreed - want} above the "
+                      f"{want} of {of} recorded, which is more than the {slack} it allows "
+                      f"for -- raise the floor in DOMAIN_FLOOR to keep the gain")
             else:
-                print(f"  floor {domain}: {agreed} of {ran}, as recorded")
+                print(f"  floor {domain}: {agreed} of {ran}, within the {slack} "
+                      f"the recorded {want} allows for")
     distinct = sum(len(v) for v in failures.values())
     print(f"  tiers: " + " ".join(f"{k}={v}" for k, v in sorted(tiers.items())))
     print(f"  differential {all_passed} of {all_total}; failure classes={distinct}, "
