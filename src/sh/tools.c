@@ -764,7 +764,7 @@ static bool logger_stream(logger_control address_to control,
 
         bool answer = true;
         positive default_priority = control->priority;
-        while (text_line_next())
+        while (text_line_next(text_line, 0))
         {
                 positive from = 0;
                 positive priority = default_priority;
@@ -5407,7 +5407,7 @@ static b32 tools_numfmt()
         {
                 positive records = 0;
 
-                while (!numfmt.stop && text_line_next())
+                while (!numfmt.stop && text_line_next(text_line, 0))
                 {
                         // A newline inside a NUL-delimited record is blank
                         // space between fields, and GNU rewrites it as one.
@@ -8368,7 +8368,9 @@ static positive dump_named_field(p8 address_to into, p8 value)
 static fn dump_canonical_line(p8 address_to bytes, positive length,
                               positive address)
 {
-        p8 line[96];
+        p8 address_to line = text_reserve(96);
+        if (!line)
+                return;
         p8 hex[DUMP_CANONICAL_WIDTH * 2];
         memory_into_hex(hex, bytes, length);
         positive made = dump_unsigned_field(line, address, 16, 8, '0');
@@ -8399,7 +8401,7 @@ static fn dump_canonical_line(p8 address_to bytes, positive length,
 
         line[made++] = '|';
         line[made++] = '\n';
-        text_put(line, made);
+        text_out_used -= 96 - made;
 }
 
 static fn dump_regular_line(dump_format address_to format,

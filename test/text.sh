@@ -2861,6 +2861,41 @@ extended = ["a", "b", "c", ".", "[ab]", "[^a]", "(a)", "(ab)", "[a-c]", "a*",
 
 random.seed(20260827)
 
+# Views must preserve a prior record before refill; sed reads directly into
+# its current pattern buffer even after hold/work pointer exchanges.
+for edge in (65535, 65536, 65537):
+    row = "alpha:" + "x" * (edge - 6) + "\n"
+    data = row + row + "tail\nlast"
+    # The test host's rev disagrees at the exact 64 KiB input boundary.
+    # These fixed records have a direct expected result independent of it.
+    total += 1
+    wanted = ("x" * (edge - 6) + ":ahpla\n") * 2 + "liat\ntsal"
+    actual = run(ours + "/rev", [], data)
+    if actual != (wanted, 0):
+        bad += 1
+        report("rev", "reader edge", (wanted, 0), actual, data)
+    for name, arguments in [("cut", ["-c2-"]),
+                            ("cut", ["-d:", "-f2-"]), ("uniq", ["-c"]),
+                            ("grep", ["-aE", "-B1", "alpha.*x"])]:
+        both(name, arguments, data)
+    for flags in (["-v"], ["-A"], ["-nvs"]):
+        both("cat", flags, data + "\t\n\001last")
+    for script in ("h;G", "x;p;x", "N;P;D", "$s/x/z/"):
+        both("sed", [script], data)
+    for name, arguments in [("cut", ["-z", "-c2-"]),
+                            ("uniq", ["-z", "-c"]),
+                            ("sed", ["-z", "h;G"])]:
+        both(name, arguments, data.replace("\n", "\0"))
+
+# Dense output events cross both input refill and partial output capacity.
+for edge in (65511, 65535, 65536):
+    data = "x" * edge + "\n\nalpha\t\001\177\n\nlast\n" * 8193 + "tail"
+    for flags in ("-ns", "-nT", "-nE", "-nAv", "-bAs"):
+        both("cat", [flags], data)
+
+# Decimal width grows past six columns without leaving reserved tail bytes.
+both("cat", ["-n"], "x\n" * 1000001)
+
 # Cross vector and refill edges with both complete and unterminated records.
 # The suffix can occur on a rejected record too: finding it only licenses
 # the VM to run, including captures, anchors and optional branches.

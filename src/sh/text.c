@@ -522,12 +522,12 @@ static bool text_reader_spill(text_reader address_to reader, p8 delimiter,
         }
 }
 
-static bool text_line_next()
+static bool text_line_next(p8 address_to storage, positive used)
 {
-        text_line_length = 0;
+        text_line_length = used;
         text_line_ended = false;
         bool have = text_reader_spill(address_of text_input, text_delimiter,
-                                      text_line, address_of text_line_length,
+                                      storage, address_of text_line_length,
                                       address_of text_line_ended, null);
         if (text_input.failed)
                 text_status = text_status ? text_status : 1;
@@ -581,7 +581,13 @@ static bool text_line_view(p8 address_to address_to line,
         // prior view from either store before it can be overwritten.
         text_record_preserve(previous, previous_length + 1, previous_storage);
 
-        if (!text_line_next())
+        // This delimiter-free prefix was already scanned; spill from the
+        // next refill, just as text_record_next does for its owned cursor.
+        _Static_assert(TEXT_READ_MAX <= TEXT_LINE_MAX,
+                       "a reader fill must fit the line spill buffer");
+        memory_copy(text_line, at, left);
+        text_input.position = text_input.filled;
+        if (!text_line_next(text_line, left))
                 return false;
 
         text_line[text_line_length] = text_delimiter;
@@ -3019,26 +3025,31 @@ static positive cat_line_number;
 static bool cat_blank_before;
 static bool cat_at_line_start;
 
-/* Bytes cat -v writes unchanged.  The structural newline and tab paths stay
-   outside this set, as do every control/high byte text_visible expands. */
-static const b8 cat_visible_span[256] = {[32 ... 126] = 1};
+/* Identity bytes for SHOW/TABS/line-state combinations. TAB and LF may
+   join ordinary spans whenever no selected operation observes them. */
+static const b8 cat_literal_span[8][256] = {
+    {[0 ... 255] = 1},
+    {[0 ... 9] = 1, [11 ... 255] = 1},
+    {[0 ... 8] = 1, [10 ... 255] = 1},
+    {[0 ... 8] = 1, [11 ... 255] = 1},
+    {[32 ... 126] = 1, ['\t'] = 1, ['\n'] = 1},
+    {[32 ... 126] = 1, ['\t'] = 1},
+    {[32 ... 126] = 1, ['\n'] = 1},
+    {[32 ... 126] = 1},
+};
 
 static fn cat_number()
 {
         // Six wide and right aligned, then a tab, which is what GNU does and
         // what anything reading the output will expect.
-        positive width = positive_digits(cat_line_number);
-
-        if (width < 6)
-                width = 6;
-
-        p8 address_to field = text_reserve(width + 1);
+        p8 address_to field = text_reserve(positive_char_max + 1);
 
         if (field)
         {
                 positive length = positive_into_padded(
                     field, cat_line_number, 6, ' ');
                 field[length] = '\t';
+                text_out_used -= positive_char_max - length;
         }
 
         cat_line_number++;
@@ -3066,9 +3077,102 @@ static inline INLINE bool cat_line_start(bool blank)
 static fn cat_walked()
 {
         p8 visible[TEXT_VISIBLE_MAX];
+        const b8 address_to literal = cat_literal_span[cat_flags == CAT_SHOW ? 4 : 7];
+        const b8 address_to block_literal = cat_literal_span[
+            ((cat_flags & CAT_SHOW) ? 4 : 0) | ((cat_flags & CAT_TABS) ? 2 : 0) |
+            ((cat_flags & (CAT_NUMBER | CAT_NUMBER_FULL | CAT_SQUEEZE | CAT_ENDS)) != 0)];
 
         while (text_fill())
         {
+                if (!text_out_failed && cat_flags != CAT_SHOW)
+                {
+                        positive room = TEXT_OUT_MAX - text_out_used;
+                        if (room < positive_char_max + 5)
+                                room = TEXT_OUT_MAX;
+                        p8 address_to field = text_reserve(room);
+                        if (field)
+                        {
+                                p8 address_to at = text_input.buffer + text_input.position;
+                                p8 address_to stop = text_input.buffer + text_input.filled;
+                                p8 address_to into = field;
+                                p8 address_to limit = field + room;
+                                bool line_start = cat_at_line_start, blank_before = cat_blank_before;
+                                positive number = cat_line_number;
+                                while (at < stop && (positive)(limit - into) >= positive_char_max + 5)
+                                {
+                                        p8 value = *at;
+                                        if (line_start)
+                                        {
+                                                bool blank = value == '\n';
+                                                if ((cat_flags & CAT_SQUEEZE) && blank && blank_before)
+                                                {
+                                                        at++;
+                                                        continue;
+                                                }
+                                                blank_before = blank;
+                                                if ((cat_flags & CAT_NUMBER_FULL) ? !blank : (cat_flags & CAT_NUMBER))
+                                                {
+                                                        into += positive_into_padded(into, number, 6, ' ');
+                                                        *into++ = '\t';
+                                                        number++;
+                                                }
+                                                line_start = false;
+                                        }
+                                        if (block_literal[value])
+                                        {
+                                                positive run = string_span_max(at,
+                                                    min((positive)(stop - at), (positive)(limit - into)), block_literal);
+                                                memory_copy_apart(into, at, run);
+                                                into += run;
+                                                at += run;
+                                                continue;
+                                        }
+                                        at++;
+                                        if (value == '\n')
+                                        {
+                                                if (cat_flags & CAT_ENDS)
+                                                        *into++ = '$';
+                                                *into++ = '\n';
+                                                line_start = true;
+                                        }
+                                        else if (value == '\t')
+                                        {
+                                                if (cat_flags & CAT_TABS)
+                                                {
+                                                        *into++ = '^';
+                                                        *into++ = 'I';
+                                                }
+                                                else
+                                                        *into++ = '\t';
+                                        }
+                                        else if (cat_flags & CAT_SHOW)
+                                        {
+                                                if (value >= 128)
+                                                {
+                                                        *into++ = 'M';
+                                                        *into++ = '-';
+                                                        value -= 128;
+                                                }
+                                                if (value == 127 || value < 32)
+                                                {
+                                                        *into++ = '^';
+                                                        value = value == 127 ? '?' : value + 64;
+                                                }
+                                                *into++ = value;
+                                        }
+                                        else
+                                                *into++ = value;
+                                }
+                                text_input.position = (positive)(at - text_input.buffer);
+                                text_out_used -= room - (positive)(into - field);
+                                cat_line_number = number;
+                                cat_at_line_start = line_start;
+                                cat_blank_before = blank_before;
+                                continue;
+                        }
+                }
+                /* A failed reservation keeps the original byte/record walker
+                   for the remainder, including later inputs and diagnostics. */
                 /* Numbering and blank squeezing only care where newlines
                    are.  Keep the byte walker for visible/tab/end
                    transformations, but move an untouched record span at a
@@ -3122,14 +3226,14 @@ static fn cat_walked()
                         }
 
                         if ((cat_flags & CAT_SHOW) &&
-                            cat_visible_span[value])
+                            literal[value])
                         {
                                 p8 address_to start = text_input.buffer +
                                                       text_input.position - 1;
                                 positive run = string_span_max(
                                     start,
                                     text_input.filled - text_input.position + 1,
-                                    cat_visible_span);
+                                    literal);
 
                                 text_put(start, run);
                                 text_input.position += run - 1;
@@ -3956,10 +4060,25 @@ static b32 text_rev()
                 if (!text_open(text_file_name(i)))
                         continue;
 
-                while (text_line_next())
+                p8 address_to line;
+                positive length;
+                while (text_line_view(address_of line, address_of length,
+                                      null, 0, null))
                 {
-                        memory_reverse(text_line, text_line_length);
-                        text_put(text_line, text_line_length);
+                        if (length <= TEXT_OUT_MAX)
+                        {
+                                p8 address_to into = text_reserve(length);
+                                if (into)
+                                {
+                                        memory_copy_apart(into, line, length);
+                                        memory_reverse(into, length);
+                                }
+                        }
+                        else
+                        {
+                                memory_reverse(line, length);
+                                text_put(line, length);
+                        }
 
                         if (text_line_ended)
                                 text_put_character(text_delimiter);
@@ -4002,7 +4121,7 @@ static bool text_lines_gather()
         if (!text_lines_ready())
                 return false;
 
-        while (text_line_next())
+        while (text_line_next(text_line, 0))
         {
                 if (text_lines_count >= TEXT_LINES_MAX)
                         return string_diagnostic(&text_diagnostic, 0, null, "too many lines");
@@ -4385,7 +4504,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                         else
                         {
                                 positive done = 0;
-                                while (done < count && text_line_next())
+                                while (done < count && text_line_next(text_line, 0))
                                 {
                                         text_put_line();
                                         done++;
@@ -4443,7 +4562,7 @@ static inline INLINE b32 text_head_tail(bool tail)
                 {
                         positive seen = 0;
 
-                        while (text_line_next())
+                        while (text_line_next(text_line, 0))
                         {
                                 seen++;
 
@@ -4728,7 +4847,7 @@ static b32 text_nl()
                 if (!text_open(text_file_name(i)))
                         continue;
 
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                 {
                         b32 marker = nl_section_of(delimiter);
 
@@ -5533,7 +5652,7 @@ static fn fmt_analyze_line(fmt_line address_to line)
 
 static bool fmt_read_line(fmt_line address_to line)
 {
-        if (!text_line_next())
+        if (!text_line_next(text_line, 0))
                 return false;
 
         memory_copy_apart(text_record_hold, text_line, text_line_length);
@@ -6368,7 +6487,7 @@ static b32 pr_source_record(pr_record address_to record)
         }
         else
         {
-                if (!text_line_next())
+                if (!text_line_next(text_line, 0))
                         return 0;
 
                 memory_copy_apart(text_record_hold, text_line,
@@ -10612,7 +10731,7 @@ static bool look_streamed()
 {
         bool found = false;
 
-        while (text_line_next())
+        while (text_line_next(text_line, 0))
         {
                 bipolar order = look_compare(text_line, text_line_length);
 
@@ -10865,7 +10984,7 @@ static b32 text_fold()
                 if (!text_open(text_file_name(i)))
                         continue;
 
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                 {
                         positive from = 0;
 
@@ -13131,7 +13250,7 @@ static bool grep_option_seen(p8 letter, string_address value)
                 if (!text_open(value))
                         return false;
 
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                         if (!grep_glob_add(address_of grep_exclude,
                                            (string_address)text_line,
                                            text_line_length, false))
@@ -13152,7 +13271,7 @@ static bool grep_option_seen(p8 letter, string_address value)
 
                 // An empty pattern file matches nothing at all, which is not
                 // the same as an empty pattern.
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                         grep_pattern_add(text_line, text_line_length, grep_fixed,
                                          grep_extended);
 
@@ -14089,7 +14208,7 @@ static string_address sed_in_place;
 
 static bool sed_line_across(b32 address_to i, b32 inputs)
 {
-        while (!text_line_next())
+        while (!text_line_next(text_line, 0))
         {
                 if (sed_separate || sed_in_place || address_to i + 1 >= inputs)
                         return false;
@@ -15133,7 +15252,7 @@ static bool sed_option_seen(p8 letter, string_address value)
                 return false;
         }
 
-        while (text_line_next())
+        while (text_line_next(text_line, 0))
         {
                 text_line[text_line_length] = '\0';
                 sed_script_add(text_line);
@@ -15320,9 +15439,8 @@ static b32 text_sed()
                                         sed_commands[c].active = true;
                 }
 
-                while (text_line_next())
+                while (text_line_next(sed_pattern.bytes, 0))
                 {
-                        memory_copy(sed_pattern.bytes, text_line, text_line_length);
                         sed_pattern.length = text_line_length;
                         sed_pattern.ended = text_line_ended;
                         sed_number++;
@@ -15441,7 +15559,7 @@ static b32 text_sed()
                                         {
                                                 if (!sed_quiet)
                                                         sed_put_space();
-                                                if (!text_line_next())
+                                                if (!text_line_next(text_line, 0))
                                                         goto drop_cycle;
                                                 sed_replaced = false;
                                         }
