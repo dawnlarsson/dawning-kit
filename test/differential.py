@@ -154237,6 +154237,13 @@ PINNED = r"""
  },
  {
   "domain": "shell",
+  "id": "a060ccb8f847a22f",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "background-interrupted-wait"
+ },
+ {
+  "domain": "shell",
   "id": "25389cf20a4d2d1a",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
@@ -154266,6 +154273,13 @@ PINNED = r"""
  {
   "domain": "shell",
   "id": "3af41b6cc20e7efc",
+  "list": "unstable",
+  "reason": "answers differently when the same case is asked again",
+  "utility": "names_posix"
+ },
+ {
+  "domain": "shell",
+  "id": "6740229452d43e0a",
   "list": "unstable",
   "reason": "answers differently when the same case is asked again",
   "utility": "names_posix"
