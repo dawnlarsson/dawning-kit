@@ -1408,6 +1408,44 @@ static positive job_specified(string_address word, positive address_to found)
         return matches ? JOB_SPEC_AMBIGUOUS : JOB_SPEC_UNKNOWN;
 }
 
+//      The words of a "jobs -x" with the job specs already resolved, run as
+//      one line. eval joins its words the same way, and for the same reason:
+//      what reads a line lives above this file.
+static COLD fn shell_jobs_replaced(positive at)
+{
+        static p8 address_to joined;
+        static positive joined_room;
+        positive used = 0;
+
+        for (; at < shell_argc; at++)
+        {
+                positive length = string_length(shell_argv[at]);
+
+                if (!shell_array_room(joined, joined_room, used + length + 2))
+                        return shell_answer(string_report(log_error, 2, "%s: no room\n", "jobs"));
+
+                if (used)
+                        joined[used++] = ' ';
+
+                memory_copy_apart(joined + used, shell_argv[at], length);
+                used += length;
+                joined[used] = end;
+        }
+
+        //      Nested the way eval and fc nest: the parser is standing in
+        //      the middle of the jobs that asked for this, and a line fed to
+        //      it without its own lexer storage is a second sentence written
+        //      over the first.
+        {
+                lex_frame frame;
+
+                lex_nest_enter(address_of frame);
+                run_lines(joined);
+                shell_input_end();
+                lex_nest_leave(address_of frame);
+        }
+}
+
 fn shell_jobs(writer write, string_address input)
 {
         shell_option_walk walk = {1};
@@ -1438,6 +1476,57 @@ fn shell_jobs(writer write, string_address input)
                 case 'n':
                         changed_only = true;
                         break;
+                case 'x':
+                        //      Every word that names a job becomes that
+                        //      job's process, and what is left is a command
+                        //      to run. Without job control there is nothing
+                        //      a spec can name, so the words run as they are
+                        //      and a spec among them is refused.
+                        {
+                                p8 more;
+                                positive at;
+
+                                //      The letters after -x, and any option
+                                //      word behind them, are still options;
+                                //      the walk is drained so that index
+                                //      names the first word of the command.
+                                while (shell_option_letter(address_of walk,
+                                                           address_of more))
+                                        ;
+
+                                //      -x is the whole of what jobs is
+                                //      doing, so Bash refuses any other
+                                //      letter beside it.
+                                if (detailed || identifiers || running_only ||
+                                    stopped_only || changed_only)
+                                        return shell_answer(string_report(
+                                            log_error, 1,
+                                            "jobs: no other options allowed with `-x'\n"));
+
+                                at = walk.index;
+
+                                if (at >= shell_argc)
+                                        return shell_answer(0);
+
+                                //      The command word names a job or it
+                                //      names a command; a spec among the
+                                //      arguments that no job answers to is
+                                //      left as it was written.
+                                if (string_is(shell_argv[at], '%'))
+                                {
+                                        positive found;
+
+                                        if (job_specified(shell_argv[at],
+                                                          address_of found)
+                                            != JOB_SPEC_FOUND)
+                                                return shell_answer(string_report(
+                                                    log_error, 1,
+                                                    "jobs: %s: no such job\n",
+                                                    shell_argv[at]));
+                                }
+
+                                return shell_jobs_replaced(at);
+                        }
                 default:
                         return shell_answer(string_report(log_error, 2, "jobs: -%s: invalid option\n",
                                       (p8[]){letter, end}));
@@ -3656,7 +3745,10 @@ static fn history_listed_fc(writer write, positive at, bool numbered)
         if (numbered)
                 string_format(write, "%p", history_first + at);
 
-        string_format(write, "\t %s\n", history_text[at]);
+        //      Bash writes a tab and a space; its POSIX mode writes the tab
+        //      alone, which is what POSIX spells for fc -l.
+        string_format(write, shell_posix_on() ? "\t%s\n" : "\t %s\n",
+                      history_text[at]);
 }
 
 fn shell_history(writer write, string_address input)
@@ -3810,6 +3902,13 @@ fn shell_history(writer write, string_address input)
 */
 static PURE positive history_range_count()
 {
+        //      The line asking is itself in the history when somebody typed
+        //      it, and fc never operates on itself. A script's fc was never
+        //      entered, so nothing is set aside there and "fc -s" reaches
+        //      the last line remembered rather than the one before it.
+        if (!shell_is_interactive)
+                return history_used;
+
         return history_used ? history_used - 1 : 0;
 }
 
@@ -3824,6 +3923,17 @@ static bool history_locate(string_address word, positive fallback,
 
         if (!word)
                 return true;
+
+        //      A minus and digits is an offset from the end; a minus
+        //      and anything else is not a number at all, and looking for a
+        //      line called "-l" is what fc does with it.
+        {
+                positive signed_digits;
+
+                if (string_is(word, '-') &&
+                    !string_digits_exact(word + 1, address_of signed_digits))
+                        goto by_prefix;
+        }
 
         if (string_get(word) == '-' ||
             string_digits_exact(word, address_of digits))
@@ -3846,6 +3956,7 @@ static bool history_locate(string_address word, positive fallback,
                 return count != 0;
         }
 
+by_prefix:
         for (positive at = count; at;)
         {
                 at--;
@@ -3872,7 +3983,11 @@ static fn history_run_text(writer write, string_address text)
 {
         lex_frame frame;
 
-        string_format(write, "%s\n", text);
+        //      The line being run again is announced on the diagnostic
+        //      channel, not among the answers: what the line writes is the
+        //      answer, and a script reading it wants only that.
+        (void)write;
+        string_format(log_error, "%s\n", text);
         log_flush();
 
         lex_nest_enter(address_of frame);
@@ -4025,6 +4140,11 @@ fn shell_fc(writer write, string_address input)
 
         if (again && at < shell_argc && string_first_of(shell_argv[at], '='))
                 replace = shell_argv[at++];
+
+        //      -s runs the line again, and running it is not listing it:
+        //      Bash lets the re-execution win over an -l given beside it.
+        if (again)
+                listing = false;
 
         if (!count)
         {

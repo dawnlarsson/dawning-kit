@@ -13257,9 +13257,22 @@ static inline INLINE b32 shell_query(writer write, positive index, b32 flags,
                                 kinds |= 8;
                 }
 
+                //      -a asks for every place the name is, so a builtin or
+                //      an alias standing in front of the files does not stop
+                //      the walk: "type -a -p echo" writes both echoes.
                 if (path_only && !(flags & SHELL_QUERY_FORCE_PATH) &&
                     (alias || kinds))
-                        continue;
+                {
+                        //      -a asks for every place the name is, so a
+                        //      builtin or an alias standing in front of the
+                        //      files does not stop the walk: "type -a -p
+                        //      echo" writes both echoes. The name was still
+                        //      found, whether or not a path is written for it.
+                        if (!every)
+                                continue;
+
+                        matched = true;
+                }
 
                 if (!path_only)
                 {
@@ -13390,11 +13403,11 @@ COLD fn shell_type(writer write, string_address input)
 
         index = walk.index;
 
-        //      -t asks for one word and outranks the two that ask for a
-        //      path: "type -p -t cd" names the kind, where -p alone would
-        //      have nothing to say about a builtin.
-        if (terse)
-                path_only = force_path = false;
+        //      -t asks for one word and outranks -p, which would have
+        //      nothing to say about a builtin; -P outranks -t in turn,
+        //      because it asks for a file and a builtin is not one.
+        if (terse && !force_path)
+                path_only = false;
 
         if (index >= shell_argc)
                 return shell_answer(0);
@@ -13811,6 +13824,21 @@ fn shell_ulimit(writer write, string_address input)
         b32 answer = 0;
         shell_limit address_to chosen = null;
         shell_limit address_to limit;
+
+        //      Every resource at once and a value for one of them is a
+        //      contradiction dash refuses outright; Bash reads the list and
+        //      pays the value no attention.
+        for (positive at = 1; at < shell_argc; at++)
+                if (!string_is(shell_argv[at], '-') && !shell_bash_compat)
+                {
+                        for (positive back = 1; back < at; back++)
+                                if (string_is(shell_argv[back], '-') &&
+                                    string_first_of(shell_argv[back] + 1, 'a'))
+                                        return shell_answer(string_report(
+                                            log_error, 2,
+                                            "ulimit: too many arguments\n"));
+                        break;
+                }
 
         while (index < shell_argc && string_is(shell_argv[index], '-') &&
                string_get(shell_argv[index] + 1))
