@@ -71,18 +71,21 @@ static bool shell_start_parameters(string_address address_to arguments,
 /*
         set -v: what was read, written back before anything is done with it.
 
-        Reading, not running, is what the option is about. A command string
-        is read whole before its first line runs, so turning verbose on
-        inside one echoes nothing more -- the flag is taken once, before the
-        string is walked. A file or a terminal is read a line at a time, so
-        `set -v` in one reaches the line after it, which is why that path
-        asks again for every line.
+        Reading, not running, is what the option is about, so the echo sits
+        where the reader hands a physical line over and the option is asked
+        about again for each one: `set -v` halfway through reaches the line
+        after it, in a file and in bash's command string alike. dash echoes
+        no command string at all, because a string was not read from
+        anywhere, and that is the whole of the difference between the two.
 */
-static bool shell_verbose_reading;
+static bool shell_verbose_from_string;
 
 static fn shell_verbose_line(string_address line)
 {
-        if (!shell_verbose_reading)
+        if (shell_verbose_from_string && !shell_bash_compat)
+                return;
+
+        if (!(shell_options & SHELL_FLAG('v')))
                 return;
 
         log_error(line, string_length(line));
@@ -95,12 +98,7 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
 {
         positive at = 0;
 
-        // dash never echoes a command string: it was not read from
-        // anywhere. Bash echoes it, once, as the parser walks it.
-        if (command_string)
-                shell_verbose_reading =
-                    shell_bash_compat &&
-                    (shell_options & SHELL_FLAG('v')) != 0;
+        shell_verbose_from_string = command_string;
 
         while (at < length)
         {
@@ -128,10 +126,6 @@ static positive shell_run_complete_lines(p8 address_to text, positive length,
 
                         if (history_action == HISTORY_EXPAND_RUN)
                         {
-                                if (!command_string)
-                                        shell_verbose_reading =
-                                            (shell_options &
-                                             SHELL_FLAG('v')) != 0;
                                 shell_verbose_line(ready);
                                 run_line(ready);
                         }
@@ -612,9 +606,7 @@ b32 main()
                    newlines are ended in place. */
                 if (!*first_newline)
                 {
-                        shell_verbose_reading =
-                            shell_bash_compat &&
-                            (shell_options & SHELL_FLAG('v')) != 0;
+                        shell_verbose_from_string = true;
                         shell_verbose_line(command);
                         run_line(command);
                 }
@@ -769,8 +761,7 @@ b32 main()
 
                 if (history_action == HISTORY_EXPAND_RUN)
                 {
-                        shell_verbose_reading =
-                            (shell_options & SHELL_FLAG('v')) != 0;
+                        shell_verbose_from_string = false;
                         shell_verbose_line(ready);
                         run_line(ready);
                 }
