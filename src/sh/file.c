@@ -115,7 +115,9 @@ static TEXT_ARENA_GROW bool text_arena_grow(
 #define ERROR_OUT_OF_RANGE 34
 #define ERROR_TOO_MANY_LEVELS 40
 #define ERROR_NOT_SUPPORTED 95
+#define ERROR_PROTOCOL_TYPE 91
 #define ERROR_NOT_CONNECTED 107
+#define ERROR_CONNECTION_REFUSED 111
 #define ERROR_OVER_QUOTA 122
 
 #define STATX_BASIC 0x7ff
@@ -2838,6 +2840,10 @@ CONST RETURNS_NONNULL string_address file_reason(bipolar code)
             ERROR_TOO_MANY_LINKS, ERROR_BROKEN_PIPE, ERROR_OUT_OF_RANGE,
             ERROR_NO_SYSTEM_CALL, ERROR_TOO_MANY_LEVELS, ERROR_NOT_SUPPORTED,
             ERROR_NOT_CONNECTED, ERROR_OVER_QUOTA,
+            /* A datagram socket asked to reach something that is not a
+               listener says which of those two it was; logger, write and
+               wall all report it. */
+            ERROR_PROTOCOL_TYPE, ERROR_CONNECTION_REFUSED,
         };
         positive magnitude = code < 0 ? (positive)0 - (positive)code
                                       : (positive)code;
@@ -3209,9 +3215,19 @@ static bool file_source_destination(string_address program, positive first,
                 return true;
         }
 
+        //      The reference stats the target and quotes what the kernel
+        //      said about it: not there is one answer and there but not a
+        //      directory is another.
         if (!file_is_directory_through(last))
-                return string_report(log_error, false, "%s: target '%s' is not a directory\n", program,
-                              last);
+        {
+                file_facts facts;
+                bipolar looked = file_look_code(AT_FDCWD, last, 0, address_of facts);
+
+                return string_report(log_error, false, "%s: target '%s': %s\n", program,
+                                     last,
+                                     file_reason(looked < 0 ? looked
+                                                            : -ERROR_NOT_DIRECTORY));
+        }
 
         bool complete = true;
 
@@ -10877,7 +10893,16 @@ static b32 file_ln()
         if (alone || !directory)
         {
                 if (after - first != 1)
-                        return string_report(log_error, 1, "ln: target '%s' is not a directory\n", last);
+                {
+                        file_facts facts;
+                        bipolar looked = file_look_code(AT_FDCWD, last,
+                                                        through ? 0 : AT_SYMLINK_NOFOLLOW,
+                                                        address_of facts);
+
+                        return string_report(log_error, 1, "ln: target '%s': %s\n", last,
+                                             file_reason(looked < 0 ? looked
+                                                                    : -ERROR_NOT_DIRECTORY));
+                }
 
                 return ln_make(program_argument((b32)first), last) ? 0 : 1;
         }
@@ -14224,7 +14249,7 @@ static b32 file_csplit()
                                 if (!csplit_parse_regex(word, address_of pattern))
                                 {
                                         string_format(log_error,
-                                                      "csplit: invalid pattern: '%s'\n", word);
+                                                      "csplit: '%s': invalid pattern\n", word);
                                         failed = true;
                                         break;
                                 }
@@ -14251,7 +14276,7 @@ static b32 file_csplit()
                         }
                         else if (!csplit_parse_line(word, address_of pattern))
                         {
-                                string_format(log_error, "csplit: invalid pattern: '%s'\n",
+                                string_format(log_error, "csplit: '%s': invalid pattern\n",
                                               word);
                                 failed = true;
                                 break;
@@ -22350,13 +22375,16 @@ static b32 file_kill()
                         continue;
                 }
 
-                // Anything else that begins with a dash is the signal itself.
+                // Anything else that begins with a dash is the signal
+                // itself. What is quoted back is the word without the one
+                // dash that made it an option, so a long-looking word keeps
+                // the second one: -bogus-option is reported as -bogus-option.
                 number = kill_signal_of(name);
 
                 if (number < 0)
                 {
                         string_format(log_error, "kill: invalid signal name or number: %s\n",
-                                      name);
+                                      argument + 1);
                         return 1;
                 }
 
@@ -23125,8 +23153,21 @@ static b32 file_cal()
                 bipolar named = cal_month_number(
                     file_operand_at(file_operand_count == 2 ? 0 : 1));
                 positive parsed_year;
+                //      A number outside the twelve is an illegal value; a
+                //      word is a name this does not know, and the reference
+                //      says which of the two it met.
                 if (named < 1)
-                        return string_report(log_error, 1, "cal: illegal month value: use 1-12\n");
+                {
+                        string_address written =
+                            file_operand_at(file_operand_count == 2 ? 0 : 1);
+                        positive value;
+
+                        return string_digits_exact(written, address_of value)
+                            ? string_report(log_error, 1,
+                                            "cal: illegal month value: use 1-12\n")
+                            : string_report(log_error, 1,
+                                            "cal: unknown month name: %s\n", written);
+                }
                 if (!string_digits_exact(file_operand_at(file_operand_count - 1),
                                 address_of parsed_year) || !parsed_year ||
                     parsed_year > 2147483646U)
