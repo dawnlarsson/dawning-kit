@@ -678,6 +678,10 @@ def files_xargs_valid(argv):
 
 
 UTILITIES = (
+    # yes is the one program here the engine cannot bound: it writes until
+    # something stops it, so both sides die on the harness's file-size limit
+    # and neither answer is a comparison. The old lane read its first line
+    # through a pipe; that needs an output bound the engine does not have.
     Utility("basename", options=(Option("-a"), Option("-z"), Option("--multiple"), Option("--zero"),
                                  Option("-s", (".txt", "txt", "", "a.txt", "x", "/"), None),
                                  Option("--suffix", (".txt", ""), True)),
@@ -760,6 +764,12 @@ UTILITIES = (
                                                   "18446744073709551615", "18446744073709551616", "", "+", "-1",
                                                   "0x10", "  +1", "1 ", "1,2"), True)),
             operands=((), ("extra",), ("extra", "--bad")), stdin=("empty",), fixture="files", stderr="exact"),
+    # hostname is not part of GNU coreutils and the reference box has none;
+    # the engine reports its cases as not run where the program is absent,
+    # and compares them where it is there.
+    Utility("hostname", options=(Option("-s"), Option("--short"), Option("-f"), Option("--fqdn"),
+                                 Option("-i"), Option("-d"), Option("-a"), Option("-y")),
+            operands=((), ("extra",), ("-x",)), stdin=("empty",), fixture="files", stderr="exact"),
     Utility("uname", options=(Option("-a"), Option("-s"), Option("-n"), Option("-r"), Option("-v"), Option("-m"),
                               Option("-p"), Option("-i"), Option("-o"), Option("--all"), Option("--kernel-name"),
                               Option("--nodename"), Option("--kernel-release"), Option("--kernel-version"),
