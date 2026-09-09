@@ -999,6 +999,8 @@ static b32 storage_umount_one(writer diagnostic, string_address program,
         return 0;
 }
 
+#define STORAGE_MOUNT_OPEN_NOFOLLOW 0400000
+
 static b32 storage_umount_recursive(writer diagnostic, string_address program,
                                     storage_mount_table address_to table,
                                     string_address root, string_address types,
@@ -1215,10 +1217,16 @@ b32 storage_umount_command(positive argc, string_address address_to argv,
                    relative or symlinked target names the same mount. */
                 positive resolved_room = 0;
                 p8 address_to resolved = null;
-                if (canonical)
                 {
-                        bipolar handle = system_open_at(AT_FDCWD, operand[i],
-                                                       STORAGE_OPEN_PATH | O_CLOEXEC);
+                        /* The table holds absolute targets, so a relative
+                           word is made absolute even under
+                           --no-canonicalize; that option says not to follow
+                           the last symlink, not to leave the spelling as it
+                           was typed. */
+                        bipolar handle = system_open_at(
+                            AT_FDCWD, operand[i],
+                            STORAGE_OPEN_PATH | O_CLOEXEC |
+                                (canonical ? 0 : STORAGE_MOUNT_OPEN_NOFOLLOW));
                         if (handle >= 0)
                         {
                                 resolved = storage_fd_path(handle,
