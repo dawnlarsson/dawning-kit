@@ -1200,15 +1200,21 @@ def main(argv=None):
             if key in unstable_ids:
                 unstable[tally_key] += 1
                 continue
-            total[tally_key] += 1
-            tiers[case.tier] += 1
-            diff = differences(want, got, policy)
-            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case, spec)
+            #       An oracle that timed out or died of a signal answered
+            #       nothing, so the case has no answer to agree or disagree
+            #       with -- and whether the reference runs out of time
+            #       depends on what else the machine is doing. Counted apart
+            #       from both columns, like a case that contradicts itself,
+            #       so a busy machine cannot move a floor.
             if want["timeout"] or want["status"] < 0:
                 invalid += 1
                 print(f"  INVALID ORACLE {key} {label_of(case)} status={want['status']} "
                       f"timeout={want['timeout']}: {case.words()}")
                 continue
+            total[tally_key] += 1
+            tiers[case.tier] += 1
+            diff = differences(want, got, policy)
+            row = ledger_rows_by_id.get(key) or option_ledger(ledger, case, spec)
             if row is not None and "case" in row:
                 # A pinned deliberate difference: the answer must hold, and
                 # must still differ from the reference.
@@ -1438,6 +1444,8 @@ def self_test():
             self.script(self.system / "chatty", "#!/bin/sh\nexit 0\n")
             self.script(self.farm / "sleeper", "#!/bin/sh\nsleep 5\n")
             self.script(self.system / "sleeper", "#!/bin/sh\nexit 0\n")
+            self.script(self.farm / "dawdler", "#!/bin/sh\nexit 0\n")
+            self.script(self.system / "dawdler", "#!/bin/sh\nsleep 5\n")
             self.script(self.farm / "flagged", "#!/bin/sh\nfor a; do case $a in -z) exit 2;; esac; done; printf ok\n")
             self.script(self.system / "flagged", "#!/bin/sh\nprintf ok\n")
             self.script(self.farm / "effect", "#!/bin/sh\nprintf x > a.txt\n")
@@ -1505,6 +1513,31 @@ def self_test():
             want, got = self.runner.pair(case, spec)
             self.assertTrue(got["timeout"])
             self.assertIn("timeout", differences(want, got))
+
+        def test_reference_timeout_is_counted_in_neither_column(self):
+            """An oracle that ran out of time answered nothing, so the case
+            has nothing to agree or disagree with -- and whether it runs out
+            depends on what else the machine is doing. It must leave the
+            denominator, or a busy machine moves a floor."""
+            spec = Utility("dawdler", timeout=1.0)
+            case = Case("text", "dawdler", [])
+            want, got = self.runner.pair(case, spec)
+            self.assertTrue(want["timeout"])
+            saved = globals().get("SPECS")
+            globals()["SPECS"] = {"text": ((spec,), (), ())}
+            import io
+            import contextlib
+            written = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(written):
+                    main([str(self.farm), "--domain", "text", "--budget", "singles",
+                          "--jobs", "1", "--no-pinned"])
+            finally:
+                globals()["SPECS"] = saved
+            report = written.getvalue()
+            self.assertIn("INVALID ORACLE", report)
+            self.assertIn("invalid oracles=1", report)
+            self.assertIn("differential 0 of 0", report)
 
         def test_missing_reference_is_reported_not_passed(self):
             case = Case("text", "nowhere-such", [])
