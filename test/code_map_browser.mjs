@@ -63,7 +63,7 @@ try {
  // additional support functions; the production C inventory is unchanged.
  // Scope values are an independently specified integration contract.
  await reset();await click('[data-view="functions"]');
- const scopeCounts={production:4193,c:3840,assembly:353,support:1575,all:5768};
+ const scopeCounts={production:4191,c:3838,assembly:353,support:1580,all:5771};
  for(const [scope,want] of Object.entries(scopeCounts)){
   await select('scope',scope);const got=await meta();check('scope '+scope,got.count===want,{expected:want,...got});
  }

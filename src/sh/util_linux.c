@@ -582,7 +582,7 @@ static b32 util_linux_bits()
                 text_delimiter = '\n';
                 if (!text_open(null))
                         return text_done(1);
-                while (text_line_next())
+                while (text_line_next(text_line, 0))
                 {
                         while (text_line_length &&
                                byte_is_space(text_line[text_line_length - 1]))

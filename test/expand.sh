@@ -647,6 +647,14 @@ answer 'ternary'        'echo $((1 ? 2 : 3)) $((0 ? 2 : 3))'
 answer 'ternary nested' 'echo $((1 ? 0 ? 4 : 5 : 6))'
 answer 'modulo'         'echo $((7 % 3)) $((-7 / 2)) $((-7 % 3))'
 
+# Higher arithmetic productions inherit the normalized lower cursor.
+bash_answer 'arithmetic cursor stays normalized across all levels' \
+        'a=3; b=2; printf "%s:%s\n" "$(( ( a + 2 ) * 3 << 1 > 20 && a != b ? (a += 2, a) : 0 ))" "$a"'
+bash_answer 'inactive arithmetic parses without variable or division effects' \
+        'set -u; printf "%s:%s:%s\n" "$(( 0 && (missing += 1) ))" "$(( 1 || (1 / 0) ))" "$(( 0 ? missing : 2 ** 3 ** 2 ))"'
+bash_answer 'arithmetic spaces preserve increments and comma sequencing' \
+        'a=2; b=4; printf "%s:%s:%s\n" "$(( a ++ + ++ b , a *= 3 , a + b ))" "$a" "$b"'
+
 group bases
 answer 'hex'            'echo $((0x10)) $((0xff)) $((0XFF))'
 answer 'octal'          'echo $((010)) $((0777))'
@@ -837,6 +845,22 @@ answer 'star by name'   "cd $tree; x='*'; printf '[%s]' \"\$x\" END; echo"
 answer 'star from name' "cd $tree; x='*'; printf '[%s]' \$x END; echo"
 answer 'half quoted'    "cd $tree; printf '[%s]' a'*' END; echo"
 answer 'no glob flag'   "cd $tree; set -f; printf '[%s]' * END; echo"
+
+# Whole quoted fields still own their bytes; mixed marks retain splitting
+# and pattern handling.
+group quoted-retention
+answer 'quoted field survives marker and retained storage growth' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; x="a\\b *?[abc] "; n=0; while [ "$n" -lt 12 ]; do x=$x$x; n=$((n+1)); done; show "$x" "head${x}tail"'
+answer 'late plain mark retains the mixed field pipeline' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; x="a\\b *?[abc] "; n=0; while [ "$n" -lt 12 ]; do x=$x$x; n=$((n+1)); done; show "${x}"tail'
+answer 'first plain mark retains the mixed field pipeline' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; x="a\\b *?[abc] "; n=0; while [ "$n" -lt 12 ]; do x=$x$x; n=$((n+1)); done; show head"$x"'
+answer 'quoted positional separators and empty fields survive' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; set -- "" "a b" "*?[abc]"; show "$@"; show "pre$@post"; set --; show "$@"; show "pre$@post"'
+answer 'quoted control and high bytes remain exact' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; x=$(printf "\001\177\200\377"); show "$x" "head${x}tail"'
+bash_answer 'quoted pattern punctuation survives glob policies' \
+        'show() { printf "<%s>" "$@" END; printf "\n"; }; x="a\\b *?[abc] @(one|two)"; shopt -s extglob nullglob; show "$x"; shopt -s failglob; show "$x"; set -f; show "$x"'
 
 group glob-walk
 walk_tree="$work/glob-walk"
