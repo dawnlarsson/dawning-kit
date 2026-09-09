@@ -6986,8 +6986,11 @@ static fn pr_put_record(pr_record address_to record, positive width)
 
                 if (character == '\r')
                 {
+                        // Measured: a return starts the line again and
+                        // then stands in its first column, so the next tab
+                        // reaches the stop after one rather than after none.
                         text_put_character(character);
-                        record_column = 0;
+                        record_column = 1;
                         pr_output_column = 0;
                         continue;
                 }
@@ -9250,6 +9253,8 @@ static positive column_cell_width(column_cell cell)
 {
         positive width = cell.length;
 
+        // A byte past ASCII is written as four characters; every other byte,
+        // a tab included, takes the one column util-linux gives it.
         for (positive at = 0; at < cell.length; at++)
                 if (cell.bytes[at] >= 0x80)
                         width += 3;
@@ -16863,6 +16868,12 @@ static b32 text_sed()
         if (!have_script)
                 return text_done(string_diagnostic(&text_diagnostic, 1, null, "no script"));
 
+        // A script whose first line is exactly #n asks for -n, which is the
+        // one comment sed reads.
+        if (sed_script_length >= 2 && sed_script[0] == '#' && sed_script[1] == 'n' &&
+            (sed_script_length == 2 || sed_script[2] == '\n'))
+                sed_quiet = true;
+
         // After the script has been read, not while: -f reads its file with
         // the same reader and a script is lines however the input is split.
         if (sed_null_data)
@@ -16925,7 +16936,7 @@ static b32 text_sed()
                                 string_diagnostic(&text_diagnostic, 0, name,
                                                   "couldn't readlink");
                                 text_status = 4;
-                                continue;
+                                break;
                         }
 
                         if (!file_resolve(name, resolved, true))
@@ -17201,6 +17212,9 @@ cycle_done:
                         if (leaving >= 0 || sed_failed || sed_io_failed)
                                 break;
                 }
+
+                if (text_input.failed)
+                        text_status = 4;
 
                 text_close();
 
