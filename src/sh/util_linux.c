@@ -792,6 +792,15 @@ static bipolar ul_path_write(string_address path, address_any bytes,
              : (positive)wrote == length ? 0 : -ERROR_INVALID;
 }
 
+/* A usage error, as upstream spells it: the complaint and the try line.
+   A value that failed to parse is not one of these. */
+static COLD b32 ul_usage_error(string_address program, string_address message)
+{
+        return string_report(log_error, 1,
+                             "%s: %s\nTry '%s --help' for more information.\n",
+                             program, message, program);
+}
+
 static bool ul_meta(file_taking address_to taking, string_address syntax,
                     b32 address_to answer)
 {
@@ -8024,7 +8033,7 @@ static b32 ul_partition_program(string_address program, b32 operation)
         positive wanted = operation == UL_BLKPG_ADD ? 4
                           : operation == UL_BLKPG_DELETE ? 2 : 3;
         if (count - taking.first != wanted)
-                return string_report(log_error, 1, "%s: %s\n", program, "not enough arguments");
+                return ul_usage_error(program, "not enough arguments");
 
         string_address device = program_argument((b32)taking.first);
         positive partition;
@@ -8202,7 +8211,9 @@ static bool ul_blockdev_seen(p8 letter, string_address value)
         positive argument = letter == '1' ? 1 : 0;
         if (value && !ul_unsigned(value, positive_max, address_of argument))
         {
-                string_report(log_error, 1, "%s: %s\n", "blockdev", "invalid command argument");
+                string_format(log_error,
+                              "blockdev: failed to parse command argument: '%s'\n",
+                              value);
                 return false;
         }
         ul_blockdev_commands[ul_blockdev_command_count++] =
@@ -8311,10 +8322,10 @@ static b32 ul_blockdev_one(string_address path, bool verbose, bool quiet)
                 if (result < 0)
                 {
                         system_close(handle);
-                        if (verbose &&
-                            descriptor->operation > UL_BLOCK_QUERY_SIGNED32)
+                        if (verbose)
                                 string_format(log, "%s failed.\n",
                                               descriptor->description);
+                        log_flush();
                         if (descriptor->letter == '0')
                                 log_error("blockdev: could not get device size\n",
                                           sizeof("blockdev: could not get device size\n") - 1);
@@ -8422,6 +8433,8 @@ static b32 util_linux_blockdev()
 
         bool report = (taking.flags & FILE_FLAG('R')) != 0;
         positive count = (positive)program_argument_count();
+        if (!report && !ul_blockdev_command_count)
+                return ul_usage_error("blockdev", "not enough arguments");
         if (report && ul_blockdev_command_count)
                 return string_report(log_error, 1, "%s: %s\n", "blockdev", "--report cannot be combined with commands");
         if (!report && ul_blockdev_command_count && taking.first == count)

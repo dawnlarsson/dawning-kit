@@ -1003,6 +1003,7 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
             STORAGE_ARGUMENT("fs-devno", 'd'),
             STORAGE_ARGUMENT("devno", 'x'),
             STORAGE_ARGUMENT("nofollow", 'N'),
+            STORAGE_ARGUMENT("show", 'S'),
         };
         bool quiet = false;
         bool fs_devno = false;
@@ -1026,6 +1027,12 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
                         devno = true;
                 else if (option == 'N')
                         nofollow = true;
+                else if (option == 'S')
+                {
+                        if (diagnostic)
+                                diagnostic(str("mountpoint: --show is not supported on this system\n"));
+                        return 1;
+                }
                 else if (option == ARGUMENT_OPERAND)
                 {
                         if (path)
@@ -1048,6 +1055,13 @@ b32 storage_mountpoint(positive argc, string_address address_to argv,
         {
                 if (diagnostic)
                         diagnostic(str("mountpoint: exactly one path is required\n"));
+                return 1;
+        }
+
+        if (devno && nofollow)
+        {
+                if (diagnostic)
+                        diagnostic(str("mountpoint: --devno and --nofollow are mutually exclusive\n"));
                 return 1;
         }
 
