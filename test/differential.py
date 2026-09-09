@@ -109,6 +109,19 @@ DOMAIN_FLOOR = {
     "misc": (18223, 20044, 8,
              "script's transcript timing, cksum --check combinations, and od "
              "and numfmt corners"),
+    "files": (57900, 73330, 100,
+              "the domain moved from singles to full in one pass, so most of "
+              "what pairwise, three-wise and the powerset found is answered "
+              "but not yet pinned: mkdir and mktemp read -m, -p and --tmpdir "
+              "as one value each where the reference reads every occurrence, "
+              "kill's option order is util-linux's own hand-rolled one, "
+              "whereis calls combinations bad usage that these accept, "
+              "realpath and readlink differ on a path whose middle is missing, "
+              "shred, touch, truncate and csplit refuse values these take, and "
+              "chmod, chown and chgrp walk no symbolic link under -R where -L "
+              "asks them to. The slack is wide because the run's own "
+              "denominator moves: sixty to eighty cases a run are dropped as "
+              "invalid oracles when the reference runs out of time"),
 }
 DOMAINS = ("text", "files", "misc", "util_linux", "shell", "builtins", "awk")
 SHELL_MODES = {"bash": ("/bin/bash", [], "bash"),
